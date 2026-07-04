@@ -1,6 +1,11 @@
 [**Русский 🇷🇺**](README_ru.md) / [**English**](README.md)
 
-<a href="https://t.me/one_andrevich"><img src="https://img.shields.io/badge/Telegram-Join-blue?style=flat-square&logo=telegram" alt="Telegram"></a>
+<p align="center">
+  <a href="https://t.me/one_andrevich"><img src="https://img.shields.io/badge/Telegram-Join-2CA5E0?style=flat-square&logo=telegram&logoColor=white" alt="Telegram"></a>
+  <a href="https://ko-fi.com/D1D11SQNQD"><img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
+  <a href="https://nowpayments.io/donation?api_key=decbeb76-30f8-4c6d-ba40-2d2dec7fd888"><img src="https://img.shields.io/badge/Crypto-Donate-2EBE74?style=flat-square&logo=bitcoin&logoColor=white" alt="Crypto donate"></a>
+</p>
+
 # Re:HomeProxy
 
 Современная многоядерная прокси-платформа на основе [hiddify-core](https://github.com/hiddify/hiddify-core) и [sing-box-extended](https://github.com/shtorm-7/sing-box-extended).
