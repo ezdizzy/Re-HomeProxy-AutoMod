@@ -80,5 +80,5 @@ config homeproxy 'automation'
 	option proxy_path 'main'
 	option preload_enabled '0'
 	option preload_url 'https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/domains/publication.txt'
-	option ip_learn '1'
+	option ip_learn '0'
 

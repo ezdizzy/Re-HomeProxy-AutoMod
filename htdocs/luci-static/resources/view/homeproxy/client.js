@@ -327,6 +327,43 @@ return view.extend({
 			return true;
 		}
 
+		/* DNS preset (A): pick a known-good primary + a failover candidate. On save it writes
+		 * the primary into dns_server and seeds the candidate into alt_dns_servers (consumed by
+		 * the DNS failover engine). Stays on "Custom" otherwise so it never fights manual edits. */
+		const dns_presets = {
+			cf:      ['1.1.1.1', '1.0.0.1'],
+			google:  ['8.8.8.8', '8.8.4.4'],
+			adguard: ['94.140.14.14', '94.140.15.15'],
+			quad9:   ['9.9.9.9', '149.112.112.112'],
+			opendns: ['208.67.222.222', '208.67.220.220']
+		};
+		o = s.taboption('routing', form.ListValue, 'dns_preset', _('DNS preset'),
+			_('Quickly set a primary DNS plus a failover candidate (added to “Alternate DNS servers”, used by DNS failover). Choose “Custom” to keep your manual DNS server.'));
+		o.value('custom', _('Custom (use the DNS server above)'));
+		o.value('cf', _('Cloudflare 1.1.1.1 / 1.0.0.1'));
+		o.value('google', _('Google 8.8.8.8 / 8.8.4.4'));
+		o.value('adguard', _('AdGuard 94.140.14.14 / 94.140.15.15'));
+		o.value('quad9', _('Quad9 9.9.9.9 / 149.112.112.112'));
+		o.value('opendns', _('OpenDNS 208.67.222.222 / 208.67.220.220'));
+		o.default = 'custom';
+		o.rmempty = false;
+		o.depends('routing_mode', 'global');
+		o.load = function() { return 'custom'; };
+		o.write = function(section_id, value) {
+			if (!value || value === 'custom') return;
+			let p = dns_presets[value];
+			if (!p) return;
+			this.section.formvalue(section_id, 'dns_server', p[0]);
+			let alts = this.section.formvalue(section_id, 'alt_dns_servers') || [];
+			if (typeof alts === 'string') alts = [ alts ];
+			if (!alts.includes(p[1])) { alts.push(p[1]); this.section.formvalue(section_id, 'alt_dns_servers', alts); }
+		};
+
+		o = s.taboption('routing', form.DynamicList, 'alt_dns_servers', _('Alternate DNS servers (failover)'),
+			_('Fallback DNS servers (IP, hostname, or DoH/DoT URL). Used by DNS failover when the primary is unreachable. The DNS preset above seeds these automatically.'));
+		o.depends('routing_mode', 'global');
+		o.placeholder = '1.0.0.1';
+
 		o = s.taboption('routing', form.Value, 'china_dns_server', _('China DNS server'),
 			_('The dns server for resolving China domains. Support UDP, TCP, DoH, DoQ, DoT.'));
 		o.value('wan', _('WAN DNS (read from interface)'));

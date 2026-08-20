@@ -1558,9 +1558,10 @@ const methods = {
 		}
 	},
 
-	automation_clear: {
-		call: function(req) {
+		automation_clear: {
+			call: function(req) {
 			system('rm -f ' + HP_DIR + '/resources/auto_proxy_list.txt');
+			system('rm -f ' + HP_DIR + '/resources/auto_proxy_ip.txt');
 			system('rm -f ' + RUN_DIR + '/automation_state.json');
 			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
 			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');

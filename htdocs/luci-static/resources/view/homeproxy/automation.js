@@ -127,13 +127,8 @@ return view.extend({
 		/* ── DNS failover (C) — lives in the `config` section ─────────────── */
 		const sf = m.section(form.NamedSection, 'config', 'homeproxy', _('DNS failover'));
 		let fo = sf.option(form.Flag, 'dns_failover', _('Enable DNS failover'),
-			_('Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the list below and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up.'));
+			_('Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the “Alternate DNS servers” list (Client ▸ DNS tab) and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up.'));
 		fo.rmempty = false;
-
-		fo = sf.option(form.DynamicList, 'alt_dns_servers', _('Alternate DNS servers'),
-			_('Add/remove fallback DNS servers (IP, hostname, or DoH/DoT URL). Used by failover and shown alongside the main DNS choice.'));
-		fo.depends('dns_failover', '1');
-		fo.placeholder = '1.1.1.1';
 
 		/* ── Live monitor ──────────────────────────────────────────────── */
 		const countsEl = E('div', { 'class': 'automation-counts' });
