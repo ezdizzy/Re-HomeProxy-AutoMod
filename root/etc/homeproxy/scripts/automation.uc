@@ -28,7 +28,7 @@
 
 'use strict';
 
-import { access, readfile, writefile, remove, open, stat } from 'fs';
+import { access, readfile, writefile, open, stat } from 'fs';
 import { cursor } from 'uci';
 
 const HP_DIR = '/etc/homeproxy';
@@ -45,12 +45,35 @@ const TRIGGER_FILE = RUN_DIR + '/automation.trigger';
 const LOG_FILE = RUN_DIR + '/automation.log';
 const DNS_LOG = '/var/log/dnsmasq-q.log';
 
+/* Module-level state shared with the top-level helper functions preload() and
+ * dns_failover_check(). Some ucode builds do not support closures over main()'s
+ * locals, so these helpers must read module-scoped variables. */
+let uci = null;
+let dns_failover = '0';
+let alt_dns = [];
+let preload_enabled = '0';
+let preload_url = '';
+let auto_set = {};
+let pending_reload = false;
+let excludes = [];
+let direct_set = {};
+let proxy_set = {};
+let auto_ip_set = {};
+
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
 }
 
+function capture(cmd) {
+	const tmp = RUN_DIR + '/capture.tmp';
+	system(cmd + ' > ' + shellquote(tmp) + ' 2>/dev/null');
+	if (!access(tmp)) return '';
+	let c = readfile(tmp);
+	return c ? c : '';
+}
+
 function log(msg) {
-	const line = `$(date "+%Y-%m-%d %H:%M:%S") [AUTO] ${msg}\n`;
+	const line = `[${sprintf('%d', time())}] [AUTO] ${msg}\n`;
 	try {
 		const fd = open(LOG_FILE, 'a');
 		if (fd) { fd.write(line); fd.close(); }
@@ -97,9 +120,7 @@ function probe(host, via_proxy, timeout) {
 	const url = `https://${host}`;
 	if (have_curl()) {
 		let proxy_arg = via_proxy ? ` -x socks5h://127.0.0.1:${AUTO_PROXY_PORT}` : '';
-		let fd = popen(`curl -s -o /dev/null -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote(url)} 2>/dev/null`);
-		let code = '';
-		if (fd) { code = trim(fd.read('all')); fd.close(); }
+		let code = trim(capture(`curl -s -o /dev/null -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote(url)} 2>/dev/null`));
 		return (code != '000' && code != '' && code != null) ? 'ok' : 'fail';
 	}
 	let proxy_env = via_proxy
@@ -143,9 +164,7 @@ function is_excluded(host) {
 /* ── Discovery ──────────────────────────────────────────────────────────── */
 
 function discover_clash(timeout) {
-	let fd = popen(`curl -s --max-time 3 http://127.0.0.1:9090/connections 2>/dev/null`);
-	let raw = '';
-	if (fd) { raw = fd.read('all'); fd.close(); }
+	let raw = capture(`curl -s --max-time 3 http://127.0.0.1:9090/connections 2>/dev/null`);
 	if (!raw) return [];
 	let data;
 	try { data = json(raw); } catch (e) { return []; }
@@ -164,9 +183,7 @@ function discover_clash(timeout) {
 }
 
 function discover_conntrack() {
-	let fd = popen(`conntrack -L 2>/dev/null | awk '/ESTABLISHED/ { for (i=1;i<=NF;i++) if ($i ~ /^dst=/) { sub("dst=", "", $i); print $i } }' | head -300`);
-	let raw = '';
-	if (fd) { raw = fd.read('all'); fd.close(); }
+	let raw = capture(`conntrack -L 2>/dev/null | awk '/ESTABLISHED/ { for (i=1;i<=NF;i++) if ($i ~ /^dst=/) { sub("dst=", "", $i); print $i } }' | head -300`);
 	if (!raw) return [];
 	return split(trim(raw), /\n/);
 }
@@ -253,7 +270,7 @@ function preload() {
 		auto_set[d] = true;
 		added++;
 	}
-	remove(tmp);
+	system('rm -f ' + shellquote(tmp));
 	if (added > 0) {
 		write_auto_list(auto_set);
 		log('preload: seeded ' + added + ' domains');
@@ -264,7 +281,7 @@ function preload() {
 /* ── Main ───────────────────────────────────────────────────────────────── */
 
 function main() {
-	const uci = cursor();
+	uci = cursor();
 	uci.load('homeproxy');
 
 	let enabled = uci.get('homeproxy', 'automation', 'enabled');
@@ -280,18 +297,18 @@ function main() {
 	let discover = uci.get('homeproxy', 'automation', 'discover') || 'clash';
 	let reeval_interval = int(uci.get('homeproxy', 'automation', 'reeval_interval') || '3600') || 3600;
 	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '60') || 60;
-	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '1';
-	let preload_enabled = uci.get('homeproxy', 'automation', 'preload_enabled') || '0';
-	let preload_url = uci.get('homeproxy', 'automation', 'preload_url') || '';
-	let excludes = split(trim(uci.get('homeproxy', 'automation', 'exclude') || 'localhost,local,lan,in-addr.arpa,ip6.arpa'), ',');
+	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '0';
+	preload_enabled = uci.get('homeproxy', 'automation', 'preload_enabled') || '0';
+	preload_url = uci.get('homeproxy', 'automation', 'preload_url') || '';
+	excludes = split(trim(uci.get('homeproxy', 'automation', 'exclude') || 'localhost,local,lan,in-addr.arpa,ip6.arpa'), ',');
 	excludes = filter(excludes, (x) => length(trim(x)));
 
 	/* DNS failover (C) reads the DNS section, not the automation section. */
-	let dns_failover = uci.get('homeproxy', 'config', 'dns_failover') || '0';
-	let alt_dns = uci.get('homeproxy', 'config', 'alt_dns_servers') || [];
+	dns_failover = uci.get('homeproxy', 'config', 'dns_failover') || '0';
+	alt_dns = uci.get('homeproxy', 'config', 'alt_dns_servers') || [];
 	if (type(alt_dns) !== 'array') alt_dns = [ alt_dns ];
 
-	let direct_set = {}, proxy_set = {}, auto_set = {}, auto_ip_set = {};
+	direct_set = {}; proxy_set = {}; auto_ip_set = {}; auto_set = {};
 	for (let d in read_lines(RES + '/direct_list.txt')) direct_set[trim(d)] = true;
 	for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
 	for (let d in read_lines(AUTO_LIST)) auto_set[trim(d)] = true;
@@ -300,7 +317,7 @@ function main() {
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
 	let last_reload = 0;
-	let pending_reload = false;
+	pending_reload = false;
 	const has = (s) => (discover === 'all') || index(split(discover, ','), s) >= 0;
 
 	function do_reload() {
@@ -414,7 +431,7 @@ function main() {
 		}
 
 		let run_now = false;
-		if (access(TRIGGER_FILE)) { remove(TRIGGER_FILE); run_now = true; }
+		if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); run_now = true; }
 
 		pass(run_now);
 
@@ -431,7 +448,7 @@ function main() {
 
 		for (let i = 0; i < 10; i++) {
 			sleep(1);
-			if (access(TRIGGER_FILE)) { remove(TRIGGER_FILE); break; }
+			if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); break; }
 			if (uci.get('homeproxy', 'automation', 'enabled') !== '1') { if (has('dns')) disable_dns_log(); return; }
 		}
 	}
@@ -440,6 +457,6 @@ function main() {
 try {
 	main();
 } catch (e) {
-	log('fatal: ' + tostring(e));
+		log('fatal: ' + sprintf('%s', e));
 	if (access(DNS_LOG)) disable_dns_log();
 }

@@ -106,7 +106,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'reload_interval', _('Config reload throttle (seconds)'));
 		o.datatype = 'uinteger';
-		o.placeholder = '300';
+		o.placeholder = '60';
 
 		o = s.option(form.Value, 'exclude', _('Never auto-learn (comma-separated)'),
 			_('Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names.'));
@@ -121,7 +121,7 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'preload_url', _('Preload list URL'),
-			_('Plaintext list, one domain per line. Default points at the Re-filter publication list.'));
+			_('Plaintext list, one domain per line. No default URL is shipped — you must provide one, otherwise preloading stays inactive.'));
 		o.depends('preload_enabled', '1');
 
 		/* ── DNS failover (C) — lives in the `config` section ─────────────── */
