@@ -172,6 +172,21 @@ function main() {
 	let last_reload = 0;
 	let pending_reload = false;
 
+	function base_domain(host) {
+		host = trim(host);
+		if (!length(host)) return host;
+		if (substr(host, -1) === '.') host = substr(host, 0, length(host) - 1);
+		let parts = split(host, '.');
+		if (length(parts) <= 2) return host;
+		/* Collapse to the registrable domain (last 2 labels). A small list of common
+		 * multi-level public suffixes avoids over-collapsing (e.g. example.co.uk). */
+		const multi = ['co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'com.au', 'co.jp', 'com.br', 'co.za'];
+		for (let m in multi)
+			if (length(host) > length(m) + 1 && substr(host, length(host) - length(m) - 1) === '.' + m)
+				return parts[length(parts)-3] + '.' + parts[length(parts)-2] + '.' + parts[length(parts)-1];
+		return parts[length(parts)-2] + '.' + parts[length(parts)-1];
+	}
+
 	function is_excluded(host) {
 		host = trim(host);
 		if (!length(host)) return true;
@@ -251,19 +266,26 @@ function main() {
 		const cap = 24;
 		for (let host in candidates) {
 			if (probed >= cap) break;
-			if (is_excluded(host)) continue;
-			if (length(keys(auto_set)) >= max_entries && !auto_set[host]) continue;
+			let dom = base_domain(host);
+			if (is_excluded(dom)) continue;
+			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
 
-			let st = state[host];
+			let st = state[dom];
 			if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400))
 				continue;
 
 			probed++;
-			let direct_res = probe(host, false, timeout);
-			let proxy_res = probe(host, true, timeout);
-			classify_and_store(host, direct_res, proxy_res);
+			/* Probe direct FIRST: most traffic is reachable directly, so we usually
+			 * stop here (fast, no proxy probe needed). Only if direct fails do we spend
+			 * a second probe through the proxy — that is the expensive, rare case. */
+			let direct_res = probe(dom, false, timeout);
+			let proxy_res = 'n/a';
+			if (direct_res !== 'ok') {
+				proxy_res = probe(dom, true, timeout);
+				sleep(150);
+			}
+			classify_and_store(dom, direct_res, proxy_res);
 			save_state(state);
-			sleep(150);
 		}
 
 		if (pending_reload && (now - last_reload) > reload_interval)
@@ -291,7 +313,7 @@ function main() {
 		pass(run_now);
 
 		/* Idle between passive-discovery cycles; trigger file forces an immediate pass. */
-		for (let i = 0; i < 30; i++) {
+		for (let i = 0; i < 10; i++) {
 			sleep(1);
 			if (access(TRIGGER_FILE)) { remove(TRIGGER_FILE); break; }
 			if (uci.get('homeproxy', 'automation', 'enabled') !== '1') return;
