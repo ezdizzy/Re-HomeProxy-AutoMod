@@ -43,6 +43,12 @@ const callClear = rpc.declare({
 	expect: { '': {} }
 });
 
+const callClearLog = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_clear_log',
+	expect: { '': {} }
+});
+
 const callTestNow = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'automation_test_now',
@@ -157,7 +163,7 @@ return view.extend({
 		/* ── Live monitor ──────────────────────────────────────────────── */
 		const countsEl = E('div', { 'class': 'automation-counts' });
 		const tableEl = E('div', { 'class': 'automation-table' });
-		const logEl = E('pre', { 'class': 'automation-log' });
+		const logEl = E('pre', { 'class': 'automation-log', style: 'max-height:300px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin:0; padding:8px; background:#1e1e1e; color:#ddd; border:1px solid #333; border-radius:4px; font-size:0.85em' });
 
 		const fileInput = E('input', {
 			type: 'file',
@@ -197,6 +203,9 @@ return view.extend({
 			btn(_('Restore list'), function() { fileInput.click(); }),
 			btn(_('Clear learned'), function() {
 				return callClear().then(refresh);
+			}),
+			btn(_('Clear log'), function() {
+				return callClearLog().then(refresh);
 			}),
 			btn(_('Restart service'), function() { return callRestart(); })
 		]);

@@ -1770,6 +1770,15 @@ const methods = {
 		}
 	},
 
+		automation_clear_log: {
+			call: function(req) {
+			const log_file = RUN_DIR + '/automation.log';
+			if (access(log_file))
+				writefile(log_file, '');
+			return { result: true };
+		}
+	},
+
 	automation_test_now: {
 		call: function(req) {
 			system('mkdir -p ' + RUN_DIR + '; touch ' + RUN_DIR + '/automation.trigger');

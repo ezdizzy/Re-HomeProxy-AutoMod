@@ -28,7 +28,7 @@
 
 import { access, readfile, writefile, open, stat } from 'fs';
 import { cursor } from 'uci';
-import { sync_learned_rulesets } from 'homeproxy';
+import { sync_learned_rulesets, isEmpty } from 'homeproxy';
 
 const HP_DIR = '/etc/homeproxy';
 const RUN_DIR = '/var/run/homeproxy';
@@ -73,6 +73,18 @@ function capture(cmd) {
 function log(msg) {
 	const line = `[${sprintf('%d', time())}] [AUTO] ${msg}\n`;
 	try {
+		/* Bound the log so it can never grow without limit. When it passes the
+		 * soft cap, keep only the most recent MAX_LOG_LINES by truncating in place
+		 * (best effort — a failed rotation must never break logging). */
+		if (access(LOG_FILE)) {
+			const MAX_LOG_BYTES = 51200;
+			let sz = 0;
+			try { sz = stat(LOG_FILE).size || 0; } catch (e) { sz = 0; }
+			if (sz > MAX_LOG_BYTES) {
+				const tmp = LOG_FILE + '.tmp';
+				system('tail -n 500 ' + shellquote(LOG_FILE) + ' > ' + shellquote(tmp) + ' 2>/dev/null; mv -f ' + shellquote(tmp) + ' ' + shellquote(LOG_FILE));
+			}
+		}
 		const fd = open(LOG_FILE, 'a');
 		if (fd) { fd.write(line); fd.close(); }
 	} catch (e) { /* best effort */ }
