@@ -3448,8 +3448,8 @@ msgid "Russia DNS server"
 msgstr "DNS-сервер России"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Direct DNS server for Russian domains. Plain UDP only."
-msgstr "DNS-сервер для российских доменов (прямое подключение). Только UDP."
+msgid "Resolves Russian domains directly, without going through the proxy. You may add several; the first entry is used."
+msgstr "Разрешает российские домены напрямую, без прокси. Можно добавить несколько; используется первый."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Yandex DNS (77.88.8.8)"
@@ -3476,8 +3476,8 @@ msgid "Secure DNS server"
 msgstr "Защищённый DNS-сервер"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Encrypted DNS server for banned domains, routed via proxy. Supports DoH and DoT."
-msgstr "Зашифрованный DNS для заблокированных доменов, маршрутизируется через прокси. Поддерживает DoH и DoT."
+msgid "Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT = DNS over HTTPS/TLS). You may add several; the first entry is used."
+msgstr "Разрешает заблокированные домены через прокси — провайдер не видит, какие сайты вы запрашиваете. Использует шифрованный DNS (DoH/DoT = DNS поверх HTTPS/TLS). Можно добавить несколько; используется первый."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Cloudflare DoH"
@@ -4458,8 +4458,8 @@ msgid "Clash API (connections, domain names)"
 msgstr "Clash API (соединения, домены)"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "conntrack (destinations by IP)"
-msgstr "conntrack (назначения по IP)"
+msgid "conntrack (destinations by IP — for apps/games without SNI)"
+msgstr "conntrack (назначения по IP — для игр/приложений без SNI)"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Both"
@@ -4544,3 +4544,51 @@ msgstr "Статус недоступен: "
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Engine log"
 msgstr "Журнал движка"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "DNS query log (captures domain at DNS time — most transparent)"
+msgstr "Журнал DNS-запросов (захватывает домен в момент DNS — наиболее прозрачно)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Clash API + DNS log"
+msgstr "Clash API + журнал DNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Clash API + DNS log + conntrack"
+msgstr "Clash API + журнал DNS + conntrack"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Learn IP destinations (conntrack)"
+msgstr "Изучать IP-назначения (conntrack)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Also learn destinations reached by raw IP (games/apps without SNI). Routes the IP via the proxy. Off by default — enable if you run such apps."
+msgstr "Также изучать назначения, доступные по «голому» IP (игры/приложения без SNI). Маршрутизирует IP через прокси. По умолчанию выключено — включите, если используете такие приложения."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Preload blocked-domain list at startup"
+msgstr "Предзагрузить список заблокированных доменов при запуске"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Fetch a plaintext domain list once at start (and daily) and seed it as learned, so popular blocked sites work on the very first visit."
+msgstr "Один раз при запуске (и ежедневно) загружает текстовый список доменов и добавляет его как изученный, чтобы популярные заблокированные сайты работали с первого захода."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Preload list URL"
+msgstr "URL списка предзагрузки"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Plaintext list, one domain per line. Default points at the Re-filter publication list."
+msgstr "Текстовый список, по одному домену на строку. По умолчанию указывает на публикацию Re-filter."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "DNS failover"
+msgstr "Резервный DNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Enable DNS failover"
+msgstr "Включить резервный DNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the “Alternate DNS servers” list (Client ▸ DNS tab) and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up."
+msgstr "Следит за основным DNS: если он недоступен, переключается на работающий сервер из списка «Альтернативные DNS-серверы» (вкладка Клиент ▸ DNS) и перегенерирует конфиг. Проверяются только обычные (UDP/Do53) серверы; DoH/DoT считаются всегда доступными."
