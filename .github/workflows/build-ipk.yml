@@ -100,20 +100,23 @@ jobs:
         id: tag
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "release_tag=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-            echo "publish_release=true" >> $GITHUB_OUTPUT
-            echo "release_type=release" >> $GITHUB_OUTPUT
+            RELEASE_TAG="v${{ github.event.inputs.version }}"
+            PUBLISH_RELEASE=true
+            RELEASE_TYPE=release
           elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "release_tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-            echo "publish_release=true" >> $GITHUB_OUTPUT
-            echo "release_type=release" >> $GITHUB_OUTPUT
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            PUBLISH_RELEASE=true
+            RELEASE_TYPE=release
           else
-            echo "release_tag=build-$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-            echo "publish_release=false" >> $GITHUB_OUTPUT
-            echo "release_type=snapshot" >> $GITHUB_OUTPUT
+            RELEASE_TAG="build-$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+            PUBLISH_RELEASE=false
+            RELEASE_TYPE=snapshot
           fi
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "publish_release=${PUBLISH_RELEASE}" >> $GITHUB_OUTPUT
+          echo "release_type=${RELEASE_TYPE}" >> $GITHUB_OUTPUT
           # Bare version (tag without the leading 'v') used as the package version for release builds.
-          echo "release_version=${release_tag#v}" >> $GITHUB_OUTPUT
+          echo "release_version=${RELEASE_TAG#v}" >> $GITHUB_OUTPUT
 
       - name: Setup APK signing key
         run: |
