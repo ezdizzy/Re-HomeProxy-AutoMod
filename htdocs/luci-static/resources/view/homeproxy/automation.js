@@ -130,7 +130,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'reload_interval', _('Config reload throttle (seconds)'));
 		o.datatype = 'uinteger';
-		o.placeholder = '60';
+		o.placeholder = '300';
 
 		o = s.option(form.Value, 'flush_min_entries', _('Apply after N new entries (batch window)'),
 			_('Force an apply (core restart) once this many new sites have been learned, even before the reload throttle elapses. Batches a burst of learns into one restart. 0 disables the batch trigger (time-only).'));
@@ -155,8 +155,6 @@ return view.extend({
 		const countsEl = E('div', { 'class': 'automation-counts' });
 		const tableEl = E('div', { 'class': 'automation-table' });
 		const logEl = E('pre', { 'class': 'automation-log' });
-		const ta = new ui.Textarea('learned', _('Learned proxy list (editable)'));
-		ta.rows = 10;
 
 		const fileInput = E('input', {
 			type: 'file',
@@ -173,9 +171,7 @@ return view.extend({
 						ui.addNotification('error', _('Restore failed: ') + ((r && r.error) || ''));
 					else
 						ui.addNotification('info', _('Restore complete — added %d site(s).').format(r.added || 0));
-					return callListRead().then(function(rr) {
-						ta.setValue(rr.content || '');
-					});
+					return refresh();
 				}).catch(function(e) {
 					ui.addNotification('error', _('Restore failed: ') + e);
 				});
@@ -197,12 +193,7 @@ return view.extend({
 			}),
 			btn(_('Restore list'), function() { fileInput.click(); }),
 			btn(_('Clear learned'), function() {
-				return callClear().then(function() { return callListRead(); }).then(function(r) {
-					ta.setValue(r.content || '');
-				});
-			}),
-			btn(_('Save list'), function() {
-				return callListWrite(ta.getValue());
+				return callClear().then(refresh);
 			}),
 			btn(_('Restart service'), function() { return callRestart(); })
 		]);
@@ -213,7 +204,6 @@ return view.extend({
 			tableEl,
 			E('div', { 'class': 'automation-actions' }, [ actions ]),
 			E('p', { 'class': 'automation-hint' }, [ _('Backup list downloads the learned sites to your computer. Restore list uploads a file and adds any missing sites (existing ones are kept). Use this to avoid re-learning from scratch after a router reset.') ]),
-			ta.render(),
 			fileInput,
 			E('h4', {}, [ _('Engine log') ]),
 			logEl
@@ -239,8 +229,6 @@ return view.extend({
 					_('Unknown') + ': <b>' + (c.unknown || 0) + '</b>';
 				renderTable(st.learned);
 				logEl.textContent = st.log || '';
-				if (ta.getValue() === '' || ta.getValue() == null)
-					ta.setValue((st.learned || []).join('\n'));
 			}).catch(function(e) {
 				countsEl.textContent = _('Status unavailable: ') + e;
 			});

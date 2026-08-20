@@ -259,10 +259,8 @@ function dns_failover_check() {
 				log('regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
 				return;
 			}
-			if (clash_up() && light_core_restart())
-				log('core restarted with new config after DNS failover.');
-			else
-				system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			log('DNS failover: restarting service to load new config.');
+			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 			return;
 		}
 	}
@@ -310,31 +308,6 @@ function main() {
 	pending_reload = false;
 	const has = (s) => (discover === 'all') || index(split(discover, ','), s) >= 0;
 
-	function clash_up() {
-		/* Clash API healthy? Used to decide between a fast in-memory hot-reload and a
-		 * full service reload (the latter is needed when the core is actually down). */
-		let code = trim(capture(`curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:9090/version 2>/dev/null`));
-		return code === '200';
-	}
-
-	function light_core_restart() {
-		/* Restart ONLY the core procd instance (procd respawns it) so the freshly generated
-		 * hiddify-c.json is loaded. This skips the full service reload (tproxy/dnsmasq/fw4
-		 * teardown + re-add) that turned every learned site into a multi-second, connection-
-		 * killing event. NOTE: sing-box/hiddify-core 1.13.x cannot hot-add routing rules at
-		 * runtime (its Clash API /configs ignores `path`), so a core restart is the lightest
-		 * viable dynamic update — the listeners drop for ~1-2s instead of the whole network stack. */
-		let pid = trim(capture('pidof hiddify-core'));
-		if (!length(pid)) pid = trim(capture('pidof sing-box'));
-		if (!length(pid)) return false;
-		system('kill -TERM ' + pid + ' 2>/dev/null');
-		for (let i = 0; i < 15; i++) {
-			sleep(1);
-			if (clash_up()) return true; /* core respawned and re-read the new config */
-		}
-		return false;
-	}
-
 	function do_reload() {
 		log('regenerating core config...');
 		/* Capture stderr to a log so a generation failure is diagnosable instead of silent. */
@@ -343,23 +316,16 @@ function main() {
 			log('regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
 			return; /* do NOT reload onto a broken/absent config */
 		}
-		if (clash_up()) {
-			if (light_core_restart()) {
-				log('core restarted with new config (lightweight, no full service reload).');
-				last_reload = time();
-				pending_reload = false;
-				pending_new = 0;
-				return;
-			}
-			log('light core restart failed, doing full service reload.');
-		} else {
-			log('core API down, doing full service reload...');
-		}
-			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-			last_reload = time();
-			pending_reload = false;
-			pending_new = 0;
-		}
+		/* hiddify-core/sing-box 1.13.x cannot hot-reload config, so the service is restarted
+		 * to pick up the freshly generated hiddify-c.json. This is the reliable apply path:
+		 * the core comes back within ~10s. (a per-instance "light" restart is not exposed by
+		 * this procd build, so a full service reload is used deliberately.) */
+		log('applying learned list — restarting service to load new config.');
+		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+		last_reload = time();
+		pending_reload = false;
+		pending_new = 0;
+	}
 
 	function classify(dom, direct_res, proxy_res, is_ip) {
 		if (!state[dom]) state[dom] = {};
