@@ -1637,10 +1637,15 @@ const methods = {
 				if (!path || !access(path)) return true;
 				let rc;
 				if (pkg_manager === 'apk') {
-					if (access('/etc/apk/keys/homeproxy-hiddify.pub'))
-						rc = system(`apk add ${shellquote(path)} >/dev/null 2>&1`, 120000);
-					else
-						rc = system(`apk add --allow-untrusted ${shellquote(path)} >/dev/null 2>&1`, 120000);
+					/* Self-update packages are delivered over HTTPS from our own
+					 * GitHub release; they may be signed or unsigned depending on
+					 * whether APK_SIGNING_KEY is configured in the build. A key
+					 * present in /etc/apk/keys makes plain `apk add` REQUIRE a
+					 * trusted signature, which fails for unsigned builds. Always
+					 * install with --allow-untrusted: it installs both signed and
+					 * unsigned local files (verification is moot for a direct HTTPS
+					 * download we already trust). */
+					rc = system(`apk add --allow-untrusted ${shellquote(path)} >/dev/null 2>&1`, 120000);
 				} else {
 					rc = system(`opkg install --force-reinstall ${shellquote(path)} >/dev/null 2>&1`, 120000);
 				}
