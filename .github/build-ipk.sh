@@ -24,7 +24,11 @@ PKG_NAME="$(get_mk_value "PKG_NAME")"
 if [ "$RELEASE_TYPE" == "release" ]; then
 	PKG_VERSION="$(get_mk_value "PKG_VERSION")"
 else
-	PKG_VERSION="$(date -u +%Y.%m.%d)-r$(git rev-list --count HEAD)"
+	# NOTE: the CI checks out a shallow clone, so `git rev-list --count HEAD` is always 1.
+	# Use the short commit SHA instead so every build gets a UNIQUE package version —
+	# otherwise reinstalling from a newer release with the same version string makes the
+	# package manager skip the file overwrite and the device keeps stale code.
+	PKG_VERSION="$(date -u +%Y.%m.%d)-g$(git rev-parse --short HEAD)"
 fi
 
 TEMP_DIR="$(mktemp -d -p $BASE_DIR)"
