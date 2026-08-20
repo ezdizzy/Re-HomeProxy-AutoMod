@@ -183,7 +183,7 @@ return view.extend({
 			fileInput.value = '';
 		});
 
-		const actions = E('div', { 'class': 'automation-actions' }, [
+		const actions = E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Test now'), function() { return callTestNow(); }),
 			btn(_('Backup list'), function() {
 				return callBackup().then(function(r) {
@@ -201,10 +201,7 @@ return view.extend({
 			btn(_('Restart service'), function() { return callRestart(); })
 		]);
 
-		const styleEl = E('style', {}, [ '.automation-table table{width:100%;border-collapse:collapse;margin-top:6px;font-size:.92em}.automation-table table th,.automation-table table td{border:1px solid #d6d6d6!important;padding:5px 8px;text-align:left;vertical-align:top}.automation-table table thead th{background:#e8e8e8!important;font-weight:600;position:sticky;top:0}.automation-table table thead th:first-child{border-top-left-radius:4px}.automation-table table thead th:last-child{border-top-right-radius:4px}.automation-table table tbody tr:hover td{background:#eef4ff!important}.automation-table .col-type{text-align:center!important;white-space:nowrap}.automation-table .col-added,.automation-table .col-check{white-space:nowrap;color:#555}' ]);
-
 		const panel = E('div', { 'class': 'automation-panel cbi-section' }, [
-			styleEl,
 			E('h3', {}, [ _('Monitor') ]),
 			countsEl,
 			E('h4', {}, [ _('Learned sites') ]),
@@ -228,33 +225,70 @@ return view.extend({
 		}
 
 		function renderTable(learned) {
-			tableEl.innerHTML = '';
 			if (!learned || !learned.length) {
+				tableEl.innerHTML = '';
 				tableEl.appendChild(E('em', {}, [ _('Nothing learned yet. Browse the web or press “Test now”.') ]));
 				return;
 			}
-			const table = E('table', { 'class': 'automation-tbl', 'style': 'width:100%' });
-			table.appendChild(E('thead', {}, [ E('tr', {}, [
-				E('th', { 'class': 'col-site' }, [ _('Site') ]),
-				E('th', { 'class': 'col-type' }, [ _('Type') ]),
-				E('th', { 'class': 'col-added' }, [ _('Added') ]),
-				E('th', { 'class': 'col-check' }, [ _('Last check') ]),
-				E('th', { 'class': 'col-why' }, [ _('Why') ])
-			]) ]));
+			if (!learned.every(function(e) { return e && (e.host || e.ip); })) {
+				return;
+			}
+			function imp(node, styles) {
+				for (var k in styles) node.style.setProperty(k, styles[k], 'important');
+			}
+			const table = E('table', { 'class': 'table cbi-section-table' });
+			imp(table, { width: '100%', 'border-collapse': 'collapse' });
+			const thead = E('thead', {});
+			const htr = E('tr', {});
+			const headers = [
+				[ _('Site'), 'left' ],
+				[ _('Type'), 'center' ],
+				[ _('Added'), 'left' ],
+				[ _('Last check'), 'left' ],
+				[ _('Why'), 'left' ]
+			];
+			headers.forEach(function(h) {
+				const th = E('th', {}, [ h[0] ]);
+				imp(th, { background: '#707070', 'font-weight': '600', color: '#f2f2f2', 'text-align': h[1], border: '1px solid #555' });
+				htr.appendChild(th);
+			});
+			thead.appendChild(htr);
+			table.appendChild(thead);
 			const tbody = E('tbody', {});
 			const maxRows = 500;
 			for (let i = 0; i < learned.length && i < maxRows; i++) {
 				const e = learned[i];
-				tbody.appendChild(E('tr', {}, [
-					E('td', { 'class': 'col-site' }, [ String(e.host || '') ]),
-					E('td', { 'class': 'col-type' }, [ e.type === 'ip' ? _('IP') : _('Domain') ]),
-					E('td', { 'class': 'col-added' }, [ String(fmtTime(e.added)) ]),
-					E('td', { 'class': 'col-check' }, [ String(fmtTime(e.last_probe)) ]),
-					E('td', { 'class': 'col-why' }, [ String(reasonText(e)) ])
-				]));
+				const cells = [
+					String(e.host || ''),
+					e.type === 'ip' ? _('IP') : _('Domain'),
+					String(fmtTime(e.added)),
+					String(fmtTime(e.last_probe)),
+					String(reasonText(e))
+				];
+				const aligns = ['left', 'center', 'left', 'left', 'left'];
+				const tr = E('tr', {});
+				for (let c = 0; c < cells.length; c++) {
+					const td = E('td', {}, [ cells[c] ]);
+					const s = { 'text-align': aligns[c], border: '1px solid #d0d0d0' };
+					if (c === 2 || c === 3) { s['white-space'] = 'nowrap'; s.color = '#555'; }
+					imp(td, s);
+					td._origColor = s.color || '';
+					tr.appendChild(td);
+				}
+				tr.addEventListener('mouseenter', (function(row) {
+					return function() { for (var j = 0; j < row.children.length; j++) { row.children[j].style.setProperty('background', '#707070', 'important'); row.children[j].style.setProperty('color', '#f2f2f2', 'important'); } };
+				})(tr));
+				tr.addEventListener('mouseleave', (function(row) {
+					return function() { for (var j = 0; j < row.children.length; j++) { row.children[j].style.setProperty('background', '', 'important'); row.children[j].style.setProperty('color', row.children[j]._origColor || '', 'important'); } };
+				})(tr));
+				tbody.appendChild(tr);
 			}
 			table.appendChild(tbody);
-			tableEl.appendChild(E('div', { 'style': 'max-height:340px; overflow:auto; margin-top:4px' }, [ table ]));
+			tableEl.innerHTML = '';
+			const wrap = E('div', {});
+			imp(wrap, { 'max-height': '340px', overflow: 'auto', 'margin-top': '4px' });
+			wrap.appendChild(table);
+			tableEl.appendChild(wrap);
 		}
 
 		function refresh() {

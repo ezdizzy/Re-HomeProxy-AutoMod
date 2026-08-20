@@ -96,18 +96,24 @@ function load_state() {
 	try { return json(c) || {}; } catch (e) { return {}; }
 }
 
+function atomic_write(path, content) {
+	let tmp = path + '.tmp';
+	writefile(tmp, content);
+	system('mv -f ' + tmp + ' ' + path);
+}
+
 function save_state(state) {
-	try { writefile(STATE_FILE, sprintf('%.J\n', state)); } catch (e) { /* ignore */ }
+	atomic_write(STATE_FILE, sprintf('%.J\n', state));
 }
 
 function write_auto_list(set) {
 	let arr = sort(keys(set));
-	writefile(AUTO_LIST, join('\n', arr) + (length(arr) ? '\n' : ''));
+	atomic_write(AUTO_LIST, join('\n', arr) + (length(arr) ? '\n' : ''));
 }
 
 function write_auto_ip_list(set) {
 	let arr = sort(keys(set));
-	writefile(AUTO_IP_LIST, join('\n', arr) + (length(arr) ? '\n' : ''));
+	atomic_write(AUTO_IP_LIST, join('\n', arr) + (length(arr) ? '\n' : ''));
 }
 
 function have_curl() {
