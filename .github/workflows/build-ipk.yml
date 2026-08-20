@@ -201,8 +201,8 @@ jobs:
           file_glob: true
           tag: ${{ steps.tag.outputs.release_tag }}
           release_name: ${{ steps.tag.outputs.release_tag }}
-          prerelease: true
-          draft: true
+          prerelease: false
+          draft: false
           body: ""
 
       - name: Publishing legacy draft release to GitHub Releases
