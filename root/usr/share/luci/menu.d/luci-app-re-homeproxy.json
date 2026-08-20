@@ -49,5 +49,13 @@
 			"type": "view",
 			"path": "homeproxy/diagnostics"
 		}
+	},
+	"admin/services/homeproxy/automation": {
+		"title": "Автоматизация",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/automation"
+		}
 	}
 }

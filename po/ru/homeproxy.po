@@ -4420,3 +4420,127 @@ msgstr "DNS ещё не готов — подождите несколько с�
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2907
 msgid "Resolving test hosts…"
 msgstr "Определяю адреса тестовых узлов…"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Automation"
+msgstr "Автоматизация"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Auto blocked-site detection"
+msgstr "Автообнаружение заблокированных сайтов"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Enable automation"
+msgstr "Включить автоматизацию"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the proxy list. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path. After toggling, press “Restart service” below."
+msgstr "Автоматически изучать заблокированные сайты: трафик, который не проходит напрямую, но работает через прокси, добавляется в список прокси. Полностью совместимо с ByeDPI и Zapret — изученные сайты просто используют ваш основной путь. После переключения нажмите «Перезапустить службу» ниже."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Mode"
+msgstr "Режим"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Balanced"
+msgstr "Сбалансированный"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Aggressive (also re-verifies learned sites)"
+msgstr "Агрессивный (также пере проверяет изученные сайты)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Discover candidates from"
+msgstr "Откуда брать кандидатов"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Clash API (connections, domain names)"
+msgstr "Clash API (соединения, домены)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "conntrack (destinations by IP)"
+msgstr "conntrack (назначения по IP)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Both"
+msgstr "Оба"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Probe timeout (seconds)"
+msgstr "Тайм-аут проверки (сек)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Maximum learned entries"
+msgstr "Макс. число изученных записей"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Confirmations required before learning"
+msgstr "Подтверждений до обучения"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Re-evaluate learned interval (seconds)"
+msgstr "Интервал переоценки (сек)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Config reload throttle (seconds)"
+msgstr "Пауза перезагрузки конфига (сек)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Never auto-learn (comma-separated)"
+msgstr "Никогда не изучать (через запятую)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names."
+msgstr "Домены/IP, исключённые из обучения (подстрока и совпадение домена). По умолчанию покрывают LAN и локальные имена."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Monitor"
+msgstr "Монитор"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Test now"
+msgstr "Проверить сейчас"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Clear learned"
+msgstr "Очистить изученное"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Save list"
+msgstr "Сохранить список"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Restart service"
+msgstr "Перезапустить службу"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Learned proxy list (editable)"
+msgstr "Изученный список прокси (редактируемый)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Nothing learned yet. Browse the web or press “Test now”."
+msgstr "Пока ничего не изучено. Откройте сайты или нажмите «Проверить сейчас»."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Enabled"
+msgstr "Включено"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Learned (blocked)"
+msgstr "Изучено (заблок.)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Direct"
+msgstr "Прямое"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Unknown"
+msgstr "Неизвестно"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Status unavailable: "
+msgstr "Статус недоступен: "
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Engine log"
+msgstr "Журнал движка"

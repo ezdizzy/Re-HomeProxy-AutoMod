@@ -22,8 +22,9 @@ define Package/luci-app-re-homeproxy/conffiles
 /etc/config/homeproxy
 /etc/homeproxy/certs/
 /etc/homeproxy/ruleset/
-/etc/homeproxy/resources/direct_list.txt
-/etc/homeproxy/resources/proxy_list.txt
+	/etc/homeproxy/resources/direct_list.txt
+	/etc/homeproxy/resources/proxy_list.txt
+	/etc/homeproxy/resources/auto_proxy_list.txt
 endef
 
 define Package/luci-app-re-homeproxy/postinst

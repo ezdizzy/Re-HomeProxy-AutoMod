@@ -93,10 +93,11 @@ const zapret_mark = uci.get(cfgname, 'config', 'zapret_mark') || '110';
 const zapret_qnum = uci.get(cfgname, 'config', 'zapret_qnum') || '200';
 const zapret_desync_mark = '0x40000000';   /* nfqws DESYNC_MARK (its reinjected fakes) */
 
-if (match(proxy_mode, /redirect/)) {
+if (match(proxy_mode, /redirect|tproxy|tun/)) {
 	self_mark = uci.get(cfgname, 'infra', 'self_mark') || '100';
-	redirect_port = uci.get(cfgname, 'infra', 'redirect_port') || '5331';
 }
+if (match(proxy_mode, /redirect/))
+	redirect_port = uci.get(cfgname, 'infra', 'redirect_port') || '5331';
 if (match(proxy_mode, /tproxy/))
 	if (outbound_udp_node !== 'nil' || routing_mode === 'custom' || routing_mode === 'proxy_banned_ru') {
 		tproxy_port = uci.get(cfgname, 'infra', 'tproxy_port') || '5332';
@@ -500,6 +501,10 @@ chain mangle_output {
 {% if (match(proxy_mode, /tun/)): %}
 chain homeproxy_mangle_lanac {
 	iifname {{ tun_name }} counter return
+	{# Loop guard: the core stamps its own egress with self_mark (route.default_mark).
+	   Without this return those packets would be re-marked tun_mark below and loop back
+	   into the tun device. #}
+	meta mark {{ self_mark }} counter return
 	udp dport 53 counter return
 
 	{% if (control_info.listen_interfaces): %}
@@ -546,6 +551,8 @@ chain homeproxy_mangle_tun_mark {
 
 chain homeproxy_mangle_tun {
 	iifname {{ tun_name }} counter return
+	{# Loop guard: same as homeproxy_mangle_lanac — never re-mark the core's own egress. #}
+	meta mark {{ self_mark }} counter return
 
 	ip daddr @homeproxy_wan_proxy_addr_v4 counter goto homeproxy_mangle_tun_mark
 	{% if (ipv6_support === '1'): %}

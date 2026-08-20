@@ -114,6 +114,9 @@ const zapret_mark = uci.get(uciconfig, ucimain, 'zapret_mark') || '110';
 /* Opt-in: route call/voice UDP ports (50000-65530) to zapret-out instead of the proxy.
  * Only honored when zapret_enabled === '1' (zapret-out exists). */
 const zapret_voice = uci.get(uciconfig, ucimain, 'zapret_voice') || '0';
+/* Automation (auto blocked-site detection): when enabled we expose two loopback test
+ * inbounds (forced direct / forced main) and merge the learned list into proxy_domain_list. */
+const automation_enabled = uci.get(uciconfig, 'automation', 'enabled');
 
 let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outbound_dns,
     domain_strategy, sniff_override, dns_server, china_dns_server, iran_dns_server, russia_dns_server,
@@ -168,6 +171,16 @@ if (routing_mode !== 'custom') {
 	proxy_domain_list = trim(readfile(HP_DIR + '/resources/proxy_list.txt'));
 	if (proxy_domain_list)
 		proxy_domain_list = split(proxy_domain_list, /[\r\n]/);
+
+	/* Learned (auto-detected) blocked domains are merged into the proxy list so they route
+	 * via the configured main path (main-out / byedpi-out / zapret-out). This keeps full
+	 * compatibility with ByeDPI & Zapret — those engines ARE the main-out, so a learned site
+	 * simply takes the same path the user already chose. */
+	let auto_raw = readfile(HP_DIR + '/resources/auto_proxy_list.txt');
+	if (auto_raw) {
+		let auto_domain_list = split(trim(auto_raw), /[\r\n]/);
+		proxy_domain_list = (proxy_domain_list || []).concat(auto_domain_list);
+	}
 
 	sniff_override = uci.get(uciconfig, uciinfra, 'sniff_override') || '1';
 } else {
@@ -1019,6 +1032,29 @@ if (match(proxy_mode, /tun/))
 		sniff: is_hiddify ? true : null,
 		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
 	});
+
+/* Automation test inbounds: loopback-only mixed inbounds used by the auto-detection
+ * daemon to probe a site BOTH direct and through the main path, so it can tell a blocked
+ * domain from a merely-slow one. They are bound to 127.0.0.1 only (never exposed). The
+ * matching route rules (below) pin each inbound to a fixed outbound. */
+if (automation_enabled === '1' && !isEmpty(main_node))
+	push(config.inbounds, {
+		type: 'mixed',
+		tag: 'auto-direct-in',
+		listen: '127.0.0.1',
+		listen_port: 5336,
+		sniff: is_hiddify ? true : null,
+		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
+		set_system_proxy: is_hiddify ? false : null,
+	}, {
+		type: 'mixed',
+		tag: 'auto-proxy-in',
+		listen: '127.0.0.1',
+		listen_port: 5337,
+		sniff: is_hiddify ? true : null,
+		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
+		set_system_proxy: is_hiddify ? false : null,
+	});
 /* Server inbounds */
 uci.foreach(uciconfig, uciserver, (cfg) => {
 	if (cfg.enabled !== '1')
@@ -1442,6 +1478,24 @@ config.route = {
 	default_interface: default_interface,
 	default_mark: strToInt(self_mark)
 };
+
+/* Automation test inbounds: pin each to a fixed outbound so the auto-detection daemon can
+ * probe a site direct vs through the main path. These must sit ABOVE the resolve/sniff and
+ * region rules so the daemon's probes are not themselves re-routed by the normal rules.
+ * The proxy side forces `main-out` — which already IS byedpi-out / zapret-out when those are
+ * the configured main node — so detection stays faithful to the user's chosen anti-DPI path. */
+if (automation_enabled === '1' && !isEmpty(main_node)) {
+	push(config.route.rules, {
+		inbound: 'auto-direct-in',
+		action: 'route',
+		outbound: 'direct-out'
+	});
+	push(config.route.rules, {
+		inbound: 'auto-proxy-in',
+		action: 'route',
+		outbound: 'main-out'
+	});
+}
 
 /* Routing rules */
 if (!isEmpty(main_node)) {

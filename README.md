@@ -11,6 +11,8 @@
 A modern multi-core proxy platform powered by [hiddify-core](https://github.com/hiddify/hiddify-core) and [sing-box-extended](https://github.com/shtorm-7/sing-box-extended). 
 A fork of [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy).
 
+> ⚠️ **This is an EXPERIMENTAL fork.** This branch carries changes not present upstream: a fix for the Tun TCP/UDP mode and a new **Automation** tab — automatic detection of blocked sites (a host that fails directly but works via the proxy is remembered and routed through the proxy/ByeDPI/Zapret). These features may be unstable and need on-device validation. Use at your own risk; prefer the original release for production.
+
 ## Overview
 
 Re:HomeProxy is a feature-rich proxy management system, a fresh take on ImmortalWrt's HomeProxy. It runs on a choice of cores ([hiddify-core](https://github.com/hiddify/hiddify-core) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)), adds a built-in DPI-bypass based on [Zapret2](https://github.com/bol-van/zapret2) and [ByeDPI](https://github.com/hufrea/byedpi) for un-throttling sites without a VPN, ready-made Russia routing rules, and a one-click core installer — all from the LuCI web interface.

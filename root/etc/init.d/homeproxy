@@ -129,6 +129,8 @@ start_service() {
 		ip -6 route add local ::/0 dev lo table "$table_mark"
 	fi
 
+	# TUN policy routing is installed LATER (after the core brings up the tun device).
+
 	# hiddify-core (client)
 	procd_open_instance "hiddify-c"
 
@@ -160,6 +162,36 @@ start_service() {
 	ucode "$HP_DIR/scripts/firewall_pre.uc"
 	utpl -S "$HP_DIR/scripts/firewall_post.ut" | tr -d '\r' > "$RUN_DIR/fw4_post.nft"
 	fw4 reload >"/dev/null" 2>&1
+
+	# Setup TUN policy routing (after the core has brought up the tun device).
+	# In `tun`/`redirect_tun` mode the firewall stamps client traffic with tun_mark; that
+	# mark must steer the packet into the tun device so the core reads it and routes it
+	# (direct-out vs main-out). Without this policy route the marked packet falls through
+	# to the main table and egresses DIRECTLY — so every site that should go through the
+	# proxy (rule-list / refilter domains) opens direct and is blocked. The route targets
+	# the tun interface (separate table from the tproxy `local ... dev lo` one).
+	local tun_name tun_mark tun_table
+	config_get tun_name "infra" "tun_name" "singtun0"
+	config_get tun_mark "infra" "tun_mark" "102"
+	config_get tun_table "infra" "tun_table" "104"
+	if [ -n "$tun_name" ] && echo "$proxy_mode" | grep -q "tun"; then
+		# Wait for the core to create the tun device (procd starts it asynchronously).
+		local i
+		for i in $(seq 1 15); do
+			ip link show "$tun_name" >/dev/null 2>&1 && break
+			sleep 1
+		done
+		if ip link show "$tun_name" >/dev/null 2>&1; then
+			ip rule add fwmark "$tun_mark" table "$tun_table" 2>/dev/null
+			ip route add 0.0.0.0/0 dev "$tun_name" table "$tun_table" 2>/dev/null
+			if [ "$ipv6_support" -eq "1" ]; then
+				ip -6 rule add fwmark "$tun_mark" table "$tun_table" 2>/dev/null
+				ip -6 route add ::/0 dev "$tun_name" table "$tun_table" 2>/dev/null
+			fi
+		else
+			log "Warning: tun device $tun_name not ready, TUN policy route not installed."
+		fi
+	fi
 
 	# ByeDPI
 	local byedpi_enabled byedpi_cmd_opts byedpi_block_quic byedpi_gid
@@ -241,6 +273,18 @@ start_service() {
 		procd_close_instance
 	fi
 
+	# Automation (auto blocked-site detection). Runs only while enabled; it owns the two
+	# loopback test inbounds (auto-direct-in / auto-proxy-in) that generate_client.uc emits.
+	# It is a separate procd instance so it respawns on crash and is torn down with the service.
+	local automation_enabled
+	config_get_bool automation_enabled "automation" "enabled" "0"
+	if [ "$automation_enabled" = "1" ]; then
+		procd_open_instance "automation"
+		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/automation.uc"
+		procd_set_param respawn
+		procd_close_instance
+	fi
+
 	# Subscription auto-update cron. This install half was dropped in the init rewrite
 	# (commit 4f3511f) while the stop_service cleanup below was kept, leaving the UI
 	# "Auto update" checkbox wired to nothing. Restored verbatim from upstream: when
@@ -265,16 +309,26 @@ stop_service() {
 
 	# Load config
 	config_load "$CONF"
-	local table_mark tproxy_mark tun_name
+	local table_mark tproxy_mark tun_name tun_mark tun_table
 	config_get table_mark "infra" "table_mark" "100"
 	config_get tproxy_mark "infra" "tproxy_mark" "101"
 	config_get tun_name "infra" "tun_name" "singtun0"
+	config_get tun_mark "infra" "tun_mark" "102"
+	config_get tun_table "infra" "tun_table" "104"
 
 	# Tproxy
 	ip rule del fwmark "$tproxy_mark" table "$table_mark" 2>"/dev/null"
 	ip route del local 0.0.0.0/0 dev lo table "$table_mark" 2>"/dev/null"
 	ip -6 rule del fwmark "$tproxy_mark" table "$table_mark" 2>"/dev/null"
 	ip -6 route del local ::/0 dev lo table "$table_mark" 2>"/dev/null"
+
+	# TUN policy route (deliver tun_mark'd flows into the tun device)
+	if [ -n "$tun_name" ]; then
+		ip rule del fwmark "$tun_mark" table "$tun_table" 2>"/dev/null"
+		ip route del 0.0.0.0/0 dev "$tun_name" table "$tun_table" 2>"/dev/null"
+		ip -6 rule del fwmark "$tun_mark" table "$tun_table" 2>"/dev/null"
+		ip -6 route del ::/0 dev "$tun_name" table "$tun_table" 2>"/dev/null"
+	fi
 
 	# Nftables rules
 	for i in "homeproxy_dstnat_redir" "homeproxy_output_redir" \

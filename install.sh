@@ -9,9 +9,9 @@
 # проверенной логикой, что и графический интерфейс.
 #
 # Установка (одной строкой — ввод читается из /dev/tty, пайп остаётся интерактивным):
-#   wget -qO- https://raw.githubusercontent.com/1andrevich/homeproxy-hiddify/master/install.sh | sh
+#   wget -qO- https://raw.githubusercontent.com/${HP_REPO}/master/install.sh | sh
 # Либо в два шага:
-#   wget -O /tmp/install.sh https://raw.githubusercontent.com/1andrevich/homeproxy-hiddify/master/install.sh
+#   wget -O /tmp/install.sh https://raw.githubusercontent.com/${HP_REPO}/master/install.sh
 #   sh /tmp/install.sh
 #
 # При заблокированном/замедленном GitHub можно указать зеркало:
@@ -19,6 +19,14 @@
 # (зеркало также пишется в uci, чтобы делегированные загрузки тоже его использовали).
 # Внимание: `sh <(wget -O- ...)` на OpenWrt НЕ работает — в busybox ash нет
 # process substitution; используйте форму с пайпом выше.
+#
+# УСТАНОВКА ИЗ СОБСТВЕННОГО ФОРКА: по умолчанию приложение и ключ берутся из
+# релизов 1andrevich/homeproxy-hiddify. Чтобы ставить ИМЕННО ваш форк, укажите
+# переменную HP_REPO (в формате owner/repo), в котором собраны ваши релизы:
+#   HP_REPO=username/re-homeproxy wget -qO- https://raw.githubusercontent.com/username/re-homeproxy/master/install.sh | sh
+# Ядра (hiddify-core), ByeDPI и Zapret при этом по-прежнему берутся из апстрима
+# (1andrevich/*) — их пересобирать не нужно, меняется только LuCI-приложение.
+HP_REPO="${HP_REPO:-1andrevich/homeproxy-hiddify}"
 
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[0;33m'; C='\033[0;36m'; N='\033[0m'
 ok()   { echo -e "${G}$1${N}"; }
@@ -71,12 +79,12 @@ info "Версия: OpenWrt $VER  |  Архитектура: $ARCH  |  Мене�
 ok "[1/5] Устанавливаю LuCI-приложение Re:HomeProxy..."
 if [ "$PM" = apk ]; then
 	if [ ! -f /etc/apk/keys/homeproxy-hiddify.pub ]; then
-		dl "https://github.com/1andrevich/homeproxy-hiddify/releases/latest/download/homeproxy-hiddify.pub" /tmp/hp.pub \
+		dl "https://github.com/${HP_REPO}/releases/latest/download/homeproxy-hiddify.pub" /tmp/hp.pub \
 			&& cp /tmp/hp.pub /etc/apk/keys/ && rm -f /tmp/hp.pub && ok "  ключ подписи добавлен в доверенные" \
 			|| warn "  не удалось скачать ключ подписи — поставлю без проверки подписи"
 	fi
 fi
-APPURL=$(api 'https://api.github.com/repos/1andrevich/homeproxy-hiddify/releases' \
+APPURL=$(api "https://api.github.com/repos/${HP_REPO}/releases" \
 	| grep -o "https://github\.com/[^\"]*luci-app-re-homeproxy[^\"]*${SUFFIX}\.${EXT}" | head -1)
 [ -n "$APPURL" ] || die "Не нашёл пакет luci-app-re-homeproxy${SUFFIX}.${EXT} (GitHub заблокирован? попробуйте GH_MIRROR=...)."
 dl "$APPURL" /tmp/app.$EXT || die "Не удалось скачать приложение (попробуйте GH_MIRROR=...)."
@@ -97,7 +105,7 @@ case "$REPLY" in
 		# базовый перевод интерфейса LuCI (из фида, best-effort)
 		if [ "$PM" = apk ]; then apk add luci-i18n-base-ru >/dev/null 2>&1; else opkg install luci-i18n-base-ru >/dev/null 2>&1; fi
 		# перевод самого приложения (из релиза homeproxy)
-		LURL=$(api 'https://api.github.com/repos/1andrevich/homeproxy-hiddify/releases' \
+		LURL=$(api "https://api.github.com/repos/${HP_REPO}/releases" \
 			| grep -o "https://github\.com/[^\"]*luci-i18n-homeproxy-ru[^\"]*\.${EXT}" | head -1)
 		if [ -n "$LURL" ] && dl "$LURL" /tmp/i18n.$EXT; then
 			if [ "$PM" = apk ]; then apk add /tmp/i18n.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/i18n.$EXT; \

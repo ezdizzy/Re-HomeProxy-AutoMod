@@ -1481,7 +1481,100 @@ const methods = {
 			let rc = pipe.close();
 			return { result: rc === 0, error: rc !== 0 ? trim(output) : null };
 		}
+	},
+
+	automation_status: {
+		call: function(req) {
+			const state_file = RUN_DIR + '/automation_state.json';
+			const auto_list = HP_DIR + '/resources/auto_proxy_list.txt';
+			const log_file = RUN_DIR + '/automation.log';
+
+			let state = {};
+			if (access(state_file)) {
+				try { state = json(readfile(state_file)) || {}; } catch (e) { state = {}; }
+			}
+
+			let learned = [];
+			if (access(auto_list)) {
+				let c = trim(readfile(auto_list));
+				if (length(c))
+					learned = filter(split(c, /[\r\n]/), (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
+			}
+
+			let blocked = [], direct = [], unknown = [];
+			for (let h in state) {
+				if (state[h].status === 'blocked') push(blocked, h);
+				else if (state[h].status === 'direct') push(direct, h);
+				else if (state[h].status === 'unknown') push(unknown, h);
+			}
+
+			let log_tail = '';
+			if (access(log_file)) {
+				let fd = popen('tail -n 40 ' + shellquote(log_file));
+				if (fd) { log_tail = fd.read('all'); fd.close(); }
+			}
+
+			let enabled = null;
+			let efd = popen('uci -q get homeproxy.automation.enabled 2>/dev/null');
+			if (efd) { enabled = trim(efd.read('all')); efd.close(); }
+
+			return {
+				enabled: enabled,
+				learned: learned,
+				counts: { blocked: length(blocked), direct: length(direct), unknown: length(unknown), learned: length(learned) },
+				state: state,
+				log: log_tail
+			};
+		}
+	},
+
+	automation_list_read: {
+		call: function(req) {
+			const file = HP_DIR + '/resources/auto_proxy_list.txt';
+			let content = '';
+			if (access(file))
+				content = readfile(file);
+			return { content: content };
+		}
+	},
+
+	automation_list_write: {
+		args: { content: 'content' },
+		call: function(req) {
+			const file = HP_DIR + '/resources/auto_proxy_list.txt';
+			let content = req.args?.content;
+			if (content) {
+				content = trim(content);
+				content = replace(content, /\r\n?/g, '\n');
+				if (!match(content, /\n$/))
+					content += '\n';
+			}
+			system('mkdir -p ' + HP_DIR + '/resources');
+			writefile(file, content);
+			/* Regenerate so the edited learned list takes effect immediately. */
+			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
+			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			return { result: true };
+		}
+	},
+
+	automation_clear: {
+		call: function(req) {
+			system('rm -f ' + HP_DIR + '/resources/auto_proxy_list.txt');
+			system('rm -f ' + RUN_DIR + '/automation_state.json');
+			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
+			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			return { result: true };
+		}
+	},
+
+	automation_test_now: {
+		call: function(req) {
+			system('mkdir -p ' + RUN_DIR + '; touch ' + RUN_DIR + '/automation.trigger');
+			return { result: true };
+		}
 	}
+
 };
 
 return { 'luci.homeproxy': methods };

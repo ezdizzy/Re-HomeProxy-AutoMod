@@ -3642,3 +3642,127 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2907
 msgid "Resolving test hosts…"
 msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Automation"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Auto blocked-site detection"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Enable automation"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the proxy list. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path. After toggling, press “Restart service” below."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Mode"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Balanced"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Aggressive (also re-verifies learned sites)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Discover candidates from"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Clash API (connections, domain names)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "conntrack (destinations by IP)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Both"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Probe timeout (seconds)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Maximum learned entries"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Confirmations required before learning"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Re-evaluate learned interval (seconds)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Config reload throttle (seconds)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Never auto-learn (comma-separated)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Monitor"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Test now"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Clear learned"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Save list"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Restart service"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Learned proxy list (editable)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Nothing learned yet. Browse the web or press “Test now”."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Enabled"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Learned (blocked)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Direct"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Unknown"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Status unavailable: "
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Engine log"
+msgstr ""
