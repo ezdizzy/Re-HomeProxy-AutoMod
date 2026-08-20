@@ -1503,6 +1503,7 @@ const methods = {
 
 			let blocked = [], direct = [], unknown = [];
 			for (let h in state) {
+				if (type(state[h]) !== 'object') continue;
 				if (state[h].status === 'blocked') push(blocked, h);
 				else if (state[h].status === 'direct') push(direct, h);
 				else if (state[h].status === 'unknown') push(unknown, h);
