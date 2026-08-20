@@ -4,7 +4,7 @@
  * Copyright (C) 2023 ImmortalWrt.org
  */
 
-import { mkstemp } from 'fs';
+import { mkstemp, readfile, writefile, access } from 'fs';
 import { urldecode_params } from 'luci.http';
 
 /* Global variables start */
@@ -76,6 +76,63 @@ export function wGET(url, ua) {
 	const output = executeCommand(`/usr/bin/wget -qO- --user-agent ${shellQuote(ua)} --timeout=10 ${shellQuote(url)}`) || {};
 	return trim(output.stdout);
 };
+/* Learned-list hot reload:
+ * Write the auto-detected blocked-site lists as sing-box RuleSet source JSON files so the
+ * core can hot-reload them via its LOCAL rule-set file watcher — no service restart, no
+ * dropped connections. Both hiddify-core and sing-box-extended are sing-box forks that
+ * auto-reload a `type: local` rule-set when its file changes (since sing-box 1.10.0).
+ *
+ *   resources/proxy_domain.json  = static proxy_list.txt  +  learned auto_proxy_list.txt
+ *                                   (domain_keyword)  -> referenced by the 'proxy-domain' ruleset
+ *   resources/auto_ip.json       = learned auto_proxy_ip.txt (ip_cidr)
+ *                                   -> referenced by the 'auto-ip' ruleset
+ *
+ * Called by generate_client.uc (so the files always exist when the core starts) and by
+ * automation.uc on every learn (the hot path — rewrite the file, the core picks it up). */
+export function sync_learned_rulesets() {
+	let res = HP_DIR + '/resources';
+	system('mkdir -p ' + res);
+	let domains = [], ips = [];
+
+	if (access(res + '/proxy_list.txt')) {
+		let raw = readfile(res + '/proxy_list.txt');
+		if (raw)
+			domains = filter(split(trim(raw), /[\r\n]/), (d) => {
+				d = trim(d);
+				return length(d) && !match(d, /^\s*#/);
+			});
+	}
+	if (access(res + '/auto_proxy_list.txt')) {
+		let raw = readfile(res + '/auto_proxy_list.txt');
+		if (raw)
+			for (let i, d in filter(split(trim(raw), /[\r\n]/), (x) => {
+				x = trim(x);
+				return length(x) && !match(x, /^\s*#/);
+			}))
+				push(domains, d);
+	}
+	if (access(res + '/auto_proxy_ip.txt')) {
+		let raw = readfile(res + '/auto_proxy_ip.txt');
+		if (raw)
+			ips = filter(split(trim(raw), /[\r\n]/), (x) => {
+				x = trim(x);
+				return length(x) && !match(x, /^\s*#/) &&
+				       (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/));
+			});
+	}
+
+	writefile(res + '/proxy_domain.json', sprintf('%.J\n', {
+		version: 1,
+		rules: domains.length ? [ { domain_keyword: domains } ] : []
+	}));
+	writefile(res + '/auto_ip.json', sprintf('%.J\n', {
+		version: 1,
+		rules: ips.length ? [ { ip_cidr: ips } ] : []
+	}));
+
+	return { domains: length(domains), ips: length(ips) };
+}
+
 /* Utilities end */
 
 /* String helper start */

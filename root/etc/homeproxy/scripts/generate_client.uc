@@ -14,7 +14,8 @@ import { cursor } from 'uci';
 
 import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
-	removeBlankAttrs, validation, HP_DIR, RUN_DIR
+	removeBlankAttrs, validation, HP_DIR, RUN_DIR,
+	sync_learned_rulesets
 } from 'homeproxy';
 
 const ubus = connect();
@@ -174,25 +175,6 @@ if (routing_mode !== 'custom') {
 	proxy_domain_list = trim(readfile(HP_DIR + '/resources/proxy_list.txt'));
 	if (proxy_domain_list)
 		proxy_domain_list = split(proxy_domain_list, /[\r\n]/);
-
-	/* Learned (auto-detected) blocked domains are merged into the proxy list so they route
-	 * via the configured main path (main-out / byedpi-out / zapret-out). This keeps full
-	 * compatibility with ByeDPI & Zapret — those engines ARE the main-out, so a learned site
-	 * simply takes the same path the user already chose. */
-	let auto_raw = readfile(HP_DIR + '/resources/auto_proxy_list.txt');
-	if (auto_raw) {
-		/* NOTE: ucode arrays have NO .concat() method — merging with it throws
-		 * "left-hand side is not a function" and aborts config generation the moment
-		 * this file exists (i.e. after the first learned blocked site). Merge by hand. */
-		let auto_domain_list = split(trim(auto_raw), /[\r\n]/);
-		if (!proxy_domain_list)
-			proxy_domain_list = [];
-		for (let i, d in auto_domain_list) {
-			d = trim(d);
-			if (length(d) && !match(d, /^\s*#/))
-				push(proxy_domain_list, d);
-		}
-	}
 
 	sniff_override = uci.get(uciconfig, uciinfra, 'sniff_override') || '1';
 } else {
@@ -788,12 +770,11 @@ if (!isEmpty(main_node)) {
 		});
 
 		/* Custom proxy list → secure-dns (before ru_domain_rulesets for explicit priority) */
-		if (length(proxy_domain_list))
-			push(config.dns.rules, {
-				rule_set: 'proxy-domain',
-				action: 'route',
-				server: 'secure-dns'
-			});
+		push(config.dns.rules, {
+			rule_set: 'proxy-domain',
+			action: 'route',
+			server: 'secure-dns'
+		});
 
 		/* Proxy-list domains → secure-dns (Cloudflare DoH via proxy) to prevent DNS leaks */
 		let ru_domain_rulesets = [];
@@ -849,12 +830,11 @@ if (!isEmpty(main_node)) {
 			});
 
 		/* Filter out SVCB/HTTPS queries for proxied custom domains */
-		if (length(proxy_domain_list))
-			push(config.dns.rules, {
-				rule_set: 'proxy-domain',
-				query_type: [64, 65],
-				action: 'reject'
-			});
+		push(config.dns.rules, {
+			rule_set: 'proxy-domain',
+			query_type: [64, 65],
+			action: 'reject'
+		});
 
 		/* Region domains -> region-dns (local) */
 		push(config.dns.rules, {
@@ -898,12 +878,12 @@ if (!isEmpty(main_node)) {
 				server: 'default-dns'
 			});
 
-		if (length(proxy_domain_list))
-			push(config.dns.rules, {
-				rule_set: 'proxy-domain',
-				query_type: [64, 65],
-				action: 'reject'
-			});
+		/* Filter out SVCB/HTTPS queries for proxied custom domains */
+		push(config.dns.rules, {
+			rule_set: 'proxy-domain',
+			query_type: [64, 65],
+			action: 'reject'
+		});
 	}
 } else if (!isEmpty(default_outbound)) {
 	/* DNS servers */
@@ -1554,36 +1534,29 @@ if (!isEmpty(main_node)) {
 			]
 		});
 
-	/* Proxy list — also used in proxy_banned_ru for proxy-domain → main-out */
-	if (length(proxy_domain_list))
-		push(config.route.rule_set, {
-			type: 'inline',
-			tag: 'proxy-domain',
-			rules: [
-				{
-					domain_keyword: proxy_domain_list,
-				}
-			]
-		});
+	/* Proxy list — also used in proxy_banned_ru for proxy-domain → main-out.
+	 * Backed by a WATCHED local rule-set file (resources/proxy_domain.json, written by
+	 * sync_learned_rulesets() from proxy_list.txt + the learned auto_proxy_list.txt). The
+	 * core hot-reloads it on file change, so Automation can apply learned sites with no
+	 * service restart. Always emitted (the file always exists, possibly empty) so hot
+	 * reloads work even when the list starts empty. */
+	push(config.route.rule_set, {
+		type: 'local',
+		tag: 'proxy-domain',
+		format: 'source',
+		path: HP_DIR + '/resources/proxy_domain.json'
+	});
 
-	/* Learned IP list (Automation, B): destinations reached by IP only (games/apps
-	 * without SNI) that fail direct but work via the proxy. Merged as an ip_cidr set
-	 * routed to main-out — fully compatible with ByeDPI/Zapret (the main path). */
-	if (automation_enabled === '1' && !isEmpty(main_node)) {
-		let auto_ip_raw = readfile(HP_DIR + '/resources/auto_proxy_ip.txt');
-		if (auto_ip_raw) {
-			let auto_ip_list = filter(split(trim(auto_ip_raw), /[\r\n]/), (x) => {
-				x = trim(x);
-				return length(x) && !match(x, /^\s*#/) && (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/));
-			});
-			if (length(auto_ip_list))
-				push(config.route.rule_set, {
-					type: 'inline',
-					tag: 'auto-ip',
-					rules: [ { ip_cidr: auto_ip_list } ]
-				});
-		}
-	}
+	/* Learned IP list (Automation, B): IP-only destinations (games/apps without SNI)
+	 * that fail direct but work via the proxy. WATCHED local rule-set file
+	 * (resources/auto_ip.json) so it hot-reloads without a restart. */
+	if (automation_enabled === '1' && !isEmpty(main_node))
+		push(config.route.rule_set, {
+			type: 'local',
+			tag: 'auto-ip',
+			format: 'source',
+			path: HP_DIR + '/resources/auto_ip.json'
+		});
 
 	if (is_selective_mode(routing_mode)) {
 		/* Resolve domains before routing — prevents the proxy server from doing its own DNS
@@ -1681,31 +1654,23 @@ if (!isEmpty(main_node)) {
 			outbound: 'main-out'
 		});
 
-		/* Custom proxy list → main-out */
-		if (length(proxy_domain_list))
+		/* Custom proxy list → main-out. The learned sites share this rule-set via the
+		 * watched local file, so they hot-reload without a restart. Always emitted
+		 * (empty rule-set is a no-op) so hot reloads work even from an empty list. */
+		push(config.route.rules, {
+			rule_set: 'proxy-domain',
+			action: 'route',
+			outbound: 'main-out'
+		});
+
+		/* Learned IP list (Automation, B) → main-out. References the watched local
+		 * rule-set file (auto-ip); hot-reloaded, so newly learned IPs apply immediately. */
+		if (automation_enabled === '1' && !isEmpty(main_node))
 			push(config.route.rules, {
-				rule_set: 'proxy-domain',
+				rule_set: 'auto-ip',
 				action: 'route',
 				outbound: 'main-out'
 			});
-
-		/* Learned IP list (Automation, B) → main-out. Placed right after proxy-domain so
-		 * IP-only destinations (games/apps without SNI) are routed through the proxy too. */
-		if (automation_enabled === '1' && !isEmpty(main_node)) {
-			let auto_ip_raw = readfile(HP_DIR + '/resources/auto_proxy_ip.txt');
-			if (auto_ip_raw) {
-				let auto_ip_list = filter(split(trim(auto_ip_raw), /[\r\n]/), (x) => {
-					x = trim(x);
-					return length(x) && !match(x, /^\s*#/) && (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/));
-				});
-				if (length(auto_ip_list))
-					push(config.route.rules, {
-						rule_set: 'auto-ip',
-						action: 'route',
-						outbound: 'main-out'
-					});
-			}
-		}
 
 		/* Per-rule outbounds and rule sets
 		 * Priority order: specific services first → russia-inside → refilter (largest list last) */
@@ -1998,4 +1963,14 @@ if (is_selective_mode(routing_mode) || routing_mode === 'custom') {
 /* Experimental end */
 
 system('mkdir -p ' + RUN_DIR);
+
+/* Write the watched learned-list rule-set files (proxy_domain.json / auto_ip.json) so they
+ * exist before the core starts. Automation rewrites them on every learn → hot reload. */
+sync_learned_rulesets();
+
 writefile(RUN_DIR + '/hiddify-c.json', sprintf('%.J\n', removeBlankAttrs(config)));
+
+/* Marker: the running config now references the learned local rule-sets, so Automation can
+ * hot-reload (rewrite the files) instead of restarting the service. Absent → do_reload falls
+ * back to a full restart once to inject the rule-sets, then writes this marker. */
+writefile(RUN_DIR + '/.learned_hotreload', '1');

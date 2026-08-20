@@ -28,6 +28,7 @@
 
 import { access, readfile, writefile, open, stat } from 'fs';
 import { cursor } from 'uci';
+import { sync_learned_rulesets } from 'homeproxy';
 
 const HP_DIR = '/etc/homeproxy';
 const RUN_DIR = '/var/run/homeproxy';
@@ -309,17 +310,29 @@ function main() {
 	const has = (s) => (discover === 'all') || index(split(discover, ','), s) >= 0;
 
 	function do_reload() {
-		log('regenerating core config...');
-		/* Capture stderr to a log so a generation failure is diagnosable instead of silent. */
+		let marker = RUN_DIR + '/.learned_hotreload';
+		if (access(marker)) {
+			/* Hot path: rewrite the watched local rule-set files (proxy_domain.json /
+			 * auto_ip.json). Both cores auto-reload a `type: local` rule-set on file
+			 * change, so learned sites apply to NEW connections immediately — no service
+			 * restart, no dropped connections. In-flight flows keep their route. */
+			let r = sync_learned_rulesets();
+			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips.');
+			last_reload = time();
+			pending_reload = false;
+			pending_new = 0;
+			return;
+		}
+		/* First run / migration: the running config does not yet reference the learned
+		 * local rule-sets, so one full restart is required to inject them (generate_client
+		 * writes the marker above, enabling the hot path afterwards). */
+		log('learned rule-sets not in running config — doing full service reload to inject them.');
 		system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
 		if (!access(RUN_DIR + '/hiddify-c.json')) {
 			log('regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
 			return; /* do NOT reload onto a broken/absent config */
 		}
-		/* hiddify-core/sing-box 1.13.x cannot hot-reload config, so the service is restarted
-		 * to pick up the freshly generated hiddify-c.json. This is the reliable apply path:
-		 * the core comes back within ~10s. (a per-instance "light" restart is not exposed by
-		 * this procd build, so a full service reload is used deliberately.) */
+		sync_learned_rulesets();
 		log('applying learned list — restarting service to load new config.');
 		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 		last_reload = time();
