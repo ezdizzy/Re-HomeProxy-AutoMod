@@ -1592,13 +1592,17 @@ const methods = {
 			if (!length(latest)) return { error: 'cannot read latest version' };
 
 			const ext = (pkg_manager === 'apk') ? 'apk' : 'ipk';
+			/* ucode's match() only accepts a compiled regex object, not a string
+			 * pattern, so build the dynamic patterns with regexp(). */
+			const re_app = regexp(`^luci-app-re-homeproxy_.*_all\.${ext}$`);
+			const re_ru  = regexp(`^luci-i18n-homeproxy-ru_.*_all\.${ext}$`);
 			let app_url = null, i18n_url = null;
 			for (let a in (rel.assets || [])) {
 				const n = a?.name || '';
 				const u = a?.browser_download_url || '';
 				if (!length(u)) continue;
-				if (match(n, `^luci-app-re-homeproxy_.*_all\.${ext}$`)) app_url = u;
-				else if (match(n, `^luci-i18n-homeproxy-ru_.*_all\.${ext}$`)) i18n_url = u;
+				if (match(n, re_app)) app_url = u;
+				else if (match(n, re_ru)) i18n_url = u;
 			}
 			if (!app_url)
 				return { error: `no app package found in latest release for ${ext}` };
