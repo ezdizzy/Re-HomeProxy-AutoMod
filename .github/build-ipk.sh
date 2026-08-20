@@ -25,10 +25,12 @@ if [ "$RELEASE_TYPE" == "release" ]; then
 	PKG_VERSION="$(get_mk_value "PKG_VERSION")"
 else
 	# NOTE: the CI checks out a shallow clone, so `git rev-list --count HEAD` is always 1.
-	# Use the short commit SHA instead so every build gets a UNIQUE package version —
+	# Use a timestamp-based version so every build gets a UNIQUE package version —
 	# otherwise reinstalling from a newer release with the same version string makes the
 	# package manager skip the file overwrite and the device keeps stale code.
-	PKG_VERSION="$(date -u +%Y.%m.%d)-g$(git rev-parse --short HEAD)"
+	# IMPORTANT: Alpine `apk` rejects hyphens in versions (only digits/dots/_suffix allowed),
+	# so we use a dotted numeric timestamp (date + seconds) which is valid for both apk and ipk.
+	PKG_VERSION="$(date -u +%Y.%m.%d.%H%M%S)"
 fi
 
 TEMP_DIR="$(mktemp -d -p $BASE_DIR)"
