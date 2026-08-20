@@ -4566,20 +4566,40 @@ msgid "Also learn destinations reached by raw IP (games/apps without SNI). Route
 msgstr "Также изучать назначения, доступные по «голому» IP (игры/приложения без SNI). Маршрутизирует IP через прокси. По умолчанию выключено — включите, если используете такие приложения."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Preload blocked-domain list at startup"
-msgstr "Предзагрузить список заблокированных доменов при запуске"
+msgid "Backup list"
+msgstr "Скачать список (бэкап)"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Fetch a plaintext domain list once at start (and daily) and seed it as learned, so popular blocked sites work on the very first visit."
-msgstr "Один раз при запуске (и ежедневно) загружает текстовый список доменов и добавляет его как изученный, чтобы популярные заблокированные сайты работали с первого захода."
+msgid "Restore list"
+msgstr "Восстановить список (из файла)"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Preload list URL"
-msgstr "URL списка предзагрузки"
+msgid "Backup list downloads the learned sites to your computer. Restore list uploads a file and adds any missing sites (existing ones are kept). Use this to avoid re-learning from scratch after a router reset."
+msgstr "«Скачать список» выгружает изученные сайты на ваш компьютер. «Восстановить список» загружает файл и добавляет недостающие сайты (существующие сохраняются). Используйте это, чтобы не проходить обучение заново после сброса роутера."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Plaintext list, one domain per line. Default points at the Re-filter publication list."
-msgstr "Текстовый список, по одному домену на строку. По умолчанию указывает на публикацию Re-filter."
+msgid "Apply after N new entries (batch window)"
+msgstr "Применять после N новых записей (пакетное окно)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Force an apply (core restart) once this many new sites have been learned, even before the reload throttle elapses. Batches a burst of learns into one restart. 0 disables the batch trigger (time-only)."
+msgstr "Принудительно применять (перезапуск ядра), как только изучено столько новых сайтов, даже до истечения таймаута перезагрузки. Сливать всплеск изученного в один перезапуск. 0 отключает пакетное правило (только по времени)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Backup failed: "
+msgstr "Ошибка бэкапа: "
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "no learned list yet"
+msgstr "список ещё не изучен"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Restore failed: "
+msgstr "Ошибка восстановления: "
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Restore complete — added %d site(s)."
+msgstr "Восстановление завершено — добавлено сайтов: %d."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "DNS failover"

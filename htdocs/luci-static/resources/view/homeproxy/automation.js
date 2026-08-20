@@ -49,6 +49,30 @@ const callTestNow = rpc.declare({
 	expect: { '': {} }
 });
 
+const callBackup = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_backup',
+	expect: { '': {} }
+});
+
+const callRestore = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_restore',
+	params: ['content'],
+	expect: { '': {} }
+});
+
+function downloadList(content) {
+	const blob = new Blob([content || ''], { type: 'text/plain' });
+	const a = document.createElement('a');
+	a.href = URL.createObjectURL(blob);
+	a.download = 'homeproxy_learned_list.txt';
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	URL.revokeObjectURL(a.href);
+}
+
 const callRestart = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'diag_service_restart',
@@ -108,6 +132,11 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.placeholder = '60';
 
+		o = s.option(form.Value, 'flush_min_entries', _('Apply after N new entries (batch window)'),
+			_('Force an apply (core restart) once this many new sites have been learned, even before the reload throttle elapses. Batches a burst of learns into one restart. 0 disables the batch trigger (time-only).'));
+		o.datatype = 'uinteger';
+		o.placeholder = '5';
+
 		o = s.option(form.Value, 'exclude', _('Never auto-learn (comma-separated)'),
 			_('Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names.'));
 		o.placeholder = 'localhost,local,lan,in-addr.arpa,ip6.arpa';
@@ -115,14 +144,6 @@ return view.extend({
 		o = s.option(form.Flag, 'ip_learn', _('Learn IP destinations (conntrack)'),
 			_('Also learn destinations reached by raw IP (games/apps without SNI). Routes the IP via the proxy. Off by default — enable if you run such apps.'));
 		o.default = o.disabled;
-
-		o = s.option(form.Flag, 'preload_enabled', _('Preload blocked-domain list at startup'),
-			_('Fetch a plaintext domain list once at start (and daily) and seed it as learned, so popular blocked sites work on the very first visit.'));
-		o.rmempty = false;
-
-		o = s.option(form.Value, 'preload_url', _('Preload list URL'),
-			_('Plaintext list, one domain per line. No default URL is shipped — you must provide one, otherwise preloading stays inactive.'));
-		o.depends('preload_enabled', '1');
 
 		/* ── DNS failover (C) — lives in the `config` section ─────────────── */
 		const sf = m.section(form.NamedSection, 'config', 'homeproxy', _('DNS failover'));
@@ -137,8 +158,44 @@ return view.extend({
 		const ta = new ui.Textarea('learned', _('Learned proxy list (editable)'));
 		ta.rows = 10;
 
+		const fileInput = E('input', {
+			type: 'file',
+			accept: '.txt,text/plain',
+			style: 'display:none'
+		});
+		fileInput.addEventListener('change', function() {
+			const file = fileInput.files[0];
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = function() {
+				callRestore(String(reader.result)).then(function(r) {
+					if (!r || r.result === false)
+						ui.addNotification('error', _('Restore failed: ') + ((r && r.error) || ''));
+					else
+						ui.addNotification('info', _('Restore complete — added %d site(s).').format(r.added || 0));
+					return callListRead().then(function(rr) {
+						ta.setValue(rr.content || '');
+					});
+				}).catch(function(e) {
+					ui.addNotification('error', _('Restore failed: ') + e);
+				});
+			};
+			reader.readAsText(file);
+			fileInput.value = '';
+		});
+
 		const actions = E('div', { 'class': 'automation-actions' }, [
 			btn(_('Test now'), function() { return callTestNow(); }),
+			btn(_('Backup list'), function() {
+				return callBackup().then(function(r) {
+					if (!r || r.result === false) {
+						ui.addNotification('error', _('Backup failed: ') + ((r && r.error) || _('no learned list yet')));
+						return;
+					}
+					downloadList(r.content || '');
+				});
+			}),
+			btn(_('Restore list'), function() { fileInput.click(); }),
 			btn(_('Clear learned'), function() {
 				return callClear().then(function() { return callListRead(); }).then(function(r) {
 					ta.setValue(r.content || '');
@@ -155,7 +212,9 @@ return view.extend({
 			countsEl,
 			tableEl,
 			E('div', { 'class': 'automation-actions' }, [ actions ]),
+			E('p', { 'class': 'automation-hint' }, [ _('Backup list downloads the learned sites to your computer. Restore list uploads a file and adds any missing sites (existing ones are kept). Use this to avoid re-learning from scratch after a router reset.') ]),
 			ta.render(),
+			fileInput,
 			E('h4', {}, [ _('Engine log') ]),
 			logEl
 		]);

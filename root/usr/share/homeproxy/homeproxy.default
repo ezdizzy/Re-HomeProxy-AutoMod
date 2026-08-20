@@ -78,7 +78,6 @@ config homeproxy 'automation'
 	option reload_interval '60'
 	option exclude 'localhost,local,lan,in-addr.arpa,ip6.arpa'
 	option proxy_path 'main'
-	option preload_enabled '0'
-	option preload_url 'https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/domains/publication.txt'
+	option flush_min_entries '5'
 	option ip_learn '0'
 

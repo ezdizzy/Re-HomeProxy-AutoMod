@@ -1,9 +1,15 @@
-name: Build ipk for HomeProxy hiddify
+name: Build Re:HomeProxy AutoMod
+
+# Builds the package on every push/PR (artifacts only). A GitHub Release is created
+# ONLY when you explicitly ask for one — via `workflow_dispatch` with a version, or by
+# pushing a `v*` tag. Plain commits to master must NOT auto-publish a release.
 
 on:
   push:
     branches:
       - 'master'
+    tags:
+      - 'v*.*.*'
     paths:
       - 'htdocs/**'
       - 'po/**'
@@ -15,10 +21,6 @@ on:
   pull_request:
     branches:
       - 'master'
-    types:
-      - opened
-      - synchronize
-      - reopened
     paths:
       - 'htdocs/**'
       - 'po/**'
@@ -28,6 +30,11 @@ on:
       - '!.github/ISSUE_TEMPLATE/**'
 
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (semantic X.Y.Z), e.g. 1.0.0. Leave empty to just build artifacts (no release).'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -89,9 +96,22 @@ jobs:
           curl -fLO "https://raw.githubusercontent.com/openwrt/openwrt/master/scripts/ipkg-build"
           sudo install -m0755 ipkg-build /usr/local/bin/ipkg-build
 
-      - name: Generate release tag
+      - name: Determine release tag / publish flag
         id: tag
-        run:           echo "release_tag=$(date -u +%Y.%m.%d)-g$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "release_tag=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "publish_release=true" >> $GITHUB_OUTPUT
+            echo "release_type=release" >> $GITHUB_OUTPUT
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "release_tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+            echo "publish_release=true" >> $GITHUB_OUTPUT
+            echo "release_type=release" >> $GITHUB_OUTPUT
+          else
+            echo "release_tag=build-$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+            echo "publish_release=false" >> $GITHUB_OUTPUT
+            echo "release_type=snapshot" >> $GITHUB_OUTPUT
+          fi
 
       - name: Setup APK signing key
         run: |
@@ -108,8 +128,8 @@ jobs:
       - name: Build ipk file
         run: |
           pushd .github
-          fakeroot bash build-ipk.sh apk "${{ github.event_name }}"
-          fakeroot bash build-ipk.sh ipk "${{ github.event_name }}"
+          fakeroot bash build-ipk.sh apk "${{ steps.tag.outputs.release_type }}"
+          fakeroot bash build-ipk.sh ipk "${{ steps.tag.outputs.release_type }}"
           echo "APK_ASSET_NAME=$(ls luci-app-re-homeproxy_*_all.apk)" >> $GITHUB_ENV
           echo "IPK_ASSET_NAME=$(ls luci-app-re-homeproxy_*_all.ipk)" >> $GITHUB_ENV
           echo "I18N_APK_ASSET_NAME=$(ls luci-i18n-homeproxy-ru_*_all.apk)" >> $GITHUB_ENV
@@ -121,109 +141,94 @@ jobs:
           popd
 
       - name: Build legacy IPK (OpenWRT 23.05)
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: steps.tag.outputs.publish_release == 'true'
         run: |
           mkdir -p .github/legacy
           pushd .github
-          fakeroot bash build-ipk.sh ipk "${{ github.event_name }}" legacy
+          fakeroot bash build-ipk.sh ipk "${{ steps.tag.outputs.release_type }}" legacy
           mv luci-*-legacy.ipk legacy/
           popd
 
       - name: Publishing APK files to GitHub Artifacts
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
         with:
           name: ${{ env.APK_ASSET_NAME }}
           path: .github/${{ env.APK_ASSET_NAME }}
 
       - name: Publishing IPK files to GitHub Artifacts
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
         with:
           name: ${{ env.IPK_ASSET_NAME }}
           path: .github/${{ env.IPK_ASSET_NAME }}
 
       - name: Publishing i18n APK to GitHub Artifacts
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
         with:
           name: ${{ env.I18N_APK_ASSET_NAME }}
           path: .github/${{ env.I18N_APK_ASSET_NAME }}
 
       - name: Publishing i18n IPK to GitHub Artifacts
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
         with:
           name: ${{ env.I18N_IPK_ASSET_NAME }}
           path: .github/${{ env.I18N_IPK_ASSET_NAME }}
 
       - name: Publishing i18n zh-cn APK to GitHub Artifacts
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
         with:
           name: ${{ env.I18N_ZH_APK_ASSET_NAME }}
           path: .github/${{ env.I18N_ZH_APK_ASSET_NAME }}
 
       - name: Publishing i18n zh-cn IPK to GitHub Artifacts
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
         with:
           name: ${{ env.I18N_ZH_IPK_ASSET_NAME }}
           path: .github/${{ env.I18N_ZH_IPK_ASSET_NAME }}
 
       - name: Publishing i18n fa APK to GitHub Artifacts
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
         with:
           name: ${{ env.I18N_FA_APK_ASSET_NAME }}
           path: .github/${{ env.I18N_FA_APK_ASSET_NAME }}
 
       - name: Publishing i18n fa IPK to GitHub Artifacts
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
         with:
           name: ${{ env.I18N_FA_IPK_ASSET_NAME }}
           path: .github/${{ env.I18N_FA_IPK_ASSET_NAME }}
 
       - name: Publishing signing public key to GitHub Artifacts
+        if: env.APK_SIGN_KEY != ''
         uses: actions/upload-artifact@v7
-        if: github.event_name != 'release' && env.APK_SIGN_KEY != ''
         with:
           name: homeproxy-hiddify.pub
           path: .github/homeproxy-hiddify.pub
 
-      - name: Publishing draft pre-release to GitHub Releases
+      - name: Publish release to GitHub Releases
+        if: steps.tag.outputs.publish_release == 'true'
         uses: svenstaro/upload-release-action@v2
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         with:
           repo_token: ${{ github.token }}
           file: .github/*.{apk,ipk,pub}
           file_glob: true
           tag: ${{ steps.tag.outputs.release_tag }}
-          release_name: ${{ steps.tag.outputs.release_tag }}
+          release_name: Re:HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}
           prerelease: false
           draft: false
-          body: ""
+          body: |
+            Re:HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}
 
-      - name: Publishing legacy draft release to GitHub Releases
+            Self-updating build of the Re:HomeProxy fork. See README for install / update instructions.
+
+      - name: Publish legacy release to GitHub Releases
+        if: steps.tag.outputs.publish_release == 'true'
         uses: svenstaro/upload-release-action@v2
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         with:
           repo_token: ${{ github.token }}
           file: .github/legacy/*.ipk
           file_glob: true
           tag: ${{ steps.tag.outputs.release_tag }}-legacy
-          release_name: ${{ steps.tag.outputs.release_tag }}-legacy (OpenWRT 23.05)
+          release_name: Re:HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}-legacy (OpenWRT 23.05)
           prerelease: true
           draft: true
           body: "Legacy build for OpenWRT 23.05 — no ucode-mod-digest dependency."
-
-      - name: Publishing to GitHub Releases
-        uses: svenstaro/upload-release-action@v2
-        if: github.event_name == 'release'
-        with:
-          repo_token: ${{ github.token }}
-          file: .github/*.{apk,ipk,pub}
-          file_glob: true
-          tag: ${{ github.ref }}
-

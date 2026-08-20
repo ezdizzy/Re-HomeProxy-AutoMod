@@ -17,10 +17,8 @@
  * direct FAILS but the proxy WORKS — so a merely-down site (both fail) or a site that
  * works direct is never rerouted. Learned domains go to resources/auto_proxy_list.txt
  * (→ proxy-domain ruleset); learned IPs go to resources/auto_proxy_ip.txt (→ auto-ip
- * ip_cidr ruleset). Both route via the user's main path → ByeDPI/Zapret compatible.
+ *   ip_cidr ruleset). Both route via the user's main path → ByeDPI/Zapret compatible.
  *
- * D — Preload: at start (and every 24h) fetch a plaintext domain list and seed it as
- *   learned, so popular blocked sites work on the very first visit.
  * C — DNS failover: if enabled, monitor the primary DNS (config.dns_server) and the
  *   alt_dns_servers list; if the primary becomes unreachable, rewrite dns_server to a
  *   healthy alternate and regenerate.  [C]
@@ -45,16 +43,15 @@ const TRIGGER_FILE = RUN_DIR + '/automation.trigger';
 const LOG_FILE = RUN_DIR + '/automation.log';
 const DNS_LOG = '/var/log/dnsmasq-q.log';
 
-/* Module-level state shared with the top-level helper functions preload() and
- * dns_failover_check(). Some ucode builds do not support closures over main()'s
- * locals, so these helpers must read module-scoped variables. */
+/* Module-level state shared with the top-level helper function dns_failover_check().
+ * Some ucode builds do not support closures over main()'s locals, so these helpers
+ * must read module-scoped variables. */
 let uci = null;
 let dns_failover = '0';
 let alt_dns = [];
-let preload_enabled = '0';
-let preload_url = '';
 let auto_set = {};
 let pending_reload = false;
+let pending_new = 0;
 let excludes = [];
 let direct_set = {};
 let proxy_set = {};
@@ -161,6 +158,19 @@ function is_excluded(host) {
 	return false;
 }
 
+	function looks_like_host(h) {
+		if (match(h, /^(https?|tls|quic):\/\//)) return false;
+		if (match(h, /^[0-9a-fA-F:]+$/)) return false;             /* bare IPv6 fragment */
+		if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) return true;      /* IPv4 */
+		if (match(h, /^[a-zA-Z0-9._-]+$/)) {
+			let parts = split(h, '.');
+			let last = parts[length(parts) - 1];
+			if (match(last, /^[0-9]+$/)) return false;             /* final label all digits → junk (e.g. "192.100", "0.1") */
+			return true;
+		}
+		return false;
+	}
+
 /* ── Discovery ──────────────────────────────────────────────────────────── */
 
 function discover_clash(timeout) {
@@ -244,38 +254,19 @@ function dns_failover_check() {
 			uci.set('homeproxy', 'config', 'dns_server', s);
 			uci.commit('homeproxy');
 			log('DNS failover: switched primary DNS to ' + s);
-			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
+			if (!access(RUN_DIR + '/hiddify-c.json')) {
+				log('regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
+				return;
+			}
+			if (clash_up() && light_core_restart())
+				log('core restarted with new config after DNS failover.');
+			else
+				system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 			return;
 		}
 	}
 	log('DNS failover: no healthy alternate DNS available');
-}
-
-/* ── Preload (D) ───────────────────────────────────────────────────────── */
-
-function preload() {
-	if (preload_enabled !== '1' || !length(preload_url)) return;
-	log('preload: fetching ' + preload_url);
-	let tmp = RUN_DIR + '/preload.tmp';
-	if (system(`wget -qO ${shellquote(tmp)} --timeout=30 ${shellquote(preload_url)} 2>/dev/null`, 35000) !== 0) {
-		log('preload: download failed');
-		return;
-	}
-	let added = 0;
-	let lines = read_lines(tmp);
-	for (let i, d in lines) {
-		d = base_domain(trim(d));
-		if (!length(d) || is_excluded(d) || auto_set[d]) continue;
-		auto_set[d] = true;
-		added++;
-	}
-	system('rm -f ' + shellquote(tmp));
-	if (added > 0) {
-		write_auto_list(auto_set);
-		log('preload: seeded ' + added + ' domains');
-		pending_reload = true;
-	}
 }
 
 /* ── Main ───────────────────────────────────────────────────────────────── */
@@ -297,9 +288,8 @@ function main() {
 	let discover = uci.get('homeproxy', 'automation', 'discover') || 'clash';
 	let reeval_interval = int(uci.get('homeproxy', 'automation', 'reeval_interval') || '3600') || 3600;
 	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '60') || 60;
+	let flush_min_entries = int(uci.get('homeproxy', 'automation', 'flush_min_entries') || '5') || 5;
 	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '0';
-	preload_enabled = uci.get('homeproxy', 'automation', 'preload_enabled') || '0';
-	preload_url = uci.get('homeproxy', 'automation', 'preload_url') || '';
 	excludes = split(trim(uci.get('homeproxy', 'automation', 'exclude') || 'localhost,local,lan,in-addr.arpa,ip6.arpa'), ',');
 	excludes = filter(excludes, (x) => length(trim(x)));
 
@@ -320,13 +310,56 @@ function main() {
 	pending_reload = false;
 	const has = (s) => (discover === 'all') || index(split(discover, ','), s) >= 0;
 
-	function do_reload() {
-		log('regenerating core config and reloading service...');
-		system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-		last_reload = time();
-		pending_reload = false;
+	function clash_up() {
+		/* Clash API healthy? Used to decide between a fast in-memory hot-reload and a
+		 * full service reload (the latter is needed when the core is actually down). */
+		let code = trim(capture(`curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:9090/version 2>/dev/null`));
+		return code === '200';
 	}
+
+	function light_core_restart() {
+		/* Restart ONLY the core procd instance (procd respawns it) so the freshly generated
+		 * hiddify-c.json is loaded. This skips the full service reload (tproxy/dnsmasq/fw4
+		 * teardown + re-add) that turned every learned site into a multi-second, connection-
+		 * killing event. NOTE: sing-box/hiddify-core 1.13.x cannot hot-add routing rules at
+		 * runtime (its Clash API /configs ignores `path`), so a core restart is the lightest
+		 * viable dynamic update — the listeners drop for ~1-2s instead of the whole network stack. */
+		let pid = trim(capture('pidof hiddify-core'));
+		if (!length(pid)) pid = trim(capture('pidof sing-box'));
+		if (!length(pid)) return false;
+		system('kill -TERM ' + pid + ' 2>/dev/null');
+		for (let i = 0; i < 15; i++) {
+			sleep(1);
+			if (clash_up()) return true; /* core respawned and re-read the new config */
+		}
+		return false;
+	}
+
+	function do_reload() {
+		log('regenerating core config...');
+		/* Capture stderr to a log so a generation failure is diagnosable instead of silent. */
+		system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
+		if (!access(RUN_DIR + '/hiddify-c.json')) {
+			log('regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
+			return; /* do NOT reload onto a broken/absent config */
+		}
+		if (clash_up()) {
+			if (light_core_restart()) {
+				log('core restarted with new config (lightweight, no full service reload).');
+				last_reload = time();
+				pending_reload = false;
+				pending_new = 0;
+				return;
+			}
+			log('light core restart failed, doing full service reload.');
+		} else {
+			log('core API down, doing full service reload...');
+		}
+			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			last_reload = time();
+			pending_reload = false;
+			pending_new = 0;
+		}
 
 	function classify(dom, direct_res, proxy_res, is_ip) {
 		if (!state[dom]) state[dom] = {};
@@ -341,11 +374,11 @@ function main() {
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;
 			if (st.confirms >= min_confirm) {
-				if (is_ip) {
-					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom}`); pending_reload = true; }
-				} else if (!auto_set[dom]) {
-					auto_set[dom] = true; write_auto_list(auto_set); log(`learned BLOCKED: ${dom}`); pending_reload = true;
-				}
+			if (is_ip) {
+				if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom}`); pending_reload = true; pending_new++; }
+			} else if (!auto_set[dom]) {
+				auto_set[dom] = true; write_auto_list(auto_set); log(`learned BLOCKED: ${dom}`); pending_reload = true; pending_new++;
+			}
 			}
 		} else if (direct_res === 'ok') {
 			st.status = 'direct'; st.confirms = 0;
@@ -375,6 +408,7 @@ function main() {
 		for (let host in domain_candidates) {
 			if (probed >= cap) break;
 			let dom = base_domain(host);
+			if (!looks_like_host(dom)) continue;
 			if (is_excluded(dom)) continue;
 			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
 			let st = state[dom];
@@ -404,7 +438,9 @@ function main() {
 			}
 		}
 
-		if (pending_reload && (now - last_reload) > reload_interval)
+		/* Batch-flush window: apply when the time throttle elapsed OR enough new entries
+		 * accumulated (so a burst of learns triggers a single core restart, not many). */
+		if (pending_reload && ((now - last_reload) > reload_interval || (flush_min_entries > 0 && pending_new >= flush_min_entries)))
 			do_reload();
 		else if (pending_reload && run_now)
 			do_reload();
@@ -413,34 +449,27 @@ function main() {
 	/* Enable DNS query logging if we discover via dns. */
 	if (has('dns')) enable_dns_log();
 
-	/* Preload once at start (D). */
-	preload();
-
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
 	log('automation daemon started (mode=' + mode + ', discover=' + discover + ', failover=' + dns_failover + ').');
 
-	let last_failover = 0;
-	let last_preload = time();
-	while (true) {
-		enabled = uci.get('homeproxy', 'automation', 'enabled');
-		if (enabled !== '1') {
-			log('automation disabled, exiting.');
-			if (has('dns')) disable_dns_log();
-			return;
-		}
+		let last_failover = 0;
+		while (true) {
+			enabled = uci.get('homeproxy', 'automation', 'enabled');
+			if (enabled !== '1') {
+				log('automation disabled, exiting.');
+				if (has('dns')) disable_dns_log();
+				return;
+			}
 
-		let run_now = false;
-		if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); run_now = true; }
+			let run_now = false;
+			if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); run_now = true; }
 
-		pass(run_now);
+			pass(run_now);
 
-		/* DNS failover (C) at most once per minute. */
-		let now = time();
-		if (dns_failover === '1' && (now - last_failover) > 60) { last_failover = now; dns_failover_check(); }
-
-		/* Preload refresh once per day (D). */
-		if (preload_enabled === '1' && (now - last_preload) > 86400) { last_preload = now; preload(); }
+			/* DNS failover (C) at most once per minute. */
+			let now = time();
+			if (dns_failover === '1' && (now - last_failover) > 60) { last_failover = now; dns_failover_check(); }
 
 		/* Persist dns log offset so we don't re-scan from the start after a restart. */
 		state.__dns_offset = dns_log_offset;

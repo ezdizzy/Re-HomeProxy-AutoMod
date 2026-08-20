@@ -181,8 +181,17 @@ if (routing_mode !== 'custom') {
 	 * simply takes the same path the user already chose. */
 	let auto_raw = readfile(HP_DIR + '/resources/auto_proxy_list.txt');
 	if (auto_raw) {
+		/* NOTE: ucode arrays have NO .concat() method — merging with it throws
+		 * "left-hand side is not a function" and aborts config generation the moment
+		 * this file exists (i.e. after the first learned blocked site). Merge by hand. */
 		let auto_domain_list = split(trim(auto_raw), /[\r\n]/);
-		proxy_domain_list = (proxy_domain_list || []).concat(auto_domain_list);
+		if (!proxy_domain_list)
+			proxy_domain_list = [];
+		for (let i, d in auto_domain_list) {
+			d = trim(d);
+			if (length(d) && !match(d, /^\s*#/))
+				push(proxy_domain_list, d);
+		}
 	}
 
 	sniff_override = uci.get(uciconfig, uciinfra, 'sniff_override') || '1';

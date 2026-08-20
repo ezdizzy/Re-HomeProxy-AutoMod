@@ -104,7 +104,7 @@ default_prerm' > "$TEMP_DIR/pre-deinstall"
 	apk mkpkg \
 		--info "name:$PKG_NAME" \
 		--info "version:$PKG_VERSION" \
-		--info "description:Re:HomeProxy - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy" \
+		--info "description:Re:HomeProxy AutoMod - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy" \
 		--info "arch:noarch" \
 		--info "origin:$PKG_NAME" \
 		--info "url:https://github.com/ezdizzy/re-homeproxy" \
@@ -179,7 +179,7 @@ PYEOF
 		Maintainer: 1andrevich <1andrevich.recede274@passmail.net>
 		Architecture: all
 		Installed-Size: TO-BE-FILLED-BY-IPKG-BUILD
-		Description:  Re:HomeProxy - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy
+		Description:  Re:HomeProxy AutoMod - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy
 	EOF
 	chmod 0644 "$TEMP_PKG_DIR/CONTROL/control"
 

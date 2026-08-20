@@ -6,54 +6,93 @@
   <a href="https://nowpayments.io/donation?api_key=decbeb76-30f8-4c6d-ba40-2d2dec7fd888"><img src="https://img.shields.io/badge/Crypto-Donate-2EBE74?style=flat-square&logo=bitcoin&logoColor=white" alt="Crypto donate"></a>
 </p>
 
-# Re:HomeProxy
+# Re:HomeProxy AutoMod
 
-A modern multi-core proxy platform powered by [hiddify-core](https://github.com/hiddify/hiddify-core) and [sing-box-extended](https://github.com/shtorm-7/sing-box-extended). 
+A modern multi-core proxy platform powered by [hiddify-core](https://github.com/hiddify/hiddify-core) and [sing-box-extended](https://github.com/shtorm-7/sing-box-extended).
 A fork of [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy).
 
-> ⚠️ **This is an EXPERIMENTAL fork.** This branch carries changes not present upstream: a fix for the Tun TCP/UDP mode and a new **Automation** tab — automatic detection of blocked sites (a host that fails directly but works via the proxy is remembered and routed through the proxy/ByeDPI/Zapret). These features may be unstable and need on-device validation. Use at your own risk; prefer the original release for production.
+> **Re:HomeProxy AutoMod** is a mod of Re:HomeProxy by **@ezdizzy**. It builds on the original
+> Re:HomeProxy app and adds AutoMod-specific changes (see *AutoMod modifications* below) — most importantly the **Automation**
+> tab and **in-app self-update**. The proxy cores, ByeDPI and Zapret engines are fetched from their own upstream releases;
+> only the LuCI app and its Russian translation are built here (repo `ezdizzy/re-homeproxy`).
 
 ## Overview
 
-Re:HomeProxy is a feature-rich proxy management system, a fresh take on ImmortalWrt's HomeProxy. It runs on a choice of cores ([hiddify-core](https://github.com/hiddify/hiddify-core) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)), adds a built-in DPI-bypass based on [Zapret2](https://github.com/bol-van/zapret2) and [ByeDPI](https://github.com/hufrea/byedpi) for un-throttling sites without a VPN, ready-made Russia routing rules, and a one-click core installer — all from the LuCI web interface.
+Re:HomeProxy is a feature-rich proxy management system, a fresh take on ImmortalWrt's HomeProxy. It runs on a choice of
+cores ([hiddify-core](https://github.com/hiddify/hiddify-core) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)),
+adds a built-in DPI-bypass based on [Zapret2](https://github.com/bol-van/zapret2) and [ByeDPI](https://github.com/hufrea/byedpi)
+for un-throttling sites without a VPN, ready-made Russia routing rules, and a one-click core installer — all from the LuCI
+web interface.
+
+## AutoMod modifications
+
+This mod adds the following on top of the original Re:HomeProxy app:
+
+- **Automation tab** — automatic detection of blocked sites. A background monitor probes hosts both directly and through
+  the proxy; a host that fails directly but works via the proxy is remembered (base domain + learned IPs) and routed
+  through the proxy / ByeDPI / Zapret. Fully compatible with ByeDPI and Zapret — learned sites follow the same path the
+  user selected. The `0/0/0` status display bug is fixed (the status method now reports real blocked / direct / unknown
+  counts).
+- **Tun TCP/UDP fix** — corrected Tun mode delivery of `tun_mark` flows into the tun device with a loop guard, so Tun
+  routing works correctly.
+- **In-app self-update** — on the **Core & Tools** tab you can check for a new version and update the LuCI app (and the
+  Russian translation) in place, without touching the SSH console. See *Updating the app* below.
+- **Fork default** — `install.sh` installs the LuCI app and Russian locale from `ezdizzy/re-homeproxy` by default
+  (cores / ByeDPI / Zapret still come from upstream `1andrevich/*`).
+- Complete Russian (ru) translation of every tab, including Automation and DNS-failover strings.
+
+> ⚠️ This is an experimental mod. By installing it you acknowledge that some features may not work as expected —
+> use it at your own risk.
 
 ## Key Features
 
-- **Multi-core engine** — run on **hiddify-core** or **sing-box-extended**, your choice per device. The built-in **Core Management** page installs and updates the core for you and automatically picks the right build for your available storage (with a compact build for tight-storage devices).
-- **Wide protocol support** — Naive, Mieru, Hysteria, SOCKS, Shadowsocks, ShadowTLS, Trojan, VLESS (XHTTP), VMess, WireGuard, **AmneziaWG / WARP** (sing-box-extended), SSH and more.
+- **Multi-core engine** — run on **hiddify-core** or **sing-box-extended**, your choice per device. The built-in
+  **Core & Tools** page installs and updates the core for you and automatically picks the right build for your available
+  storage (with a compact build for tight-storage devices).
+- **Wide protocol support** — Naive, Mieru, Hysteria, SOCKS, Shadowsocks, ShadowTLS, Trojan, VLESS (XHTTP), VMess,
+  WireGuard, **AmneziaWG / WARP** (sing-box-extended), SSH and more.
 - **Two built-in DPI-bypass engines** — un-throttle and unblock sites (e.g. YouTube, Discord) **without any VPN subscription**:
-  - **ByeDPI** ([hufrea/byedpi](https://github.com/hufrea/byedpi)) — a SOCKS-level desync proxy, with 47 ready-made strategy presets and a multi-site **strategy tester** that shows which setting actually works on your ISP.
-  - **Zapret 2** ([bol-van/zapret2](https://github.com/bol-van/zapret2), nfqws2) — a packet-level NFQUEUE desync that mangles the handshake in-place. Selected per routing rule (e.g. send only YouTube/Discord through it), with curated presets, optional Discord-voice desync, and its own scoped tester.
+  - **ByeDPI** ([hufrea/byedpi](https://github.com/hufrea/byedpi)) — a SOCKS-level desync proxy, with 47 ready-made
+    strategy presets and a multi-site **strategy tester** that shows which setting actually works on your ISP.
+  - **Zapret 2** ([bol-van/zapret2](https://github.com/bol-van/zapret2), nfqws2) — a packet-level NFQUEUE desync that
+    mangles the handshake in-place. Selected per routing rule (e.g. send only YouTube/Discord through it), with curated
+    presets, optional Discord-voice desync, and its own scoped tester.
 - **URLTest auto-selection** — automatically routes through the fastest reachable node and fails over when one goes down.
-- **Russia routing rules** — one-click RU Proxy Rules (Russia Inside, Re:Filter) with curated domain/IP lists, so only blocked destinations go through the proxy.
-- **Subscription support** — import nodes from subscription links (sing-box JSON / Hiddify, base64 / plain share-links, and Xray/V2Ray JSON configs) and update them on demand.
+- **Russia routing rules** — one-click RU Proxy Rules (Russia Inside, Re:Filter) with curated domain/IP lists, so only
+  blocked destinations go through the proxy.
+- **Subscription support** — import nodes from subscription links (sing-box JSON / Hiddify, base64 / plain share-links,
+  and Xray/V2Ray JSON configs) and update them on demand.
 - **Diagnostics** — a built-in page to check core/system health, inspect ports, and generate a shareable report.
+- **Automation** — auto-detect blocked sites and route them through the proxy/ByeDPI/Zapret (see *AutoMod modifications*).
+- **In-app self-update** — update the LuCI app from the **Core & Tools** tab.
 - **Modern web interface** — clean, responsive LuCI UI with node management, ACL traffic routing, and NFT rule control.
-
 
 ## Prerequisites
 
 - OpenWRT / ImmortalWrt 24.10 or higher (opkg)
 - OpenWRT / ImmortalWrt 25.12 or higher (apk)
 
-Optionally legacy build for 23.05 is available in Releases
+Optionally legacy build for 23.05 is available in Releases.
 
 ## Installation
 
-*~40 MB of free space recommended. Tight on storage? Install the LuCI app first, then use its **Core & Tools** tab (Services → Re:HomeProxy → Core & Tools) to install a core — it auto-picks a build that fits, including a compact build for small memory devices.*
+*~40 MB of free space recommended. Tight on storage? Install the LuCI app first, then use its **Core & Tools** tab
+(Services → Re:HomeProxy AutoMod → Core & Tools) to install a core — it auto-picks a build that fits, including a
+compact build for small memory devices.*
 
 ### Quick install (one-liner)
 
-Installs the LuCI app, then interactively walks you through the proxy core and optional ByeDPI / Zapret. Works on APK (25.12+), opkg (24.10) and 23.05 legacy. Run over SSH on the router:
+Installs the LuCI app, then interactively walks you through the proxy core and optional ByeDPI / Zapret. Works on APK
+(25.12+), opkg (24.10) and 23.05 legacy. Run over SSH on the router:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/1andrevich/homeproxy-hiddify/master/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
 ```
 
 Behind a blocked/throttled GitHub, pass a mirror (note: the env var goes on `sh`, not `wget`):
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/1andrevich/homeproxy-hiddify/master/install.sh | GH_MIRROR=https://your.mirror sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | GH_MIRROR=https://your.mirror sh
 ```
 
 Prefer to do it by hand? Follow the per-version steps below.
@@ -63,9 +102,9 @@ Prefer to do it by hand? Follow the per-version steps below.
 #### 1. Install *luci-app-re-homeproxy* package
 
 ```sh
-wget -O /tmp/homeproxy-hiddify.pub https://github.com/1andrevich/homeproxy-hiddify/releases/latest/download/homeproxy-hiddify.pub
+wget -O /tmp/homeproxy-hiddify.pub https://github.com/ezdizzy/re-homeproxy/releases/latest/download/homeproxy-hiddify.pub
 cp /tmp/homeproxy-hiddify.pub /etc/apk/keys/
-wget -O /tmp/luci-app-re-homeproxy.apk "$(wget -qO- 'https://api.github.com/repos/1andrevich/homeproxy-hiddify/releases' | grep -o 'https://github\.com/[^"]*luci-app-re-homeproxy[^"]*\.apk' | head -1)"
+wget -O /tmp/luci-app-re-homeproxy.apk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/re-homeproxy/releases' | grep -o 'https://github\.com/[^"]*luci-app-re-homeproxy[^"]*\.apk' | head -1)"
 apk add /tmp/luci-app-re-homeproxy.apk
 ```
 
@@ -73,32 +112,35 @@ Once the key is in `/etc/apk/keys/` it is trusted permanently — no flag needed
 
 #### 2. Install components from the **Core & Tools** tab
 
-Open **Services → Re:HomeProxy → Core & Tools** and install what you need — the installer auto-picks a build that fits your storage:
+Open **Services → Re:HomeProxy AutoMod → Core & Tools** and install what you need — the installer auto-picks a build
+that fits your storage:
 
-- **Proxy core** *(required, pick one)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (default) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) (adds AmneziaWG / WARP and the widest protocol set). See **[Core Management](../../wiki/Core-Management-en)**.
-- **ByeDPI** *(optional)* — SOCKS-level DPI bypass that un-throttles sites without a VPN, with 40 presets and a built-in strategy tester. See **[ByeDPI](../../wiki/ByeDPI-en)**.
-- **Zapret 2** *(optional)* — packet-level (nfqws2) DPI bypass selected per routing rule, with curated presets and optional Discord-voice desync. See **[Zapret](../../wiki/Zapret-en)**.
+- **Proxy core** *(required, pick one)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (default) or
+  [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) (adds AmneziaWG / WARP and the widest protocol set).
+- **ByeDPI** *(optional)* — SOCKS-level DPI bypass that un-throttles sites without a VPN, with 47 presets and a built-in
+  strategy tester.
+- **Zapret 2** *(optional)* — packet-level (nfqws2) DPI bypass selected per routing rule, with curated presets and
+  optional Discord-voice desync.
+- **Re:HomeProxy AutoMod** *(the app itself)* — see *Updating the app*; update in place from this tab.
 
 ### OpenWRT 24.10 (opkg)
 
 #### 1. Install *luci-app-re-homeproxy* package
 
 ```sh
-wget -O /tmp/luci-app-re-homeproxy.ipk "$(wget -qO- 'https://api.github.com/repos/1andrevich/homeproxy-hiddify/releases' | grep -o 'https://github\.com/[^"]*luci-app-re-homeproxy[^"]*\.ipk' | head -1)"
+wget -O /tmp/luci-app-re-homeproxy.ipk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/re-homeproxy/releases' | grep -o 'https://github\.com/[^"]*luci-app-re-homeproxy[^"]*\.ipk' | head -1)"
 opkg install /tmp/luci-app-re-homeproxy.ipk
 ```
 
 #### 2. Install components from the **Core & Tools** tab
 
-Open **Services → Re:HomeProxy → Core & Tools** and install what you need — the installer auto-picks a build that fits your storage:
-
-- **Proxy core** *(required, pick one)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (default) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) (adds AmneziaWG / WARP and the widest protocol set). See **[Core Management](../../wiki/Core-Management-en)**.
-- **ByeDPI** *(optional)* — SOCKS-level DPI bypass that un-throttles sites without a VPN, with 40 presets and a built-in strategy tester. See **[ByeDPI](../../wiki/ByeDPI-en)**.
-- **Zapret 2** *(optional)* — packet-level (nfqws2) DPI bypass selected per routing rule, with curated presets and optional Discord-voice desync. See **[Zapret](../../wiki/Zapret-en)**.
+Open **Services → Re:HomeProxy AutoMod → Core & Tools** and install what you need — the installer auto-picks a build
+that fits your storage (same options as the APK section above).
 
 ### Manual install over SSH (alternative to the Core & Tools tab)
 
-The **Core & Tools** tab is recommended — it auto-detects your hardware and picks a build that fits. To install the same components by hand over SSH, first detect your architecture and package format:
+The **Core & Tools** tab is recommended — it auto-detects your hardware and picks a build that fits. To install the same
+components by hand over SSH, first detect your architecture and package format:
 
 ```sh
 . /etc/openwrt_release; ARCH="$DISTRIB_ARCH"
@@ -106,7 +148,8 @@ command -v apk >/dev/null && EXT=apk || EXT=ipk
 echo "$ARCH / $EXT"
 ```
 
-The hiddify-core and ByeDPI packages are signed with the `homeproxy-hiddify.pub` key trusted during the app install above; if you skipped that, add `--allow-untrusted` to `apk add`.
+The hiddify-core and ByeDPI packages are signed with the `homeproxy-hiddify.pub` key trusted during the app install
+above; if you skipped that, add `--allow-untrusted` to `apk add`.
 
 **Proxy core — pick one** (plus its required kernel modules):
 
@@ -141,19 +184,36 @@ wget -O /tmp/zapret2.$EXT "https://github.com/1andrevich/zapret2-openwrt/release
 if [ "$EXT" = apk ]; then apk add /tmp/zapret2.apk; else opkg install /tmp/zapret2.ipk; fi
 ```
 
-### Optional 
-
-Installation of [Russian Language Pack](https://github.com/1andrevich/homeproxy-hiddify/blob/master/README_ru.md#3-%D1%83%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%BA%D0%B0-%D1%8F%D0%B7%D1%8B%D0%BA%D0%BE%D0%B2%D0%BE%D0%B3%D0%BE-%D0%BF%D0%B0%D0%BA%D0%B5%D1%82%D0%B0-ru-1)
-
-If using "Custom JSON" — see the **[Custom JSON Config](../../wiki/Custom-JSON-Config-en)** wiki page for full details.
-
 ### 4. Start the service
 
 ```sh
 /etc/init.d/homeproxy start
 ```
 
-The service will auto-start on boot. Monitor logs at **Services → Re:HomeProxy → Core & Tools**.
+The service will auto-start on boot. Monitor logs at **Services → Re:HomeProxy AutoMod → Core & Tools**.
+
+## Updating the app (AutoMod self-update)
+
+You do **not** need the SSH console to update Re:HomeProxy AutoMod:
+
+1. Open **Services → Re:HomeProxy AutoMod → Core & Tools**.
+2. In the **Application** card, click **Check update**. It compares your installed version (shown as
+   `Re:HomeProxy AutoMod vX.Y.Z`) with the latest GitHub release of `ezdizzy/re-homeproxy`.
+3. If an update is available, click **Update**. The app downloads the new `luci-app-re-homeproxy` package (and the
+   Russian translation) and installs it in place; rpcd restarts automatically and the page reloads.
+
+> The app pulls its own builds from `ezdizzy/re-homeproxy`. Cores / ByeDPI / Zapret are still updated via their own
+> cards on the same tab (those come from upstream). A GitHub token (set in **Core & Tools → GitHub token**) raises the
+> GitHub API rate limit used by the update check.
+
+## Versioning & Releases
+
+- **Version scheme:** semantic `X.Y.Z` (e.g. `1.0.0`). The version lives in `Makefile` (`PKG_VERSION`) and is the single
+  source of truth — the GitHub release tag is `vX.Y.Z` and the in-app self-update compares the locally installed version
+  against that tag.
+- **No automatic releases.** Pushing commits to `master` only builds artifacts — it does **not** publish a GitHub release.
+  A release is created only for finished, tested builds.
+- After a release is published, the **Check update** button in the app will offer it to installed routers.
 
 ## Documentation
 
@@ -170,11 +230,13 @@ Full guides live in the **[Wiki](../../wiki/Home)**:
 - **[Zapret](../../wiki/Zapret-en)** — packet-level (nfqws2) DPI bypass, presets, Discord-voice and the tester
 - **[Custom Routing](../../wiki/Custom-Routing-en)** — UI routing nodes + rules (match by domain/IP/port/protocol/process)
 - **[Custom JSON Config](../../wiki/Custom-JSON-Config-en)** — raw hiddify-core config routing mode
+- **[Automation](../../wiki/Automation-Status-en)** — the AutoMod Automation tab (A–D states, risks, TODO)
 - **[Troubleshooting](../../wiki/Troubleshooting-en)** — common errors and fixes
 
 ## Credits & Acknowledgements
 
-Re:HomeProxy stands on the work of many upstream projects. The LuCI app is GPL-licensed; the cores and bypass engines are fetched at install time from their own releases and remain under their own licenses.
+Re:HomeProxy stands on the work of many upstream projects. The LuCI app is GPL-licensed; the cores and bypass engines are
+fetched at install time from their own releases and remain under their own licenses.
 
 **Base & cores**
 - [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy) — the original LuCI app this is a fork of

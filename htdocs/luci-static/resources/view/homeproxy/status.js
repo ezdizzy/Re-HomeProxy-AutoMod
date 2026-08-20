@@ -303,6 +303,31 @@ const callZapretRemove = rpc.declare({
 	expect: { '': {} }
 });
 
+const callAppStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_status',
+	expect: { '': {} }
+});
+
+const callAppCheckUpdate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_check_update',
+	expect: { '': {} }
+});
+
+const callAppPrepareInstall = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_prepare_install',
+	expect: { '': {} }
+});
+
+const callAppInstallPkg = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_install_pkg',
+	params: ['app_path', 'i18n_path', 'pkg_manager'],
+	expect: { '': {} }
+});
+
 function buildByeDPICard(byedpi, isMainNode) {
 	let installed = byedpi?.installed || false;
 	let version   = byedpi?.version   || null;
@@ -599,6 +624,114 @@ function buildCurlCard(curl) {
 	]);
 }
 
+function buildAppCard(appStatus) {
+	const installed = !!appStatus;
+	let version = appStatus?.version || null;
+	const pkgMgr = appStatus?.pkg_manager || null;
+
+	const statusEl = E('strong', {
+		style: installed ? 'color:green' : 'color:gray'
+	}, installed ? (version ? 'Re:HomeProxy AutoMod v' + version : _('Installed')) : _('Not installed'));
+
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || 'gray'; };
+
+	let updateAvailable = false;
+
+	const checkBtn = E('button', {
+		class: 'btn cbi-button',
+		click: async function() {
+			checkBtn.disabled = true;
+			remoteEl.textContent = _('Checking...');
+			remoteEl.style.color = 'gray';
+			const ret = await L.resolveDefault(callAppCheckUpdate(), {});
+			checkBtn.disabled = false;
+			if (ret.error) {
+				remoteEl.textContent = ret.error;
+				remoteEl.style.color = 'red';
+				updateBtn.disabled = true;
+				return;
+			}
+			remoteEl.textContent = _('Latest') + ': v' + ret.latest_version;
+			updateAvailable = !!ret.update_available;
+			if (updateAvailable) {
+				remoteEl.style.color = 'darkorange';
+				updateBtn.disabled = false;
+				setMsg(_('Update available'), 'darkorange');
+			} else {
+				remoteEl.style.color = 'green';
+				updateBtn.disabled = true;
+				setMsg(_('Up to date'), 'green');
+			}
+		}
+	}, [ _('Check update') ]);
+
+	const updateBtn = E('button', {
+		class: 'btn cbi-button cbi-button-action',
+		disabled: true,
+		click: async function() {
+			updateBtn.disabled = true;
+			checkBtn.disabled = true;
+			statusEl.textContent = _('Preparing...');
+			statusEl.style.color = 'gray';
+			setMsg('', 'gray');
+
+			const prep = await L.resolveDefault(callAppPrepareInstall(), {});
+			if (prep.error) {
+				statusEl.textContent = version ? 'Re:HomeProxy AutoMod v' + version : _('Installed');
+				statusEl.style.color = 'green';
+				updateBtn.disabled = false;
+				checkBtn.disabled = false;
+				setMsg(prep.error, 'red');
+				return;
+			}
+
+			setMsg(_('Downloading...'), 'gray');
+			const dlApp = await L.resolveDefault(callCoreDownload(prep.app.dl_url, prep.app.tmp_path), {});
+			if (!dlApp.result) {
+				setMsg(dlApp.error || _('Download failed'), 'red');
+				updateBtn.disabled = false;
+				checkBtn.disabled = false;
+				return;
+			}
+			let i18nPath = '';
+			if (prep.i18n) {
+				const dlI18n = await L.resolveDefault(callCoreDownload(prep.i18n.dl_url, prep.i18n.tmp_path), {});
+				if (dlI18n.result) i18nPath = prep.i18n.tmp_path;
+			}
+
+			setMsg(_('Installing...'), 'gray');
+			const inst = await L.resolveDefault(
+				callAppInstallPkg(prep.app.tmp_path, i18nPath, prep.pkg_manager), {});
+			if (!inst.result) {
+				setMsg(inst.error || _('Installation failed'), 'red');
+				updateBtn.disabled = false;
+				checkBtn.disabled = false;
+				return;
+			}
+
+			setMsg(_('Installed — reloading...'), 'green');
+			/* The package postinst restarts rpcd after a short delay; wait long enough
+			 * for the new rpcd (with the updated methods) to be serving before reload. */
+			setTimeout(() => window.location.reload(), 5000);
+		}
+	}, [ _('Update') ]);
+
+	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
+		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
+			E('strong', {}, 'Re:HomeProxy AutoMod'),
+			statusEl,
+			checkBtn,
+			remoteEl,
+			updateBtn,
+			msgEl
+		]),
+		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
+			_('The LuCI app itself. "Check update" compares your installed version with the latest GitHub release; "Update" downloads and installs the new app (and the Russian translation) in place.'))
+	]);
+}
+
 function callCoreInfo() {
 	return fs.exec_direct('/usr/bin/ucode', [CORE_MGMT, 'info'], 'json');
 }
@@ -772,11 +905,12 @@ return view.extend({
 			uci.load('homeproxy'),
 			L.resolveDefault(callByeDPIStatus(), {}),
 			L.resolveDefault(callCurlStatus(), {}),
-			L.resolveDefault(callZapretStatus(), {})
+			L.resolveDefault(callZapretStatus(), {}),
+			L.resolveDefault(callAppStatus(), {})
 		]);
 	},
 
-	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus]) {
+	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus]) {
 		const routingMode = uci.get('homeproxy', 'config', 'routing_mode') || '';
 		const isRuMode = routingMode === 'proxy_banned_ru';
 		let m, s, o;
@@ -865,6 +999,12 @@ return view.extend({
 				return node;
 			}
 		}
+
+		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Application'));
+		s.anonymous = true;
+
+		o = s.option(form.DummyValue, '_app_card');
+		o.default = buildAppCard(appStatus);
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Core management'));
 		s.anonymous = true;
