@@ -49,7 +49,7 @@
 - [Route Rule](https://sing-box.sagernet.org/configuration/route/rule/) — все поля сопоставления
 - [Sniff](https://sing-box.sagernet.org/configuration/route/sniff/) — сопоставление по **Протоколу** требует включённого сниффинга (он включён по умолчанию)
 
-> **Сопоставление по протоколу требует сниффинга.** Матч по `quic`, `tls`, `bittorrent` и т. п. опирается на анализ первых пакетов на inbound-е — Re-HomeProxy включает это на своих inbound-ах, так что работает из коробки.
+> **Сопоставление по протоколу требует сниффинга.** Матч по `quic`, `tls`, `bittorrent` и т. п. опирается на анализ первых пакетов на inbound-е — Re:HomeProxy AutoMod включает это на своих inbound-ах, так что работает из коробки.
 
 ---
 

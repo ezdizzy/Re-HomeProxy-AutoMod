@@ -631,7 +631,7 @@ function buildAppCard(appStatus) {
 
 	const statusEl = E('strong', {
 		style: installed ? 'color:green' : 'color:gray'
-	}, installed ? (version ? 'Re-HomeProxy AutoMod v' + version : _('Installed')) : _('Not installed'));
+	}, installed ? (version ? 'Re:HomeProxy AutoMod v' + version : _('Installed')) : _('Not installed'));
 
 	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
@@ -679,7 +679,7 @@ function buildAppCard(appStatus) {
 
 			const prep = await L.resolveDefault(callAppPrepareInstall(), {});
 			if (prep.error) {
-				statusEl.textContent = version ? 'Re-HomeProxy AutoMod v' + version : _('Installed');
+				statusEl.textContent = version ? 'Re:HomeProxy AutoMod v' + version : _('Installed');
 				statusEl.style.color = 'green';
 				updateBtn.disabled = false;
 				checkBtn.disabled = false;
@@ -720,7 +720,7 @@ function buildAppCard(appStatus) {
 
 	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
-			E('strong', {}, 'Re-HomeProxy AutoMod'),
+			E('strong', {}, 'Re:HomeProxy AutoMod'),
 			statusEl,
 			checkBtn,
 			remoteEl,
@@ -1052,7 +1052,7 @@ return view.extend({
 		s.anonymous = true;
 
 		o = s.option(form.DummyValue, '_homeproxy_logview');
-		o.render = L.bind(getRuntimeLog, this, o, _('Re-HomeProxy'));
+		o.render = L.bind(getRuntimeLog, this, o, _('Re:HomeProxy AutoMod'));
 
 		o = s.option(form.DummyValue, '_hiddify-c_logview');
 		o.render = L.bind(getRuntimeLog, this, o, _('core client'));

@@ -1,4 +1,4 @@
-name: Build Re-HomeProxy AutoMod
+name: Build Re:HomeProxy AutoMod
 
 # Builds the package on every push/PR (artifacts only). A GitHub Release is created
 # ONLY when you explicitly ask for one — via `workflow_dispatch` with a version, or by
@@ -212,11 +212,11 @@ jobs:
           file: .github/*.{apk,ipk,pub}
           file_glob: true
           tag: ${{ steps.tag.outputs.release_tag }}
-          release_name: Re-HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}
+          release_name: Re:HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}
           prerelease: false
           draft: false
           body: |
-            Re-HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}
+            Re:HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}
 
             Self-updating build of the Re-HomeProxy fork. See README for install / update instructions.
 
@@ -228,7 +228,7 @@ jobs:
           file: .github/legacy/*.ipk
           file_glob: true
           tag: ${{ steps.tag.outputs.release_tag }}-legacy
-          release_name: Re-HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}-legacy (OpenWRT 23.05)
+          release_name: Re:HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}-legacy (OpenWRT 23.05)
           prerelease: true
           draft: true
           body: "Legacy build for OpenWRT 23.05 — no ucode-mod-digest dependency."

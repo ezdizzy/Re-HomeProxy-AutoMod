@@ -5,14 +5,14 @@
 
 include $(TOPDIR)/rules.mk
 
-LUCI_TITLE:=Re-HomeProxy AutoMod - multi-core proxy platform (fork of ImmortalWrt HomeProxy)
+LUCI_TITLE:=Re:HomeProxy AutoMod - multi-core proxy platform (fork of ImmortalWrt HomeProxy)
 LUCI_PKGARCH:=all
 LUCI_DEPENDS:= \
 	+firewall4 \
 	+ucode-mod-digest
 
 PKG_NAME:=luci-app-re-homeproxy
-# Semantic version (X.Y.Z). This value IS the public version of Re-HomeProxy AutoMod:
+# Semantic version (X.Y.Z). This value IS the public version of Re:HomeProxy AutoMod:
 # the GitHub release tag is "v${PKG_VERSION}" and the in-app self-update compares the
 # locally installed version against the latest release tag. Bump it ONLY when cutting a
 # release (see LOCAL_CHANGELOG.md / README "Releases" section). Do NOT use a date/timestamp.

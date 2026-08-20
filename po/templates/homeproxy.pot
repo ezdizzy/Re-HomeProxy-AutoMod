@@ -338,6 +338,10 @@ msgstr ""
 msgid "Check update"
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/status.js:731
+msgid "The LuCI app itself. \"Check update\" compares your installed version with the latest GitHub release; \"Update\" downloads and installs the new app (and the Russian translation) in place."
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/client.js:217
 msgid "China DNS server"
 msgstr ""
@@ -2087,6 +2091,10 @@ msgstr ""
 msgid "Resources management"
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1003
+msgid "Application"
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 msgid "Core management"
 msgstr ""
@@ -3704,7 +3712,19 @@ msgid "Re-evaluate learned interval (seconds)"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Config reload throttle (seconds)"
+msgid "Learned-list flush interval (seconds)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "How often the learned list is pushed to the live routing rules (hot reload — no core restart). Newly learned sites then apply to new connections within this window. A full service restart also applies them, but this keeps them live without one."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Flush after N new entries (batch window)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Force a flush once this many new sites have been learned, even before the flush interval elapses. Batches a burst of learns into a single file update (one hot reload) instead of many. 0 = time-only."
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js

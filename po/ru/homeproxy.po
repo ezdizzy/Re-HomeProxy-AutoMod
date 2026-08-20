@@ -357,6 +357,10 @@ msgstr "Проверить"
 msgid "Check update"
 msgstr "Проверить обновление"
 
+#: htdocs/luci-static/resources/view/homeproxy/status.js:731
+msgid "The LuCI app itself. \"Check update\" compares your installed version with the latest GitHub release; \"Update\" downloads and installs the new app (and the Russian translation) in place."
+msgstr "Само приложение LuCI. «Проверить обновление» сравнивает вашу установленную версию с последним релизом на GitHub; «Обновить» загружает и устанавливает новое приложение (и русский перевод) на место."
+
 #: htdocs/luci-static/resources/view/homeproxy/client.js:217
 msgid "China DNS server"
 msgstr "DNS-сервер для Китая"
@@ -2193,6 +2197,10 @@ msgstr "Стратегия резолвинга"
 msgid "Resources management"
 msgstr "Управление ресурсами"
 
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1003
+msgid "Application"
+msgstr "Приложение"
+
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 msgid "Core management"
 msgstr "Управление ядром"
@@ -3848,8 +3856,21 @@ msgid "Diagnostics Report"
 msgstr "Отчёт диагностики"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
-msgid "Re-HomeProxy Diagnostics"
-msgstr "Диагностика Re-HomeProxy"
+msgid "Re:HomeProxy AutoMod Diagnostics"
+msgstr "Диагностика Re:HomeProxy AutoMod"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Re:HomeProxy AutoMod"
+msgstr "Re:HomeProxy AutoMod"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Re:HomeProxy AutoMod Server"
+msgstr "Сервер Re:HomeProxy AutoMod"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Re:HomeProxy AutoMod chains"
+msgstr "Цепочки Re:HomeProxy AutoMod"
 
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
 msgid "Core & Tools"
@@ -4481,9 +4502,13 @@ msgstr "Подтверждений до обучения"
 msgid "Re-evaluate learned interval (seconds)"
 msgstr "Интервал переоценки (сек)"
 
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Config reload throttle (seconds)"
-msgstr "Пауза перезагрузки конфига (сек)"
+#: htdocs/luci-static/resources/view/homeproxy/automation.js:131
+msgid "Learned-list flush interval (seconds)"
+msgstr "Интервал сброса изученного списка (сек)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js:132
+msgid "How often the learned list is pushed to the live routing rules (hot reload — no core restart). Newly learned sites then apply to new connections within this window. A full service restart also applies them, but this keeps them live without one."
+msgstr "Как часто изученный список выгружается в активные правила маршрутизации (горячая перезагрузка — без перезапуска ядра). Недавно изученные сайты применяются к новым соединениям в этом окне. Полный перезапуск службы тоже применяет их, но этот параметр держит их актуальными без перезапуска."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Never auto-learn (comma-separated)"
@@ -4577,13 +4602,13 @@ msgstr "Восстановить список (из файла)"
 msgid "Backup list downloads the learned sites to your computer. Restore list uploads a file and adds any missing sites (existing ones are kept). Use this to avoid re-learning from scratch after a router reset."
 msgstr "«Скачать список» выгружает изученные сайты на ваш компьютер. «Восстановить список» загружает файл и добавляет недостающие сайты (существующие сохраняются). Используйте это, чтобы не проходить обучение заново после сброса роутера."
 
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Apply after N new entries (batch window)"
-msgstr "Применять после N новых записей (пакетное окно)"
+#: htdocs/luci-static/resources/view/homeproxy/automation.js:137
+msgid "Flush after N new entries (batch window)"
+msgstr "Сбрасывать после N новых записей (пакетное окно)"
 
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Force an apply (core restart) once this many new sites have been learned, even before the reload throttle elapses. Batches a burst of learns into one restart. 0 disables the batch trigger (time-only)."
-msgstr "Принудительно применять (перезапуск ядра), как только изучено столько новых сайтов, даже до истечения таймаута перезагрузки. Сливать всплеск изученного в один перезапуск. 0 отключает пакетное правило (только по времени)."
+#: htdocs/luci-static/resources/view/homeproxy/automation.js:138
+msgid "Force a flush once this many new sites have been learned, even before the flush interval elapses. Batches a burst of learns into a single file update (one hot reload) instead of many. 0 = time-only."
+msgstr "Принудительно сбросить, как только изучено столько новых сайтов, даже до истечения интервала сброса. Сливает всплеск изученного в одно обновление файла (одну горячую перезагрузку) вместо множества. 0 = только по времени."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Backup failed: "

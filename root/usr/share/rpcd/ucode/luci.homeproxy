@@ -40,7 +40,7 @@ function hasKernelModule(kmod) {
 	return !!access('/sys/module/' + modname);
 }
 
-/* Latest Re-HomeProxy AutoMod release (from the app's own fork repo). Honors the
+/* Latest Re:HomeProxy AutoMod release (from the app's own fork repo). Honors the
  * optional GitHub token (higher rate limit). Returns the parsed JSON, or null on failure. */
 function app_github_release() {
 	const token_fd = popen('uci -q get homeproxy.config.github_token 2>/dev/null');
@@ -1509,7 +1509,7 @@ const methods = {
 		}
 	},
 
-	/* --- Re-HomeProxy AutoMod self-update (Core & Tools tab) --- */
+	/* --- Re:HomeProxy AutoMod self-update (Core & Tools tab) --- */
 
 	app_status: {
 		call: function(req) {
@@ -1652,6 +1652,7 @@ const methods = {
 		call: function(req) {
 			const state_file = RUN_DIR + '/automation_state.json';
 			const auto_list = HP_DIR + '/resources/auto_proxy_list.txt';
+			const auto_ip = HP_DIR + '/resources/auto_proxy_ip.txt';
 			const log_file = RUN_DIR + '/automation.log';
 
 			let state = {};
@@ -1663,8 +1664,30 @@ const methods = {
 			if (access(auto_list)) {
 				let c = trim(readfile(auto_list));
 				if (length(c))
-					learned = filter(split(c, /[\r\n]/), (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
+					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
+						push(learned, { host: trim(x), type: 'domain' });
 			}
+			if (access(auto_ip)) {
+				let c = trim(readfile(auto_ip));
+				if (length(c))
+					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
+						push(learned, { host: trim(x), type: 'ip' });
+			}
+
+			/* Attach per-entry metadata from the daemon state (added time, last check, reason). */
+			for (let i, e in learned) {
+				let st = state[e.host];
+				if (type(st) === 'object') {
+					e.status = st.status || 'blocked';
+					e.added = st.added || st.last_probe || 0;
+					e.last_probe = st.last_probe || 0;
+				} else {
+					e.status = 'blocked';
+					e.added = 0;
+					e.last_probe = 0;
+				}
+			}
+			sort(learned, (a, b) => (b.added || 0) - (a.added || 0));
 
 			let blocked = [], direct = [], unknown = [];
 			for (let h in state) {

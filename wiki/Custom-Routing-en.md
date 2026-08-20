@@ -49,7 +49,7 @@ Rules are evaluated top to bottom (the list is sortable) and the first match win
 - [Route Rule](https://sing-box.sagernet.org/configuration/route/rule/) — every match field
 - [Sniff](https://sing-box.sagernet.org/configuration/route/sniff/) — **Protocol** matching needs sniffing enabled (it is, by default)
 
-> **Protocol matching needs sniffing.** Matching by `quic`, `tls`, `bittorrent`, etc. relies on the inbound sniffing the first packets — Re-HomeProxy enables this on its inbounds, so it works out of the box.
+> **Protocol matching needs sniffing.** Matching by `quic`, `tls`, `bittorrent`, etc. relies on the inbound sniffing the first packets — Re:HomeProxy AutoMod enables this on its inbounds, so it works out of the box.
 
 ---
 

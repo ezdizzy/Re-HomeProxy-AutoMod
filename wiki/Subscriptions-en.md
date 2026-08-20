@@ -2,7 +2,7 @@
 
 # Subscriptions & Node Import
 
-There are four ways to get nodes into Re-HomeProxy. All live on **Node Settings → Nodes** (import buttons) and **Node Settings → Subscriptions**.
+There are four ways to get nodes into Re:HomeProxy AutoMod. All live on **Node Settings → Nodes** (import buttons) and **Node Settings → Subscriptions**.
 
 ---
 
@@ -26,7 +26,7 @@ The **Import share links** button accepts one link per line. Supported schemes:
 
 ### AmneziaVPN `vpn://` links
 
-Re-HomeProxy fully decodes Amnezia's `vpn://` share format (`base64url(qCompress(zlib JSON))`) right in the browser — no helper tool needed. It reads the container inside and recognises **both** Amnezia config types automatically:
+Re:HomeProxy AutoMod fully decodes Amnezia's `vpn://` share format (`base64url(qCompress(zlib JSON))`) right in the browser — no helper tool needed. It reads the container inside and recognises **both** Amnezia config types automatically:
 
 - **AmneziaWG** (`amnezia-awg` / `amnezia-awg2`) → an **AmneziaWG** node, with the full obfuscation parameter set (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5`), MTU, keepalive and keys. *Requires the sing-box-extended core* — see [Supported Protocols](Supported-Protocols-en).
 - **Xray** (`amnezia-xray`) → the Xray outbound inside is parsed into a node, including **VLESS + Reality/TLS** and the transport (`ws`, `grpc`, `xhttp`/`splithttp`, HTTPUpgrade) with their settings.
@@ -35,7 +35,7 @@ So an Amnezia link works whether it carries an AmneziaWG or an Xray profile.
 
 ### Base64
 
-Subscription and share-link payloads are very often **base64**-encoded — this is the norm, not an edge case. Re-HomeProxy decodes base64 transparently:
+Subscription and share-link payloads are very often **base64**-encoded — this is the norm, not an edge case. Re:HomeProxy AutoMod decodes base64 transparently:
 
 - A pasted block that is one big base64 blob is decoded into its list of links.
 - Individual `ss://` / `vmess://` links carry their own base64 (userinfo, VMess JSON) — handled automatically.
@@ -58,7 +58,7 @@ The **Import .conf** button reads a **WireGuard** or **AmneziaWG** `.conf` file 
 
 ## 3. Subscription URLs (auto-updating)
 
-On the **Subscriptions** tab, add one or more **Subscription URL-s**. The router fetches them and keeps the node list in sync. Re-HomeProxy understands several response formats automatically:
+On the **Subscriptions** tab, add one or more **Subscription URL-s**. The router fetches them and keeps the node list in sync. Re:HomeProxy AutoMod understands several response formats automatically:
 
 - **Base64 / plain share-link lists** — the classic subscription format (one encoded link per line).
 - **sing-box JSON / Hiddify** — when the subscription is served as a sing-box/Hiddify JSON config. The correct format is requested via the **User-Agent**, so the same URL can return different formats to different clients.

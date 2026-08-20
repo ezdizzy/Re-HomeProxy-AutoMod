@@ -2,7 +2,7 @@
 
 # Supported Protocols
 
-Re-HomeProxy runs on a choice of cores: [hiddify-core](https://github.com/hiddify/hiddify-core) (default) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) — both forks of [sing-box](https://sing-box.sagernet.org) with additional protocols and features not available upstream. The protocols shown in the node editor depend on **which core you installed** and how it was compiled on your device. You choose and install the core on the **Core management** section (Services → Re-HomeProxy → Core & Tools).
+Re:HomeProxy AutoMod runs on a choice of cores: [hiddify-core](https://github.com/hiddify/hiddify-core) (default) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) — both forks of [sing-box](https://sing-box.sagernet.org) with additional protocols and features not available upstream. The protocols shown in the node editor depend on **which core you installed** and how it was compiled on your device. You choose and install the core on the **Core management** section (Services → Re:HomeProxy AutoMod → Core & Tools).
 
 ---
 

@@ -2,7 +2,7 @@
 
 # Zapret
 
-**Zapret 2** is a second, packet-level DPI-bypass built into Re-HomeProxy. It un-throttles and unblocks sites **without any VPN subscription** by desyncing the handshake of selected flows directly on the wire. Re-HomeProxy bundles the [bol-van/zapret2](https://github.com/bol-van/zapret2) engine (`nfqws2`) and manages it for you.
+**Zapret 2** is a second, packet-level DPI-bypass built into Re:HomeProxy AutoMod. It un-throttles and unblocks sites **without any VPN subscription** by desyncing the handshake of selected flows directly on the wire. Re:HomeProxy AutoMod bundles the [bol-van/zapret2](https://github.com/bol-van/zapret2) engine (`nfqws2`) and manages it for you.
 
 It complements [ByeDPI](ByeDPI-en): same goal, different layer. See [ByeDPI vs Zapret](#byedpi-vs-zapret) below.
 
@@ -38,8 +38,8 @@ Because it is a marked *direct* outbound (not a tunnel), `zapret-out` falls back
 
 ## Enabling Zapret
 
-1. Go to **Services → Re-HomeProxy → Node Settings** and open the **Zapret** tab.
-2. If `nfqws2` is not installed yet, use the **Install** button — Re-HomeProxy fetches the right [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt) package for your architecture.
+1. Go to **Services → Re:HomeProxy AutoMod → Node Settings** and open the **Zapret** tab.
+2. If `nfqws2` is not installed yet, use the **Install** button — Re:HomeProxy AutoMod fetches the right [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt) package for your architecture.
 3. Tick **Enable**, pick a strategy preset (see below), and **Save & Apply**.
 
 That's all for the engine. The `--qnum` / `--user` / `--fwmark` / `--lua-init` arguments are added automatically — you only edit the desync strategy itself.

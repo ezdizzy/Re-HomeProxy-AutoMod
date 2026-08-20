@@ -108,9 +108,9 @@ function renderStatus(isRunning, features) {
 	let spanTemp = '<em><span style="color:%s"><strong>%s (%s) %s</strong></span></em>';
 	let renderHTML;
 	if (isRunning)
-		renderHTML = spanTemp.format('green', _('Re-HomeProxy'), coreStr, _('RUNNING'));
+		renderHTML = spanTemp.format('green', _('Re:HomeProxy AutoMod'), coreStr, _('RUNNING'));
 	else
-		renderHTML = spanTemp.format('red', _('Re-HomeProxy'), coreStr, _('NOT RUNNING'));
+		renderHTML = spanTemp.format('red', _('Re:HomeProxy AutoMod'), coreStr, _('NOT RUNNING'));
 
 	return renderHTML;
 }
@@ -155,7 +155,7 @@ return view.extend({
 					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport));
 		});
 
-		m = new form.Map('homeproxy', _('Re-HomeProxy'),
+		m = new form.Map('homeproxy', _('Re:HomeProxy AutoMod'),
 			_('The modern multi-core proxy platform. Fork of ImmortalWrt.'));
 
 		s = m.section(form.TypedSection);

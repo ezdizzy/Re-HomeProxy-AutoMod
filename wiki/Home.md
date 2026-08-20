@@ -1,4 +1,4 @@
-# Re-HomeProxy Wiki
+# Re:HomeProxy AutoMod Wiki
 
 ---
 

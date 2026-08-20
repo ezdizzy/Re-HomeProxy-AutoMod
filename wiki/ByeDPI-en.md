@@ -2,7 +2,7 @@
 
 # ByeDPI
 
-**ByeDPI** is a built-in DPI-bypass that can un-throttle and unblock sites **without any VPN subscription**. Re-HomeProxy bundles the [ByeDPI](https://github.com/hufrea/byedpi) engine (`ciadpi`) and manages it for you.
+**ByeDPI** is a built-in DPI-bypass that can un-throttle and unblock sites **without any VPN subscription**. Re:HomeProxy AutoMod bundles the [ByeDPI](https://github.com/hufrea/byedpi) engine (`ciadpi`) and manages it for you.
 
 ---
 
@@ -24,17 +24,17 @@ Think of ByeDPI as a complement to a VPN node (offload throttled sites like YouT
 
 ## Enabling ByeDPI
 
-1. Go to **Services → Re-HomeProxy → Node Settings** and open the **ByeDPI** section.
-2. If `ciadpi` is not installed yet, use the **Install** button — Re-HomeProxy fetches the right `byedpi` package for your architecture.
+1. Go to **Services → Re:HomeProxy AutoMod → Node Settings** and open the **ByeDPI** section.
+2. If `ciadpi` is not installed yet, use the **Install** button — Re:HomeProxy AutoMod fetches the right `byedpi` package for your architecture.
 3. Tick **Enable**, pick a strategy (see below), and **Save & Apply**.
 
-That's all that's needed for the engine. Re-HomeProxy starts `ciadpi` for you and prevents it from looping back through the proxy automatically — you do not need to touch the firewall or process settings.
+That's all that's needed for the engine. Re:HomeProxy AutoMod starts `ciadpi` for you and prevents it from looping back through the proxy automatically — you do not need to touch the firewall or process settings.
 
 ---
 
 ## Strategies and presets
 
-A "strategy" is the set of command-line options ByeDPI uses to mangle the handshake. There is no universal best strategy — **what works depends on your ISP's DPI**. Re-HomeProxy ships **47 ready-made presets** grouped by technique (named by group letter, e.g. `C3`, `I1`):
+A "strategy" is the set of command-line options ByeDPI uses to mangle the handshake. There is no universal best strategy — **what works depends on your ISP's DPI**. Re:HomeProxy AutoMod ships **47 ready-made presets** grouped by technique (named by group letter, e.g. `C3`, `I1`):
 
 | Group | Examples | Idea |
 |-------|----------|------|
@@ -86,7 +86,7 @@ ByeDPI appears as a selectable node (**ByeDPI**) once enabled. Two common setups
 
 ## DNS
 
-ByeDPI is a desync, not a tunnel, so DNS does **not** go through it. When ByeDPI carries traffic, Re-HomeProxy resolves names **directly** (your configured Secure DNS detours direct-out for ByeDPI). Trying to push DoH/DoT or UDP DNS *through* ByeDPI fails — the handshake mangling corrupts the encrypted DNS session. This is handled automatically; there is nothing to configure.
+ByeDPI is a desync, not a tunnel, so DNS does **not** go through it. When ByeDPI carries traffic, Re:HomeProxy AutoMod resolves names **directly** (your configured Secure DNS detours direct-out for ByeDPI). Trying to push DoH/DoT or UDP DNS *through* ByeDPI fails — the handshake mangling corrupts the encrypted DNS session. This is handled automatically; there is nothing to configure.
 
 ---
 

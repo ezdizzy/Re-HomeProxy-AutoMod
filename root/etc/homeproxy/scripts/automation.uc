@@ -2,7 +2,7 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-only
  *
- * Re-HomeProxy — Automatic blocked-site / destination detection daemon.
+ * Re:HomeProxy AutoMod — Automatic blocked-site / destination detection daemon.
  *
  * Discovery sources (UCI automation.discover, comma-separated):
  *   clash     — Clash API /connections (domain names of live traffic)
@@ -286,8 +286,8 @@ function main() {
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
 	let discover = uci.get('homeproxy', 'automation', 'discover') || 'clash';
 	let reeval_interval = int(uci.get('homeproxy', 'automation', 'reeval_interval') || '3600') || 3600;
-	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '60') || 60;
-	let flush_min_entries = int(uci.get('homeproxy', 'automation', 'flush_min_entries') || '5') || 5;
+	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '10') || 10;
+	let flush_min_entries = int(uci.get('homeproxy', 'automation', 'flush_min_entries') || '1') || 1;
 	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '0';
 	excludes = split(trim(uci.get('homeproxy', 'automation', 'exclude') || 'localhost,local,lan,in-addr.arpa,ip6.arpa'), ',');
 	excludes = filter(excludes, (x) => length(trim(x)));
@@ -353,11 +353,11 @@ function main() {
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;
 			if (st.confirms >= min_confirm) {
-			if (is_ip) {
-				if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom}`); pending_reload = true; pending_new++; }
-			} else if (!auto_set[dom]) {
-				auto_set[dom] = true; write_auto_list(auto_set); log(`learned BLOCKED: ${dom}`); pending_reload = true; pending_new++;
-			}
+		if (is_ip) {
+			if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom}`); pending_reload = true; pending_new++; }
+		} else if (!auto_set[dom]) {
+			auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom}`); pending_reload = true; pending_new++;
+		}
 			}
 		} else if (direct_res === 'ok') {
 			st.status = 'direct'; st.confirms = 0;

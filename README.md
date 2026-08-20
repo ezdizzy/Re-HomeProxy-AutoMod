@@ -6,12 +6,12 @@
   <a href="https://nowpayments.io/donation?api_key=decbeb76-30f8-4c6d-ba40-2d2dec7fd888"><img src="https://img.shields.io/badge/Crypto-Donate-2EBE74?style=flat-square&logo=bitcoin&logoColor=white" alt="Crypto donate"></a>
 </p>
 
-# Re-HomeProxy AutoMod
+# Re:HomeProxy AutoMod
 
 A modern multi-core proxy platform powered by [hiddify-core](https://github.com/hiddify/hiddify-core) and [sing-box-extended](https://github.com/shtorm-7/sing-box-extended).
 A fork of [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy).
 
-> **Re-HomeProxy AutoMod** is a mod of Re-HomeProxy by **@ezdizzy**. It builds on the original
+> **Re:HomeProxy AutoMod** is a mod of Re-HomeProxy by **@ezdizzy**. It builds on the original
 > Re-HomeProxy app and adds AutoMod-specific changes (see *AutoMod modifications* below) — most importantly the **Automation**
 > tab and **in-app self-update**. The proxy cores, ByeDPI and Zapret engines are fetched from their own upstream releases;
 > only the LuCI app and its Russian translation are built here (repo `ezdizzy/re-homeproxy`).
@@ -77,7 +77,7 @@ Optionally legacy build for 23.05 is available in Releases.
 ## Installation
 
 *~40 MB of free space recommended. Tight on storage? Install the LuCI app first, then use its **Core & Tools** tab
-(Services → Re-HomeProxy AutoMod → Core & Tools) to install a core — it auto-picks a build that fits, including a
+(Services → Re:HomeProxy AutoMod → Core & Tools) to install a core — it auto-picks a build that fits, including a
 compact build for small memory devices.*
 
 ### Quick install (one-liner)
@@ -112,7 +112,7 @@ Once the key is in `/etc/apk/keys/` it is trusted permanently — no flag needed
 
 #### 2. Install components from the **Core & Tools** tab
 
-Open **Services → Re-HomeProxy AutoMod → Core & Tools** and install what you need — the installer auto-picks a build
+Open **Services → Re:HomeProxy AutoMod → Core & Tools** and install what you need — the installer auto-picks a build
 that fits your storage:
 
 - **Proxy core** *(required, pick one)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (default) or
@@ -121,7 +121,7 @@ that fits your storage:
   strategy tester.
 - **Zapret 2** *(optional)* — packet-level (nfqws2) DPI bypass selected per routing rule, with curated presets and
   optional Discord-voice desync.
-- **Re-HomeProxy AutoMod** *(the app itself)* — see *Updating the app*; update in place from this tab.
+- **Re:HomeProxy AutoMod** *(the app itself)* — see *Updating the app*; update in place from this tab.
 
 ### OpenWRT 24.10 (opkg)
 
@@ -134,7 +134,7 @@ opkg install /tmp/luci-app-re-homeproxy.ipk
 
 #### 2. Install components from the **Core & Tools** tab
 
-Open **Services → Re-HomeProxy AutoMod → Core & Tools** and install what you need — the installer auto-picks a build
+Open **Services → Re:HomeProxy AutoMod → Core & Tools** and install what you need — the installer auto-picks a build
 that fits your storage (same options as the APK section above).
 
 ### Manual install over SSH (alternative to the Core & Tools tab)
@@ -190,15 +190,15 @@ if [ "$EXT" = apk ]; then apk add /tmp/zapret2.apk; else opkg install /tmp/zapre
 /etc/init.d/homeproxy start
 ```
 
-The service will auto-start on boot. Monitor logs at **Services → Re-HomeProxy AutoMod → Core & Tools**.
+The service will auto-start on boot. Monitor logs at **Services → Re:HomeProxy AutoMod → Core & Tools**.
 
 ## Updating the app (AutoMod self-update)
 
-You do **not** need the SSH console to update Re-HomeProxy AutoMod:
+You do **not** need the SSH console to update Re:HomeProxy AutoMod:
 
-1. Open **Services → Re-HomeProxy AutoMod → Core & Tools**.
+1. Open **Services → Re:HomeProxy AutoMod → Core & Tools**.
 2. In the **Application** card, click **Check update**. It compares your installed version (shown as
-   `Re-HomeProxy AutoMod vX.Y.Z`) with the latest GitHub release of `ezdizzy/re-homeproxy`.
+   `Re:HomeProxy AutoMod vX.Y.Z`) with the latest GitHub release of `ezdizzy/re-homeproxy`.
 3. If an update is available, click **Update**. The app downloads the new `luci-app-re-homeproxy` package (and the
    Russian translation) and installs it in place; rpcd restarts automatically and the page reloads.
 
@@ -208,12 +208,7 @@ You do **not** need the SSH console to update Re-HomeProxy AutoMod:
 
 ## Versioning & Releases
 
-- **Version scheme:** semantic `X.Y.Z` (e.g. `1.0.0`). The version lives in `Makefile` (`PKG_VERSION`) and is the single
-  source of truth — the GitHub release tag is `vX.Y.Z` and the in-app self-update compares the locally installed version
-  against that tag.
-- **No automatic releases.** Pushing commits to `master` only builds artifacts — it does **not** publish a GitHub release.
-  A release is created only for finished, tested builds.
-- After a release is published, the **Check update** button in the app will offer it to installed routers.
+- **Version scheme:** semantic `X.Y.Z` (e.g. `1.0.0`).
 
 ## Documentation
 

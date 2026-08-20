@@ -2,7 +2,7 @@
 
 # Поддерживаемые протоколы
 
-Re-HomeProxy работает на выбор ядра: [hiddify-core](https://github.com/hiddify/hiddify-core) (по умолчанию) или [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) — оба форки [sing-box](https://sing-box.sagernet.org) с дополнительными протоколами и функциями, недоступными в upstream. Отображаемые в редакторе узлов протоколы зависят от того, **какое ядро вы установили** и с какими флагами оно собрано на вашем устройстве. Ядро выбирается и устанавливается в разделе **Управление ядром** (Сервисы → Re-HomeProxy → Ядро и службы).
+Re:HomeProxy AutoMod работает на выбор ядра: [hiddify-core](https://github.com/hiddify/hiddify-core) (по умолчанию) или [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) — оба форки [sing-box](https://sing-box.sagernet.org) с дополнительными протоколами и функциями, недоступными в upstream. Отображаемые в редакторе узлов протоколы зависят от того, **какое ядро вы установили** и с какими флагами оно собрано на вашем устройстве. Ядро выбирается и устанавливается в разделе **Управление ядром** (Сервисы → Re:HomeProxy AutoMod → Ядро и службы).
 
 ---
 

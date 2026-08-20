@@ -2,7 +2,7 @@
 
 # Core Management
 
-Re-HomeProxy is **multi-core**: the LuCI app is the interface, and a separate **core** binary does the actual proxying. You install, update, and switch cores from **Services → Re-HomeProxy → Core & Tools → Core management** — no SSH required.
+Re:HomeProxy AutoMod is **multi-core**: the LuCI app is the interface, and a separate **core** binary does the actual proxying. You install, update, and switch cores from **Services → Re:HomeProxy AutoMod → Core & Tools → Core management** — no SSH required.
 
 ---
 
@@ -56,8 +56,8 @@ Tight on flash but building your own image? Large cores fit comfortably when **b
 ## Switching cores and updating
 
 - **Update:** press **Install** again — it fetches the latest release and reinstalls.
-- **Switch cores:** install the other core; if both are present, Re-HomeProxy uses your **Preferred core** setting (on **Client → Routing Settings**). The config generator and the service honour the same preference, so the generated config always matches the core that will run it.
-- **Custom / external core:** instead of the managed install you can point Re-HomeProxy at a **self-provided core binary** (a build you compiled, or a version not in Releases) — it detects and uses it. Advanced setups only.
+- **Switch cores:** install the other core; if both are present, Re:HomeProxy AutoMod uses your **Preferred core** setting (on **Client → Routing Settings**). The config generator and the service honour the same preference, so the generated config always matches the core that will run it.
+- **Custom / external core:** instead of the managed install you can point Re:HomeProxy AutoMod at a **self-provided core binary** (a build you compiled, or a version not in Releases) — it detects and uses it. Advanced setups only.
 - **Version / status:** the **Core management** section shows the installed core and version. If it shows all `?`, the backend (rpcd) is stale — restart it (`/etc/init.d/rpcd restart`) and reload the page.
 
 ---

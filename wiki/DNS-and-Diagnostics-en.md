@@ -2,7 +2,7 @@
 
 # DNS & Diagnostics
 
-Two related topics: how Re-HomeProxy resolves names (and why that matters for leaks), and how to verify everything works.
+Two related topics: how Re:HomeProxy AutoMod resolves names (and why that matters for leaks), and how to verify everything works.
 
 ---
 
@@ -40,7 +40,7 @@ In Russia mode, **IPv6 support is off by default on purpose**: the RU routing li
 
 ## Diagnostics
 
-The **Diagnostics** page (Services → Re-HomeProxy → Diagnostics) runs live checks. Each card has its own **Check** button.
+The **Diagnostics** page (Services → Re:HomeProxy AutoMod → Diagnostics) runs live checks. Each card has its own **Check** button.
 
 | Card | What it shows |
 |------|---------------|

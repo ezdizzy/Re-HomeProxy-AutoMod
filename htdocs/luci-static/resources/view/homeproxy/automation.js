@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Re-HomeProxy — Automation tab.
+ * Re:HomeProxy AutoMod — Automation tab.
  * Settings for the auto blocked-site detection engine plus a live monitor of what it
  * has learned. The detection only ADDS sites proven unreachable directly yet reachable
  * via the proxy, and routes them through the user's configured main path — so it stays
@@ -128,14 +128,17 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.placeholder = '3600';
 
-		o = s.option(form.Value, 'reload_interval', _('Config reload throttle (seconds)'));
+		o = s.option(form.Value, 'reload_interval', _('Learned-list flush interval (seconds)'),
+			_('How often the learned list is pushed to the live routing rules (hot reload — no core restart). Newly learned sites then apply to new connections within this window. A full service restart also applies them, but this keeps them live without one.'));
 		o.datatype = 'uinteger';
-		o.placeholder = '300';
+		o.default = '10';
+		o.placeholder = '10';
 
-		o = s.option(form.Value, 'flush_min_entries', _('Apply after N new entries (batch window)'),
-			_('Force an apply (core restart) once this many new sites have been learned, even before the reload throttle elapses. Batches a burst of learns into one restart. 0 disables the batch trigger (time-only).'));
+		o = s.option(form.Value, 'flush_min_entries', _('Flush after N new entries (batch window)'),
+			_('Force a flush once this many new sites have been learned, even before the flush interval elapses. Batches a burst of learns into a single file update (one hot reload) instead of many. 0 = time-only.'));
 		o.datatype = 'uinteger';
-		o.placeholder = '5';
+		o.default = '1';
+		o.placeholder = '1';
 
 		o = s.option(form.Value, 'exclude', _('Never auto-learn (comma-separated)'),
 			_('Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names.'));
@@ -198,16 +201,31 @@ return view.extend({
 			btn(_('Restart service'), function() { return callRestart(); })
 		]);
 
+		const styleEl = E('style', {}, [ '.automation-table{margin-top:4px}.automation-table table{width:100%;border-collapse:collapse;margin-top:6px;font-size:.92em}.automation-table th,.automation-table td{border:1px solid #e2e2e2;padding:5px 8px;text-align:left;vertical-align:top}.automation-table thead th{background:#e8e8e8;font-weight:600;position:sticky;top:0}.automation-table thead th:first-child{border-top-left-radius:4px}.automation-table thead th:last-child{border-top-right-radius:4px}.automation-table tbody tr:hover{background:#f0f6ff}.automation-table .col-type{text-align:center;white-space:nowrap}.automation-table .col-added,.automation-table .col-check{white-space:nowrap;color:#555}' ]);
+
 		const panel = E('div', { 'class': 'automation-panel cbi-section' }, [
+			styleEl,
 			E('h3', {}, [ _('Monitor') ]),
 			countsEl,
+			E('h4', {}, [ _('Learned sites') ]),
 			tableEl,
-			E('div', { 'class': 'automation-actions' }, [ actions ]),
+			actions,
 			E('p', { 'class': 'automation-hint' }, [ _('Backup list downloads the learned sites to your computer. Restore list uploads a file and adds any missing sites (existing ones are kept). Use this to avoid re-learning from scratch after a router reset.') ]),
 			fileInput,
 			E('h4', {}, [ _('Engine log') ]),
 			logEl
 		]);
+
+		function fmtTime(ts) {
+			if (!ts) return '—';
+			try { return new Date(Number(ts) * 1000).toLocaleString(); }
+			catch (e) { return String(ts); }
+		}
+
+		function reasonText(e) {
+			if (e.status === 'blocked') return _('direct ✗ / proxy ✓');
+			return e.status || '—';
+		}
 
 		function renderTable(learned) {
 			tableEl.innerHTML = '';
@@ -215,8 +233,28 @@ return view.extend({
 				tableEl.appendChild(E('em', {}, [ _('Nothing learned yet. Browse the web or press “Test now”.') ]));
 				return;
 			}
-			for (let i = 0; i < learned.length && i < 500; i++)
-				tableEl.appendChild(E('div', { 'class': 'automation-row' }, [ learned[i] ]));
+			const table = E('table', { 'class': 'table cbi-section-table', 'style': 'width:100%' });
+			table.appendChild(E('thead', {}, [ E('tr', {}, [
+				E('th', { 'class': 'col-site' }, [ _('Site') ]),
+				E('th', { 'class': 'col-type' }, [ _('Type') ]),
+				E('th', { 'class': 'col-added' }, [ _('Added') ]),
+				E('th', { 'class': 'col-check' }, [ _('Last check') ]),
+				E('th', { 'class': 'col-why' }, [ _('Why') ])
+			]) ]));
+			const tbody = E('tbody', {});
+			const maxRows = 500;
+			for (let i = 0; i < learned.length && i < maxRows; i++) {
+				const e = learned[i];
+				tbody.appendChild(E('tr', {}, [
+					E('td', { 'class': 'col-site' }, [ String(e.host || '') ]),
+					E('td', { 'class': 'col-type' }, [ e.type === 'ip' ? _('IP') : _('Domain') ]),
+					E('td', { 'class': 'col-added' }, [ String(fmtTime(e.added)) ]),
+					E('td', { 'class': 'col-check' }, [ String(fmtTime(e.last_probe)) ]),
+					E('td', { 'class': 'col-why' }, [ String(reasonText(e)) ])
+				]));
+			}
+			table.appendChild(tbody);
+			tableEl.appendChild(E('div', { 'style': 'max-height:340px; overflow:auto; margin-top:4px' }, [ table ]));
 		}
 
 		function refresh() {

@@ -76,6 +76,17 @@ export function wGET(url, ua) {
 	const output = executeCommand(`/usr/bin/wget -qO- --user-agent ${shellQuote(ua)} --timeout=10 ${shellQuote(url)}`) || {};
 	return trim(output.stdout);
 };
+/* Write a rule-set file atomically (temp + rename) so the core's file watcher never
+ * reads a half-written JSON: fsnotify can fire mid-write, and a truncated parse error
+ * would keep the previous (stale) rules until the next event. rename(2) is atomic on the
+ * overlayfs upper layer, and sing-box (>=1.10.0) correctly tracks a file replaced via
+ * rename (mv), so the watcher keeps working after the swap. */
+function write_ruleset_file(path, obj) {
+	let tmp = path + '.tmp';
+	writefile(tmp, sprintf('%.J\n', obj));
+	system('mv -f ' + shellQuote(tmp) + ' ' + shellQuote(path));
+}
+
 /* Learned-list hot reload:
  * Write the auto-detected blocked-site lists as sing-box RuleSet source JSON files so the
  * core can hot-reload them via its LOCAL rule-set file watcher — no service restart, no
@@ -121,17 +132,17 @@ export function sync_learned_rulesets() {
 			});
 	}
 
-	writefile(res + '/proxy_domain.json', sprintf('%.J\n', {
+	write_ruleset_file(res + '/proxy_domain.json', {
 		version: 1,
-		rules: domains.length ? [ { domain_keyword: domains } ] : []
-	}));
-	writefile(res + '/auto_ip.json', sprintf('%.J\n', {
+		rules: length(domains) ? [ { domain_keyword: domains } ] : []
+	});
+	write_ruleset_file(res + '/auto_ip.json', {
 		version: 1,
-		rules: ips.length ? [ { ip_cidr: ips } ] : []
-	}));
+		rules: length(ips) ? [ { ip_cidr: ips } ] : []
+	});
 
 	return { domains: length(domains), ips: length(ips) };
-}
+};
 
 /* Utilities end */
 
