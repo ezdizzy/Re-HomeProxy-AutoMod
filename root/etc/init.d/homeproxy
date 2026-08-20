@@ -42,6 +42,19 @@ start_service() {
 		fi
 	fi
 
+	# Ensure the automation section exists. The LuCI Automation tab renders a NamedSection
+	# for `homeproxy.automation`; if that section is absent from /etc/config/homeproxy
+	# (e.g. carried over from an older build or the upstream core package, since conffiles
+	# are never overwritten on reinstall), the tab shows only its heading and none of its
+	# options — including the master "Enable automation" switch. Create it with safe
+	# defaults so the tab is always usable. Idempotent.
+	if ! uci -q get "$CONF.automation" >/dev/null 2>&1; then
+		uci -q set "$CONF.automation=homeproxy"
+		uci -q set "$CONF.automation.enabled=0"
+		uci -q commit "$CONF"
+		log "created missing $CONF.automation section (defaults)."
+	fi
+
 	config_load "$CONF"
 
 	local preferred_core
