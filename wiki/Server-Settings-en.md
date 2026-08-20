@@ -2,9 +2,9 @@
 
 # Server Settings
 
-Most of Re:HomeProxy is a **client** — the router dials *out* to proxy nodes. **Server Settings** is the reverse: it runs **inbounds** on the router so other devices can connect *in*. Use it to turn the router into your own endpoint (e.g. a home server you reach from a phone while away), or to expose a local SOCKS/HTTP proxy to the LAN.
+Most of Re-HomeProxy is a **client** — the router dials *out* to proxy nodes. **Server Settings** is the reverse: it runs **inbounds** on the router so other devices can connect *in*. Use it to turn the router into your own endpoint (e.g. a home server you reach from a phone while away), or to expose a local SOCKS/HTTP proxy to the LAN.
 
-Open it at **Services → Re:HomeProxy → Server Settings**. It is independent of client mode — run either, both, or neither. A fresh install has **no inbounds**; you add them here.
+Open it at **Services → Re-HomeProxy → Server Settings**. It is independent of client mode — run either, both, or neither. A fresh install has **no inbounds**; you add them here.
 
 > ⚠️ An inbound opens a listening port. Turn on **Firewall** (below) only for inbounds you want reachable from the Internet, and always protect them with a strong password and/or TLS.
 

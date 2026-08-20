@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Re:HomeProxy — Automation tab.
+ * Re-HomeProxy — Automation tab.
  * Settings for the auto blocked-site detection engine plus a live monitor of what it
  * has learned. The detection only ADDS sites proven unreachable directly yet reachable
  * via the proxy, and routes them through the user's configured main path — so it stays

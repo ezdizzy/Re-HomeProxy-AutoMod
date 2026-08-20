@@ -2,9 +2,9 @@
 
 # Getting Started
 
-This page walks you from a fresh install to a working connection. It assumes Re:HomeProxy is already installed (see the [README](../../blob/master/README.md) for package installation).
+This page walks you from a fresh install to a working connection. It assumes Re-HomeProxy is already installed (see the [README](../../blob/master/README.md) for package installation).
 
-> Everything below is done in the LuCI web UI: **Services → Re:HomeProxy**.
+> Everything below is done in the LuCI web UI: **Services → Re-HomeProxy**.
 
 ---
 
@@ -34,7 +34,7 @@ All import methods and formats: **[Subscriptions & Node Import](Subscriptions-en
 
 ## Step 3 — Select the main node
 
-Back on the **Client** page, set **Main node** to the node you added — or choose **URLTest** to let Re:HomeProxy automatically pick and fail over to the fastest reachable node.
+Back on the **Client** page, set **Main node** to the node you added — or choose **URLTest** to let Re-HomeProxy automatically pick and fail over to the fastest reachable node.
 
 ---
 

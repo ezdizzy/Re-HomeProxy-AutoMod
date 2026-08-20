@@ -6,20 +6,20 @@
   <a href="https://nowpayments.io/donation?api_key=decbeb76-30f8-4c6d-ba40-2d2dec7fd888"><img src="https://img.shields.io/badge/Crypto-Donate-2EBE74?style=flat-square&logo=bitcoin&logoColor=white" alt="Crypto donate"></a>
 </p>
 
-# Re:HomeProxy AutoMod
+# Re-HomeProxy AutoMod
 
 Современная многоядерная прокси-платформа на основе [hiddify-core](https://github.com/hiddify/hiddify-core) и
 [sing-box-extended](https://github.com/shtorm-7/sing-box-extended).
 Форк [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy).
 
-> **Re:HomeProxy AutoMod** — мод Re:HomeProxy от **@ezdizzy**. Этот мод дополняет оригинальное приложение Re:HomeProxy
+> **Re-HomeProxy AutoMod** — мод Re-HomeProxy от **@ezdizzy**. Этот мод дополняет оригинальное приложение Re-HomeProxy
 > доработками AutoMod (см. раздел *Доработки AutoMod* ниже) — прежде всего вкладкой **«Автоматизация»** и
 > **самообновлением приложения из веб-интерфейса**. Ядра прокси, ByeDPI и Zapret берутся из собственных релизов вышестоящих
 > проектов; здесь собираются только LuCI-приложение и его русская локализация (репозиторий `ezdizzy/re-homeproxy`).
 
 ## Обзор
 
-Re:HomeProxy — многофункциональная система управления прокси, новый взгляд на HomeProxy от ImmortalWrt. Работает на выбор
+Re-HomeProxy — многофункциональная система управления прокси, новый взгляд на HomeProxy от ImmortalWrt. Работает на выбор
 ядра ([hiddify-core](https://github.com/hiddify/hiddify-core) или [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)),
 включает встроенный обход DPI на основе [Zapret2](https://github.com/bol-van/zapret2) и [ByeDPI](https://github.com/hufrea/byedpi)
 для разблокировки сайтов без VPN, готовые правила маршрутизации для России и установщик ядра в один клик — всё из
@@ -27,7 +27,7 @@ Re:HomeProxy — многофункциональная система упра�
 
 ## Доработки AutoMod
 
-Этот мод добавляет поверх оригинального приложения Re:HomeProxy:
+Этот мод добавляет поверх оригинального приложения Re-HomeProxy:
 
 - **Вкладка «Автоматизация»** — автоматическое обнаружение заблокированных сайтов. Фоновый монитор проверяет узлы и
   напрямую, и через прокси; домен, не открывающийся напрямую, но работающий через прокси, запоминается (базовый домен +
@@ -81,7 +81,7 @@ Re:HomeProxy — многофункциональная система упра�
 ## Установка
 
 *Рекомендуется ~40 Мб свободного места. Мало места? Сначала установите пакет LuCI, затем на вкладке **«Ядро и службы»**
-(Службы → Re:HomeProxy AutoMod → Ядро и службы) установите ядро — оно само подберёт подходящую сборку для устройств с
+(Службы → Re-HomeProxy AutoMod → Ядро и службы) установите ядро — оно само подберёт подходящую сборку для устройств с
 малым объёмом памяти.*
 
 ### Быстрая установка (одной строкой)
@@ -103,7 +103,7 @@ wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.
 
 ### OpenWRT 25.12+ (APK)
 
-#### 1. Установка пакета Re:HomeProxy
+#### 1. Установка пакета Re-HomeProxy
 
 ```sh
 wget -O /tmp/homeproxy-hiddify.pub https://github.com/ezdizzy/re-homeproxy/releases/latest/download/homeproxy-hiddify.pub
@@ -117,7 +117,7 @@ apk add /tmp/luci-app-re-homeproxy.apk
 
 #### 2. Установка компонентов на вкладке **«Ядро и службы»**
 
-Откройте **Службы → Re:HomeProxy AutoMod → Ядро и службы** и установите нужное — установщик сам подберёт сборку под
+Откройте **Службы → Re-HomeProxy AutoMod → Ядро и службы** и установите нужное — установщик сам подберёт сборку под
 свободное место:
 
 - **Ядро прокси** *(обязательно, выберите одно)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (по умолчанию)
@@ -127,7 +127,7 @@ apk add /tmp/luci-app-re-homeproxy.apk
   стратегий.
 - **Zapret 2** *(опционально)* — обход DPI на уровне пакетов (nfqws2), назначается в правилах маршрутизации, с подобранными
   пресетами и опциональным обходом для голоса Discord.
-- **Re:HomeProxy AutoMod** *(само приложение)* — см. *Обновление приложения*; обновляется на месте из этой же вкладки.
+- **Re-HomeProxy AutoMod** *(само приложение)* — см. *Обновление приложения*; обновляется на месте из этой же вкладки.
 
 #### 3. Установка языкового пакета RU
 
@@ -140,7 +140,7 @@ apk add /tmp/luci-i18n-homeproxy-ru.apk
 
 ### OpenWRT 24.10 (opkg)
 
-#### 1. Установка пакета Re:HomeProxy
+#### 1. Установка пакета Re-HomeProxy
 
 ```sh
 wget -O /tmp/luci-app-re-homeproxy.ipk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/re-homeproxy/releases' | grep -o 'https://github\.com/[^"]*luci-app-re-homeproxy[^"]*\.ipk' | head -1)"
@@ -149,7 +149,7 @@ opkg install /tmp/luci-app-re-homeproxy.ipk
 
 #### 2. Установка компонентов на вкладке **«Ядро и службы»**
 
-Откройте **Службы → Re:HomeProxy AutoMod → Ядро и службы** и установите нужное — установщик сам подберёт сборку под
+Откройте **Службы → Re-HomeProxy AutoMod → Ядро и службы** и установите нужное — установщик сам подберёт сборку под
 свободное место (те же опции, что в разделе APK выше).
 
 #### 3. Установка языкового пакета RU
@@ -212,16 +212,16 @@ if [ "$EXT" = apk ]; then apk add /tmp/zapret2.apk; else opkg install /tmp/zapre
 /etc/init.d/homeproxy start
 ```
 
-Служба запускается автоматически при загрузке системы. Логи доступны в разделе **Службы → Re:HomeProxy AutoMod →
+Служба запускается автоматически при загрузке системы. Логи доступны в разделе **Службы → Re-HomeProxy AutoMod →
 Ядро и службы**.
 
 ## Обновление приложения (самообновление AutoMod)
 
-Для обновления Re:HomeProxy AutoMod **не нужна** SSH-консоль:
+Для обновления Re-HomeProxy AutoMod **не нужна** SSH-консоль:
 
-1. Откройте **Службы → Re:HomeProxy AutoMod → Ядро и службы**.
+1. Откройте **Службы → Re-HomeProxy AutoMod → Ядро и службы**.
 2. В карточке **«Application» (Приложение)** нажмите **Check update** (Проверить обновление). Приложение сравнит
-   установленную версию (показывается как `Re:HomeProxy AutoMod vX.Y.Z`) с последним релизом `ezdizzy/re-homeproxy` на
+   установленную версию (показывается как `Re-HomeProxy AutoMod vX.Y.Z`) с последним релизом `ezdizzy/re-homeproxy` на
    GitHub.
 3. Если обновление доступно, нажмите **Update** (Обновить). Приложение скачает новый пакет `luci-app-re-homeproxy` (и
    русскую локализацию) и установит на месте; rpcd перезапустится автоматически и страница перезагрузится.
@@ -232,12 +232,7 @@ if [ "$EXT" = apk ]; then apk add /tmp/zapret2.apk; else opkg install /tmp/zapre
 
 ## Версии и релизы
 
-- **Схема версий:** семантическая `X.Y.Z` (например, `1.0.0`). Версия хранится в `Makefile` (`PKG_VERSION`) и является
-  единственным источником правды — тег релиза на GitHub равен `vX.Y.Z`, а самообновление в приложении сравнивает
-  установленную версию с этим тегом.
-- **Автоматических релизов нет.** При обычном пуше коммитов в `master` собираются только артефакты — GitHub-релиз **не**
-  публикуется. Релиз создаётся только для готовых, проверенных сборок.
-- После публикации релиза кнопка **Check update** в приложении предложит его установленным роутерам.
+- **Схема версий:** семантическая `X.Y.Z` (например, `1.0.0`).
 
 ## Документация
 
@@ -259,7 +254,7 @@ if [ "$EXT" = apk ]; then apk add /tmp/zapret2.apk; else opkg install /tmp/zapre
 
 ## Благодарности и используемые проекты
 
-Re:HomeProxy опирается на работу множества вышестоящих проектов. Приложение LuCI распространяется под GPL; ядра и движки
+Re-HomeProxy опирается на работу множества вышестоящих проектов. Приложение LuCI распространяется под GPL; ядра и движки
 обхода DPI скачиваются при установке из их собственных релизов и остаются под своими лицензиями.
 
 **Основа и ядра**

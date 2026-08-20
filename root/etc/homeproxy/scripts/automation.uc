@@ -2,7 +2,7 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-only
  *
- * Re:HomeProxy — Automatic blocked-site / destination detection daemon.
+ * Re-HomeProxy — Automatic blocked-site / destination detection daemon.
  *
  * Discovery sources (UCI automation.discover, comma-separated):
  *   clash     — Clash API /connections (domain names of live traffic)

@@ -40,7 +40,7 @@ function hasKernelModule(kmod) {
 	return !!access('/sys/module/' + modname);
 }
 
-/* Latest Re:HomeProxy AutoMod release (from the app's own fork repo). Honors the
+/* Latest Re-HomeProxy AutoMod release (from the app's own fork repo). Honors the
  * optional GitHub token (higher rate limit). Returns the parsed JSON, or null on failure. */
 function app_github_release() {
 	const token_fd = popen('uci -q get homeproxy.config.github_token 2>/dev/null');
@@ -1509,7 +1509,7 @@ const methods = {
 		}
 	},
 
-	/* --- Re:HomeProxy AutoMod self-update (Core & Tools tab) --- */
+	/* --- Re-HomeProxy AutoMod self-update (Core & Tools tab) --- */
 
 	app_status: {
 		call: function(req) {

@@ -2,7 +2,7 @@
 
 # Routing & Access Control
 
-Re:HomeProxy decides **what** traffic is proxied (routing mode + rules) and **which devices** are affected (access control). This page covers both.
+Re-HomeProxy decides **what** traffic is proxied (routing mode + rules) and **which devices** are affected (access control). This page covers both.
 
 ---
 
