@@ -82,8 +82,10 @@ return view.extend({
 
 		o = s.option(form.ListValue, 'discover', _('Discover candidates from'));
 		o.value('clash', _('Clash API (connections, domain names)'));
-		o.value('conntrack', _('conntrack (destinations by IP)'));
-		o.value('both', _('Both'));
+		o.value('dns', _('DNS query log (captures domain at DNS time — most transparent)'));
+		o.value('conntrack', _('conntrack (destinations by IP — for apps/games without SNI)'));
+		o.value('both', _('Clash API + DNS log'));
+		o.value('all', _('Clash API + DNS log + conntrack'));
 		o.default = 'clash';
 
 		o = s.option(form.Value, 'timeout', _('Probe timeout (seconds)'));
@@ -109,6 +111,29 @@ return view.extend({
 		o = s.option(form.Value, 'exclude', _('Never auto-learn (comma-separated)'),
 			_('Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names.'));
 		o.placeholder = 'localhost,local,lan,in-addr.arpa,ip6.arpa';
+
+		o = s.option(form.Flag, 'ip_learn', _('Learn IP destinations (conntrack)'),
+			_('Also learn destinations reached by raw IP (games/apps without SNI). Routes the IP via the proxy. Off by default — enable if you run such apps.'));
+		o.default = o.disabled;
+
+		o = s.option(form.Flag, 'preload_enabled', _('Preload blocked-domain list at startup'),
+			_('Fetch a plaintext domain list once at start (and daily) and seed it as learned, so popular blocked sites work on the very first visit.'));
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'preload_url', _('Preload list URL'),
+			_('Plaintext list, one domain per line. Default points at the Re-filter publication list.'));
+		o.depends('preload_enabled', '1');
+
+		/* ── DNS failover (C) — lives in the `config` section ─────────────── */
+		const sf = m.section(form.NamedSection, 'config', 'homeproxy', _('DNS failover'));
+		let fo = sf.option(form.Flag, 'dns_failover', _('Enable DNS failover'),
+			_('Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the list below and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up.'));
+		fo.rmempty = false;
+
+		fo = sf.option(form.DynamicList, 'alt_dns_servers', _('Alternate DNS servers'),
+			_('Add/remove fallback DNS servers (IP, hostname, or DoH/DoT URL). Used by failover and shown alongside the main DNS choice.'));
+		fo.depends('dns_failover', '1');
+		fo.placeholder = '1.1.1.1';
 
 		/* ── Live monitor ──────────────────────────────────────────────── */
 		const countsEl = E('div', { 'class': 'automation-counts' });

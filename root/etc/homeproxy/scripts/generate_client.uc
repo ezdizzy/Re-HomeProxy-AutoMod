@@ -1554,6 +1554,25 @@ if (!isEmpty(main_node)) {
 			]
 		});
 
+	/* Learned IP list (Automation, B): destinations reached by IP only (games/apps
+	 * without SNI) that fail direct but work via the proxy. Merged as an ip_cidr set
+	 * routed to main-out — fully compatible with ByeDPI/Zapret (the main path). */
+	if (automation_enabled === '1' && !isEmpty(main_node)) {
+		let auto_ip_raw = readfile(HP_DIR + '/resources/auto_proxy_ip.txt');
+		if (auto_ip_raw) {
+			let auto_ip_list = filter(split(trim(auto_ip_raw), /[\r\n]/), (x) => {
+				x = trim(x);
+				return length(x) && !match(x, /^\s*#/) && (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/));
+			});
+			if (length(auto_ip_list))
+				push(config.route.rule_set, {
+					type: 'inline',
+					tag: 'auto-ip',
+					rules: [ { ip_cidr: auto_ip_list } ]
+				});
+		}
+	}
+
 	if (is_selective_mode(routing_mode)) {
 		/* Resolve domains before routing — prevents the proxy server from doing its own DNS
 		 * resolution, and (reverse) lets the geoip baseline match by IP. */
@@ -1657,6 +1676,24 @@ if (!isEmpty(main_node)) {
 				action: 'route',
 				outbound: 'main-out'
 			});
+
+		/* Learned IP list (Automation, B) → main-out. Placed right after proxy-domain so
+		 * IP-only destinations (games/apps without SNI) are routed through the proxy too. */
+		if (automation_enabled === '1' && !isEmpty(main_node)) {
+			let auto_ip_raw = readfile(HP_DIR + '/resources/auto_proxy_ip.txt');
+			if (auto_ip_raw) {
+				let auto_ip_list = filter(split(trim(auto_ip_raw), /[\r\n]/), (x) => {
+					x = trim(x);
+					return length(x) && !match(x, /^\s*#/) && (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/));
+				});
+				if (length(auto_ip_list))
+					push(config.route.rules, {
+						rule_set: 'auto-ip',
+						action: 'route',
+						outbound: 'main-out'
+					});
+			}
+		}
 
 		/* Per-rule outbounds and rule sets
 		 * Priority order: specific services first → russia-inside → refilter (largest list last) */

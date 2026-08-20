@@ -294,6 +294,8 @@ return view.extend({
 		o.value('208.67.222.222', _('Cisco Public DNS (208.67.222.222)'));
 		o.value('8.8.8.8', _('Google Public DNS (8.8.8.8)'));
 		o.value('', '---');
+		o.value('9.9.9.9', _('Quad9 Public DNS (9.9.9.9)'));
+		o.value('94.140.14.14', _('AdGuard Public DNS (94.140.14.14)'));
 		o.value('223.5.5.5', _('Aliyun Public DNS (223.5.5.5)'));
 		o.value('119.29.29.29', _('Tencent Public DNS (119.29.29.29)'));
 		o.value('117.50.10.10', _('ThreatBook Public DNS (117.50.10.10)'));

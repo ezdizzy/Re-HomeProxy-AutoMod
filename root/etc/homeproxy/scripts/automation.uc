@@ -2,29 +2,33 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-only
  *
- * Re:HomeProxy — Automatic blocked-site detection daemon.
+ * Re:HomeProxy — Automatic blocked-site / destination detection daemon.
  *
- * How it works (transparent, compatible with ByeDPI & Zapret):
- *   1. Discover candidate destinations the user actually reaches (via the core's Clash
- *      API /connections, or conntrack as a fallback).
- *   2. For each unknown candidate, probe it BOTH direct (forced through `auto-direct-in`
- *      -> direct-out) and through the configured main path (forced through `auto-proxy-in`
- *      -> main-out). The test inbounds are created by generate_client.uc only while
- *      automation is enabled, and bound to 127.0.0.1.
- *   3. If direct fails but the proxy path succeeds, the site is classified "blocked" and
- *      its domain is appended to resources/auto_proxy_list.txt. generate_client.uc merges
- *      that file into the proxy-domain ruleset, so the site is routed via the user's main
- *      outbound (main-out, which already IS byedpi-out / zapret-out when those are the
- *      configured main node). Nothing about ByeDPI/Zapret rule wiring changes.
- *   4. On change, regenerate + reload the core (throttled) so the learned rule applies.
+ * Discovery sources (UCI automation.discover, comma-separated):
+ *   clash     — Clash API /connections (domain names of live traffic)
+ *   dns       — dnsmasq query log (captures the domain at DNS time, BEFORE the
+ *               connection — makes learning transparent: the site is usually fixed
+ *               before the user navigates/retries)  [A]
+ *   conntrack — destination IPs of established flows (for IP-only apps/games)  [B]
  *
- * The daemon is intentionally conservative: it only ADDS sites it has proven unreachable
- * directly yet reachable via the proxy. Direct-only sites are left alone.
+ * Classification (for every candidate): probe it BOTH direct (auto-direct-in →
+ * direct-out) and through the configured main path (auto-proxy-in → main-out, which
+ * already IS byedpi-out / zapret-out). A destination is learned as "blocked" only when
+ * direct FAILS but the proxy WORKS — so a merely-down site (both fail) or a site that
+ * works direct is never rerouted. Learned domains go to resources/auto_proxy_list.txt
+ * (→ proxy-domain ruleset); learned IPs go to resources/auto_proxy_ip.txt (→ auto-ip
+ * ip_cidr ruleset). Both route via the user's main path → ByeDPI/Zapret compatible.
+ *
+ * D — Preload: at start (and every 24h) fetch a plaintext domain list and seed it as
+ *   learned, so popular blocked sites work on the very first visit.
+ * C — DNS failover: if enabled, monitor the primary DNS (config.dns_server) and the
+ *   alt_dns_servers list; if the primary becomes unreachable, rewrite dns_server to a
+ *   healthy alternate and regenerate.  [C]
  */
 
 'use strict';
 
-import { access, readfile, writefile, remove } from 'fs';
+import { access, readfile, writefile, remove, open, stat } from 'fs';
 import { cursor } from 'uci';
 
 const HP_DIR = '/etc/homeproxy';
@@ -36,8 +40,10 @@ const AUTO_PROXY_PORT = 5337;
 
 const STATE_FILE = RUN_DIR + '/automation_state.json';
 const AUTO_LIST = RES + '/auto_proxy_list.txt';
+const AUTO_IP_LIST = RES + '/auto_proxy_ip.txt';
 const TRIGGER_FILE = RUN_DIR + '/automation.trigger';
 const LOG_FILE = RUN_DIR + '/automation.log';
+const DNS_LOG = '/var/log/dnsmasq-q.log';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -58,8 +64,7 @@ function read_lines(path) {
 	if (!c) return [];
 	c = trim(c);
 	if (!length(c)) return [];
-	let arr = split(c, /[\r\n]/);
-	return filter(arr, (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
+	return filter(split(c, /[\r\n]/), (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
 }
 
 function load_state() {
@@ -76,14 +81,14 @@ function save_state(state) {
 
 function write_auto_list(set) {
 	let arr = sort(keys(set));
-	let content = join('\n', arr) + (length(arr) ? '\n' : '');
-	system(`mkdir -p ${RES}`);
-	writefile(AUTO_LIST, content);
+	writefile(AUTO_LIST, join('\n', arr) + (length(arr) ? '\n' : ''));
 }
 
-/* Probe a single host (domain or IP) through a forced outbound. Returns 'ok' on a
- * successful TLS handshake, 'fail' otherwise. Uses curl when present (SOCKS5 aware);
- * falls back to wget through the mixed inbounds' HTTP proxy mode. */
+function write_auto_ip_list(set) {
+	let arr = sort(keys(set));
+	writefile(AUTO_IP_LIST, join('\n', arr) + (length(arr) ? '\n' : ''));
+}
+
 function have_curl() {
 	return !!access('/usr/bin/curl');
 }
@@ -97,7 +102,6 @@ function probe(host, via_proxy, timeout) {
 		if (fd) { code = trim(fd.read('all')); fd.close(); }
 		return (code != '000' && code != '' && code != null) ? 'ok' : 'fail';
 	}
-	/* wget fallback: HTTP CONNECT proxy (mixed inbound is http-proxy capable). */
 	let proxy_env = via_proxy
 		? `http_proxy=http://127.0.0.1:${AUTO_PROXY_PORT} https_proxy=http://127.0.0.1:${AUTO_PROXY_PORT}`
 		: `http_proxy= https_proxy=`;
@@ -105,7 +109,38 @@ function probe(host, via_proxy, timeout) {
 	return (rc === 0) ? 'ok' : 'fail';
 }
 
-/* Candidate discovery ------------------------------------------------------- */
+function base_domain(host) {
+	host = trim(host);
+	if (!length(host)) return host;
+	if (substr(host, -1) === '.') host = substr(host, 0, length(host) - 1);
+	let parts = split(host, '.');
+	if (length(parts) <= 2) return host;
+	const multi = ['co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'com.au', 'co.jp', 'com.br', 'co.za'];
+	for (let m in multi)
+		if (length(host) > length(m) + 1 && substr(host, length(host) - length(m) - 1) === '.' + m)
+			return parts[length(parts)-3] + '.' + parts[length(parts)-2] + '.' + parts[length(parts)-1];
+	return parts[length(parts)-2] + '.' + parts[length(parts)-1];
+}
+
+function is_private_ip(ip) {
+	return match(ip, /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/) || match(ip, /^fc00:|^fe80:/) || ip === '0.0.0.0';
+}
+
+function is_excluded(host) {
+	host = trim(host);
+	if (!length(host)) return true;
+	for (let e in excludes) {
+		e = trim(e);
+		if (!length(e)) continue;
+		if (host === e) return true;
+		if (length(host) > length(e) && substr(host, length(host) - length(e) - 1) === '.' + e)
+			return true;
+	}
+	if (direct_set[host] || proxy_set[host] || auto_set[host] || auto_ip_set[host]) return true;
+	return false;
+}
+
+/* ── Discovery ──────────────────────────────────────────────────────────── */
 
 function discover_clash(timeout) {
 	let fd = popen(`curl -s --max-time 3 http://127.0.0.1:9090/connections 2>/dev/null`);
@@ -121,8 +156,6 @@ function discover_clash(timeout) {
 		if (!host || match(host, /^[0-9.]+$/) || match(host, /^[0-9a-fA-F:]+$/))
 			host = m.destinationIP;
 		if (!host) continue;
-		/* Only re-classify traffic that currently goes DIRECT (the default in
-		 * selective/global modes). Anything already proxied is not a candidate. */
 		if (m.outbound && m.outbound !== 'direct-out' && m.outbound !== 'auto-direct-in')
 			continue;
 		push(hosts, host);
@@ -131,14 +164,103 @@ function discover_clash(timeout) {
 }
 
 function discover_conntrack() {
-	let fd = popen(`conntrack -L 2>/dev/null | awk '/ESTABLISHED/ { for (i=1;i<=NF;i++) if ($i ~ /^dst=/) { sub("dst=", "", $i); print $i } }' | head -200`);
+	let fd = popen(`conntrack -L 2>/dev/null | awk '/ESTABLISHED/ { for (i=1;i<=NF;i++) if ($i ~ /^dst=/) { sub("dst=", "", $i); print $i } }' | head -300`);
 	let raw = '';
 	if (fd) { raw = fd.read('all'); fd.close(); }
 	if (!raw) return [];
 	return split(trim(raw), /\n/);
 }
 
-/* Main loop ---------------------------------------------------------------- */
+let dns_log_offset = 0;
+function discover_dns() {
+	if (!access(DNS_LOG)) return [];
+	let fd = open(DNS_LOG, 'r');
+	if (!fd) return [];
+	let size = stat(DNS_LOG).size;
+	if (dns_log_offset > size) dns_log_offset = 0; /* log rotated */
+	fd.seek(dns_log_offset);
+	let hosts = [];
+	for (let line = fd.read('line'); length(line); line = fd.read('line')) {
+		let m = match(trim(line), /query\[[Aq]+\]\s+([^ ]+)\s+from/);
+		if (m) push(hosts, m[1]);
+	}
+	dns_log_offset = fd.tell();
+	fd.close();
+	return hosts;
+}
+
+function enable_dns_log() {
+	system('uci -q set dhcp.@dnsmasq[0].logqueries=1');
+	system('uci -q set dhcp.@dnsmasq[0].logfacility=' + shellquote(DNS_LOG));
+	system('uci commit dhcp');
+	system('/etc/init.d/dnsmasq restart >/dev/null 2>&1');
+}
+
+function disable_dns_log() {
+	system('uci -q del dhcp.@dnsmasq[0].logqueries');
+	system('uci -q del dhcp.@dnsmasq[0].logfacility');
+	system('uci commit dhcp');
+	system('/etc/init.d/dnsmasq restart >/dev/null 2>&1');
+}
+
+/* ── DNS failover (C) ───────────────────────────────────────────────────── */
+
+function dns_reachable(server) {
+	/* Only plain UDP/Do53 servers are health-checked; DoH/DoT are treated as always up. */
+	if (match(server, /^(https?|tls|quic):\/\//)) return true;
+	if (have_curl())
+		return system(`curl -s --max-time 3 --connect-timeout 3 ${shellquote('https://' + server + '/dns-query')} -o /dev/null 2>/dev/null`, 4000) === 0
+		    || system(`dig +short +time=2 +tries=1 +timeout=2 @${shellquote(server)} example.com >/dev/null 2>&1`, 6000) === 0;
+	return system(`nc -u -z -w 2 ${shellquote(server)} 53 >/dev/null 2>&1`, 4000) === 0;
+}
+
+function dns_failover_check() {
+	if (dns_failover !== '1') return;
+	let primary = uci.get('homeproxy', 'config', 'dns_server');
+	if (isEmpty(primary) || primary === 'wan') return;
+	if (dns_reachable(primary)) return; /* primary healthy — nothing to do */
+	log('DNS failover: primary ' + primary + ' unreachable, looking for a healthy alternate');
+	for (let s in alt_dns) {
+		if (s === primary) continue;
+		if (dns_reachable(s)) {
+			uci.set('homeproxy', 'config', 'dns_server', s);
+			uci.commit('homeproxy');
+			log('DNS failover: switched primary DNS to ' + s);
+			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
+			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			return;
+		}
+	}
+	log('DNS failover: no healthy alternate DNS available');
+}
+
+/* ── Preload (D) ───────────────────────────────────────────────────────── */
+
+function preload() {
+	if (preload_enabled !== '1' || !length(preload_url)) return;
+	log('preload: fetching ' + preload_url);
+	let tmp = RUN_DIR + '/preload.tmp';
+	if (system(`wget -qO ${shellquote(tmp)} --timeout=30 ${shellquote(preload_url)} 2>/dev/null`, 35000) !== 0) {
+		log('preload: download failed');
+		return;
+	}
+	let added = 0;
+	let lines = read_lines(tmp);
+	for (let i, d in lines) {
+		d = base_domain(trim(d));
+		if (!length(d) || is_excluded(d) || auto_set[d]) continue;
+		auto_set[d] = true;
+		added++;
+	}
+	remove(tmp);
+	if (added > 0) {
+		write_auto_list(auto_set);
+		log('preload: seeded ' + added + ' domains');
+		pending_reload = true;
+	}
+}
+
+/* ── Main ───────────────────────────────────────────────────────────────── */
 
 function main() {
 	const uci = cursor();
@@ -156,136 +278,112 @@ function main() {
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
 	let discover = uci.get('homeproxy', 'automation', 'discover') || 'clash';
 	let reeval_interval = int(uci.get('homeproxy', 'automation', 'reeval_interval') || '3600') || 3600;
-	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '300') || 300;
+	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '60') || 60;
+	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '1';
+	let preload_enabled = uci.get('homeproxy', 'automation', 'preload_enabled') || '0';
+	let preload_url = uci.get('homeproxy', 'automation', 'preload_url') || '';
 	let excludes = split(trim(uci.get('homeproxy', 'automation', 'exclude') || 'localhost,local,lan,in-addr.arpa,ip6.arpa'), ',');
 	excludes = filter(excludes, (x) => length(trim(x)));
 
-	/* Static lists we must never touch / never re-probe as "unknown". */
-	let direct_set = {};
+	/* DNS failover (C) reads the DNS section, not the automation section. */
+	let dns_failover = uci.get('homeproxy', 'config', 'dns_failover') || '0';
+	let alt_dns = uci.get('homeproxy', 'config', 'alt_dns_servers') || [];
+	if (type(alt_dns) !== 'array') alt_dns = [ alt_dns ];
+
+	let direct_set = {}, proxy_set = {}, auto_set = {}, auto_ip_set = {};
 	for (let d in read_lines(RES + '/direct_list.txt')) direct_set[trim(d)] = true;
-	let proxy_set = {};
 	for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
-	let auto_set = {};
 	for (let d in read_lines(AUTO_LIST)) auto_set[trim(d)] = true;
+	for (let d in read_lines(AUTO_IP_LIST)) auto_ip_set[trim(d)] = true;
 	let state = load_state();
+	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
 	let last_reload = 0;
 	let pending_reload = false;
-
-	function base_domain(host) {
-		host = trim(host);
-		if (!length(host)) return host;
-		if (substr(host, -1) === '.') host = substr(host, 0, length(host) - 1);
-		let parts = split(host, '.');
-		if (length(parts) <= 2) return host;
-		/* Collapse to the registrable domain (last 2 labels). A small list of common
-		 * multi-level public suffixes avoids over-collapsing (e.g. example.co.uk). */
-		const multi = ['co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'com.au', 'co.jp', 'com.br', 'co.za'];
-		for (let m in multi)
-			if (length(host) > length(m) + 1 && substr(host, length(host) - length(m) - 1) === '.' + m)
-				return parts[length(parts)-3] + '.' + parts[length(parts)-2] + '.' + parts[length(parts)-1];
-		return parts[length(parts)-2] + '.' + parts[length(parts)-1];
-	}
-
-	function is_excluded(host) {
-		host = trim(host);
-		if (!length(host)) return true;
-		for (let e in excludes) {
-			e = trim(e);
-			if (!length(e)) continue;
-			if (host === e) return true;
-			/* domain-suffix match: "local" matches "foo.local" but not "localfoo" */
-			if (length(host) > length(e) && substr(host, length(host) - length(e) - 1) === '.' + e)
-				return true;
-		}
-		if (direct_set[host] || proxy_set[host] || auto_set[host]) return true;
-		return false;
-	}
+	const has = (s) => (discover === 'all') || index(split(discover, ','), s) >= 0;
 
 	function do_reload() {
 		log('regenerating core config and reloading service...');
-		system(`ucode ${HP_DIR}/scripts/generate_client.uc >/dev/null 2>&1`);
+		system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
 		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 		last_reload = time();
 		pending_reload = false;
 	}
 
-	function classify_and_store(host, direct_res, proxy_res) {
-		host = trim(host);
-		if (!state[host]) state[host] = {};
-		let st = state[host];
+	function classify(dom, direct_res, proxy_res, is_ip) {
+		if (!state[dom]) state[dom] = {};
+		let st = state[dom];
 		st.last_probe = time();
 		st.direct = direct_res;
 		st.proxy = proxy_res;
+		st.type = is_ip ? 'ip' : 'domain';
 
 		let blocked = (direct_res === 'fail' && proxy_res === 'ok');
-
 		if (blocked) {
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;
-			/* Require min_confirm independent confirmations before committing, so a
-			 * transient blip doesn't permanently route a site through the proxy. */
-			if (st.confirms >= min_confirm && !auto_set[host]) {
-				auto_set[host] = true;
-				write_auto_list(auto_set);
-				log(`learned BLOCKED: ${host}`);
-				pending_reload = true;
+			if (st.confirms >= min_confirm) {
+				if (is_ip) {
+					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom}`); pending_reload = true; }
+				} else if (!auto_set[dom]) {
+					auto_set[dom] = true; write_auto_list(auto_set); log(`learned BLOCKED: ${dom}`); pending_reload = true;
+				}
 			}
 		} else if (direct_res === 'ok') {
-			st.status = 'direct';
-			st.confirms = 0;
+			st.status = 'direct'; st.confirms = 0;
 		} else {
 			st.status = 'unknown';
 		}
 	}
 
-	/* One discovery + probe pass. */
 	function pass(run_now) {
-		/* Refresh config in case the user toggled something. */
 		enabled = uci.get('homeproxy', 'automation', 'enabled');
 		if (enabled !== '1') return;
 
-		let candidates = {};
-		if (discover === 'clash' || discover === 'both') {
-			for (let i, h in discover_clash(timeout)) candidates[h] = true;
-		}
-		if ((discover === 'conntrack' || discover === 'both') && !length(keys(candidates))) {
-			for (let i, h in discover_conntrack()) candidates[h] = true;
-		}
-		/* In aggressive mode, also re-evaluate already-learned entries so they stay correct. */
+		let domain_candidates = {}, ip_candidates = {};
+		if (has('clash'))     for (let i, h in discover_clash(timeout)) domain_candidates[h] = true;
+		if (has('dns'))       for (let i, h in discover_dns())          domain_candidates[h] = true;
+		if (has('conntrack') && !length(keys(domain_candidates)))
+			for (let i, ip in discover_conntrack()) ip_candidates[ip] = true;
+
 		if (mode === 'aggressive') {
-			for (let h in auto_set) {
-				let st = state[h];
-				if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval)
-					candidates[h] = true;
-			}
+			for (let h in auto_set)     { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) domain_candidates[h] = true; }
+			for (let h in auto_ip_set)  { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) ip_candidates[h] = true; }
 		}
 
 		let now = time();
 		let probed = 0;
 		const cap = 24;
-		for (let host in candidates) {
+		for (let host in domain_candidates) {
 			if (probed >= cap) break;
 			let dom = base_domain(host);
 			if (is_excluded(dom)) continue;
 			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
-
 			let st = state[dom];
-			if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400))
-				continue;
-
+			if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
 			probed++;
-			/* Probe direct FIRST: most traffic is reachable directly, so we usually
-			 * stop here (fast, no proxy probe needed). Only if direct fails do we spend
-			 * a second probe through the proxy — that is the expensive, rare case. */
 			let direct_res = probe(dom, false, timeout);
 			let proxy_res = 'n/a';
-			if (direct_res !== 'ok') {
-				proxy_res = probe(dom, true, timeout);
-				sleep(150);
-			}
-			classify_and_store(dom, direct_res, proxy_res);
+			if (direct_res !== 'ok') { proxy_res = probe(dom, true, timeout); sleep(150); }
+			classify(dom, direct_res, proxy_res, false);
 			save_state(state);
+		}
+
+		/* IP learning (B): only when enabled and for non-private destinations. */
+		if (ip_learn === '1') {
+			for (let ip in ip_candidates) {
+				if (probed >= cap) break;
+				if (is_private_ip(ip) || is_excluded(ip)) continue;
+				if (length(keys(auto_ip_set)) >= max_entries && !auto_ip_set[ip]) continue;
+				let st = state[ip];
+				if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
+				probed++;
+				let direct_res = probe(ip, false, timeout);
+				let proxy_res = 'n/a';
+				if (direct_res !== 'ok') { proxy_res = probe(ip, true, timeout); sleep(150); }
+				classify(ip, direct_res, proxy_res, true);
+				save_state(state);
+			}
 		}
 
 		if (pending_reload && (now - last_reload) > reload_interval)
@@ -294,31 +392,47 @@ function main() {
 			do_reload();
 	}
 
-	log('automation daemon started (mode=' + mode + ', discover=' + discover + ').');
+	/* Enable DNS query logging if we discover via dns. */
+	if (has('dns')) enable_dns_log();
 
-	let cycle = 0;
+	/* Preload once at start (D). */
+	preload();
+
+	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
+
+	log('automation daemon started (mode=' + mode + ', discover=' + discover + ', failover=' + dns_failover + ').');
+
+	let last_failover = 0;
+	let last_preload = time();
 	while (true) {
 		enabled = uci.get('homeproxy', 'automation', 'enabled');
 		if (enabled !== '1') {
 			log('automation disabled, exiting.');
+			if (has('dns')) disable_dns_log();
 			return;
 		}
 
 		let run_now = false;
-		if (access(TRIGGER_FILE)) {
-			remove(TRIGGER_FILE);
-			run_now = true;
-		}
+		if (access(TRIGGER_FILE)) { remove(TRIGGER_FILE); run_now = true; }
 
 		pass(run_now);
 
-		/* Idle between passive-discovery cycles; trigger file forces an immediate pass. */
+		/* DNS failover (C) at most once per minute. */
+		let now = time();
+		if (dns_failover === '1' && (now - last_failover) > 60) { last_failover = now; dns_failover_check(); }
+
+		/* Preload refresh once per day (D). */
+		if (preload_enabled === '1' && (now - last_preload) > 86400) { last_preload = now; preload(); }
+
+		/* Persist dns log offset so we don't re-scan from the start after a restart. */
+		state.__dns_offset = dns_log_offset;
+		save_state(state);
+
 		for (let i = 0; i < 10; i++) {
 			sleep(1);
 			if (access(TRIGGER_FILE)) { remove(TRIGGER_FILE); break; }
-			if (uci.get('homeproxy', 'automation', 'enabled') !== '1') return;
+			if (uci.get('homeproxy', 'automation', 'enabled') !== '1') { if (has('dns')) disable_dns_log(); return; }
 		}
-		cycle++;
 	}
 }
 
@@ -326,4 +440,5 @@ try {
 	main();
 } catch (e) {
 	log('fatal: ' + tostring(e));
+	if (access(DNS_LOG)) disable_dns_log();
 }
