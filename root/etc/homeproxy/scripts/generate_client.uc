@@ -152,15 +152,18 @@ if (routing_mode !== 'custom') {
 
 	/* Shared selective knobs (forward RU + reverse CN/IR): remote DoH + exceptions.
 	 * Reverse modes ride the same engine, so they get secure-dns/overrides for free. */
+	/* DNS fields can be a single value or a DynamicList (array); use the first entry. */
+	let first_of = (v) => (type(v) === 'array') ? (length(v) ? v[0] : '') : v;
+
 	if (is_selective_mode(routing_mode)) {
-		secure_dns_server = uci.get(uciconfig, ucimain, 'secure_dns_server') || 'https://cloudflare-dns.com/dns-query';
+		secure_dns_server = first_of(uci.get(uciconfig, ucimain, 'secure_dns_server')) || 'https://cloudflare-dns.com/dns-query';
 		domain_strategy = uci.get(uciconfig, ucimain, 'domain_strategy');
 		proxy_calls = uci.get(uciconfig, ucimain, 'proxy_calls');
 		no_proxy_torrents = uci.get(uciconfig, ucimain, 'no_proxy_torrents');
 		show_advanced_rules = uci.get(uciconfig, ucimain, 'show_advanced_rules');
 	}
 	if (routing_mode === 'proxy_banned_ru')
-		russia_dns_server = uci.get(uciconfig, ucimain, 'russia_dns_server') || '77.88.8.8';
+		russia_dns_server = first_of(uci.get(uciconfig, ucimain, 'russia_dns_server')) || '77.88.8.8';
 
 	dns_default_strategy = (ipv6_support !== '1') ? 'ipv4_only' : null;
 

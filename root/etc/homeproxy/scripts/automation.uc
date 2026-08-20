@@ -174,17 +174,18 @@ function discover_conntrack() {
 let dns_log_offset = 0;
 function discover_dns() {
 	if (!access(DNS_LOG)) return [];
-	let fd = open(DNS_LOG, 'r');
-	if (!fd) return [];
 	let size = stat(DNS_LOG).size;
 	if (dns_log_offset > size) dns_log_offset = 0; /* log rotated */
+	let fd = open(DNS_LOG, 'r');
+	if (!fd) return [];
 	fd.seek(dns_log_offset);
 	let hosts = [];
 	for (let line = fd.read('line'); length(line); line = fd.read('line')) {
 		let m = match(trim(line), /query\[[Aq]+\]\s+([^ ]+)\s+from/);
 		if (m) push(hosts, m[1]);
 	}
-	dns_log_offset = fd.tell();
+	/* ucode file objects have no tell(); we read to EOF so the new offset is the file size. */
+	dns_log_offset = size;
 	fd.close();
 	return hosts;
 }

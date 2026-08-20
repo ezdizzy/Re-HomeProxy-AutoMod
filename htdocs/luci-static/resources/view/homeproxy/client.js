@@ -436,8 +436,8 @@ return view.extend({
 			return true;
 		}
 
-		o = s.taboption('routing', form.Value, 'russia_dns_server', _('Russia DNS server') + ' 🔓',
-			_('Resolves Russian domains directly, without going through the proxy.'));
+		o = s.taboption('routing', form.DynamicList, 'russia_dns_server', _('Russia DNS server') + ' 🔓',
+			_('Resolves Russian domains directly, without going through the proxy. You may add several; the first entry is used.'));
 		o.value('77.88.8.8', _('Yandex DNS (77.88.8.8)'));
 		o.value('193.58.251.251', _('SkyDNS (193.58.251.251)'));
 		o.value('83.220.169.155', _('Comss.one (83.220.169.155)'));
@@ -447,15 +447,16 @@ return view.extend({
 		o.default = '77.88.8.8';
 		o.rmempty = false;
 		o.validate = function(section_id, value) {
-			if (section_id && value) {
-				if (!stubValidator.apply('ip4addr', value) && !stubValidator.apply('ip6addr', value))
+			let list = Array.isArray(value) ? value : (value ? [ value ] : []);
+			for (let v in list) {
+				if (list[v] && !stubValidator.apply('ip4addr', list[v]) && !stubValidator.apply('ip6addr', list[v]))
 					return _('Expecting: %s').format(_('valid DNS server address'));
 			}
 			return true;
 		}
 
-		o = s.taboption('routing', form.Value, 'secure_dns_server', _('Secure DNS server') + ' 🔒',
-			_('Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT = DNS over HTTPS/TLS).'));
+		o = s.taboption('routing', form.DynamicList, 'secure_dns_server', _('Secure DNS server') + ' 🔒',
+			_('Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT = DNS over HTTPS/TLS). You may add several; the first entry is used.'));
 		o.value('https://cloudflare-dns.com/dns-query', _('Cloudflare DoH'));
 		o.value('https://dns.quad9.net/dns-query', _('Quad9 DoH'));
 		o.value('https://dns.adguard-dns.com/dns-query', _('AdGuard DoH'));
@@ -467,11 +468,13 @@ return view.extend({
 		o.default = 'https://cloudflare-dns.com/dns-query';
 		o.rmempty = false;
 		o.validate = function(section_id, value) {
-			if (section_id && value) {
+			let list = Array.isArray(value) ? value : (value ? [ value ] : []);
+			for (let v in list) {
+				if (!list[v]) continue;
 				try {
-					let url = new URL(value.replace(/^.*:\/\//, 'http://'));
+					let url = new URL(list[v].replace(/^.*:\/\//, 'http://'));
 					if (stubValidator.apply('hostname', url.hostname) || stubValidator.apply('ipaddr', url.hostname))
-						return true;
+						continue;
 				} catch(e) {}
 				return _('Expecting: %s').format(_('valid DNS server address'));
 			}

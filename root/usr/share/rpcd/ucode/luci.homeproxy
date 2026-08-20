@@ -1522,7 +1522,6 @@ const methods = {
 				enabled: enabled,
 				learned: learned,
 				counts: { blocked: length(blocked), direct: length(direct), unknown: length(unknown), learned: length(learned) },
-				state: state,
 				log: log_tail
 			};
 		}

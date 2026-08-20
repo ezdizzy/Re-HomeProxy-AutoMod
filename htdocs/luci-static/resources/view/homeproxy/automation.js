@@ -155,7 +155,7 @@ return view.extend({
 			countsEl,
 			tableEl,
 			E('div', { 'class': 'automation-actions' }, [ actions ]),
-			ta,
+			ta.render(),
 			E('h4', {}, [ _('Engine log') ]),
 			logEl
 		]);
