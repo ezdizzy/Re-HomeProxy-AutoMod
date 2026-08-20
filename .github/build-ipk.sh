@@ -9,6 +9,11 @@ set -o pipefail
 PKG_MGR="${1:-apk}"
 RELEASE_TYPE="${2:-snapshot}"
 LEGACY="${3:-}"
+# Optional 4th arg: explicit package version (the workflow_dispatch `version` input,
+# or the pushed `v*` tag). When set on a release build it overrides the Makefile's
+# PKG_VERSION so the package files (e.g. luci-app-re-homeproxy_1.0.4_all.apk) match
+# the GitHub release tag (v1.0.4). Without it we fall back to the Makefile value.
+PKG_VERSION_OVERRIDE="${4:-}"
 
 export PKG_SOURCE_DATE_EPOCH="$(date "+%s")"
 export SOURCE_DATE_EPOCH="$PKG_SOURCE_DATE_EPOCH"
@@ -22,7 +27,11 @@ function get_mk_value() {
 
 PKG_NAME="$(get_mk_value "PKG_NAME")"
 if [ "$RELEASE_TYPE" == "release" ]; then
-	PKG_VERSION="$(get_mk_value "PKG_VERSION")"
+	if [ -n "$PKG_VERSION_OVERRIDE" ]; then
+		PKG_VERSION="$PKG_VERSION_OVERRIDE"
+	else
+		PKG_VERSION="$(get_mk_value "PKG_VERSION")"
+	fi
 else
 	# NOTE: the CI checks out a shallow clone, so `git rev-list --count HEAD` is always 1.
 	# Use a timestamp-based version so every build gets a UNIQUE package version —

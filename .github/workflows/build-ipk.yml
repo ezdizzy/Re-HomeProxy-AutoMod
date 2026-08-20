@@ -112,6 +112,8 @@ jobs:
             echo "publish_release=false" >> $GITHUB_OUTPUT
             echo "release_type=snapshot" >> $GITHUB_OUTPUT
           fi
+          # Bare version (tag without the leading 'v') used as the package version for release builds.
+          echo "release_version=${release_tag#v}" >> $GITHUB_OUTPUT
 
       - name: Setup APK signing key
         run: |
@@ -128,8 +130,8 @@ jobs:
       - name: Build ipk file
         run: |
           pushd .github
-          fakeroot bash build-ipk.sh apk "${{ steps.tag.outputs.release_type }}"
-          fakeroot bash build-ipk.sh ipk "${{ steps.tag.outputs.release_type }}"
+          fakeroot bash build-ipk.sh apk "${{ steps.tag.outputs.release_type }}" "" "${{ steps.tag.outputs.release_version }}"
+          fakeroot bash build-ipk.sh ipk "${{ steps.tag.outputs.release_type }}" "" "${{ steps.tag.outputs.release_version }}"
           echo "APK_ASSET_NAME=$(ls luci-app-re-homeproxy_*_all.apk)" >> $GITHUB_ENV
           echo "IPK_ASSET_NAME=$(ls luci-app-re-homeproxy_*_all.ipk)" >> $GITHUB_ENV
           echo "I18N_APK_ASSET_NAME=$(ls luci-i18n-homeproxy-ru_*_all.apk)" >> $GITHUB_ENV
@@ -145,7 +147,7 @@ jobs:
         run: |
           mkdir -p .github/legacy
           pushd .github
-          fakeroot bash build-ipk.sh ipk "${{ steps.tag.outputs.release_type }}" legacy
+          fakeroot bash build-ipk.sh ipk "${{ steps.tag.outputs.release_type }}" legacy "${{ steps.tag.outputs.release_version }}"
           mv luci-*-legacy.ipk legacy/
           popd
 
