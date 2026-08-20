@@ -201,7 +201,7 @@ return view.extend({
 			btn(_('Restart service'), function() { return callRestart(); })
 		]);
 
-		const styleEl = E('style', {}, [ '.automation-table{margin-top:4px}.automation-table table{width:100%;border-collapse:collapse;margin-top:6px;font-size:.92em}.automation-table th,.automation-table td{border:1px solid #e2e2e2;padding:5px 8px;text-align:left;vertical-align:top}.automation-table thead th{background:#e8e8e8;font-weight:600;position:sticky;top:0}.automation-table thead th:first-child{border-top-left-radius:4px}.automation-table thead th:last-child{border-top-right-radius:4px}.automation-table tbody tr:hover{background:#f0f6ff}.automation-table .col-type{text-align:center;white-space:nowrap}.automation-table .col-added,.automation-table .col-check{white-space:nowrap;color:#555}' ]);
+		const styleEl = E('style', {}, [ '.automation-table table{width:100%;border-collapse:collapse;margin-top:6px;font-size:.92em}.automation-table table th,.automation-table table td{border:1px solid #d6d6d6!important;padding:5px 8px;text-align:left;vertical-align:top}.automation-table table thead th{background:#e8e8e8!important;font-weight:600;position:sticky;top:0}.automation-table table thead th:first-child{border-top-left-radius:4px}.automation-table table thead th:last-child{border-top-right-radius:4px}.automation-table table tbody tr:hover td{background:#eef4ff!important}.automation-table .col-type{text-align:center!important;white-space:nowrap}.automation-table .col-added,.automation-table .col-check{white-space:nowrap;color:#555}' ]);
 
 		const panel = E('div', { 'class': 'automation-panel cbi-section' }, [
 			styleEl,
@@ -233,7 +233,7 @@ return view.extend({
 				tableEl.appendChild(E('em', {}, [ _('Nothing learned yet. Browse the web or press “Test now”.') ]));
 				return;
 			}
-			const table = E('table', { 'class': 'table cbi-section-table', 'style': 'width:100%' });
+			const table = E('table', { 'class': 'automation-tbl', 'style': 'width:100%' });
 			table.appendChild(E('thead', {}, [ E('tr', {}, [
 				E('th', { 'class': 'col-site' }, [ _('Site') ]),
 				E('th', { 'class': 'col-type' }, [ _('Type') ]),
