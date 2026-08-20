@@ -1,6 +1,6 @@
 #!/bin/sh
 # Установщик Re:HomeProxy для OpenWrt (в одном скрипте: APK / opkg / 23.05 legacy)
-# https://github.com/1andrevich/homeproxy-hiddify
+# https://github.com/ezdizzy/re-homeproxy
 #
 # Вручную ставится только LuCI-приложение + ключ подписи, а ядро, ByeDPI и Zapret
 # устанавливаются через собственный бэкенд приложения (core_mgmt.uc + rpcd-объект
@@ -9,10 +9,12 @@
 # проверенной логикой, что и графический интерфейс.
 #
 # Установка (одной строкой — ввод читается из /dev/tty, пайп остаётся интерактивным):
-#   wget -qO- https://raw.githubusercontent.com/${HP_REPO}/master/install.sh | sh
-# Либо в два шага:
-#   wget -O /tmp/install.sh https://raw.githubusercontent.com/${HP_REPO}/master/install.sh
-#   sh /tmp/install.sh
+#   wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
+# Для ЭТОГО форка HP_REPO по умолчанию = ezdizzy/re-homeproxy, поэтому приложение и
+# русская локаль ставятся именно из вашего репозитория; ядра/ByeDPI/Zapret — из апстрима.
+# Либо в два шага (надёжнее, если нужно переопределить репозиторий):
+#   wget -O /tmp/install.sh https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh
+#   HP_REPO=otheruser/re-homeproxy sh /tmp/install.sh
 #
 # При заблокированном/замедленном GitHub можно указать зеркало:
 #   GH_MIRROR=https://my.mirror sh install.sh
@@ -20,13 +22,14 @@
 # Внимание: `sh <(wget -O- ...)` на OpenWrt НЕ работает — в busybox ash нет
 # process substitution; используйте форму с пайпом выше.
 #
-# УСТАНОВКА ИЗ СОБСТВЕННОГО ФОРКА: по умолчанию приложение и ключ берутся из
-# релизов 1andrevich/homeproxy-hiddify. Чтобы ставить ИМЕННО ваш форк, укажите
-# переменную HP_REPO (в формате owner/repo), в котором собраны ваши релизы:
-#   HP_REPO=username/re-homeproxy wget -qO- https://raw.githubusercontent.com/username/re-homeproxy/master/install.sh | sh
-# Ядра (hiddify-core), ByeDPI и Zapret при этом по-прежнему берутся из апстрима
-# (1andrevich/*) — их пересобирать не нужно, меняется только LuCI-приложение.
-HP_REPO="${HP_REPO:-1andrevich/homeproxy-hiddify}"
+# УСТАНОВКА ИЗ ФОРКА: этот install.sh живёт в вашем форке и по умолчанию (HP_REPO)
+# указывает на ezdizzy/re-homeproxy, поэтому приложение + русская локаль тянутся оттуда.
+# Ядра (hiddify-core), ByeDPI и Zapret по-прежнему берутся из апстрима (1andrevich/*)
+# через бэкенд приложения — их пересобирать не нужно, меняется только LuCI-приложение.
+# ВАЖНО: чтобы поставить из ДРУГОГО форка, задайте HP_REPO ПЕРЕД sh, а не перед wget
+# (иначе переменная не попадёт в процесс sh из-за пайпа):
+#   HP_REPO=username/re-homeproxy sh /tmp/install.sh
+HP_REPO="${HP_REPO:-ezdizzy/re-homeproxy}"
 
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[0;33m'; C='\033[0;36m'; N='\033[0m'
 ok()   { echo -e "${G}$1${N}"; }
