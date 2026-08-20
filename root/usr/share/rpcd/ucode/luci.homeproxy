@@ -47,17 +47,21 @@ function app_github_release() {
 	let token = null;
 	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
 	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
-	const fd = popen(`wget -qO- ${auth} "https://api.github.com/repos/ezdizzy/re-homeproxy/releases/latest" 2>/dev/null`);
+	const fd = popen(`wget -qO- --timeout=10 ${auth} "https://api.github.com/repos/ezdizzy/re-homeproxy/releases/latest" 2>/dev/null`);
 	if (!fd) return null;
 	const raw = fd.read('all');
 	fd.close();
 	try { return json(raw); } catch(e) { return null; }
 }
 
-/* Semantic version compare: -1 if a<b, 0 if equal, 1 if a>b. */
+/* Semantic version compare: -1 if a<b, 0 if equal, 1 if a>b.
+ * Note: this ucode build has no Array.prototype.map, so iterate explicitly. */
 function app_vercmp(a, b) {
-	const pa = split(a || '', '.').map((x) => int(x) || 0);
-	const pb = split(b || '', '.').map((x) => int(x) || 0);
+	const sa = split(a || '', '.');
+	const sb = split(b || '', '.');
+	const pa = [], pb = [];
+	for (let i = 0; i < length(sa); i++) push(pa, int(sa[i]) || 0);
+	for (let i = 0; i < length(sb); i++) push(pb, int(sb[i]) || 0);
 	const n = max(length(pa), length(pb));
 	for (let i = 0; i < n; i++) {
 		const x = pa[i] || 0, y = pb[i] || 0;
