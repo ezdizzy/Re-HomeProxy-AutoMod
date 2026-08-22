@@ -160,6 +160,16 @@ return view.extend({
 			_('Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the “Alternate DNS servers” list (Client ▸ DNS tab) and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up.'));
 		fo.rmempty = false;
 
+		let fon = sf.option(form.DummyValue, '_md_note');
+		fon.rawhtml = true;
+		fon.cfgvalue = function() { return ''; };
+		fon.write = function() { return undefined; };
+		fon.renderWidget = function(section_id, option_index, cfgvalue) {
+			return E('div', { 'class': 'automation-hint', 'style': 'margin-bottom:8px' }, [
+				_('Redundant with MultiDNS: when MultiDNS is enabled it already races every server in each pool and returns the fastest live answer, so a single failed primary is bypassed automatically. Reserve DNS is therefore ignored while MultiDNS is on — use one or the other.')
+			]);
+		};
+
 		/* ── Live monitor ──────────────────────────────────────────────── */
 		const countsEl = E('div', { 'class': 'automation-counts' });
 		const tableEl = E('div', { 'class': 'automation-table' });
@@ -229,7 +239,12 @@ return view.extend({
 		}
 
 		function reasonText(e) {
-			if (e.status === 'blocked') return _('direct ✗ / proxy ✓');
+			if (e.status === 'blocked') {
+				let d = e.direct || '✗', p = e.proxy || '✓';
+				return _('direct %s ✗ / proxy %s ✓').format(d, p);
+			}
+			if (e.status === 'blocked_no_proxy') return _('blocked both ways');
+			if (e.status === 'unknown') return _('uncertain');
 			return e.status || '—';
 		}
 

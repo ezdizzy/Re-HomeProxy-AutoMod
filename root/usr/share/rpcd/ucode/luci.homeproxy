@@ -1694,6 +1694,8 @@ const methods = {
 					e.status = st.status || 'blocked';
 					e.added = st.added || st.last_probe || 0;
 					e.last_probe = st.last_probe || 0;
+					e.direct = st.direct || '';
+					e.proxy = st.proxy || '';
 				} else {
 					e.status = 'blocked';
 					e.added = 0;
@@ -1728,6 +1730,118 @@ const methods = {
 			};
 		}
 	},
+
+	multidns_status: {
+		call: function(req) {
+			const state_file = RUN_DIR + '/multidns/multidns_state.json';
+			const md_dir = RUN_DIR + '/multidns';
+			let state = {};
+			if (access(state_file)) {
+				try { state = json(readfile(state_file)) || {}; } catch (e) { state = {}; }
+			}
+			let enabled = null;
+			let efd = popen('uci -q get homeproxy.multidns.enabled 2>/dev/null');
+			if (efd) { enabled = trim(efd.read('all')); efd.close(); }
+
+			/* Read the live smartdns pool (which servers are currently active). */
+			let active = { ru: [], secure: [] };
+			let cfg = md_dir + '/smartdns.conf';
+			if (access(cfg)) {
+				let fd = popen('grep -E " -group (ru|secure)" ' + shellquote(cfg) + ' 2>/dev/null');
+				if (fd) {
+					for (let line = fd.read('line'); length(line); line = fd.read('line')) {
+						let m = match(trim(line), /^(server(-[a-z]+)? )?(\S+) -group (ru|secure)( |$)/);
+						if (m) push((m[4] === 'ru') ? active.ru : active.secure, m[3]);
+					}
+					fd.close();
+				}
+			}
+			/* Per-server trend rows for the monitor. */
+			let pool_of = (srv) => {
+				if (index(active.ru, srv) >= 0) return 'ru';
+				if (index(active.secure, srv) >= 0) return 'secure';
+				return '—';
+			};
+			let servers = [];
+			for (let s in (state.servers || {})) {
+				let st = state.servers[s];
+				push(servers, {
+					server: s,
+					pool: pool_of(s),
+					score: st.score != null ? st.score : null,
+					latency: st.lat != null ? st.lat : null,
+					success: st.succ != null ? st.succ : null,
+					live: st.live != null ? st.live : null,
+					samples: st.samples || 0,
+					poisoned: !!st.poisoned,
+					pruned: !!st.pruned,
+					last_ip: st.last_ip || null,
+					last_ok: st.last_ok || false,
+					last_live: st.last_live || false
+				});
+			}
+			/* smartdns liveness. smartdns maintains its own pid files; the daemon
+			 * also records the live pid into md_dir/smartdns.pid. pgrep/pkill are
+			 * absent on this busybox, so check candidate pid files, then pidof. */
+			let sd_alive = false;
+			let pid_candidates = [ md_dir + '/smartdns.pid', '/var/run/smartdns.pid', '/tmp/run/smartdns.pid' ];
+			for (let pf in pid_candidates) {
+				if (access(pf)) {
+					let c = trim(readfile(pf));
+					if (c && system('kill -0 ' + shellquote(c) + ' 2>/dev/null') === 0) { sd_alive = true; break; }
+				}
+			}
+			if (!sd_alive)
+				sd_alive = (system('pidof smartdns >/dev/null 2>&1') === 0);
+
+			return {
+				enabled: enabled,
+				smartdns: sd_alive,
+				active: active,
+				servers: servers
+			};
+		}
+	},
+
+		multidns_reload: {
+			call: function(req) {
+				if (!access('/usr/sbin/smartdns'))
+					return { result: false, error: 'smartdns not installed' };
+				let pidf = RUN_DIR + '/multidns/smartdns.pid';
+				if (access(pidf)) {
+					let c = trim(readfile(pidf));
+					if (c) system('kill -HUP ' + shellquote(c) + ' 2>/dev/null');
+				}
+				system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+				return { result: true };
+			}
+		},
+
+	multidns_reset: {
+		call: function(req) {
+			system('rm -f ' + RUN_DIR + '/multidns/multidns_state.json');
+			system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+			return { result: true };
+		}
+	},
+
+	/* Hard kill-switch: disable MultiDNS and fully stop the racing resolver + smartdns
+	 * so DNS reverts to the standard upstreams. Always works, even if the UI toggle
+	 * is out of sync, giving the user a guaranteed way to recover connectivity. */
+		multidns_disable: {
+			call: function(req) {
+				system('uci -q set homeproxy.multidns.enabled=0');
+				system('uci -q commit homeproxy');
+				let pidf = RUN_DIR + '/multidns/smartdns.pid';
+				if (access(pidf)) {
+					let c = trim(readfile(pidf));
+					if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');
+					system('rm -f ' + shellquote(pidf));
+				}
+				system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+				return { result: true };
+			}
+		},
 
 	automation_list_read: {
 		call: function(req) {

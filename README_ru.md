@@ -1,12 +1,8 @@
 [**Русский 🇷🇺**](README_ru.md) / [**English**](README.md)
 
-<p align="center">
-  <a href="https://t.me/one_andrevich"><img src="https://img.shields.io/badge/Telegram-Join-2CA5E0?style=flat-square&logo=telegram&logoColor=white" alt="Telegram"></a>
-  <a href="https://ko-fi.com/D1D11SQNQD"><img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
-  <a href="https://nowpayments.io/donation?api_key=decbeb76-30f8-4c6d-ba40-2d2dec7fd888"><img src="https://img.shields.io/badge/Crypto-Donate-2EBE74?style=flat-square&logo=bitcoin&logoColor=white" alt="Crypto donate"></a>
-</p>
-
 # Re:HomeProxy AutoMod
+Оригинальный проект - https://github.com/1andrevich/homeproxy-hiddify
+
 
 Современная многоядерная прокси-платформа на основе [hiddify-core](https://github.com/hiddify/hiddify-core) и
 [sing-box-extended](https://github.com/shtorm-7/sing-box-extended).
@@ -32,8 +28,7 @@ Re-HomeProxy — многофункциональная система упра�
 - **Вкладка «Автоматизация»** — автоматическое обнаружение заблокированных сайтов. Фоновый монитор проверяет узлы и
   напрямую, и через прокси; домен, не открывающийся напрямую, но работающий через прокси, запоминается (базовый домен +
   обученные IP) и пускается через прокси/ByeDPI/Zapret. Полностью совместимо с ByeDPI и Zapret — обученные сайты идут тем
-  же путём, что выбрал пользователь. Исправлена ошибка отображения `0/0/0` (метод статуса теперь показывает реальные
-  счётчики заблокировано / напрямую / неизвестно).
+  же путём, что выбрал пользователь.
 - **Исправление Tun TCP/UDP** — корректная доставка `tun_mark`-потоков в tun-устройство с защитой от зацикливания, так
   что маршрутизация в режиме Tun работает правильно.
 - **Самообновление приложения** — на вкладке **«Ядро и службы»** можно проверить наличие новой версии и обновить

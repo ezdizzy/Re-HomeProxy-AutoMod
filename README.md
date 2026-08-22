@@ -1,12 +1,8 @@
 [**Русский 🇷🇺**](README_ru.md) / [**English**](README.md)
 
-<p align="center">
-  <a href="https://t.me/one_andrevich"><img src="https://img.shields.io/badge/Telegram-Join-2CA5E0?style=flat-square&logo=telegram&logoColor=white" alt="Telegram"></a>
-  <a href="https://ko-fi.com/D1D11SQNQD"><img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
-  <a href="https://nowpayments.io/donation?api_key=decbeb76-30f8-4c6d-ba40-2d2dec7fd888"><img src="https://img.shields.io/badge/Crypto-Donate-2EBE74?style=flat-square&logo=bitcoin&logoColor=white" alt="Crypto donate"></a>
-</p>
 
 # Re:HomeProxy AutoMod
+Orginal project - https://github.com/1andrevich/homeproxy-hiddify
 
 A modern multi-core proxy platform powered by [hiddify-core](https://github.com/hiddify/hiddify-core) and [sing-box-extended](https://github.com/shtorm-7/sing-box-extended).
 A fork of [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy).
@@ -31,8 +27,7 @@ This mod adds the following on top of the original Re-HomeProxy app:
 - **Automation tab** — automatic detection of blocked sites. A background monitor probes hosts both directly and through
   the proxy; a host that fails directly but works via the proxy is remembered (base domain + learned IPs) and routed
   through the proxy / ByeDPI / Zapret. Fully compatible with ByeDPI and Zapret — learned sites follow the same path the
-  user selected. The `0/0/0` status display bug is fixed (the status method now reports real blocked / direct / unknown
-  counts).
+  user selected.
 - **Tun TCP/UDP fix** — corrected Tun mode delivery of `tun_mark` flows into the tun device with a loop guard, so Tun
   routing works correctly.
 - **In-app self-update** — on the **Core & Tools** tab you can check for a new version and update the LuCI app (and the

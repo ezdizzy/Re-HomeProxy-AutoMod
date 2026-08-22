@@ -49,6 +49,8 @@ const DNS_LOG = '/var/log/dnsmasq-q.log';
  * must read module-scoped variables. */
 let uci = null;
 let dns_failover = '0';
+let dns_failover_plain = '0';
+let dns_failover_secure = '0';
 let alt_dns = [];
 let auto_set = {};
 let pending_reload = false;
@@ -60,6 +62,10 @@ let auto_ip_set = {};
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
+}
+
+function first_of(v) {
+	return (type(v) === 'array') ? (length(v) ? v[0] : '') : v;
 }
 
 function capture(cmd) {
@@ -132,18 +138,36 @@ function have_curl() {
 	return !!access('/usr/bin/curl');
 }
 
+/* Probe a host BOTH direct and via the configured main path. Returns an object
+ * { code, ok, block } instead of a bare 'ok'/'fail' so classification can tell
+ * apart "unreachable" (000/timeout), "blocked" (4xx/5xx or a 200 block-page),
+ * and "reachable" (2xx/3xx with a real page). This is what lets us learn the
+ * 403-via-direct / works-via-proxy case that the old code missed. */
 function probe(host, via_proxy, timeout) {
 	const url = `https://${host}`;
 	if (have_curl()) {
 		let proxy_arg = via_proxy ? ` -x socks5h://127.0.0.1:${AUTO_PROXY_PORT}` : '';
-		let code = trim(capture(`curl -s -o /dev/null -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote(url)} 2>/dev/null`));
-		return (code != '000' && code != '' && code != null) ? 'ok' : 'fail';
+		let bodyf = RUN_DIR + '/pb.tmp';
+		let codef = RUN_DIR + '/pc.tmp';
+		/* Follow redirects (-L) so we judge the FINAL page the browser would see;
+		 * capture the code AND the body (to detect 200 block-pages). */
+		system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote(url)} > ${shellquote(codef)} 2>/dev/null`);
+		let code = trim(readfile(codef) || '000');
+		let c = classify_code(code);
+		let block = (c === 'block');
+		if (c === 'ok') {
+			let body = readfile(bodyf) || '';
+			if (body_blocked(body)) block = true;
+		}
+		let ok = (c === 'ok') && !block;
+		return { code: code, ok: ok, block: block };
 	}
 	let proxy_env = via_proxy
 		? `http_proxy=http://127.0.0.1:${AUTO_PROXY_PORT} https_proxy=http://127.0.0.1:${AUTO_PROXY_PORT}`
 		: `http_proxy= https_proxy=`;
 	let rc = system(`${proxy_env} /usr/bin/wget -q -T ${timeout} -t 1 --no-check-certificate -O /dev/null ${shellquote(url)} 2>/dev/null`, timeout * 1000 + 2000);
-	return (rc === 0) ? 'ok' : 'fail';
+	let ok = (rc === 0);
+	return { code: ok ? '200' : '000', ok: ok, block: false };
 }
 
 function base_domain(host) {
@@ -189,6 +213,32 @@ function is_excluded(host) {
 		}
 		return false;
 	}
+
+/* Blocking-pattern signatures: a 200/3xx page whose body matches one of these is
+ * treated as a DPI/operator block page (the request "succeeded" but the content is
+ * a refusal). Catches the case where direct returns a 200 block-page while the
+ * proxy returns the real page. Matched case-insensitively. */
+const BLOCK_SIGNATURES = [
+	'access denied', 'access forbidden', 'forbidden', 'доступ ограничен',
+	'доступ запрещен', 'заблокир', 'заблокиров', 'blocked by', 'block page',
+	'the site is blocked', 'сайт заблокирован', 'err_blocked', 'доступ к ресурсу',
+	'blocked site', 'не доступен', 'resource is limited', 'request blocked'
+];
+function body_blocked(body) {
+	if (!body) return false;
+	body = lower(body);
+	for (let s in BLOCK_SIGNATURES) if (index(body, s) >= 0) return true;
+	return false;
+}
+/* Classify a raw HTTP code string: 'ok' (2xx/3xx), 'block' (4xx/5xx), 'fail' (no response). */
+function classify_code(code) {
+	let c = trim(code || '000');
+	if (c === '' || c === '000') return 'fail';
+	let n = int(c);
+	if (n >= 200 && n < 400) return 'ok';
+	if (n >= 400 && n <= 599) return 'block';
+	return 'fail';
+}
 
 /* ── Discovery ──────────────────────────────────────────────────────────── */
 
@@ -261,29 +311,66 @@ function dns_reachable(server) {
 	return system(`nc -u -z -w 2 ${shellquote(server)} 53 >/dev/null 2>&1`, 4000) === 0;
 }
 
-function dns_failover_check() {
+	function dns_failover_check() {
+		/* MultiDNS already races EVERY server in each pool and returns the fastest
+		 * live answer, so the legacy single-primary failover is redundant (and would
+		 * fight MultiDNS's own pool management). Skip it whenever MultiDNS is enabled. */
+		if ((uci.get('homeproxy', 'multidns', 'enabled') || '0') === '1') return;
+		/* Legacy Reserve/backup DNS failover. Covers BOTH plain and encrypted pools, each
+	 * with its own on/off switch. Plain-pool primary = russia_dns_server (or region/dns
+	 * server in other modes); secure-pool primary = secure_dns_server. The first healthy
+	 * server from the *matching* pool's list becomes the new primary. DoH/DoT servers are
+	 * now health-checked for real (see dns_reachable). */
 	if (dns_failover !== '1') return;
-	let primary = uci.get('homeproxy', 'config', 'dns_server');
-	if (isEmpty(primary) || primary === 'wan') return;
-	if (dns_reachable(primary)) return; /* primary healthy — nothing to do */
-	log('DNS failover: primary ' + primary + ' unreachable, looking for a healthy alternate');
-	for (let s in alt_dns) {
-		if (s === primary) continue;
-		if (dns_reachable(s)) {
-			uci.set('homeproxy', 'config', 'dns_server', s);
-			uci.commit('homeproxy');
-			log('DNS failover: switched primary DNS to ' + s);
-			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
-			if (!access(RUN_DIR + '/hiddify-c.json')) {
-				log('regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
-				return;
+	let mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
+	let plain_key = (mode === 'proxy_banned_ru') ? 'russia_dns_server'
+		: (mode === 'bypass_cn') ? 'china_dns_server'
+		: (mode === 'bypass_ir') ? 'iran_dns_server' : 'dns_server';
+	let plain_primary = first_of(uci.get('homeproxy', 'config', plain_key));
+	let secure_primary = first_of(uci.get('homeproxy', 'config', 'secure_dns_server'));
+	let plain_list = (type(uci.get('homeproxy', 'config', plain_key)) === 'array') ? uci.get('homeproxy', 'config', plain_key) : [ plain_primary ];
+	let secure_list = (type(uci.get('homeproxy', 'config', 'secure_dns_server')) === 'array') ? uci.get('homeproxy', 'config', 'secure_dns_server') : [ secure_primary ];
+
+	if (dns_failover_plain === '1' && !isEmpty(plain_primary) && plain_primary !== 'wan') {
+		if (!dns_reachable(plain_primary)) {
+			log('DNS failover (plain): primary ' + plain_primary + ' unreachable, looking for a healthy alternate');
+			for (let s in plain_list) {
+				if (s === plain_primary) continue;
+				if (dns_reachable(s)) {
+					uci.set('homeproxy', 'config', plain_key, s);
+					uci.commit('homeproxy');
+					log('DNS failover (plain): switched ' + plain_key + ' to ' + s);
+					return do_failover_reload();
+				}
 			}
-			log('DNS failover: restarting service to load new config.');
-			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-			return;
+			log('DNS failover (plain): no healthy alternate available');
 		}
 	}
-	log('DNS failover: no healthy alternate DNS available');
+	if (dns_failover_secure === '1' && !isEmpty(secure_primary) && secure_primary !== 'wan') {
+		if (!dns_reachable(secure_primary)) {
+			log('DNS failover (secure): primary ' + secure_primary + ' unreachable, looking for a healthy alternate');
+			for (let s in secure_list) {
+				if (s === secure_primary) continue;
+				if (dns_reachable(s)) {
+					uci.set('homeproxy', 'config', 'secure_dns_server', s);
+					uci.commit('homeproxy');
+					log('DNS failover (secure): switched secure_dns_server to ' + s);
+					return do_failover_reload();
+				}
+			}
+			log('DNS failover (secure): no healthy alternate available');
+		}
+	}
+}
+
+function do_failover_reload() {
+	system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
+	if (!access(RUN_DIR + '/hiddify-c.json')) {
+		log('DNS failover: regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
+		return;
+	}
+	log('DNS failover: restarting service to load new config.');
+	system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 }
 
 /* ── Main ───────────────────────────────────────────────────────────────── */
@@ -312,6 +399,8 @@ function main() {
 
 	/* DNS failover (C) reads the DNS section, not the automation section. */
 	dns_failover = uci.get('homeproxy', 'config', 'dns_failover') || '0';
+	dns_failover_plain = uci.get('homeproxy', 'config', 'dns_failover_plain') || '0';
+	dns_failover_secure = uci.get('homeproxy', 'config', 'dns_failover_secure') || '0';
 	alt_dns = uci.get('homeproxy', 'config', 'alt_dns_servers') || [];
 	if (type(alt_dns) !== 'array') alt_dns = [ alt_dns ];
 
@@ -358,29 +447,44 @@ function main() {
 		pending_new = 0;
 	}
 
-	function classify(dom, direct_res, proxy_res, is_ip) {
+	function classify(dom, d, p, is_ip) {
 		if (!state[dom]) state[dom] = {};
 		let st = state[dom];
 		st.last_probe = time();
-		st.direct = direct_res;
-		st.proxy = proxy_res;
+		st.direct = d.code;
+		st.proxy = p ? p.code : 'n/a';
 		st.type = is_ip ? 'ip' : 'domain';
 
-		let blocked = (direct_res === 'fail' && proxy_res === 'ok');
-		if (blocked) {
+		/* A host is learned as BLOCKED only when direct is NOT ok (fails, times out,
+		 * gets a 4xx/5xx, or a 200 block-page) AND the proxy reaches a real page.
+		 * - direct ok                       -> not blocked, leave as-is
+		 * - direct not ok + proxy ok        -> blocked, learn it
+		 * - direct not ok + proxy blocked   -> proxy can't help (blocked_no_proxy)
+		 * - direct not ok + proxy fail      -> both unreachable / transient (unknown)
+		 * This covers: timeout/reset, poisoning (NXDOMAIN/bogus IP), DPI 403/451/5xx,
+		 * MITM block-pages served with 200, and the 403-direct / 200-proxy case. */
+		if (d.ok) {
+			st.status = 'direct';
+			st.confirms = 0;
+			return;
+		}
+		let p_ok = p && p.ok;
+		if (p_ok) {
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;
 			if (st.confirms >= min_confirm) {
-		if (is_ip) {
-			if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom}`); pending_reload = true; pending_new++; }
-		} else if (!auto_set[dom]) {
-			auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom}`); pending_reload = true; pending_new++;
-		}
+				if (is_ip) {
+					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; }
+				} else if (!auto_set[dom]) {
+					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++;
+				}
 			}
-		} else if (direct_res === 'ok') {
-			st.status = 'direct'; st.confirms = 0;
+		} else if (p && p.block) {
+			st.status = 'blocked_no_proxy';
+			st.confirms = 0;
 		} else {
 			st.status = 'unknown';
+			st.confirms = 0;
 		}
 	}
 
@@ -411,10 +515,10 @@ function main() {
 			let st = state[dom];
 			if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
 			probed++;
-			let direct_res = probe(dom, false, timeout);
-			let proxy_res = 'n/a';
-			if (direct_res !== 'ok') { proxy_res = probe(dom, true, timeout); sleep(150); }
-			classify(dom, direct_res, proxy_res, false);
+			let d_res = probe(dom, false, timeout);
+			let p_res = null;
+			if (!d_res.ok) { p_res = probe(dom, true, timeout); sleep(150); }
+			classify(dom, d_res, p_res, false);
 			save_state(state);
 		}
 
@@ -427,10 +531,10 @@ function main() {
 				let st = state[ip];
 				if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
 				probed++;
-				let direct_res = probe(ip, false, timeout);
-				let proxy_res = 'n/a';
-				if (direct_res !== 'ok') { proxy_res = probe(ip, true, timeout); sleep(150); }
-				classify(ip, direct_res, proxy_res, true);
+				let d_res = probe(ip, false, timeout);
+				let p_res = null;
+				if (!d_res.ok) { p_res = probe(ip, true, timeout); sleep(150); }
+				classify(ip, d_res, p_res, true);
 				save_state(state);
 			}
 		}

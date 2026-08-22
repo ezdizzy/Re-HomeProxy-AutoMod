@@ -522,11 +522,12 @@ return view.extend({
 		}
 
 		o = s.taboption('routing', form.Value, 'routing_port', _('Routing ports'),
-			_('Specify target ports to be proxied. Multiple ports must be separated by commas.'));
+			_('Specify target ports to be proxied. Multiple ports must be separated by commas. Leave empty for all ports.'));
 		o.value('', _('All ports'));
 		o.value('common', _('Common ports only (bypass P2P traffic)'));
 		o.validate = function(section_id, value) {
-			if (section_id && value && value !== 'common') {
+			/* 'all' is a legacy "all ports" sentinel; treat it as valid (empty). */
+			if (section_id && value && value !== 'common' && value !== 'all') {
 
 				let ports = [];
 				for (let i of value.split(',')) {
@@ -1920,6 +1921,160 @@ return view.extend({
 		/* DNS rules end */
 		/* Custom routing settings end */
 
+		/* ── MultiDNS (per-query racing across all servers in each pool) ─────────── */
+		s.tab('multidns', _('MultiDNS'));
+
+		o = s.taboption('multidns', form.SectionValue, '_multidns', form.NamedSection, 'multidns', 'homeproxy');
+
+		ss = o.subsection;
+		so = ss.option(form.Flag, 'enabled', _('Enable MultiDNS'),
+			_('Race ALL servers in each DNS pool at once (every query) and return the fastest LIVE answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon continuously scores servers by latency + IP liveness + trend and prunes dead/polluted ones. Requires the smartdns package.'));
+		so.rmempty = false;
+		/* Safety switch: when the user disables MultiDNS, hard-stop the racing
+		 * resolver so DNS reverts to the standard upstreams. */
+		so.onchange = function(ev, section_id, value) {
+			if (!value || value === '0')
+				mdDisable().catch(function() {});
+		};
+
+		so = ss.option(form.Flag, 'use_plain', _('Race plain (Russia) DNS pool'),
+			_('Query every entry of the plain DNS-server list in parallel and pick the fastest live IP. Unblocks speed and reliability for non-proxied sites.'));
+		so.default = '1';
+		so.rmempty = false;
+		so.depends('enabled', '1');
+
+		so = ss.option(form.Flag, 'use_secure', _('Race secure (encrypted) DNS pool'),
+			_('Query every DoH/DoT entry in the secure pool in parallel and pick the fastest live IP for blocked / proxied domains.'));
+		so.default = '1';
+		so.rmempty = false;
+		so.depends('enabled', '1');
+
+		so = ss.option(form.Flag, 'secure_via_proxy', _('Tunnel secure-pool queries through the proxy'),
+			_('Send the secure pool’s DoH/DoT queries through the proxy tunnel (SOCKS5) so your ISP cannot see which sites you look up. Disable to resolve them directly (still encrypted).'));
+		so.default = '1';
+		so.rmempty = false;
+		so.depends('enabled', '1');
+		so.depends('use_secure', '1');
+
+		so = ss.option(form.Value, 'bench_interval', _('Quality check interval (seconds)'),
+			_('How often the analyzer probes each server for latency / liveness / poisoning and updates trends.'));
+		so.datatype = 'uinteger';
+		so.default = '300';
+		so.placeholder = '300';
+		so.rmempty = false;
+		so.depends('enabled', '1');
+		so.depends('use_plain', '1');
+		so.depends('use_secure', '1');
+
+		/* Live monitor (always visible so you can verify without enabling first). */
+		function mdBtn(label, handler) {
+			return E('button', {
+				'class': 'btn cbi-button',
+				'click': function() {
+					const el = this;
+					el.disabled = true;
+					Promise.resolve(handler()).finally(function() { el.disabled = false; });
+				}
+			}, [ label ]);
+		}
+		const mdStatus = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_status', expect: { '': {} } });
+		const mdReload = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_reload', expect: { '': {} } });
+		const mdReset = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_reset', expect: { '': {} } });
+		const mdDisable = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_disable', expect: { '': {} } });
+
+		const mdStatusEl = E('div', { 'class': 'automation-counts' });
+		const mdTableEl = E('div', { 'class': 'automation-table' });
+
+		function mdRefresh() {
+			return mdStatus().then(function(st) {
+				const en = st.enabled === '1';
+				mdStatusEl.innerHTML =
+					_('Enabled') + ': <b>' + (en ? _('yes') : _('no')) + '</b> &nbsp;|&nbsp; ' +
+					_('smartdns') + ': <b>' + (st.smartdns ? _('running') : _('stopped')) + '</b> &nbsp;|&nbsp; ' +
+					_('Plain pool') + ': <b>' + (st.active && st.active.ru ? st.active.ru.length : 0) + '</b> &nbsp;|&nbsp; ' +
+					_('Secure pool') + ': <b>' + (st.active && st.active.secure ? st.active.secure.length : 0) + '</b>';
+				mdRenderTable(st.servers);
+			}).catch(function(e) {
+				mdStatusEl.textContent = _('MultiDNS status unavailable: ') + e;
+			});
+		}
+
+		const mdActions = E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
+			mdBtn(_('Rebuild pools'), function() { return mdReload(); }),
+			mdBtn(_('Reset trends'), function() { return mdReset().then(mdRefresh); }),
+			mdBtn(_('Disable & restore DNS'), function() { return mdDisable().then(mdRefresh); })
+		]);
+
+		const mdPanel = E('div', { 'class': 'automation-panel cbi-section' }, [
+			E('h3', {}, [ _('Live DNS quality monitor') ]),
+			mdStatusEl,
+			mdTableEl,
+			mdActions,
+			E('p', { 'class': 'automation-hint' }, [ _('Score = latency + live-IP ratio + success, with poisoning penalty. Servers with a persistently low score are pruned from the live racing pool and re-checked.') ])
+		]);
+
+		so = ss.option(form.DummyValue, '_md_monitor');
+		so.rawhtml = true;
+		so.rmempty = true;
+		(function(opt) {
+			const _super = opt.renderWidget.bind(opt);
+			opt.renderWidget = function(section_id, option_index, cfgvalue) {
+				return Promise.resolve(_super(section_id, option_index, cfgvalue)).then(function(node) {
+					node.appendChild(mdPanel);
+					return node;
+				});
+			};
+		})(so);
+		so.write = function() { return undefined; };
+
+		mdRefresh();
+
+		function mdFmtTs(ts) { return ts ? String(ts) : '—'; }
+		function mdRenderTable(servers) {
+			if (!servers || !servers.length) {
+				mdTableEl.innerHTML = '';
+				mdTableEl.appendChild(E('em', {}, [ _('No data yet — enable MultiDNS and wait for the first quality check.') ]));
+				return;
+			}
+			const table = E('table', { 'class': 'table cbi-section-table' });
+			const headers = [ _('Server'), _('Pool'), _('Score'), _('Latency'), _('Live %'), _('Success %'), _('Trend'), _('Status') ];
+			const thead = E('thead', {});
+			const htr = E('tr', {});
+			for (let h of headers) {
+				const th = E('th', {}, [ h ]);
+				th.style.setProperty('background', '#707070', 'important');
+				th.style.setProperty('color', '#f2f2f2', 'important');
+				th.style.setProperty('padding', '3px 6px', 'important');
+				th.style.setProperty('border', '1px solid #555', 'important');
+				htr.appendChild(th);
+			}
+			thead.appendChild(htr);
+			table.appendChild(thead);
+			const tbody = E('tbody', {});
+			for (let e of servers) {
+				let pool = e.pool || '—';
+				/* pool is inferred from active lists sent by RPC; fall back to '—' */
+				let lat = (e.latency != null) ? (e.latency + ' ms') : '—';
+				let live = (e.live != null) ? (e.live + '%') : '—';
+				let succ = (e.success != null) ? (e.success + '%') : '—';
+				let status = e.pruned ? _('pruned (bad)') : (e.poisoned ? _('poisoned?') : _('active'));
+				let trend = '';
+				if (e.samples >= 2) trend = '≈'; /* trend history shown via score stability */
+				const cells = [ String(e.server), pool, String(e.score != null ? e.score : '—'), lat, live, succ, trend, status ];
+				const tr = E('tr', {});
+				for (let i = 0; i < cells.length; i++) {
+					const td = E('td', {}, [ cells[i] ]);
+					td.style.setProperty('border', '1px solid #d0d0d0', 'important');
+					td.style.setProperty('padding', '3px 6px', 'important');
+					tr.appendChild(td);
+				}
+				tbody.appendChild(tr);
+			}
+			table.appendChild(tbody);
+			mdTableEl.innerHTML = '';
+			mdTableEl.appendChild(table);
+		}
+
 		/* Rule set settings start */
 		s.tab('ruleset', _('Rule Set'));
 		o = s.taboption('ruleset', form.SectionValue, '_ruleset', form.GridSection, 'ruleset');
@@ -2158,6 +2313,7 @@ return view.extend({
 
 		/* ByeDPI settings are on the Node Settings page */
 
+		poll.add(mdRefresh, 10);
 		return m.render();
 	}
 });

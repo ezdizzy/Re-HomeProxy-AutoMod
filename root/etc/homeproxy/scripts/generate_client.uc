@@ -123,7 +123,9 @@ let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outb
     domain_strategy, sniff_override, dns_server, china_dns_server, iran_dns_server, russia_dns_server,
     secure_dns_server, proxy_calls, no_proxy_torrents, show_advanced_rules, dns_default_strategy, dns_default_server, dns_disable_cache,
     dns_disable_cache_expire, dns_independent_cache, dns_client_subnet, cache_file_store_rdrc,
-    cache_file_rdrc_timeout, direct_domain_list, proxy_domain_list;
+    cache_file_rdrc_timeout, direct_domain_list, proxy_domain_list,
+    multidns_enabled, mdns_use_plain, mdns_use_secure, mdns_secure_via_proxy,
+    mdns_plain_port, mdns_secure_port, mdns_proxy_port, mdns_main_is_proxy;
 
 if (routing_mode !== 'custom') {
 	main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
@@ -155,6 +157,28 @@ if (routing_mode !== 'custom') {
 	 * Reverse modes ride the same engine, so they get secure-dns/overrides for free. */
 	/* DNS fields can be a single value or a DynamicList (array); use the first entry. */
 	let first_of = (v) => (type(v) === 'array') ? (length(v) ? v[0] : '') : v;
+
+	/* MultiDNS: a dedicated smartdns instance races ALL servers in each pool (plain
+	 * "Russia" pool + encrypted "secure" pool) at query time and returns the fastest
+	 * LIVE answer. When enabled per pool, the sing-box resolvers below are repointed to
+	 * the local smartdns listener instead of hitting a single upstream directly. The
+	 * daemon (scripts/multidns.uc) builds the smartdns config from these same UCI lists
+	 * and continuously scores/ranks servers by latency + IP liveness + quality trends. */
+	multidns_enabled = uci.get(uciconfig, 'multidns', 'enabled') || '0';
+	mdns_use_plain = (uci.get(uciconfig, 'multidns', 'use_plain') || '1') !== '0';
+	mdns_use_secure = (uci.get(uciconfig, 'multidns', 'use_secure') || '1') !== '0';
+	mdns_secure_via_proxy = (uci.get(uciconfig, 'multidns', 'secure_via_proxy') || '1') !== '0';
+	mdns_plain_port = uci.get(uciconfig, 'multidns', 'plain_port') || '5453';
+	mdns_secure_port = uci.get(uciconfig, 'multidns', 'secure_port') || '5454';
+	mdns_proxy_port = uci.get(uciconfig, 'multidns', 'proxy_port') || '5338';
+	/* A real tunnel proxy (not byedpi/zapret, which egress direct) can carry the
+	 * secure pool's DoH/DoT queries so the ISP cannot see them. */
+	mdns_main_is_proxy = !(main_node in ['byedpi-out', 'zapret-out']);
+
+	/* Safety: if the smartdns binary is missing, do NOT repoint resolvers to the
+	 * local listener (that would black-hole all DNS). Fall back to the standard
+	 * single upstreams; the multidns daemon logs "smartdns missing". */
+	let mdns_ok = (multidns_enabled === '1') && access('/usr/sbin/smartdns');
 
 	if (is_selective_mode(routing_mode)) {
 		secure_dns_server = first_of(uci.get(uciconfig, ucimain, 'secure_dns_server')) || 'https://cloudflare-dns.com/dns-query';
@@ -745,20 +769,32 @@ if (!isEmpty(main_node)) {
 		 * is already encrypted/un-poisonable, it just must not pass through the desync. */
 		/* ByeDPI and Zapret both egress direct (not a tunnel), so secure-dns must go
 		 * direct too — a DoH/DoT query can't ride a desync. */
-		const secure_dns_detour = (main_node === 'byedpi-out' || main_node === 'zapret-out') ? 'direct-out' : 'main-out';
+		/* MultiDNS: when the plain "Russia" pool is enabled, race ALL russia_dns_server
+		 * entries through the local smartdns listener instead of a single upstream. */
+		const mdns_secure_via_proxy_eff = (		mdns_ok && mdns_use_secure && mdns_secure_via_proxy && mdns_main_is_proxy);
+		const ru_dns_target = (		mdns_ok && mdns_use_plain)
+			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_plain_port) }
+			: parse_dnsserver(russia_dns_server);
 		push(config.dns.servers, {
 			tag: 'russia-dns',
 			detour: self_mark ? 'direct-out' : null,
-			...parse_dnsserver(russia_dns_server)
+			...ru_dns_target
 		});
+		/* Secure pool: always race via smartdns when MultiDNS+secure enabled. The DoH/DoT
+		 * upstreams themselves tunnel through the proxy only when secure_via_proxy is on (the
+		 * daemon points smartdns at the dedicated socks5 inbound below); here we just repoint
+		 * the sing-box resolver to the local listener. */
+		const secure_target = (		mdns_ok && mdns_use_secure)
+			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_secure_port) }
+			: parse_dnsserver(secure_dns_server, 'tcp');
 		push(config.dns.servers, {
 			tag: 'secure-dns',
 			domain_resolver: {
 				server: 'russia-dns',
 				strategy: (ipv6_support !== '1') ? 'ipv4_only' : null
 			},
-			detour: secure_dns_detour,
-			...parse_dnsserver(secure_dns_server, 'tcp')
+			detour: 'direct-out',
+			...secure_target
 		});
 		config.dns.final = 'russia-dns';
 
@@ -810,14 +846,18 @@ if (!isEmpty(main_node)) {
 		 * NOTE (Iran validation): bootstrapping a DoH *hostname* via the local resolver can be
 		 * poisoned by the ISP -- if confirmed in-country, set secure_dns_server to an IP-literal
 		 * DoH (e.g. https://1.1.1.1/dns-query) so no bootstrap is needed. */
+		/* Secure pool: race via the local smartdns listener when MultiDNS+secure is on. */
+		const secure_target_br = (		mdns_ok && mdns_use_secure)
+			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_secure_port) }
+			: parse_dnsserver(secure_dns_server, 'tcp');
 		push(config.dns.servers, {
 			tag: 'secure-dns',
 			domain_resolver: {
 				server: 'region-dns',
 				strategy: (ipv6_support !== '1') ? 'ipv4_only' : null
 			},
-			detour: 'main-out',
-			...parse_dnsserver(secure_dns_server, 'tcp')
+			detour: 'direct-out',
+			...secure_target_br
 		});
 		config.dns.final = 'secure-dns';
 
@@ -986,6 +1026,20 @@ push(config.inbounds, {
 	sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
 	set_system_proxy: is_hiddify ? false : null,
 });
+
+/* MultiDNS secure-pool tunnel: smartdns sends its DoH/DoT upstreams through this
+ * dedicated loopback SOCKS5 inbound so they ride the real proxy (ISP can't see them).
+ * A fixed high-priority route rule below sends everything from this inbound to main-out,
+ * and we exempt its traffic from the DNS sniffer so the resolver's own queries aren't
+ * re-routed by normal rules. */
+if (		mdns_ok && mdns_use_secure && mdns_secure_via_proxy && mdns_main_is_proxy) {
+	push(config.inbounds, {
+		type: 'socks',
+		tag: 'mdns-proxy-in',
+		listen: '127.0.0.1',
+		listen_port: int(mdns_proxy_port)
+	});
+}
 
 if (match(proxy_mode, /redirect/))
 	push(config.inbounds, {
@@ -1470,6 +1524,21 @@ config.route = {
 	default_interface: default_interface,
 	default_mark: strToInt(self_mark)
 };
+
+/* MultiDNS secure-pool tunnel: traffic from the resolver's dedicated SOCKS5 inbound rides
+ * the real proxy (main-out) untouched by sniffing/rules, so DoH/DoT upstreams stay hidden
+ * from the ISP. Sits above the resolve/sniff rules (same rationale as the automation pins). */
+if (		mdns_ok && mdns_use_secure && mdns_secure_via_proxy && mdns_main_is_proxy) {
+	push(config.route.rules, {
+		inbound: 'mdns-proxy-in',
+		action: 'route',
+		outbound: 'main-out'
+	});
+	push(config.route.rules, {
+		inbound: 'mdns-proxy-in',
+		action: 'sniff'
+	});
+}
 
 /* Automation test inbounds: pin each to a fixed outbound so the auto-detection daemon can
  * probe a site direct vs through the main path. These must sit ABOVE the resolve/sniff and

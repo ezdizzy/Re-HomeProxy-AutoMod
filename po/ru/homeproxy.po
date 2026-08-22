@@ -4636,4 +4636,201 @@ msgstr "Включить резервный DNS"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the “Alternate DNS servers” list (Client ▸ DNS tab) and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up."
-msgstr "Следит за основным DNS: если он недоступен, переключается на работающий сервер из списка «Альтернативные DNS-серверы» (вкладка Клиент ▸ DNS) и перегенерирует конфиг. Проверяются только обычные (UDP/Do53) серверы; DoH/DoT считаются всегда доступными."
+msgstr "Следит за основным DNS: если он недоступен, переключается на работающий сервер из списка «Альтернативные DNS-серверы» (вкладка Клиент ▸ DNS) и перегенерирует конфиг. Проверяются обычные (UDP/Do53) и зашифрованные (DoH/DoT) серверы — для DoH/DoT реально проверяется HTTPS/TLS-соединение."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Enable plain DNS failover"
+msgstr "Резервный DNS (обычный пул)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Enable secure DNS failover"
+msgstr "Резервный DNS (защищённый пул)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "MultiDNS"
+msgstr "MultiDNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Enable MultiDNS"
+msgstr "Включить MultiDNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Race plain (Russia) DNS pool"
+msgstr "Гонка обычных (Россия) DNS-серверов"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Race secure (encrypted) DNS pool"
+msgstr "Гонка защищённых (шифрованных) DNS-серверов"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Tunnel secure-pool queries through the proxy"
+msgstr "Туннелировать запросы защищённого пула через прокси"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Quality check interval (seconds)"
+msgstr "Интервал проверки качества (секунды)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Live DNS quality monitor"
+msgstr "Монитор качества DNS в реальном времени"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Rebuild pools"
+msgstr "Пересобрать пулы"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Reset trends"
+msgstr "Сбросить тренды"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Score = latency + live-IP ratio + success, with poisoning penalty. Servers with a persistently low score are pruned from the live racing pool and re-checked."
+msgstr "Оценка = задержка + доля живых IP + успешность, со штрафом за отравление. Серверы с устойчиво низкой оценкой исключаются из живого пула гонки и проверяются повторно."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "No data yet — enable MultiDNS and wait for the first quality check."
+msgstr "Данных пока нет — включите MultiDNS и дождитесь первой проверки качества."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Plain pool"
+msgstr "Обычный пул"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Secure pool"
+msgstr "Защищённый пул"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Server"
+msgstr "Сервер"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Pool"
+msgstr "Пул"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Score"
+msgstr "Оценка"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Latency"
+msgstr "Задержка"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Live %"
+msgstr "Живых %"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Success %"
+msgstr "Успех %"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Trend"
+msgstr "Тренд"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Status"
+msgstr "Статус"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "pruned (bad)"
+msgstr "исключён (плохой)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "poisoned?"
+msgstr "отравлен?"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "MultiDNS status unavailable: "
+msgstr "Статус MultiDNS недоступен: "
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "running"
+msgstr "запущен"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "stopped"
+msgstr "остановлен"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Race ALL servers in each DNS pool at once (every query) and return the fastest LIVE answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon continuously scores servers by latency + IP liveness + trend and prunes dead/polluted ones. Requires the smartdns package."
+msgstr "Запрашивает все серверы каждого пула DNS одновременно (при каждом запросе) и возвращает самый быстрый ЖИВОЙ ответ. Пулы «Россия» (обычный) и шифрованный «Secure» гоняются независимо, повторяя раздельную маршрутизацию. Демон качества непрерывно оценивает серверы по задержке, живости IP и тренду и отсекает мёртвые/отравленные. Требуется пакет smartdns."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Query every entry of the plain DNS-server list in parallel and pick the fastest live IP. Unblocks speed and reliability for non-proxied sites."
+msgstr "Опрашивает параллельно каждую запись обычного списка DNS-серверов и выбирает самый быстрый живой IP. Повышает скорость и надёжность для непроксируемых сайтов."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Query every DoH/DoT entry in the secure pool in parallel and pick the fastest live IP for blocked / proxied domains."
+msgstr "Опрашивает параллельно каждую запись DoH/DoT защищённого пула и выбирает самый быстрый живой IP для заблокированных и проксируемых доменов."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Send the secure pool’s DoH/DoT queries through the proxy tunnel (SOCKS5) so your ISP cannot see which sites you look up. Disable to resolve them directly (still encrypted)."
+msgstr "Отправляет DoH/DoT-запросы защищённого пула через туннель прокси (SOCKS5), чтобы провайдер не видел, какие сайты вы ищете. Выключите, чтобы резолвить напрямую (всё ещё шифруется)."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends."
+msgstr "Как часто анализатор опрашивает каждый сервер на задержку, живость и отравление и обновляет тренды."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Disable & restore DNS"
+msgstr "Отключить и восстановить DNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "smartdns"
+msgstr "smartdns"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Clear log"
+msgstr "Очистить журнал"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Why"
+msgstr "Почему"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Domain"
+msgstr "Домен"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "IP"
+msgstr "IP"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Last check"
+msgstr "Последняя проверка"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Learned sites"
+msgstr "Обученные сайты"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Added"
+msgstr "Добавлен"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Site"
+msgstr "Сайт"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "active"
+msgstr "активен"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "direct ✗ / proxy ✓"
+msgstr "прямой ✗ / прокси ✓"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "direct %s ✗ / proxy %s ✓"
+msgstr "прямой %s ✗ / прокси %s ✓"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "blocked both ways"
+msgstr "заблокировано обходными путями"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "uncertain"
+msgstr "неопределённо"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Redundant with MultiDNS: when MultiDNS is enabled it already races every server in each pool and returns the fastest live answer, so a single failed primary is bypassed automatically. Reserve DNS is therefore ignored while MultiDNS is on — use one or the other."
+msgstr "Дублирует MultiDNS: при включённом MultiDNS он уже опрашивает все серверы каждого пула и возвращает самый быстрый живой ответ, поэтому отказ одного основного сервера обходится автоматически. Резервный DNS игнорируется, пока включён MultiDNS, — используйте что-то одно."
+

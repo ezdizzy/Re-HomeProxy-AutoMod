@@ -55,6 +55,36 @@ start_service() {
 		log "created missing $CONF.automation section (defaults)."
 	fi
 
+	# Same for the MultiDNS section (the MultiDNS tab renders NamedSection
+	# `homeproxy.multidns`; without it the tab's options error out). Idempotent.
+	if ! uci -q get "$CONF.multidns" >/dev/null 2>&1; then
+		uci -q set "$CONF.multidns=homeproxy"
+		uci -q set "$CONF.multidns.enabled=0"
+		uci -q set "$CONF.multidns.use_plain=1"
+		uci -q set "$CONF.multidns.use_secure=1"
+		uci -q set "$CONF.multidns.secure_via_proxy=1"
+		uci -q set "$CONF.multidns.bench_interval=300"
+		uci -q commit "$CONF"
+		log "created missing $CONF.multidns section (defaults)."
+	fi
+
+	# Auto-enable the AntiDPI engines when a *-out node/rule reference exists but the
+	# master switch is off. Without this the reference is inert (falls back to direct-out)
+	# and the engine (ciadpi / nfqws2) is never launched — so "add a Zapret/ByeDPI rule"
+	# silently does nothing. Idempotent; the values are re-read by config_load below.
+	if [ "$(uci -q get "$CONF.config.zapret_enabled")" != "1" ] && \
+	   uci show "$CONF" 2>/dev/null | grep -q "='zapret-out'"; then
+		uci -q set "$CONF.config.zapret_enabled=1"
+		uci -q commit "$CONF"
+		log "auto-enabled $CONF.config.zapret_enabled (zapret-out reference found)."
+	fi
+	if [ "$(uci -q get "$CONF.config.byedpi_enabled")" != "1" ] && \
+	   uci show "$CONF" 2>/dev/null | grep -q "='byedpi-out'"; then
+		uci -q set "$CONF.config.byedpi_enabled=1"
+		uci -q commit "$CONF"
+		log "auto-enabled $CONF.config.byedpi_enabled (byedpi-out reference found)."
+	fi
+
 	config_load "$CONF"
 
 	local preferred_core
@@ -294,6 +324,19 @@ start_service() {
 	if [ "$automation_enabled" = "1" ]; then
 		procd_open_instance "automation"
 		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/automation.uc"
+		procd_set_param respawn
+		procd_close_instance
+	fi
+
+	# MultiDNS analyzer: races all DNS servers in each pool (plain + secure) via a
+	# dedicated smartdns instance and continuously scores/ranks them by latency + IP
+	# liveness + quality trends. Runs only while enabled; owns the smartdns process.
+	local multidns_enabled
+	config_get_bool multidns_enabled "multidns" "enabled" "0"
+	if [ "$multidns_enabled" = "1" ] && [ -x "/usr/sbin/smartdns" ]; then
+		mkdir -p "$RUN_DIR/multidns"
+		procd_open_instance "multidns"
+		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/multidns.uc"
 		procd_set_param respawn
 		procd_close_instance
 	fi
