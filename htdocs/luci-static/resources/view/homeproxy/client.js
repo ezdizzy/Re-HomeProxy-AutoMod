@@ -246,12 +246,43 @@ return view.extend({
 		o.depends('main_node', 'urltest');
 		o.rmempty = false;
 
-		o = s.taboption('routing', form.ListValue, 'main_urltest_preferred', _('Preferred node'),
+		/* Deterministic visibility of the mode-dependent options. LuCI hides/shows
+		 * options via dependency checks on form widgets; to be safe on every LuCI
+		 * version we also sync visibility explicitly on every widget change and
+		 * after the initial render. Auto → no extra options; Prefer → only the
+		 * single "URLTest node" select; Manual → only the node list. */
+		const urltestSync = function() {
+			const getVal = (cbid) => {
+				const el = document.getElementById('widget.' + cbid);
+				return el ? el.value : null;
+			};
+			const syncBlock = (mn_cbid, mode_cbid, pref_cbid, nodes_cbid) => {
+				const mn = getVal(mn_cbid) ?? uci.get('homeproxy', 'config', mn_cbid.split('.').pop());
+				const mode = getVal(mode_cbid) ?? uci.get('homeproxy', 'config', mode_cbid.split('.').pop()) ?? 'manual';
+				const on = (mn === 'urltest');
+				[[pref_cbid, on && mode === 'prefer'],
+				 [nodes_cbid, on && mode === 'manual']].forEach(([opt, show]) => {
+					const el = document.querySelector('[data-field="' + opt + '"]');
+					if (el)
+						el.classList[show ? 'remove' : 'add']('hidden');
+				});
+			};
+			syncBlock('cbid.homeproxy.config.main_node',
+				'cbid.homeproxy.config.main_urltest_mode',
+				'cbid.homeproxy.config.main_urltest_preferred',
+				'cbid.homeproxy.config.main_urltest_nodes');
+			syncBlock('cbid.homeproxy.config.main_udp_node',
+				'cbid.homeproxy.config.main_udp_urltest_mode',
+				'cbid.homeproxy.config.main_udp_urltest_preferred',
+				'cbid.homeproxy.config.main_udp_urltest_nodes');
+		};
+		document.addEventListener('widget-change', urltestSync, true);
+
+		o = s.taboption('routing', form.ListValue, 'main_urltest_preferred', _('URLTest node'),
 			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends('main_node', 'urltest');
-		o.depends('main_urltest_mode', 'prefer');
 		o.rmempty = false;
 
 		o = s.taboption('routing', hp.CBIStaticList, 'main_urltest_nodes', _('URLTest nodes'),
@@ -259,7 +290,6 @@ return view.extend({
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends('main_node', 'urltest');
-		o.depends('main_urltest_mode', 'manual');
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Value, 'main_urltest_interval', _('Test interval'),
@@ -295,12 +325,11 @@ return view.extend({
 		o.depends('main_udp_node', 'urltest');
 		o.rmempty = false;
 
-		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_preferred', _('Preferred node'),
+		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_preferred', _('URLTest node'),
 			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends('main_udp_node', 'urltest');
-		o.depends('main_udp_urltest_mode', 'prefer');
 		o.rmempty = false;
 
 		o = s.taboption('routing', hp.CBIStaticList, 'main_udp_urltest_nodes', _('URLTest nodes'),
@@ -308,7 +337,6 @@ return view.extend({
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends('main_udp_node', 'urltest');
-		o.depends('main_udp_urltest_mode', 'manual');
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_interval', _('Test interval'),
@@ -403,78 +431,6 @@ return view.extend({
 		o.depends('routing_mode', 'global');
 		o.placeholder = '1.0.0.1';
 
-		o = s.taboption('routing', form.Value, 'china_dns_server', _('China DNS server'),
-			_('The dns server for resolving China domains. Support UDP, TCP, DoH, DoQ, DoT.'));
-		o.value('wan', _('WAN DNS (read from interface)'));
-		o.value('223.5.5.5', _('Aliyun Public DNS (223.5.5.5)'));
-		o.value('210.2.4.8', _('CNNIC Public DNS (210.2.4.8)'));
-		o.value('119.29.29.29', _('Tencent Public DNS (119.29.29.29)'));
-		o.value('117.50.10.10', _('ThreatBook Public DNS (117.50.10.10)'));
-		o.depends('routing_mode', 'bypass_cn');
-		o.default = '223.5.5.5';
-		o.rmempty = false;
-		o.validate = function(section_id, value) {
-			if (section_id && !['wan'].includes(value)) {
-				if (!value)
-					return _('Expecting: %s').format(_('non-empty value'));
-
-				try {
-					let url = new URL(value.replace(/^.*:\/\//, 'http://'));
-					if (stubValidator.apply('hostname', url.hostname))
-						return true;
-					else if (stubValidator.apply('ip4addr', url.hostname))
-						return true;
-					else if (stubValidator.apply('ip6addr', url.hostname.match(/^\[(.+)\]$/)?.[1]))
-						return true;
-					else
-						return _('Expecting: %s').format(_('valid DNS server address'));
-				} catch(e) {}
-
-				if (!stubValidator.apply('ipaddr', value))
-					return _('Expecting: %s').format(_('valid DNS server address'));
-			}
-
-			return true;
-		}
-
-		o = s.taboption('routing', form.Value, 'iran_dns_server', _('Iran DNS server'),
-			_('The Domain Name Server for resolving Iran Domestic domains only. Your Internet Provider sees these queries in plain text.'));
-		o.value('wan', _('WAN DNS (read from interface)'));
-		o.value('178.22.122.100', _('Shecan (178.22.122.100)'));
-		o.value('185.51.200.2', _('Shecan secondary (185.51.200.2)'));
-		o.value('78.157.42.100', _('Electro/Begzar (78.157.42.100)'));
-		o.value('78.157.42.101', _('Electro/Begzar secondary (78.157.42.101)'));
-		o.value('10.202.10.202', _('403.online (10.202.10.202)'));
-		o.value('10.202.10.102', _('403.online secondary (10.202.10.102)'));
-		o.value('10.202.10.10', _('Radar (10.202.10.10)'));
-		o.value('10.202.10.11', _('Radar secondary (10.202.10.11)'));
-		o.depends('routing_mode', 'bypass_ir');
-		o.default = '178.22.122.100';
-		o.rmempty = false;
-		o.validate = function(section_id, value) {
-			if (section_id && !['wan'].includes(value)) {
-				if (!value)
-					return _('Expecting: %s').format(_('non-empty value'));
-
-				try {
-					let url = new URL(value.replace(/^.*:\/\//, 'http://'));
-					if (stubValidator.apply('hostname', url.hostname))
-						return true;
-					else if (stubValidator.apply('ip4addr', url.hostname))
-						return true;
-					else if (stubValidator.apply('ip6addr', url.hostname.match(/^\[(.+)\]$/)?.[1]))
-						return true;
-					else
-						return _('Expecting: %s').format(_('valid DNS server address'));
-				} catch(e) {}
-
-				if (!stubValidator.apply('ipaddr', value))
-					return _('Expecting: %s').format(_('valid DNS server address'));
-			}
-
-			return true;
-		}
-
 		o = s.taboption('routing', form.DynamicList, 'russia_dns_server', _('Russia DNS server') + ' 🔓',
 			_('Resolves Russian domains directly, without going through the proxy. You may add several; the first entry is used.'));
 		o.value('77.88.8.8', _('Yandex DNS (77.88.8.8)'));
@@ -557,17 +513,10 @@ return view.extend({
 
 		o = s.taboption('routing', form.ListValue, 'routing_mode', _('Routing mode'));
 		o.value('proxy_banned_ru', _('Russia (Proxy Banned)'));
-		o.value('bypass_cn', _('China (bypass mainland)'));
-		o.value('bypass_ir', _('Iran (bypass domestic)'));
 		o.value('global', _('Global'));
 		o.value('custom', _('Custom routing'));
 		o.value('custom_json', _('Custom JSON'));
-		const _lang_section = (uci.sections('luci', 'internal') || []).find(s => s['.name'] === 'languages');
-		const _lang_codes = _lang_section ? Object.keys(_lang_section).filter(k => /^[a-z]/.test(k)) : [];
-		o.default = _lang_codes.includes('ru') ? 'proxy_banned_ru' :
-		            _lang_codes.some(k => k.startsWith('zh')) ? 'bypass_cn' :
-		            _lang_codes.some(k => k.startsWith('fa')) ? 'bypass_ir' :
-		            'proxy_banned_ru';
+		o.default = 'proxy_banned_ru';
 		o.rmempty = false;
 		o.onchange = function(ev, section_id, value) {
 			if (section_id && (value === 'custom' || value === 'custom_json'))
@@ -2366,8 +2315,16 @@ return view.extend({
 		/* ACL settings end */
 
 		/* ByeDPI settings are on the Node Settings page */
-
 		poll.add(mdRefresh, 10);
-		return m.render();
+
+		return m.render().then(function(node) {
+			/* Apply the URLTest-mode visibility once the form DOM is attached
+			 * (belt-and-braces: the widget-change listener keeps it in sync
+			 * on every live change). */
+			setTimeout(urltestSync, 0);
+			setTimeout(urltestSync, 500);
+			return node;
+		});
 	}
+
 });

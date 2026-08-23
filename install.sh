@@ -458,9 +458,13 @@ ask_automation() {
 	info "  они добавятся в список и заработают после добавления подписки/узла."
 	ask "  Включить сейчас? [Д/н]:"
 	if is_no "$REPLY"; then info "  Включить позже: Automation."; return 0; fi
+	# tcpdump нужен источнику SNI (ловит DoH-клиентов и приложения с hardcoded IP);
+	# без него SNI молча неактивен, остальные источники работают.
+	command -v tcpdump >/dev/null 2>&1 || { info "  ставлю tcpdump (источник SNI)..."; if [ "$PM" = apk ]; then apk add tcpdump >/dev/null 2>&1; else opkg install tcpdump >/dev/null 2>&1; fi; }
 	uci -q set homeproxy.automation.enabled=1
+	uci -q set homeproxy.automation.discover=all
 	uci -q commit homeproxy
-	ok "  Автоматизация включена."
+	ok "  Автоматизация включена (источники: все — DNS-лог + Clash + SNI + conntrack)."
 	return 0
 }
 
@@ -482,39 +486,52 @@ zapret_pick_strategy() {
 	HOSTFAKE=$(ucode -e 'import { readfile } from "fs"; let j = json(readfile("/etc/homeproxy/zapret_candidates.json") || "{}"); for (let c in (j.candidates || [])) { if (c.name == "Hostfakesplit") { printf("%s", c.args); break; } }')
 	[ -n "$HOSTFAKE" ] && uci -q set homeproxy.config.zapret_cmd_opts="$HOSTFAKE"
 
-	info "  тестирую стратегию по умолчанию (Hostfakesplit) на YouTube..."
+	# Гарантия чистого прямого пути: на время тестов останавливаем сервис, чтобы
+	# YouTube-проверка измеряла ТОЛЬКО стратегию Zapret, а не работающий прокси
+	# (иначе при активной подписке тест всегда «проходит» через прокси).
+	HP_WAS_RUNNING=0
+	pidof hiddify-core >/dev/null 2>&1 && HP_WAS_RUNNING=1
+	pidof sing-box >/dev/null 2>&1 && HP_WAS_RUNNING=1
+	[ "$HP_WAS_RUNNING" = 1 ] && /etc/init.d/homeproxy stop >/dev/null 2>&1
+
+	RC=1
+	info "  тестирую стратегию по умолчанию (Hostfakesplit) на YouTube (прямой путь)..."
 	if [ "$(zapret_test "$HOSTFAKE")" = 1 ]; then
 		uci -q commit homeproxy
 		ok "  Hostfakesplit работает — YouTube открывается."
-		return 0
+		RC=0
+	else
+		info "  YouTube не открылся — перебираю встроенные стратегии (Recommended → остальные)..."
+		ucode -e 'import { readfile } from "fs"; let j = json(readfile("/etc/homeproxy/zapret_candidates.json") || "{}"); for (let c in (j.candidates || [])) { if (c.name != "Hostfakesplit") printf("%s\t%s\t%s\n", c.name, c.args, (c.group || "auto")); }' > /tmp/zcand.txt
+		TRIED=0
+		FOUND=0
+		while IFS="$(printf '\t')" read -r NAME ARGS GROUP; do
+			[ -n "$ARGS" ] || continue
+			TRIED=$((TRIED+1))
+			[ "$TRIED" -gt 12 ] && { info "  лимит перебора (12) — останавливаюсь."; break; }
+			printf '    %2d) %s: ' "$TRIED" "$NAME"
+			if [ "$(zapret_test "$ARGS")" = 1 ]; then
+				echo "YouTube OK"
+				uci -q set homeproxy.config.zapret_cmd_opts="$ARGS"
+				FOUND=1
+				break
+			fi
+			echo "нет"
+		done < /tmp/zcand.txt
+		rm -f /tmp/zcand.txt
+		uci -q commit homeproxy
+		if [ "$FOUND" = 1 ]; then
+			ok "  выбрана стратегия: $NAME"
+			RC=0
+		else
+			warn "  ни одна стратегия не прошла YouTube-тест — оставлена Hostfakesplit."
+			warn "  Подберите позже: Node Settings → Zapret → Full strategy test."
+		fi
 	fi
 
-	info "  YouTube не открылся — перебираю встроенные стратегии (Recommended → остальные)..."
-	ucode -e 'import { readfile } from "fs"; let j = json(readfile("/etc/homeproxy/zapret_candidates.json") || "{}"); for (let c in (j.candidates || [])) { if (c.name != "Hostfakesplit") printf("%s\t%s\t%s\n", c.name, c.args, (c.group || "auto")); }' > /tmp/zcand.txt
-	TRIED=0
-	FOUND=0
-	while IFS="$(printf '\t')" read -r NAME ARGS GROUP; do
-		[ -n "$ARGS" ] || continue
-		TRIED=$((TRIED+1))
-		[ "$TRIED" -gt 12 ] && { info "  лимит перебора (12) — останавливаюсь."; break; }
-		printf '    %2d) %s: ' "$TRIED" "$NAME"
-		if [ "$(zapret_test "$ARGS")" = 1 ]; then
-			echo "YouTube OK"
-			uci -q set homeproxy.config.zapret_cmd_opts="$ARGS"
-			FOUND=1
-			break
-		fi
-		echo "нет"
-	done < /tmp/zcand.txt
-	rm -f /tmp/zcand.txt
-	uci -q commit homeproxy
-	if [ "$FOUND" = 1 ]; then
-		ok "  выбрана стратегия: $NAME"
-		return 0
-	fi
-	warn "  ни одна стратегия не прошла YouTube-тест — оставлена Hostfakesplit."
-	warn "  Подберите позже: Node Settings → Zapret → Full strategy test."
-	return 1
+	# Возвращаем сервис (финальный рестарт в конце всё равно перечитает конфиг)
+	[ "$HP_WAS_RUNNING" = 1 ] && { /etc/init.d/homeproxy start >/dev/null 2>&1; sleep 3; }
+	return $RC
 }
 
 install_zapret() {
@@ -542,8 +559,15 @@ install_zapret() {
 					uci -q set homeproxy.config.zapret_enabled=1
 					uci -q commit homeproxy
 					ok "  Zapret включён."
-					zapret_pick_strategy
-					[ "$(count_nodes)" -eq 0 ] && add_rule youtube zapret-out
+					if zapret_pick_strategy; then
+						# Стратегия подтверждена на прямом пути — YouTube идёт через
+						# Zapret всегда (и с подпиской, и без): это снимает нагрузку
+						# с прокси и работает даже без подписки.
+						add_rule youtube zapret-out
+					else
+						warn "  правило YouTube → Zapret НЕ добавлено (нет рабочей стратегии — иначе YouTube бы не открывался)."
+						warn "  После подбора стратегии добавьте правило вручную: Proxy Rules → YouTube → Zapret."
+					fi
 				fi
 			else warn "  установка Zapret не удалась."; fi
 		else warn "  не удалось скачать Zapret — пропускаю."; fi
@@ -634,8 +658,12 @@ menu() {
 					install_zapret
 				else
 					ask "  Zapret установлен. Подобрать стратегию заново? [Д/н]:"
-					if ! is_no "$REPLY"; then zapret_pick_strategy; fi
-					[ "$(count_nodes)" -eq 0 ] && add_rule youtube zapret-out
+					if ! is_no "$REPLY"; then
+						zapret_pick_strategy && add_rule youtube zapret-out
+					elif [ "$(uci -q get homeproxy.config.zapret_enabled)" = 1 ] && [ -n "$(uci -q get homeproxy.config.zapret_cmd_opts)" ]; then
+						info "  стратегия уже задана — проверяю правило YouTube → Zapret..."
+						add_rule youtube zapret-out
+					fi
 				fi
 				apply_and_check ;;
 			7) install_byedpi; apply_and_check ;;

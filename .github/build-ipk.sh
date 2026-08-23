@@ -34,7 +34,7 @@ if [ "$RELEASE_TYPE" == "release" ]; then
 	fi
 else
 	# NOTE: the CI checks out a shallow clone, so `git rev-list --count HEAD` is always 1.
-	# Use a timestamp-based version so every build gets a UNIQUE package version —
+	# Use a timestamp-based version so every build gets a UNIQUE package version вЂ”
 	# otherwise reinstalling from a newer release with the same version string makes the
 	# package manager skip the file overwrite and the device keeps stale code.
 	# IMPORTANT: Alpine `apk` rejects hyphens in versions (only digits/dots/_suffix allowed),
@@ -62,8 +62,6 @@ cat > "$TEMP_PKG_DIR/lib/upgrade/keep.d/$PKG_NAME" <<-EOF
 /etc/homeproxy/resources/direct_list.txt
 /etc/homeproxy/resources/proxy_list.txt
 EOF
-
-po2lmo "$PKG_DIR/po/zh_Hans/homeproxy.po" "$TEMP_PKG_DIR/usr/lib/lua/luci/i18n/homeproxy.zh-cn.lmo"
 
 if [ "$PKG_MGR" == "apk" ]; then
 	find "$TEMP_PKG_DIR" -type f,l -printf '/%P\n' | sort > "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.list"
@@ -171,7 +169,7 @@ PYEOF
 
 	# Rename handling (ipk): do NOT Provides the old names. opkg treats an installed
 	# package that is also Provided as *satisfying* the dependency and then never
-	# fires Conflicts — so old + new would coexist. Dropping Provides and keeping
+	# fires Conflicts вЂ” so old + new would coexist. Dropping Provides and keeping
 	# Conflicts+Replaces makes opkg cleanly replace the old pkg. (Nothing depends on
 	# the old names: the i18n packages depend on $PKG_NAME.) The apk path uses the
 	# Alpine rename idiom instead: provides + replaces (see the apk mkpkg call above).
@@ -283,116 +281,3 @@ fi
 
 rm -rf "$I18N_TEMP_DIR"
 
-# Build i18n package for Chinese Simplified
-I18N_ZH_PKG_NAME="luci-i18n-homeproxy-zh-cn"
-I18N_ZH_TEMP_DIR="$(mktemp -d -p $BASE_DIR)"
-I18N_ZH_TEMP_PKG_DIR="$I18N_ZH_TEMP_DIR/$I18N_ZH_PKG_NAME"
-mkdir -p "$I18N_ZH_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/"
-if [ "$PKG_MGR" == "apk" ]; then
-	mkdir -p "$I18N_ZH_TEMP_PKG_DIR/lib/apk/packages/"
-else
-	mkdir -p "$I18N_ZH_TEMP_PKG_DIR/CONTROL/"
-fi
-
-po2lmo "$PKG_DIR/po/zh_Hans/homeproxy.po" "$I18N_ZH_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/homeproxy.zh-cn.lmo"
-
-if [ "$PKG_MGR" == "apk" ]; then
-	find "$I18N_ZH_TEMP_PKG_DIR" -type f,l -printf '/%P\n' | sort > "$I18N_ZH_TEMP_PKG_DIR/lib/apk/packages/$I18N_ZH_PKG_NAME.list"
-
-	apk mkpkg \
-		--info "name:$I18N_ZH_PKG_NAME" \
-		--info "version:$PKG_VERSION" \
-		--info "description:Chinese Simplified translation for luci-app-re-homeproxy" \
-		--info "arch:noarch" \
-		--info "origin:$I18N_ZH_PKG_NAME" \
-		--info "url:https://github.com/ezdizzy/re-homeproxy" \
-		--info "maintainer:1andrevich <1andrevich.recede274@passmail.net>" \
-		--info "depends:$PKG_NAME" \
-		${APK_SIGN_KEY:+--sign-key "$APK_SIGN_KEY"} \
-		--files "$I18N_ZH_TEMP_PKG_DIR" \
-		--output "$I18N_ZH_TEMP_DIR/${I18N_ZH_PKG_NAME}_${PKG_VERSION}.apk"
-
-	mv "$I18N_ZH_TEMP_DIR/${I18N_ZH_PKG_NAME}_${PKG_VERSION}.apk" "$BASE_DIR/${I18N_ZH_PKG_NAME}_${PKG_VERSION}_all.apk"
-else
-	cat > "$I18N_ZH_TEMP_PKG_DIR/CONTROL/control" <<-EOF
-		Package: $I18N_ZH_PKG_NAME
-		Version: $PKG_VERSION
-		Depends: $PKG_NAME
-		Source: https://github.com/ezdizzy/re-homeproxy
-		SourceName: $I18N_ZH_PKG_NAME
-		Section: luci
-		SourceDateEpoch: $PKG_SOURCE_DATE_EPOCH
-		Maintainer: 1andrevich <1andrevich.recede274@passmail.net>
-		Architecture: all
-		Installed-Size: TO-BE-FILLED-BY-IPKG-BUILD
-		Description:  Chinese Simplified translation for luci-app-re-homeproxy
-	EOF
-	chmod 0644 "$I18N_ZH_TEMP_PKG_DIR/CONTROL/control"
-
-	ipkg-build -m "" "$I18N_ZH_TEMP_PKG_DIR" "$I18N_ZH_TEMP_DIR"
-
-	if [ "$LEGACY" == "legacy" ]; then
-		mv "$I18N_ZH_TEMP_DIR/${I18N_ZH_PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${I18N_ZH_PKG_NAME}_${PKG_VERSION}_all-legacy.ipk"
-	else
-		mv "$I18N_ZH_TEMP_DIR/${I18N_ZH_PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${I18N_ZH_PKG_NAME}_${PKG_VERSION}_all.ipk"
-	fi
-fi
-
-rm -rf "$I18N_ZH_TEMP_DIR"
-
-# Build i18n package for Farsi (Persian)
-I18N_FA_PKG_NAME="luci-i18n-homeproxy-fa"
-I18N_FA_TEMP_DIR="$(mktemp -d -p $BASE_DIR)"
-I18N_FA_TEMP_PKG_DIR="$I18N_FA_TEMP_DIR/$I18N_FA_PKG_NAME"
-mkdir -p "$I18N_FA_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/"
-if [ "$PKG_MGR" == "apk" ]; then
-	mkdir -p "$I18N_FA_TEMP_PKG_DIR/lib/apk/packages/"
-else
-	mkdir -p "$I18N_FA_TEMP_PKG_DIR/CONTROL/"
-fi
-
-po2lmo "$PKG_DIR/po/fa_IR/homeproxy.po" "$I18N_FA_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/homeproxy.fa.lmo"
-
-if [ "$PKG_MGR" == "apk" ]; then
-	find "$I18N_FA_TEMP_PKG_DIR" -type f,l -printf '/%P\n' | sort > "$I18N_FA_TEMP_PKG_DIR/lib/apk/packages/$I18N_FA_PKG_NAME.list"
-
-	apk mkpkg \
-		--info "name:$I18N_FA_PKG_NAME" \
-		--info "version:$PKG_VERSION" \
-		--info "description:Farsi (Persian) translation for luci-app-re-homeproxy" \
-		--info "arch:noarch" \
-		--info "origin:$I18N_FA_PKG_NAME" \
-		--info "url:https://github.com/ezdizzy/re-homeproxy" \
-		--info "maintainer:1andrevich <1andrevich.recede274@passmail.net>" \
-		--info "depends:$PKG_NAME" \
-		${APK_SIGN_KEY:+--sign-key "$APK_SIGN_KEY"} \
-		--files "$I18N_FA_TEMP_PKG_DIR" \
-		--output "$I18N_FA_TEMP_DIR/${I18N_FA_PKG_NAME}_${PKG_VERSION}.apk"
-
-	mv "$I18N_FA_TEMP_DIR/${I18N_FA_PKG_NAME}_${PKG_VERSION}.apk" "$BASE_DIR/${I18N_FA_PKG_NAME}_${PKG_VERSION}_all.apk"
-else
-	cat > "$I18N_FA_TEMP_PKG_DIR/CONTROL/control" <<-EOF
-		Package: $I18N_FA_PKG_NAME
-		Version: $PKG_VERSION
-		Depends: $PKG_NAME
-		Source: https://github.com/ezdizzy/re-homeproxy
-		SourceName: $I18N_FA_PKG_NAME
-		Section: luci
-		SourceDateEpoch: $PKG_SOURCE_DATE_EPOCH
-		Maintainer: 1andrevich <1andrevich.recede274@passmail.net>
-		Architecture: all
-		Installed-Size: TO-BE-FILLED-BY-IPKG-BUILD
-		Description:  Farsi (Persian) translation for luci-app-re-homeproxy
-	EOF
-	chmod 0644 "$I18N_FA_TEMP_PKG_DIR/CONTROL/control"
-
-	ipkg-build -m "" "$I18N_FA_TEMP_PKG_DIR" "$I18N_FA_TEMP_DIR"
-
-	if [ "$LEGACY" == "legacy" ]; then
-		mv "$I18N_FA_TEMP_DIR/${I18N_FA_PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${I18N_FA_PKG_NAME}_${PKG_VERSION}_all-legacy.ipk"
-	else
-		mv "$I18N_FA_TEMP_DIR/${I18N_FA_PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${I18N_FA_PKG_NAME}_${PKG_VERSION}_all.ipk"
-	fi
-fi
-
-rm -rf "$I18N_FA_TEMP_DIR"

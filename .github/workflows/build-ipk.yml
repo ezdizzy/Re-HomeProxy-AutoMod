@@ -135,7 +135,7 @@ jobs:
           bash .github/rescan-translation.sh
           # Guard: surface any untranslated (empty msgstr) entries in the shipped
           # locales as a non-fatal warning so translations never silently regress.
-          for po in po/ru/homeproxy.po po/zh_Hans/homeproxy.po po/fa_IR/homeproxy.po; do
+          for po in po/ru/homeproxy.po; do
             n=$(awk 'BEGIN{c=0} /^msgstr ""$/{c++} END{print c}' "$po")
             if [ "$n" -gt 0 ]; then
               echo "::warning file=$po:: $n untranslated (empty msgstr) string(s)"
@@ -151,10 +151,6 @@ jobs:
           echo "IPK_ASSET_NAME=$(ls luci-app-re-homeproxy_*_all.ipk)" >> $GITHUB_ENV
           echo "I18N_APK_ASSET_NAME=$(ls luci-i18n-homeproxy-ru_*_all.apk)" >> $GITHUB_ENV
           echo "I18N_IPK_ASSET_NAME=$(ls luci-i18n-homeproxy-ru_*_all.ipk)" >> $GITHUB_ENV
-          echo "I18N_ZH_APK_ASSET_NAME=$(ls luci-i18n-homeproxy-zh-cn_*_all.apk)" >> $GITHUB_ENV
-          echo "I18N_ZH_IPK_ASSET_NAME=$(ls luci-i18n-homeproxy-zh-cn_*_all.ipk)" >> $GITHUB_ENV
-          echo "I18N_FA_APK_ASSET_NAME=$(ls luci-i18n-homeproxy-fa_*_all.apk)" >> $GITHUB_ENV
-          echo "I18N_FA_IPK_ASSET_NAME=$(ls luci-i18n-homeproxy-fa_*_all.ipk)" >> $GITHUB_ENV
           popd
 
       - name: Build legacy IPK (OpenWRT 23.05)
@@ -189,30 +185,6 @@ jobs:
         with:
           name: ${{ env.I18N_IPK_ASSET_NAME }}
           path: .github/${{ env.I18N_IPK_ASSET_NAME }}
-
-      - name: Publishing i18n zh-cn APK to GitHub Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.I18N_ZH_APK_ASSET_NAME }}
-          path: .github/${{ env.I18N_ZH_APK_ASSET_NAME }}
-
-      - name: Publishing i18n zh-cn IPK to GitHub Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.I18N_ZH_IPK_ASSET_NAME }}
-          path: .github/${{ env.I18N_ZH_IPK_ASSET_NAME }}
-
-      - name: Publishing i18n fa APK to GitHub Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.I18N_FA_APK_ASSET_NAME }}
-          path: .github/${{ env.I18N_FA_APK_ASSET_NAME }}
-
-      - name: Publishing i18n fa IPK to GitHub Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.I18N_FA_IPK_ASSET_NAME }}
-          path: .github/${{ env.I18N_FA_IPK_ASSET_NAME }}
 
       - name: Publishing signing public key to GitHub Artifacts
         if: env.APK_SIGN_KEY != ''

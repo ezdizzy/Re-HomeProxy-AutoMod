@@ -182,19 +182,31 @@ function fingerprint(b) {
  * 403-via-direct / works-via-proxy case that the old code missed. `fp` is a
  * normalized body fingerprint used to detect "proxy returns the same block page"
  * (a block page the signature list missed). HTTPS is tried first; on failure a
- * plain HTTP retry covers HTTP-only / redirect-to-http sites. */
+ * plain HTTP retry covers HTTP-only / redirect-to-http sites.
+ *
+ * BOTH probes go through the dedicated automation test inbounds (generate_client
+ * emits them with hard route rules): direct = auto-direct-in (:5336) → direct-out,
+ * proxy = auto-proxy-in (:5337) → main-out. A plain router-originated curl is NOT
+ * a reliable "direct" probe — the router's own output interception can reroute it
+ * through the proxy (e.g. when the host matches the blocklist), which silently
+ * fakes "direct works". The pinned inbounds make the two paths explicit. */
 function probe(host, via_proxy, timeout) {
+	let proxy_port = via_proxy ? AUTO_PROXY_PORT : AUTO_DIRECT_PORT;
 	if (have_curl()) {
-		let proxy_arg = via_proxy ? ` -x socks5h://127.0.0.1:${AUTO_PROXY_PORT}` : '';
+		let proxy_arg = ` -x socks5h://127.0.0.1:${proxy_port}`;
 		let bodyf = RUN_DIR + '/pb.tmp';
 		let codef = RUN_DIR + '/pc.tmp';
 		let code = '000', c = 'fail';
-		/* 1) HTTPS. */
+		/* 1) HTTPS. Always clear the temp files first: a failed/timed-out curl
+		 * leaves STALE content behind, and reading it back silently reports the
+		 * previous probe's code — a nasty source of false "200 direct" results. */
+		system(`rm -f ${shellquote(bodyf)} ${shellquote(codef)}`);
 		system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote('https://' + host)} > ${shellquote(codef)} 2>/dev/null`);
 		code = trim(readfile(codef) || '000');
 		c = classify_code(code);
 		if (c === 'fail') {
 			/* 2) HTTPS failed — retry plain HTTP (HTTP-only / redirect-to-http sites). */
+			system(`rm -f ${shellquote(bodyf)} ${shellquote(codef)}`);
 			system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote('http://' + host)} > ${shellquote(codef)} 2>/dev/null`);
 			code = trim(readfile(codef) || '000');
 			c = classify_code(code);
@@ -203,14 +215,18 @@ function probe(host, via_proxy, timeout) {
 		let fp = fingerprint(body);
 		let block = (c === 'block');
 		if (c === 'ok') {
-			if (body_blocked(body)) block = true;
+			/* A 2xx/3xx response is a real page UNLESS the body is small AND
+			 * carries a block-page signature (MITM block pages served with 200).
+			 * Large pages are never block pages — this kills false positives on
+			 * big portals/news sites that merely contain a signature word
+			 * somewhere in their markup. */
+			if (length(body) < 32768 && body_blocked(body))
+				block = true;
 		}
 		let ok = (c === 'ok') && !block;
 		return { code: code, ok: ok, block: block, fp: fp };
 	}
-	let proxy_env = via_proxy
-		? `http_proxy=http://127.0.0.1:${AUTO_PROXY_PORT} https_proxy=http://127.0.0.1:${AUTO_PROXY_PORT}`
-		: `http_proxy= https_proxy=`;
+	let proxy_env = `http_proxy=http://127.0.0.1:${proxy_port} https_proxy=http://127.0.0.1:${proxy_port}`;
 	let rc = system(`${proxy_env} /usr/bin/wget -q -T ${timeout} -t 1 --no-check-certificate -O /dev/null ${shellquote('https://' + host)} 2>/dev/null`, timeout * 1000 + 2000);
 	let ok = (rc === 0);
 	return { code: ok ? '200' : '000', ok: ok, block: false, fp: '' };
@@ -236,6 +252,11 @@ function is_private_ip(ip) {
 function is_excluded(host) {
 	host = trim(host);
 	if (!length(host)) return true;
+	/* Russian TLDs are NEVER learned — in Russia they must always go direct.
+	 * Hard-coded (not just the default exclude list) so no config change can
+	 * accidentally start probing .ru/.рф/.su sites. */
+	if (substr(host, -3) === '.ru' || substr(host, -3) === '.su' || substr(host, -3) === '.рф')
+		return true;
 	for (let e in excludes) {
 		e = trim(e);
 		if (!length(e)) continue;
@@ -325,7 +346,13 @@ function discover_dns() {
 	/* ucode file objects have no tell(); we read to EOF so the new offset is the file size. */
 	dns_log_offset = size;
 	fd.close();
-	return hosts;
+	/* Newest first: the domains queried most recently are the most likely to be
+	 * the user's current pain — the per-cycle probe cap should spend on them,
+	 * not on the oldest traffic in the log. */
+	let rev = [];
+	for (let i = length(hosts) - 1; i >= 0; i = i - 1)
+		push(rev, hosts[i]);
+	return rev;
 }
 
 function enable_dns_log() {
@@ -449,8 +476,23 @@ function main() {
 	direct_set = {}; proxy_set = {}; auto_ip_set = {}; auto_set = {};
 	for (let d in read_lines(RES + '/direct_list.txt')) direct_set[trim(d)] = true;
 	for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
-	for (let d in read_lines(AUTO_LIST)) auto_set[trim(d)] = true;
+	/* Load the learned list but drop entries that are now excluded (.ru/.рф/.su
+	 * or user excludes) — self-heals lists learned by older versions. If anything
+	 * was dropped, persist the cleaned list right away. */
+	let dropped = 0;
+	for (let d in read_lines(AUTO_LIST)) {
+		d = trim(d);
+		if (!length(d)) continue;
+		if (substr(d, -3) === '.ru' || substr(d, -3) === '.su' || substr(d, -3) === '.рф') {
+			log('dropping learned entry (RU TLD always goes direct): ' + d);
+			dropped++;
+			continue;
+		}
+		auto_set[d] = true;
+	}
 	for (let d in read_lines(AUTO_IP_LIST)) auto_ip_set[trim(d)] = true;
+	if (dropped > 0)
+		write_auto_list(auto_set);
 	let state = load_state();
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
@@ -543,8 +585,11 @@ function main() {
 		if (enabled !== '1') return;
 
 		let domain_candidates = {}, ip_candidates = {};
-		if (has('clash'))     for (let i, h in discover_clash(timeout)) domain_candidates[h] = true;
+		/* DNS first: it captures the domain at query time, newest-first, so the
+		 * probe cap always spends on the user's most recent activity — the most
+		 * transparent and reliable source. Clash/SNI/conntrack fill in the gaps. */
 		if (has('dns'))       for (let i, h in discover_dns())          domain_candidates[h] = true;
+		if (has('clash'))     for (let i, h in discover_clash(timeout)) domain_candidates[h] = true;
 		if (has('sni'))       for (let i, h in discover_sni())          domain_candidates[h] = true;
 		if (has('conntrack') && !length(keys(domain_candidates)))
 			for (let i, ip in discover_conntrack()) ip_candidates[ip] = true;

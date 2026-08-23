@@ -117,7 +117,7 @@ return view.extend({
 		o.value('conntrack', _('conntrack (destinations by IP — for apps/games without SNI)'));
 		o.value('both', _('Clash API + DNS log'));
 		o.value('all', _('Clash API + DNS log + SNI + conntrack'));
-		o.default = 'clash';
+		o.default = 'all';
 
 		o = s.option(form.Value, 'timeout', _('Probe timeout (seconds)'));
 		o.datatype = 'uinteger';

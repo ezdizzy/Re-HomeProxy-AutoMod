@@ -4039,8 +4039,8 @@ msgid "Manual node list"
 msgstr "Список узлов вручную"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Preferred node"
-msgstr "Приоритетный узел"
+msgid "URLTest node"
+msgstr "Узел URLTest"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance."
