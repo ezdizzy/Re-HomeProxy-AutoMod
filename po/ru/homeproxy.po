@@ -3453,7 +3453,7 @@ msgstr "Региональный DNS"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Russia DNS server"
-msgstr "DNS-сервер России"
+msgstr "DNS-сервера России"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Resolves Russian domains directly, without going through the proxy. You may add several; the first entry is used."
@@ -3481,7 +3481,7 @@ msgstr "Google DNS UDP (8.8.8.8)"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Secure DNS server"
-msgstr "Защищённый DNS-сервер"
+msgstr "Защищённые DNS-сервера"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT = DNS over HTTPS/TLS). You may add several; the first entry is used."
@@ -4750,9 +4750,49 @@ msgstr "запущен"
 msgid "stopped"
 msgstr "остановлен"
 
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Race ALL servers in each DNS pool at once (every query) and return the fastest LIVE answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon continuously scores servers by latency + IP liveness + trend and prunes dead/polluted ones. Requires the smartdns package."
-msgstr "Запрашивает все серверы каждого пула DNS одновременно (при каждом запросе) и возвращает самый быстрый ЖИВОЙ ответ. Пулы «Россия» (обычный) и шифрованный «Secure» гоняются независимо, повторяя раздельную маршрутизацию. Демон качества непрерывно оценивает серверы по задержке, живости IP и тренду и отсекает мёртвые/отравленные. Требуется пакет smartdns."
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "installed, not running"
+msgstr "установлен, не запущен"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Russia"
+msgstr "Россия"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Disabled"
+msgstr "Отключён"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "MultiDNS DNS Tests"
+msgstr "Проверки DNS MultiDNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Testing MultiDNS DNS…"
+msgstr "Проверка DNS MultiDNS…"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "running — racing all pool servers"
+msgstr "запущен — гонка всех серверов пула"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "not running"
+msgstr "не запущен"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Plain pool (Russia) — %s"
+msgstr "Обычный пул (Россия) — %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Resolved via fastest live server: "
+msgstr "Резолв через самый быстрый живой сервер: "
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Secure pool — %s"
+msgstr "Защищённый пул — %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Direct control (bypassing MultiDNS)"
+msgstr "Прямой контроль (в обход MultiDNS)"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Query every entry of the plain DNS-server list in parallel and pick the fastest live IP. Unblocks speed and reliability for non-proxied sites."
@@ -4773,10 +4813,6 @@ msgstr "Как часто анализатор опрашивает каждый
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Disable & restore DNS"
 msgstr "Отключить и восстановить DNS"
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "smartdns"
-msgstr "smartdns"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Clear log"
@@ -4834,3 +4870,539 @@ msgstr "неопределённо"
 msgid "Redundant with MultiDNS: when MultiDNS is enabled it already races every server in each pool and returns the fastest live answer, so a single failed primary is bypassed automatically. Reserve DNS is therefore ignored while MultiDNS is on — use one or the other."
 msgstr "Дублирует MultiDNS: при включённом MultiDNS он уже опрашивает все серверы каждого пула и возвращает самый быстрый живой ответ, поэтому отказ одного основного сервера обходится автоматически. Резервный DNS игнорируется, пока включён MultiDNS, — используйте что-то одно."
 
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "32 hex characters"
+msgstr "32 шестнадцатеричных символа"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "403.online (10.202.10.202)"
+msgstr "403.online (10.202.10.202)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "403.online secondary (10.202.10.102)"
+msgstr "403.online вторичный (10.202.10.102)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Active core"
+msgstr "Активное ядро"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "AdGuard 94.140.14.14 / 94.140.15.15"
+msgstr "AdGuard 94.140.14.14 / 94.140.15.15"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "AdGuard DNS UDP (94.140.14.14)"
+msgstr "AdGuard DNS UDP (94.140.14.14)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "AdGuard DoQ"
+msgstr "AdGuard DoQ"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "AdGuard DoT"
+msgstr "AdGuard DoT"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "AdGuard Public DNS (94.140.14.14)"
+msgstr "Публичный DNS AdGuard (94.140.14.14)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Alternate DNS servers (failover)"
+msgstr "Резервные DNS-серверы (failover)"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "AmneziaWG"
+msgstr "AmneziaWG"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Auto"
+msgstr "Авто"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Bidi"
+msgstr "Bidi"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Clash API + DNS log + SNI + conntrack"
+msgstr "Clash API + журнал DNS + SNI + conntrack"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Close idle connections after this duration (e.g. 5m, 30s)."
+msgstr "Закрывать бездействующие соединения спустя это время (напр. 5m, 30s)."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Cloudflare 1.1.1.1 / 1.0.0.1"
+msgstr "Cloudflare 1.1.1.1 / 1.0.0.1"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Concurrency"
+msgstr "Параллельность"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "ControlD DoH"
+msgstr "ControlD DoH"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "core client"
+msgstr "клиент ядра"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Custom (use the DNS server above)"
+msgstr "Свой (использовать DNS-сервер выше)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Detect"
+msgstr "Определить"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Detected"
+msgstr "Определено"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Detecting..."
+msgstr "Определение..."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Detection failed"
+msgstr "Не удалось определить"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "DNS inbound"
+msgstr "DNS-инбаунд"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "DNS preset"
+msgstr "Пресет DNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "DNS.SB DoH"
+msgstr "DNS.SB DoH"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "DNS.WATCH (84.200.69.80)"
+msgstr "DNS.WATCH (84.200.69.80)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "DNS.WATCH Public DNS (84.200.69.80)"
+msgstr "Публичный DNS DNS.WATCH (84.200.69.80)"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Domain fronting host"
+msgstr "Хост domain fronting"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Domain fronting port"
+msgstr "Порт domain fronting"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Duplicate source — only the first rule will take effect"
+msgstr "Дублирующийся источник — сработает только первое правило"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Electro/Begzar (78.157.42.100)"
+msgstr "Electro/Begzar (78.157.42.100)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Electro/Begzar secondary (78.157.42.101)"
+msgstr "Electro/Begzar вторичный (78.157.42.101)"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Extra headers"
+msgstr "Дополнительные заголовки"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Fallback DNS servers (IP, hostname, or DoH/DoT URL). Used by DNS failover when the primary is unreachable. The DNS preset above seeds these automatically."
+msgstr "Резервные DNS-серверы (IP, имя хоста или URL DoH/DoT). Используются DNS failover, когда основной недоступен. Пресет DNS выше заполняет их автоматически."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Google 8.8.8.8 / 8.8.4.4"
+msgstr "Google 8.8.8.8 / 8.8.4.4"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "H1"
+msgstr "H1"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "H2"
+msgstr "H2"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "H3"
+msgstr "H3"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "H4"
+msgstr "H4"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Handshake timeout"
+msgstr "Таймаут рукопожатия"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "I have a custom core path"
+msgstr "У меня свой путь к ядру"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "I1"
+msgstr "I1"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "I2"
+msgstr "I2"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "I3"
+msgstr "I3"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "I4"
+msgstr "I4"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "I5"
+msgstr "I5"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Inbound"
+msgstr "Инбаунд"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Installed — reloading..."
+msgstr "Установлено — перезагрузка..."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Installed successfully (compact build)"
+msgstr "Установлено успешно (компактная сборка)"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "ITime"
+msgstr "ITime"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "J1"
+msgstr "J1"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "J2"
+msgstr "J2"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "J3"
+msgstr "J3"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Jc"
+msgstr "Jc"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Jmax"
+msgstr "Jmax"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Jmin"
+msgstr "Jmin"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "JSON object, e.g. {\"X-Header\": \"value\"}. Leave empty for none."
+msgstr "JSON-объект, напр. {\"X-Header\": \"value\"}. Пусто — без заголовков."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Junk packet count."
+msgstr "Количество мусорных пакетов."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Junk packet maximum size."
+msgstr "Максимальный размер мусорного пакета."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Junk packet minimum size."
+msgstr "Минимальный размер мусорного пакета."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "LibreDNS (116.202.176.26)"
+msgstr "LibreDNS (116.202.176.26)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "LibreDNS DoH"
+msgstr "LibreDNS DoH"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "LibreDNS DoT"
+msgstr "LibreDNS DoT"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "LibreDNS Public DNS (116.202.176.26)"
+msgstr "Публичный DNS LibreDNS (116.202.176.26)"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "List of MTProxy secrets. Each secret is a 32-character hex string (16 bytes). One secret per user."
+msgstr "Список секретов MTProxy. Каждый секрет — 32-символьная hex-строка (16 байт). По одному секрету на пользователя."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Magic header range, e.g. 1603445073-1836768565"
+msgstr "Диапазон magic header, напр. 1603445073-1836768565"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Magic header range, e.g. 2047861992-2141668339"
+msgstr "Диапазон magic header, напр. 2047861992-2141668339"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Magic header range, e.g. 2141792848-2142674170"
+msgstr "Диапазон magic header, напр. 2141792848-2142674170"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Magic header range, e.g. 426560850-1096521767"
+msgstr "Диапазон magic header, напр. 426560850-1096521767"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Match inbound tag."
+msgstr "Совпадает с тегом инбаунда."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Maximum time to complete handshake (e.g. 10s)."
+msgstr "Максимальное время завершения рукопожатия (напр. 10s)."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Mieru"
+msgstr "Mieru"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Mixed (SOCKS/HTTP) inbound"
+msgstr "Смешанный (SOCKS/HTTP) инбаунд"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "mosdns"
+msgstr "mosdns"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "mosdns package is missing — MultiDNS cannot accelerate DNS. Install mosdns (see README) or reinstall the app."
+msgstr "Пакет mosdns не установлен — MultiDNS не может ускорять DNS. Установите mosdns (см. README) или переустановите приложение."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "MTProxy"
+msgstr "MTProxy"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Mullvad DoH"
+msgstr "Mullvad DoH"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Mullvad DoT"
+msgstr "Mullvad DoT"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "MultiDNS / mosdns"
+msgstr "MultiDNS / mosdns"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Per-query DNS racing engine for MultiDNS: races every server in each pool in parallel and returns the fastest valid answer, while the quality daemon verifies over HTTPS that the returned IPs actually open sites and prunes dead/polluted servers. Binary from <a href=\"https://github.com/IrineSistiana/mosdns\" target=\"_blank\">IrineSistiana/mosdns</a> releases."
+msgstr "Движок per-query гонки DNS для MultiDNS: параллельно гоняет все серверы каждого пула и возвращает самый быстрый валидный ответ, а демон качества проверяет по HTTPS, что возвращённые IP действительно открывают сайты, и исключает мёртвые/отравленные серверы. Бинарник из релизов <a href=\"https://github.com/IrineSistiana/mosdns\" target=\"_blank\">IrineSistiana/mosdns</a>."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Removed successfully — MultiDNS disabled"
+msgstr "Удалено — MultiDNS отключён"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "mosdns running"
+msgstr "mosdns запущен"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "MultiDNS races all configured DNS servers and shows their measured latency / success / open-ratio. A server that consistently fails (dead, or returns IPs that do not open the site) is pruned from the live pool and re-checked; the others race on every query (mosdns picks the fastest valid answer)."
+msgstr "MultiDNS гоняет все настроенные DNS-серверы и показывает их измеренные задержку / успех / долю «открывается». Сервер, который стабильно проваливается (мёртв или возвращает IP, не открывающие сайт), исключается из живого пула и перепроверяется; остальные гоняются при каждом запросе (mosdns берёт самый быстрый валидный ответ)."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Multisplit"
+msgstr "Multisplit"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "No answer — mosdns may be down"
+msgstr "Нет ответа — возможно, mosdns не запущен"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "no core installed"
+msgstr "ядро не установлено"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "No strategy set — pick a preset or enter options first"
+msgstr "Стратегия не задана — выберите пресет или введите параметры"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Open %"
+msgstr "Открывается %"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "OpenDNS (208.67.222.222)"
+msgstr "OpenDNS (208.67.222.222)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "OpenDNS 208.67.222.222 / 208.67.220.220"
+msgstr "OpenDNS 208.67.222.222 / 208.67.220.220"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Optional cookie byte sequence in &lt;b 0x...&gt; format."
+msgstr "Необязательная байтовая последовательность cookie в формате &lt;b 0x...&gt;."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Packet down"
+msgstr "Пакетов вниз"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Packet up"
+msgstr "Пакетов вверх"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "pruned"
+msgstr "исключён"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Quad9 9.9.9.9 / 149.112.112.112"
+msgstr "Quad9 9.9.9.9 / 149.112.112.112"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Quad9 DNS UDP (9.9.9.9)"
+msgstr "Quad9 DNS UDP (9.9.9.9)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Quad9 Public DNS (9.9.9.9)"
+msgstr "Публичный DNS Quad9 (9.9.9.9)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Quickly set a primary DNS plus a failover candidate (added to “Alternate DNS servers”, used by DNS failover). Choose “Custom” to keep your manual DNS server."
+msgstr "Быстро задать основной DNS плюс резервный кандидат (добавляется в «Резервные DNS-серверы», используется DNS failover). Выберите «Свой», чтобы оставить вручную указанный DNS-сервер."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh)."
+msgstr "Гонять несколько серверов каждого пула DNS одновременно (при каждом запросе) и возвращать самый быстрый валидный ответ. Пулы «Россия» (обычный) и шифрованный «Secure» гоняются независимо, повторяя раздельную маршрутизацию. Демон качества проверяет по HTTPS, что возвращённый сервером IP действительно открывает сайт, оценивает серверы по задержке + доле «открывается» + тренду и исключает мёртвые/отравленные. Требуется движок mosdns (ставится install.sh)."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Radar (10.202.10.10)"
+msgstr "Radar (10.202.10.10)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Radar secondary (10.202.10.11)"
+msgstr "Radar вторичный (10.202.10.11)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Redirect inbound"
+msgstr "Redirect-инбаунд"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "reload page to apply"
+msgstr "перезагрузите страницу для применения"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Requires curl. Install it on the Status page first."
+msgstr "Требуется curl. Сначала установите его на странице «Ядро и службы»."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "S1"
+msgstr "S1"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "S2"
+msgstr "S2"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "S3"
+msgstr "S3"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "S4"
+msgstr "S4"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "SafeDNS (195.46.39.39)"
+msgstr "SafeDNS (195.46.39.39)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "SafeDNS Public DNS (195.46.39.39)"
+msgstr "Публичный DNS SafeDNS (195.46.39.39)"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Secrets"
+msgstr "Секреты"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Shecan (178.22.122.100)"
+msgstr "Shecan (178.22.122.100)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Shecan secondary (185.51.200.2)"
+msgstr "Shecan вторичный (185.51.200.2)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Source"
+msgstr "Источник"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Specify target ports to be proxied. Multiple ports must be separated by commas. Leave empty for all ports."
+msgstr "Укажите целевые порты для проксирования. Несколько портов разделяйте запятыми. Пусто — все порты."
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Speedtest"
+msgstr "Speedtest"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Stream down"
+msgstr "Поток вниз"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Stream up"
+msgstr "Поток вверх"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Target hostname for FakeTLS domain fronting. Clients will see TLS to this domain."
+msgstr "Целевое имя хоста для FakeTLS domain fronting. Клиенты будут видеть TLS к этому домену."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "TLS SNI capture (ClientHello — DoH clients, hardcoded-IP apps, games)"
+msgstr "Захват TLS SNI (ClientHello — DoH-клиенты, приложения с зашитыми IP, игры)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "To enable Tun support, you need to install <code>kmod-tun</code>"
+msgstr "Для поддержки Tun установите <code>kmod-tun</code>"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "TProxy inbound"
+msgstr "TProxy-инбаунд"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "TUN inbound"
+msgstr "TUN-инбаунд"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "UDP TPROXY counters (UDP into HomeProxy)"
+msgstr "Счётчики UDP TPROXY (UDP в HomeProxy)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Up to date"
+msgstr "Актуально"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Update available"
+msgstr "Доступно обновление"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Worker pool size. Leave empty for default."
+msgstr "Размер пула воркеров. Пусто — значение по умолчанию."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "XHTTP"
+msgstr "XHTTP"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "XHTTP mode"
+msgstr "Режим XHTTP"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Yandex"
+msgstr "Яндекс"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Zapret"
+msgstr "Zapret"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Zapret 2"
+msgstr "Zapret 2"

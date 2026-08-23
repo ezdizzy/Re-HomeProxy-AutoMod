@@ -3821,3 +3821,1026 @@ msgstr "DNS آماده نیست — چند ثانیه پس از «اعمال» �
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2907
 msgid "Resolving test hosts…"
 msgstr "در حال یافتن نشانی میزبان‌های آزمایش…"
+
+msgid "— custom / select a preset —"
+msgstr "— سفارشی / انتخاب یک پیش‌تنظیم —"
+
+msgid "— select a preset —"
+msgstr "— انتخاب یک پیش‌تنظیم —"
+
+msgid "%d/%d passed"
+msgstr "%d/%d موفق"
+
+msgid "✓ ByeDPI started (install curl for full test)"
+msgstr "✓ ByeDPI راه‌اندازی شد (برای آزمایش کامل curl را نصب کنید)"
+
+msgid "32 hex characters"
+msgstr "۳۲ نویسه هگزادسیمال"
+
+msgid "403.online (10.202.10.202)"
+msgstr "403.online (10.202.10.202)"
+
+msgid "403.online secondary (10.202.10.102)"
+msgstr "403.online ثانویه (10.202.10.102)"
+
+msgid "active"
+msgstr "فعال"
+
+msgid "Active core"
+msgstr "هسته فعال"
+
+msgid "Active UDP Node"
+msgstr "نود UDP فعال"
+
+msgid "Active URLTest node"
+msgstr "نود URLTest فعال"
+
+msgid "Added"
+msgstr "افزوده شد"
+
+msgid "AdGuard 94.140.14.14 / 94.140.15.15"
+msgstr "AdGuard 94.140.14.14 / 94.140.15.15"
+
+msgid "AdGuard DNS UDP (94.140.14.14)"
+msgstr "AdGuard DNS UDP (94.140.14.14)"
+
+msgid "AdGuard DoQ"
+msgstr "AdGuard DoQ"
+
+msgid "AdGuard DoT"
+msgstr "AdGuard DoT"
+
+msgid "AdGuard Public DNS (94.140.14.14)"
+msgstr "AdGuard Public DNS (94.140.14.14)"
+
+msgid "Aggressive"
+msgstr "تهاجمی"
+
+msgid "Aggressive (also re-verifies learned sites)"
+msgstr "تهاجمی (سایت‌های یادگرفته‌شده را هم دوباره بررسی می‌کند)"
+
+msgid "Allow insecure TLS for the download direction. Use only for testing."
+msgstr "اجازه TLS ناامن برای جهت دانلود. فقط برای آزمایش استفاده کنید."
+
+msgid "Also learn destinations reached by raw IP (games/apps without SNI). Routes the IP via the proxy. Off by default — enable if you run such apps."
+msgstr "مقصدهایی که با IP خام در دسترس‌اند را هم یاد بگیر (بازی‌ها/برنامه‌های بدون SNI). IP را از طریق پروکسی مسیردهی می‌کند. به‌طور پیش‌فرض خاموش است — اگر چنین برنامه‌هایی اجرا می‌کنید فعال کنید."
+
+msgid "Alternate DNS servers (failover)"
+msgstr "سرورهای DNS جایگزین (پشتیبان)"
+
+msgid "AmneziaWG"
+msgstr "AmneziaWG"
+
+msgid "AntiDPI"
+msgstr "AntiDPI"
+
+msgid "Application"
+msgstr "برنامه"
+
+msgid "Applied: %s — now Save & Apply"
+msgstr "اعمال شد: %s — اکنون «ذخیره و اعمال» کنید"
+
+msgid "Arguments passed to ByeDPI. Select a preset above or enter custom options. See <code>ciadpi --help</code> for full flag reference."
+msgstr "آرگومان‌های ارسال‌شده به ByeDPI. یک پیش‌تنظیم بالا انتخاب کنید یا گزینه‌های سفارشی وارد کنید. برای مرجع کامل پرچم‌ها <code>ciadpi --help</code> را ببینید."
+
+msgid "Auto"
+msgstr "خودکار"
+
+msgid "Auto blocked-site detection"
+msgstr "تشخیص خودکار سایت‌های مسدود"
+
+msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the proxy list. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path. After toggling, press “Restart service” below."
+msgstr "یادگیری خودکار سایت‌های مسدود: ترافیکی که مستقیم ناموفق اما از طریق پروکسی موفق است به لیست پروکسی افزوده می‌شود. کاملاً سازگار با ByeDPI و Zapret — سایت‌های یادگرفته‌شده به‌سادگی از مسیر اصلی پیکربندی‌شده شما استفاده می‌کنند. پس از تغییر، «راه‌اندازی مجدد سرویس» را پایین بزنید."
+
+msgid "Automatically picks the fastest node by periodically measuring latency. Traffic is always sent through the lowest-latency node in the pool.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the URLTest pool."
+msgstr "با اندازه‌گیری دوره‌ای تأخیر، سریع‌ترین نود را به‌طور خودکار انتخاب می‌کند. ترافیک همیشه از طریق نود با کمترین تأخیر در مجموعه ارسال می‌شود.<br>اگر مشکل اتصال دارید و نودی برای مدت طولانی نارنجی/خاکستری می‌ماند، آن را از مجموعه URLTest حذف کنید."
+
+msgid "Automation"
+msgstr "خودکارسازی"
+
+msgid "Auto-mode"
+msgstr "حالت خودکار"
+
+msgid "Backup failed: "
+msgstr "پشتیبان‌گیری ناموفق: "
+
+msgid "Backup list"
+msgstr "پشتیبان‌گیری لیست"
+
+msgid "Backup list downloads the learned sites to your computer. Restore list uploads a file and adds any missing sites (existing ones are kept). Use this to avoid re-learning from scratch after a router reset."
+msgstr "پشتیبان‌گیری لیست، سایت‌های یادگرفته‌شده را روی رایانه شما دانلود می‌کند. بازیابی لیست، یک فایل بارگذاری و سایت‌های گمشده را اضافه می‌کند (موجودها حفظ می‌شوند). برای جلوگیری از یادگیری دوباره پس از بازنشانی روتر از این استفاده کنید."
+
+msgid "Balanced"
+msgstr "متعادل"
+
+msgid "Bidi"
+msgstr "Bidi"
+
+msgid "Binded interface"
+msgstr "واسط متصل‌شده"
+
+msgid "Block QUIC (UDP port 443)"
+msgstr "مسدود کردن QUIC (پورت UDP 443)"
+
+msgid "blocked both ways"
+msgstr "مسدود در هر دو جهت"
+
+msgid "ByeDPI"
+msgstr "ByeDPI"
+
+msgid "ByeDPI (ciadpi) is not installed. Install it now?"
+msgstr "ByeDPI (ciadpi) نصب نیست. اکنون نصب شود؟"
+
+msgid "ByeDPI running"
+msgstr "ByeDPI در حال اجرا"
+
+msgid "ByeDPI strategy tester"
+msgstr "آزمایشگر استراتژی ByeDPI"
+
+msgid "Cannot remove: ByeDPI is selected as Main Node. Change Main Node first."
+msgstr "حذف ممکن نیست: ByeDPI به‌عنوان نود اصلی انتخاب شده. ابتدا نود اصلی را تغییر دهید."
+
+msgid "Clash API (connections, domain names)"
+msgstr "Clash API (اتصالات، نام دامنه‌ها)"
+
+msgid "Clash API + DNS log"
+msgstr "Clash API + گزارش DNS"
+
+msgid "Clash API + DNS log + SNI + conntrack"
+msgstr "Clash API + گزارش DNS + SNI + conntrack"
+
+msgid "Clear learned"
+msgstr "پاک کردن یادگرفته‌ها"
+
+msgid "Clear log"
+msgstr "پاک کردن گزارش"
+
+msgid "click Apply next to a strategy (prefer all-green)"
+msgstr "روی «اعمال» کنار یک استراتژی کلیک کنید (ترجیحاً همه سبز)"
+
+msgid "Close idle connections after this duration (e.g. 5m, 30s)."
+msgstr "اتصالات بیکار را پس از این مدت ببند (مثلاً 5m، 30s)."
+
+msgid "Cloudflare 1.1.1.1 / 1.0.0.1"
+msgstr "Cloudflare 1.1.1.1 / 1.0.0.1"
+
+msgid "Cloudflare DNS UDP (1.1.1.1)"
+msgstr "Cloudflare DNS UDP (1.1.1.1)"
+
+msgid "Command options"
+msgstr "گزینه‌های دستور"
+
+msgid "Community"
+msgstr "اجتماعی"
+
+msgid "Concurrency"
+msgstr "همزمانی"
+
+msgid "Confirmations required before learning"
+msgstr "تعداد تأیید لازم پیش از یادگیری"
+
+msgid "Connectivity"
+msgstr "اتصال‌پذیری"
+
+msgid "conntrack (destinations by IP — for apps/games without SNI)"
+msgstr "conntrack (مقصدها بر اساس IP — برای برنامه‌ها/بازی‌های بدون SNI)"
+
+msgid "ControlD DoH"
+msgstr "ControlD DoH"
+
+msgid "core client"
+msgstr "کلاینت هسته"
+
+msgid "Custom (use the DNS server above)"
+msgstr "سفارشی (استفاده از سرور DNS بالا)"
+
+msgid "Custom JSON"
+msgstr "JSON سفارشی"
+
+msgid "Default (fake + multidisorder)"
+msgstr "پیش‌فرض (fake + multidisorder)"
+
+msgid "Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)"
+msgstr "مسیر پیش‌فرض مستقیم است. قوانین اضافه‌شده از پروکسی عبور می‌کنند با اولویت خودکار:<br>1. لیست‌های کوچک (YouTube، Discord و غیره)<br>2. <b>Russia Inside</b> (۱۰۰۰+ دامنه، itdoginfo) — مجموعه ضروری داخل روسیه (YouTube، Discord، Telegram، Meta…) که از پروکسی عبور می‌کند<br>3. <b>Re-filter</b> (۶۰۰۰۰+ دامنه + ۲۵۰۰۰+ IP) — لیست سیاه اجتماعی از دامنه‌ها و IP‌های مسدودشده در روسیه (Roskomnadzor)"
+
+msgid "Desync strategy"
+msgstr "استراتژی Desync"
+
+msgid "Detect"
+msgstr "تشخیص"
+
+msgid "Detected"
+msgstr "تشخیص داده شد"
+
+msgid "Detecting..."
+msgstr "در حال تشخیص..."
+
+msgid "Detection failed"
+msgstr "تشخیص ناموفق"
+
+msgid "direct %s ✗ / proxy %s ✓"
+msgstr "مستقیم %s ✗ / پروکسی %s ✓"
+
+msgid "Direct control (bypassing MultiDNS)"
+msgstr "کنترل مستقیم (دور زدن MultiDNS)"
+
+msgid "Direct IP"
+msgstr "IP مستقیم"
+
+msgid "Disable & restore DNS"
+msgstr "غیرفعال‌سازی و بازیابی DNS"
+
+msgid "Disabled"
+msgstr "غیرفعال"
+
+msgid "Discord calls via Zapret"
+msgstr "تماس‌های Discord از طریق Zapret"
+
+msgid "Discover candidates from"
+msgstr "کشف نامزدها از"
+
+msgid "Disorder — reorders TCP segments"
+msgstr "Disorder — ترتیب بخش‌های TCP را به‌هم می‌زند"
+
+msgid "DNS failover"
+msgstr "پشتیبان DNS"
+
+msgid "DNS inbound"
+msgstr "ورودی DNS"
+
+msgid "DNS preset"
+msgstr "پیش‌تنظیم DNS"
+
+msgid "DNS query log (captures domain at DNS time — most transparent)"
+msgstr "گزارش پرس‌وجوی DNS (دامنه را هنگام DNS ضبط می‌کند — شفاف‌ترین)"
+
+msgid "DNS.SB DoH"
+msgstr "DNS.SB DoH"
+
+msgid "DNS.WATCH (84.200.69.80)"
+msgstr "DNS.WATCH (84.200.69.80)"
+
+msgid "DNS.WATCH Public DNS (84.200.69.80)"
+msgstr "DNS.WATCH Public DNS (84.200.69.80)"
+
+msgid "Domain"
+msgstr "دامنه"
+
+msgid "Domain fronting host"
+msgstr "میزبان Domain fronting"
+
+msgid "Domain fronting port"
+msgstr "پورت Domain fronting"
+
+msgid "Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names."
+msgstr "دامنه‌ها / IP‌هایی که از یادگیری مستثنی می‌شوند (تطابق زیررشته و دامنه). پیش‌فرض LAN و نام‌های محلی را پوشش می‌دهد."
+
+msgid "Done"
+msgstr "انجام شد"
+
+msgid "Download allow insecure"
+msgstr "اجازه ناامن دانلود"
+
+msgid "Download ALPN"
+msgstr "ALPN دانلود"
+
+msgid "Download host"
+msgstr "میزبان دانلود"
+
+msgid "Download path"
+msgstr "مسیر دانلود"
+
+msgid "Download port"
+msgstr "پورت دانلود"
+
+msgid "Download server"
+msgstr "سرور دانلود"
+
+msgid "Download TLS server name"
+msgstr "نام سرور TLS دانلود"
+
+msgid "Duplicate source — only the first rule will take effect"
+msgstr "منبع تکراری — فقط نخستین قانون اعمال می‌شود"
+
+msgid "Each is probed against 4 sites (~12 min total). You can Stop it at any point."
+msgstr "هرکدام روی ۴ سایت آزمایش می‌شود (مجموعاً ~۱۲ دقیقه). می‌توانید هر زمان متوقفش کنید."
+
+msgid "Electro/Begzar (78.157.42.100)"
+msgstr "Electro/Begzar (78.157.42.100)"
+
+msgid "Electro/Begzar secondary (78.157.42.101)"
+msgstr "Electro/Begzar ثانویه (78.157.42.101)"
+
+msgid "Enable automation"
+msgstr "فعال‌سازی خودکارسازی"
+
+msgid "Enable ByeDPI"
+msgstr "فعال‌سازی ByeDPI"
+
+msgid "Enable DNS failover"
+msgstr "فعال‌سازی پشتیبان DNS"
+
+msgid "Enable MultiDNS"
+msgstr "فعال‌سازی MultiDNS"
+
+msgid "Enable Zapret"
+msgstr "فعال‌سازی Zapret"
+
+msgid "Enabled"
+msgstr "فعال"
+
+msgid "enabled, but nfqws2 not running"
+msgstr "فعال است، اما nfqws2 اجرا نیست"
+
+msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test all strategies\" feature in Client → ByeDPI tab."
+msgstr "آزمایش واقعی استراتژی ByeDPI مبتنی بر HTTP را فعال می‌کند. برای قابلیت «آزمایش همه استراتژی‌ها» در کلاینت → برگه ByeDPI لازم است."
+
+msgid "Engine log"
+msgstr "گزارش موتور"
+
+msgid "Extra headers"
+msgstr "سرآیندهای اضافی"
+
+msgid "Fake MD5"
+msgstr "MD5 جعلی"
+
+msgid "Fake only"
+msgstr "فقط جعلی"
+
+msgid "Fake TTL"
+msgstr "TTL جعلی"
+
+msgid "Fallback DNS servers (IP, hostname, or DoH/DoT URL). Used by DNS failover when the primary is unreachable. The DNS preset above seeds these automatically."
+msgstr "سرورهای DNS پشتیبان (IP، نام میزبان، یا نشانی DoH/DoT). وقتی DNS اصلی در دسترس نیست توسط پشتیبان DNS استفاده می‌شود. پیش‌تنظیم DNS بالا این‌ها را خودکار پر می‌کند."
+
+msgid "Fetching nodes, please wait..."
+msgstr "در حال دریافت نودها، لطفاً صبر کنید..."
+
+msgid "Flush after N new entries (batch window)"
+msgstr "تخلیه پس از N ورودی جدید (پنجره دسته‌ای)"
+
+msgid "Force a flush once this many new sites have been learned, even before the flush interval elapses. Batches a burst of learns into a single file update (one hot reload) instead of many. 0 = time-only."
+msgstr "هنگامی که این تعداد سایت جدید یاد گرفته شد، حتی پیش از پایان فاصله تخلیه، یک تخلیه اجباری انجام بده. چند یادگیری را در یک به‌روزرسانی فایل (یک hot reload) دسته‌بندی می‌کند. 0 = فقط بر اساس زمان."
+
+msgid "Full Combo"
+msgstr "ترکیب کامل"
+
+msgid "Full strategy test"
+msgstr "آزمایش کامل استراتژی"
+
+msgid "Full-test pool"
+msgstr "مجموعه آزمایش کامل"
+
+msgid "Google 8.8.8.8 / 8.8.4.4"
+msgstr "Google 8.8.8.8 / 8.8.4.4"
+
+msgid "Google DNS UDP (8.8.8.8)"
+msgstr "Google DNS UDP (8.8.8.8)"
+
+msgid "Grouped by technique. Based on <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea/byedpi</a> and community testing. See also <a href=\"https://github.com/fatyzzz/Byedpi-Setup\" target=\"_blank\">fatyzzz/Byedpi-Setup</a>."
+msgstr "گروه‌بندی بر اساس تکنیک. بر پایه <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> و آزمایش جامعه کاربری. همچنین <a href="https://github.com/fatyzzz/Byedpi-Setup" target="_blank">fatyzzz/Byedpi-Setup</a> را ببینید."
+
+msgid "H1"
+msgstr "H1"
+
+msgid "H2"
+msgstr "H2"
+
+msgid "H3"
+msgstr "H3"
+
+msgid "H4"
+msgstr "H4"
+
+msgid "Handshake mode"
+msgstr "حالت دست‌دادن"
+
+msgid "Handshake timeout"
+msgstr "مهلت دست‌دادن"
+
+msgid "High"
+msgstr "زیاد"
+
+msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends."
+msgstr "هر چند وقت یک‌بار تحلیل‌گر هر سرور را برای تأخیر / فعال بودن / آلودگی کاوش و روندها را به‌روزرسانی می‌کند."
+
+msgid "How often the learned list is pushed to the live routing rules (hot reload — no core restart). Newly learned sites then apply to new connections within this window. A full service restart also applies them, but this keeps them live without one."
+msgstr "هر چند وقت یک‌بار لیست یادگرفته‌شده به قوانین مسیردهی زنده اعمال می‌شود (hot reload — بدون راه‌اندازی مجدد هسته). سایت‌های تازه‌یادگرفته‌شده سپس در همین بازه روی اتصالات جدید اعمال می‌شوند. راه‌اندازی مجدد کامل سرویس هم آن‌ها را اعمال می‌کند، اما این کار بدون آن نیز آن‌ها را زنده نگه می‌دارد."
+
+msgid "HTTP Modification"
+msgstr "اصلاح HTTP"
+
+msgid "I have a custom core path"
+msgstr "مسیر هسته سفارشی دارم"
+
+msgid "I1"
+msgstr "I1"
+
+msgid "I2"
+msgstr "I2"
+
+msgid "I3"
+msgstr "I3"
+
+msgid "I4"
+msgstr "I4"
+
+msgid "I5"
+msgstr "I5"
+
+msgid "In gaming mode, only TCP traffic from the selected device is proxied."
+msgstr "در حالت بازی، فقط ترافیک TCP دستگاه انتخاب‌شده از پروکسی عبور می‌کند."
+
+msgid "In global proxy mode, all traffic from the selected device goes through the proxy."
+msgstr "در حالت پروکسی سراسری، تمام ترافیک دستگاه انتخاب‌شده از پروکسی عبور می‌کند."
+
+msgid "Inbound"
+msgstr "ورودی"
+
+msgid "Install ByeDPI"
+msgstr "نصب ByeDPI"
+
+msgid "Install Zapret"
+msgstr "نصب Zapret"
+
+msgid "Installed — reloading..."
+msgstr "نصب شد — در حال بارگذاری مجدد..."
+
+msgid "Installed successfully (compact build)"
+msgstr "با موفقیت نصب شد (ساخت فشرده)"
+
+msgid "Installed, but kmod-nft-queue is missing — Zapret cannot intercept traffic without it."
+msgstr "نصب شده، اما kmod-nft-queue موجود نیست — Zapret بدون آن نمی‌تواند ترافیک را رهگیری کند."
+
+msgid "installed, not running"
+msgstr "نصب شده، اجرا نیست"
+
+msgid "IP"
+msgstr "IP"
+
+msgid "ITime"
+msgstr "ITime"
+
+msgid "J1"
+msgstr "J1"
+
+msgid "J2"
+msgstr "J2"
+
+msgid "J3"
+msgstr "J3"
+
+msgid "Jc"
+msgstr "Jc"
+
+msgid "Jmax"
+msgstr "Jmax"
+
+msgid "Jmin"
+msgstr "Jmin"
+
+msgid "JSON object, e.g. {\"X-Header\": \"value\"}. Leave empty for none."
+msgstr "شیء JSON، مثلاً {\"X-Header\": \"value\"}. برای هیچ‌کدام خالی بگذارید."
+
+msgid "Junk packet count."
+msgstr "تعداد بسته‌های زباله."
+
+msgid "Junk packet maximum size."
+msgstr "حداکثر اندازه بسته زباله."
+
+msgid "Junk packet minimum size."
+msgstr "حداقل اندازه بسته زباله."
+
+msgid "LAN clients are not affected during testing."
+msgstr "کلاینت‌های LAN در طول آزمایش تحت تأثیر قرار نمی‌گیرند."
+
+msgid "Last check"
+msgstr "آخرین بررسی"
+
+msgid "Latency"
+msgstr "تأخیر"
+
+msgid "Learn IP destinations (conntrack)"
+msgstr "یادگیری مقصدهای IP (conntrack)"
+
+msgid "Learned (blocked)"
+msgstr "یادگرفته‌شده (مسدود)"
+
+msgid "Learned sites"
+msgstr "سایت‌های یادگرفته‌شده"
+
+msgid "Learned-list flush interval (seconds)"
+msgstr "فاصله تخلیه لیست یادگرفته‌شده (ثانیه)"
+
+msgid "LibreDNS (116.202.176.26)"
+msgstr "LibreDNS (116.202.176.26)"
+
+msgid "LibreDNS DoH"
+msgstr "LibreDNS DoH"
+
+msgid "LibreDNS DoT"
+msgstr "LibreDNS DoT"
+
+msgid "LibreDNS Public DNS (116.202.176.26)"
+msgstr "LibreDNS Public DNS (116.202.176.26)"
+
+msgid "List of MTProxy secrets. Each secret is a 32-character hex string (16 bytes). One secret per user."
+msgstr "فهرست رمزهای MTProxy. هر رمز یک رشته هگزادسیمال ۳۲ نویسه‌ای (۱۶ بایت) است. یک رمز برای هر کاربر."
+
+msgid "Live %"
+msgstr "زنده %"
+
+msgid "Live DNS quality monitor"
+msgstr "پایش زنده کیفیت DNS"
+
+msgid "Low"
+msgstr "کم"
+
+msgid "Magic header range, e.g. 1603445073-1836768565"
+msgstr "بازه Magic header، مثلاً 1603445073-1836768565"
+
+msgid "Magic header range, e.g. 2047861992-2141668339"
+msgstr "بازه Magic header، مثلاً 2047861992-2141668339"
+
+msgid "Magic header range, e.g. 2141792848-2142674170"
+msgstr "بازه Magic header، مثلاً 2141792848-2142674170"
+
+msgid "Magic header range, e.g. 426560850-1096521767"
+msgstr "بازه Magic header، مثلاً 426560850-1096521767"
+
+msgid "Match inbound tag."
+msgstr "برچسب ورودی مطابق."
+
+msgid "Max bytes per POST"
+msgstr "حداکثر بایت در هر POST"
+
+msgid "Maximum learned entries"
+msgstr "حداکثر ورودی‌های یادگرفته‌شده"
+
+msgid "Maximum time to complete handshake (e.g. 10s)."
+msgstr "حداکثر زمان تکمیل دست‌دادن (مثلاً 10s)."
+
+msgid "Middle"
+msgstr "متوسط"
+
+msgid "Mieru"
+msgstr "Mieru"
+
+msgid "Min POST interval (ms)"
+msgstr "حداقل فاصله POST (میلی‌ثانیه)"
+
+msgid "Mixed (SOCKS/HTTP) inbound"
+msgstr "ورودی ترکیبی (SOCKS/HTTP)"
+
+msgid "Monitor"
+msgstr "پایش"
+
+msgid "Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the “Alternate DNS servers” list (Client ▸ DNS tab) and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up."
+msgstr "DNS اصلی را پایش می‌کند؛ اگر از دسترس خارج شد، به یک سرور سالم از فهرست «سرورهای DNS جایگزین» (برگه کلاینت ▸ DNS) سوئیچ و بازتولید می‌کند. فقط سرورهای ساده (UDP/Do53) بررسی سلامت می‌شوند؛ DoH/DoT همیشه فعال فرض می‌شوند."
+
+msgid "mosdns"
+msgstr "mosdns"
+
+msgid "mosdns package is missing — MultiDNS cannot accelerate DNS. Install mosdns (see README) or reinstall the app."
+msgstr "بسته mosdns موجود نیست — MultiDNS نمی‌تواند DNS را شتاب بدهد. mosdns را نصب کنید (به README مراجعه کنید) یا برنامه را دوباره نصب کنید."
+
+msgid "MTProxy"
+msgstr "MTProxy"
+
+msgid "Mullvad DoH"
+msgstr "Mullvad DoH"
+
+msgid "Mullvad DoT"
+msgstr "Mullvad DoT"
+
+msgid "MultiDNS"
+msgstr "MultiDNS"
+
+msgid "MultiDNS / mosdns"
+msgstr "MultiDNS / mosdns"
+
+msgid "MultiDNS DNS Tests"
+msgstr "آزمایش‌های DNS با MultiDNS"
+
+msgid "MultiDNS races all configured DNS servers and shows their measured latency / success / open-ratio. A server that consistently fails (dead, or returns IPs that do not open the site) is pruned from the live pool and re-checked; the others race on every query (mosdns picks the fastest valid answer)."
+msgstr "MultiDNS همه سرورهای DNS پیکربندی‌شده را به رقابت می‌گذارد و تأخیر / موفقیت / نسبت باز بودن اندازه‌گیری‌شده آن‌ها را نشان می‌دهد. سروری که پیوسته ناموفق است (مرده، یا IPهایی برمی‌گرداند که سایت را باز نمی‌کنند) از مجموعه زنده هرس و دوباره بررسی می‌شود؛ بقیه در هر پرس‌وجو رقابت می‌کنند (mosdns سریع‌ترین پاسخ معتبر را برمی‌گزیند)."
+
+msgid "MultiDNS status unavailable: "
+msgstr "وضعیت MultiDNS در دسترس نیست: "
+
+msgid "Multiplexing"
+msgstr "مالتی‌پلکس‌سازی"
+
+msgid "Multisplit"
+msgstr "Multisplit"
+
+msgid "Never auto-learn (comma-separated)"
+msgstr "هرگز خودکار یاد نگیر (با ویرگول جدا)"
+
+msgid "No answer — mosdns may be down"
+msgstr "بدون پاسخ — ممکن است mosdns از کار افتاده باشد"
+
+msgid "no core installed"
+msgstr "هسته‌ای نصب نیست"
+
+msgid "No data"
+msgstr "بدون داده"
+
+msgid "No data yet — enable MultiDNS and wait for the first quality check."
+msgstr "هنوز داده‌ای نیست — MultiDNS را فعال کنید و منتظر نخستین بررسی کیفیت بمانید."
+
+msgid "no learned list yet"
+msgstr "هنوز لیست یادگرفته‌شده‌ای نیست"
+
+msgid "No package manager found. Install ciadpi manually from the Status page."
+msgstr "مدیر بسته‌ای یافت نشد. ciadpi را به‌صورت دستی از صفحه وضعیت نصب کنید."
+
+msgid "No package manager found. Install zapret2 manually from the Status page."
+msgstr "مدیر بسته‌ای یافت نشد. zapret2 را به‌صورت دستی از صفحه وضعیت نصب کنید."
+
+msgid "No strategy set — pick a preset or enter options first"
+msgstr "استراتژی‌ای تنظیم نشده — ابتدا یک پیش‌تنظیم انتخاب یا گزینه‌ها را وارد کنید"
+
+msgid "Nothing learned yet. Browse the web or press “Test now”."
+msgstr "هنوز چیزی یاد گرفته نشده. وب را مرور کنید یا «اکنون آزمایش» را بزنید."
+
+msgid "Off"
+msgstr "خاموش"
+
+msgid "OOB"
+msgstr "OOB"
+
+msgid "Open %"
+msgstr "باز %"
+
+msgid "OpenDNS (208.67.222.222)"
+msgstr "OpenDNS (208.67.222.222)"
+
+msgid "OpenDNS 208.67.222.222 / 208.67.220.220"
+msgstr "OpenDNS 208.67.222.222 / 208.67.220.220"
+
+msgid "Optional cookie byte sequence in &lt;b 0x...&gt; format."
+msgstr "دنباله بایت اختیاری cookie با قالب &lt;b 0x...&gt;."
+
+msgid "Optional separate server address for the download direction. Empty reuses the main server (works on hiddify-core; set explicitly for sing-box)."
+msgstr "آدرس سرور جداگانه اختیاری برای جهت دانلود. خالی یعنی استفاده دوباره از سرور اصلی (روی hiddify-core کار می‌کند؛ برای sing-box صریحاً تنظیم کنید)."
+
+msgid "Packet down"
+msgstr "بسته پایین"
+
+msgid "Packet up"
+msgstr "بسته بالا"
+
+msgid "packet-up mode: max body size of each upload POST, e.g. 1000000-1000000."
+msgstr "حالت packet-up: حداکثر اندازه بدنه هر POST آپلود، مثلاً 1000000-1000000."
+
+msgid "packet-up mode: minimum interval between upload POSTs in ms, e.g. 30-30."
+msgstr "حالت packet-up: حداقل فاصله بین POSTهای آپلود به میلی‌ثانیه، مثلاً 30-30."
+
+msgid "Padding bytes"
+msgstr "بایت‌های Padding"
+
+msgid "partial"
+msgstr "جزئی"
+
+msgid "Plain pool"
+msgstr "مجموعه Plain"
+
+msgid "Plain pool (Russia) — %s"
+msgstr "مجموعه Plain (روسیه) — %s"
+
+msgid "Pool"
+msgstr "مجموعه"
+
+msgid "Port range for the Mieru connection, e.g. %s."
+msgstr "بازه پورت برای اتصال Mieru، مثلاً %s."
+
+msgid "Preparing..."
+msgstr "در حال آماده‌سازی..."
+
+msgid "Probe timeout (seconds)"
+msgstr "مهلت کاوش (ثانیه)"
+
+msgid "Proxy IP"
+msgstr "IP پروکسی"
+
+msgid "Proxy mode for devices"
+msgstr "حالت پروکسی برای دستگاه‌ها"
+
+msgid "pruned"
+msgstr "هرس‌شده"
+
+msgid "Quad9 9.9.9.9 / 149.112.112.112"
+msgstr "Quad9 9.9.9.9 / 149.112.112.112"
+
+msgid "Quad9 DNS UDP (9.9.9.9)"
+msgstr "Quad9 DNS UDP (9.9.9.9)"
+
+msgid "Quad9 Public DNS (9.9.9.9)"
+msgstr "Quad9 Public DNS (9.9.9.9)"
+
+msgid "Quality check interval (seconds)"
+msgstr "فاصله بررسی کیفیت (ثانیه)"
+
+msgid "Query every DoH/DoT entry in the secure pool in parallel and pick the fastest live IP for blocked / proxied domains."
+msgstr "هر ورودی DoH/DoT در مجموعه امن را موازی پرس‌وجو می‌کند و سریع‌ترین IP زنده را برای دامنه‌های مسدود/پروکسی انتخاب می‌کند."
+
+msgid "Query every entry of the plain DNS-server list in parallel and pick the fastest live IP. Unblocks speed and reliability for non-proxied sites."
+msgstr "هر ورودی فهرست سرورهای DNS ساده را موازی پرس‌وجو می‌کند و سریع‌ترین IP زنده را برمی‌گزیند. سرعت و پایداری سایت‌های بدون پروکسی را بهبود می‌دهد."
+
+msgid "Quickly set a primary DNS plus a failover candidate (added to “Alternate DNS servers”, used by DNS failover). Choose “Custom” to keep your manual DNS server."
+msgstr "سریع یک DNS اصلی به‌همراه یک نامزد پشتیبان تنظیم می‌کند (به «سرورهای DNS جایگزین» افزوده و توسط پشتیبان DNS استفاده می‌شود). برای نگه‌داشتن سرور DNS دستی خود «سفارشی» را انتخاب کنید."
+
+msgid "Race plain (Russia) DNS pool"
+msgstr "رقابت مجموعه DNS ساده (روسیه)"
+
+msgid "Race secure (encrypted) DNS pool"
+msgstr "رقابت مجموعه DNS امن (رمزگذاری‌شده)"
+
+msgid "Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh)."
+msgstr "چندین سرور را در هر مجموعه DNS همزمان به رقابت می‌گذارد (هر پرس‌وجو) و سریع‌ترین پاسخ معتبر را برمی‌گرداند. مجموعه ساده «روسیه» و مجموعه رمزگذاری‌شده «امن» مستقل رقابت می‌کنند و مسیردهی تقسیمی را بازتاب می‌دهند. یک دیمن کیفیت از طریق HTTPS بررسی می‌کند که IP برگشتی هر سرور واقعاً سایت را باز می‌کند، سرورها را بر اساس تأخیر + نسبت باز + روند امتیازدهی و موارد مرده/آلوده را هرس می‌کند. نیازمند موتور mosdns است (نصب توسط install.sh)."
+
+msgid "Radar (10.202.10.10)"
+msgstr "Radar (10.202.10.10)"
+
+msgid "Radar secondary (10.202.10.11)"
+msgstr "Radar ثانویه (10.202.10.11)"
+
+msgid "Random padding length range, e.g. 100-1000. Leave empty for the core default."
+msgstr "بازه طول padding تصادفی، مثلاً 100-1000. برای پیش‌فرض هسته خالی بگذارید."
+
+msgid "Re:HomeProxy AutoMod"
+msgstr "Re:HomeProxy AutoMod"
+
+msgid "Re:HomeProxy AutoMod chains"
+msgstr "زنجیره‌های Re:HomeProxy AutoMod"
+
+msgid "Re:HomeProxy AutoMod Diagnostics"
+msgstr "تشخیص‌های Re:HomeProxy AutoMod"
+
+msgid "Re:HomeProxy AutoMod Server"
+msgstr "سرور Re:HomeProxy AutoMod"
+
+msgid "Rebuild pools"
+msgstr "بازسازی مجموعه‌ها"
+
+msgid "Recommended"
+msgstr "پیشنهادی"
+
+msgid "Redirect inbound"
+msgstr "ورودی Redirect"
+
+msgid "Redundant with MultiDNS: when MultiDNS is enabled it already races every server in each pool and returns the fastest live answer, so a single failed primary is bypassed automatically. Reserve DNS is therefore ignored while MultiDNS is on — use one or the other."
+msgstr "با MultiDNS افزونه است: وقتی MultiDNS فعال است، از قبل همه سرورها در هر مجموعه را به رقابت می‌گذارد و سریع‌ترین پاسخ زنده را برمی‌گرداند، بنابراین یک DNS اصلی ناموفق به‌طور خودکار دور زده می‌شود. از این رو DNS ذخیره هنگام فعال بودن MultiDNS نادیده گرفته می‌شود — یکی را انتخاب کنید."
+
+msgid "Re-evaluate learned interval (seconds)"
+msgstr "فاصله ارزیابی مجدد یادگرفته‌ها (ثانیه)"
+
+msgid "Reinstall"
+msgstr "نصب مجدد"
+
+msgid "reload page to apply"
+msgstr "برای اعمال، صفحه را دوباره بارگذاری کنید"
+
+msgid "Requires curl. Install it on the Status page first."
+msgstr "نیازمند curl است. ابتدا آن را از صفحه وضعیت نصب کنید."
+
+msgid "Reset trends"
+msgstr "بازنشانی روندها"
+
+msgid "Resolved via fastest live server: "
+msgstr "حل‌شده از طریق سریع‌ترین سرور زنده: "
+
+msgid "Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT = DNS over HTTPS/TLS). You may add several; the first entry is used."
+msgstr "دامنه‌های مسدودشده را از طریق پروکسی حل می‌کند — ISP نمی‌تواند ببیند چه سایت‌هایی جستجو می‌کنید. از DNS رمزگذاری‌شده استفاده می‌کند (DoH/DoT = DNS over HTTPS/TLS). می‌توانید چند مورد اضافه کنید؛ نخستین ورودی استفاده می‌شود."
+
+msgid "Resolves Russian domains directly, without going through the proxy. You may add several; the first entry is used."
+msgstr "دامنه‌های روسی را مستقیماً و بدون پروکسی حل می‌کند. می‌توانید چند مورد اضافه کنید؛ نخستین ورودی استفاده می‌شود."
+
+msgid "Restore complete — added %d site(s)."
+msgstr "بازیابی کامل شد — %d سایت افزوده شد."
+
+msgid "Restore failed: "
+msgstr "بازیابی ناموفق: "
+
+msgid "Restore list"
+msgstr "بازیابی لیست"
+
+msgid "Run full test"
+msgstr "اجرای آزمایش کامل"
+
+msgid "running — racing all pool servers"
+msgstr "در حال اجرا — رقابت همه سرورهای مجموعه"
+
+msgid "Runs Core, Config, Network, and Connectivity checks simultaneously."
+msgstr "بررسی‌های هسته، پیکربندی، شبکه و اتصال‌پذیری را همزمان اجرا می‌کند."
+
+msgid "Russia"
+msgstr "روسیه"
+
+msgid "S1"
+msgstr "S1"
+
+msgid "S2"
+msgstr "S2"
+
+msgid "S3"
+msgstr "S3"
+
+msgid "S4"
+msgstr "S4"
+
+msgid "SafeDNS (195.46.39.39)"
+msgstr "SafeDNS (195.46.39.39)"
+
+msgid "SafeDNS Public DNS (195.46.39.39)"
+msgstr "SafeDNS Public DNS (195.46.39.39)"
+
+msgid "Score"
+msgstr "امتیاز"
+
+msgid "Secrets"
+msgstr "رمزها"
+
+msgid "Secure pool"
+msgstr "مجموعه امن"
+
+msgid "Secure pool — %s"
+msgstr "مجموعه امن — %s"
+
+msgid "Send the secure pool’s DoH/DoT queries through the proxy tunnel (SOCKS5) so your ISP cannot see which sites you look up. Disable to resolve them directly (still encrypted)."
+msgstr "پرس‌وجوهای DoH/DoT مجموعه امن را از تونل پروکسی (SOCKS5) عبور می‌دهد تا ISP نتواند ببیند چه سایت‌هایی جستجو می‌کنید. برای حل مستقیم آن‌ها (همچنان رمزگذاری‌شده) غیرفعال کنید."
+
+msgid "Shecan (178.22.122.100)"
+msgstr "Shecan (178.22.122.100)"
+
+msgid "Shecan secondary (185.51.200.2)"
+msgstr "Shecan ثانویه (185.51.200.2)"
+
+msgid "Site"
+msgstr "سایت"
+
+msgid "Source"
+msgstr "منبع"
+
+msgid "Specify target ports to be proxied. Multiple ports must be separated by commas. Leave empty for all ports."
+msgstr "پورت‌های هدف برای پروکسی را مشخص کنید. چند پورت باید با ویرگول جدا شوند. برای همه پورت‌ها خالی بگذارید."
+
+msgid "Speedtest"
+msgstr "آزمایش سرعت"
+
+msgid "Split"
+msgstr "تقسیم"
+
+msgid "Split download: host (Host header / :authority) for the download direction. Leave empty to reuse the upload host."
+msgstr "تقسیم دانلود: میزبان (سرآیند Host / :authority) برای جهت دانلود. برای استفاده دوباره از میزبان آپلود خالی بگذارید."
+
+msgid "Split download: path for the download direction. Leave empty to reuse the upload path."
+msgstr "تقسیم دانلود: مسیر برای جهت دانلود. برای استفاده دوباره از مسیر آپلود خالی بگذارید."
+
+msgid "Status unavailable: "
+msgstr "وضعیت در دسترس نیست: "
+
+msgid "Stop"
+msgstr "توقف"
+
+msgid "stopped"
+msgstr "متوقف شد"
+
+msgid "Stopping…"
+msgstr "در حال توقف…"
+
+msgid "Strategy preset"
+msgstr "پیش‌تنظیم استراتژی"
+
+msgid "Stream down"
+msgstr "جریان پایین"
+
+msgid "Stream up"
+msgstr "جریان بالا"
+
+msgid "Success %"
+msgstr "موفقیت %"
+
+msgid "Target hostname for FakeTLS domain fronting. Clients will see TLS to this domain."
+msgstr "نام میزبان هدف برای domain fronting با FakeTLS. کلاینت‌ها TLS را به این دامنه می‌بینند."
+
+msgid "TCP and UDP"
+msgstr "TCP و UDP"
+
+msgid "Test all strategies"
+msgstr "آزمایش همه استراتژی‌ها"
+
+msgid "Test all strategies?"
+msgstr "همه استراتژی‌ها آزمایش شود؟"
+
+msgid "Test current strategy"
+msgstr "آزمایش استراتژی فعلی"
+
+msgid "Test failed"
+msgstr "آزمایش ناموفق"
+
+msgid "Test now"
+msgstr "اکنون آزمایش کن"
+
+msgid "Testing %d/%d: %s"
+msgstr "در حال آزمایش %d/%d: %s"
+
+msgid "Testing MultiDNS DNS…"
+msgstr "در حال آزمایش DNS با MultiDNS…"
+
+msgid "Testing..."
+msgstr "در حال آزمایش..."
+
+msgid "The LuCI app itself. \"Check update\" compares your installed version with the latest GitHub release; \"Update\" downloads and installs the new app (and the Russian translation) in place."
+msgstr "خود برنامه LuCI. «بررسی به‌روزرسانی» نسخه نصب‌شده شما را با آخرین انتشار GitHub مقایسه می‌کند؛ «به‌روزرسانی» برنامه جدید (و ترجمه روسی) را دانلود و نصب می‌کند."
+
+msgid "timeout"
+msgstr "مهلت"
+
+msgid "TLS Modification"
+msgstr "اصلاح TLS"
+
+msgid "TLS Record Split"
+msgstr "تقسیم رکورد TLS"
+
+msgid "TLS SNI capture (ClientHello — DoH clients, hardcoded-IP apps, games)"
+msgstr "ضبط TLS SNI (ClientHello — کلاینت‌های DoH، برنامه‌های IP-سخت، بازی‌ها)"
+
+msgid "TLS SNI for the download direction (often a different CDN/edge host than the upload)."
+msgstr "TLS SNI برای جهت دانلود (معمولاً میزبان CDN/edge متفاوت از آپلود)."
+
+msgid "To enable Tun support, you need to install <code>kmod-tun</code>"
+msgstr "برای فعال‌سازی پشتیبانی Tun باید <code>kmod-tun</code> را نصب کنید"
+
+msgid "TProxy inbound"
+msgstr "ورودی TProxy"
+
+msgid "Trend"
+msgstr "روند"
+
+msgid "TUN inbound"
+msgstr "ورودی TUN"
+
+msgid "Tunnel secure-pool queries through the proxy"
+msgstr "عبور پرس‌وجوهای مجموعه امن از تونل پروکسی"
+
+msgid "UDP TPROXY counters (UDP into HomeProxy)"
+msgstr "شمارنده‌های UDP TPROXY (UDP ورودی به HomeProxy)"
+
+msgid "uncertain"
+msgstr "نامشخص"
+
+msgid "Up to date"
+msgstr "به‌روز"
+
+msgid "Update available"
+msgstr "به‌روزرسانی موجود است"
+
+msgid "Updating subscriptions"
+msgstr "در حال به‌روزرسانی اشتراک‌ها"
+
+msgid "Warning: kmod-nft-queue is not installed — Zapret cannot intercept traffic without it."
+msgstr "هشدار: kmod-nft-queue نصب نیست — Zapret بدون آن نمی‌تواند ترافیک را رهگیری کند."
+
+msgid "Why"
+msgstr "چرا"
+
+msgid "work on all sites"
+msgstr "روی همه سایت‌ها کار می‌کند"
+
+msgid "Worker pool size. Leave empty for default."
+msgstr "اندازه مجموعه worker. برای پیش‌فرض خالی بگذارید."
+
+msgid "Wrap UDP traffic in TCP when routing to ByeDPI."
+msgstr "هنگام مسیردهی به ByeDPI، ترافیک UDP را در TCP بپیچد."
+
+msgid "XHTTP"
+msgstr "XHTTP"
+
+msgid "XHTTP mode"
+msgstr "حالت XHTTP"
+
+msgid "Yandex"
+msgstr "Yandex"
+
+msgid "Zapret"
+msgstr "Zapret"
+
+msgid "Zapret (nfqws2)"
+msgstr "Zapret (nfqws2)"
+
+msgid "Zapret (zapret2/nfqws2) is not installed. Install it now?"
+msgstr "Zapret (zapret2/nfqws2) نصب نیست. اکنون نصب شود؟"
+
+msgid "Zapret 2"
+msgstr "Zapret 2"
+
+msgid "Zapret 2 running"
+msgstr "Zapret 2 در حال اجرا"
+
+msgid "Zapret is installed, but the NFQUEUE kernel module (kmod-nft-queue) is missing. Enabling it now could break the firewall. Reinstall Zapret or install kmod-nft-queue first."
+msgstr "Zapret نصب است، اما ماژول هسته NFQUEUE (kmod-nft-queue) موجود نیست. فعال‌سازی اکنون ممکن است فایروال را بشکند. ابتدا Zapret را دوباره نصب یا kmod-nft-queue را نصب کنید."
+
+msgid "Zapret NFQUEUE counters (mark 110 → queue)"
+msgstr "شمارنده‌های NFQUEUE مربوط به Zapret (علامت 110 → صف)"

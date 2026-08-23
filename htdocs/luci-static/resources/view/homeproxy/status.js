@@ -309,6 +309,146 @@ const callAppStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+const callMultidnsStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'multidns_status',
+	expect: { '': {} }
+});
+
+const callMosdnsStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'mosdns_status',
+	expect: { '': {} }
+});
+
+const callMosdnsPrepareInstall = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'mosdns_prepare_install',
+	expect: { '': {} }
+});
+
+const callMosdnsInstallPkg = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'mosdns_install_pkg',
+	params: ['tmp_path'],
+	expect: { '': {} }
+});
+
+const callMosdnsRemove = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'mosdns_remove',
+	expect: { '': {} }
+});
+
+function buildMosdnsCard(mdns, mos) {
+	mdns = mdns || {};
+	mos  = mos  || {};
+	let installed = !!mos.installed;
+	let version   = mos.version || null;
+	const running    = !!mos.running;
+	const enabled    = mdns.enabled === '1';
+	const ru         = (mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
+	const sec        = (mdns.active && mdns.active.secure) ? mdns.active.secure.length : 0;
+
+	const statusEl = E('strong', {
+		style: installed ? 'color:green' : 'color:gray'
+	}, installed ? (version ? version : _('Installed')) : _('Not installed'));
+
+	const runEl = E('span', {
+		style: 'margin-left:6px; font-size:0.9em; color:' + (running ? 'green' : 'gray')
+	}, running ? _('running') : _('stopped'));
+
+	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || 'gray'; };
+
+	const installBtn = E('button', {
+		class: 'btn cbi-button cbi-button-action',
+		style: 'margin-left:4px',
+		click: async function() {
+			const prevInstalled = installed;
+			const prevVersion   = version;
+			installBtn.disabled = true;
+			removeBtn.disabled  = true;
+			statusEl.textContent = _('Installing...');
+			statusEl.style.color = 'gray';
+
+			const fail = (msg) => {
+				installed = prevInstalled;
+				version   = prevVersion;
+				statusEl.textContent = installed ? (version || _('Installed')) : _('Not installed');
+				statusEl.style.color = installed ? 'green' : 'gray';
+				installBtn.disabled = false;
+				removeBtn.disabled  = !installed;
+				setMsg(msg, 'red');
+			};
+
+			setMsg(_('Checking requirements...'), 'gray');
+			const prep = await L.resolveDefault(callMosdnsPrepareInstall(), {});
+			if (prep.error) return fail(prep.error);
+
+			setMsg(_('Downloading...'), 'gray');
+			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
+			if (!dl.result) return fail(dl.error || _('Download failed'));
+
+			setMsg(_('Installing package...'), 'gray');
+			const inst = await L.resolveDefault(callMosdnsInstallPkg(prep.tmp_path), {});
+			if (!inst.result) return fail(inst.error || _('Installation failed'));
+
+			const fresh = await L.resolveDefault(callMosdnsStatus(), {});
+			installed = fresh.installed || false;
+			version   = fresh.version || null;
+			statusEl.textContent = installed ? (version || _('Installed')) : _('Unknown');
+			statusEl.style.color = installed ? 'green' : 'gray';
+			installBtn.textContent = _('Update');
+			installBtn.disabled = false;
+			removeBtn.disabled  = false;
+			setMsg(_('Installed successfully'), 'green');
+		}
+	}, [ installed ? _('Update') : _('Install') ]);
+
+	const removeBtn = E('button', {
+		class: 'btn cbi-button cbi-button-negative',
+		style: 'margin-left:4px',
+		disabled: !installed || null,
+		click: async function() {
+			removeBtn.disabled  = true;
+			installBtn.disabled = true;
+			setMsg(_('Removing...'), 'gray');
+			const ret = await L.resolveDefault(callMosdnsRemove(), {});
+			installBtn.disabled = false;
+			if (ret.result) {
+				installed = false;
+				version   = null;
+				statusEl.textContent = _('Not installed');
+				statusEl.style.color = 'gray';
+				installBtn.textContent = _('Install');
+				setMsg(_('Removed successfully — MultiDNS disabled'), 'green');
+			} else {
+				removeBtn.disabled = false;
+				setMsg(ret.error || _('Removal failed'), 'red');
+			}
+		}
+	}, [ _('Remove') ]);
+
+	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
+		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
+			E('strong', {}, 'mosdns (MultiDNS)'),
+			statusEl,
+			runEl,
+			installBtn,
+			removeBtn,
+			msgEl
+		]),
+		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#555' }, [
+			_('MultiDNS') + ': ' + (enabled ? _('Enabled') : _('Disabled')) +
+			' &nbsp;|&nbsp; ' + _('Plain pool') + ' (' + _('Russia') + '): ' + ru +
+			' &nbsp;|&nbsp; ' + _('Secure pool') + ': ' + sec
+		]),
+		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
+			_('Per-query DNS racing engine for MultiDNS: races every server in each pool in parallel and returns the fastest valid answer, while the quality daemon verifies over HTTPS that the returned IPs actually open sites and prunes dead/polluted servers. Binary from <a href="https://github.com/IrineSistiana/mosdns" target="_blank">IrineSistiana/mosdns</a> releases.'))
+	]);
+}
+
 const callAppCheckUpdate = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'app_check_update',
@@ -906,11 +1046,13 @@ return view.extend({
 			L.resolveDefault(callByeDPIStatus(), {}),
 			L.resolveDefault(callCurlStatus(), {}),
 			L.resolveDefault(callZapretStatus(), {}),
-			L.resolveDefault(callAppStatus(), {})
+			L.resolveDefault(callAppStatus(), {}),
+			L.resolveDefault(callMultidnsStatus(), {}),
+			L.resolveDefault(callMosdnsStatus(), {})
 		]);
 	},
 
-	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus]) {
+	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus, mdnsStatus, mosdnsStatus]) {
 		const routingMode = uci.get('homeproxy', 'config', 'routing_mode') || '';
 		const isRuMode = routingMode === 'proxy_banned_ru';
 		let m, s, o;
@@ -1047,6 +1189,12 @@ return view.extend({
 
 		o = s.option(form.DummyValue, '_zapret_card');
 		o.default = buildZapretCard(zapretStatus);
+
+		s = m.section(form.NamedSection, 'config', 'homeproxy', _('MultiDNS / mosdns'));
+		s.anonymous = true;
+
+		o = s.option(form.DummyValue, '_multidns_card');
+		o.default = buildMosdnsCard(mdnsStatus, mosdnsStatus);
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy');
 		s.anonymous = true;

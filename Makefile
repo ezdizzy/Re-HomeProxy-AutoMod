@@ -7,6 +7,11 @@ include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=Re:HomeProxy AutoMod - multi-core proxy platform (fork of ImmortalWrt HomeProxy)
 LUCI_PKGARCH:=all
+# NOTE: MultiDNS uses mosdns (not smartdns) as its per-query DNS racing engine.
+# mosdns is NOT shipped in the standard OpenWrt feed, so it is fetched at runtime
+# from the mosdns GitHub releases by install.sh (binary → /usr/bin/mosdns) instead
+# of being declared as a hard package dependency (which would break install on
+# feeds that lack it). The app degrades gracefully when mosdns is absent.
 LUCI_DEPENDS:= \
 	+firewall4 \
 	+ucode-mod-digest
@@ -15,7 +20,7 @@ PKG_NAME:=luci-app-re-homeproxy
 # Semantic version (X.Y.Z). This value IS the public version of Re:HomeProxy AutoMod:
 # the GitHub release tag is "v${PKG_VERSION}" and the in-app self-update compares the
 # locally installed version against the latest release tag. Bump it ONLY when cutting a
-# release (see LOCAL_CHANGELOG.md / README "Releases" section). Do NOT use a date/timestamp.
+# release (see LOCAL_DOCS/LOCAL_CHANGELOG.md / README "Releases" section). Do NOT use a date/timestamp.
 PKG_VERSION:=1.1.0
 PKG_RELEASE:=1
 PKG_MAINTAINER:=1andrevich <1andrevich.recede274@passmail.net>

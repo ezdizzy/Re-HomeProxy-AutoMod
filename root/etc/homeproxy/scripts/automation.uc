@@ -9,6 +9,8 @@
  *   dns       — dnsmasq query log (captures the domain at DNS time, BEFORE the
  *               connection — makes learning transparent: the site is usually fixed
  *               before the user navigates/retries)  [A]
+ *   sni       — TLS ClientHello SNI capture on the LAN (catches DoH clients,
+ *               apps with hardcoded IPs and games that never hit the DNS log)
  *   conntrack — destination IPs of established flows (for IP-only apps/games)  [B]
  *
  * Classification (for every candidate): probe it BOTH direct (auto-direct-in →
@@ -138,36 +140,80 @@ function have_curl() {
 	return !!access('/usr/bin/curl');
 }
 
+/* Blocking-pattern signatures: a 200/3xx page whose body matches one of these is
+ * treated as a DPI/operator block page (the request "succeeded" but the content is
+ * a refusal). Catches the case where direct returns a 200 block-page while the
+ * proxy returns the real page. Matched case-insensitively. */
+const BLOCK_SIGNATURES = [
+	'access denied', 'access forbidden', 'forbidden', 'доступ ограничен',
+	'доступ запрещен', 'заблокир', 'заблокиров', 'blocked by', 'block page',
+	'the site is blocked', 'сайт заблокирован', 'err_blocked', 'доступ к ресурсу',
+	'blocked site', 'не доступен', 'resource is limited', 'request blocked'
+];
+function body_blocked(body) {
+	if (!body) return false;
+	body = lc(body);
+	for (let s in BLOCK_SIGNATURES) if (index(body, s) >= 0) return true;
+	return false;
+}
+/* Classify a raw HTTP code string: 'ok' (2xx/3xx), 'block' (4xx/5xx), 'fail' (no response). */
+function classify_code(code) {
+	let c = trim(code || '000');
+	if (c === '' || c === '000') return 'fail';
+	let n = int(c);
+	if (n >= 200 && n < 400) return 'ok';
+	if (n >= 400 && n <= 599) return 'block';
+	return 'fail';
+}
+/* Normalized body fingerprint (length + head/tail, lowercased) — enough to tell
+ * "the same block page" from "a different real page". */
+function fingerprint(b) {
+	if (!b) return '';
+	b = lc(b);
+	let head = substr(b, 0, 64);
+	let tail = (length(b) > 64) ? substr(b, length(b) - 64, 64) : '';
+	return sprintf('%d:%s:%s', length(b), head, tail);
+}
+
 /* Probe a host BOTH direct and via the configured main path. Returns an object
- * { code, ok, block } instead of a bare 'ok'/'fail' so classification can tell
+ * { code, ok, block, fp } instead of a bare 'ok'/'fail' so classification can tell
  * apart "unreachable" (000/timeout), "blocked" (4xx/5xx or a 200 block-page),
  * and "reachable" (2xx/3xx with a real page). This is what lets us learn the
- * 403-via-direct / works-via-proxy case that the old code missed. */
+ * 403-via-direct / works-via-proxy case that the old code missed. `fp` is a
+ * normalized body fingerprint used to detect "proxy returns the same block page"
+ * (a block page the signature list missed). HTTPS is tried first; on failure a
+ * plain HTTP retry covers HTTP-only / redirect-to-http sites. */
 function probe(host, via_proxy, timeout) {
-	const url = `https://${host}`;
 	if (have_curl()) {
 		let proxy_arg = via_proxy ? ` -x socks5h://127.0.0.1:${AUTO_PROXY_PORT}` : '';
 		let bodyf = RUN_DIR + '/pb.tmp';
 		let codef = RUN_DIR + '/pc.tmp';
-		/* Follow redirects (-L) so we judge the FINAL page the browser would see;
-		 * capture the code AND the body (to detect 200 block-pages). */
-		system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote(url)} > ${shellquote(codef)} 2>/dev/null`);
-		let code = trim(readfile(codef) || '000');
-		let c = classify_code(code);
+		let code = '000', c = 'fail';
+		/* 1) HTTPS. */
+		system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote('https://' + host)} > ${shellquote(codef)} 2>/dev/null`);
+		code = trim(readfile(codef) || '000');
+		c = classify_code(code);
+		if (c === 'fail') {
+			/* 2) HTTPS failed — retry plain HTTP (HTTP-only / redirect-to-http sites). */
+			system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote('http://' + host)} > ${shellquote(codef)} 2>/dev/null`);
+			code = trim(readfile(codef) || '000');
+			c = classify_code(code);
+		}
+		let body = readfile(bodyf) || '';
+		let fp = fingerprint(body);
 		let block = (c === 'block');
 		if (c === 'ok') {
-			let body = readfile(bodyf) || '';
 			if (body_blocked(body)) block = true;
 		}
 		let ok = (c === 'ok') && !block;
-		return { code: code, ok: ok, block: block };
+		return { code: code, ok: ok, block: block, fp: fp };
 	}
 	let proxy_env = via_proxy
 		? `http_proxy=http://127.0.0.1:${AUTO_PROXY_PORT} https_proxy=http://127.0.0.1:${AUTO_PROXY_PORT}`
 		: `http_proxy= https_proxy=`;
-	let rc = system(`${proxy_env} /usr/bin/wget -q -T ${timeout} -t 1 --no-check-certificate -O /dev/null ${shellquote(url)} 2>/dev/null`, timeout * 1000 + 2000);
+	let rc = system(`${proxy_env} /usr/bin/wget -q -T ${timeout} -t 1 --no-check-certificate -O /dev/null ${shellquote('https://' + host)} 2>/dev/null`, timeout * 1000 + 2000);
 	let ok = (rc === 0);
-	return { code: ok ? '200' : '000', ok: ok, block: false };
+	return { code: ok ? '200' : '000', ok: ok, block: false, fp: '' };
 }
 
 function base_domain(host) {
@@ -214,32 +260,6 @@ function is_excluded(host) {
 		return false;
 	}
 
-/* Blocking-pattern signatures: a 200/3xx page whose body matches one of these is
- * treated as a DPI/operator block page (the request "succeeded" but the content is
- * a refusal). Catches the case where direct returns a 200 block-page while the
- * proxy returns the real page. Matched case-insensitively. */
-const BLOCK_SIGNATURES = [
-	'access denied', 'access forbidden', 'forbidden', 'доступ ограничен',
-	'доступ запрещен', 'заблокир', 'заблокиров', 'blocked by', 'block page',
-	'the site is blocked', 'сайт заблокирован', 'err_blocked', 'доступ к ресурсу',
-	'blocked site', 'не доступен', 'resource is limited', 'request blocked'
-];
-function body_blocked(body) {
-	if (!body) return false;
-	body = lower(body);
-	for (let s in BLOCK_SIGNATURES) if (index(body, s) >= 0) return true;
-	return false;
-}
-/* Classify a raw HTTP code string: 'ok' (2xx/3xx), 'block' (4xx/5xx), 'fail' (no response). */
-function classify_code(code) {
-	let c = trim(code || '000');
-	if (c === '' || c === '000') return 'fail';
-	let n = int(c);
-	if (n >= 200 && n < 400) return 'ok';
-	if (n >= 400 && n <= 599) return 'block';
-	return 'fail';
-}
-
 /* ── Discovery ──────────────────────────────────────────────────────────── */
 
 function discover_clash(timeout) {
@@ -265,6 +285,28 @@ function discover_conntrack() {
 	let raw = capture(`conntrack -L 2>/dev/null | awk '/ESTABLISHED/ { for (i=1;i<=NF;i++) if ($i ~ /^dst=/) { sub("dst=", "", $i); print $i } }' | head -300`);
 	if (!raw) return [];
 	return split(trim(raw), /\n/);
+}
+
+/* SNI discovery (source `sni`): capture TLS ClientHello packets on the LAN bridge
+ * and extract the server_name (SNI) hostnames. This catches DoH clients, apps with
+ * hardcoded IPs and games that never hit the dnsmasq log. Best-effort — requires
+ * tcpdump and returns nothing ([]) when it is absent. The normal probe/classify
+ * step still filters junk, so false candidates are never learned. */
+function discover_sni() {
+	if (!access('/usr/sbin/tcpdump') && !access('/usr/bin/tcpdump')) return [];
+	let tmp = RUN_DIR + '/sni.tmp';
+	/* PSH set (tcp[13]&8 != 0) + dst port 443 → ClientHello/first data. ASCII dump
+	 * (-A) reveals the plaintext SNI. Bounded to ~20 packets and ~5s. */
+	system(`tcpdump -i br-lan -s 160 -A -c 20 'tcp port 443 and (tcp[13] & 8 != 0)' > ` + shellquote(tmp) + ` 2>/dev/null & TDPID=$!; sleep 5; kill $TDPID 2>/dev/null`);
+	let out = readfile(tmp) || '';
+	if (!length(out)) return [];
+	let hosts = [];
+	let lines = split(out, '\n');
+	for (let i = 0; i < length(lines); i = i + 1) {
+		let m = match(lines[i], /([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+){1,})/);
+		if (m && looks_like_host(m[1])) push(hosts, m[1]);
+	}
+	return hosts;
 }
 
 let dns_log_offset = 0;
@@ -311,16 +353,26 @@ function dns_reachable(server) {
 	return system(`nc -u -z -w 2 ${shellquote(server)} 53 >/dev/null 2>&1`, 4000) === 0;
 }
 
+function do_failover_reload() {
+	system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
+	if (!access(RUN_DIR + '/hiddify-c.json')) {
+		log('DNS failover: regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
+		return;
+	}
+	log('DNS failover: restarting service to load new config.');
+	system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+}
+
 	function dns_failover_check() {
 		/* MultiDNS already races EVERY server in each pool and returns the fastest
 		 * live answer, so the legacy single-primary failover is redundant (and would
 		 * fight MultiDNS's own pool management). Skip it whenever MultiDNS is enabled. */
 		if ((uci.get('homeproxy', 'multidns', 'enabled') || '0') === '1') return;
 		/* Legacy Reserve/backup DNS failover. Covers BOTH plain and encrypted pools, each
-	 * with its own on/off switch. Plain-pool primary = russia_dns_server (or region/dns
-	 * server in other modes); secure-pool primary = secure_dns_server. The first healthy
-	 * server from the *matching* pool's list becomes the new primary. DoH/DoT servers are
-	 * now health-checked for real (see dns_reachable). */
+		 * with its own on/off switch. Plain-pool primary = russia_dns_server (or region/dns
+		 * server in other modes); secure-pool primary = secure_dns_server. The first healthy
+		 * server from the *matching* pool's list becomes the new primary. DoH/DoT servers are
+		 * now health-checked for real (see dns_reachable). */
 	if (dns_failover !== '1') return;
 	let mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 	let plain_key = (mode === 'proxy_banned_ru') ? 'russia_dns_server'
@@ -361,16 +413,6 @@ function dns_reachable(server) {
 			log('DNS failover (secure): no healthy alternate available');
 		}
 	}
-}
-
-function do_failover_reload() {
-	system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
-	if (!access(RUN_DIR + '/hiddify-c.json')) {
-		log('DNS failover: regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
-		return;
-	}
-	log('DNS failover: restarting service to load new config.');
-	system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 }
 
 /* ── Main ───────────────────────────────────────────────────────────────── */
@@ -414,7 +456,7 @@ function main() {
 
 	let last_reload = 0;
 	pending_reload = false;
-	const has = (s) => (discover === 'all') || index(split(discover, ','), s) >= 0;
+	const has = (s) => (discover === 'all') || index(split(discover, ','), s) >= 0 || (discover === 'both' && s in ['clash', 'dns']);
 
 	function do_reload() {
 		let marker = RUN_DIR + '/.learned_hotreload';
@@ -470,6 +512,14 @@ function main() {
 		}
 		let p_ok = p && p.ok;
 		if (p_ok) {
+			/* Proxy returns a real page, but if its body matches the direct body
+			 * (a block page the signature list missed), the proxy doesn't actually
+			 * help → treat as blocked_no_proxy, not a learnable block. */
+			if (d.fp && p.fp && d.fp === p.fp) {
+				st.status = 'blocked_no_proxy';
+				st.confirms = 0;
+				return;
+			}
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;
 			if (st.confirms >= min_confirm) {
@@ -495,6 +545,7 @@ function main() {
 		let domain_candidates = {}, ip_candidates = {};
 		if (has('clash'))     for (let i, h in discover_clash(timeout)) domain_candidates[h] = true;
 		if (has('dns'))       for (let i, h in discover_dns())          domain_candidates[h] = true;
+		if (has('sni'))       for (let i, h in discover_sni())          domain_candidates[h] = true;
 		if (has('conntrack') && !length(keys(domain_candidates)))
 			for (let i, ip in discover_conntrack()) ip_candidates[ip] = true;
 

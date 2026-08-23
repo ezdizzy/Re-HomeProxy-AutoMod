@@ -565,6 +565,9 @@ const methods = {
 				zapret_installed:  !!access('/opt/zapret2/nfq2/nfqws2'),
 				zapret_running:    false,
 				zapret_pid:        null,
+				mosdns_installed:  !!access('/usr/bin/mosdns'),
+				mosdns_running:    false,
+				mosdns_pid:        null,
 				listen_ports:      []
 			};
 
@@ -588,6 +591,16 @@ const methods = {
 				result.zapret_pid = length(zpid) > 0 ? zpid : null;
 			}
 
+			/* mosdns — MultiDNS racing engine (own process, managed by the
+			 * homeproxy.multidns procd instance). */
+			let mfd = popen('pidof mosdns 2>/dev/null');
+			if (mfd) {
+				const mpid = trim(mfd.read('all'));
+				mfd.close();
+				result.mosdns_running = length(mpid) > 0;
+				result.mosdns_pid = length(mpid) > 0 ? mpid : null;
+			}
+
 			if (!binary)
 				return result;
 
@@ -606,7 +619,7 @@ const methods = {
 			if (fd) {
 				const ports = [];
 				for (let line = fd.read('line'); length(line); line = fd.read('line')) {
-					if (match(line, /hiddify|sing.box|ciadpi/))
+					if (match(line, /hiddify|sing.box|ciadpi|mosdns/))
 						push(ports, trim(line));
 				}
 				fd.close();
@@ -931,7 +944,7 @@ const methods = {
 			fd = popen('netstat -tlnup 2>/dev/null');
 			if (fd) {
 				for (let line = fd.read('line'); length(line); line = fd.read('line')) {
-					if (match(line, /hiddify|sing.box|ciadpi/))
+					if (match(line, /hiddify|sing.box|ciadpi|mosdns/))
 						add(trim(line));
 				}
 				fd.close();
@@ -1731,6 +1744,158 @@ const methods = {
 		}
 	},
 
+	/* --- mosdns engine management (MultiDNS racing engine, Core & Tools tab) ---
+	 * mosdns is NOT an OpenWrt package: install.sh fetches the static binary from
+	 * IrineSistiana/mosdns GitHub releases. These RPCs mirror that (install/update/
+	 * remove from the UI, like the ByeDPI/Zapret/curl cards). */
+
+	mosdns_status: {
+		call: function(req) {
+			const installed = !!access('/usr/bin/mosdns');
+			let version = null;
+			if (installed) {
+				const fd = popen('/usr/bin/mosdns version 2>/dev/null');
+				if (fd) {
+					const out = trim(fd.read('all'));
+					fd.close();
+					const m = match(out, /v?([0-9]+\.[0-9]+\.[0-9]+)/);
+					if (m) version = 'v' + m[1];
+				}
+			}
+			let running = false;
+			const fd2 = popen('pidof mosdns 2>/dev/null');
+			if (fd2) {
+				running = length(trim(fd2.read('all'))) > 0;
+				fd2.close();
+			}
+			let pkg_manager = null;
+			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
+			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
+			let arch = null;
+			const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
+			if (afd) { arch = trim(afd.read('all')); afd.close(); }
+			return { installed, version, running, pkg_manager, arch };
+		}
+	},
+
+	mosdns_prepare_install: {
+		call: function(req) {
+			let arch = null;
+			const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
+			if (afd) { arch = trim(afd.read('all')); afd.close(); }
+			if (!length(arch))
+				return { error: 'Cannot detect architecture' };
+
+			/* Map DISTRIB_ARCH to the mosdns release asset suffix (same table as
+			 * install.sh step 2.5). mips big-endian and i386 have no binary. */
+			let march = null;
+			if (match(arch, /^aarch64/)) march = 'arm64';
+			else if (match(arch, /^arm_cortex-a7/) || match(arch, /^arm_cortex-a9/) ||
+			         match(arch, /^arm_cortex-a15/) || match(arch, /^arm_cortex-a8/) ||
+			         match(arch, /^arm_mpcore/)) march = 'arm-7';
+			else if (match(arch, /^arm_cortex-a5/) || match(arch, /^arm926ej-s/) ||
+			         match(arch, /^arm_fa526/)) march = 'arm-6';
+			else if (arch === 'x86_64') march = 'amd64';
+			else if (match(arch, /^mipsel_24kc/) || match(arch, /^mipsel_74kc/)) march = 'mipsle-softfloat';
+			else
+				return { error: 'mosdns has no release binary for architecture ' + arch };
+
+			const dl_url = 'https://github.com/IrineSistiana/mosdns/releases/latest/download/mosdns-linux-' + march + '.zip';
+			const tmp_path = '/tmp/mosdns-linux-' + march + '.zip';
+			return { dl_url, tmp_path, march };
+		}
+	},
+
+	mosdns_install_pkg: {
+		args: { tmp_path: 'tmp_path' },
+		call: function(req) {
+			const tmp_path = req.args?.tmp_path;
+			if (!tmp_path)
+				return { result: false, error: 'Missing arguments' };
+			if (!access(tmp_path))
+				return { result: false, error: 'Archive not found — download failed?' };
+
+			/* unzip is required to unpack the release archive; install it
+			 * best-effort through the package manager if missing. */
+			if (system('command -v unzip >/dev/null 2>&1') !== 0) {
+				if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk'))
+					system('apk add unzip >/dev/null 2>&1', 60000);
+				else if (access('/bin/opkg') || access('/usr/bin/opkg'))
+					system('opkg install unzip >/dev/null 2>&1', 60000);
+			}
+			if (system('command -v unzip >/dev/null 2>&1') !== 0) {
+				system(`rm -f ${shellquote(tmp_path)}`);
+				return { result: false, error: 'unzip is required and could not be installed' };
+			}
+
+			const dest = '/tmp/mosdns_pkg';
+			system(`rm -rf ${shellquote(dest)}; mkdir -p ${shellquote(dest)}`);
+			let rc = system(`unzip -o ${shellquote(tmp_path)} -d ${shellquote(dest)} >/dev/null 2>&1`, 60000);
+			system(`rm -f ${shellquote(tmp_path)}`);
+			if (rc !== 0) {
+				system(`rm -rf ${shellquote(dest)}`);
+				return { result: false, error: 'unzip failed — the archive is corrupt' };
+			}
+
+			let bin = null;
+			let fd = popen('find ' + shellquote(dest) + ' -type f -name mosdns 2>/dev/null');
+			if (fd) { bin = trim(fd.read('all')); fd.close(); }
+			if (!length(bin)) {
+				system(`rm -rf ${shellquote(dest)}`);
+				return { result: false, error: 'mosdns binary not found in the archive' };
+			}
+
+			/* Stop the running mosdns before replacing the binary (a deleted binary's
+			 * process keeps running), then restart the MultiDNS procd instance so it
+			 * starts a fresh mosdns from the new /usr/bin/mosdns. */
+			let pidf = RUN_DIR + '/multidns/mosdns.pid';
+			if (access(pidf)) {
+				const c = trim(readfile(pidf));
+				if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');
+				system('rm -f ' + shellquote(pidf));
+			}
+			system('pidof mosdns >/dev/null 2>&1 && kill $(pidof mosdns) 2>/dev/null; true');
+			/* busybox `install` applet is not present on all images — cp + chmod is equivalent. */
+			rc = system(`cp ${shellquote(bin)} /usr/bin/mosdns && chmod 0755 /usr/bin/mosdns`, 30000);
+			system(`rm -rf ${shellquote(dest)}`);
+			if (rc !== 0)
+				return { result: false, error: 'failed to install /usr/bin/mosdns' };
+
+			system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+
+			let version = null;
+			const vfd = popen('/usr/bin/mosdns version 2>/dev/null');
+			if (vfd) {
+				const out = trim(vfd.read('all'));
+				vfd.close();
+				const m = match(out, /v?([0-9]+\.[0-9]+\.[0-9]+)/);
+				if (m) version = 'v' + m[1];
+			}
+			return { result: true, version: version };
+		}
+	},
+
+	mosdns_remove: {
+		call: function(req) {
+			/* Disable MultiDNS first (DNS falls back to the direct upstreams via the
+			 * mdns_ok guard), stop the running mosdns, then delete the binary. */
+			system("uci -q set homeproxy.multidns.enabled=0; uci -q commit homeproxy 2>/dev/null; true");
+			let pidf = RUN_DIR + '/multidns/mosdns.pid';
+			if (access(pidf)) {
+				const c = trim(readfile(pidf));
+				if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');
+				system('rm -f ' + shellquote(pidf));
+			}
+			system('pidof mosdns >/dev/null 2>&1 && kill $(pidof mosdns) 2>/dev/null; true');
+			system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+			system('rm -f /usr/bin/mosdns');
+			/* Regenerate the client config so russia-dns/secure-dns revert to direct
+			 * upstreams right away (instead of pointing at the dead 5453/5454). */
+			system('/etc/init.d/homeproxy reload 2>/dev/null; true');
+			return { result: !access('/usr/bin/mosdns') };
+		}
+	},
+
 	multidns_status: {
 		call: function(req) {
 			const state_file = RUN_DIR + '/multidns/multidns_state.json';
@@ -1743,19 +1908,12 @@ const methods = {
 			let efd = popen('uci -q get homeproxy.multidns.enabled 2>/dev/null');
 			if (efd) { enabled = trim(efd.read('all')); efd.close(); }
 
-			/* Read the live smartdns pool (which servers are currently active). */
+			/* Active pools = the servers currently configured in UCI. We take
+			 * this straight from the daemon's recorded state.pools so the
+			 * monitor is authoritative and does not depend on mosdns running. */
 			let active = { ru: [], secure: [] };
-			let cfg = md_dir + '/smartdns.conf';
-			if (access(cfg)) {
-				let fd = popen('grep -E " -group (ru|secure)" ' + shellquote(cfg) + ' 2>/dev/null');
-				if (fd) {
-					for (let line = fd.read('line'); length(line); line = fd.read('line')) {
-						let m = match(trim(line), /^(server(-[a-z]+)? )?(\S+) -group (ru|secure)( |$)/);
-						if (m) push((m[4] === 'ru') ? active.ru : active.secure, m[3]);
-					}
-					fd.close();
-				}
-			}
+			if (state.pools && state.pools.ru)
+				active = { ru: state.pools.ru, secure: state.pools.secure || [] };
 			/* Per-server trend rows for the monitor. */
 			let pool_of = (srv) => {
 				if (index(active.ru, srv) >= 0) return 'ru';
@@ -1772,6 +1930,7 @@ const methods = {
 					latency: st.lat != null ? st.lat : null,
 					success: st.succ != null ? st.succ : null,
 					live: st.live != null ? st.live : null,
+					open: st.open != null ? st.open : null,
 					samples: st.samples || 0,
 					poisoned: !!st.poisoned,
 					pruned: !!st.pruned,
@@ -1780,37 +1939,98 @@ const methods = {
 					last_live: st.last_live || false
 				});
 			}
-			/* smartdns liveness. smartdns maintains its own pid files; the daemon
-			 * also records the live pid into md_dir/smartdns.pid. pgrep/pkill are
-			 * absent on this busybox, so check candidate pid files, then pidof. */
-			let sd_alive = false;
-			let pid_candidates = [ md_dir + '/smartdns.pid', '/var/run/smartdns.pid', '/tmp/run/smartdns.pid' ];
+			/* mosdns liveness. The daemon records the live pid into
+			 * md_dir/mosdns.pid; check it, then fall back to pidof. */
+			let md_alive = false;
+			let pid_candidates = [ md_dir + '/mosdns.pid' ];
 			for (let pf in pid_candidates) {
 				if (access(pf)) {
 					let c = trim(readfile(pf));
-					if (c && system('kill -0 ' + shellquote(c) + ' 2>/dev/null') === 0) { sd_alive = true; break; }
+					if (c && system('kill -0 ' + shellquote(c) + ' 2>/dev/null') === 0) { md_alive = true; break; }
 				}
 			}
-			if (!sd_alive)
-				sd_alive = (system('pidof smartdns >/dev/null 2>&1') === 0);
+			if (!md_alive)
+				md_alive = (system('pidof mosdns >/dev/null 2>&1') === 0);
 
 			return {
 				enabled: enabled,
-				smartdns: sd_alive,
+				installed: access('/usr/bin/mosdns'),
+				mosdns: md_alive,
 				active: active,
 				servers: servers
 			};
 		}
 	},
 
+	/* DNS health check shown in Diagnostics when MultiDNS is enabled. Resolves a
+	 * canary through each live mosdns racing listener (plain :5453 / secure
+	 * :5454) and compares against a direct query, so the user can see that
+	 * MultiDNS is actually accelerating + de-poisoning resolution. */
+	diag_dns_multidns: {
+		call: function() {
+			let fd = popen('uci -q get homeproxy.multidns.enabled 2>/dev/null');
+			let enabled = fd ? trim(fd.read('all')) : '0';
+			if (fd) fd.close();
+			if (enabled !== '1')
+				return { enabled: false };
+
+			let plain_port = '5453';
+			let secure_port = '5454';
+			let pf = popen('uci -q get homeproxy.multidns.plain_port 2>/dev/null');
+			if (pf) { let pv = trim(pf.read('all')); if (length(pv)) plain_port = pv; pf.close(); }
+			let sf = popen('uci -q get homeproxy.multidns.secure_port 2>/dev/null');
+			if (sf) { let sv = trim(sf.read('all')); if (length(sv)) secure_port = sv; sf.close(); }
+
+			let md_alive = (system('pidof mosdns >/dev/null 2>&1') === 0);
+
+			/* Resolve through the racing listeners (the path clients actually use). */
+			let probe = (port, name) => {
+				let out = '';
+				let p = popen('nslookup -port=' + port + ' ' + name + ' 127.0.0.1 2>&1');
+				if (p) { out = trim(p.read('all')); p.close(); }
+				let ips = [];
+				for (let l in split(out, '\n')) {
+					let m = match(trim(l), /^Address:\s+(\S+)$/);
+					if (m && !match(m[1], /:\d+$/)) push(ips, m[1]);
+				}
+				return { ok: length(ips) > 0, ip: length(ips) ? ips[0] : null, output: out };
+			};
+			let plain = probe(plain_port, 'example.com');
+			let secure = probe(secure_port, 'cloudflare.com');
+
+			/* Direct control: resolve the same names straight against the
+			 * configured servers (bypassing the racing layer) for comparison. */
+			let direct_out = '';
+			let dp = popen('nslookup example.com 2>&1');
+			if (dp) { direct_out = trim(dp.read('all')); dp.close(); }
+
+			return {
+				enabled: true,
+				mosdns: md_alive,
+				plain_port: plain_port,
+				secure_port: secure_port,
+				plain_ok: plain.ok,
+				plain_ip: plain.ip,
+				plain_output: plain.output,
+				secure_ok: secure.ok,
+				secure_ip: secure.ip,
+				secure_output: secure.output,
+				direct_output: direct_out
+			};
+		}
+	},
+
 		multidns_reload: {
 			call: function(req) {
-				if (!access('/usr/sbin/smartdns'))
-					return { result: false, error: 'smartdns not installed' };
-				let pidf = RUN_DIR + '/multidns/smartdns.pid';
+				if (!access('/usr/bin/mosdns'))
+					return { result: false, error: 'mosdns not installed' };
+				/* mosdns has no SIGHUP config reload; kill it and restart the procd
+				 * instance so the daemon rebuilds the config and starts a fresh one. */
+				let pidf = RUN_DIR + '/multidns/mosdns.pid';
 				if (access(pidf)) {
 					let c = trim(readfile(pidf));
-					if (c) system('kill -HUP ' + shellquote(c) + ' 2>/dev/null');
+					if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');
+					system('rm -f ' + shellquote(pidf));
 				}
 				system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
 				return { result: true };
@@ -1825,14 +2045,14 @@ const methods = {
 		}
 	},
 
-	/* Hard kill-switch: disable MultiDNS and fully stop the racing resolver + smartdns
+	/* Hard kill-switch: disable MultiDNS and fully stop the racing resolver + mosdns
 	 * so DNS reverts to the standard upstreams. Always works, even if the UI toggle
 	 * is out of sync, giving the user a guaranteed way to recover connectivity. */
 		multidns_disable: {
 			call: function(req) {
 				system('uci -q set homeproxy.multidns.enabled=0');
 				system('uci -q commit homeproxy');
-				let pidf = RUN_DIR + '/multidns/smartdns.pid';
+				let pidf = RUN_DIR + '/multidns/mosdns.pid';
 				if (access(pidf)) {
 					let c = trim(readfile(pidf));
 					if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');

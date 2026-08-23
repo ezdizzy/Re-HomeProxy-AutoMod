@@ -52,6 +52,12 @@ const callDnsRu = rpc.declare({
 	expect: { '': {} }
 });
 
+const callDnsMultidns = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'diag_dns_multidns',
+	expect: { '': {} }
+});
+
 const callNftables = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'diag_nftables',
@@ -267,11 +273,13 @@ function buildCoreSection(view) {
 				row(_('sing-box'),        statusBadge(ret.singbox_installed,  ret.singbox_installed  ? _('installed') : _('not found'))),
 				row(_('ByeDPI'),          statusBadge(ret.byedpi_installed,   ret.byedpi_installed   ? _('installed') : _('not found'))),
 				row(_('Zapret 2'),        statusBadge(ret.zapret_installed,   ret.zapret_installed   ? _('installed') : _('not found'))),
+				row(_('mosdns'),          statusBadge(ret.mosdns_installed,  ret.mosdns_installed  ? _('installed') : _('not found'))),
 				ret.binary ? row(_('Active binary'), E('code', {}, ret.binary)) : null,
 				ret.version ? row(_('Version'), E('span', { 'class': 'diag-pre', 'style': 'max-height:5em' }, ret.version)) : null,
 				row(_('Running'),         statusBadge(ret.running, ret.running ? _('yes') + (ret.pid ? ' (PID ' + ret.pid + ')' : '') : _('no'))),
 				ret.byedpi_installed ? row(_('ByeDPI running'), statusBadge(ret.byedpi_running, ret.byedpi_running ? _('yes') + (ret.byedpi_pid ? ' (PID ' + ret.byedpi_pid + ')' : '') : _('no'))) : null,
 				ret.zapret_installed ? row(_('Zapret 2 running'), statusBadge(ret.zapret_running, ret.zapret_running ? _('yes') + (ret.zapret_pid ? ' (PID ' + ret.zapret_pid + ')' : '') : _('no'))) : null,
+				ret.mosdns_installed ? row(_('mosdns running'), statusBadge(ret.mosdns_running, ret.mosdns_running ? _('yes') + (ret.mosdns_pid ? ' (PID ' + ret.mosdns_pid + ')' : '') : _('no'))) : null,
 				row(_('Listening ports'), E('div', {}, portLines))
 			].filter(Boolean));
 		});
@@ -367,6 +375,7 @@ function buildDnsSection(view) {
 	function run() {
 		spinner(resultsEl, _('Testing DNS…'));
 		return L.resolveDefault(callDnsRu(), {}).then(function(ret) {
+
 			if (ret.skip) {
 				cardEl.style.display = 'none';
 				return;
@@ -397,6 +406,65 @@ function buildDnsSection(view) {
 				ret.secure_output ? E('div', {}, [
 					E('div', { 'class': 'diag-label' }, 'nslookup andrevi.ch'),
 					pre(ret.secure_output)
+				]) : null
+			].filter(Boolean));
+		});
+	}
+
+	return { el: cardEl, run: run };
+}
+
+function buildMultidnsDnsSection(view) {
+	const resultsEl = E('div', {});
+
+	const cardEl = sectionCard(_('MultiDNS DNS Tests'), 'diag-mdns-dns', [
+		E('div', { 'class': 'diag-row' }, [
+			E('button', {
+				'class': 'btn cbi-button cbi-button-action diag-btn',
+				'click': ui.createHandlerFn(view, run)
+			}, _('Test'))
+		]),
+		resultsEl
+	]);
+	cardEl.style.display = 'none';
+
+	function run() {
+		spinner(resultsEl, _('Testing MultiDNS DNS…'));
+		return L.resolveDefault(callDnsMultidns(), {}).then(function(ret) {
+			if (!ret.enabled) {
+				cardEl.style.display = 'none';
+				return;
+			}
+			cardEl.style.display = '';
+
+			dom.content(resultsEl, [
+				E('div', { 'style': 'font-weight:bold; margin:.4em 0 .2em' }, _('mosdns')),
+				row(_('Status'), statusBadge(ret.mosdns,
+					ret.mosdns ? _('running — racing all pool servers') : _('not running'))),
+
+				E('div', { 'style': 'font-weight:bold; margin:.8em 0 .2em' },
+					_('Plain pool (Russia) — %s').format(ret.plain_port || '5453')),
+				row('example.com', statusBadge(ret.plain_ok,
+					ret.plain_ok ? (_('Resolved via fastest live server: ') + (ret.plain_ip || ''))
+					             : _('No answer — mosdns may be down'))),
+				ret.plain_output ? E('div', {}, [
+					E('div', { 'class': 'diag-label' }, 'nslookup -port=' + (ret.plain_port || '5453') + ' example.com 127.0.0.1'),
+					pre(ret.plain_output)
+				]) : null,
+
+				E('div', { 'style': 'font-weight:bold; margin:.8em 0 .2em' },
+					_('Secure pool — %s').format(ret.secure_port || '5454')),
+				row('cloudflare.com', statusBadge(ret.secure_ok,
+					ret.secure_ok ? (_('Resolved via fastest live server: ') + (ret.secure_ip || ''))
+					              : _('No answer — mosdns may be down'))),
+				ret.secure_output ? E('div', {}, [
+					E('div', { 'class': 'diag-label' }, 'nslookup -port=' + (ret.secure_port || '5454') + ' cloudflare.com 127.0.0.1'),
+					pre(ret.secure_output)
+				]) : null,
+
+				ret.direct_output ? E('div', {}, [
+					E('div', { 'class': 'diag-label' }, _('Direct control (bypassing MultiDNS)')),
+					pre(ret.direct_output)
 				]) : null
 			].filter(Boolean));
 		});
@@ -531,11 +599,13 @@ return view.extend({
 		const core   = buildCoreSection(this);
 		const config = buildConfigSection(this);
 		const dns    = buildDnsSection(this);
+		const mdns   = buildMultidnsDnsSection(this);
 		const nft    = buildNftSection(this);
 		const conn   = buildConnectivitySection(this, features.core_type || null);
 		const report = buildReportSection(this);
 
 		dns.run();
+		mdns.run();
 
 		const runAll = ui.createHandlerFn(this, function() {
 			return Promise.all([
@@ -559,6 +629,7 @@ return view.extend({
 			core.el,
 			config.el,
 			dns.el,
+			mdns.el,
 			nft.el,
 			conn.el,
 			report.el

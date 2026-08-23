@@ -130,6 +130,18 @@ jobs:
             echo "No APK_SIGNING_KEY secret set — building unsigned package"
           fi
 
+      - name: Rescan translations (keep POT/po in sync)
+        run: |
+          bash .github/rescan-translation.sh
+          # Guard: surface any untranslated (empty msgstr) entries in the shipped
+          # locales as a non-fatal warning so translations never silently regress.
+          for po in po/ru/homeproxy.po po/zh_Hans/homeproxy.po po/fa_IR/homeproxy.po; do
+            n=$(awk 'BEGIN{c=0} /^msgstr ""$/{c++} END{print c}' "$po")
+            if [ "$n" -gt 0 ]; then
+              echo "::warning file=$po:: $n untranslated (empty msgstr) string(s)"
+            fi
+          done
+
       - name: Build ipk file
         run: |
           pushd .github

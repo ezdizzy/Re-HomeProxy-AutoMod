@@ -113,9 +113,10 @@ return view.extend({
 		o = s.option(form.ListValue, 'discover', _('Discover candidates from'));
 		o.value('clash', _('Clash API (connections, domain names)'));
 		o.value('dns', _('DNS query log (captures domain at DNS time — most transparent)'));
+		o.value('sni', _('TLS SNI capture (ClientHello — DoH clients, hardcoded-IP apps, games)'));
 		o.value('conntrack', _('conntrack (destinations by IP — for apps/games without SNI)'));
 		o.value('both', _('Clash API + DNS log'));
-		o.value('all', _('Clash API + DNS log + conntrack'));
+		o.value('all', _('Clash API + DNS log + SNI + conntrack'));
 		o.default = 'clash';
 
 		o = s.option(form.Value, 'timeout', _('Probe timeout (seconds)'));

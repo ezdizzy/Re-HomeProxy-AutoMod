@@ -1,4 +1,5 @@
 # Local documentation — must NEVER be published to GitHub.
-# Re:HomeProxy AutoMod change log / working notes live here.
+# Re:HomeProxy AutoMod change log / working notes live in LOCAL_DOCS/.
+LOCAL_DOCS/
 LOCAL_CHANGELOG.md
 LOCAL_*.md

@@ -125,7 +125,7 @@ let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outb
     dns_disable_cache_expire, dns_independent_cache, dns_client_subnet, cache_file_store_rdrc,
     cache_file_rdrc_timeout, direct_domain_list, proxy_domain_list,
     multidns_enabled, mdns_use_plain, mdns_use_secure, mdns_secure_via_proxy,
-    mdns_plain_port, mdns_secure_port, mdns_proxy_port, mdns_main_is_proxy;
+    mdns_ok, mdns_plain_port, mdns_secure_port, mdns_proxy_in;
 
 if (routing_mode !== 'custom') {
 	main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
@@ -158,27 +158,34 @@ if (routing_mode !== 'custom') {
 	/* DNS fields can be a single value or a DynamicList (array); use the first entry. */
 	let first_of = (v) => (type(v) === 'array') ? (length(v) ? v[0] : '') : v;
 
-	/* MultiDNS: a dedicated smartdns instance races ALL servers in each pool (plain
-	 * "Russia" pool + encrypted "secure" pool) at query time and returns the fastest
-	 * LIVE answer. When enabled per pool, the sing-box resolvers below are repointed to
-	 * the local smartdns listener instead of hitting a single upstream directly. The
-	 * daemon (scripts/multidns.uc) builds the smartdns config from these same UCI lists
-	 * and continuously scores/ranks servers by latency + IP liveness + quality trends. */
+	/* MultiDNS: a dedicated mosdns instance races several servers of each pool
+	 * (plain "Russia" pool + encrypted "secure" pool) at query time and returns the
+	 * fastest valid answer. When enabled per pool, the sing-box resolvers below are
+	 * repointed to the local mosdns listener instead of hitting a single upstream
+	 * directly. The daemon (scripts/multidns.uc) builds the mosdns config from these
+	 * same UCI lists and continuously scores/ranks servers by latency + HTTP "site
+	 * opens" verification + trends, pruning consistently-bad ones. */
 	multidns_enabled = uci.get(uciconfig, 'multidns', 'enabled') || '0';
 	mdns_use_plain = (uci.get(uciconfig, 'multidns', 'use_plain') || '1') !== '0';
 	mdns_use_secure = (uci.get(uciconfig, 'multidns', 'use_secure') || '1') !== '0';
 	mdns_secure_via_proxy = (uci.get(uciconfig, 'multidns', 'secure_via_proxy') || '1') !== '0';
 	mdns_plain_port = uci.get(uciconfig, 'multidns', 'plain_port') || '5453';
 	mdns_secure_port = uci.get(uciconfig, 'multidns', 'secure_port') || '5454';
-	mdns_proxy_port = uci.get(uciconfig, 'multidns', 'proxy_port') || '5338';
-	/* A real tunnel proxy (not byedpi/zapret, which egress direct) can carry the
-	 * secure pool's DoH/DoT queries so the ISP cannot see them. */
-	mdns_main_is_proxy = !(main_node in ['byedpi-out', 'zapret-out']);
 
-	/* Safety: if the smartdns binary is missing, do NOT repoint resolvers to the
-	 * local listener (that would black-hole all DNS). Fall back to the standard
-	 * single upstreams; the multidns daemon logs "smartdns missing". */
-	let mdns_ok = (multidns_enabled === '1') && access('/usr/sbin/smartdns');
+	/* Safety: only repoint resolvers to the local racing listener when MultiDNS is
+	 * enabled AND mosdns is actually running. The daemon (init.d bootstraps it
+	 * before this script runs) owns the mosdns process; if it ever fails to
+	 * start (bad config, port clash, missing binary) we MUST fall back to the
+	 * standard single upstreams — otherwise every query hits a dead listener and
+	 * the whole network loses DNS/internet. This guard is the hard safety net. */
+	let mdns_running = (system('pidof mosdns >/dev/null 2>&1') === 0);
+	mdns_ok = (multidns_enabled === '1') && access('/usr/bin/mosdns') && mdns_running;
+
+	/* Dedicated loopback inbound the secure pool's DoH/DoT rides when
+	 * secure_via_proxy is set, so the encrypted query goes through main-out and the
+	 * ISP cannot even see that a DoH server is being contacted. (The plain pool
+	 * resolves directly and needs no tunnel.) */
+	mdns_proxy_in = mdns_ok && mdns_use_secure && mdns_secure_via_proxy;
 
 	if (is_selective_mode(routing_mode)) {
 		secure_dns_server = first_of(uci.get(uciconfig, ucimain, 'secure_dns_server')) || 'https://cloudflare-dns.com/dns-query';
@@ -761,18 +768,14 @@ if (!isEmpty(main_node)) {
 	if (routing_mode === 'proxy_banned_ru') {
 		/* Russia mode: direct-default routing, russia-dns for all, secure-dns for proxy lists.
 		 *
-		 * secure-dns goes through main-out for real proxy nodes — tunneling the query hides
-		 * it from the ISP and reaches resolvers the ISP might block. But ByeDPI is a DPI-desync,
-		 * not a tunnel: routing DNS through it fails every way (DoH/DoT TLS handshake gets
-		 * corrupted by the desync; udp:// can't do socks UDP-over-TCP), and it adds no privacy
-		 * since ByeDPI egresses direct anyway. So for ByeDPI, secure-dns goes direct — DoH/DoT
-		 * is already encrypted/un-poisonable, it just must not pass through the desync. */
-		/* ByeDPI and Zapret both egress direct (not a tunnel), so secure-dns must go
-		 * direct too — a DoH/DoT query can't ride a desync. */
-		/* MultiDNS: when the plain "Russia" pool is enabled, race ALL russia_dns_server
-		 * entries through the local smartdns listener instead of a single upstream. */
-		const mdns_secure_via_proxy_eff = (		mdns_ok && mdns_use_secure && mdns_secure_via_proxy && mdns_main_is_proxy);
-		const ru_dns_target = (		mdns_ok && mdns_use_plain)
+		 * MultiDNS accelerates both pools: when it is enabled the resolvers are pointed at the
+		 * dedicated mosdns racing listeners (127.0.0.1:5453 plain / :5454 secure). mosdns
+		 * races several servers in each pool on every query and returns the fastest valid
+		 * answer, and drops poisoned/dead-IP answers. The plain pool resolves DIRECTLY (no
+		 * proxy) — that is the documented behaviour and avoids a hard proxy dependency; the
+		 * secure pool uses DoH/DoT (encrypted, hijack-proof). When MultiDNS is off we fall
+		 * back to sing-box's own resolver so DNS never breaks. */
+		const ru_dns_target = (mdns_ok && mdns_use_plain)
 			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_plain_port) }
 			: parse_dnsserver(russia_dns_server);
 		push(config.dns.servers, {
@@ -780,11 +783,10 @@ if (!isEmpty(main_node)) {
 			detour: self_mark ? 'direct-out' : null,
 			...ru_dns_target
 		});
-		/* Secure pool: always race via smartdns when MultiDNS+secure enabled. The DoH/DoT
-		 * upstreams themselves tunnel through the proxy only when secure_via_proxy is on (the
-		 * daemon points smartdns at the dedicated socks5 inbound below); here we just repoint
-		 * the sing-box resolver to the local listener. */
-		const secure_target = (		mdns_ok && mdns_use_secure)
+		/* Secure pool: race via the local mosdns listener when MultiDNS is on (DoH/DoT
+		 * bypasses the hijack); otherwise sing-box's own direct DoH/DoT resolver. */
+		const mdns_sec = (mdns_ok && mdns_use_secure);
+		const secure_target = mdns_sec
 			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_secure_port) }
 			: parse_dnsserver(secure_dns_server, 'tcp');
 		push(config.dns.servers, {
@@ -846,7 +848,7 @@ if (!isEmpty(main_node)) {
 		 * NOTE (Iran validation): bootstrapping a DoH *hostname* via the local resolver can be
 		 * poisoned by the ISP -- if confirmed in-country, set secure_dns_server to an IP-literal
 		 * DoH (e.g. https://1.1.1.1/dns-query) so no bootstrap is needed. */
-		/* Secure pool: race via the local smartdns listener when MultiDNS+secure is on. */
+		/* Secure pool: race via the local mosdns listener when MultiDNS+secure is on. */
 		const secure_target_br = (		mdns_ok && mdns_use_secure)
 			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_secure_port) }
 			: parse_dnsserver(secure_dns_server, 'tcp');
@@ -1027,19 +1029,13 @@ push(config.inbounds, {
 	set_system_proxy: is_hiddify ? false : null,
 });
 
-/* MultiDNS secure-pool tunnel: smartdns sends its DoH/DoT upstreams through this
- * dedicated loopback SOCKS5 inbound so they ride the real proxy (ISP can't see them).
- * A fixed high-priority route rule below sends everything from this inbound to main-out,
- * and we exempt its traffic from the DNS sniffer so the resolver's own queries aren't
- * re-routed by normal rules. */
-if (		mdns_ok && mdns_use_secure && mdns_secure_via_proxy && mdns_main_is_proxy) {
-	push(config.inbounds, {
-		type: 'socks',
-		tag: 'mdns-proxy-in',
-		listen: '127.0.0.1',
-		listen_port: int(mdns_proxy_port)
-	});
-}
+/* MultiDNS: the plain (Russia) pool resolves DIRECTLY via mosdns upstreams (no proxy —
+ * documented behaviour, and avoids a hard proxy dependency). The secure pool's DoH/DoT is
+ * encrypted so it is hijack-proof on its own; when secure_via_proxy is set it additionally
+ * rides a dedicated loopback inbound mdns-proxy-in (127.0.0.1:5338) pinned to main-out via a
+ * route rule below, so the ISP can't even see the encrypted query. The plain pool needs no
+ * tunnel. (The previous smartdns design's dedicated 5338 inbound never bound because only
+ * the inbound — never its route rule — was emitted; both are now emitted together.) */
 
 if (match(proxy_mode, /redirect/))
 	push(config.inbounds, {
@@ -1101,6 +1097,23 @@ if (automation_enabled === '1' && !isEmpty(main_node))
 		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
 		set_system_proxy: is_hiddify ? false : null,
 	});
+
+/* MultiDNS secure-via-proxy inbound: a loopback-only mixed (SOCKS5/HTTP) inbound the
+ * mosdns secure pool's DoH/DoT rides when secure_via_proxy is set. Pinned to main-out by
+ * a route rule below, so the encrypted DNS query actually egresses through the proxy
+ * (fixing the old latent bug where DoH went direct despite the toggle). Bound to
+ * 127.0.0.1 only (never exposed). Port 5338 is free (5330/5333/5335-5337/5453/5454 are used). */
+if (mdns_proxy_in)
+	push(config.inbounds, {
+		type: 'mixed',
+		tag: 'mdns-proxy-in',
+		listen: '127.0.0.1',
+		listen_port: 5338,
+		sniff: is_hiddify ? true : null,
+		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
+		set_system_proxy: is_hiddify ? false : null,
+	});
+
 /* Server inbounds */
 uci.foreach(uciconfig, uciserver, (cfg) => {
 	if (cfg.enabled !== '1')
@@ -1525,21 +1538,6 @@ config.route = {
 	default_mark: strToInt(self_mark)
 };
 
-/* MultiDNS secure-pool tunnel: traffic from the resolver's dedicated SOCKS5 inbound rides
- * the real proxy (main-out) untouched by sniffing/rules, so DoH/DoT upstreams stay hidden
- * from the ISP. Sits above the resolve/sniff rules (same rationale as the automation pins). */
-if (		mdns_ok && mdns_use_secure && mdns_secure_via_proxy && mdns_main_is_proxy) {
-	push(config.route.rules, {
-		inbound: 'mdns-proxy-in',
-		action: 'route',
-		outbound: 'main-out'
-	});
-	push(config.route.rules, {
-		inbound: 'mdns-proxy-in',
-		action: 'sniff'
-	});
-}
-
 /* Automation test inbounds: pin each to a fixed outbound so the auto-detection daemon can
  * probe a site direct vs through the main path. These must sit ABOVE the resolve/sniff and
  * region rules so the daemon's probes are not themselves re-routed by the normal rules.
@@ -1553,6 +1551,18 @@ if (automation_enabled === '1' && !isEmpty(main_node)) {
 	});
 	push(config.route.rules, {
 		inbound: 'auto-proxy-in',
+		action: 'route',
+		outbound: 'main-out'
+	});
+}
+
+/* MultiDNS secure-via-proxy: pin the dedicated mdns-proxy-in inbound to main-out so the
+ * mosdns secure pool's DoH/DoT really egresses through the proxy. Also emitted with the
+ * inbound itself (above), so the pair is never split — the split was the historical
+ * "5338 never bound" trap. Placed ABOVE resolve/region rules like the automation pair. */
+if (mdns_proxy_in) {
+	push(config.route.rules, {
+		inbound: 'mdns-proxy-in',
 		action: 'route',
 		outbound: 'main-out'
 	});

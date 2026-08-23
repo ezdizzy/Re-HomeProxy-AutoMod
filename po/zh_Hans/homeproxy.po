@@ -3876,3 +3876,990 @@ msgstr "DNS 尚未就绪——点击“应用”后请稍候几秒再重试"
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2907
 msgid "Resolving test hosts…"
 msgstr "正在解析测试主机…"
+
+msgid "— custom / select a preset —"
+msgstr "— 自定义 / 选择预设 —"
+
+msgid "— select a preset —"
+msgstr "— 选择预设 —"
+
+msgid "%d/%d passed"
+msgstr "%d/%d 通过"
+
+msgid "✓ ByeDPI started (install curl for full test)"
+msgstr "✓ ByeDPI 已启动（安装 curl 以进行完整测试）"
+
+msgid "32 hex characters"
+msgstr "32 个十六进制字符"
+
+msgid "403.online (10.202.10.202)"
+msgstr "403.online (10.202.10.202)"
+
+msgid "403.online secondary (10.202.10.102)"
+msgstr "403.online 备用 (10.202.10.102)"
+
+msgid "active"
+msgstr "活跃"
+
+msgid "Active core"
+msgstr "当前核心"
+
+msgid "Active UDP Node"
+msgstr "当前 UDP 节点"
+
+msgid "Active URLTest node"
+msgstr "当前 URLTest 节点"
+
+msgid "Added"
+msgstr "已添加"
+
+msgid "AdGuard 94.140.14.14 / 94.140.15.15"
+msgstr "AdGuard 94.140.14.14 / 94.140.15.15"
+
+msgid "AdGuard DNS UDP (94.140.14.14)"
+msgstr "AdGuard DNS UDP (94.140.14.14)"
+
+msgid "AdGuard DoQ"
+msgstr "AdGuard DoQ"
+
+msgid "AdGuard DoT"
+msgstr "AdGuard DoT"
+
+msgid "AdGuard Public DNS (94.140.14.14)"
+msgstr "AdGuard 公共 DNS (94.140.14.14)"
+
+msgid "Aggressive"
+msgstr "激进"
+
+msgid "Aggressive (also re-verifies learned sites)"
+msgstr "激进（同时重新验证已学习站点）"
+
+msgid "Allow insecure TLS for the download direction. Use only for testing."
+msgstr "允许下载方向使用不安全的 TLS。仅用于测试。"
+
+msgid "Also learn destinations reached by raw IP (games/apps without SNI). Routes the IP via the proxy. Off by default — enable if you run such apps."
+msgstr "同时学习通过原始 IP 访问的目标（无 SNI 的游戏/应用）。将该 IP 通过代理路由。默认关闭——如果运行此类应用则启用。"
+
+msgid "Alternate DNS servers (failover)"
+msgstr "备用 DNS 服务器（故障转移）"
+
+msgid "AmneziaWG"
+msgstr "AmneziaWG"
+
+msgid "AntiDPI"
+msgstr "AntiDPI"
+
+msgid "Application"
+msgstr "应用"
+
+msgid "Applied: %s — now Save & Apply"
+msgstr "已应用：%s — 现在保存并应用"
+
+msgid "Arguments passed to ByeDPI. Select a preset above or enter custom options. See <code>ciadpi --help</code> for full flag reference."
+msgstr "传递给 ByeDPI 的参数。选择上方预设或输入自定义选项。完整参数参考请见 <code>ciadpi --help</code>。"
+
+msgid "Auto"
+msgstr "自动"
+
+msgid "Auto blocked-site detection"
+msgstr "自动封锁站点检测"
+
+msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the proxy list. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path. After toggling, press “Restart service” below."
+msgstr "自动学习被封锁站点：直连失败但通过代理可用的流量会被加入代理列表。与 ByeDPI 和 Zapret 完全兼容——学习到的站点直接使用您配置的主路径。切换后请点击下方“重启服务”。"
+
+msgid "Automatically picks the fastest node by periodically measuring latency. Traffic is always sent through the lowest-latency node in the pool.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the URLTest pool."
+msgstr "通过定期测量延迟自动选择最快节点。流量始终通过池中延迟最低的节点发送。<br>如果连接有问题且某节点长时间保持橙色/灰色，请尝试将其从 URLTest 池中移除。"
+
+msgid "Automation"
+msgstr "自动化"
+
+msgid "Auto-mode"
+msgstr "自动模式"
+
+msgid "Backup failed: "
+msgstr "备份失败："
+
+msgid "Backup list"
+msgstr "备份列表"
+
+msgid "Backup list downloads the learned sites to your computer. Restore list uploads a file and adds any missing sites (existing ones are kept). Use this to avoid re-learning from scratch after a router reset."
+msgstr "备份列表会将学习到的站点下载到您的电脑。恢复列表会上传文件并添加任何缺失的站点（已有的会保留）。使用此功能可避免路由器重置后从头重新学习。"
+
+msgid "Balanced"
+msgstr "均衡"
+
+msgid "Bidi"
+msgstr "Bidi"
+
+msgid "Block QUIC (UDP port 443)"
+msgstr "封锁 QUIC（UDP 端口 443）"
+
+msgid "blocked both ways"
+msgstr "双向封锁"
+
+msgid "ByeDPI"
+msgstr "ByeDPI"
+
+msgid "ByeDPI (ciadpi) is not installed. Install it now?"
+msgstr "ByeDPI (ciadpi) 未安装。立即安装？"
+
+msgid "ByeDPI running"
+msgstr "ByeDPI 运行中"
+
+msgid "ByeDPI strategy tester"
+msgstr "ByeDPI 策略测试器"
+
+msgid "Cannot remove: ByeDPI is selected as Main Node. Change Main Node first."
+msgstr "无法移除：ByeDPI 被选为主节点。请先更改主节点。"
+
+msgid "Clash API (connections, domain names)"
+msgstr "Clash API（连接、域名）"
+
+msgid "Clash API + DNS log"
+msgstr "Clash API + DNS 日志"
+
+msgid "Clash API + DNS log + SNI + conntrack"
+msgstr "Clash API + DNS 日志 + SNI + conntrack"
+
+msgid "Clear learned"
+msgstr "清除已学习"
+
+msgid "Clear log"
+msgstr "清除日志"
+
+msgid "click Apply next to a strategy (prefer all-green)"
+msgstr "点击策略旁的“应用”（优先选择全绿）"
+
+msgid "Close idle connections after this duration (e.g. 5m, 30s)."
+msgstr "在此时长后关闭空闲连接（例如 5m、30s）。"
+
+msgid "Cloudflare 1.1.1.1 / 1.0.0.1"
+msgstr "Cloudflare 1.1.1.1 / 1.0.0.1"
+
+msgid "Cloudflare DNS UDP (1.1.1.1)"
+msgstr "Cloudflare DNS UDP (1.1.1.1)"
+
+msgid "Command options"
+msgstr "命令选项"
+
+msgid "Community"
+msgstr "社区"
+
+msgid "Concurrency"
+msgstr "并发"
+
+msgid "Confirmations required before learning"
+msgstr "学习前所需确认次数"
+
+msgid "Connectivity"
+msgstr "连通性"
+
+msgid "conntrack (destinations by IP — for apps/games without SNI)"
+msgstr "conntrack（按 IP 记录目标 — 用于无 SNI 的应用/游戏）"
+
+msgid "ControlD DoH"
+msgstr "ControlD DoH"
+
+msgid "core client"
+msgstr "核心客户端"
+
+msgid "Custom (use the DNS server above)"
+msgstr "自定义（使用上方 DNS 服务器）"
+
+msgid "Custom JSON"
+msgstr "自定义 JSON"
+
+msgid "Default (fake + multidisorder)"
+msgstr "默认（伪造 + 多重乱序）"
+
+msgid "Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)"
+msgstr "默认路由为直连。已添加的规则走代理，优先级自动排列：<br>1. 小列表（YouTube、Discord 等）<br>2. <b>Russia Inside</b>（1000+ 域名，itdoginfo）— 俄罗斯境内必备集合（YouTube、Discord、Telegram、Meta…）通过代理路由<br>3. <b>Re-filter</b>（60000+ 域名 + 25000+ IP）— 俄罗斯被封锁域名和 IP 的社区黑名单（Roskomnadzor）"
+
+msgid "Desync strategy"
+msgstr "去同步策略"
+
+msgid "Detect"
+msgstr "检测"
+
+msgid "Detected"
+msgstr "已检测"
+
+msgid "Detecting..."
+msgstr "检测中..."
+
+msgid "Detection failed"
+msgstr "检测失败"
+
+msgid "direct %s ✗ / proxy %s ✓"
+msgstr "直连 %s ✗ / 代理 %s ✓"
+
+msgid "Direct control (bypassing MultiDNS)"
+msgstr "直接控制（绕过 MultiDNS）"
+
+msgid "Disable & restore DNS"
+msgstr "禁用并恢复 DNS"
+
+msgid "Disabled"
+msgstr "已禁用"
+
+msgid "Discord calls via Zapret"
+msgstr "通过 Zapret 的 Discord 通话"
+
+msgid "Discover candidates from"
+msgstr "从中发现候选"
+
+msgid "Disorder — reorders TCP segments"
+msgstr "乱序 — 重新排序 TCP 分段"
+
+msgid "DNS failover"
+msgstr "DNS 故障转移"
+
+msgid "DNS inbound"
+msgstr "DNS 入站"
+
+msgid "DNS preset"
+msgstr "DNS 预设"
+
+msgid "DNS query log (captures domain at DNS time — most transparent)"
+msgstr "DNS 查询日志（在 DNS 阶段捕获域名 — 最透明）"
+
+msgid "DNS.SB DoH"
+msgstr "DNS.SB DoH"
+
+msgid "DNS.WATCH (84.200.69.80)"
+msgstr "DNS.WATCH (84.200.69.80)"
+
+msgid "DNS.WATCH Public DNS (84.200.69.80)"
+msgstr "DNS.WATCH 公共 DNS (84.200.69.80)"
+
+msgid "Domain"
+msgstr "域名"
+
+msgid "Domain fronting host"
+msgstr "域名前置主机"
+
+msgid "Domain fronting port"
+msgstr "域名前置端口"
+
+msgid "Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names."
+msgstr "不参与学习的域名 / IP（子串与域名匹配）。默认覆盖局域网和本地名称。"
+
+msgid "Done"
+msgstr "完成"
+
+msgid "Download allow insecure"
+msgstr "下载允许不安全"
+
+msgid "Download ALPN"
+msgstr "下载 ALPN"
+
+msgid "Download host"
+msgstr "下载主机"
+
+msgid "Download path"
+msgstr "下载路径"
+
+msgid "Download port"
+msgstr "下载端口"
+
+msgid "Download server"
+msgstr "下载服务器"
+
+msgid "Download TLS server name"
+msgstr "下载 TLS 服务器名称"
+
+msgid "Duplicate source — only the first rule will take effect"
+msgstr "来源重复 — 仅第一条规则生效"
+
+msgid "Each is probed against 4 sites (~12 min total). You can Stop it at any point."
+msgstr "每项会针对 4 个站点进行探测（总计约 12 分钟）。您可以随时停止。"
+
+msgid "Electro/Begzar (78.157.42.100)"
+msgstr "Electro/Begzar (78.157.42.100)"
+
+msgid "Electro/Begzar secondary (78.157.42.101)"
+msgstr "Electro/Begzar 备用 (78.157.42.101)"
+
+msgid "Enable automation"
+msgstr "启用自动化"
+
+msgid "Enable ByeDPI"
+msgstr "启用 ByeDPI"
+
+msgid "Enable DNS failover"
+msgstr "启用 DNS 故障转移"
+
+msgid "Enable MultiDNS"
+msgstr "启用 MultiDNS"
+
+msgid "Enable Zapret"
+msgstr "启用 Zapret"
+
+msgid "Enabled"
+msgstr "已启用"
+
+msgid "enabled, but nfqws2 not running"
+msgstr "已启用，但 nfqws2 未运行"
+
+msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test all strategies\" feature in Client → ByeDPI tab."
+msgstr "启用基于真实 HTTP 的 ByeDPI 策略测试。“客户端 → ByeDPI 标签页”中“测试所有策略”功能所必需。"
+
+msgid "Engine log"
+msgstr "引擎日志"
+
+msgid "Extra headers"
+msgstr "额外标头"
+
+msgid "Fake MD5"
+msgstr "伪造 MD5"
+
+msgid "Fake only"
+msgstr "仅伪造"
+
+msgid "Fake TTL"
+msgstr "伪造 TTL"
+
+msgid "Fallback DNS servers (IP, hostname, or DoH/DoT URL). Used by DNS failover when the primary is unreachable. The DNS preset above seeds these automatically."
+msgstr "备用 DNS 服务器（IP、主机名或 DoH/DoT URL）。当主服务器不可达时由 DNS 故障转移使用。上方的 DNS 预设会自动填充这些内容。"
+
+msgid "Fetching nodes, please wait..."
+msgstr "正在获取节点，请稍候..."
+
+msgid "Flush after N new entries (batch window)"
+msgstr "累积 N 个新条目后刷新（批量窗口）"
+
+msgid "Force a flush once this many new sites have been learned, even before the flush interval elapses. Batches a burst of learns into a single file update (one hot reload) instead of many. 0 = time-only."
+msgstr "当学习到这么多新站点时强制刷新，即使尚未到达刷新间隔。将突发学习批量合并为一次文件更新（一次热重载）而非多次。0 = 仅按时间。"
+
+msgid "Full Combo"
+msgstr "完整组合"
+
+msgid "Full strategy test"
+msgstr "完整策略测试"
+
+msgid "Full-test pool"
+msgstr "完整测试池"
+
+msgid "Google 8.8.8.8 / 8.8.4.4"
+msgstr "Google 8.8.8.8 / 8.8.4.4"
+
+msgid "Google DNS UDP (8.8.8.8)"
+msgstr "Google DNS UDP (8.8.8.8)"
+
+msgid "Grouped by technique. Based on <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea/byedpi</a> and community testing. See also <a href=\"https://github.com/fatyzzz/Byedpi-Setup\" target=\"_blank\">fatyzzz/Byedpi-Setup</a>."
+msgstr "按技术分组。基于 <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea/byedpi</a> 和社区测试。另请参阅 <a href=\"https://github.com/fatyzzz/Byedpi-Setup\" target=\"_blank\">fatyzzz/Byedpi-Setup</a>。"
+
+msgid "H1"
+msgstr "H1"
+
+msgid "H2"
+msgstr "H2"
+
+msgid "H3"
+msgstr "H3"
+
+msgid "H4"
+msgstr "H4"
+
+msgid "Handshake timeout"
+msgstr "握手超时"
+
+msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends."
+msgstr "分析器探测每个服务器延迟 / 存活 / 污染的频率并更新趋势。"
+
+msgid "How often the learned list is pushed to the live routing rules (hot reload — no core restart). Newly learned sites then apply to new connections within this window. A full service restart also applies them, but this keeps them live without one."
+msgstr "学习列表推送到实时路由规则的频率（热重载 — 无需重启核心）。新学习到的站点会在此窗口内应用到新连接。完全重启服务也能应用，但此方式无需重启即可保持生效。"
+
+msgid "HTTP Modification"
+msgstr "HTTP 修改"
+
+msgid "I have a custom core path"
+msgstr "我有自定义核心路径"
+
+msgid "I1"
+msgstr "I1"
+
+msgid "I2"
+msgstr "I2"
+
+msgid "I3"
+msgstr "I3"
+
+msgid "I4"
+msgstr "I4"
+
+msgid "I5"
+msgstr "I5"
+
+msgid "In gaming mode, only TCP traffic from the selected device is proxied."
+msgstr "在游戏模式下，仅所选设备的 TCP 流量通过代理。"
+
+msgid "In global proxy mode, all traffic from the selected device goes through the proxy."
+msgstr "在全局代理模式下，所选设备的所有流量都通过代理。"
+
+msgid "Inbound"
+msgstr "入站"
+
+msgid "Install ByeDPI"
+msgstr "安装 ByeDPI"
+
+msgid "Install Zapret"
+msgstr "安装 Zapret"
+
+msgid "Installed — reloading..."
+msgstr "已安装 — 正在重新加载..."
+
+msgid "Installed successfully (compact build)"
+msgstr "安装成功（精简构建）"
+
+msgid "Installed, but kmod-nft-queue is missing — Zapret cannot intercept traffic without it."
+msgstr "已安装，但缺少 kmod-nft-queue — 没有它 Zapret 无法拦截流量。"
+
+msgid "installed, not running"
+msgstr "已安装，未运行"
+
+msgid "IP"
+msgstr "IP"
+
+msgid "ITime"
+msgstr "ITime"
+
+msgid "J1"
+msgstr "J1"
+
+msgid "J2"
+msgstr "J2"
+
+msgid "J3"
+msgstr "J3"
+
+msgid "Jc"
+msgstr "Jc"
+
+msgid "Jmax"
+msgstr "Jmax"
+
+msgid "Jmin"
+msgstr "Jmin"
+
+msgid "JSON object, e.g. {\"X-Header\": \"value\"}. Leave empty for none."
+msgstr "JSON 对象，例如 {\"X-Header\": \"value\"}。留空表示无。"
+
+msgid "Junk packet count."
+msgstr "垃圾包数量。"
+
+msgid "Junk packet maximum size."
+msgstr "垃圾包最大大小。"
+
+msgid "Junk packet minimum size."
+msgstr "垃圾包最小大小。"
+
+msgid "LAN clients are not affected during testing."
+msgstr "测试期间局域网客户端不受影响。"
+
+msgid "Last check"
+msgstr "上次检查"
+
+msgid "Latency"
+msgstr "延迟"
+
+msgid "Learn IP destinations (conntrack)"
+msgstr "学习 IP 目标（conntrack）"
+
+msgid "Learned (blocked)"
+msgstr "已学习（封锁）"
+
+msgid "Learned sites"
+msgstr "已学习站点"
+
+msgid "Learned-list flush interval (seconds)"
+msgstr "学习列表刷新间隔（秒）"
+
+msgid "LibreDNS (116.202.176.26)"
+msgstr "LibreDNS (116.202.176.26)"
+
+msgid "LibreDNS DoH"
+msgstr "LibreDNS DoH"
+
+msgid "LibreDNS DoT"
+msgstr "LibreDNS DoT"
+
+msgid "LibreDNS Public DNS (116.202.176.26)"
+msgstr "LibreDNS 公共 DNS (116.202.176.26)"
+
+msgid "List of MTProxy secrets. Each secret is a 32-character hex string (16 bytes). One secret per user."
+msgstr "MTProxy 密钥列表。每个密钥为 32 个十六进制字符（16 字节）。每个用户一个密钥。"
+
+msgid "Live %"
+msgstr "实时 %"
+
+msgid "Live DNS quality monitor"
+msgstr "实时 DNS 质量监控"
+
+msgid "Magic header range, e.g. 1603445073-1836768565"
+msgstr "魔法标头范围，例如 1603445073-1836768565"
+
+msgid "Magic header range, e.g. 2047861992-2141668339"
+msgstr "魔法标头范围，例如 2047861992-2141668339"
+
+msgid "Magic header range, e.g. 2141792848-2142674170"
+msgstr "魔法标头范围，例如 2141792848-2142674170"
+
+msgid "Magic header range, e.g. 426560850-1096521767"
+msgstr "魔法标头范围，例如 426560850-1096521767"
+
+msgid "Match inbound tag."
+msgstr "匹配入站标签。"
+
+msgid "Max bytes per POST"
+msgstr "每个 POST 最大字节数"
+
+msgid "Maximum learned entries"
+msgstr "最大学习条目数"
+
+msgid "Maximum time to complete handshake (e.g. 10s)."
+msgstr "完成握手的最大时间（例如 10s）。"
+
+msgid "Mieru"
+msgstr "Mieru"
+
+msgid "Min POST interval (ms)"
+msgstr "POST 最小间隔（毫秒）"
+
+msgid "Mixed (SOCKS/HTTP) inbound"
+msgstr "混合（SOCKS/HTTP）入站"
+
+msgid "Monitor"
+msgstr "监控"
+
+msgid "Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the “Alternate DNS servers” list (Client ▸ DNS tab) and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up."
+msgstr "监控主 DNS；如果它不可达，则切换到“备用 DNS 服务器”列表（客户端 ▸ DNS 标签页）中的健康服务器并重新生成。仅普通（UDP/Do53）服务器会进行健康检查；DoH/DoT 假定始终可用。"
+
+msgid "mosdns"
+msgstr "mosdns"
+
+msgid "mosdns package is missing — MultiDNS cannot accelerate DNS. Install mosdns (see README) or reinstall the app."
+msgstr "缺少 mosdns 包 — MultiDNS 无法加速 DNS。请安装 mosdns（见 README）或重新安装应用。"
+
+msgid "MTProxy"
+msgstr "MTProxy"
+
+msgid "Mullvad DoH"
+msgstr "Mullvad DoH"
+
+msgid "Mullvad DoT"
+msgstr "Mullvad DoT"
+
+msgid "MultiDNS"
+msgstr "MultiDNS"
+
+msgid "MultiDNS / mosdns"
+msgstr "MultiDNS / mosdns"
+
+msgid "MultiDNS DNS Tests"
+msgstr "MultiDNS DNS 测试"
+
+msgid "MultiDNS races all configured DNS servers and shows their measured latency / success / open-ratio. A server that consistently fails (dead, or returns IPs that do not open the site) is pruned from the live pool and re-checked; the others race on every query (mosdns picks the fastest valid answer)."
+msgstr "MultiDNS 并行竞争所有已配置的 DNS 服务器，并显示其测得的延迟 / 成功率 / 打开率。持续失败的服务器（已失效，或返回的 IP 无法打开站点）会被从实时池中剔除并重新检查；其余服务器在每个查询时竞争（mosdns 选择最快的有效答案）。"
+
+msgid "MultiDNS status unavailable: "
+msgstr "MultiDNS 状态不可用："
+
+msgid "Multisplit"
+msgstr "Multisplit"
+
+msgid "Never auto-learn (comma-separated)"
+msgstr "永不自动学习（逗号分隔）"
+
+msgid "No answer — mosdns may be down"
+msgstr "无应答 — mosdns 可能已停止"
+
+msgid "no core installed"
+msgstr "未安装核心"
+
+msgid "No data yet — enable MultiDNS and wait for the first quality check."
+msgstr "暂无数据 — 启用 MultiDNS 并等待首次质量检查。"
+
+msgid "no learned list yet"
+msgstr "尚无学习列表"
+
+msgid "No package manager found. Install ciadpi manually from the Status page."
+msgstr "未找到包管理器。请从状态页面手动安装 ciadpi。"
+
+msgid "No package manager found. Install zapret2 manually from the Status page."
+msgstr "未找到包管理器。请从状态页面手动安装 zapret2。"
+
+msgid "No strategy set — pick a preset or enter options first"
+msgstr "未设置策略 — 请先选择预设或输入选项"
+
+msgid "Nothing learned yet. Browse the web or press “Test now”."
+msgstr "尚未学习任何内容。浏览网页或按“立即测试”。"
+
+msgid "OOB"
+msgstr "OOB"
+
+msgid "Open %"
+msgstr "打开率 %"
+
+msgid "OpenDNS (208.67.222.222)"
+msgstr "OpenDNS (208.67.222.222)"
+
+msgid "OpenDNS 208.67.222.222 / 208.67.220.220"
+msgstr "OpenDNS 208.67.222.222 / 208.67.220.220"
+
+msgid "Optional cookie byte sequence in &lt;b 0x...&gt; format."
+msgstr "可选的 cookie 字节序列，格式为 &lt;b 0x...&gt;。"
+
+msgid "Optional separate server address for the download direction. Empty reuses the main server (works on hiddify-core; set explicitly for sing-box)."
+msgstr "下载方向的可选独立服务器地址。留空则复用主服务器（hiddify-core 支持；sing-box 需显式设置）。"
+
+msgid "Packet down"
+msgstr "下行数据包"
+
+msgid "Packet up"
+msgstr "上行数据包"
+
+msgid "packet-up mode: max body size of each upload POST, e.g. 1000000-1000000."
+msgstr "packet-up 模式：每次上传 POST 的最大正文大小，例如 1000000-1000000。"
+
+msgid "packet-up mode: minimum interval between upload POSTs in ms, e.g. 30-30."
+msgstr "packet-up 模式：上传 POST 之间的最小间隔（毫秒），例如 30-30。"
+
+msgid "Padding bytes"
+msgstr "填充字节"
+
+msgid "partial"
+msgstr "部分"
+
+msgid "Plain pool"
+msgstr "普通池"
+
+msgid "Plain pool (Russia) — %s"
+msgstr "普通池（俄罗斯）— %s"
+
+msgid "Pool"
+msgstr "池"
+
+msgid "Preparing..."
+msgstr "准备中..."
+
+msgid "Probe timeout (seconds)"
+msgstr "探测超时（秒）"
+
+msgid "Proxy mode for devices"
+msgstr "设备代理模式"
+
+msgid "pruned"
+msgstr "已剔除"
+
+msgid "Quad9 9.9.9.9 / 149.112.112.112"
+msgstr "Quad9 9.9.9.9 / 149.112.112.112"
+
+msgid "Quad9 DNS UDP (9.9.9.9)"
+msgstr "Quad9 DNS UDP (9.9.9.9)"
+
+msgid "Quad9 Public DNS (9.9.9.9)"
+msgstr "Quad9 公共 DNS (9.9.9.9)"
+
+msgid "Quality check interval (seconds)"
+msgstr "质量检查间隔（秒）"
+
+msgid "Query every DoH/DoT entry in the secure pool in parallel and pick the fastest live IP for blocked / proxied domains."
+msgstr "并行查询安全池中的每个 DoH/DoT 条目，并为被封锁 / 代理的域名选择最快的实时 IP。"
+
+msgid "Query every entry of the plain DNS-server list in parallel and pick the fastest live IP. Unblocks speed and reliability for non-proxied sites."
+msgstr "并行查询普通 DNS 服务器列表中的每个条目并选择最快的实时 IP。提升非代理站点的速度与可靠性。"
+
+msgid "Quickly set a primary DNS plus a failover candidate (added to “Alternate DNS servers”, used by DNS failover). Choose “Custom” to keep your manual DNS server."
+msgstr "快速设置主 DNS 及故障转移候选（添加到“备用 DNS 服务器”，由 DNS 故障转移使用）。选择“自定义”以保留手动 DNS 服务器。"
+
+msgid "Race plain (Russia) DNS pool"
+msgstr "竞争普通（俄罗斯）DNS 池"
+
+msgid "Race secure (encrypted) DNS pool"
+msgstr "竞争安全（加密）DNS 池"
+
+msgid "Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh)."
+msgstr "同时竞争每个 DNS 池中的多个服务器（每个查询），并返回最快的有效答案。普通“俄罗斯”池与加密“安全”池独立竞争，对应分流路由。质量守护进程通过 HTTPS 验证每个服务器返回的 IP 确实能打开站点，按延迟 + 打开率 + 趋势为服务器评分，并剔除失效 / 被污染的服务器。需要 mosdns 引擎（由 install.sh 安装）。"
+
+msgid "Radar (10.202.10.10)"
+msgstr "Radar (10.202.10.10)"
+
+msgid "Radar secondary (10.202.10.11)"
+msgstr "Radar 备用 (10.202.10.11)"
+
+msgid "Random padding length range, e.g. 100-1000. Leave empty for the core default."
+msgstr "随机填充长度范围，例如 100-1000。留空使用核心默认值。"
+
+msgid "Re:HomeProxy AutoMod"
+msgstr "Re:HomeProxy AutoMod"
+
+msgid "Re:HomeProxy AutoMod chains"
+msgstr "Re:HomeProxy AutoMod 链"
+
+msgid "Re:HomeProxy AutoMod Diagnostics"
+msgstr "Re:HomeProxy AutoMod 诊断"
+
+msgid "Re:HomeProxy AutoMod Server"
+msgstr "Re:HomeProxy AutoMod 服务器"
+
+msgid "Rebuild pools"
+msgstr "重建池"
+
+msgid "Recommended"
+msgstr "推荐"
+
+msgid "Redirect inbound"
+msgstr "重定向入站"
+
+msgid "Redundant with MultiDNS: when MultiDNS is enabled it already races every server in each pool and returns the fastest live answer, so a single failed primary is bypassed automatically. Reserve DNS is therefore ignored while MultiDNS is on — use one or the other."
+msgstr "与 MultiDNS 冗余：启用 MultiDNS 后它已会竞争每个池中的每个服务器并返回最快的实时答案，因此单个主服务器故障会自动绕过。因此启用 MultiDNS 时会忽略保留 DNS — 请二选一。"
+
+msgid "Re-evaluate learned interval (seconds)"
+msgstr "重新评估学习间隔（秒）"
+
+msgid "Reinstall"
+msgstr "重新安装"
+
+msgid "reload page to apply"
+msgstr "重新加载页面以应用"
+
+msgid "Requires curl. Install it on the Status page first."
+msgstr "需要 curl。请先在状态页面安装。"
+
+msgid "Reset trends"
+msgstr "重置趋势"
+
+msgid "Resolved via fastest live server: "
+msgstr "通过最快的实时服务器解析："
+
+msgid "Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT = DNS over HTTPS/TLS). You may add several; the first entry is used."
+msgstr "通过代理解析被封锁的域名 — 运营商无法看到您查询的站点。使用加密 DNS（DoH/DoT = DNS over HTTPS/TLS）。可添加多个；使用第一个条目。"
+
+msgid "Resolves Russian domains directly, without going through the proxy. You may add several; the first entry is used."
+msgstr "直接解析俄罗斯域名，不经过代理。可添加多个；使用第一个条目。"
+
+msgid "Restore complete — added %d site(s)."
+msgstr "恢复完成 — 添加了 %d 个站点。"
+
+msgid "Restore failed: "
+msgstr "恢复失败："
+
+msgid "Restore list"
+msgstr "恢复列表"
+
+msgid "Run full test"
+msgstr "运行完整测试"
+
+msgid "running — racing all pool servers"
+msgstr "运行中 — 竞争所有池服务器"
+
+msgid "Runs Core, Config, Network, and Connectivity checks simultaneously."
+msgstr "同时运行核心、配置、网络和连通性检查。"
+
+msgid "Russia"
+msgstr "俄罗斯"
+
+msgid "S1"
+msgstr "S1"
+
+msgid "S2"
+msgstr "S2"
+
+msgid "S3"
+msgstr "S3"
+
+msgid "S4"
+msgstr "S4"
+
+msgid "SafeDNS (195.46.39.39)"
+msgstr "SafeDNS (195.46.39.39)"
+
+msgid "SafeDNS Public DNS (195.46.39.39)"
+msgstr "SafeDNS 公共 DNS (195.46.39.39)"
+
+msgid "Score"
+msgstr "评分"
+
+msgid "Secrets"
+msgstr "密钥"
+
+msgid "Secure pool"
+msgstr "安全池"
+
+msgid "Secure pool — %s"
+msgstr "安全池 — %s"
+
+msgid "Send the secure pool’s DoH/DoT queries through the proxy tunnel (SOCKS5) so your ISP cannot see which sites you look up. Disable to resolve them directly (still encrypted)."
+msgstr "将安全池的 DoH/DoT 查询通过代理隧道（SOCKS5）发送，使运营商无法看到您查询的站点。禁用以直接解析（仍为加密）。"
+
+msgid "Shecan (178.22.122.100)"
+msgstr "Shecan (178.22.122.100)"
+
+msgid "Shecan secondary (185.51.200.2)"
+msgstr "Shecan 备用 (185.51.200.2)"
+
+msgid "Site"
+msgstr "站点"
+
+msgid "Source"
+msgstr "来源"
+
+msgid "Specify target ports to be proxied. Multiple ports must be separated by commas. Leave empty for all ports."
+msgstr "指定要代理的目标端口。多个端口必须用逗号分隔。留空表示所有端口。"
+
+msgid "Speedtest"
+msgstr "测速"
+
+msgid "Split"
+msgstr "分流"
+
+msgid "Split download: host (Host header / :authority) for the download direction. Leave empty to reuse the upload host."
+msgstr "分流下载：下载方向的主机（Host 标头 / :authority）。留空则复用上传主机。"
+
+msgid "Split download: path for the download direction. Leave empty to reuse the upload path."
+msgstr "分流下载：下载方向的路径。留空则复用上传路径。"
+
+msgid "Status unavailable: "
+msgstr "状态不可用："
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "stopped"
+msgstr "已停止"
+
+msgid "Stopping…"
+msgstr "正在停止…"
+
+msgid "Strategy preset"
+msgstr "策略预设"
+
+msgid "Stream down"
+msgstr "下行流"
+
+msgid "Stream up"
+msgstr "上行流"
+
+msgid "Success %"
+msgstr "成功率 %"
+
+msgid "Target hostname for FakeTLS domain fronting. Clients will see TLS to this domain."
+msgstr "FakeTLS 域名前置的目标主机名。客户端将看到指向该域名的 TLS。"
+
+msgid "Test all strategies"
+msgstr "测试所有策略"
+
+msgid "Test all strategies?"
+msgstr "测试所有策略？"
+
+msgid "Test current strategy"
+msgstr "测试当前策略"
+
+msgid "Test failed"
+msgstr "测试失败"
+
+msgid "Test now"
+msgstr "立即测试"
+
+msgid "Testing %d/%d: %s"
+msgstr "测试中 %d/%d：%s"
+
+msgid "Testing MultiDNS DNS…"
+msgstr "正在测试 MultiDNS DNS…"
+
+msgid "Testing..."
+msgstr "测试中..."
+
+msgid "The LuCI app itself. \"Check update\" compares your installed version with the latest GitHub release; \"Update\" downloads and installs the new app (and the Russian translation) in place."
+msgstr "LuCI 应用本身。“检查更新”会将已安装版本与最新 GitHub 版本进行比较；“更新”会下载并就地安装新应用（以及俄语翻译）。"
+
+msgid "timeout"
+msgstr "超时"
+
+msgid "TLS Modification"
+msgstr "TLS 修改"
+
+msgid "TLS Record Split"
+msgstr "TLS 记录拆分"
+
+msgid "TLS SNI capture (ClientHello — DoH clients, hardcoded-IP apps, games)"
+msgstr "TLS SNI 捕获（ClientHello — DoH 客户端、硬编码 IP 的应用、游戏）"
+
+msgid "TLS SNI for the download direction (often a different CDN/edge host than the upload)."
+msgstr "下载方向的 TLS SNI（通常是与上传不同的 CDN/边缘主机）。"
+
+msgid "To enable Tun support, you need to install <code>kmod-tun</code>"
+msgstr "要启用 Tun 支持，需要安装 <code>kmod-tun</code>"
+
+msgid "TProxy inbound"
+msgstr "TProxy 入站"
+
+msgid "Trend"
+msgstr "趋势"
+
+msgid "TUN inbound"
+msgstr "TUN 入站"
+
+msgid "Tunnel secure-pool queries through the proxy"
+msgstr "通过代理隧道发送安全池查询"
+
+msgid "UDP TPROXY counters (UDP into HomeProxy)"
+msgstr "UDP TPROXY 计数器（进入 HomeProxy 的 UDP）"
+
+msgid "uncertain"
+msgstr "不确定"
+
+msgid "Up to date"
+msgstr "已是最新"
+
+msgid "Update available"
+msgstr "有可用更新"
+
+msgid "Updating subscriptions"
+msgstr "正在更新订阅"
+
+msgid "Warning: kmod-nft-queue is not installed — Zapret cannot intercept traffic without it."
+msgstr "警告：未安装 kmod-nft-queue — 没有它 Zapret 无法拦截流量。"
+
+msgid "Why"
+msgstr "原因"
+
+msgid "work on all sites"
+msgstr "适用于所有站点"
+
+msgid "Worker pool size. Leave empty for default."
+msgstr "工作线程池大小。留空使用默认值。"
+
+msgid "Wrap UDP traffic in TCP when routing to ByeDPI."
+msgstr "路由到 ByeDPI 时将 UDP 流量封装到 TCP 中。"
+
+msgid "XHTTP"
+msgstr "XHTTP"
+
+msgid "XHTTP mode"
+msgstr "XHTTP 模式"
+
+msgid "Yandex"
+msgstr "Yandex"
+
+msgid "Zapret"
+msgstr "Zapret"
+
+msgid "Zapret (nfqws2)"
+msgstr "Zapret (nfqws2)"
+
+msgid "Zapret (zapret2/nfqws2) is not installed. Install it now?"
+msgstr "Zapret (zapret2/nfqws2) 未安装。立即安装？"
+
+msgid "Zapret 2"
+msgstr "Zapret 2"
+
+msgid "Zapret 2 running"
+msgstr "Zapret 2 运行中"
+
+msgid "Zapret is installed, but the NFQUEUE kernel module (kmod-nft-queue) is missing. Enabling it now could break the firewall. Reinstall Zapret or install kmod-nft-queue first."
+msgstr "Zapret 已安装，但缺少 NFQUEUE 内核模块（kmod-nft-queue）。立即启用可能破坏防火墙。请先重新安装 Zapret 或安装 kmod-nft-queue。"
+
+msgid "Zapret NFQUEUE counters (mark 110 → queue)"
+msgstr "Zapret NFQUEUE 计数器（标记 110 → 队列）"

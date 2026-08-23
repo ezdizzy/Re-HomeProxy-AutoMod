@@ -51,7 +51,7 @@
 		}
 	},
 	"admin/services/homeproxy/automation": {
-		"title": "Автоматизация",
+		"title": "Automation",
 		"order": 50,
 		"action": {
 			"type": "view",

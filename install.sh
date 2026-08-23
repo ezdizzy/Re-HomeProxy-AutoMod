@@ -144,6 +144,42 @@ jtrue "$(ucode "$CM" install_pkg "$CORE" "$TMP" "$PMG")" || die "  устано�
 jtrue "$(ucode "$CM" install_kmods "$PMG")" || warn "  не удалось поставить kmod — без kmod-nft-tproxy/kmod-tun прокси не будет маршрутизировать."
 ok "  $CORE установлен."
 
+# --------------------------------------------------------------- 2.5 mosdns (для MultiDNS)
+info "[MultiDNS] Проверяю/ставлю mosdns (движок гонки DNS)..."
+if [ -x /usr/bin/mosdns ]; then
+	ok "  mosdns уже установлен."
+else
+	case "$ARCH" in
+		aarch64_*) MARCH=arm64 ;;
+		arm_cortex-a7*|arm_cortex-a9*|arm_cortex-a15*|arm_cortex-a8*|arm_mpcore*) MARCH=arm-7 ;;
+		arm_cortex-a5*|arm926ej-s|arm_fa526) MARCH=arm-6 ;;
+		x86_64) MARCH=amd64 ;;
+		mipsel_24kc|mipsel_74kc) MARCH=mipsle-softfloat ;;
+		*) MARCH="" ;;
+	esac
+	if [ -z "$MARCH" ]; then
+		warn "  mosdns: нет готового бинарника для архитектуры $ARCH — пропускаю (MultiDNS будет недоступен)."
+	else
+		if ! command -v unzip >/dev/null 2>&1; then
+			if [ "$PM" = apk ]; then apk add unzip >/dev/null 2>&1; else opkg install unzip >/dev/null 2>&1; fi
+		fi
+		if command -v unzip >/dev/null 2>&1 && \
+		   dl "https://github.com/IrineSistiana/mosdns/releases/latest/download/mosdns-linux-${MARCH}.zip" /tmp/mosdns.zip; then
+			unzip -o /tmp/mosdns.zip -d /tmp/mosdns >/dev/null 2>&1
+		MBIN=$(find /tmp/mosdns -type f -name 'mosdns' | head -1)
+		if [ -n "$MBIN" ]; then
+			# busybox `install` applet отсутствует на части образов — cp + chmod эквивалентны
+			cp "$MBIN" /usr/bin/mosdns && chmod 0755 /usr/bin/mosdns && ok "  mosdns установлен ($MARCH)."
+			else
+				warn "  mosdns: бинарник не найден в архиве — пропускаю."
+			fi
+			rm -rf /tmp/mosdns /tmp/mosdns.zip
+		else
+			warn "  mosdns: не удалось скачать (GitHub заблокирован? попробуйте GH_MIRROR=...) — MultiDNS будет недоступен."
+		fi
+	fi
+fi
+
 # --------------------------------------------------------------- 3. Zapret (опционально)
 ask "[3/5] Установить Zapret 2 (обход DPI на уровне пакетов — видео/QUIC, звонки)? [y/N]:"
 if is_yes "$REPLY"; then

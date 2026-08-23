@@ -124,6 +124,30 @@ start_service() {
 	core_version="$("$PROG" version 2>/dev/null | head -1 | awk '{print $3}')"
 	printf '{"core_type":"%s","version":"%s"}\n' "$CORE_TYPE" "$core_version" > "$RUN_DIR/core.info"
 
+	# MultiDNS: bootstrap the dedicated mosdns instance NOW (synchronously) so the
+	# generated client config can repoint its resolvers at the live racing listener.
+	# The full analyzer daemon (procd instance, registered further below) takes over
+	# afterwards and keeps mosdns alive/pruned. If mosdns cannot start, we skip
+	# and generate_client.uc falls back to direct upstreams (no DNS black-hole / no
+	# loss of internet). The daemon's bootstrap mode builds the conf + starts mosdns
+	# then exits; the procd daemon reuses that instance.
+	local md_en
+	config_get_bool md_en "multidns" "enabled" "0"
+	if [ "$md_en" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
+		mkdir -p "$RUN_DIR/multidns"
+		# Bootstrap the dedicated mosdns instance synchronously so generate_client
+		# can repoint DNS at the live racing listener. Bounded by a watchdog: if the
+		# bootstrap ever hangs it must NOT block start_service, so kill it after 25s.
+		# mosdns is launched detached (setsid) so it survives the kill and keeps
+		# serving; generate_client's mdns_ok guard then repoints to it safely.
+		(
+			/usr/bin/ucode "$HP_DIR/scripts/multidns.uc" bootstrap &
+			_bp=$!
+			( sleep 25; kill -9 "$_bp" 2>/dev/null ) &
+			wait "$_bp"
+		) 2>/dev/null || true
+	fi
+
 	# Generate or copy client config
 	if [ "$routing_mode" = "custom_json" ]; then
 		if [ -e "$HP_DIR/hiddify-c.json" ]; then
@@ -328,12 +352,12 @@ start_service() {
 		procd_close_instance
 	fi
 
-	# MultiDNS analyzer: races all DNS servers in each pool (plain + secure) via a
-	# dedicated smartdns instance and continuously scores/ranks them by latency + IP
-	# liveness + quality trends. Runs only while enabled; owns the smartdns process.
+	# MultiDNS analyzer: races the DNS servers in each pool (plain + secure) via a
+	# dedicated mosdns instance and continuously scores/ranks them by latency + HTTP
+	# "site opens" verification + trends. Runs only while enabled; owns the mosdns process.
 	local multidns_enabled
 	config_get_bool multidns_enabled "multidns" "enabled" "0"
-	if [ "$multidns_enabled" = "1" ] && [ -x "/usr/sbin/smartdns" ]; then
+	if [ "$multidns_enabled" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
 		mkdir -p "$RUN_DIR/multidns"
 		procd_open_instance "multidns"
 		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/multidns.uc"
@@ -413,6 +437,14 @@ stop_service() {
 	# Remove DNS hijack
 	rm -rf "$DNSMASQ_DIR/../dnsmasq-homeproxy.conf" "$DNSMASQ_DIR"
 	/etc/init.d/dnsmasq restart >"/dev/null" 2>&1
+
+	# Stop MultiDNS mosdns (the analyzer daemon itself is stopped by procd). Prefer
+	# our own pid file; fall back to killing any mosdns so a stale instance can't
+	# survive a restart and hold the racing ports.
+	local sdp="$RUN_DIR/multidns/mosdns.pid"
+	if [ -f "$sdp" ]; then kill "$(cat "$sdp")" 2>/dev/null; fi
+	pidof mosdns >/dev/null 2>&1 && kill "$(pidof mosdns)" 2>/dev/null
+	rm -f "$sdp" 2>/dev/null
 
 	# Only remove the log; hiddify-c.json is manually placed by the user
 	rm -f "$RUN_DIR/hiddify-c.log"
