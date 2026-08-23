@@ -1281,24 +1281,95 @@ config.outbounds = [
 	}
 ];
 
+/* Build a URLTest outbound from one of three pool modes:
+ *   auto   — every imported node participates (no list to maintain);
+ *   prefer — the preferred node first, the rest raced behind it via a nested
+ *            urltest (preferred is used as long as it is alive and within
+ *            tolerance of the best alternative);
+ *   manual — only the explicitly selected nodes (legacy behavior).
+ * Returns { outbound, extra } where extra is the flat list of node sections
+ * used (for endpoint/outbound emission) and outbound may be null when the pool
+ * ends up empty (caller falls back to a plain direct outbound so the config
+ * stays valid and DNS/internet keep working). */
+function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) {
+	let outbounds = [],
+	    extra = [],
+	    rest = [],
+	    pref = null;
+
+	if (mode === 'auto') {
+		uci.foreach(uciconfig, ucinode, (cfg) => {
+			push(outbounds, `cfg-${cfg['.name']}-out`);
+			push(extra, cfg['.name']);
+		});
+	} else if (mode === 'prefer') {
+		if (!isEmpty(preferred) && uci.get_all(uciconfig, preferred) != null) {
+			pref = preferred;
+			push(outbounds, `cfg-${pref}-out`);
+			push(extra, pref);
+		}
+		uci.foreach(uciconfig, ucinode, (cfg) => {
+			if (cfg['.name'] === pref)
+				return;
+			push(rest, `cfg-${cfg['.name']}-out`);
+			push(extra, cfg['.name']);
+		});
+		if (length(rest)) {
+			push(config.outbounds, {
+				type: 'urltest',
+				tag: tag + '-alt',
+				outbounds: rest,
+				interval: strToTime(interval),
+				tolerance: strToInt(tolerance)
+			});
+			push(outbounds, tag + '-alt');
+		}
+	} else {
+		for (let k in (manual_nodes || [])) {
+			if (uci.get_all(uciconfig, k) == null)
+				continue;
+			push(outbounds, `cfg-${k}-out`);
+			push(extra, k);
+		}
+	}
+
+	if (!length(outbounds))
+		return { outbound: null, extra: extra };
+
+	return { outbound: {
+		type: 'urltest',
+		tag: tag,
+		outbounds: outbounds,
+		interval: strToTime(interval),
+		tolerance: strToInt(tolerance),
+		idle_timeout: (strToInt(interval) > 1800) ? `${interval * 2}s` : null
+	}, extra: extra };
+}
+
 /* Main outbounds */
 if (!isEmpty(main_node)) {
 	let urltest_nodes = [];
 
 	if (main_node === 'urltest') {
-		const main_urltest_nodes = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [], (k) => uci.get_all(uciconfig, k) != null);
+		/* Mode is a backward-compatible option: configs that predate the modes keep
+		 * their explicit node list (manual). New installs set 'auto' explicitly. */
+		const main_urltest_nodes = uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [];
+		const main_urltest_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
+		const main_urltest_preferred = uci.get(uciconfig, ucimain, 'main_urltest_preferred');
 		const main_urltest_interval = uci.get(uciconfig, ucimain, 'main_urltest_interval');
 		const main_urltest_tolerance = uci.get(uciconfig, ucimain, 'main_urltest_tolerance');
 
-		push(config.outbounds, {
-			type: 'urltest',
-			tag: 'main-out',
-			outbounds: map(main_urltest_nodes, (k) => `cfg-${k}-out`),
-			interval: strToTime(main_urltest_interval),
-			tolerance: strToInt(main_urltest_tolerance),
-			idle_timeout: (strToInt(main_urltest_interval) > 1800) ? `${main_urltest_interval * 2}s` : null,
-		});
-		urltest_nodes = main_urltest_nodes;
+		const ut = build_urltest('main-out', main_urltest_mode, main_urltest_preferred,
+			main_urltest_nodes, main_urltest_interval, main_urltest_tolerance);
+		if (ut.outbound)
+			push(config.outbounds, ut.outbound);
+		else {
+			/* Empty pool (no nodes yet): keep the config valid — direct egress means
+			 * DNS + internet keep working, the user just has no proxying. */
+			warn('homeproxy: URLTest pool is empty, main-out falls back to direct.\n');
+			push(config.outbounds, { type: 'direct', tag: 'main-out' });
+		}
+		urltest_nodes = ut.extra;
 	} else if (main_node === 'byedpi-out') {
 		/* ByeDPI as main node: route through the local ByeDPI socks proxy.
 		 * byedpi-out is a synthetic tag, not a real node section, so build the
@@ -1326,6 +1397,11 @@ if (!isEmpty(main_node)) {
 			});
 		else
 			push(config.outbounds, { type: 'direct', tag: 'main-out' });
+	} else if (main_node === 'direct-out') {
+		/* Explicit "no proxy" fallback: used when the user has no subscription or
+		 * node configured yet. Everything routes direct and the internet keeps
+		 * working (DNS hijack → core → direct resolution). */
+		push(config.outbounds, { type: 'direct', tag: 'main-out' });
 	} else {
 		const main_node_cfg = uci.get_all(uciconfig, main_node) || {};
 		if (main_node_cfg.type in ['wireguard', 'amneziawg']) {
@@ -1338,19 +1414,21 @@ if (!isEmpty(main_node)) {
 	}
 
 	if (main_udp_node === 'urltest') {
-		const main_udp_urltest_nodes = filter(uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [], (k) => uci.get_all(uciconfig, k) != null);
+		const main_udp_urltest_nodes = uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [];
+		const main_udp_urltest_mode = uci.get(uciconfig, ucimain, 'main_udp_urltest_mode') || 'manual';
+		const main_udp_urltest_preferred = uci.get(uciconfig, ucimain, 'main_udp_urltest_preferred');
 		const main_udp_urltest_interval = uci.get(uciconfig, ucimain, 'main_udp_urltest_interval');
 		const main_udp_urltest_tolerance = uci.get(uciconfig, ucimain, 'main_udp_urltest_tolerance');
 
-		push(config.outbounds, {
-			type: 'urltest',
-			tag: 'main-udp-out',
-			outbounds: map(main_udp_urltest_nodes, (k) => `cfg-${k}-out`),
-			interval: strToTime(main_udp_urltest_interval),
-			tolerance: strToInt(main_udp_urltest_tolerance),
-			idle_timeout: (strToInt(main_udp_urltest_interval) > 1800) ? `${main_udp_urltest_interval * 2}s` : null,
-		});
-		urltest_nodes = [...urltest_nodes, ...filter(main_udp_urltest_nodes, (l) => !~index(urltest_nodes, l))];
+		const ut = build_urltest('main-udp-out', main_udp_urltest_mode, main_udp_urltest_preferred,
+			main_udp_urltest_nodes, main_udp_urltest_interval, main_udp_urltest_tolerance);
+		if (ut.outbound)
+			push(config.outbounds, ut.outbound);
+		else {
+			warn('homeproxy: UDP URLTest pool is empty, main-udp-out falls back to direct.\n');
+			push(config.outbounds, { type: 'direct', tag: 'main-udp-out' });
+		}
+		urltest_nodes = [...urltest_nodes, ...filter(ut.extra, (l) => !~index(urltest_nodes, l))];
 	} else if (dedicated_udp_node && main_udp_node === 'byedpi-out') {
 		/* ByeDPI as dedicated UDP node — same synthetic-tag handling as above */
 		if (byedpi_enabled === '1')
@@ -1766,11 +1844,20 @@ if (!isEmpty(main_node)) {
 		const main_node_type = uci.get(uciconfig, main_node, 'type') || '';
 		let main_has_wg = (main_node_type in ['wireguard', 'amneziawg']);
 		if (!main_has_wg && main_node === 'urltest') {
-			const ut_nodes = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [], (k) => uci.get_all(uciconfig, k) != null);
-			for (let n in ut_nodes) {
-				if ((uci.get(uciconfig, n, 'type') || '') in ['wireguard', 'amneziawg']) {
-					main_has_wg = true;
-					break;
+			const ut_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
+			const scan_wg = (n) => ((uci.get(uciconfig, n, 'type') || '') in ['wireguard', 'amneziawg']);
+			if (ut_mode === 'auto' || ut_mode === 'prefer') {
+				uci.foreach(uciconfig, ucinode, (c) => {
+					if (!main_has_wg && scan_wg(c['.name']))
+						main_has_wg = true;
+				});
+			} else {
+				const ut_nodes = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [], (k) => uci.get_all(uciconfig, k) != null);
+				for (let n in ut_nodes) {
+					if (scan_wg(n)) {
+						main_has_wg = true;
+						break;
+					}
 				}
 			}
 		}

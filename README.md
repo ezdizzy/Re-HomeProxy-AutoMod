@@ -28,12 +28,21 @@ This mod adds the following on top of the original Re-HomeProxy app:
   the proxy; a host that fails directly but works via the proxy is remembered (base domain + learned IPs) and routed
   through the proxy / ByeDPI / Zapret. Fully compatible with ByeDPI and Zapret — learned sites follow the same path the
   user selected.
+- **MultiDNS (mosdns engine)** — a DNS accelerator: every query is raced in parallel across all servers of the pool
+  (plain "Russia" + encrypted "Secure"), returning the fastest live answer. A quality daemon verifies over HTTPS that the
+  returned IPs actually open sites and auto-prunes dead/polluted servers and IPs. Configure on the **MultiDNS** tab of
+  Client Settings; install/update mosdns from its card on **Core & Tools**.
+- **URLTest with three modes** — **Auto** (all imported nodes), **Preferred node + auto** (your chosen node first, the
+  fastest of the rest when it dies or slows down) and **Manual node list** (classic explicit selection).
 - **Tun TCP/UDP fix** — corrected Tun mode delivery of `tun_mark` flows into the tun device with a loop guard, so Tun
   routing works correctly.
 - **In-app self-update** — on the **Core & Tools** tab you can check for a new version and update the LuCI app (and the
   Russian translation) in place, without touching the SSH console. See *Updating the app* below.
 - **Fork default** — `install.sh` installs the LuCI app and Russian locale from `ezdizzy/re-homeproxy` by default
   (cores / ByeDPI / Zapret still come from upstream `1andrevich/*`).
+- **Interactive installer** — `install.sh` walks you through everything (subscription, MultiDNS, Automation, Zapret with
+  automatic strategy testing) and **never leaves you without internet**: with no subscription it switches to direct mode
+  and adds a "YouTube → Zapret" rule. Re-running the script opens a configuration menu.
 - Complete Russian (ru) translation of every tab, including Automation and DNS-failover strings.
 
 > ⚠️ This is an experimental mod. By installing it you acknowledge that some features may not work as expected —
@@ -52,7 +61,10 @@ This mod adds the following on top of the original Re-HomeProxy app:
   - **Zapret 2** ([bol-van/zapret2](https://github.com/bol-van/zapret2), nfqws2) — a packet-level NFQUEUE desync that
     mangles the handshake in-place. Selected per routing rule (e.g. send only YouTube/Discord through it), with curated
     presets, optional Discord-voice desync, and its own scoped tester.
-- **URLTest auto-selection** — automatically routes through the fastest reachable node and fails over when one goes down.
+- **URLTest auto-selection** — three modes: **Auto** (all nodes), **Preferred node + auto**, **Manual node list**.
+  Automatically routes through the fastest reachable node and fails over when one goes down.
+- **MultiDNS** — races every DNS server of the pool on each query (mosdns engine) plus a quality daemon with HTTP
+  "site opens" verification and automatic pruning of dead servers/IPs.
 - **Russia routing rules** — one-click RU Proxy Rules (Russia Inside, Re:Filter) with curated domain/IP lists, so only
   blocked destinations go through the proxy.
 - **Subscription support** — import nodes from subscription links (sing-box JSON / Hiddify, base64 / plain share-links,
@@ -77,12 +89,21 @@ compact build for small memory devices.*
 
 ### Quick install (one-liner)
 
-Installs the LuCI app, then interactively walks you through the proxy core and optional ByeDPI / Zapret. Works on APK
-(25.12+), opkg (24.10) and 23.05 legacy. Run over SSH on the router:
+Interactive installer: it installs the LuCI app (+ Russian language), then walks you through the rest step by step — the
+proxy core (with a warning that Telegram/WhatsApp/Instagram and other blocked services won't work without a subscription),
+adding a subscription or a share-link, enabling **MultiDNS** and **Automation**, installing **Zapret 2** with automatic
+strategy testing (starts with Hostfakesplit and checks YouTube) and **ByeDPI** (up to you).
+
+Key point: **you are never left without internet** — with no subscription the script switches to direct mode and
+immediately creates a "Source YouTube → Node Zapret" rule. Re-running the script opens a **configuration menu**: add a
+subscription/node, pick the main node, toggle MultiDNS/Automation, retest Zapret strategies, update the core, etc. Works
+on APK (25.12+), opkg (24.10) and 23.05 legacy. Run over SSH on the router:
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
 ```
+
+The script detects an existing installation and opens the configuration menu instead of reinstalling.
 
 Behind a blocked/throttled GitHub, pass a mirror (note: the env var goes on `sh`, not `wget`):
 

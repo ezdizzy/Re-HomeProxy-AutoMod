@@ -63,7 +63,7 @@ start_service() {
 		uci -q set "$CONF.multidns.use_plain=1"
 		uci -q set "$CONF.multidns.use_secure=1"
 		uci -q set "$CONF.multidns.secure_via_proxy=1"
-		uci -q set "$CONF.multidns.bench_interval=300"
+		uci -q set "$CONF.multidns.bench_interval=120"
 		uci -q commit "$CONF"
 		log "created missing $CONF.multidns section (defaults)."
 	fi

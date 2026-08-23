@@ -195,6 +195,7 @@ return view.extend({
 			o.value(i, proxy_nodes[i]);
 		o.value('byedpi-out', _('ByeDPI'));
 		o.value('zapret-out', _('Zapret'));
+		o.value('direct-out', _('Direct (no proxy)'));
 		o.default = 'nil';
 		o.depends({'routing_mode': /^((?!custom).)+$/});
 		o.rmempty = false;
@@ -232,16 +233,33 @@ return view.extend({
 		};
 
 		o = s.taboption('routing', form.DummyValue, '_urltest_info', _('URLTest'),
-			_('Automatically picks the fastest node by periodically measuring latency. Traffic is always sent through the lowest-latency node in the pool.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the URLTest pool.'));
+			_('Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> uses your chosen node first and falls back to the rest when it is dead or too slow; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool.'));
 		o.depends('main_node', 'urltest');
 		o.rawhtml = true;
 		o.cfgvalue = function() { return ''; };
+
+		o = s.taboption('routing', form.ListValue, 'main_urltest_mode', _('URLTest mode'));
+		o.value('auto', _('Auto — all nodes (recommended)'));
+		o.value('prefer', _('Preferred node + auto'));
+		o.value('manual', _('Manual node list'));
+		o.default = 'manual';
+		o.depends('main_node', 'urltest');
+		o.rmempty = false;
+
+		o = s.taboption('routing', form.ListValue, 'main_urltest_preferred', _('Preferred node'),
+			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
+		for (let i in proxy_nodes)
+			o.value(i, proxy_nodes[i]);
+		o.depends('main_node', 'urltest');
+		o.depends('main_urltest_mode', 'prefer');
+		o.rmempty = false;
 
 		o = s.taboption('routing', hp.CBIStaticList, 'main_urltest_nodes', _('URLTest nodes'),
 			_('List of nodes to test.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends('main_node', 'urltest');
+		o.depends('main_urltest_mode', 'manual');
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Value, 'main_urltest_interval', _('Test interval'),
@@ -264,8 +282,25 @@ return view.extend({
 			o.value(i, proxy_nodes[i]);
 		o.value('byedpi-out', _('ByeDPI'));
 		o.value('zapret-out', _('Zapret'));
+		o.value('direct-out', _('Direct (no proxy)'));
 		o.default = 'nil';
 		o.depends({'routing_mode': /^((?!custom|proxy_banned_ru).)+$/, 'proxy_mode': /^((?!redirect$).)+$/});
+		o.rmempty = false;
+
+		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_mode', _('URLTest mode'));
+		o.value('auto', _('Auto — all nodes (recommended)'));
+		o.value('prefer', _('Preferred node + auto'));
+		o.value('manual', _('Manual node list'));
+		o.default = 'manual';
+		o.depends('main_udp_node', 'urltest');
+		o.rmempty = false;
+
+		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_preferred', _('Preferred node'),
+			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
+		for (let i in proxy_nodes)
+			o.value(i, proxy_nodes[i]);
+		o.depends('main_udp_node', 'urltest');
+		o.depends('main_udp_urltest_mode', 'prefer');
 		o.rmempty = false;
 
 		o = s.taboption('routing', hp.CBIStaticList, 'main_udp_urltest_nodes', _('URLTest nodes'),
@@ -273,6 +308,7 @@ return view.extend({
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends('main_udp_node', 'urltest');
+		o.depends('main_udp_urltest_mode', 'manual');
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_interval', _('Test interval'),
@@ -1974,10 +2010,10 @@ return view.extend({
 		so.depends('use_secure', '1');
 
 		so = ss.option(form.Value, 'bench_interval', _('Quality check interval (seconds)'),
-			_('How often the analyzer probes each server for latency / liveness / poisoning and updates trends.'));
+			_('How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 120s — lower reacts faster to a bad server but verifies sites more often.'));
 		so.datatype = 'uinteger';
-		so.default = '300';
-		so.placeholder = '300';
+		so.default = '120';
+		so.placeholder = '120';
 		so.rmempty = false;
 		so.depends('enabled', '1');
 		so.depends('use_plain', '1');

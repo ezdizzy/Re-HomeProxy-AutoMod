@@ -1261,17 +1261,37 @@ function main() {
 		const first_server = uci.get_first(uciconfig, ucinode);
 		if (first_server) {
 			let main_urltest_nodes;
+			let urltest_empty = false;
 			if (main_node === 'urltest') {
-				main_urltest_nodes = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes'), (v) => {
-					if (!uci.get(uciconfig, v)) {
-						log(sprintf('Node %s is gone, removing from urltest list.', v));
-						return false;
+				const ut_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
+				if (ut_mode === 'manual') {
+					main_urltest_nodes = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes'), (v) => {
+						if (!uci.get(uciconfig, v)) {
+							log(sprintf('Node %s is gone, removing from urltest list.', v));
+							return false;
+						}
+						return true;
+					});
+					if (!length(main_urltest_nodes)) {
+						uci.set(uciconfig, ucimain, 'main_urltest_nodes', main_urltest_nodes);
+						urltest_empty = true;
 					}
-					return true;
-				});
+				} else if (ut_mode === 'prefer') {
+					/* Preferred node gone → clear it; the pool falls back to the rest. */
+					const pref = uci.get(uciconfig, ucimain, 'main_urltest_preferred');
+					if (pref && !uci.get(uciconfig, pref)) {
+						log(sprintf('Preferred node %s is gone, clearing preference.', pref));
+						uci.delete(uciconfig, ucimain, 'main_urltest_preferred');
+					}
+				}
+				/* auto: implicit pool — nothing to maintain */
 			}
 
-			if ((main_node === 'urltest') ? !length(main_urltest_nodes) : !uci.get(uciconfig, main_node)) {
+			/* Synthetic tags (direct/ByeDPI/Zapret) are not node sections and must not
+			 * be treated as missing nodes. */
+			const synthetic = ['direct-out', 'byedpi-out', 'zapret-out'];
+			if ((main_node === 'urltest') ? urltest_empty :
+			    (!(main_node in synthetic) && !uci.get(uciconfig, main_node))) {
 				uci.set(uciconfig, ucimain, 'main_node', first_server);
 				uci.commit(uciconfig);
 				need_restart = true;
@@ -1281,17 +1301,32 @@ function main() {
 
 			if (!isEmpty(main_udp_node) && main_udp_node !== 'same') {
 				let main_udp_urltest_nodes;
+				let udp_urltest_empty = false;
 				if (main_udp_node === 'urltest') {
-					main_udp_urltest_nodes = filter(uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes'), (v) => {
-						if (!uci.get(uciconfig, v)) {
-							log(sprintf('Node %s is gone, removing from urltest list.', v));
-							return false;
+					const ut_mode = uci.get(uciconfig, ucimain, 'main_udp_urltest_mode') || 'manual';
+					if (ut_mode === 'manual') {
+						main_udp_urltest_nodes = filter(uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes'), (v) => {
+							if (!uci.get(uciconfig, v)) {
+								log(sprintf('Node %s is gone, removing from UDP urltest list.', v));
+								return false;
+							}
+							return true;
+						});
+						if (!length(main_udp_urltest_nodes)) {
+							uci.set(uciconfig, ucimain, 'main_udp_urltest_nodes', main_udp_urltest_nodes);
+							udp_urltest_empty = true;
 						}
-						return true;
-					});
+					} else if (ut_mode === 'prefer') {
+						const pref = uci.get(uciconfig, ucimain, 'main_udp_urltest_preferred');
+						if (pref && !uci.get(uciconfig, pref)) {
+							log(sprintf('Preferred UDP node %s is gone, clearing preference.', pref));
+							uci.delete(uciconfig, ucimain, 'main_udp_urltest_preferred');
+						}
+					}
 				}
 
-				if ((main_udp_node === 'urltest') ? !length(main_udp_urltest_nodes) : !uci.get(uciconfig, main_udp_node)) {
+				if ((main_udp_node === 'urltest') ? udp_urltest_empty :
+				    (!(main_udp_node in synthetic) && !uci.get(uciconfig, main_udp_node))) {
 					uci.set(uciconfig, ucimain, 'main_udp_node', first_server);
 					uci.commit(uciconfig);
 					need_restart = true;

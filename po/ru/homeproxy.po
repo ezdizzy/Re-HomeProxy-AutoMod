@@ -4019,8 +4019,36 @@ msgid "How often each node is tested (seconds). Lower = faster failover, higher 
 msgstr "Время в секундах: меньше = узлы тестируются чаще, больше = реже тесты - меньше нагрузки."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Automatically picks the fastest node by periodically measuring latency. Traffic is always sent through the lowest-latency node in the pool.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the URLTest pool."
-msgstr "Автоматически выбирает самый быстрый узел, периодически измеряя задержку. Трафик всегда идёт через узел с наименьшей задержкой в пуле.<br>Если вы испытываете проблемы с подключением, а узел остаётся оранжевым/серым продолжительное время — попробуйте удалить его из списка URLTest."
+msgid "Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> uses your chosen node first and falls back to the rest when it is dead or too slow; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool."
+msgstr "Автоматически выбирает самый быстрый узел, периодически измеряя задержку. <b>Авто</b> использует все импортированные узлы; <b>Приоритетный узел + авто</b> сначала использует выбранный узел и переключается на остальные, когда он мёртв или слишком медленный; <b>Список узлов вручную</b> использует только выбранные узлы.<br>Если есть проблемы с подключением и узел долго остаётся оранжевым/серым — попробуйте убрать его из пула."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "URLTest mode"
+msgstr "Режим URLTest"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Auto — all nodes (recommended)"
+msgstr "Авто — все узлы (рекомендуется)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Preferred node + auto"
+msgstr "Приоритетный узел + авто"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Manual node list"
+msgstr "Список узлов вручную"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Preferred node"
+msgstr "Приоритетный узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance."
+msgstr "Используется первым; трафик переключается на самый быстрый из остальных узлов, когда он мёртв или медленнее лучшей альтернативы более чем на допуск."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Direct (no proxy)"
+msgstr "Напрямую (без прокси)"
 
 msgid "Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values."
 msgstr "Минимальная разница задержек (мс) для переключения на более быстрый узел — предотвращает постоянное переключение между узлами с близкой задержкой."
@@ -4807,8 +4835,8 @@ msgid "Send the secure pool’s DoH/DoT queries through the proxy tunnel (SOCKS5
 msgstr "Отправляет DoH/DoT-запросы защищённого пула через туннель прокси (SOCKS5), чтобы провайдер не видел, какие сайты вы ищете. Выключите, чтобы резолвить напрямую (всё ещё шифруется)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends."
-msgstr "Как часто анализатор опрашивает каждый сервер на задержку, живость и отравление и обновляет тренды."
+msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 120s — lower reacts faster to a bad server but verifies sites more often."
+msgstr "Как часто анализатор опрашивает каждый сервер на задержку, живость и отравление и обновляет тренды. По умолчанию 120 с — меньше значение быстрее реагирует на плохой сервер, но чаще проверяет сайты."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Disable & restore DNS"

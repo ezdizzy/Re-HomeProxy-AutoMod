@@ -3912,8 +3912,36 @@ msgstr "تشخیص خودکار سایت‌های مسدود"
 msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the proxy list. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path. After toggling, press “Restart service” below."
 msgstr "یادگیری خودکار سایت‌های مسدود: ترافیکی که مستقیم ناموفق اما از طریق پروکسی موفق است به لیست پروکسی افزوده می‌شود. کاملاً سازگار با ByeDPI و Zapret — سایت‌های یادگرفته‌شده به‌سادگی از مسیر اصلی پیکربندی‌شده شما استفاده می‌کنند. پس از تغییر، «راه‌اندازی مجدد سرویس» را پایین بزنید."
 
-msgid "Automatically picks the fastest node by periodically measuring latency. Traffic is always sent through the lowest-latency node in the pool.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the URLTest pool."
-msgstr "با اندازه‌گیری دوره‌ای تأخیر، سریع‌ترین نود را به‌طور خودکار انتخاب می‌کند. ترافیک همیشه از طریق نود با کمترین تأخیر در مجموعه ارسال می‌شود.<br>اگر مشکل اتصال دارید و نودی برای مدت طولانی نارنجی/خاکستری می‌ماند، آن را از مجموعه URLTest حذف کنید."
+msgid "Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> uses your chosen node first and falls back to the rest when it is dead or too slow; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool."
+msgstr "با اندازه‌گیری دوره‌ای تأخیر، سریع‌ترین نود را خودکار انتخاب می‌کند. <b>خودکار</b> از همه نودهای واردشده استفاده می‌کند؛ <b>نود اولویت‌دار + خودکار</b> ابتدا نود انتخابی شما را به کار می‌گیرد و وقتی مرده یا خیلی کند باشد به بقیه بازمی‌گردد؛ <b>فهرست دستی نودها</b> فقط از نودهای انتخابی شما استفاده می‌کند.<br>اگر مشکل اتصال دارید و نودی برای مدت طولانی نارنجی/خاکستری می‌ماند، آن را از مجموعه حذف کنید."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "URLTest mode"
+msgstr "حالت URLTest"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Auto — all nodes (recommended)"
+msgstr "خودکار — همه نودها (توصیه‌شده)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Preferred node + auto"
+msgstr "نود اولویت‌دار + خودکار"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Manual node list"
+msgstr "فهرست دستی نودها"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Preferred node"
+msgstr "نود اولویت‌دار"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance."
+msgstr "ابتدا استفاده می‌شود؛ وقتی مرده باشد یا بیش از حد تحمل از بهترین جایگزین کندتر باشد، ترافیک به سریع‌ترین نود باقی‌مانده منتقل می‌شود."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Direct (no proxy)"
+msgstr "مستقیم (بدون پروکسی)"
 
 msgid "Automation"
 msgstr "خودکارسازی"
@@ -4221,8 +4249,8 @@ msgstr "مهلت دست‌دادن"
 msgid "High"
 msgstr "زیاد"
 
-msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends."
-msgstr "هر چند وقت یک‌بار تحلیل‌گر هر سرور را برای تأخیر / فعال بودن / آلودگی کاوش و روندها را به‌روزرسانی می‌کند."
+msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 120s — lower reacts faster to a bad server but verifies sites more often."
+msgstr "هر چند وقت یک‌بار تحلیل‌گر هر سرور را برای تأخیر / فعال بودن / آلودگی کاوش و روندها را به‌روزرسانی می‌کند. پیش‌فرض ۱۲۰ ثانیه — مقدار کمتر سریع‌تر به سرور بد واکنش نشان می‌دهد اما سایت‌ها را بیشتر بررسی می‌کند."
 
 msgid "How often the learned list is pushed to the live routing rules (hot reload — no core restart). Newly learned sites then apply to new connections within this window. A full service restart also applies them, but this keeps them live without one."
 msgstr "هر چند وقت یک‌بار لیست یادگرفته‌شده به قوانین مسیردهی زنده اعمال می‌شود (hot reload — بدون راه‌اندازی مجدد هسته). سایت‌های تازه‌یادگرفته‌شده سپس در همین بازه روی اتصالات جدید اعمال می‌شوند. راه‌اندازی مجدد کامل سرویس هم آن‌ها را اعمال می‌کند، اما این کار بدون آن نیز آن‌ها را زنده نگه می‌دارد."

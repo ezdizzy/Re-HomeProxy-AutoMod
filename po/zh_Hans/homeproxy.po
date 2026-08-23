@@ -3967,8 +3967,36 @@ msgstr "自动封锁站点检测"
 msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the proxy list. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path. After toggling, press “Restart service” below."
 msgstr "自动学习被封锁站点：直连失败但通过代理可用的流量会被加入代理列表。与 ByeDPI 和 Zapret 完全兼容——学习到的站点直接使用您配置的主路径。切换后请点击下方“重启服务”。"
 
-msgid "Automatically picks the fastest node by periodically measuring latency. Traffic is always sent through the lowest-latency node in the pool.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the URLTest pool."
-msgstr "通过定期测量延迟自动选择最快节点。流量始终通过池中延迟最低的节点发送。<br>如果连接有问题且某节点长时间保持橙色/灰色，请尝试将其从 URLTest 池中移除。"
+msgid "Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> uses your chosen node first and falls back to the rest when it is dead or too slow; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool."
+msgstr "通过周期性的延迟测量自动选择最快的节点。<b>自动</b>使用所有导入的节点；<b>优先节点 + 自动</b>先使用您选择的节点，当其失效或过慢时回退到其余节点；<b>手动节点列表</b>仅使用您选择的节点。<br>如果连接有问题且某节点长时间保持橙色/灰色，请尝试将其从池中移除。"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "URLTest mode"
+msgstr "URLTest 模式"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Auto — all nodes (recommended)"
+msgstr "自动 — 所有节点（推荐）"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Preferred node + auto"
+msgstr "优先节点 + 自动"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Manual node list"
+msgstr "手动节点列表"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Preferred node"
+msgstr "优先节点"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance."
+msgstr "优先使用；当其失效或比最佳替代节点慢超过容差时，流量切换到其余节点中最快的一个。"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Direct (no proxy)"
+msgstr "直连（无代理）"
 
 msgid "Automation"
 msgstr "自动化"
@@ -4264,8 +4292,8 @@ msgstr "H4"
 msgid "Handshake timeout"
 msgstr "握手超时"
 
-msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends."
-msgstr "分析器探测每个服务器延迟 / 存活 / 污染的频率并更新趋势。"
+msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 120s — lower reacts faster to a bad server but verifies sites more often."
+msgstr "分析器探测每个服务器延迟 / 存活 / 污染的频率并更新趋势。默认 120 秒 — 数值越小对坏服务器的反应越快，但会更频繁地验证站点。"
 
 msgid "How often the learned list is pushed to the live routing rules (hot reload — no core restart). Newly learned sites then apply to new connections within this window. A full service restart also applies them, but this keeps them live without one."
 msgstr "学习列表推送到实时路由规则的频率（热重载 — 无需重启核心）。新学习到的站点会在此窗口内应用到新连接。完全重启服务也能应用，但此方式无需重启即可保持生效。"

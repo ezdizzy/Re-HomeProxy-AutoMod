@@ -55,7 +55,7 @@ let PROXY = '127.0.0.1:5338';   /* dedicated mdns-proxy-in (mixed) pinned to mai
 
 let uci = null;
 let enabled = '0', use_plain = '1', use_secure = '1', secure_via_proxy = '1',
-    bench_interval = 300, alpha = 40, min_live_ratio = 50, min_score = 20,
+    bench_interval = 120, alpha = 40, min_live_ratio = 50, min_score = 20,
     plain_port = 5453, secure_port = 5454;
 
 function log(msg) {
@@ -881,7 +881,7 @@ function main() {
 		use_plain = (uci.get('homeproxy', 'multidns', 'use_plain') || '1') !== '0';
 		use_secure = (uci.get('homeproxy', 'multidns', 'use_secure') || '1') !== '0';
 		secure_via_proxy = (uci.get('homeproxy', 'multidns', 'secure_via_proxy') || '1') !== '0';
-		bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '300') || 300;
+			bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '120') || 120;
 		alpha = ratio100(uci.get('homeproxy', 'multidns', 'alpha') || '0.4', 40);
 		min_live_ratio = ratio100(uci.get('homeproxy', 'multidns', 'min_live_ratio') || '0.5', 50);
 		min_score = int(uci.get('homeproxy', 'multidns', 'min_score') || '20') || 20;
@@ -910,7 +910,7 @@ function main() {
 			use_plain = (uci.get('homeproxy', 'multidns', 'use_plain') || '1') !== '0';
 			use_secure = (uci.get('homeproxy', 'multidns', 'use_secure') || '1') !== '0';
 			secure_via_proxy = (uci.get('homeproxy', 'multidns', 'secure_via_proxy') || '1') !== '0';
-			bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '300') || 300;
+		bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '120') || 120;
 			plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
 			secure_port = uci.get('homeproxy', 'multidns', 'secure_port') || '5454';
 			PROXY = '127.0.0.1:5338';  /* dedicated mdns-proxy-in → main-out */
