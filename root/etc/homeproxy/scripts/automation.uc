@@ -189,11 +189,53 @@ function fingerprint(b) {
  * proxy = auto-proxy-in (:5337) → main-out. A plain router-originated curl is NOT
  * a reliable "direct" probe — the router's own output interception can reroute it
  * through the proxy (e.g. when the host matches the blocklist), which silently
- * fakes "direct works". The pinned inbounds make the two paths explicit. */
+ * fakes "direct works". The pinned inbounds make the two paths explicit.
+ *
+ * DNS-view matters a lot: the direct probe must measure the path the user's
+ * browser actually gets. The router's DNS (mosdns racing) can intermittently
+ * fall back to the SECURE pool (DoH through the proxy) and return non-RU-edge
+ * answers (observed with Vercel: browser got arn1 403, probe got iad1 200 —
+ * the probe resolved through the proxy's DNS view and "direct" looked fine).
+ * So the direct probe resolves the host against a PLAIN public resolver as seen
+ * from Russia and pins the connection to that answer with --resolve — the same
+ * RU-facing resolution a browser would use. The proxy probe keeps `socks5h`
+ * (resolve at the tunnel end) so locally poisoned answers can't break the
+ * proxy-side measurement. */
+function resolve_plain_view(host) {
+	let out = capture(`nslookup -type=A ${shellquote(host)} 8.8.8.8 2>/dev/null`);
+	if (!match(out, /Address/)) {
+		out = capture(`nslookup -type=A ${shellquote(host)} 1.1.1.1 2>/dev/null`);
+		if (!match(out, /Address/))
+			out = capture(`nslookup -type=A ${shellquote(host)} 77.88.8.8 2>/dev/null`);
+	}
+	for (let l in split(out, '\n')) {
+		let m = match(trim(l), /^Address:\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/);
+		if (m && m[1] !== '127.0.0.1')
+			return m[1];
+	}
+	return null;
+}
+
 function probe(host, via_proxy, timeout) {
-	let proxy_port = via_proxy ? AUTO_PROXY_PORT : AUTO_DIRECT_PORT;
+	let pin = '';
+	if (!via_proxy) {
+		/* Plain-view resolution is mandatory for the direct probe: if the plain
+		 * public DNS can't answer (RKN blocks it intermittently), the user's
+		 * browser can't reach the site directly either — report unreachable
+		 * (000) instead of falling back to a possibly proxy-side DNS answer. */
+		let ip = null;
+		for (let t = 0; t < 3 && !ip; t = t + 1) {
+			ip = resolve_plain_view(host);
+			if (!ip) sleep(150);
+		}
+		if (!ip)
+			return { code: '000', ok: false, block: false, fp: '' };
+		pin = ` --resolve ${shellquote(host + ':443:' + ip)}`;
+	}
+	let proxy_arg = via_proxy
+		? ` -x socks5h://127.0.0.1:${AUTO_PROXY_PORT}`
+		: ` -x socks5://127.0.0.1:${AUTO_DIRECT_PORT}`;
 	if (have_curl()) {
-		let proxy_arg = ` -x socks5h://127.0.0.1:${proxy_port}`;
 		let bodyf = RUN_DIR + '/pb.tmp';
 		let codef = RUN_DIR + '/pc.tmp';
 		let code = '000', c = 'fail';
@@ -201,13 +243,13 @@ function probe(host, via_proxy, timeout) {
 		 * leaves STALE content behind, and reading it back silently reports the
 		 * previous probe's code — a nasty source of false "200 direct" results. */
 		system(`rm -f ${shellquote(bodyf)} ${shellquote(codef)}`);
-		system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote('https://' + host)} > ${shellquote(codef)} 2>/dev/null`);
+		system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg}${pin} ${shellquote('https://' + host)} > ${shellquote(codef)} 2>/dev/null`);
 		code = trim(readfile(codef) || '000');
 		c = classify_code(code);
 		if (c === 'fail') {
 			/* 2) HTTPS failed — retry plain HTTP (HTTP-only / redirect-to-http sites). */
 			system(`rm -f ${shellquote(bodyf)} ${shellquote(codef)}`);
-			system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg} ${shellquote('http://' + host)} > ${shellquote(codef)} 2>/dev/null`);
+			system(`curl -sL --max-redirs 3 -o ${shellquote(bodyf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} ${proxy_arg}${pin} ${shellquote('http://' + host)} > ${shellquote(codef)} 2>/dev/null`);
 			code = trim(readfile(codef) || '000');
 			c = classify_code(code);
 		}
@@ -226,23 +268,11 @@ function probe(host, via_proxy, timeout) {
 		let ok = (c === 'ok') && !block;
 		return { code: code, ok: ok, block: block, fp: fp };
 	}
-	let proxy_env = `http_proxy=http://127.0.0.1:${proxy_port} https_proxy=http://127.0.0.1:${proxy_port}`;
+	let wget_port = via_proxy ? AUTO_PROXY_PORT : AUTO_DIRECT_PORT;
+	let proxy_env = `http_proxy=http://127.0.0.1:${wget_port} https_proxy=http://127.0.0.1:${wget_port}`;
 	let rc = system(`${proxy_env} /usr/bin/wget -q -T ${timeout} -t 1 --no-check-certificate -O /dev/null ${shellquote('https://' + host)} 2>/dev/null`, timeout * 1000 + 2000);
 	let ok = (rc === 0);
 	return { code: ok ? '200' : '000', ok: ok, block: false, fp: '' };
-}
-
-function base_domain(host) {
-	host = trim(host);
-	if (!length(host)) return host;
-	if (substr(host, -1) === '.') host = substr(host, 0, length(host) - 1);
-	let parts = split(host, '.');
-	if (length(parts) <= 2) return host;
-	const multi = ['co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'com.au', 'co.jp', 'com.br', 'co.za'];
-	for (let m in multi)
-		if (length(host) > length(m) + 1 && substr(host, length(host) - length(m) - 1) === '.' + m)
-			return parts[length(parts)-3] + '.' + parts[length(parts)-2] + '.' + parts[length(parts)-1];
-	return parts[length(parts)-2] + '.' + parts[length(parts)-1];
 }
 
 function is_private_ip(ip) {
@@ -324,7 +354,9 @@ function discover_sni() {
 	let hosts = [];
 	let lines = split(out, '\n');
 	for (let i = 0; i < length(lines); i = i + 1) {
-		let m = match(lines[i], /([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+){1,})/);
+		/* No {1,} quantifier — this ucode's regex engine rejects open-ended
+		 * intervals ("Repetition not preceded by valid expression"); use +. */
+		let m = match(lines[i], /([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)+)/);
 		if (m && looks_like_host(m[1])) push(hosts, m[1]);
 	}
 	return hosts;
@@ -562,9 +594,13 @@ function main() {
 				st.confirms = 0;
 				return;
 			}
+			/* Unreachable direct (000/timeout/RST) can be a transient blip — require
+			 * ONE extra confirmation before learning. A hard refusal (4xx/5xx) is a
+			 * strong block signal and learns at the normal min_confirm. */
+			const need = (d.code === '000') ? min_confirm + 1 : min_confirm;
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;
-			if (st.confirms >= min_confirm) {
+			if (st.confirms >= need) {
 				if (is_ip) {
 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; }
 				} else if (!auto_set[dom]) {
@@ -604,7 +640,13 @@ function main() {
 		const cap = 24;
 		for (let host in domain_candidates) {
 			if (probed >= cap) break;
-			let dom = base_domain(host);
+			/* Probe the ACTUAL candidate host (the exact domain the user queried /
+			 * the SNI their client sent) — NOT the collapsed base domain. Many
+			 * blocks are subdomain-scoped (e.g. app.kilo.ai is blocked while
+			 * kilo.ai works), and probing only the base domain hides them. */
+			let dom = trim(host);
+			if (substr(dom, -1) === '.') dom = substr(dom, 0, length(dom) - 1);
+			if (substr(dom, 0, 4) === 'www.') dom = substr(dom, 4);
 			if (!looks_like_host(dom)) continue;
 			if (is_excluded(dom)) continue;
 			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
