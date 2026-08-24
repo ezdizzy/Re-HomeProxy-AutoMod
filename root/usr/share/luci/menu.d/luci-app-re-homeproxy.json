@@ -18,6 +18,14 @@
 			"path": "homeproxy/client"
 		}
 	},
+	"admin/services/homeproxy/dns": {
+		"title": "DNS Settings",
+		"order": 12,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/dns"
+		}
+	},
 	"admin/services/homeproxy/node": {
 		"title": "Node Settings",
 		"order": 15,

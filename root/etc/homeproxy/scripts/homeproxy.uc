@@ -103,7 +103,11 @@ function write_ruleset_file(path, obj) {
 export function sync_learned_rulesets() {
 	let res = HP_DIR + '/resources';
 	system('mkdir -p ' + res);
-	let domains = [], ips = [];
+	/* Static list keeps its upstream KEYWORD semantics (substring match, curated by
+	 * the user). Learned entries are EXACT hosts discovered automatically — they must
+	 * go out as domain_suffix (suffix-with-dot-boundary match): a keyword like "t.co"
+	 * would also match "reddit.com" and silently reroute unrelated sites via proxy. */
+	let domains = [], learned_domains = [], ips = [];
 
 	if (access(res + '/proxy_list.txt')) {
 		let raw = readfile(res + '/proxy_list.txt');
@@ -120,7 +124,7 @@ export function sync_learned_rulesets() {
 				x = trim(x);
 				return length(x) && !match(x, /^\s*#/);
 			}))
-				push(domains, d);
+				push(learned_domains, d);
 	}
 	if (access(res + '/auto_proxy_ip.txt')) {
 		let raw = readfile(res + '/auto_proxy_ip.txt');
@@ -132,16 +136,23 @@ export function sync_learned_rulesets() {
 			});
 	}
 
+	/* Both rules live in ONE watched rule-set file so a single hot-reload applies
+	 * static and learned entries together. */
+	let rules = [];
+	if (length(domains))
+		push(rules, { domain_keyword: domains });
+	if (length(learned_domains))
+		push(rules, { domain_suffix: learned_domains });
 	write_ruleset_file(res + '/proxy_domain.json', {
 		version: 1,
-		rules: length(domains) ? [ { domain_keyword: domains } ] : []
+		rules: rules
 	});
 	write_ruleset_file(res + '/auto_ip.json', {
 		version: 1,
 		rules: length(ips) ? [ { ip_cidr: ips } ] : []
 	});
 
-	return { domains: length(domains), ips: length(ips) };
+	return { domains: length(domains) + length(learned_domains), ips: length(ips) };
 };
 
 /* Utilities end */

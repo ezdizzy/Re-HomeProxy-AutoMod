@@ -8,6 +8,21 @@
 'use strict';
 
 import { access, error, lstat, popen, readfile, writefile } from 'fs';
+import { sync_learned_rulesets } from '/etc/homeproxy/scripts/homeproxy.uc';
+
+/* Apply an edited learned list WITHOUT a service restart: rewrite the watched local
+ * rule-set files (proxy_domain.json / auto_ip.json) — the core hot-reloads them.
+ * Full generate+reload is kept only as a fallback for the migration edge where the
+ * running config does not yet reference the learned rule-sets (no hot-reload marker).
+ * The old unconditional restart dropped every connection on each list edit/clear. */
+function apply_learned_list_hot() {
+	if (!access('/var/run/homeproxy/.learned_hotreload')) {
+		system('ucode /etc/homeproxy/scripts/generate_client.uc >/dev/null 2>&1');
+		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+		return;
+	}
+	sync_learned_rulesets();
+}
 
 /* Kanged from ucode/luci */
 function shellquote(s) {
@@ -2091,9 +2106,8 @@ const methods = {
 			}
 			system('mkdir -p ' + HP_DIR + '/resources');
 			writefile(file, content);
-			/* Regenerate so the edited learned list takes effect immediately. */
-			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			/* Regenerate so the edited learned list takes effect immediately (hot reload). */
+			apply_learned_list_hot();
 			return { result: true };
 		}
 	},
@@ -2103,11 +2117,10 @@ const methods = {
 			system('rm -f ' + HP_DIR + '/resources/auto_proxy_list.txt');
 			system('rm -f ' + HP_DIR + '/resources/auto_proxy_ip.txt');
 			system('rm -f ' + RUN_DIR + '/automation_state.json');
-			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			apply_learned_list_hot();
 			return { result: true };
-		}
-	},
+			}
+		},
 
 		automation_clear_log: {
 			call: function(req) {

@@ -13,6 +13,7 @@
 | [Routing & Access Control](Routing-and-Access-Control-en) | Routing modes, RU Proxy Rules, per-device access control |
 | [Server Settings](Server-Settings-en) | Run the router as a proxy server — inbounds, types, TLS/ACME |
 | [DNS & Diagnostics](DNS-and-Diagnostics-en) | Clean vs secure DNS, IPv6 leaks, and the Diagnostics page |
+| [DNS Settings](DNS-Settings-en) | The dedicated DNS page: server pools, reserve DNS and MultiDNS with a live quality monitor |
 | [ByeDPI](ByeDPI-en) | SOCKS-level DPI-bypass — un-throttle sites without a VPN, strategy presets and the tester |
 | [Zapret](Zapret-en) | Packet-level (nfqws2) DPI-bypass — per-rule desync, presets, Discord voice and the tester |
 | [Custom Routing](Custom-Routing-en) | UI routing nodes + rules — match by domain/IP/port/protocol/process |
@@ -32,6 +33,7 @@
 | [Маршрутизация и контроль доступа](Routing-and-Access-Control-ru) | Режимы маршрутизации, RU Proxy Rules, пер-девайс контроль доступа |
 | [Настройки сервера](Server-Settings-ru) | Роутер как прокси-сервер — inbound-ы, типы, TLS/ACME |
 | [DNS и диагностика](DNS-and-Diagnostics-ru) | Чистый и защищённый DNS, утечки IPv6 и страница диагностики |
+| [Настройки DNS](DNS-Settings-ru) | Отдельная страница DNS: пулы серверов, резервный DNS и MultiDNS с живым монитором качества |
 | [ByeDPI](ByeDPI-ru) | Обход DPI на уровне SOCKS — разблокировка сайтов без VPN, пресеты стратегий и тестер |
 | [Zapret](Zapret-ru) | Обход DPI на уровне пакетов (nfqws2) — рассинхронизация по правилам, пресеты, голос Discord и тестер |
 | [Пользовательская маршрутизация](Custom-Routing-ru) | Узлы и правила маршрутизации в UI — матч по домену/IP/порту/протоколу/процессу |

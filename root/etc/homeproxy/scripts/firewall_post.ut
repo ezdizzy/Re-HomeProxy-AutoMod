@@ -72,6 +72,16 @@ if (routing_port === 'common')
 else if (routing_port === 'all')
 	routing_port = null; /* 'all' means no port filter (proxy every port) */
 
+/* VoIP call/media ports must reach the core EVEN when the user narrowed the
+ * interception port set ("Common ports only"): the media ranges (3478-3497,
+ * 50000-65530, ...) are not in the common list, so Proxy calls and Zapret voice
+ * would silently die outside it. Append the ranges the enabled features need —
+ * the nft set has auto-merge, overlaps are harmless. */
+const proxy_calls_fw = uci.get(cfgname, 'config', 'proxy_calls');
+const zapret_voice_fw = (uci.get(cfgname, 'config', 'zapret_enabled') === '1' && uci.get(cfgname, 'config', 'zapret_voice') === '1');
+if ((proxy_calls_fw === '1' || zapret_voice_fw === '1') && !isEmpty(routing_port))
+	routing_port = routing_port + ',1400,8443,4244,7985,5222,5223,5242,5243,596:599,3478:3497,16384:16402,19294:19344,50000:65530';
+
 const proxy_mode = uci.get(cfgname, 'config', 'proxy_mode') || 'redirect_tproxy',
       ipv6_support = uci.get(cfgname, 'config', 'ipv6_support') || '0';
 

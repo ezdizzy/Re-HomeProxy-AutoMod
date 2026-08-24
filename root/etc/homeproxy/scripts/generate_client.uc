@@ -246,7 +246,7 @@ if (match(proxy_mode, /redirect/)) {
 }
 if (match(proxy_mode, /tproxy/))
 	tproxy_port = uci.get(uciconfig, 'infra', 'tproxy_port') || '5332';
-if (match(proxy_mode), /tun/) {
+if (match(proxy_mode, /tun/)) {
 	tun_name = uci.get(uciconfig, uciinfra, 'tun_name') || 'singtun0';
 	tun_addr4 = uci.get(uciconfig, uciinfra, 'tun_addr4') || '172.19.0.1/30';
 	tun_addr6 = uci.get(uciconfig, uciinfra, 'tun_addr6') || 'fdfe:dcba:9876::1/126';
@@ -805,6 +805,17 @@ if (!isEmpty(main_node)) {
 			domain: ['andrevi.ch'],
 			action: 'route',
 			server: 'secure-dns'
+		});
+
+		/* Filter out SVCB/HTTPS queries (types 64/65) for proxied domains — same rule
+		 * the bypass/global modes emit. Browsers use HTTPS records to discover
+		 * alternate endpoints and HTTP/3; letting them resolve via plain DNS leaks
+		 * interest in blocked domains and lets clients bypass domain routing via QUIC.
+		 * Placed BEFORE the proxy-domain route rule so reject wins. */
+		push(config.dns.rules, {
+			rule_set: 'proxy-domain',
+			query_type: [64, 65],
+			action: 'reject'
 		});
 
 		/* Custom proxy list → secure-dns (before ru_domain_rulesets for explicit priority) */

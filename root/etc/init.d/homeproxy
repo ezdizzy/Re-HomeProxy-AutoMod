@@ -462,10 +462,38 @@ service_stopped() {
 }
 
 reload_service() {
+	# Debounce rapid duplicate reloads. The automation DNS-failover path commits UCI
+	# AND calls reload manually; the procd reload-trigger on the same config fires a
+	# SECOND full stop/start right after. rc.common SERIALIZES init.d calls, so the
+	# duplicate always lands shortly AFTER the previous reload finished — hence the
+	# stamp is written on COMPLETION, not on start. A reload arriving this soon after
+	# a completed one is always a redundant duplicate (the finished reload already
+	# applied the current config); legitimate user actions are spaced far wider.
+	local stamp="$RUN_DIR/.last_reload"
+	local now last=0
+	now=$(date +%s)
+	[ -f "$stamp" ] && last=$(cat "$stamp" 2>/dev/null)
+	last=${last:-0}
+	# (a) another reload is literally still running (calls are NOT serialized);
+	local rpid
+	rpid=$(cat "$RUN_DIR/.reload_running" 2>/dev/null)
+	if [ -n "$rpid" ] && kill -0 "$rpid" 2>/dev/null; then
+		log "reload suppressed (debounce: another reload is in progress)."
+		return
+	fi
+	# (b) a reload finished moments ago — its config state is already current.
+	if [ $((now - last)) -lt 20 ]; then
+		log "reload suppressed (debounce: $((now - last))s since previous reload finished)."
+		return
+	fi
+
+	echo "$$" > "$RUN_DIR/.reload_running"
 	log "Reloading service..."
 
 	stop
 	start
+	rm -f "$RUN_DIR/.reload_running"
+	date +%s > "$stamp"
 }
 
 service_triggers() {

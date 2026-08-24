@@ -8,7 +8,7 @@ Two related topics: how Re:HomeProxy AutoMod resolves names (and why that matter
 
 ## DNS
 
-DNS is configured on **Client → Routing**. Which fields appear depends on the routing mode.
+DNS pools, reserve DNS and MultiDNS are configured on the dedicated **[DNS Settings](DNS-Settings-en)** page (Services → Re:HomeProxy AutoMod → DNS Settings). **Client → Routing** keeps only the single DNS server of the Global routing mode (with its preset and alternate servers). Which fields appear depends on the routing mode.
 
 ### Russia mode (`proxy_banned_ru`) — two resolvers
 

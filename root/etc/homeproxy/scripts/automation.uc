@@ -21,6 +21,20 @@
  * (→ proxy-domain ruleset); learned IPs go to resources/auto_proxy_ip.txt (→ auto-ip
  *   ip_cidr ruleset). Both route via the user's main path → ByeDPI/Zapret compatible.
  *
+ * Non-HTTP destinations (Telegram DC MTProto, game servers, hardcoded-IP apps) never
+ * answer HTTP probes — for those the daemon falls back to a TLS/TCP reachability probe
+ * through the same pinned inbounds: a TLS error exit proves the TCP handshake SUCCEEDED
+ * (endpoint alive, just not TLS), so "TCP dead direct + TCP ok via proxy" is learnable
+ * even when no HTTP response exists. Raw UDP media (calls) is NOT detectable this way —
+ * that stays with the per-service call-proxying rules.
+ *
+ * Learned entries are self-healing: every hour a couple of stale entries are re-probed
+ * DIRECT; an entry answering directly 3 times in a row is removed from the learned lists
+ * (it no longer needs the proxy) — so a site unblocked by RKN returns to direct without
+ * user action, in both balanced and aggressive mode. Shared-CDN address space
+ * (Cloudflare etc.) is NEVER learned as IPs: one learned prefix there would reroute
+ * unrelated services sharing the same addresses.
+ *
  * C — DNS failover: if enabled, monitor the primary DNS (config.dns_server) and the
  *   alt_dns_servers list; if the primary becomes unreachable, rewrite dns_server to a
  *   healthy alternate and regenerate.  [C]
@@ -38,6 +52,46 @@ const RES = HP_DIR + '/resources';
 
 const AUTO_DIRECT_PORT = 5336;
 const AUTO_PROXY_PORT = 5337;
+
+/* Probe budget per cycle: domains and IPs have SEPARATE caps so IP learning can never
+ * starve domain learning (and vice versa). */
+const DOM_CAP = 16;
+const IP_CAP = 8;
+
+/* Self-healing: re-check learned entries older than 7 days, REEVAL_BATCH per hour.
+ * An entry is removed only after HEAL_CONFIRM consecutive DIRECT successes — a single
+ * transient direct success (flapping proxy, captive portal) must not unlearn it. */
+const REEVAL_PERIOD = 3600;
+const REEVAL_AGE = 604800;
+const REEVAL_BATCH = 2;
+const HEAL_CONFIRM = 3;
+
+/* Shared-CDN IPv4 prefixes NEVER learned as IPs. Big CDNs hand the SAME addresses to
+ * blocked and unblocked services alike; one learned prefix there reroutes unrelated
+ * traffic through the proxy (collateral damage). Cloudflare's main anycast space is
+ * covered; extend conservatively if ever needed. */
+const SHARED_CDN_PREFIXES = [
+	'104.16.', '104.17.', '104.18.', '104.19.', '104.20.', '104.21.', '104.22.',
+	'104.24.', '104.25.', '104.26.', '104.27.',
+	'172.64.', '172.65.', '172.66.', '172.67.', '172.68.', '172.69.', '172.70.', '172.71.',
+	'162.158.', '162.159.', '141.101.', '188.114.', '190.93.', '108.162.', '173.245.'
+];
+/* Learned-IP list cap: IPs are riskier than domains (no SNI boundary), keep the list
+ * small enough to audit by eye in the UI table. */
+const IP_LIST_MAX = 512;
+
+/* A raw conntrack destination is probed only after it was seen this many times in
+ * one collection pass: recurring destinations are real services the user depends
+ * on; one-off flows are background noise (telemetry, scans, CDN shards) and probing
+ * them floods the state table with meaningless 'unknown' records. */
+const MIN_IP_SEEN = 2;
+
+/* State hygiene: records for hosts NOT in any active list (learned/direct/proxy/
+ * excluded) expire after 14 days without a probe, and the whole non-listed working
+ * set is hard-capped. automation_state.json otherwise grows without bound (20k+
+ * records observed) and drowns the UI counters in ancient 'unknown' entries. */
+const PRUNE_AGE = 1209600;
+const STATE_CAP = 5000;
 
 const STATE_FILE = RUN_DIR + '/automation_state.json';
 const AUTO_LIST = RES + '/auto_proxy_list.txt';
@@ -61,6 +115,8 @@ let excludes = [];
 let direct_set = {};
 let proxy_set = {};
 let auto_ip_set = {};
+let last_reeval = 0;
+let last_prune = 0;
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -209,9 +265,10 @@ function resolve_plain_view(host) {
 			out = capture(`nslookup -type=A ${shellquote(host)} 77.88.8.8 2>/dev/null`);
 	}
 	for (let l in split(out, '\n')) {
-		let m = match(trim(l), /^Address:\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/);
-		if (m && m[1] !== '127.0.0.1')
-			return m[1];
+		/* Tolerate both "Address: <ip>" and indexed "Address 1: <ip> name" forms. */
+		let m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
+		if (m && m[2] !== '127.0.0.1')
+			return m[2];
 	}
 	return null;
 }
@@ -222,11 +279,17 @@ function probe(host, via_proxy, timeout) {
 		/* Plain-view resolution is mandatory for the direct probe: if the plain
 		 * public DNS can't answer (RKN blocks it intermittently), the user's
 		 * browser can't reach the site directly either — report unreachable
-		 * (000) instead of falling back to a possibly proxy-side DNS answer. */
+		 * (000) instead of falling back to a possibly proxy-side DNS answer.
+		 * EXCEPT for literal IPs: there is nothing to resolve, and nslookup of an
+		 * IP literal is unreliable — probing https://IP directly is exact. */
 		let ip = null;
-		for (let t = 0; t < 3 && !ip; t = t + 1) {
-			ip = resolve_plain_view(host);
-			if (!ip) sleep(150);
+		if (match(host, /^\d{1,3}(\.\d{1,3}){3}$/)) {
+			ip = host;
+		} else {
+			for (let t = 0; t < 3 && !ip; t = t + 1) {
+				ip = resolve_plain_view(host);
+				if (!ip) sleep(150);
+			}
 		}
 		if (!ip)
 			return { code: '000', ok: false, block: false, fp: '' };
@@ -277,6 +340,33 @@ function probe(host, via_proxy, timeout) {
 
 function is_private_ip(ip) {
 	return match(ip, /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/) || match(ip, /^fc00:|^fe80:/) || ip === '0.0.0.0';
+}
+
+function is_shared_cdn_ip(ip) {
+	/* Only IPv4 candidates are prefix-checked; IPv6 shared-CDN ranges are too
+	 * numerous to enumerate and are simply allowed (rare in conntrack on LAN). */
+	for (let p in SHARED_CDN_PREFIXES)
+		if (substr(ip, 0, length(p)) === p) return true;
+	return false;
+}
+
+/* TCP/TLS reachability for non-HTTP endpoints (Telegram DC MTProto, game servers,
+ * hardcoded-IP apps). Rides the same pinned test inbounds as probe(). Exit-code
+ * semantics of a TLS attempt against an arbitrary TCP endpoint:
+ *   0              full TLS success  -> reachable
+ *   35/51/52/53/56/57/58/59/60      TLS failed AFTER the TCP handshake -> reachable
+ *   7 (refused) / 28 (timeout/filtered) / 6 (DNS n/a) -> NOT reachable
+ * A server that accepts TCP but silently drops bad TLS still yields 28 — accepted
+ * limitation; min_confirm>=2 for IPs plus the CDN whitelist absorb that class. */
+const TCP_OK_EXIT = [0, 35, 51, 52, 53, 56, 57, 58, 59, 60];
+function tcp_reachable(host, via_proxy, timeout) {
+	let proxy_arg = via_proxy
+		? ` -x socks5h://127.0.0.1:${AUTO_PROXY_PORT}`
+		: ` -x socks5://127.0.0.1:${AUTO_DIRECT_PORT}`;
+	let rc = system(`curl -s -o /dev/null -k --connect-timeout ${timeout} --max-time ${timeout}${proxy_arg} ${shellquote('https://' + host)} 2>/dev/null`, timeout * 1000 + 2000);
+	for (let c in TCP_OK_EXIT)
+		if (rc === c) return true;
+	return false;
 }
 
 function is_excluded(host) {
@@ -418,8 +508,11 @@ function do_failover_reload() {
 		log('DNS failover: regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
 		return;
 	}
-	log('DNS failover: restarting service to load new config.');
-	system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+	/* The uci.commit() in the failover paths above already fires the service's procd
+	 * reload-trigger (procd_add_reload_trigger homeproxy) — that single reload applies
+	 * the regenerated config. Calling /etc/init.d/homeproxy reload here AS WELL produced
+	 * a second full stop/start right after the trigger's one. */
+	log('DNS failover: config regenerated, UCI committed — service reload happens via the procd config trigger.');
 }
 
 	function dns_failover_check() {
@@ -448,9 +541,18 @@ function do_failover_reload() {
 			for (let s in plain_list) {
 				if (s === plain_primary) continue;
 				if (dns_reachable(s)) {
-					uci.set('homeproxy', 'config', plain_key, s);
+					/* REORDER, don't truncate: move the healthy server to the front
+					 * and keep every other entry. The old `uci.set(key, s)` replaced
+					 * the whole list with ONE server, silently destroying the user's
+					 * remaining failover candidates after the first switch. */
+					let newlist = [ s ];
+					for (let x in plain_list) {
+						x = trim(x);
+						if (length(x) && x !== s) push(newlist, x);
+					}
+					uci.set('homeproxy', 'config', plain_key, newlist);
 					uci.commit('homeproxy');
-					log('DNS failover (plain): switched ' + plain_key + ' to ' + s);
+					log('DNS failover (plain): moved ' + s + ' to front of ' + plain_key + ' (' + length(newlist) + ' entries kept)');
 					return do_failover_reload();
 				}
 			}
@@ -463,9 +565,14 @@ function do_failover_reload() {
 			for (let s in secure_list) {
 				if (s === secure_primary) continue;
 				if (dns_reachable(s)) {
-					uci.set('homeproxy', 'config', 'secure_dns_server', s);
+					let newlist = [ s ];
+					for (let x in secure_list) {
+						x = trim(x);
+						if (length(x) && x !== s) push(newlist, x);
+					}
+					uci.set('homeproxy', 'config', 'secure_dns_server', newlist);
 					uci.commit('homeproxy');
-					log('DNS failover (secure): switched secure_dns_server to ' + s);
+					log('DNS failover (secure): moved ' + s + ' to front of secure_dns_server (' + length(newlist) + ' entries kept)');
 					return do_failover_reload();
 				}
 			}
@@ -490,7 +597,34 @@ function main() {
 	let max_entries = int(uci.get('homeproxy', 'automation', 'max_entries') || '2000') || 2000;
 	let min_confirm = int(uci.get('homeproxy', 'automation', 'min_confirm') || '1') || 1;
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
-	let discover = uci.get('homeproxy', 'automation', 'discover') || 'clash';
+	/* Discovery sources. The new UI stores an ARRAY of domain sources (MultiValue:
+	 * dns / clash / sni). Legacy values were one string: all | both | clash | dns |
+	 * sni | conntrack. Raw-IP learning is governed SOLELY by ip_learn now — legacy
+	 * 'conntrack' as a source is accepted but ignored (collecting IP candidates
+	 * without learning them was dead weight). */
+	let disc = {};
+	let discover_opt = uci.get('homeproxy', 'automation', 'discover');
+	if (type(discover_opt) === 'array') {
+		for (let x in discover_opt)
+			disc[trim(x)] = true;
+		/* Empty selection (migration edge) must not disable discovery entirely. */
+		if (length(keys(disc)) === 0) {
+			disc['dns'] = true; disc['clash'] = true; disc['sni'] = true;
+		}
+	} else {
+		let dstr = trim(discover_opt || 'all');
+		if (dstr === 'all' || length(dstr) === 0) {
+			disc['dns'] = true; disc['clash'] = true; disc['sni'] = true;
+		} else if (dstr === 'both') {
+			disc['dns'] = true; disc['clash'] = true;
+		} else if (length(dstr)) {
+			disc[dstr] = true;
+		}
+	}
+	if (disc['all']) { disc['dns'] = true; disc['clash'] = true; disc['sni'] = true; delete disc['all']; }
+	if (disc['conntrack']) delete disc['conntrack'];
+	const has = (s) => (disc[s] == true);
+	let discover_str = join('+', keys(disc));
 	let reeval_interval = int(uci.get('homeproxy', 'automation', 'reeval_interval') || '3600') || 3600;
 	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '10') || 10;
 	let flush_min_entries = int(uci.get('homeproxy', 'automation', 'flush_min_entries') || '1') || 1;
@@ -528,9 +662,16 @@ function main() {
 	let state = load_state();
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
+	/* When the main path is plain Direct there is no proxy side to probe: auto-proxy-in
+	 * routes to a direct outbound, so the "proxy" probe is a copy of the direct one and
+	 * nothing can ever be learned. Skip proxy probes entirely (saves the probe budget);
+	 * the daemon stays alive so enabling a real main node + reload resumes learning. */
+	let main_is_direct = (uci.get('homeproxy', 'config', 'main_node') === 'direct-out');
+	if (main_is_direct)
+		log('main node is Direct (no proxy) — proxy-side probes disabled, learning paused.');
+
 	let last_reload = 0;
 	pending_reload = false;
-	const has = (s) => (discover === 'all') || index(split(discover, ','), s) >= 0 || (discover === 'both' && s in ['clash', 'dns']);
 
 	function do_reload() {
 		let marker = RUN_DIR + '/.learned_hotreload';
@@ -563,7 +704,7 @@ function main() {
 		pending_new = 0;
 	}
 
-	function classify(dom, d, p, is_ip) {
+	function classify(dom, d, p, is_ip, tcp_direct) {
 		if (!state[dom]) state[dom] = {};
 		let st = state[dom];
 		st.last_probe = time();
@@ -578,8 +719,10 @@ function main() {
 		 * - direct not ok + proxy blocked   -> proxy can't help (blocked_no_proxy)
 		 * - direct not ok + proxy fail      -> both unreachable / transient (unknown)
 		 * This covers: timeout/reset, poisoning (NXDOMAIN/bogus IP), DPI 403/451/5xx,
-		 * MITM block-pages served with 200, and the 403-direct / 200-proxy case. */
-		if (d.ok) {
+		 * MITM block-pages served with 200, and the 403-direct / 200-proxy case.
+		 * tcp_direct: the TCP/TLS fallback proved the endpoint reachable DIRECTLY
+		 * even though HTTP probes failed (proprietary protocol) -> never learn it. */
+		if (d.ok || tcp_direct) {
 			st.status = 'direct';
 			st.confirms = 0;
 			return;
@@ -596,8 +739,11 @@ function main() {
 			}
 			/* Unreachable direct (000/timeout/RST) can be a transient blip — require
 			 * ONE extra confirmation before learning. A hard refusal (4xx/5xx) is a
-			 * strong block signal and learns at the normal min_confirm. */
-			const need = (d.code === '000') ? min_confirm + 1 : min_confirm;
+			 * strong block signal and learns at the normal min_confirm. Learned IPs
+			 * are riskier than domains (no SNI boundary): they always need at least
+			 * 2 confirmations regardless of user config. */
+			let need = min_confirm + ((d.code === '000') ? 1 : 0);
+			if (is_ip && need < 2) need = 2;
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;
 			if (st.confirms >= need) {
@@ -623,23 +769,29 @@ function main() {
 		let domain_candidates = {}, ip_candidates = {};
 		/* DNS first: it captures the domain at query time, newest-first, so the
 		 * probe cap always spends on the user's most recent activity — the most
-		 * transparent and reliable source. Clash/SNI/conntrack fill in the gaps. */
+		 * transparent and reliable source. Clash/SNI fill in the gaps.
+		 * conntrack is collected UNCONDITIONALLY when enabled and counted per IP
+		 * (MIN_IP_SEEN gate below): recurring destinations are real services;
+		 * one-off flows are background noise that would flood the state table. */
 		if (has('dns'))       for (let i, h in discover_dns())          domain_candidates[h] = true;
 		if (has('clash'))     for (let i, h in discover_clash(timeout)) domain_candidates[h] = true;
 		if (has('sni'))       for (let i, h in discover_sni())          domain_candidates[h] = true;
-		if (has('conntrack') && !length(keys(domain_candidates)))
-			for (let i, ip in discover_conntrack()) ip_candidates[ip] = true;
+		/* Raw-IP candidates are collected ONLY when IP learning is enabled — the old
+		 * separate 'conntrack' discovery source is merged into the ip_learn switch. */
+		if (ip_learn === '1')
+			for (let i, ip in discover_conntrack())
+				ip_candidates[ip] = (int(ip_candidates[ip] || 0)) + 1;
 
 		if (mode === 'aggressive') {
 			for (let h in auto_set)     { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) domain_candidates[h] = true; }
-			for (let h in auto_ip_set)  { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) ip_candidates[h] = true; }
+			/* Re-evaluated learned IPs bypass the seen-threshold via a large count. */
+			for (let h in auto_ip_set)  { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) ip_candidates[h] = MIN_IP_SEEN; }
 		}
 
 		let now = time();
-		let probed = 0;
-		const cap = 24;
+		let dom_probed = 0;
 		for (let host in domain_candidates) {
-			if (probed >= cap) break;
+			if (dom_probed >= DOM_CAP) break;
 			/* Probe the ACTUAL candidate host (the exact domain the user queried /
 			 * the SNI their client sent) — NOT the collapsed base domain. Many
 			 * blocks are subdomain-scoped (e.g. app.kilo.ai is blocked while
@@ -652,30 +804,128 @@ function main() {
 			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
 			let st = state[dom];
 			if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
-			probed++;
+			dom_probed++;
 			let d_res = probe(dom, false, timeout);
 			let p_res = null;
-			if (!d_res.ok) { p_res = probe(dom, true, timeout); sleep(150); }
+			if (!d_res.ok && !main_is_direct) { p_res = probe(dom, true, timeout); sleep(150); }
 			classify(dom, d_res, p_res, false);
-			save_state(state);
 		}
 
-		/* IP learning (B): only when enabled and for non-private destinations. */
+		/* IP learning (B): only when enabled, for non-private destinations that are
+		 * not shared-CDN address space. HTTP probes first; if both sides are HTTP-
+		 * inconclusive (proprietary protocols — MTProto DCs, game servers), fall back
+		 * to the TCP/TLS reachability probe through the same pinned inbounds. */
+		let ip_probed = 0;
 		if (ip_learn === '1') {
 			for (let ip in ip_candidates) {
-				if (probed >= cap) break;
-				if (is_private_ip(ip) || is_excluded(ip)) continue;
-				if (length(keys(auto_ip_set)) >= max_entries && !auto_ip_set[ip]) continue;
+				if (ip_probed >= IP_CAP) break;
+				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_excluded(ip)) continue;
+				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
+				 * probe on it (learned IPs being re-evaluated pass via their count). */
+				if (((int(ip_candidates[ip] || 0)) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
+				if (length(keys(auto_ip_set)) >= IP_LIST_MAX && !auto_ip_set[ip]) continue;
 				let st = state[ip];
 				if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
-				probed++;
+				ip_probed++;
 				let d_res = probe(ip, false, timeout);
 				let p_res = null;
-				if (!d_res.ok) { p_res = probe(ip, true, timeout); sleep(150); }
-				classify(ip, d_res, p_res, true);
-				save_state(state);
+				if (!d_res.ok && !main_is_direct) { p_res = probe(ip, true, timeout); sleep(150); }
+				/* TCP fallback only when HTTP could not classify either side. */
+				let tcp_direct = false;
+				if (!d_res.ok && !(p_res && p_res.ok)) {
+					tcp_direct = tcp_reachable(ip, false, timeout);
+					if (!tcp_direct && !main_is_direct && tcp_reachable(ip, true, timeout)) {
+						/* TCP dead direct + alive via proxy = a learnable block the
+						 * HTTP layer cannot see. Fabricate an ok proxy result so the
+						 * normal confirm/learn path handles it unchanged. */
+						p_res = { code: 'TCP', ok: true, block: false, fp: '' };
+					}
+					sleep(150);
+				}
+				classify(ip, d_res, p_res, true, tcp_direct);
 			}
 		}
+
+		/* Self-healing (both modes): hourly, re-probe DIRECT a couple of learned
+		 * entries older than 7 days. An entry answering directly HEAL_CONFIRM times
+		 * in a row no longer needs the proxy — remove it from the lists. */
+		if ((now - last_reeval) > REEVAL_PERIOD) {
+			last_reeval = now;
+			let healed = [];
+			let rechecked = 0;
+			for (let lst in [auto_set, auto_ip_set]) {
+				/* keys() snapshot: entries are deleted from lst during iteration. */
+				for (let h in keys(lst)) {
+					if (rechecked >= REEVAL_BATCH) break;
+					let st = state[h];
+					if (st && st.last_probe && (now - st.last_probe) < REEVAL_AGE) continue;
+					rechecked++;
+					let d_res = probe(h, false, timeout);
+					if (!st) { state[h] = {}; st = state[h]; }
+					st.last_probe = now;
+					if (d_res.ok) {
+						st.heal = (st.heal || 0) + 1;
+						if (st.heal >= HEAL_CONFIRM) {
+							delete lst[h];
+							push(healed, h);
+						}
+					} else {
+						st.heal = 0;
+					}
+				}
+			}
+			if (length(healed)) {
+				write_auto_list(auto_set);
+				write_auto_ip_list(auto_ip_set);
+				log('self-healed (answers direct again): ' + join(', ', healed));
+				pending_reload = true;
+			}
+		}
+
+		/* State hygiene (hourly): records for hosts NOT in any active list expire
+		 * after PRUNE_AGE without a probe, and the non-listed working set is capped
+		 * at STATE_CAP (oldest evicted first). Without this automation_state.json
+		 * grows unbounded — 20k+ stale 'unknown' records were observed drowning the
+		 * UI counters and wasting flash on every save_state. Listed hosts (learned/
+		 * direct/proxy lists) are never pruned here. */
+		if ((now - last_prune) > REEVAL_PERIOD) {
+			last_prune = now;
+			let stale = [];
+			let keep = {};
+			for (let d in read_lines(RES + '/direct_list.txt')) keep[trim(d)] = true;
+			for (let d in read_lines(RES + '/proxy_list.txt')) keep[trim(d)] = true;
+			for (let h in keys(state)) {
+				if (h === '__dns_offset') continue;
+				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
+				let st = state[h];
+				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
+					push(stale, h);
+			}
+			for (let i, h in stale) delete state[h];
+			/* Hard cap on the remaining non-listed set: evict oldest by last_probe. */
+			let rest = [];
+			for (let h in keys(state)) {
+				if (h === '__dns_offset') continue;
+				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
+				push(rest, { h: h, t: state[h].last_probe || 0 });
+			}
+			let excess = length(rest) - STATE_CAP;
+			if (excess > 0) {
+				sort(rest, (a, b) => a.t - b.t);
+				for (let i = 0; i < excess; i++) delete state[rest[i].h];
+				log('state cap: evicted ' + excess + ' oldest records');
+			}
+			let removed = length(stale) + (excess > 0 ? excess : 0);
+			if (removed > 0) {
+				save_state(state);
+				log('pruned ' + length(stale) + ' stale state records' + (excess > 0 ? ' +' + excess + ' over cap' : ''));
+			}
+		}
+
+		/* Persist state ONCE per cycle (not per probe): the file write is atomic but
+		 * still costs fsync-ish work ×24 probes otherwise. Learned-list writes keep
+		 * their own immediate atomic flush inside classify(). */
+		save_state(state);
 
 		/* Batch-flush window: apply when the time throttle elapsed OR enough new entries
 		 * accumulated (so a burst of learns triggers a single core restart, not many). */
@@ -690,7 +940,7 @@ function main() {
 
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
-	log('automation daemon started (mode=' + mode + ', discover=' + discover + ', failover=' + dns_failover + ').');
+	log('automation daemon started (mode=' + mode + ', sources=' + (length(keys(disc)) ? discover_str : 'none') + ', ip_learn=' + ip_learn + ', failover=' + dns_failover + ').');
 
 		let last_failover = 0;
 		while (true) {

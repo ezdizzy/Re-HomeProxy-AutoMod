@@ -15,6 +15,7 @@
 'require form';
 'require poll';
 'require rpc';
+'require uci';
 'require ui';
 'require view';
 
@@ -110,14 +111,23 @@ return view.extend({
 		o.value('aggressive', _('Aggressive (also re-verifies learned sites)'));
 		o.default = 'balanced';
 
-		o = s.option(form.ListValue, 'discover', _('Discover candidates from'));
-		o.value('clash', _('Clash API (connections, domain names)'));
+		o = s.option(form.MultiValue, 'discover', _('Discover candidates from'),
+			_('Domain-name sources to watch for candidates. Raw-IP destinations are a separate switch below (“Learn IP destinations”).'));
 		o.value('dns', _('DNS query log (captures domain at DNS time — most transparent)'));
+		o.value('clash', _('Clash API (connections, domain names)'));
 		o.value('sni', _('TLS SNI capture (ClientHello — DoH clients, hardcoded-IP apps, games)'));
-		o.value('conntrack', _('conntrack (destinations by IP — for apps/games without SNI)'));
-		o.value('both', _('Clash API + DNS log'));
-		o.value('all', _('Clash API + DNS log + SNI + conntrack'));
-		o.default = 'all';
+		o.default = [ 'dns', 'clash', 'sni' ];
+		o.rmempty = false;
+		/* Legacy configs store a single string ('all' | 'both' | 'clash' | ...) — map
+		 * it to the equivalent checkbox set for display, so nothing looks unchecked. */
+		o.cfgvalue = function() {
+			let v = uci.get('homeproxy', 'automation', 'discover');
+			if (v == null) return this.default;
+			if (!Array.isArray(v)) v = [ v ];
+			if (v.length === 0 || v.includes('all')) return [ 'dns', 'clash', 'sni' ];
+			if (v.includes('both')) v = v.filter(function(x) { return x !== 'both'; }).concat([ 'dns', 'clash' ]);
+			return v.filter(function(x) { return [ 'dns', 'clash', 'sni' ].includes(x); });
+		};
 
 		o = s.option(form.Value, 'timeout', _('Probe timeout (seconds)'));
 		o.datatype = 'uinteger';
@@ -135,41 +145,18 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.placeholder = '3600';
 
-		o = s.option(form.Value, 'reload_interval', _('Learned-list flush interval (seconds)'),
-			_('How often the learned list is pushed to the live routing rules (hot reload — no core restart). Newly learned sites then apply to new connections within this window. A full service restart also applies them, but this keeps them live without one.'));
-		o.datatype = 'uinteger';
-		o.default = '10';
-		o.placeholder = '10';
-
-		o = s.option(form.Value, 'flush_min_entries', _('Flush after N new entries (batch window)'),
-			_('Force a flush once this many new sites have been learned, even before the flush interval elapses. Batches a burst of learns into a single file update (one hot reload) instead of many. 0 = time-only.'));
-		o.datatype = 'uinteger';
-		o.default = '1';
-		o.placeholder = '1';
+		/* NOTE: legacy UCI keys reload_interval / flush_min_entries are intentionally
+		 * NOT exposed: learned entries hot-reload into the running core with no restart
+		 * and no dropped connections, so batching windows serve no purpose. The daemon
+		 * keeps honoring the defaults for old configs. */
 
 		o = s.option(form.Value, 'exclude', _('Never auto-learn (comma-separated)'),
 			_('Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names.'));
 		o.placeholder = 'localhost,local,lan,in-addr.arpa,ip6.arpa';
 
-		o = s.option(form.Flag, 'ip_learn', _('Learn IP destinations (conntrack)'),
-			_('Also learn destinations reached by raw IP (games/apps without SNI). Routes the IP via the proxy. Off by default — enable if you run such apps.'));
+		o = s.option(form.Flag, 'ip_learn', _('Learn IP destinations'),
+			_('Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps.'));
 		o.default = o.disabled;
-
-		/* ── DNS failover (C) — lives in the `config` section ─────────────── */
-		const sf = m.section(form.NamedSection, 'config', 'homeproxy', _('DNS failover'));
-		let fo = sf.option(form.Flag, 'dns_failover', _('Enable DNS failover'),
-			_('Monitor the primary DNS; if it becomes unreachable, switch to a healthy server from the “Alternate DNS servers” list (Client ▸ DNS tab) and regenerate. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up.'));
-		fo.rmempty = false;
-
-		let fon = sf.option(form.DummyValue, '_md_note');
-		fon.rawhtml = true;
-		fon.cfgvalue = function() { return ''; };
-		fon.write = function() { return undefined; };
-		fon.renderWidget = function(section_id, option_index, cfgvalue) {
-			return E('div', { 'class': 'automation-hint', 'style': 'margin-bottom:8px' }, [
-				_('Redundant with MultiDNS: when MultiDNS is enabled it already races every server in each pool and returns the fastest live answer, so a single failed primary is bypassed automatically. Reserve DNS is therefore ignored while MultiDNS is on — use one or the other.')
-			]);
-		};
 
 		/* ── Live monitor ──────────────────────────────────────────────── */
 		const countsEl = E('div', { 'class': 'automation-counts' });
@@ -241,6 +228,10 @@ return view.extend({
 
 		function reasonText(e) {
 			if (e.status === 'blocked') {
+				/* Restored/imported entries (or records from older daemon versions)
+				 * carry no probe codes — show a plain verdict instead of empty ✗✗/✓✓. */
+				if (!e.direct && !e.proxy)
+					return _('blocked (details not recorded)');
 				let d = e.direct || '✗', p = e.proxy || '✓';
 				return _('direct %s ✗ / proxy %s ✓').format(d, p);
 			}
@@ -266,7 +257,7 @@ return view.extend({
 			const thead = E('thead', {});
 			const htr = E('tr', {});
 			const headers = [
-				[ _('Site'), 'left' ],
+				[ _('Resource'), 'left' ],
 				[ _('Type'), 'center' ],
 				[ _('Added'), 'left' ],
 				[ _('Last check'), 'left' ],

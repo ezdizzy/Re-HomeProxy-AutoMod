@@ -67,6 +67,9 @@ function log(msg) {
 }
 
 function dbg(m) {
+	/* Debug trace is opt-in: touch /tmp/mdbg.enable to enable. The old unconditional
+	 * version appended to /tmp/mdbg.txt forever (tmpfs growth for zero value). */
+	if (!access('/tmp/mdbg.enable')) return;
 	try { const fd = open('/tmp/mdbg.txt', 'a'); if (fd) { fd.write(m + '\n'); fd.close(); } } catch (e) {}
 }
 
@@ -249,9 +252,11 @@ function udp_dns_query(server, canary) {
     let ips = [];
     let lines = split(r, '\n');
     for (let i = 0; i < length(lines); i = i + 1) {
-      /* "Address: <ip>" answer lines; skip the server self-line "Address: 1.2.3.4:53". */
-      let m = match(trim(lines[i]), /^Address:\s+(\S+)$/);
-      if (m && !match(m[1], /:\d+$/)) push(ips, m[1]);
+      /* Answer lines across busybox variants: "Address: <ip>" and the indexed
+       * "Address 1: <ip> name" form. The server self-line carries a :port suffix
+       * ("Address: 77.88.8.8:53") and is skipped by the port check below. */
+      let m = match(trim(lines[i]), /^Address(\s+[0-9]+)?:\s*(\S+)/);
+      if (m && !match(m[2], /:[0-9]+$/)) push(ips, m[2]);
     }
     if (length(ips) > 0) return ips;
   }
@@ -390,7 +395,10 @@ function verify_ip(ip, domain, via_proxy) {
 	let opens = (c === 'ok');
 	if (opens) {
 		let body = readfile(bodyf) || '';
-		if (body_blocked(body)) opens = false;
+		/* Size guard (mirrors automation.uc): a large page is never a block page —
+		 * without this, a big portal whose markup merely contains a signature word
+		 * would mark the server's IP as dead. */
+		if (length(body) < 32768 && body_blocked(body)) opens = false;
 	}
 	return { code: code, opens: opens };
 }
@@ -785,10 +793,22 @@ function analyze() {
 
 	/* Dead-IP blacklist streaks: an IP must fail to open the site in >=2
 	 * consecutive cycles before it is blacklisted, so a transient failure never
-	 * poisons the live pool. */
+	 * poisons the live pool. Entries carry a last-seen timestamp and expire after
+	 * 7 days without a failure observation — otherwise stale entries accumulated
+	 * over the daemon's lifetime would blacklist IPs that work fine again. */
+	let now_ts = time();
 	if (!st.dead_ips) st.dead_ips = {};
-	for (let ip in good_this) delete st.dead_ips[ip];
-	for (let ip in dead_this) st.dead_ips[ip] = (st.dead_ips[ip] || 0) + 1;
+	if (!st.dead_ips_t) st.dead_ips_t = {};
+	for (let ip in good_this) { delete st.dead_ips[ip]; delete st.dead_ips_t[ip]; }
+	for (let ip in dead_this) {
+		st.dead_ips[ip] = (st.dead_ips[ip] || 0) + 1;
+		st.dead_ips_t[ip] = now_ts;
+	}
+	for (let ip in keys(st.dead_ips))
+		if ((now_ts - (st.dead_ips_t[ip] || 0)) > 604800) {
+			delete st.dead_ips[ip];
+			delete st.dead_ips_t[ip];
+		}
 	let blacklist = [];
 	for (let ip in st.dead_ips) if ((st.dead_ips[ip] || 0) >= 2) push(blacklist, ip);
 	atomic_write(DEAD_IPS_FILE, join('\n', blacklist) + (length(blacklist) ? '\n' : ''));
@@ -891,8 +911,15 @@ function main() {
 
 		if (!access(MOSDNS)) { log('mosdns binary missing — install mosdns to use MultiDNS.'); sleep(30); continue; }
 
-		log('MultiDNS analyzer started (plain=' + use_plain + ', secure=' + use_secure + ', via_proxy=' + secure_via_proxy + ').');
-		ensure_data_files();
+	log('MultiDNS analyzer started (plain=' + use_plain + ', secure=' + use_secure + ', via_proxy=' + secure_via_proxy + ').');
+	ensure_data_files();
+	/* Adopt a healthy instance left by the synchronous init.d bootstrap instead of
+	 * restarting it: a restart kills the racing listeners AFTER generate_client.uc
+	 * has already pointed russia-dns/secure-dns at 127.0.0.1:5453/5454, producing
+	 * seconds of SERVFAIL on every service start. Restart only when the running
+	 * instance's config differs from what we would build now (or it is dead). */
+	let conf_fresh = build_mosdns_conf();
+	if (!(mosdns_running() && access(CONF) && trim(readfile(CONF)) === conf_fresh))
 		start_mosdns();
 		/* Run an initial analysis at startup so the monitor shows real pool data
 		 * immediately instead of waiting a full bench_interval. */

@@ -5434,3 +5434,77 @@ msgstr "Zapret"
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 msgid "Zapret 2"
 msgstr "Zapret 2"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "DNS servers & pools"
+msgstr "DNS-серверы и пулы"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Server pools"
+msgstr "Пулы серверов"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Global mode primary"
+msgstr "Основной сервер (режим Global)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Learn IP destinations"
+msgstr "Изучать IP-назначения"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid ""
+"Watch recurring conntrack destinations (games, Telegram data centers, apps "
+"without SNI) and learn those that fail directly but answer through the "
+"proxy. Off by default — enable if you use such apps."
+msgstr ""
+"Наблюдать за повторяющимися conntrack-назначениями (игры, дата-центры "
+"Telegram, приложения без SNI): те, что недоступны напрямую, но отвечают "
+"через прокси, направляются через прокси. По умолчанию выключено — включите, "
+"если пользуетесь такими приложениями."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid ""
+"Domain-name sources to watch for candidates. Raw-IP destinations are a "
+"separate switch below (“Learn IP destinations”)."
+msgstr ""
+"Источники домённых имён-кандидатов. Raw-IP назначения — отдельный "
+"переключатель ниже («Изучать IP-назначения»)."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Single DNS & reserve"
+msgstr "Одиночный DNS и резерв"
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Plain (Russia) pool"
+msgstr "Обычный пул (Россия)"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Secure (encrypted) pool"
+msgstr "Защищённый пул (шифрованный)"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid ""
+"Health-check and rotate the “Russia DNS server” list."
+msgstr ""
+"Проверять доступность и ротировать список «DNS-серверы "
+"России»."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid ""
+"Health-check and rotate the “Secure DNS server” list."
+msgstr ""
+"Проверять доступность и ротировать список «Защищённые DNS-"
+"сервера»."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid ""
+"For setups WITHOUT MultiDNS: watch the first server of each pool list (Russia / Secure above); when it stops answering, move a healthy one from the same list to the front. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up. Ignored while MultiDNS is enabled — it already races every server."
+msgstr ""
+"Для схем БЕЗ MultiDNS: следить за первым сервером каждого списка выше (Россия / Защищённый); если он перестаёт отвечать — переставить здоровый из того же списка первым. Проверяются только обычные (UDP/Do53) серверы; DoH/DoT считаются всегда доступными. Игнорируется при включённом MultiDNS — он уже опрашивает все серверы сразу."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Resource"
+msgstr "Ресурс"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "blocked (details not recorded)"
+msgstr "заблокирован (детали не записаны)"

@@ -70,12 +70,46 @@ count_nodes() {
 	uci show homeproxy 2>/dev/null | grep -cE "^homeproxy\.[^.]+=node$"
 }
 
+# Домен/адрес узла -> IPv4 (пусто, если не резолвится)
+resolve4() {
+	nslookup -type=A "$1" 2>/dev/null | grep -v ':53' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1
+}
+
+# Гео по IP в формате диагностики: "<ip> (<CC>, <ORG>)". Без пинга — он одномоментный.
+# Результат кэшируется на время одного вызова list_nodes (файл $1).
+geo_cached() {
+	local IP="$1" CACHE="$2" R CC ORG C
+	C=$(grep -F "$IP|" "$CACHE" 2>/dev/null | head -n1 | cut -d'|' -f2-)
+	if [ -z "$C" ]; then
+		R=$(wget -qO- --timeout=5 "http://ip-api.com/json/$IP?fields=countryCode,org&lang=ru" 2>/dev/null)
+		CC=$(printf '%s' "$R" | sed -n 's/.*"countryCode":"\([^"]*\)".*/\1/p')
+		ORG=$(printf '%s' "$R" | sed -n 's/.*"org":"\([^"]*\)".*/\1/p')
+		C="$IP"
+		[ -n "$CC" ] && C="$C ($CC"
+		[ -n "$ORG" ] && C="$C, $ORG"
+		[ -n "$CC" ] && C="$C)"
+		printf '%s|%s\n' "$IP" "$C" >> "$CACHE"
+	fi
+	printf '%s' "$C"
+}
+
 list_nodes() {
+	# Человекочитаемый список как в Диагностике: «Метка → IP (CC, организация)»,
+	# имя секции — в конце строки (его просят ввести в меню выбора узла).
+	local GEO=/tmp/hp_geo.$$
+	: > "$GEO"
 	uci show homeproxy 2>/dev/null | sed -n 's/^homeproxy\.\([^.]*\)=node$/\1/p' | while read -r sec; do
 		LBL=$(uci -q get "homeproxy.$sec.label" 2>/dev/null)
 		[ -z "$LBL" ] && LBL=$sec
-		printf "    %s — %s\n" "$sec" "$LBL"
+		ADDR=$(uci -q get "homeproxy.$sec.address" 2>/dev/null)
+		INFO=""
+		if [ -n "$ADDR" ]; then
+			IP=$(resolve4 "$ADDR")
+			[ -n "$IP" ] && INFO=" → $(geo_cached "$IP" "$GEO")"
+		fi
+		printf "    %s%s  [%s]\n" "$LBL" "$INFO" "$sec"
 	done
+	rm -f "$GEO"
 }
 
 # Добавить правило прокси, если правила с таким источником ещё нет. add_rule <source> <node>
@@ -533,9 +567,17 @@ ask_automation() {
 	# без него SNI молча неактивен, остальные источники работают.
 	command -v tcpdump >/dev/null 2>&1 || { info "  ставлю tcpdump (источник SNI)..."; if [ "$PM" = apk ]; then apk add tcpdump >/dev/null 2>&1; else opkg install tcpdump >/dev/null 2>&1; fi; }
 	uci -q set homeproxy.automation.enabled=1
-	uci -q set homeproxy.automation.discover=all
+	# Источники кандидатов: канонический СПИСОК (dns/clash/sni) под новый MultiValue-UI.
+	# Старое значение 'all' демон понимает, но виджет его не показывает как выбранные пункты.
+	uci -q delete homeproxy.automation.discover 2>/dev/null
+	uci -q add_list homeproxy.automation.discover=dns
+	uci -q add_list homeproxy.automation.discover=clash
+	uci -q add_list homeproxy.automation.discover=sni
+	# IP-обучение включено по умолчанию: conntrack-кандидаты фильтруются (повторы >=2 раз,
+	# shared-CDN исключены, кап 8/цикл, min_confirm>=2) — безопасно и ловит Telegram DC/игры.
+	uci -q set homeproxy.automation.ip_learn=1
 	uci -q commit homeproxy
-	ok "  Автоматизация включена (источники: все — DNS-лог + Clash + SNI + conntrack)."
+	ok "  Автоматизация включена (источники: DNS-лог + Clash + SNI; IP-изучение: вкл)."
 	return 0
 }
 

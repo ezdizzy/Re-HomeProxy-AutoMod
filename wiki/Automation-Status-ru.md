@@ -118,11 +118,15 @@
 
 ## Открытые TODO (продолжение)
 
+> **Обновление (август 2026, Automation v2):** реализовано — дедуп/кап/CDN-фильтр для
+> conntrack-IP (порог повторов ≥2, shared-CDN исключены, кап 8/цикл, min_confirm≥2);
+> отображение выученных IP в мониторе; TCP/TLS-fallback проба для не-HTTP эндпоинтов
+> (Telegram DC, игры); самолечение выученных записей в обоих режимах; hot-reload списка;
+> батчинг записи стейта с гигиеной (prune + жёсткий кап). UI: источники — мультвыбор
+> dns/clash/sni, отдельный переключатель «Learn IP destinations».
+
 - Ротация/лимит `/var/log/dnsmasq-q.log`.
 - Более точная проверка здоровья DNS (UDP-запрос вместо `curl`-к-DoH).
-- Дедуп/кап и фильтрация CDN для conntrack-IP (B).
-- Отображение выученных IP в мониторе automation.js.
-- Перевод новых строк UI в `po/ru` (сейчас fallback на английский).
 - Натурные тесты A/B/C/D на роутере и правка регэкспов/логики по результатам.
 
 ## Быстрый чек-лист сборки/теста
@@ -130,8 +134,8 @@
 ```
 .\\build-run.sh            # собрать dist/ и release/
 # install.sh ставит opkg-пакет на роутер
-# Включить в UI: Automation ▸ Enable + Discover = "DNS query log" (или both/all)
-# Опцionalно: Client ▸ DNS ▸ DNS preset = Cloudflare + Enable DNS failover
-# Лог демона: /var/log/homeproxy/automation.log ; состояние: /var/run/homeproxy/automation_state.json
+# Включить в UI: Automation ▸ Enable + источники (мультвыбор dns/clash/sni) + Learn IP destinations
+# Опционально: страница «Настройки DNS» ▸ пресет/резерв (для Global-режима) или MultiDNS
+# Лог демона: /var/run/homeproxy/automation.log ; состояние: /var/run/homeproxy/automation_state.json
 # Выученное: /etc/homeproxy/resources/auto_proxy_list.txt и auto_proxy_ip.txt
 ```

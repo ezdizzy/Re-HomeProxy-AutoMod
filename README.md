@@ -25,13 +25,17 @@ web interface.
 This mod adds the following on top of the original Re-HomeProxy app:
 
 - **Automation tab** — automatic detection of blocked sites. A background monitor probes hosts both directly and through
-  the proxy; a host that fails directly but works via the proxy is remembered (base domain + learned IPs) and routed
-  through the proxy / ByeDPI / Zapret. Fully compatible with ByeDPI and Zapret — learned sites follow the same path the
-  user selected.
-- **MultiDNS (mosdns engine)** — a DNS accelerator: every query is raced in parallel across all servers of the pool
-  (plain "Russia" + encrypted "Secure"), returning the fastest live answer. A quality daemon verifies over HTTPS that the
-  returned IPs actually open sites and auto-prunes dead/polluted servers and IPs. Configure on the **MultiDNS** tab of
-  Client Settings; install/update mosdns from its card on **Core & Tools**.
+  the proxy; a host that fails directly but works via the proxy is remembered and routed through the proxy / ByeDPI / Zapret.
+  Raw IP destinations are covered too (games, Telegram data centers, apps without SNI): recurring conntrack addresses are
+  verified with a TCP probe through both paths, shared CDN ranges are excluded, and learned entries self-heal — an
+  unblocked site returns to the direct path on its own. The learned list is applied with a hot reload — no restart, no
+  dropped connections.
+- **DNS Settings page** — every DNS setting in one menu: server pools (plain "Russia" 🔓 + encrypted "Secure" 🔒),
+  reserve DNS for setups without MultiDNS, and the **MultiDNS** engine with a live quality monitor.
+- **MultiDNS (mosdns engine)** — a DNS accelerator: every query is raced in parallel across all servers of the pool,
+  returning the fastest live answer. A quality daemon verifies over HTTPS that the returned IPs actually open sites and
+  auto-prunes dead/polluted servers and IPs. Configure it on the dedicated **DNS Settings** page; install/update mosdns
+  from its card on **Core & Tools**.
 - **URLTest with three modes** — **Auto** (all imported nodes), **Preferred node + auto** (your chosen node first, the
   fastest of the rest when it dies or slows down) and **Manual node list** (classic explicit selection).
 - **Tun TCP/UDP fix** — corrected Tun mode delivery of `tun_mark` flows into the tun device with a loop guard, so Tun
@@ -237,6 +241,7 @@ Full guides live in the **[Wiki](../../wiki/Home)**:
 - **[Routing & Access Control](../../wiki/Routing-and-Access-Control-en)** — routing modes, RU Proxy Rules, per-device access control
 - **[Server Settings](../../wiki/Server-Settings-en)** — run the router as a proxy server (inbounds, types, TLS/ACME)
 - **[DNS & Diagnostics](../../wiki/DNS-and-Diagnostics-en)** — clean vs secure DNS, IPv6 leaks, and the Diagnostics page
+- **[DNS Settings](../../wiki/DNS-Settings-en)** — the dedicated DNS page: server pools, reserve DNS and MultiDNS with a live quality monitor
 - **[ByeDPI](../../wiki/ByeDPI-en)** — SOCKS-level DPI bypass, strategy presets and the tester
 - **[Zapret](../../wiki/Zapret-en)** — packet-level (nfqws2) DPI bypass, presets, Discord-voice and the tester
 - **[Custom Routing](../../wiki/Custom-Routing-en)** — UI routing nodes + rules (match by domain/IP/port/protocol/process)
