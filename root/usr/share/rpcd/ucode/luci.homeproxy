@@ -1934,10 +1934,16 @@ const methods = {
 			let active = { ru: [], secure: [] };
 			if (state.pools && state.pools.ru)
 				active = { ru: state.pools.ru, secure: state.pools.secure || [] };
-			/* Per-server trend rows for the monitor. */
+			/* Per-server trend rows for the monitor. A server may belong to BOTH
+			 * pools (e.g. user added the same DoH endpoint to Russia and Secure
+			 * lists) — show the combined membership instead of hiding it behind
+			 * the first match, otherwise pool counts and table rows disagree. */
 			let pool_of = (srv) => {
-				if (index(active.ru, srv) >= 0) return 'ru';
-				if (index(active.secure, srv) >= 0) return 'secure';
+				let a = index(active.ru, srv) >= 0;
+				let b = index(active.secure, srv) >= 0;
+				if (a && b) return 'ru+secure';
+				if (a) return 'ru';
+				if (b) return 'secure';
 				return '—';
 			};
 			let servers = [];
