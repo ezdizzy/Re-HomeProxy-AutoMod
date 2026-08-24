@@ -246,50 +246,20 @@ return view.extend({
 		o.depends('main_node', 'urltest');
 		o.rmempty = false;
 
-		/* Deterministic visibility of the mode-dependent options. LuCI hides/shows
-		 * options via dependency checks on form widgets; to be safe on every LuCI
-		 * version we also sync visibility explicitly on every widget change and
-		 * after the initial render. Auto → no extra options; Prefer → only the
-		 * single "URLTest node" select; Manual → only the node list. */
-		const urltestSync = function() {
-			const getVal = (cbid) => {
-				const el = document.getElementById('widget.' + cbid);
-				return el ? el.value : null;
-			};
-			const syncBlock = (mn_cbid, mode_cbid, pref_cbid, nodes_cbid) => {
-				const mn = getVal(mn_cbid) ?? uci.get('homeproxy', 'config', mn_cbid.split('.').pop());
-				const mode = getVal(mode_cbid) ?? uci.get('homeproxy', 'config', mode_cbid.split('.').pop()) ?? 'manual';
-				const on = (mn === 'urltest');
-				[[pref_cbid, on && mode === 'prefer'],
-				 [nodes_cbid, on && mode === 'manual']].forEach(([opt, show]) => {
-					const el = document.querySelector('[data-field="' + opt + '"]');
-					if (el)
-						el.classList[show ? 'remove' : 'add']('hidden');
-				});
-			};
-			syncBlock('cbid.homeproxy.config.main_node',
-				'cbid.homeproxy.config.main_urltest_mode',
-				'cbid.homeproxy.config.main_urltest_preferred',
-				'cbid.homeproxy.config.main_urltest_nodes');
-			syncBlock('cbid.homeproxy.config.main_udp_node',
-				'cbid.homeproxy.config.main_udp_urltest_mode',
-				'cbid.homeproxy.config.main_udp_urltest_preferred',
-				'cbid.homeproxy.config.main_udp_urltest_nodes');
-		};
-		document.addEventListener('widget-change', urltestSync, true);
-
 		o = s.taboption('routing', form.ListValue, 'main_urltest_preferred', _('URLTest node'),
 			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		o.depends('main_node', 'urltest');
+		o.depends({ 'main_node': 'urltest', 'main_urltest_mode': 'prefer' });
+		o.retain = true;
 		o.rmempty = false;
 
 		o = s.taboption('routing', hp.CBIStaticList, 'main_urltest_nodes', _('URLTest nodes'),
 			_('List of nodes to test.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		o.depends('main_node', 'urltest');
+		o.depends({ 'main_node': 'urltest', 'main_urltest_mode': 'manual' });
+		o.retain = true;
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Value, 'main_urltest_interval', _('Test interval'),
@@ -329,14 +299,16 @@ return view.extend({
 			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		o.depends('main_udp_node', 'urltest');
+		o.depends({ 'main_udp_node': 'urltest', 'main_udp_urltest_mode': 'prefer' });
+		o.retain = true;
 		o.rmempty = false;
 
 		o = s.taboption('routing', hp.CBIStaticList, 'main_udp_urltest_nodes', _('URLTest nodes'),
 			_('List of nodes to test.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		o.depends('main_udp_node', 'urltest');
+		o.depends({ 'main_udp_node': 'urltest', 'main_udp_urltest_mode': 'manual' });
+		o.retain = true;
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_interval', _('Test interval'),
@@ -2318,11 +2290,6 @@ return view.extend({
 		poll.add(mdRefresh, 10);
 
 		return m.render().then(function(node) {
-			/* Apply the URLTest-mode visibility once the form DOM is attached
-			 * (belt-and-braces: the widget-change listener keeps it in sync
-			 * on every live change). */
-			setTimeout(urltestSync, 0);
-			setTimeout(urltestSync, 500);
 			return node;
 		});
 	}
