@@ -78,23 +78,30 @@ if [ "$PKG_MGR" == "apk" ]; then
 export root="${IPKG_INSTROOT}"
 export pkgname="'"$PKG_NAME"'"
 add_group_and_user
-default_postinst
-[ -n "${IPKG_INSTROOT}" ] || { rm -f /tmp/luci-indexcache.*
+# Deliberately NOT default_postinst: its init.d loop runs "/etc/init.d/homeproxy
+# start" synchronously, and the service start is slow (mosdns bootstrap +
+# rule-set downloads + fw4) — slow enough to blow the 120s ubus timeout and
+# kill apk mid-transaction (observed: update failed, i18n updated, app stayed
+# old). The app update flow restarts the service in the background instead.
+[ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
+	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration; do
+		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
+	done
+	uci commit
+fi
+	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
 	exit 0
 }' > "$TEMP_DIR/post-install"
 
 	echo -e '#!/bin/sh
-export PKG_UPGRADE=1
-#!/bin/sh
 [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
 [ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
 . ${IPKG_INSTROOT}/lib/functions.sh
 export root="${IPKG_INSTROOT}"
 export pkgname="'"$PKG_NAME"'"
 add_group_and_user
-default_postinst
 [ -n "${IPKG_INSTROOT}" ] || { rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
@@ -196,7 +203,23 @@ PYEOF
 [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
 [ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
 . ${IPKG_INSTROOT}/lib/functions.sh
-default_postinst $0 $@' > "$TEMP_PKG_DIR/CONTROL/postinst"
+export root="${IPKG_INSTROOT}"
+export pkgname="'"$PKG_NAME"'"
+add_group_and_user
+# Not default_postinst: its init.d loop would start /etc/init.d/homeproxy
+# synchronously (slow: bootstrap + rule-set downloads + fw4) and can blow the
+# update timeout. The app update flow restarts the service in the background.
+[ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
+	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration; do
+		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
+	done
+	uci commit
+fi
+	rm -f /tmp/luci-indexcache.*
+	rm -rf /tmp/luci-modulecache/
+	killall -HUP rpcd 2>/dev/null
+	exit 0
+}' > "$TEMP_PKG_DIR/CONTROL/postinst"
 	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst"
 
 	echo -e "[ -n "\${IPKG_INSTROOT}" ] || {

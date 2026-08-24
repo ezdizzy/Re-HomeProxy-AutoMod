@@ -1670,6 +1670,11 @@ const methods = {
 			const ok_i18n = i18n_path ? do_install(i18n_path) : true;
 			if (!ok_app)
 				return { result: false, error: 'app package installation failed' };
+			/* The package scripts deliberately do NOT start the service (the init.d
+			 * start is slow and would hang the package transaction). Bring the new
+			 * scripts live with a BACKGROUND restart so the RPC returns immediately
+			 * and the UI never blocks. */
+			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
 			return { result: true, i18n_updated: !!ok_i18n };
 		}
 	},
