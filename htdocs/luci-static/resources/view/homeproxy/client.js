@@ -1,4 +1,4 @@
-﻿/*
+/*
  * SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (C) 2022-2025 ImmortalWrt.org
@@ -187,8 +187,8 @@ return view.extend({
 			o.rmempty = false;
 		}
 
-		o = s.taboption('routing', form.ListValue, 'main_node', _('Main node') + ' рџ”—',
-			_('In this mode: only blocked domains are routed through this node вЂ” all other traffic goes direct.'));
+		o = s.taboption('routing', form.ListValue, 'main_node', _('Main node') + ' 🔗',
+			_('In this mode: only blocked domains are routed through this node — all other traffic goes direct.'));
 		o.value('nil', _('Disable'));
 		o.value('urltest', _('URLTest'));
 		for (let i in proxy_nodes)
@@ -205,7 +205,7 @@ return view.extend({
 		o = s.taboption('routing', form.DummyValue, '_active_urltest_node', _('Active URLTest node'));
 		o.depends('main_node', 'urltest');
 		o.cfgvalue = function() {
-			const el = E('span', { 'style': 'color:gray' }, 'вЂ”');
+			const el = E('span', { 'style': 'color:gray' }, '—');
 			poll.add(L.bind(function() {
 				return L.resolveDefault(callActiveNode(), {}).then(function(ret) {
 					if (ret && !ret.error && ret.node) {
@@ -213,13 +213,13 @@ return view.extend({
 						const name = (m && proxy_nodes[m[1]]) ? proxy_nodes[m[1]] : ret.node;
 						const type = ret.type ? ' (' + ret.type + ')' : '';
 						/* Same 4-colour scheme as the status page: 65535 ms is the
-						   URLTest timeout sentinel (confirmed dead в†’ red); >=3000 ms is
+						   URLTest timeout sentinel (confirmed dead → red); >=3000 ms is
 						   working-but-slow (orange); a real low latency is green; no
 						   delay at all is unmeasured (gray, no number). */
 						let dColor, dStr = '';
-						if (ret.delay === 65535) { dColor = 'red'; dStr = ' вЂ” ' + _('timeout'); }
-						else if (ret.delay >= 3000) { dColor = 'orange'; dStr = ' вЂ” ' + ret.delay + ' ms'; }
-						else if (ret.delay) { dColor = 'green'; dStr = ' вЂ” ' + ret.delay + ' ms'; }
+						if (ret.delay === 65535) { dColor = 'red'; dStr = ' — ' + _('timeout'); }
+						else if (ret.delay >= 3000) { dColor = 'orange'; dStr = ' — ' + ret.delay + ' ms'; }
+						else if (ret.delay) { dColor = 'green'; dStr = ' — ' + ret.delay + ' ms'; }
 						else dColor = 'gray';
 						el.textContent = name + type + dStr;
 						el.style.color = dColor;
@@ -239,7 +239,7 @@ return view.extend({
 		o.cfgvalue = function() { return ''; };
 
 		o = s.taboption('routing', form.ListValue, 'main_urltest_mode', _('URLTest mode'));
-		o.value('auto', _('Auto вЂ” all nodes (recommended)'));
+		o.value('auto', _('Auto — all nodes (recommended)'));
 		o.value('prefer', _('Preferred node + auto'));
 		o.value('manual', _('Manual node list'));
 		o.default = 'manual';
@@ -269,7 +269,7 @@ return view.extend({
 		o.depends('main_node', 'urltest');
 
 		o = s.taboption('routing', form.Value, 'main_urltest_tolerance', _('Test tolerance'),
-			_('Minimum latency gap (ms) required to switch to a faster node вЂ” prevents flapping between nodes with close latency values.'));
+			_('Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values.'));
 		o.datatype = 'uinteger';
 		o.placeholder = '150';
 		o.depends('main_node', 'urltest');
@@ -288,7 +288,7 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_mode', _('URLTest mode'));
-		o.value('auto', _('Auto вЂ” all nodes (recommended)'));
+		o.value('auto', _('Auto — all nodes (recommended)'));
 		o.value('prefer', _('Preferred node + auto'));
 		o.value('manual', _('Manual node list'));
 		o.default = 'manual';
@@ -323,103 +323,22 @@ return view.extend({
 		o.placeholder = '150';
 		o.depends('main_udp_node', 'urltest');
 
-		/* Global-mode primary DNS + reserve list. These belong to the routing scheme
-		 * (single resolver for the whole tunnel), NOT to the DNS pools page: Russia/
-		 * Secure pools live on the DNS Settings page, this trio only applies when
-		 * routing_mode = global. */
-		o = s.taboption('routing', form.Value, 'dns_server', _('DNS server'),
-			_('Support UDP, TCP, DoH, DoQ, DoT. TCP protocol will be used if not specified.'));
-		o.value('wan', _('WAN DNS (read from interface)'));
-		o.value('1.1.1.1', _('CloudFlare Public DNS (1.1.1.1)'));
-		o.value('208.67.222.222', _('Cisco Public DNS (208.67.222.222)'));
-		o.value('8.8.8.8', _('Google Public DNS (8.8.8.8)'));
-		o.value('', '---');
-		o.value('9.9.9.9', _('Quad9 Public DNS (9.9.9.9)'));
-		o.value('94.140.14.14', _('AdGuard Public DNS (94.140.14.14)'));
-		o.value('84.200.69.80', _('DNS.WATCH Public DNS (84.200.69.80)'));
-		o.value('116.202.176.26', _('LibreDNS Public DNS (116.202.176.26)'));
-		o.value('195.46.39.39', _('SafeDNS Public DNS (195.46.39.39)'));
-		o.value('223.5.5.5', _('Aliyun Public DNS (223.5.5.5)'));
-		o.value('119.29.29.29', _('Tencent Public DNS (119.29.29.29)'));
-		o.value('117.50.10.10', _('ThreatBook Public DNS (117.50.10.10)'));
-		o.default = '8.8.8.8';
-		o.rmempty = false;
-		o.depends('routing_mode', 'global');
-		o.validate = function(section_id, value) {
-			if (section_id && !['wan'].includes(value)) {
-				if (!value)
-					return _('Expecting: %s').format(_('non-empty value'));
-
-				let ipv6_support = this.section.formvalue(section_id, 'ipv6_support');
-				try {
-					let url = new URL(value.replace(/^.*:\/\//, 'http://'));
-					if (stubValidator.apply('hostname', url.hostname))
-						return true;
-					else if (stubValidator.apply('ip4addr', url.hostname))
-						return true;
-					else if ((ipv6_support === '1') && stubValidator.apply('ip6addr', url.hostname.match(/^\[(.+)\]$/)?.[1]))
-						return true;
-					else
-						return _('Expecting: %s').format(_('valid DNS server address'));
-				} catch(e) {}
-
-				if (!stubValidator.apply((ipv6_support === '1') ? 'ipaddr' : 'ip4addr', value))
-					return _('Expecting: %s').format(_('valid DNS server address'));
-			}
-
-			return true;
-		}
-
-		const dns_presets = {
-			cf:      ['1.1.1.1', '1.0.0.1'],
-			google:  ['8.8.8.8', '8.8.4.4'],
-			adguard: ['94.140.14.14', '94.140.15.15'],
-			quad9:   ['9.9.9.9', '149.112.112.112'],
-			opendns: ['208.67.222.222', '208.67.220.220']
-		};
-		o = s.taboption('routing', form.ListValue, 'dns_preset', _('DNS preset'),
-			_('Quickly set a primary DNS plus a failover candidate (added to “Alternate DNS servers”, used by DNS failover). Choose “Custom” to keep your manual DNS server.'));
-		o.value('custom', _('Custom (use the DNS server above)'));
-		o.value('cf', _('Cloudflare 1.1.1.1 / 1.0.0.1'));
-		o.value('google', _('Google 8.8.8.8 / 8.8.4.4'));
-		o.value('adguard', _('AdGuard 94.140.14.14 / 94.140.15.15'));
-		o.value('quad9', _('Quad9 9.9.9.9 / 149.112.112.112'));
-		o.value('opendns', _('OpenDNS 208.67.222.222 / 208.67.220.220'));
-		o.default = 'custom';
-		o.rmempty = false;
-		o.depends('routing_mode', 'global');
-		o.load = function() { return 'custom'; };
-		o.write = function(section_id, value) {
-			if (!value || value === 'custom') return;
-			let p = dns_presets[value];
-			if (!p) return;
-			this.section.formvalue(section_id, 'dns_server', p[0]);
-			let alts = this.section.formvalue(section_id, 'alt_dns_servers') || [];
-			if (typeof alts === 'string') alts = [ alts ];
-			if (!alts.includes(p[1])) { alts.push(p[1]); this.section.formvalue(section_id, 'alt_dns_servers', alts); }
-		};
-
-		o = s.taboption('routing', form.DynamicList, 'alt_dns_servers', _('Alternate DNS servers (failover)'),
-			_('Fallback DNS servers (IP, hostname, or DoH/DoT URL). Used by DNS failover when the primary is unreachable. The DNS preset above seeds these automatically.'));
-		o.depends('routing_mode', 'global');
-		o.placeholder = '1.0.0.1';
-
-		o = s.taboption('routing', form.Flag, 'proxy_calls',
-			_('Proxy calls') + ' рџ“ћ',
+o = s.taboption('routing', form.Flag, 'proxy_calls',
+			_('Proxy calls') + ' 📞',
 			_('Route VoIP call ports (WhatsApp, Telegram, FaceTime, etc.) through the proxy.'));
 		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
 		o.default = o.enabled;
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Flag, 'no_proxy_torrents',
-			_('Do not proxify torrents') + ' рџ§І',
+			_('Do not proxify torrents') + ' 🧲',
 			_('Force torrent traffic (BitTorrent protocol + common ports) to bypass the proxy.'));
 		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
 		o.default = o.enabled;
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Flag, 'show_advanced_rules',
-			_('Advanced custom rules') + ' рџ‘ЁвЂЌрџ’»',
+			_('Advanced custom rules') + ' 👨‍💻',
 			_('Show Routing Nodes and Routing Rules tabs for additional custom rules.'));
 		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
 		o.default = o.disabled;
@@ -569,11 +488,11 @@ return view.extend({
 			this.value('system-dns', _('System DNS'));
 			const _rm = uci.get(data[0], 'config', 'routing_mode');
 			if (_rm === 'proxy_banned_ru') {
-				this.value('russia-dns', _('Russia DNS server') + ' рџ”“');
-				this.value('secure-dns', _('Secure DNS server') + ' рџ”’');
+				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			} else if (/^bypass_(cn|ir)$/.test(_rm)) {
-				this.value('region-dns', _('Region DNS') + ' рџ”“');
-				this.value('secure-dns', _('Secure DNS server') + ' рџ”’');
+				this.value('region-dns', _('Region DNS') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			}
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
@@ -588,7 +507,7 @@ return view.extend({
 
 		o = s.taboption('routing', form.Flag, 'byedpi_enabled', _('Enable ByeDPI'),
 			_('A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. ' +
-			  'Works by confusing your ISP\'s traffic analysis вЂ” your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. ' +
+			  'Works by confusing your ISP\'s traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. ' +
 			  'Results depend on your ISP and may require trying different strategies in the ByeDPI tab. ' +
 			  'ByeDPI will be installed automatically on first enable.'));
 		o.default = o.disabled;
@@ -670,7 +589,7 @@ return view.extend({
 		})(o);
 
 		o = s.taboption('routing', form.Flag, 'zapret_enabled', _('Enable Zapret'),
-			_('An alternative to ByeDPI: another free way to unblock throttled or blocked sites (YouTube, DiscordвЂ¦) without a VPN subscription. ' +
+			_('An alternative to ByeDPI: another free way to unblock throttled or blocked sites (YouTube, Discord…) without a VPN subscription. ' +
 			  'Practical difference from ByeDPI: Zapret can work with the QUIC protocol. ' +
 			  'Finding a working strategy is individual and depends on your ISP\'s restrictions. ' +
 			  'Installed automatically on first enable.'));
@@ -684,7 +603,7 @@ return view.extend({
 						if (!ev.target.checked) return;
 						const status = await L.resolveDefault(callZapretStatus(), {});
 						if (status.installed) {
-							/* Installed but the NFQUEUE kmod is missing в†’ enabling would emit
+							/* Installed but the NFQUEUE kmod is missing → enabling would emit
 							 * `queue num` and nft would reject the whole fw4 set. Block it.
 							 * (kmod_ok === false only; undefined = old backend = don't block.) */
 							if (status.kmod_ok === false) {
@@ -761,7 +680,7 @@ return view.extend({
 			};
 		})(o);
 
-		/* Proxy Rules start (per-service overrides вЂ” RU forward + CN/IR reverse) */
+		/* Proxy Rules start (per-service overrides — RU forward + CN/IR reverse) */
 		s.tab('ru_rules', _('Proxy Rules'));
 		o = s.taboption('ru_rules', form.SectionValue, '_ru_rules', form.TypedSection, 'proxy_ru_rule');
 		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
@@ -776,9 +695,9 @@ return view.extend({
 		const _rmode_rules = uci.get('homeproxy', 'config', 'routing_mode');
 		if (_rmode_rules === 'bypass_cn' || _rmode_rules === 'bypass_ir') {
 			const _region_name = (_rmode_rules === 'bypass_cn') ? _('China') : _('Iran');
-			ss.description = _('Default route is through the proxy. %s domains and IPs (geosite + geoip) automatically go Direct. Rules added here are per-service overrides applied before that baseline вЂ” e.g. force a specific service Direct, or send it through a separate node.').format(_region_name);
+			ss.description = _('Default route is through the proxy. %s domains and IPs (geosite + geoip) automatically go Direct. Rules added here are per-service overrides applied before that baseline — e.g. force a specific service Direct, or send it through a separate node.').format(_region_name);
 		} else {
-			ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) вЂ” the in-Russia must-have set (YouTube, Discord, Telegram, MetaвЂ¦) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) вЂ” community blocklist of domains and IPs banned in Russia (Roskomnadzor)');
+			ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)');
 		}
 
 		so = ss.option(form.Flag, 'enabled', _('Enable'));
@@ -786,7 +705,7 @@ return view.extend({
 		so.rmempty = false;
 		so.editable = true;
 
-		so = ss.option(form.ListValue, 'source', _('Source') + ' в¤µпёЏ');
+		so = ss.option(form.ListValue, 'source', _('Source') + ' ⤵️');
 		/* Russia bulk lists are RU-forward only; CN/IR get geosite/geoip baked into the
 		 * engine baseline, so here they only need per-service overrides. */
 		if (_rmode_rules === 'proxy_banned_ru') {
@@ -818,12 +737,12 @@ return view.extend({
 		so.validate = function(section_id, value) {
 			for (const sid of this.section.cfgsections()) {
 				if (sid !== section_id && this.cfgvalue(sid) === value)
-					return _('Duplicate source вЂ” only the first rule will take effect');
+					return _('Duplicate source — only the first rule will take effect');
 			}
 			return true;
 		};
 
-		so = ss.option(form.ListValue, 'node', _('Node') + ' рџ”—');
+		so = ss.option(form.ListValue, 'node', _('Node') + ' 🔗');
 		so.value('main-out', _('Same as main node'));
 		so.value('urltest', _('Separate URLTest'));
 		for (let i in proxy_nodes)
@@ -886,7 +805,7 @@ return view.extend({
 		/* "Same as main node" exists in every mode EXCEPT custom routing and custom JSON */
 		const _rmode = uci.get('homeproxy', 'config', 'routing_mode');
 		if (_rmode !== 'custom' && _rmode !== 'custom_json')
-			so.value('main-out', _('Same as main node') + ' рџ”—');
+			so.value('main-out', _('Same as main node') + ' 🔗');
 		so.value('urltest', _('URLTest'));
 		for (let i in proxy_nodes)
 			so.value(i, proxy_nodes[i]);
@@ -904,11 +823,11 @@ return view.extend({
 			this.value('system-dns', _('System DNS'));
 			const _rm = uci.get(data[0], 'config', 'routing_mode');
 			if (_rm === 'proxy_banned_ru') {
-				this.value('russia-dns', _('Russia DNS server') + ' рџ”“');
-				this.value('secure-dns', _('Secure DNS server') + ' рџ”’');
+				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			} else if (/^bypass_(cn|ir)$/.test(_rm)) {
-				this.value('region-dns', _('Region DNS') + ' рџ”“');
-				this.value('secure-dns', _('Secure DNS server') + ' рџ”’');
+				this.value('region-dns', _('Region DNS') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			}
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
@@ -942,7 +861,7 @@ return view.extend({
 
 			this.value('', _('Direct'));
 			if (/^(proxy_banned_ru|bypass_cn|bypass_ir)$/.test(uci.get(data[0], 'config', 'routing_mode')))
-				this.value('main-out', _('Same as main node') + ' рџ”—');
+				this.value('main-out', _('Same as main node') + ' 🔗');
 			uci.sections(data[0], 'routing_node', (res) => {
 				if (res['.name'] !== section_id && res.enabled === '1')
 					this.value(res['.name'], res.label);
@@ -1189,9 +1108,9 @@ return view.extend({
 			 * possibly-stale main_node value, to avoid offering a tag that won't exist. */
 			if (uci.get(data[0], 'config', 'routing_mode') !== 'custom' &&
 			    uci.get(data[0], 'config', 'main_node'))
-				this.value('main-out', _('Same as main node') + ' рџ”—');
+				this.value('main-out', _('Same as main node') + ' 🔗');
 			/* byedpi-out, by contrast, IS emitted in every routing mode whenever ByeDPI is
-			 * enabled вЂ” so a custom-mode rule can target it directly, no routing node needed. */
+			 * enabled — so a custom-mode rule can target it directly, no routing node needed. */
 			if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
 				this.value('byedpi-out', _('ByeDPI'));
 			if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
@@ -1402,11 +1321,11 @@ return view.extend({
 			this.value('system-dns', _('System DNS'));
 			const _rm = uci.get(data[0], 'config', 'routing_mode');
 			if (_rm === 'proxy_banned_ru') {
-				this.value('russia-dns', _('Russia DNS server') + ' рџ”“');
-				this.value('secure-dns', _('Secure DNS server') + ' рџ”’');
+				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			} else if (/^bypass_(cn|ir)$/.test(_rm)) {
-				this.value('region-dns', _('Region DNS') + ' рџ”“');
-				this.value('secure-dns', _('Secure DNS server') + ' рџ”’');
+				this.value('region-dns', _('Region DNS') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			}
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
@@ -1684,11 +1603,11 @@ return view.extend({
 			this.value('system-dns', _('System DNS'));
 			const _rm = uci.get(data[0], 'config', 'routing_mode');
 			if (_rm === 'proxy_banned_ru') {
-				this.value('russia-dns', _('Russia DNS server') + ' рџ”“');
-				this.value('secure-dns', _('Secure DNS server') + ' рџ”’');
+				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			} else if (/^bypass_(cn|ir)$/.test(_rm)) {
-				this.value('region-dns', _('Region DNS') + ' рџ”“');
-				this.value('secure-dns', _('Secure DNS server') + ' рџ”’');
+				this.value('region-dns', _('Region DNS') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			}
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
@@ -2073,6 +1992,7 @@ return view.extend({
 		/* Interface control end */
 		/* ACL settings end */
 
+		
 		return m.render().then(function(node) {
 			return node;
 		});
