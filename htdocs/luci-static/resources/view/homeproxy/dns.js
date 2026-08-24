@@ -55,10 +55,13 @@ return view.extend({
 
 		/* ── Tab: DNS servers (the split-routing pools) ─────────────────── */
 		o = s.taboption('pools', form.DynamicList, 'russia_dns_server', _('Russia DNS server') + ' 🔓',
-			_('Resolves Russian domains directly, without going through the proxy. You may add several — MultiDNS races all of them, without it the first entry is used.'));
+			_('Resolves Russian domains directly, without going through the proxy. You may add several — MultiDNS races all of them, without it the first entry is used. A bare IP is queried over UDP with TCP fallback; entries may force a transport: tcp://IP, or an encrypted direct DoH URL like https://1.1.1.1/dns-query (never proxied).'));
 		o.value('77.88.8.8', _('Yandex DNS (77.88.8.8)'));
 		o.value('193.58.251.251', _('SkyDNS (193.58.251.251)'));
 		o.value('83.220.169.155', _('Comss.one (83.220.169.155)'));
+		o.value('https://1.1.1.1/dns-query', _('Cloudflare DoH direct by IP (1.1.1.1)'));
+		o.value('https://8.8.8.8/resolve', _('Google DoH direct by IP (8.8.8.8)'));
+		o.value('tcp://8.8.8.8', _('Google DNS TCP (tcp://8.8.8.8)'));
 		o.value('1.1.1.1', _('Cloudflare DNS UDP (1.1.1.1)'));
 		o.value('8.8.8.8', _('Google DNS UDP (8.8.8.8)'));
 		o.value('9.9.9.9', _('Quad9 DNS UDP (9.9.9.9)'));
@@ -67,13 +70,30 @@ return view.extend({
 		o.value('116.202.176.26', _('LibreDNS (116.202.176.26)'));
 		o.value('195.46.39.39', _('SafeDNS (195.46.39.39)'));
 		o.value('94.140.14.14', _('AdGuard DNS UDP (94.140.14.14)'));
+		o.value('https://cloudflare-dns.com/dns-query', _('Cloudflare DoH'));
+		o.value('https://dns.quad9.net/dns-query', _('Quad9 DoH'));
+		o.value('https://dns.adguard-dns.com/dns-query', _('AdGuard DoH'));
+		o.value('https://dns.google/dns-query', _('Google DoH'));
+		o.value('https://freedns.controld.com/p0', _('ControlD DoH'));
+		o.value('https://doh.dns.sb/dns-query', _('DNS.SB DoH'));
+		o.value('https://doh.libredns.gr/dns-query', _('LibreDNS DoH'));
+		o.value('https://dns.mullvad.net/dns-query', _('Mullvad DoH'));
+		o.value('tls://cloudflare-dns.com', _('Cloudflare DoT'));
+		o.value('tls://dns.quad9.net', _('Quad9 DoT'));
+		o.value('tls://dns.google', _('Google DoT'));
+		o.value('tls://dns.adguard-dns.com', _('AdGuard DoT'));
+		o.value('tls://dot.libredns.gr', _('LibreDNS DoT'));
+		o.value('tls://dns.mullvad.net', _('Mullvad DoT'));
 		o.default = '77.88.8.8';
 		o.rmempty = false;
 		o.validate = function(section_id, value) {
 			let list = Array.isArray(value) ? value : (value ? [ value ] : []);
 			for (let v in list) {
-				if (list[v] && !stubValidator.apply('ip4addr', list[v]) && !stubValidator.apply('ip6addr', list[v]))
-					return _('Expecting: %s').format(_('valid DNS server address'));
+				if (!list[v]) continue;
+				let host = String(list[v]).replace(/^[a-z]+:\/\//i, '').split(/[/:]/)[0];
+				if (stubValidator.apply('ip4addr', host) || stubValidator.apply('ip6addr', host) || stubValidator.apply('hostname', host))
+					continue;
+				return _('Expecting: %s').format(_('valid DNS server address'));
 			}
 			return true;
 		}
@@ -110,6 +130,16 @@ return view.extend({
 			}
 			return true;
 		}
+
+		o = s.taboption('pools', form.Flag, 'russia_dns_use_wan', _('Provider (WAN) DNS') + ' 🔓',
+			_('Automatically detect the DNS servers your provider assigns on the WAN interface and race them together with the "Russia DNS server" list above. No manual setup on any router or ISP: MultiDNS measures quality continuously and prunes this server automatically if it is dead, slow or returns forged answers.'));
+		o.default = '1';
+		o.rmempty = false;
+
+		o = s.taboption('pools', form.Flag, 'russia_dns_auto_doh', _('Direct DoH fallback'),
+			_('For ISPs that BLOCK or FORGE all plaintext port-53 traffic (UDP swallowed, TCP answered with garbage): two direct encrypted DoH upstreams — Cloudflare 1.1.1.1 and Google 8.8.8.8, queried straight from the router without the proxy — are added to the racing pool automatically so names keep resolving. Leave OFF on a normal network: enabled only after two consecutive verification cycles prove every plaintext answer unverifiable.'));
+		o.default = '0';
+		o.rmempty = false;
 
 
 		/* ── Tab: Reserve DNS (legacy failover for setups WITHOUT MultiDNS) ──────
@@ -222,12 +252,19 @@ return view.extend({
 		]);
 
 		const mdPanel = E('div', { 'class': 'automation-panel cbi-section' }, [
-			E('h3', {}, [ _('Live DNS quality monitor') ]),
+			E('h3', {}, [ _('DNS quality monitor') ]),
 			mdStatusEl,
 			mdTableEl,
 			mdActions,
 			E('p', { 'class': 'automation-hint' }, [ _('MultiDNS races all configured DNS servers and shows their measured latency / success / open-ratio. A server that consistently fails (dead, or returns IPs that do not open the site) is pruned from the live pool and re-checked; the others race on every query (mosdns picks the fastest valid answer).') ])
 		]);
+
+		so = ss.option(form.Flag, 'verify_user_domains', _('Verify real user domains'),
+			_('Sample the domains your clients actually query (from the dnsmasq log, stays on this router) and cross-check the racing pool\'s answers against direct encrypted DoH references. A domain whose answers persistently disagree with every reference is quarantined to the secure pool automatically, so forged answers stop reaching clients. Costs a few extra HTTPS checks per quality cycle.'));
+		so.default = '1';
+		so.rmempty = false;
+		so.depends('enabled', '1');
+		so.depends('use_plain', '1');
 
 		so = ss.option(form.DummyValue, '_md_monitor');
 		so.rawhtml = true;

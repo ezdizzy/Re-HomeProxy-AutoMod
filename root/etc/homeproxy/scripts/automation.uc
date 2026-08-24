@@ -457,6 +457,13 @@ function discover_dns() {
 	if (!access(DNS_LOG)) return [];
 	let size = stat(DNS_LOG).size;
 	if (dns_log_offset > size) dns_log_offset = 0; /* log rotated */
+	/* Self-rotation: the query log grows without bound otherwise (~56 MB seen).
+	 * dnsmasq holds the fd with O_APPEND, so an in-place truncate is safe —
+	 * writes continue at the new end. Only recent queries matter for discovery. */
+	if (size > 4194304) {
+		let w = open(DNS_LOG, 'w');
+		if (w) { w.close(); dns_log_offset = 0; size = 0; }
+	}
 	let fd = open(DNS_LOG, 'r');
 	if (!fd) return [];
 	fd.seek(dns_log_offset);
@@ -805,12 +812,14 @@ function main() {
 			let st = state[dom];
 			if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
 			dom_probed++;
+
 			let d_res = probe(dom, false, timeout);
 			let p_res = null;
 			if (!d_res.ok && !main_is_direct) { p_res = probe(dom, true, timeout); sleep(150); }
-			classify(dom, d_res, p_res, false);
+			/* A client may resolve a BARE IP literal (dnsmasq logs it like a name);
+			 * classify by content so the UI Type column stays truthful. */
+			classify(dom, d_res, p_res, !!match(dom, /^(\d{1,3}\.){3}\d{1,3}$/));
 		}
-
 		/* IP learning (B): only when enabled, for non-private destinations that are
 		 * not shared-CDN address space. HTTP probes first; if both sides are HTTP-
 		 * inconclusive (proprietary protocols — MTProto DCs, game servers), fall back

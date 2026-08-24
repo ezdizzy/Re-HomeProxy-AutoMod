@@ -160,8 +160,8 @@ set_dns_defaults() {
 		uci -q delete homeproxy.config.russia_dns_server 2>/dev/null
 		uci -q add_list homeproxy.config.russia_dns_server=77.88.8.8
 		uci -q add_list homeproxy.config.russia_dns_server=8.8.8.8
-		uci -q add_list homeproxy.config.russia_dns_server=1.1.1.1
-		ok "  обычный DNS-пул: Яндекс 77.88.8.8, Google 8.8.8.8, Cloudflare 1.1.1.1"
+		uci -q add_list homeproxy.config.russia_dns_server=https://cloudflare-dns.com/dns-query
+		ok "  обычный DNS-пул: Яндекс 77.88.8.8, Google 8.8.8.8, Cloudflare DoH (прямой)"
 	fi
 	CUR=$(uci -q get homeproxy.config.secure_dns_server)
 	if [ -z "$CUR" ]; then
@@ -170,6 +170,11 @@ set_dns_defaults() {
 		uci -q add_list homeproxy.config.secure_dns_server=https://cloudflare-dns.com/dns-query
 		uci -q add_list homeproxy.config.secure_dns_server=https://dns.quad9.net/dns-query
 		ok "  защищённый DNS-пул: Google, Cloudflare, Quad9 (DoH)"
+	fi
+	CUR=$(uci -q get homeproxy.config.russia_dns_use_wan)
+	if [ -z "$CUR" ]; then
+		uci -q set homeproxy.config.russia_dns_use_wan='1'
+		ok "  DNS провайдера (WAN) добавлен в обычный пул по умолчанию"
 	fi
 	uci -q commit homeproxy
 }

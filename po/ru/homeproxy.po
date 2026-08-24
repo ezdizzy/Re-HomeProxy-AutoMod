@@ -5505,6 +5505,74 @@ msgstr ""
 msgid "Reserve DNS"
 msgstr "Резервный DNS"
 
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Provider (WAN) DNS"
+msgstr "DNS провайдера (WAN)"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid ""
+"Automatically detect the DNS servers your provider assigns on the WAN "
+"interface and race them together with the \"Russia DNS server\" list above. "
+"No manual setup on any router or ISP: MultiDNS measures quality continuously "
+"and prunes this server automatically if it is dead, slow or returns forged "
+"answers."
+msgstr ""
+"Автоматически определять DNS-серверы провайдера, выданные на WAN-интерфейсе, "
+"и опрашивать их вместе со списком «DNS-серверы России» выше. Не требует "
+"настройки ни на одном роутере и у любого провайдера: MultiDNS непрерывно "
+"оценивает качество и сам исключает этот сервер, если он мёртв, медлен или "
+"отдаёт подменённые ответы."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Direct DoH fallback"
+msgstr "Прямой DoH-фолбэк"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "DNS quality monitor"
+msgstr "Монитор качества DNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Verify real user domains"
+msgstr "Верификация реальных доменов"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid ""
+"Sample the domains your clients actually query (from the dnsmasq log, stays on this router) and cross-check the racing pool's answers against direct encrypted DoH references. A domain whose answers persistently disagree with every reference is quarantined to the secure pool automatically, so forged answers stop reaching clients. Costs a few extra HTTPS checks per quality cycle."
+msgstr ""
+"Выбирать домены, которые реально запрашивают ваши клиенты (из лога dnsmasq, всё остаётся "
+"на этом роутере), и сверять ответы гоночного пула с эталонами через прямой шифрованный "
+"DoH. Домен, ответы по которому устойчиво не совпадают ни с одним эталоном, автоматически "
+"отправляется в карантин — на защищённый пул, чтобы подделки больше не доходили до "
+"клиентов. Стоит нескольких дополнительных HTTPS-проверок за цикл проверки качества."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid ""
+"For ISPs that BLOCK or FORGE all plaintext port-53 traffic (UDP swallowed, TCP answered with garbage): two direct encrypted DoH upstreams — Cloudflare 1.1.1.1 and Google 8.8.8.8, queried straight from the router without the proxy — are added to the racing pool automatically so names keep resolving. Leave OFF on a normal network: enabled only after two consecutive verification cycles prove every plaintext answer unverifiable."
+msgstr ""
+"Для провайдеров, которые глушат ИЛИ подделывают весь plaintext-трафик порта 53 (UDP молчит, TCP отвечает мусором): в гоночный пул автоматически добавляются два прямых шифрованных DoH-апстрима — Cloudflare 1.1.1.1 и Google 8.8.8.8, запрашиваемые роутером напрямую, без прокси, чтобы резолвинг не прерывался. В обычной сети оставьте ВЫКЛЮЧЕННЫМ: включается только после двух циклов проверки подряд, доказавших несовместимость всех открытых ответов с эталонными."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Cloudflare DoH direct by IP (1.1.1.1)"
+msgstr "Cloudflare DoH напрямую по IP (1.1.1.1)"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Google DoH direct by IP (8.8.8.8)"
+msgstr "Google DoH напрямую по IP (8.8.8.8)"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Yandex DNS TCP (tcp://77.88.8.8)"
+msgstr "Яндекс DNS TCP (tcp://77.88.8.8)"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Google DNS TCP (tcp://8.8.8.8)"
+msgstr "Google DNS TCP (tcp://8.8.8.8)"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid ""
+"Resolves Russian domains directly, without going through the proxy. You may add several — MultiDNS races all of them, without it the first entry is used. A bare IP is queried over UDP with TCP fallback; entries may force a transport: tcp://IP, or an encrypted direct DoH URL like https://1.1.1.1/dns-query (never proxied)."
+msgstr ""
+"Резолвит российские домены напрямую, без прокси. Можно добавить несколько — MultiDNS опрашивает их все, без него используется первая запись. Голый IP опрашивается по UDP с фолбэком на TCP; в записях можно явно задать транспорт: tcp://IP или шифрованный прямой DoH-адрес вида https://1.1.1.1/dns-query (проксируется никогда)."
+
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Resource"
