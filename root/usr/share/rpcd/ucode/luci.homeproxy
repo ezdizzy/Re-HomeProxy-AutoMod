@@ -1934,24 +1934,23 @@ const methods = {
 			let active = { ru: [], secure: [] };
 			if (state.pools && state.pools.ru)
 				active = { ru: state.pools.ru, secure: state.pools.secure || [] };
-			/* Per-server trend rows for the monitor. A server may belong to BOTH
-			 * pools (e.g. user added the same DoH endpoint to Russia and Secure
-			 * lists) — show the combined membership instead of hiding it behind
-			 * the first match, otherwise pool counts and table rows disagree. */
+			/* Per-server trend rows for the monitor. State keys are per-pool
+			 * ("sec:" prefix for secure entries) because the same server may be
+			 * raced on two different paths (direct vs tunneled) and must show
+			 * independent metrics. Each key yields its own row with the exact
+			 * single pool label. */
 			let pool_of = (srv) => {
-				let a = index(active.ru, srv) >= 0;
-				let b = index(active.secure, srv) >= 0;
-				if (a && b) return 'ru+secure';
-				if (a) return 'ru';
-				if (b) return 'secure';
+				if (index(active.ru, srv) >= 0) return 'ru';
+				if (index(active.secure, srv) >= 0) return 'secure';
 				return '—';
 			};
 			let servers = [];
 			for (let s in (state.servers || {})) {
 				let st = state.servers[s];
+				let base = (substr(s, 0, 4) === 'sec:') ? substr(s, 4) : s;
 				push(servers, {
-					server: s,
-					pool: pool_of(s),
+					server: base,
+					pool: pool_of(base),
 					score: st.score != null ? st.score : null,
 					latency: st.lat != null ? st.lat : null,
 					success: st.succ != null ? st.succ : null,

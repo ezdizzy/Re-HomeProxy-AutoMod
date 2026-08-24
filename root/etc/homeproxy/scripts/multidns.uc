@@ -134,6 +134,14 @@ function ratio100(s, def) {
 	return (v > 100) ? 100 : v;
 }
 
+/* Per-pool state key. The SAME server entry may belong to both pools and is
+ * probed on DIFFERENT paths (plain = direct, secure = via the tunnel), so its
+ * samples must never overwrite each other: secure entries are stored under a
+ * "sec:" prefix, plain entries keep the bare name (backwards compatible). */
+function skey(group, s) {
+	return (group === 'secure') ? ('sec:' + s) : s;
+}
+
 /* True when host looks like a literal IPv4/IPv6 address (no DNS bootstrap needed). */
 function is_ip(host) {
 	return !!match(host, /^[0-9]{1,3}(\.[0-9]{1,3}){3}$/) || !!match(host, /^[0-9a-fA-F:]+$/);
@@ -729,7 +737,7 @@ function build_mosdns_conf() {
 
 	let plain_up = [], secure_up = [];
 	for (let e in plain) if (!(st.servers[e] && st.servers[e].pruned)) push(plain_up, e);
-	for (let e in secure) if (!(st.servers[e] && st.servers[e].pruned)) push(secure_up, e);
+	for (let e in secure) if (!(st.servers[skey('secure', e)] && st.servers[skey('secure', e)].pruned)) push(secure_up, e);
 
 	/* First plain IP doubles as the bootstrap resolver for domain-based secure
 	 * upstreams so mosdns never has to consult the (loop-risky) system resolver. */
@@ -1170,7 +1178,8 @@ function analyze() {
 					if (r2.ok || length(r2.ips)) r = r2;
 				}
 				if (r.lat != null && r.lat != r.lat) r.lat = null;  /* NaN guard */
-				let cur = st.servers[s] || { lat: null, succ: null, live: null, open: null, samples: 0, pruned: false, bad_streak: 0 };
+				let sk = skey(p.group, s);
+				let cur = st.servers[sk] || { lat: null, succ: null, live: null, open: null, samples: 0, pruned: false, bad_streak: 0 };
 				let okf = r.ok ? 100 : 0;
 				let livef = (r.ok && r.live) ? 100 : 0;
 				cur.succ = (cur.succ == null) ? okf : ((a_ok * okf + a_old * cur.succ) / 100);
@@ -1207,7 +1216,7 @@ function analyze() {
 					let openf = int((opens * 100) / checked);
 					cur.open = (cur.open == null) ? openf : ((a_ok * openf + a_old * cur.open) / 100);
 				}
-				st.servers[s] = cur;
+				st.servers[sk] = cur;
 			} catch (e) { dbg('probe error [' + s + ']: ' + sprintf('%s', e)); }
 		}
 	}
@@ -1248,8 +1257,10 @@ function analyze() {
 	 * reflects EXACTLY the servers the user selected. */
 	let keep = {};
 	for (let k in st.pools)
-		for (let i = 0; i < length(st.pools[k]); i = i + 1)
+		for (let i = 0; i < length(st.pools[k]); i = i + 1) {
 			keep[st.pools[k][i]] = true;
+			if (k === 'secure') keep[skey('secure', st.pools[k][i])] = true;
+		}
 	for (let s in st.servers)
 		if (!keep[s]) delete st.servers[s];
 
