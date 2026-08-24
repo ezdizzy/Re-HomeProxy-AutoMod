@@ -5497,9 +5497,13 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid ""
-"For setups WITHOUT MultiDNS: watch the first server of each pool list (Russia / Secure above); when it stops answering, move a healthy one from the same list to the front. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up. Ignored while MultiDNS is enabled — it already races every server."
+"For setups WITHOUT MultiDNS: watch the first server of each pool list (Russia / Secure above); when it stops answering, move a healthy one from the same list to the front. Every transport is health-checked for real — plain UDP/53, DoH over HTTPS, DoT over TCP:853; only QUIC is assumed always up (no probe tooling). Ignored while MultiDNS is enabled — it already races every server."
 msgstr ""
-"Для схем БЕЗ MultiDNS: следить за первым сервером каждого списка выше (Россия / Защищённый); если он перестаёт отвечать — переставить здоровый из того же списка первым. Проверяются только обычные (UDP/Do53) серверы; DoH/DoT считаются всегда доступными. Игнорируется при включённом MultiDNS — он уже опрашивает все серверы сразу."
+"Для схем БЕЗ MultiDNS: следить за первым сервером каждого списка выше (Россия / "
+"Защищённый); если он перестаёт отвечать — переставить здоровый из того же списка "
+"первым. Каждый транспорт проверяется по-настоящему: обычный UDP/53, DoH по HTTPS, "
+"DoT по TCP:853; только QUIC считается всегда доступным (нет инструмента проверки). "
+"Игнорируется при включённом MultiDNS — он уже опрашивает все серверы сразу."
 
 #: htdocs/luci-static/resources/view/homeproxy/dns.js
 msgid "Reserve DNS"

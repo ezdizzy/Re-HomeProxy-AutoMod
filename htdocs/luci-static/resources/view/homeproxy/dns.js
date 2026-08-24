@@ -148,7 +148,7 @@ return view.extend({
 		 * SAME list. The single-server trio (dns_server/preset/alternates) belongs
 		 * to Global routing mode and lives on Client Settings ▸ Routing. */
 		o = s.taboption('reserve', form.Flag, 'dns_failover', _('Enable DNS failover'),
-			_('For setups WITHOUT MultiDNS: watch the first server of each pool list (Russia / Secure above); when it stops answering, move a healthy one from the same list to the front. Only plain (UDP/Do53) servers are health-checked; DoH/DoT are assumed always up. Ignored while MultiDNS is enabled — it already races every server.'));
+			_('For setups WITHOUT MultiDNS: watch the first server of each pool list (Russia / Secure above); when it stops answering, move a healthy one from the same list to the front. Every transport is health-checked for real — plain UDP/53, DoH over HTTPS, DoT over TCP:853; only QUIC is assumed always up (no probe tooling). Ignored while MultiDNS is enabled — it already races every server.'));
 		o.rmempty = false;
 
 		o = s.taboption('reserve', form.Flag, 'dns_failover_plain', _('Plain (Russia) pool'),

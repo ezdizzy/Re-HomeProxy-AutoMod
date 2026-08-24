@@ -501,11 +501,25 @@ function disable_dns_log() {
 /* ── DNS failover (C) ───────────────────────────────────────────────────── */
 
 function dns_reachable(server) {
-	/* Only plain UDP/Do53 servers are health-checked; DoH/DoT are treated as always up. */
-	if (match(server, /^(https?|tls|quic):\/\//)) return true;
+	/* Encrypted upstreams are health-checked over their real transport now:
+	 * - DoH: any HTTP response within 4s counts (a live resolver answers even a
+	 *   bare GET; dead = connect/timeout failure);
+	 * - DoT: TCP:853 must accept the connection (busybox has no TLS client);
+	 * - DoQ: no probe path without extra tooling — assumed up.
+	 */
+	if (match(server, /^https?:\/\//)) {
+		if (!have_curl()) return true;
+		return system(`curl -s -o /dev/null --max-time 4 --connect-timeout 4 ${shellquote(server)} 2>/dev/null`, 6000) === 0;
+	}
+	if (match(server, /^tls:\/\//)) {
+		let m = match(server, /^tls:\/\/([^/:]+)/);
+		if (!m) return true;
+		return system(`nc -w 3 ${shellquote(m[1])} 853 >/dev/null 2>&1`, 5000) === 0;
+	}
+	if (match(server, /^quic:\/\//)) return true;
+
 	if (have_curl())
-		return system(`curl -s --max-time 3 --connect-timeout 3 ${shellquote('https://' + server + '/dns-query')} -o /dev/null 2>/dev/null`, 4000) === 0
-		    || system(`dig +short +time=2 +tries=1 +timeout=2 @${shellquote(server)} example.com >/dev/null 2>&1`, 6000) === 0;
+		return system(`dig +short +time=2 +tries=1 +timeout=2 @${shellquote(server)} example.com >/dev/null 2>&1`, 6000) === 0;
 	return system(`nc -u -z -w 2 ${shellquote(server)} 53 >/dev/null 2>&1`, 4000) === 0;
 }
 
