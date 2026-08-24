@@ -241,26 +241,104 @@ if [ -f /etc/config/homeproxy ] && [ -f /usr/share/rpcd/ucode/luci.homeproxy ] &
 	APP_INSTALLED=1
 fi
 
+# ------------------------------------------------- Проверка версии и пакеты приложения
+# Сравнить две версии X.Y.Z: 0, если $1 < $2 (нужно обновление), иначе 1.
+ver_lt() {
+	awk -v a="$1" -v b="$2" 'BEGIN {
+		na = split(a, A, "[.]"); nb = split(b, B, "[.]");
+		n = (na > nb) ? na : nb;
+		for (i = 1; i <= n; i++) {
+			xa = (i <= na) ? (A[i] + 0) : 0;
+			xb = (i <= nb) ? (B[i] + 0) : 0;
+			if (xa < xb) { exit 0 }
+			if (xa > xb) { exit 1 }
+		}
+		exit 1
+	}'
+}
+
+# Установленная версия пакета приложения (пусто, если не определена).
+app_installed_version() {
+	if [ "$PM" = apk ]; then
+		apk info luci-app-re-homeproxy 2>/dev/null | head -1 \
+			| sed -n 's/.*luci-app-re-homeproxy-\([0-9][0-9.]*\).*/\1/p'
+	else
+		opkg status luci-app-re-homeproxy 2>/dev/null \
+			| sed -n 's/^Version: \([0-9][0-9.]*\).*/\1/p'
+	fi
+}
+
+# Последняя версия из GitHub-релиза (пусто, если GitHub недоступен).
+app_latest_version() {
+	api "https://api.github.com/repos/${HP_REPO}/releases/latest" \
+		| sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v*\([0-9][0-9.]*\)".*/\1/p' | head -1
+}
+
+# Ключ подписи apk (идемпотентно; best-effort).
+ensure_key() {
+	[ "$PM" = apk ] || return 0
+	[ -f /etc/apk/keys/homeproxy-hiddify.pub ] && return 0
+	dl "https://github.com/${HP_REPO}/releases/latest/download/homeproxy-hiddify.pub" /tmp/hp.pub \
+		&& cp /tmp/hp.pub /etc/apk/keys/ && rm -f /tmp/hp.pub \
+		&& ok "  ключ подписи добавлен в доверенные" \
+		|| warn "  не удалось скачать ключ подписи — поставлю без проверки подписи"
+}
+
+# Скачать и установить приложение + русскую локаль из последнего релиза (без вопросов).
+# Возвращает 0 при успешной установке приложения.
+app_install_pkgs() {
+	APPURL=$(api "https://api.github.com/repos/${HP_REPO}/releases" \
+		| grep -o "https://github\.com/[^\"]*luci-app-re-homeproxy[^\"]*${SUFFIX}\.${EXT}" | head -1)
+	if [ -z "$APPURL" ]; then warn "  не нашёл пакет luci-app-re-homeproxy${SUFFIX}.${EXT} (GitHub заблокирован?)."; return 1; fi
+	dl "$APPURL" /tmp/app.$EXT || { warn "  не удалось скачать приложение."; return 1; }
+	if [ "$PM" = apk ]; then
+		apk add /tmp/app.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  apk add завершился ошибкой."; return 1; }
+	else
+		opkg update >/dev/null 2>&1; opkg install /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  opkg install завершился ошибкой."; return 1; }
+	fi
+	rm -f /tmp/app.$EXT
+
+	LURL=$(api "https://api.github.com/repos/${HP_REPO}/releases" \
+		| grep -o "https://github\.com/[^\"]*luci-i18n-homeproxy-ru[^\"]*\.${EXT}" | head -1)
+	if [ -n "$LURL" ] && dl "$LURL" /tmp/i18n.$EXT; then
+		if [ "$PM" = apk ]; then apk add /tmp/i18n.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/i18n.$EXT; \
+		else opkg install /tmp/i18n.$EXT; fi
+		rm -f /tmp/i18n.$EXT
+	fi
+	return 0
+}
+
+# Обновить приложение и перевод, если установлена старая версия (best-effort:
+# при недоступном GitHub настройка продолжается со старой версией).
+app_update_if_needed() {
+	INST=$(app_installed_version)
+	if [ -z "$INST" ]; then
+		warn "  не удалось определить установленную версию — пропускаю проверку обновления."
+		return 0
+	fi
+	LATEST=$(app_latest_version)
+	if [ -z "$LATEST" ]; then
+		warn "  не удалось проверить свежую версию (GitHub недоступен?) — продолжаю с установленной $INST."
+		return 0
+	fi
+	if ver_lt "$INST" "$LATEST"; then
+		info "  установлена $INST, свежая $LATEST — обновляю приложение и перевод..."
+		ensure_key
+		if app_install_pkgs; then
+			ok "  приложение обновлено до $LATEST."
+		else
+			warn "  обновление не удалось — продолжаю со старой версией (часть функций может работать некорректно)."
+		fi
+	else
+		ok "  приложение актуально ($INST)."
+	fi
+}
+
 # ------------------------------------------------- 1. LuCI-приложение + ключ
 install_app() {
 	ok "[1/7] Устанавливаю LuCI-приложение Re:HomeProxy AutoMod..."
-	if [ "$PM" = apk ]; then
-		if [ ! -f /etc/apk/keys/homeproxy-hiddify.pub ]; then
-			dl "https://github.com/${HP_REPO}/releases/latest/download/homeproxy-hiddify.pub" /tmp/hp.pub \
-				&& cp /tmp/hp.pub /etc/apk/keys/ && rm -f /tmp/hp.pub && ok "  ключ подписи добавлен в доверенные" \
-				|| warn "  не удалось скачать ключ подписи — поставлю без проверки подписи"
-		fi
-	fi
-	APPURL=$(api "https://api.github.com/repos/${HP_REPO}/releases" \
-		| grep -o "https://github\.com/[^\"]*luci-app-re-homeproxy[^\"]*${SUFFIX}\.${EXT}" | head -1)
-	[ -n "$APPURL" ] || die "Не нашёл пакет luci-app-re-homeproxy${SUFFIX}.${EXT} (GitHub заблокирован? попробуйте GH_MIRROR=...)."
-	dl "$APPURL" /tmp/app.$EXT || die "Не удалось скачать приложение (попробуйте GH_MIRROR=...)."
-	if [ "$PM" = apk ]; then
-		apk add /tmp/app.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/app.$EXT || die "apk add завершился ошибкой."
-	else
-		opkg update >/dev/null 2>&1; opkg install /tmp/app.$EXT || die "opkg install завершился ошибкой."
-	fi
-	rm -f /tmp/app.$EXT
+	ensure_key
+	app_install_pkgs || die "Установка приложения завершилась ошибкой."
 	ok "  приложение установлено."
 
 	# Русский язык интерфейса (по умолчанию — да)
@@ -268,13 +346,6 @@ install_app() {
 	if ! is_no "$REPLY"; then
 		info "  ставлю русский язык LuCI..."
 		if [ "$PM" = apk ]; then apk add luci-i18n-base-ru >/dev/null 2>&1; else opkg install luci-i18n-base-ru >/dev/null 2>&1; fi
-		LURL=$(api "https://api.github.com/repos/${HP_REPO}/releases" \
-			| grep -o "https://github\.com/[^\"]*luci-i18n-homeproxy-ru[^\"]*\.${EXT}" | head -1)
-		if [ -n "$LURL" ] && dl "$LURL" /tmp/i18n.$EXT; then
-			if [ "$PM" = apk ]; then apk add /tmp/i18n.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/i18n.$EXT; \
-			else opkg install /tmp/i18n.$EXT; fi
-		else warn "  перевод приложения не найден — пропускаю"; fi
-		rm -f /tmp/i18n.$EXT
 		uci set luci.main.lang=ru; uci commit luci
 		ok "  русский язык установлен" 
 	fi
@@ -700,7 +771,8 @@ summary() {
 # ======================================================== ГЛАВНЫЙ ПОТОК
 
 if [ "$APP_INSTALLED" = 1 ]; then
-	ok "Приложение уже установлено — перехожу в режим настройки."
+	ok "Приложение уже установлено — проверяю обновления и перехожу в режим настройки."
+	app_update_if_needed
 	/etc/init.d/rpcd restart >/dev/null 2>&1; sleep 1
 	ensure_baseline
 	apply_and_check
