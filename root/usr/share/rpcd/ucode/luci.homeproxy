@@ -1947,10 +1947,14 @@ const methods = {
 			let servers = [];
 			for (let s in (state.servers || {})) {
 				let st = state.servers[s];
-				let base = (substr(s, 0, 4) === 'sec:') ? substr(s, 4) : s;
+				/* The KEY decides the pool ('sec:' prefix = secure entry by
+				 * construction), never a name lookup - the same name may exist
+				 * in both pools as two independent rows. */
+				let is_sec = (substr(s, 0, 4) === 'sec:');
+				let base = is_sec ? substr(s, 4) : s;
 				push(servers, {
 					server: base,
-					pool: pool_of(base),
+					pool: is_sec ? 'secure' : pool_of(base),
 					score: st.score != null ? st.score : null,
 					latency: st.lat != null ? st.lat : null,
 					success: st.succ != null ? st.succ : null,
