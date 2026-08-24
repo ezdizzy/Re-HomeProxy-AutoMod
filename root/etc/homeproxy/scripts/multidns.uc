@@ -541,17 +541,26 @@ function build_mosdns_conf() {
 	}
 
 	/* --- cache plugins --- */
+	/* size: LRU entries; lazy_cache_ttl: serve an expired entry instantly (one query
+	 * cycle of staleness at most — the fresh answer is fetched in the background
+	 * right after); dump_file/interval: survive mosdns restarts without a cold cache. */
 	if (have_plain) {
 		push(lines, '  - tag: cache_plain');
 		push(lines, '    type: cache');
 		push(lines, '    args:');
 		push(lines, '      size: 4096');
+		push(lines, '      lazy_cache_ttl: 86400');
+		push(lines, '      dump_file: ' + yaml_q(MD_DIR + '/plain_cache.dump'));
+		push(lines, '      dump_interval: 60');
 	}
 	if (have_secure) {
 		push(lines, '  - tag: cache_secure');
 		push(lines, '    type: cache');
 		push(lines, '    args:');
 		push(lines, '      size: 4096');
+		push(lines, '      lazy_cache_ttl: 86400');
+		push(lines, '      dump_file: ' + yaml_q(MD_DIR + '/secure_cache.dump'));
+		push(lines, '      dump_interval: 60');
 	}
 
 	/* --- data sets: dead-IP blacklist + learned proxy domains/IPs --- */

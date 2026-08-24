@@ -5501,6 +5501,11 @@ msgid ""
 msgstr ""
 "Для схем БЕЗ MultiDNS: следить за первым сервером каждого списка выше (Россия / Защищённый); если он перестаёт отвечать — переставить здоровый из того же списка первым. Проверяются только обычные (UDP/Do53) серверы; DoH/DoT считаются всегда доступными. Игнорируется при включённом MultiDNS — он уже опрашивает все серверы сразу."
 
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Reserve DNS"
+msgstr "Резервный DNS"
+
+
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Resource"
 msgstr "Ресурс"
