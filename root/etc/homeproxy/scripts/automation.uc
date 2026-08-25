@@ -58,6 +58,15 @@ const AUTO_PROXY_PORT = 5337;
 const DOM_CAP = 16;
 const IP_CAP = 8;
 
+/* Re-probe delay for hosts ALREADY classified 'blocked' with pending confirmations.
+ * They are one measurement away from being learned; under the plain 24h balanced
+ * guard each extra confirmation cost a full day, and state-cap eviction kept
+ * resetting the counter in between — hard-blocked sites (dead ICMP/TCP/DNS direct,
+ * e.g. blackholed .rw/.tld hosts) could then NEVER reach the confirm threshold.
+ * 90s keeps two distinct measurements (anti-transient) while closing the gap to
+ * roughly two passes. */
+const CONFIRM_RETRY = 90;
+
 /* Self-healing: re-check learned entries older than 7 days, REEVAL_BATCH per hour.
  * An entry is removed only after HEAL_CONFIRM consecutive DIRECT successes — a single
  * transient direct success (flapping proxy, captive portal) must not unlearn it. */
@@ -818,6 +827,23 @@ function main() {
 			for (let h in auto_ip_set)  { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) ip_candidates[h] = MIN_IP_SEEN; }
 		}
 
+		/* Fast-track confirmation: hosts sitting at status 'blocked' with confirms>0
+		 * are re-added to the candidate pool EVERY pass regardless of discovery
+		 * sources — the user may not re-visit the site within the confirm window,
+		 * and without this the second measurement only happened if the domain was
+		 * queried again the next day. IPs ride along with the seen-threshold bypass. */
+		for (let h in keys(state)) {
+			let pst = state[h];
+			/* type() guard: state holds non-record scalars (__dns_offset); reading
+			 * .status off a number throws "LHS is not an array or object". */
+			if (type(pst) !== 'object' || pst.status !== 'blocked' || !(int(pst.confirms) > 0)) continue;
+			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
+				if (ip_learn === '1') ip_candidates[h] = MIN_IP_SEEN;
+			} else {
+				domain_candidates[h] = true;
+			}
+		}
+
 		let now = time();
 		let dom_probed = 0;
 		for (let host in domain_candidates) {
@@ -833,7 +859,8 @@ function main() {
 			if (is_excluded(dom)) continue;
 			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
 			let st = state[dom];
-			if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
+			/* Pending-confirm hosts re-probe after CONFIRM_RETRY, not the daily guard. */
+			if (st && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && (st.confirms || 0) > 0) ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) continue;
 			dom_probed++;
 
 			let d_res = probe(dom, false, timeout);
@@ -857,7 +884,7 @@ function main() {
 				if (((int(ip_candidates[ip] || 0)) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
 				if (length(keys(auto_ip_set)) >= IP_LIST_MAX && !auto_ip_set[ip]) continue;
 				let st = state[ip];
-				if (st && st.last_probe && (now - st.last_probe) < (mode === 'aggressive' ? reeval_interval : 86400)) continue;
+				if (st && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && (st.confirms || 0) > 0) ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) continue;
 				ip_probed++;
 				let d_res = probe(ip, false, timeout);
 				let p_res = null;
@@ -934,11 +961,15 @@ function main() {
 					push(stale, h);
 			}
 			for (let i, h in stale) delete state[h];
-			/* Hard cap on the remaining non-listed set: evict oldest by last_probe. */
+			/* Hard cap on the remaining non-listed set: evict oldest by last_probe.
+			 * Records with a pending 'blocked' confirmation are exempt — evicting
+			 * them reset the confirm counter and the host never got learned. */
 			let rest = [];
 			for (let h in keys(state)) {
 				if (h === '__dns_offset') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
+				let cst = state[h];
+				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
 				push(rest, { h: h, t: state[h].last_probe || 0 });
 			}
 			let excess = length(rest) - STATE_CAP;
@@ -1007,6 +1038,8 @@ function main() {
 try {
 	main();
 } catch (e) {
-		log('fatal: ' + sprintf('%s', e));
+		/* Include the source line: runtime TypeErrors carry .stackline and a bare
+		 * message otherwise gives no clue where the daemon tripped. */
+		log('fatal: ' + sprintf('%s', e) + ((type(e) === 'object' && e.stackline) ? ' @line ' + e.stackline : ''));
 	if (access(DNS_LOG)) disable_dns_log();
 }
