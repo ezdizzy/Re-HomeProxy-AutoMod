@@ -149,10 +149,12 @@ return view.extend({
 		 * NOT exposed: learned entries hot-reload into the running core with no restart
 		 * and no dropped connections, so batching windows serve no purpose. The daemon
 		 * keeps honoring the defaults for old configs. */
-
-		o = s.option(form.Value, 'exclude', _('Never auto-learn (comma-separated)'),
-			_('Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names.'));
-		o.placeholder = 'localhost,local,lan,in-addr.arpa,ip6.arpa';
+		o = s.option(form.TextValue, 'exclude', _('Never auto-learn'),
+			_('Domains / IPs excluded from learning (substring & domain match). One entry per line or comma-separated; lines starting with # are comments, blank lines allowed - organize the list as you like. Defaults cover LAN and local names.'));
+		o.placeholder = 'localhost\nlocal\nlan\n# my own notes:\n# example.com\nin-addr.arpa,ip6.arpa';
+		o.rows = 8;
+		o.monospace = true;
+		o.wrap = false;
 
 		o = s.option(form.Flag, 'ip_learn', _('Learn IP destinations'),
 			_('Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps.'));

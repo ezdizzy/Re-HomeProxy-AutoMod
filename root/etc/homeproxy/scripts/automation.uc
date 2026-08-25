@@ -650,7 +650,11 @@ function main() {
 	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '10') || 10;
 	let flush_min_entries = int(uci.get('homeproxy', 'automation', 'flush_min_entries') || '1') || 1;
 	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '0';
-	excludes = split(trim(uci.get('homeproxy', 'automation', 'exclude') || 'localhost,local,lan,in-addr.arpa,ip6.arpa'), ',');
+	/* Exclude list: newline- or comma-separated; '#' starts a comment (to end of
+	 * line) so users can annotate/organize entries. Blank pieces are dropped. */
+	let raw_ex = replace(uci.get('homeproxy', 'automation', 'exclude')
+		|| 'localhost,local,lan,in-addr.arpa,ip6.arpa', /#[^\n]*/g, '');
+	excludes = split(raw_ex, /[,\n]/);
 	excludes = filter(excludes, (x) => length(trim(x)));
 
 	/* DNS failover (C) reads the DNS section, not the automation section. */
@@ -968,7 +972,7 @@ function main() {
 
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
-	log('automation daemon started (mode=' + mode + ', sources=' + (length(keys(disc)) ? discover_str : 'none') + ', ip_learn=' + ip_learn + ', failover=' + dns_failover + ').');
+	log('automation daemon started (mode=' + mode + ', sources=' + (length(keys(disc)) ? discover_str : 'none') + ', ip_learn=' + ip_learn + ').');
 
 		let last_failover = 0;
 		while (true) {

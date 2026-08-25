@@ -4539,12 +4539,16 @@ msgid "How often the learned list is pushed to the live routing rules (hot reloa
 msgstr "Как часто изученный список выгружается в активные правила маршрутизации (горячая перезагрузка — без перезапуска ядра). Недавно изученные сайты применяются к новым соединениям в этом окне. Полный перезапуск службы тоже применяет их, но этот параметр держит их актуальными без перезапуска."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Never auto-learn (comma-separated)"
-msgstr "Никогда не изучать (через запятую)"
+msgid "Never auto-learn"
+msgstr "Никогда не изучать"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Domains / IPs excluded from learning (substring & domain match). Defaults cover LAN and local names."
-msgstr "Домены/IP, исключённые из обучения (подстрока и совпадение домена). По умолчанию покрывают LAN и локальные имена."
+msgid ""
+"Domains / IPs excluded from learning (substring & domain match). One entry per line or comma-separated; lines starting with # are comments, blank lines allowed - organize the list as you like. Defaults cover LAN and local names."
+msgstr ""
+"Домены/IP, исключённые из обучения (подстрока и совпадение домена). По одной записи на "
+"строку или через запятую; строки с # — комментарии, пустые строки разрешены — "
+"организуйте список как удобно. По умолчанию покрывает LAN и локальные имена."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Monitor"
