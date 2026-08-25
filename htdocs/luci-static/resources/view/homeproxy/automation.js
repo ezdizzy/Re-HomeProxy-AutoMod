@@ -111,6 +111,13 @@ return view.extend({
 		o.value('aggressive', _('Aggressive (also re-verifies learned sites)'));
 		o.default = 'balanced';
 
+		o = s.option(form.ListValue, 'performance', _('Performance profile'),
+			_('eco: classic serial probing for weak routers. perf: up to 64 domains / 32 IPs per pass probed in parallel batches (16 at once) — needs a multi-core router with 1 GB RAM (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory.'));
+		o.value('auto', _('Auto (detect by hardware)'));
+		o.value('eco', _('Eco — serial, weak routers'));
+		o.value('perf', _('Performance — parallel, strong routers'));
+		o.default = 'auto';
+
 		o = s.option(form.MultiValue, 'discover', _('Discover candidates from'),
 			_('Domain-name sources to watch for candidates. Raw-IP destinations are a separate switch below (“Learn IP destinations”).'));
 		o.value('dns', _('DNS query log (captures domain at DNS time — most transparent)'));

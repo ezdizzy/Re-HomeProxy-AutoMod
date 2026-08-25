@@ -4491,6 +4491,28 @@ msgid "Mode"
 msgstr "Режим"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Performance profile"
+msgstr "Профиль производительности"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid ""
+"eco: classic serial probing for weak routers. perf: up to 64 domains / 32 IPs per pass probed in parallel batches (16 at once) — needs a multi-core router with 1 GB RAM (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
+msgstr ""
+"eco: классические последовательные пробы для слабых роутеров. perf: до 64 доменов / 32 IP за "
+"проход параллельными батчами (по 16 одновременно) — нужен многоядерный роутер с 1 ГБ ОЗУ "
+"(например, GL.iNet Flint 2). auto: определяется по числу ядер и памяти."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Auto (detect by hardware)"
+msgstr "Авто (определить по железу)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Eco — serial, weak routers"
+msgstr "Eco — последовательно, для слабых роутеров"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Performance — parallel, strong routers"
+msgstr "Performance — параллельно, для мощных роутеров"
 msgid "Balanced"
 msgstr "Сбалансированный"
 

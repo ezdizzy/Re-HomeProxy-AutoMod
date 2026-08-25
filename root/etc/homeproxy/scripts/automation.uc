@@ -54,9 +54,16 @@ const AUTO_DIRECT_PORT = 5336;
 const AUTO_PROXY_PORT = 5337;
 
 /* Probe budget per cycle: domains and IPs have SEPARATE caps so IP learning can never
- * starve domain learning (and vice versa). */
-const DOM_CAP = 16;
-const IP_CAP = 8;
+ * starve domain learning (and vice versa). The actual caps come from the performance
+ * profile (homeproxy.automation.performance): eco keeps these classic values and runs
+ * probes strictly serially; perf roughly quadruples them and measures hosts in
+ * PARALLEL batches (the engine is I/O-bound — curl timeouts — so a multi-core router
+ * can probe dozens of hosts at once without breaking a sweat). */
+const ECO_DOM_CAP = 16;
+const ECO_IP_CAP = 8;
+const PERF_DOM_CAP = 64;
+const PERF_IP_CAP = 32;
+const PERF_PARALLEL = 16;
 
 /* Re-probe delay for hosts ALREADY classified 'blocked' with pending confirmations.
  * They are one measurement away from being learned; under the plain 24h balanced
@@ -100,7 +107,8 @@ const MIN_IP_SEEN = 2;
  * set is hard-capped. automation_state.json otherwise grows without bound (20k+
  * records observed) and drowns the UI counters in ancient 'unknown' entries. */
 const PRUNE_AGE = 1209600;
-const STATE_CAP = 5000;
+const ECO_STATE_CAP = 5000;
+const PERF_STATE_CAP = 12000;
 
 const STATE_FILE = RUN_DIR + '/automation_state.json';
 const AUTO_LIST = RES + '/auto_proxy_list.txt';
@@ -126,6 +134,11 @@ let proxy_set = {};
 let auto_ip_set = {};
 let last_reeval = 0;
 let last_prune = 0;
+/* Plain-view DNS cache for the serial probe() path (self-heal/reeval re-probe the
+ * same learned hosts hourly): skip the triple nslookup while the answer is fresh.
+ * Module-level because resolve_plain_view is a top-level helper (no closures over
+ * main() locals on this ucode build). */
+let pv_cache = {};
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -267,6 +280,9 @@ function fingerprint(b) {
  * (resolve at the tunnel end) so locally poisoned answers can't break the
  * proxy-side measurement. */
 function resolve_plain_view(host) {
+	let ce = pv_cache[host];
+	if (type(ce) === 'object' && ce.ip && (time() - int(ce.t)) < 600)
+		return ce.ip;
 	let out = capture(`nslookup -type=A ${shellquote(host)} 8.8.8.8 2>/dev/null`);
 	if (!match(out, /Address/)) {
 		out = capture(`nslookup -type=A ${shellquote(host)} 1.1.1.1 2>/dev/null`);
@@ -276,8 +292,11 @@ function resolve_plain_view(host) {
 	for (let l in split(out, '\n')) {
 		/* Tolerate both "Address: <ip>" and indexed "Address 1: <ip> name" forms. */
 		let m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
-		if (m && m[2] !== '127.0.0.1')
+		if (m && m[2] !== '127.0.0.1') {
+			pv_cache[host] = { ip: m[2], t: time() };
+			if (length(keys(pv_cache)) > 400) pv_cache = {};
 			return m[2];
+		}
 	}
 	return null;
 }
@@ -442,12 +461,14 @@ function discover_conntrack() {
  * hardcoded IPs and games that never hit the dnsmasq log. Best-effort — requires
  * tcpdump and returns nothing ([]) when it is absent. The normal probe/classify
  * step still filters junk, so false candidates are never learned. */
-function discover_sni() {
+function discover_sni(pkts, secs) {
 	if (!access('/usr/sbin/tcpdump') && !access('/usr/bin/tcpdump')) return [];
 	let tmp = RUN_DIR + '/sni.tmp';
 	/* PSH set (tcp[13]&8 != 0) + dst port 443 → ClientHello/first data. ASCII dump
-	 * (-A) reveals the plaintext SNI. Bounded to ~20 packets and ~5s. */
-	system(`tcpdump -i br-lan -s 160 -A -c 20 'tcp port 443 and (tcp[13] & 8 != 0)' > ` + shellquote(tmp) + ` 2>/dev/null & TDPID=$!; sleep 5; kill $TDPID 2>/dev/null`);
+	 * (-A) reveals the plaintext SNI. Bounded by pkts/secs (perf profile widens
+	 * both). Best-effort — requires tcpdump and returns nothing ([]) when it is
+	 * absent. The normal probe/classify step still filters junk. */
+	system(`tcpdump -i br-lan -s 160 -A -c ${pkts} 'tcp port 443 and (tcp[13] & 8 != 0)' > ` + shellquote(tmp) + ` 2>/dev/null & TDPID=$!; sleep ${secs}; kill $TDPID 2>/dev/null`);
 	let out = readfile(tmp) || '';
 	if (!length(out)) return [];
 	let hosts = [];
@@ -625,6 +646,126 @@ function main() {
 
 	let timeout = int(uci.get('homeproxy', 'automation', 'timeout') || '6') || 6;
 	let max_entries = int(uci.get('homeproxy', 'automation', 'max_entries') || '2000') || 2000;
+
+	/* Performance profile: perf = parallel batch probing + bigger caps (multi-core
+	 * routers, e.g. GL.iNet Flint 2); eco = the classic serial engine for weak
+	 * hardware; auto detects by core count / RAM. */
+	let perf_mode = trim(uci.get('homeproxy', 'automation', 'performance') || 'auto');
+	if (perf_mode !== 'eco' && perf_mode !== 'perf') {
+		let cores = 0;
+		for (let l in split(readfile('/proc/cpuinfo') || '', '\n'))
+			if (substr(l, 0, 9) === 'processor') cores = cores + 1;
+		let mm = match(readfile('/proc/meminfo') || '', /^MemTotal:\s+([0-9]+)/);
+		let mem_mb = mm ? int(mm[1]) / 1024 : 128;
+		perf_mode = (cores >= 4 || mem_mb >= 900) ? 'perf' : 'eco';
+	}
+	const PERF = (perf_mode === 'perf');
+	const dom_cap = PERF ? PERF_DOM_CAP : ECO_DOM_CAP;
+	const ip_cap = PERF ? PERF_IP_CAP : ECO_IP_CAP;
+	const par = PERF ? PERF_PARALLEL : 1;
+	const state_cap = PERF ? PERF_STATE_CAP : ECO_STATE_CAP;
+	const sni_pkts = PERF ? 60 : 20;
+	const sni_secs = PERF ? 8 : 5;
+	log(`performance profile: ${perf_mode} (dom_cap=${dom_cap}, ip_cap=${ip_cap}, parallel=${par})`);
+
+	/* Probe worker: one measurement per invocation, safe to run many copies in
+	 * parallel. Mirrors the serial probe() exactly — plain-view DNS resolution
+	 * with --resolve pinning for direct, socks5 vs socks5h through the pinned
+	 * test inbounds, HTTPS first with a plain-HTTP retry. Writes <prefix>.code,
+	 * <prefix>.body and a <prefix>.done marker when finished. */
+	const WORKER = RUN_DIR + '/probe_worker.sh';
+	writefile(WORKER, `#!/bin/sh
+# automation.uc probe worker: <host> <direct|proxy|tcp|tcpproxy> <port> <timeout> <prefix>
+H="$1"; SIDE="$2"; PORT="$3"; TO="$4"; PRE="$5"
+case "$SIDE" in
+	proxy|tcpproxy) PX="-x socks5h://127.0.0.1:$PORT" ;;
+	*)              PX="-x socks5://127.0.0.1:$PORT" ;;
+esac
+PIN=""
+IP=""
+if [ "$SIDE" = direct ]; then
+	for R in 8.8.8.8 1.1.1.1 77.88.8.8; do
+		IP=$(nslookup -type=A "$H" "$R" 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
+		[ -n "$IP" ] && break
+		sleep 1
+	done
+	if [ -z "$IP" ]; then printf '000' > "$PRE.code"; : > "$PRE.body"; echo done > "$PRE.done"; exit 0; fi
+	PIN="--resolve $H:443:$IP"
+fi
+rm -f "$PRE.code" "$PRE.body"
+if [ "$SIDE" = tcp ] || [ "$SIDE" = tcpproxy ]; then
+	curl -s -o /dev/null -k --connect-timeout "$TO" --max-time "$TO" $PX "https://$H" >/dev/null 2>&1
+	echo $? > "$PRE.code"; : > "$PRE.body"; echo done > "$PRE.done"; exit 0
+fi
+curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code}' -k --connect-timeout "$TO" --max-time "$TO" $PX $PIN "https://$H" > "$PRE.code" 2>/dev/null
+C=$(cat "$PRE.code" 2>/dev/null)
+if [ -z "$C" ] || [ "$C" = "000" ]; then
+	[ "$SIDE" = direct ] && PIN="--resolve $H:80:$IP"
+	rm -f "$PRE.code" "$PRE.body"
+	curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code}' -k --connect-timeout "$TO" --max-time "$TO" $PX $PIN "http://$H" > "$PRE.code" 2>/dev/null
+fi
+echo done > "$PRE.done"
+`);
+	system(`chmod +x ${WORKER} 2>/dev/null`);
+
+	/* Run one probe side for a batch of hosts CONCURRENTLY. items:
+	 * [{ i: <string id>, h: <host> }] → { <id>: { code, ok, block, fp } }.
+	 * Launches a worker per host (chunked to `par` in-flight by probe_all),
+	 * waits for .done markers within a generous deadline, then classifies each
+	 * result exactly like the serial probe() did. Workers that miss the
+	 * deadline are still harvested from their files on next pass's cleanup of
+	 * stale pw.* prefixes at startup below. */
+	function probe_wave(items, side, timeout) {
+		let out = {};
+		let port = (side === 'proxy' || side === 'tcpproxy') ? AUTO_PROXY_PORT : AUTO_DIRECT_PORT;
+		for (let k = 0; k < length(items); k++) {
+			let pre = RUN_DIR + '/pw.' + items[k].i;
+			system(`${WORKER} ${shellquote(items[k].h)} ${side} ${port} ${timeout} ${shellquote(pre)} >/dev/null 2>&1 &`);
+		}
+		let deadline = time() + timeout * 6 + 20;
+		while (time() < deadline) {
+			let left = 0;
+			for (let k = 0; k < length(items); k++)
+				if (!access(RUN_DIR + '/pw.' + items[k].i + '.done')) left++;
+			if (left === 0) break;
+			sleep(200);
+		}
+		for (let k = 0; k < length(items); k++) {
+			let pre = RUN_DIR + '/pw.' + items[k].i;
+			let raw = trim(readfile(pre + '.code') || '');
+			let body = readfile(pre + '.body') || '';
+			let res;
+			if (side === 'tcp' || side === 'tcpproxy') {
+				let ok = false;
+				for (let c in TCP_OK_EXIT) if (raw === c) ok = true;
+				res = { code: length(raw) ? raw : '-1', ok: ok, block: false, fp: '' };
+			} else {
+				let c = classify_code(raw);
+				let block = (c === 'block');
+				if (c === 'ok' && length(body) < 32768 && body_blocked(body))
+					block = true;
+				res = { code: length(raw) ? raw : '000', ok: (c === 'ok') && !block, block: block, fp: fingerprint(body) };
+			}
+			out[items[k].i] = res;
+			system(`rm -f ${shellquote(pre)}.code ${shellquote(pre)}.body ${shellquote(pre)}.done 2>/dev/null`);
+		}
+		return out;
+	}
+
+	function probe_all(items, side, timeout) {
+		let merged = {};
+		for (let s = 0; s < length(items); s += par) {
+			let chunk = slice(items, s, s + par);
+			let m = probe_wave(chunk, side, timeout);
+			for (let k in keys(m)) merged[k] = m[k];
+		}
+		return merged;
+	}
+	/* Stale worker leftovers from a crashed pass would poison later reads only if
+	 * ids collide; ids embed the pass-unique selection index, and every wave
+	 * deletes its files after harvest — a startup sweep is belt & braces. */
+	system(`rm -f ${RUN_DIR}/pw.*.done ${RUN_DIR}/pw.*.code ${RUN_DIR}/pw.*.body 2>/dev/null`);
+
 	let min_confirm = int(uci.get('homeproxy', 'automation', 'min_confirm') || '1') || 1;
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
 	/* Discovery sources. The new UI stores an ARRAY of domain sources (MultiValue:
@@ -805,21 +946,23 @@ function main() {
 		enabled = uci.get('homeproxy', 'automation', 'enabled');
 		if (enabled !== '1') return;
 
-		let domain_candidates = {}, ip_candidates = {};
-		/* DNS first: it captures the domain at query time, newest-first, so the
-		 * probe cap always spends on the user's most recent activity — the most
-		 * transparent and reliable source. Clash/SNI fill in the gaps.
-		 * conntrack is collected UNCONDITIONALLY when enabled and counted per IP
-		 * (MIN_IP_SEEN gate below): recurring destinations are real services;
-		 * one-off flows are background noise that would flood the state table. */
-		if (has('dns'))       for (let i, h in discover_dns())          domain_candidates[h] = true;
+		let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
+		/* DNS first: it captures the domain at query time, newest-first. The per-host
+		 * query COUNT from this slice doubles as a priority score — the probe budget
+		 * goes to what the user actually hammers first, not to hash order.
+		 * Clash/SNI fill in the gaps. conntrack is counted per IP (MIN_IP_SEEN gate). */
+		if (has('dns'))
+			for (let i, h in discover_dns()) {
+				domain_candidates[h] = true;
+				dns_freq[h] = (int(dns_freq[h]) || 0) + 1;
+			}
 		if (has('clash'))     for (let i, h in discover_clash(timeout)) domain_candidates[h] = true;
-		if (has('sni'))       for (let i, h in discover_sni())          domain_candidates[h] = true;
+		if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) domain_candidates[h] = true;
 		/* Raw-IP candidates are collected ONLY when IP learning is enabled — the old
 		 * separate 'conntrack' discovery source is merged into the ip_learn switch. */
 		if (ip_learn === '1')
 			for (let i, ip in discover_conntrack())
-				ip_candidates[ip] = (int(ip_candidates[ip] || 0)) + 1;
+				ip_candidates[ip] = (int(ip_candidates[ip]) || 0) + 1;
 
 		if (mode === 'aggressive') {
 			for (let h in auto_set)     { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) domain_candidates[h] = true; }
@@ -829,9 +972,9 @@ function main() {
 
 		/* Fast-track confirmation: hosts sitting at status 'blocked' with confirms>0
 		 * are re-added to the candidate pool EVERY pass regardless of discovery
-		 * sources — the user may not re-visit the site within the confirm window,
-		 * and without this the second measurement only happened if the domain was
-		 * queried again the next day. IPs ride along with the seen-threshold bypass. */
+		 * sources AND get absolute priority over fresh candidates — finishing a
+		 * learn beats starting one. IPs ride along with the seen-threshold bypass. */
+		let priority = {};
 		for (let h in keys(state)) {
 			let pst = state[h];
 			/* type() guard: state holds non-record scalars (__dns_offset); reading
@@ -840,19 +983,29 @@ function main() {
 			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
 				if (ip_learn === '1') ip_candidates[h] = MIN_IP_SEEN;
 			} else {
+				priority[h] = true;
 				domain_candidates[h] = true;
 			}
 		}
 
 		let now = time();
-		let dom_probed = 0;
-		for (let host in domain_candidates) {
-			if (dom_probed >= DOM_CAP) break;
+
+		/* ── Domain learning: select up to dom_cap candidates, then run the direct
+		 * wave and (for failures) the proxy wave CONCURRENTLY via probe workers.
+		 * Selection order: pending-confirmations first, then by DNS query count. ── */
+		let cand = [];
+		for (let h in keys(priority)) push(cand, h);
+		let rest = sort(filter(keys(domain_candidates), (h) => !priority[h]),
+			(a, b) => ((int(dns_freq[b]) || 0) - (int(dns_freq[a]) || 0)));
+		for (let x in rest) push(cand, x);
+		let sel = [];
+		for (let oi = 0; oi < length(cand); oi++) {
+			if (length(sel) >= dom_cap) break;
 			/* Probe the ACTUAL candidate host (the exact domain the user queried /
 			 * the SNI their client sent) — NOT the collapsed base domain. Many
 			 * blocks are subdomain-scoped (e.g. app.kilo.ai is blocked while
 			 * kilo.ai works), and probing only the base domain hides them. */
-			let dom = trim(host);
+			let dom = trim(cand[oi]);
 			if (substr(dom, -1) === '.') dom = substr(dom, 0, length(dom) - 1);
 			if (substr(dom, 0, 4) === 'www.') dom = substr(dom, 4);
 			if (!looks_like_host(dom)) continue;
@@ -860,48 +1013,83 @@ function main() {
 			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
 			let st = state[dom];
 			/* Pending-confirm hosts re-probe after CONFIRM_RETRY, not the daily guard. */
-			if (st && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && (st.confirms || 0) > 0) ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) continue;
-			dom_probed++;
-
-			let d_res = probe(dom, false, timeout);
-			let p_res = null;
-			if (!d_res.ok && !main_is_direct) { p_res = probe(dom, true, timeout); sleep(150); }
-			/* A client may resolve a BARE IP literal (dnsmasq logs it like a name);
-			 * classify by content so the UI Type column stays truthful. */
-			classify(dom, d_res, p_res, !!match(dom, /^(\d{1,3}\.){3}\d{1,3}$/));
+			if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) continue;
+			push(sel, dom);
 		}
-		/* IP learning (B): only when enabled, for non-private destinations that are
-		 * not shared-CDN address space. HTTP probes first; if both sides are HTTP-
-		 * inconclusive (proprietary protocols — MTProto DCs, game servers), fall back
-		 * to the TCP/TLS reachability probe through the same pinned inbounds. */
-		let ip_probed = 0;
+		if (length(sel)) {
+			let ditems = [];
+			for (let i = 0; i < length(sel); i++) push(ditems, { i: 'd' + i, h: sel[i] });
+			let dwave = probe_all(ditems, 'direct', timeout);
+			let pitems = [];
+			for (let i = 0; i < length(sel); i++)
+				if (!(dwave['d' + i] && dwave['d' + i].ok))
+					push(pitems, { i: 'p' + i, h: sel[i] });
+			let pwave = main_is_direct ? {} : probe_all(pitems, 'proxy', timeout);
+			for (let i = 0; i < length(sel); i++) {
+				let d_res = dwave['d' + i] || { code: '000', ok: false, block: false, fp: '' };
+				let p_res = pwave['p' + i] || null;
+				/* A client may resolve a BARE IP literal (dnsmasq logs it like a name);
+				 * classify by content so the UI Type column stays truthful. */
+				classify(sel[i], d_res, p_res, !!match(sel[i], /^(\d{1,3}\.){3}\d{1,3}$/));
+			}
+		}
+
+		/* ── IP learning: same two-wave HTTP probing, then the TCP/TLS fallback waves
+		 * for endpoints where HTTP could not classify either side (MTProto DCs,
+		 * game servers). Only when enabled, for non-private non-shared-CDN IPs. ── */
 		if (ip_learn === '1') {
+			let ipsel = [];
 			for (let ip in ip_candidates) {
-				if (ip_probed >= IP_CAP) break;
+				if (length(ipsel) >= ip_cap) break;
 				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_excluded(ip)) continue;
 				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
-				 * probe on it (learned IPs being re-evaluated pass via their count). */
-				if (((int(ip_candidates[ip] || 0)) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
+				 * probe on it (learned/fast-tracked IPs pass via their count). */
+				if (((int(ip_candidates[ip]) || 0) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
 				if (length(keys(auto_ip_set)) >= IP_LIST_MAX && !auto_ip_set[ip]) continue;
 				let st = state[ip];
-				if (st && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && (st.confirms || 0) > 0) ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) continue;
-				ip_probed++;
-				let d_res = probe(ip, false, timeout);
-				let p_res = null;
-				if (!d_res.ok && !main_is_direct) { p_res = probe(ip, true, timeout); sleep(150); }
-				/* TCP fallback only when HTTP could not classify either side. */
-				let tcp_direct = false;
-				if (!d_res.ok && !(p_res && p_res.ok)) {
-					tcp_direct = tcp_reachable(ip, false, timeout);
-					if (!tcp_direct && !main_is_direct && tcp_reachable(ip, true, timeout)) {
+				if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) continue;
+				push(ipsel, ip);
+			}
+			if (length(ipsel)) {
+				let di = [];
+				for (let i = 0; i < length(ipsel); i++) push(di, { i: 'i' + i, h: ipsel[i] });
+				let idw = probe_all(di, 'direct', timeout);
+				let needp = {}, pi = [];
+				for (let i = 0; i < length(ipsel); i++)
+					if (!(idw['i' + i] && idw['i' + i].ok)) { needp[i] = true; push(pi, { i: 'i' + i, h: ipsel[i] }); }
+				let ipw = main_is_direct ? {} : probe_all(pi, 'proxy', timeout);
+				let ti = [];
+				for (let i = 0; i < length(ipsel); i++) {
+					if (!needp[i]) continue;
+					if ((ipw['i' + i] && ipw['i' + i].ok)) continue;
+					push(ti, { i: 'i' + i, h: ipsel[i] });
+				}
+				let tcp_direct_ok = {}, tcp_proxy_ok = {};
+				if (length(ti)) {
+					let tw = probe_all(ti, 'tcp', timeout);
+					let tpxi = [];
+					for (let i = 0; i < length(ipsel); i++) {
+						tcp_direct_ok[i] = tw['i' + i] && tw['i' + i].ok;
+						if (!tcp_direct_ok[i] && !main_is_direct) push(tpxi, { i: 'i' + i, h: ipsel[i] });
+					}
+					if (length(tpxi)) {
+						let tpw = probe_all(tpxi, 'tcpproxy', timeout);
+						for (let i = 0; i < length(ipsel); i++)
+							tcp_proxy_ok[i] = tpw['i' + i] && tpw['i' + i].ok;
+					}
+				}
+				for (let i = 0; i < length(ipsel); i++) {
+					let d_res = idw['i' + i] || { code: '000', ok: false, block: false, fp: '' };
+					let p_res = ipw['i' + i] || null;
+					let tdok = !!tcp_direct_ok[i];
+					if (!d_res.ok && !(p_res && p_res.ok) && !tdok && tcp_proxy_ok[i]) {
 						/* TCP dead direct + alive via proxy = a learnable block the
 						 * HTTP layer cannot see. Fabricate an ok proxy result so the
 						 * normal confirm/learn path handles it unchanged. */
 						p_res = { code: 'TCP', ok: true, block: false, fp: '' };
 					}
-					sleep(150);
+					classify(ipsel[i], d_res, p_res, true, tdok);
 				}
-				classify(ip, d_res, p_res, true, tcp_direct);
 			}
 		}
 
@@ -972,7 +1160,7 @@ function main() {
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
 				push(rest, { h: h, t: state[h].last_probe || 0 });
 			}
-			let excess = length(rest) - STATE_CAP;
+			let excess = length(rest) - state_cap;
 			if (excess > 0) {
 				sort(rest, (a, b) => a.t - b.t);
 				for (let i = 0; i < excess; i++) delete state[rest[i].h];
