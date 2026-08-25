@@ -266,6 +266,14 @@ return view.extend({
 		so.depends('enabled', '1');
 		so.depends('use_plain', '1');
 
+		so = ss.option(form.Value, 'http_budget', _('HTTP check budget per cycle'),
+			_('Total HTTPS verification checks the quality daemon may spend per cycle (split equally between the pools). Higher = fresher open-ratio data on big pools, at the cost of more background requests. Default 24.'));
+		so.datatype = 'range(4, 96)';
+		so.default = '24';
+		so.placeholder = '24';
+		so.rmempty = false;
+		so.depends('enabled', '1');
+
 		so = ss.option(form.DummyValue, '_md_monitor');
 		so.rawhtml = true;
 		so.rmempty = true;

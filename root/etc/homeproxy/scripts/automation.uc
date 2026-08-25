@@ -702,6 +702,11 @@ function main() {
 			 * change, so learned sites apply to NEW connections immediately — no service
 			 * restart, no dropped connections. In-flight flows keep their route. */
 			let r = sync_learned_rulesets();
+			/* Flush the router's DNS cache so LAN clients re-resolve learned
+			 * domains immediately instead of serving stale (often forged)
+			 * answers until their old TTL expires - this is the dominant part
+			 * of the "site works only minutes later" delay. */
+			system('killall -HUP dnsmasq >/dev/null 2>&1');
 			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips.');
 			last_reload = time();
 			pending_reload = false;

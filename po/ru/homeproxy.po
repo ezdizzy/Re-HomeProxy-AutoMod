@@ -5540,6 +5540,18 @@ msgid "Verify real user domains"
 msgstr "Верификация реальных доменов"
 
 #: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "HTTP check budget per cycle"
+msgstr "Бюджет HTTPS-проверок за цикл"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid ""
+"Total HTTPS verification checks the quality daemon may spend per cycle (split equally between the pools). Higher = fresher open-ratio data on big pools, at the cost of more background requests. Default 24."
+msgstr ""
+"Сколько всего HTTPS-проверок качества демон может потратить за один цикл (делится "
+"поровну между пулами). Больше — свежее данные «Открывается %» на больших пулах, ценой "
+"большего числа фоновых запросов. По умолчанию 24."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
 msgid ""
 "Sample the domains your clients actually query (from the dnsmasq log, stays on this router) and cross-check the racing pool's answers against direct encrypted DoH references. A domain whose answers persistently disagree with every reference is quarantined to the secure pool automatically, so forged answers stop reaching clients. Costs a few extra HTTPS checks per quality cycle."
 msgstr ""

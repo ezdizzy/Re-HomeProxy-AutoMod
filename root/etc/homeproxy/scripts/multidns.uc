@@ -76,6 +76,7 @@ let enabled = '0', use_plain = '1', use_secure = '1', secure_via_proxy = '1',
 let autodoh_active = null;   /* tri-state: unset/true/false — for one-shot logging */
 let user_dns_offset = 0;     /* incremental read position in the dnsmasq query log */
 let self_mark = 100;         /* core's fwmark; hoisted for the probe table too */
+let http_budget_total = 24;  /* total HTTP-verify checks per cycle, split across pools */
 let autodoh_injected = false;/* last assemble_plain_pool() actually injected AUTO_DOH */
 
 function log(msg) {
@@ -1104,9 +1105,10 @@ function analyze() {
 		if (!st.uv_last) st.uv_last = {};
 		let excl = {};
 		for (let l in read_lines(PROXY_DOMAINS_FILE)) excl[trim(l)] = true;
-		for (let k in keys(st.quarantine || {})) excl[k] = true;
 		excl['ya.ru'] = true; excl['example.com'] = true; excl['cloudflare.com'] = true;
 		excl['google.com'] = true; excl['www.google.com'] = true;
+		/* NOTE: quarantined domains are NOT excluded - they must keep being
+		 * sampled (at the usual cadence) or a lifted verdict could never happen. */
 		let cands = [];
 		for (let k in keys(st.user_recent)) {
 			if (excl[k]) continue;
@@ -1124,12 +1126,18 @@ function analyze() {
 			for (let i = 0; i < length(cands); i++) if (i !== mi) push(rest, cands[i]);
 			cands = rest;
 			st.uv_last[dom] = cyc;
-			let ref = {};
 			let r1 = doh_query('1.1.1.1', '/dns-query', dom, false);
-			for (let i = 0; i < length(r1.ips); i = i + 1) ref[r1.ips[i]] = true;
 			let r2 = doh_query('8.8.8.8', '/resolve', dom, false);
+			/* Self-consistency gate: if the two references disagree with each
+			 * other, the name rotates by design (pool.ntp.org, geo CDN) and can
+			 * not be judged at all - cross-validation would flag EVERY answer. */
+			let consistent = false;
+			for (let i = 0; i < length(r1.ips) && !consistent; i = i + 1)
+				if (index(r2.ips, r1.ips[i]) >= 0) consistent = true;
+			if (!consistent) continue;
+			let ref = {};
+			for (let i = 0; i < length(r1.ips); i = i + 1) ref[r1.ips[i]] = true;
 			for (let i = 0; i < length(r2.ips); i = i + 1) ref[r2.ips[i]] = true;
-			if (!length(keys(ref))) continue;               /* references unreachable */
 			let got = tcp_dns_query('127.0.0.1', '' + plain_port, dom);
 			if (!length(got)) continue;                     /* listener silent — no verdict */
 			let clean = false;
@@ -1160,8 +1168,9 @@ function analyze() {
 		let p = pools[pi];
 		/* Fair share: each pool gets an equal slice of the HTTP budget so a long
 		 * plain list can't starve secure-pool verification (AdGuard showed
-		 * open=— purely from budget exhaustion). */
-		let pool_budget = int(24 / length(pools));
+		 * open=— purely from budget exhaustion). Budget is UCI-tunable
+		 * (multidns.http_budget, default 24). */
+		let pool_budget = int(http_budget_total / length(pools));
 		let cs = p.canaries;
 		let c1 = cs[cyc % length(cs)];
 		let c2 = cs[(cyc + 1) % length(cs)];
@@ -1301,6 +1310,7 @@ function bootstrap() {
 	secure_via_proxy = (uci.get('homeproxy', 'multidns', 'secure_via_proxy') || '1') !== '0';
 	plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
 	secure_port = uci.get('homeproxy', 'multidns', 'secure_port') || '5454';
+	http_budget_total = int(uci.get('homeproxy', 'multidns', 'http_budget') || '24') || 24;
 	PROXY = '127.0.0.1:5338';  /* dedicated mdns-proxy-in → main-out */
 	self_mark = int(uci.get('homeproxy', 'infra', 'self_mark') || '100') || 100;
 	ensure_probe_table(self_mark);
@@ -1342,6 +1352,7 @@ function main() {
 		min_score = int(uci.get('homeproxy', 'multidns', 'min_score') || '20') || 20;
 		plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
 		secure_port = uci.get('homeproxy', 'multidns', 'secure_port') || '5454';
+		http_budget_total = int(uci.get('homeproxy', 'multidns', 'http_budget') || '24') || 24;
 		PROXY = '127.0.0.1:5338';  /* dedicated mdns-proxy-in → main-out */
 		self_mark = int(uci.get('homeproxy', 'infra', 'self_mark') || '100') || 100;
 		ensure_probe_table(self_mark);
