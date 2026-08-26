@@ -162,6 +162,11 @@ let excludes = [];
 let direct_set = {};
 let proxy_set = {};
 let auto_ip_set = {};
+/* Hot-lane hosts of the CURRENT pass (host → true). MODULE scope, not a pass()
+ * local: classify() is a sibling nested function and this ucode build does not
+ * support closures over siblings' locals ("access to undeclared variable") —
+ * same constraint dns_failover_check hit before it moved to module vars. */
+let hot_set = {};
 let last_reeval = 0;
 let last_prune = 0;
 /* Plain-view DNS cache for the serial probe() path (self-heal/reeval re-probe the
@@ -1171,7 +1176,7 @@ echo done > "$PRE.done"
 		 * ccTLD ("7.ua", "b.ly", "g.tj") is wildcard-ad noise, never user traffic. */
 		let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
 		let reeval_set = {};
-		let hot_set = {};
+		hot_set = {};
 		let intake = (h) => {
 			h = lc(trim(h));
 			if (!looks_like_host(h)) return;
