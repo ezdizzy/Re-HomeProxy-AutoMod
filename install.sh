@@ -114,7 +114,10 @@ list_nodes() {
 
 # Добавить правило прокси, если правила с таким источником ещё нет. add_rule <source> <node>
 add_rule() {
-	if uci show homeproxy 2>/dev/null | grep -q "homeproxy\.proxy_ru_rule.*\.source='$1'"; then
+	# uci show prints auto-generated section ids (homeproxy.cfgXXXX.source='…'),
+	# NOT the section type — matching on "proxy_ru_rule" never matched, so every
+	# re-run appended another duplicate rule.
+	if uci show homeproxy 2>/dev/null | grep -q "\.source='$1'"; then
 		return 0
 	fi
 	SEC=$(uci add homeproxy proxy_ru_rule 2>/dev/null)
@@ -130,6 +133,7 @@ add_rule() {
 # Гарантия интернета: если основной узел не задан (нет подписки/узлов) — прямой режим
 # и правило YouTube → Zapret. Ничего уже настроенного не трогает.
 ensure_baseline() {
+	apply_gh_mirror
 	[ -z "$(uci -q get homeproxy.config.routing_mode)" ] && uci -q set homeproxy.config.routing_mode=proxy_banned_ru
 	[ -z "$(uci -q get homeproxy.config.main_udp_node)" ] && uci -q set homeproxy.config.main_udp_node=same
 	MN=$(uci -q get homeproxy.config.main_node)
@@ -140,14 +144,16 @@ ensure_baseline() {
 			ok "  узлы найдены — включён URLTest (авто, все узлы)."
 			[ "$(uci -q get homeproxy.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
 		elif [ "$(uci -q get homeproxy.config.zapret_enabled)" = 1 ]; then
-			# Zapret is an engine, not a main node: direct main + rule routes YouTube
-			# through the Zapret desync (same result, cleaner architecture).
+			# Zapret is an engine, not a main node: direct main keeps the internet up.
+			# NO unconditional YouTube→Zapret rule here: per policy that rule is added
+			# ONLY after a strategy passed its live test (install_zapret does exactly
+			# that); re-running the installer must not route YouTube into an untested
+			# engine.
 			uci -q set homeproxy.config.main_node=direct-out
-			add_rule youtube zapret-out
-			info "  нет подписки: интернет напрямую, YouTube — через Zapret."
+			info "  нет подписки: интернет напрямую."
+			info "  YouTube через Zapret добавится после успешного теста стратегии (пункт меню Zapret)."
 		else
 			uci -q set homeproxy.config.main_node=direct-out
-			add_rule youtube zapret-out
 			info "  нет подписки: интернет работает как обычно (напрямую)."
 			info "  Заблокированные сайты станут доступны после добавления подписки/узла."
 		fi
@@ -274,7 +280,15 @@ SUFFIX="_all"; [ "$LEGACY" = 1 ] && SUFFIX="_all-legacy"
 info "Версия: OpenWrt $VER  |  Архитектура: $ARCH  |  Менеджер пакетов: $PM  |  legacy=$LEGACY"
 
 # Прописываем зеркало в бэкенд, чтобы делегированные загрузки тоже его использовали
-if [ -n "$GH_MIRROR" ]; then uci set homeproxy.config.github_mirror="$GH_MIRROR"; uci commit homeproxy 2>/dev/null; fi
+# Зеркало GitHub для бэкенда приложения пишем в UCI ПОСЛЕ установки пакета:
+# ранняя запись при отсутствии /etc/config/homeproxy создавала пустой конфиг,
+# который (как conffile) блокировал поставку shipped-дефолтов из пакета.
+apply_gh_mirror() {
+	if [ -n "$GH_MIRROR" ] && [ -f /etc/config/homeproxy ]; then
+		uci set homeproxy.config.github_mirror="$GH_MIRROR"
+		uci commit homeproxy 2>/dev/null
+	fi
+}
 
 # Приложение уже установлено?
 APP_INSTALLED=0
