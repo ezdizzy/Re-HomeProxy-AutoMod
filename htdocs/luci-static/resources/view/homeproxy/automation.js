@@ -103,7 +103,8 @@ return view.extend({
 		const s = m.section(form.NamedSection, 'automation', 'homeproxy', _('Auto blocked-site detection'));
 
 		let o = s.option(form.Flag, 'enabled', _('Enable automation'),
-			_('Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the proxy list. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path. After toggling, press “Restart service” below.'));
+			_('Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br>'
+			+ '<b>Mode notes:</b> active only in "Bypass blocking". Automatically paused in Global (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in Custom routing / Custom JSON. After toggling, press "Restart service" below.'));
 		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'mode', _('Mode'));

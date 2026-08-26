@@ -402,6 +402,34 @@ function is_public_infra_ip(ip) {
 	return false;
 }
 
+/* The router's own addresses (WAN/LAN/loopback, incl. the ISP-assigned public IP)
+ * must never be learned: probing them from the router itself always looks like a
+ * block (direct probe of self fails) while the tunnel exit loops back fine —
+ * a guaranteed false 'blocked' verdict that would route traffic to our own
+ * address through the proxy. Collected once at startup from fib_trie host routes. */
+let local_ips = {};
+function load_local_ips() {
+	local_ips = {};
+	let f = open('/proc/net/fib_trie', 'r');
+	if (!f) return;
+	let pend = null;
+	let line;
+	while ((line = f.read('line')) !== null) {
+		line = trim(line);
+		if (pend !== null && match(line, /^\/32 host LOCAL/)) {
+			local_ips[pend] = true;
+			pend = null;
+			continue;
+		}
+		let m = match(line, /\|-- (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+		pend = m ? m[1] : null;
+	}
+	f.close();
+}
+function is_local_ip(ip) {
+	return local_ips[ip] === true;
+}
+
 /* TCP/TLS reachability for non-HTTP endpoints (Telegram DC MTProto, game servers,
  * hardcoded-IP apps). Rides the same pinned test inbounds as probe(). Exit-code
  * semantics of a TLS attempt against an arbitrary TCP endpoint:
@@ -475,7 +503,11 @@ function discover_clash(timeout) {
 }
 
 function discover_conntrack() {
-	let raw = capture(`conntrack -L 2>/dev/null | awk '/ESTABLISHED/ { for (i=1;i<=NF;i++) if ($i ~ /^dst=/) { sub("dst=", "", $i); print $i } }' | head -300`);
+	/* Only WEB flows (tcp dport 80/443): those are what the HTTP/TLS probe can
+	 * actually judge. Unfiltered conntrack fed the learner DNS (udp/53), NTP and
+	 * self-traffic destinations — a DNS server "fails" every HTTPS probe by
+	 * design and then gets learned as BLOCKED. */
+	let raw = capture(`( conntrack -L -p tcp --dport 80 2>/dev/null; conntrack -L -p tcp --dport 443 2>/dev/null ) | awk '/ESTABLISHED/ { for (i=1;i<=NF;i++) if ($i ~ /^dst=/) { sub("dst=", "", $i); print $i } }' | head -300`);
 	if (!raw) return [];
 	return split(trim(raw), /\n/);
 }
@@ -843,6 +875,7 @@ echo done > "$PRE.done"
 	if (type(alt_dns) !== 'array') alt_dns = [ alt_dns ];
 
 	direct_set = {}; proxy_set = {}; auto_ip_set = {}; auto_set = {};
+	load_local_ips();
 	for (let d in read_lines(RES + '/direct_list.txt')) direct_set[trim(d)] = true;
 	for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
 	/* Load the learned list but drop entries that are now excluded (.ru/.рф/.su
@@ -859,9 +892,29 @@ echo done > "$PRE.done"
 		}
 		auto_set[d] = true;
 	}
-	for (let d in read_lines(AUTO_IP_LIST)) auto_ip_set[trim(d)] = true;
+	/* Sanitize on load: infrastructure IPs must never live in the learned set —
+	 * a poisoned entry survives in-memory even after the list file is cleaned
+	 * externally until the next restart. */
+	let ip_dropped = 0;
+	for (let d in read_lines(AUTO_IP_LIST)) {
+		d = trim(d);
+		if (!length(d)) continue;
+		if (is_public_infra_ip(d)) {
+			log('dropping learned IP (public resolver/anycast infrastructure): ' + d);
+			ip_dropped++;
+			continue;
+		}
+		if (is_local_ip(d)) {
+			log('dropping learned IP (router own address): ' + d);
+			ip_dropped++;
+			continue;
+		}
+		auto_ip_set[d] = true;
+	}
 	if (dropped > 0)
 		write_auto_list(auto_set);
+	if (ip_dropped > 0)
+		write_auto_ip_list(auto_ip_set);
 	let state = load_state();
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
@@ -937,6 +990,15 @@ echo done > "$PRE.done"
 		}
 		let p_ok = p && p.ok;
 		if (p_ok) {
+			/* Hard guard, independent of every intake path: some IP classes must
+			 * NEVER be learned no matter how the probe verdicts look — private/
+			 * router-own addresses (probing self always "fails" direct), shared
+			 * CDNs and public resolver/anycast infra (collateral tunneling). */
+			if (is_ip && (is_private_ip(dom) || is_shared_cdn_ip(dom) || is_public_infra_ip(dom) || is_local_ip(dom))) {
+				st.status = 'direct';
+				st.confirms = 0;
+				return;
+			}
 			/* Proxy returns a real page, but if its body matches the direct body
 			 * (a block page the signature list missed), the proxy doesn't actually
 			 * help → treat as blocked_no_proxy, not a learnable block. */
@@ -965,33 +1027,59 @@ echo done > "$PRE.done"
 			st.status = 'blocked_no_proxy';
 			st.confirms = 0;
 		} else {
-			st.status = 'unknown';
-			st.confirms = 0;
+			/* 'unknown' = both sides inconclusive (transient, junk candidate,
+			 * non-HTTP endpoint). These were persisted verbatim and drowned the
+			 * state table in 11k+ meaningless records — drop them instead; a
+			 * recurring host simply gets re-probed on a later pass. */
+			delete state[dom];
 		}
 	}
 
 	function pass(run_now) {
 		enabled = uci.get('homeproxy', 'automation', 'enabled');
 		if (enabled !== '1') return;
-		/* Custom modes bring their own routing/DNS: the pinned test inbounds are
-		 * not emitted there (no preset main-out to probe against), so every probe
-		 * would just fail and pollute the state table. Stay resident — flipping
-		 * back to a preset mode resumes learning on the next service reload. */
+		/* Mode gating. Learning is only meaningful when a real proxy path exists
+		 * AND the mode actually routes by rules:
+		 * - custom/custom_json: pinned test inbounds are not emitted there;
+		 * - Global: EVERYTHING tunnels anyway — nothing to learn;
+		 * - Main node Direct: no proxy side to verify against.
+		 * Stay resident — flipping back to a learnable setup resumes on reload. */
 		let rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 		if (rmode === 'custom' || rmode === 'custom_json') return;
+		let main_node_now = uci.get('homeproxy', 'config', 'main_node') || 'nil';
+		main_is_direct = (main_node_now === 'direct-out' || main_node_now === 'nil' || rmode === 'global');
+		if (rmode === 'global' || main_is_direct) return;
 
+		/* Candidate intake: normalise case (DNS queries and SNI keep client-side
+		 * case; mixed-case duplicates like "zz.rw"/"ZZ.rw" would be probed twice)
+		 * and drop junk shapes — a single-character second-level label under some
+		 * ccTLD ("7.ua", "b.ly", "g.tj") is wildcard-ad noise, never user traffic. */
 		let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
+		let intake = (h) => {
+			h = lc(trim(h));
+			if (!looks_like_host(h)) return;
+			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
+				/* Bare-IP literal from the DNS/SNI log belongs to the IP pipeline
+				 * (seen-threshold + private/local/infra filters), NOT to domains:
+				 * routing it into domain_candidates let it bypass every IP guard
+				 * and get learned straight from classify(). */
+				if (ip_learn === '1') ip_candidates[h] = (int(ip_candidates[h]) || 0) + 1;
+				return;
+			}
+			let parts = split(h, '.');
+			if (length(parts) >= 2 && length(parts[length(parts) - 2]) <= 1)
+				return;
+			domain_candidates[h] = true;
+			dns_freq[h] = (int(dns_freq[h]) || 0) + 1;
+		};
 		/* DNS first: it captures the domain at query time, newest-first. The per-host
 		 * query COUNT from this slice doubles as a priority score — the probe budget
 		 * goes to what the user actually hammers first, not to hash order.
 		 * Clash/SNI fill in the gaps. conntrack is counted per IP (MIN_IP_SEEN gate). */
 		if (has('dns'))
-			for (let i, h in discover_dns()) {
-				domain_candidates[h] = true;
-				dns_freq[h] = (int(dns_freq[h]) || 0) + 1;
-			}
-		if (has('clash'))     for (let i, h in discover_clash(timeout)) domain_candidates[h] = true;
-		if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) domain_candidates[h] = true;
+			for (let i, h in discover_dns()) intake(h);
+		if (has('clash'))     for (let i, h in discover_clash(timeout)) intake(h);
+		if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) intake(h);
 		/* Raw-IP candidates are collected ONLY when IP learning is enabled — the old
 		 * separate 'conntrack' discovery source is merged into the ip_learn switch. */
 		if (ip_learn === '1')
@@ -1015,8 +1103,8 @@ echo done > "$PRE.done"
 			 * .status off a number throws "LHS is not an array or object". */
 			if (type(pst) !== 'object' || pst.status !== 'blocked' || !(int(pst.confirms) > 0)) continue;
 			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
-				/* Never fast-track public resolver/anycast IPs into probing. */
-				if (ip_learn === '1' && !is_public_infra_ip(h)) ip_candidates[h] = MIN_IP_SEEN;
+				/* Never fast-track public resolver/anycast or router-own IPs into probing. */
+				if (ip_learn === '1' && !is_public_infra_ip(h) && !is_local_ip(h)) ip_candidates[h] = MIN_IP_SEEN;
 			} else {
 				priority[h] = true;
 				domain_candidates[h] = true;
@@ -1076,7 +1164,7 @@ echo done > "$PRE.done"
 			let ipsel = [];
 			for (let ip in ip_candidates) {
 				if (length(ipsel) >= ip_cap) break;
-				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_public_infra_ip(ip) || is_excluded(ip)) continue;
+				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_public_infra_ip(ip) || is_local_ip(ip) || is_excluded(ip)) continue;
 				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
 				 * probe on it (learned/fast-tracked IPs pass via their count). */
 				if (((int(ip_candidates[ip]) || 0) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;

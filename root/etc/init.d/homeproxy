@@ -141,9 +141,21 @@ start_service() {
 	# and generate_client.uc falls back to direct upstreams (no DNS black-hole / no
 	# loss of internet). The daemon's bootstrap mode builds the conf + starts mosdns
 	# then exits; the procd daemon reuses that instance.
-	local md_en
+	#
+	# Mode gating: MultiDNS accelerates the PRESET DNS pools (russia / region /
+	# secure), which only exist in proxy_banned_ru and bypass_cn/bypass_ir. In
+	# global nothing queries its listeners, and custom/custom_json bring their own
+	# DNS — bootstrapping mosdns there is pure RAM/startup waste, so skip it.
+	local md_en mdns_wired
 	config_get_bool md_en "multidns" "enabled" "0"
-	if [ "$md_en" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
+	mdns_wired=0
+	case "$routing_mode" in
+		proxy_banned_ru|bypass_cn|bypass_ir) mdns_wired=1 ;;
+	esac
+	if [ "$md_en" = "1" ] && [ "$mdns_wired" != "1" ]; then
+		log "MultiDNS enabled but not wired into '$routing_mode' DNS (no preset pools there) — skipping mosdns."
+	fi
+	if [ "$md_en" = "1" ] && [ "$mdns_wired" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
 		mkdir -p "$RUN_DIR/multidns"
 		# Bootstrap the dedicated mosdns instance synchronously so generate_client
 		# can repoint DNS at the live racing listener. Bounded by a watchdog: if the
@@ -390,10 +402,11 @@ start_service() {
 
 	# MultiDNS analyzer: races the DNS servers in each pool (plain + secure) via a
 	# dedicated mosdns instance and continuously scores/ranks them by latency + HTTP
-	# "site opens" verification + trends. Runs only while enabled; owns the mosdns process.
+	# "site opens" verification + trends. Runs only while enabled AND only in modes
+	# whose preset DNS pools it actually accelerates (see the mdns_wired gate above).
 	local multidns_enabled
 	config_get_bool multidns_enabled "multidns" "enabled" "0"
-	if [ "$multidns_enabled" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
+	if [ "$multidns_enabled" = "1" ] && [ "$mdns_wired" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
 		mkdir -p "$RUN_DIR/multidns"
 		procd_open_instance "multidns"
 		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/multidns.uc"

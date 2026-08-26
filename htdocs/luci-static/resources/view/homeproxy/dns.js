@@ -174,7 +174,8 @@ return view.extend({
 
 		let ss = o.subsection;
 		let so = ss.option(form.Flag, 'enabled', _('Enable MultiDNS'),
-			_('Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh).'));
+			_('Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh).<br>'
+			+ '<b>Wired into:</b> "Bypass blocking" and region preset modes, whose DNS pools it accelerates. In Global / Custom routing / Custom JSON nothing queries its listeners — mosdns is not started there, so leave this off in those modes.'));
 		so.rmempty = false;
 		/* Safety switch: when the user disables MultiDNS, hard-stop the racing
 		 * resolver so DNS reverts to the standard upstreams. */
