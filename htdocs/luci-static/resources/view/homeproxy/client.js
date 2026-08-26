@@ -353,7 +353,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.ListValue, 'routing_mode', _('Routing mode'),
-			_('• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection.<br>'
+			_('• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The Automation engine (its own tab) keeps these lists current automatically.<br>'
 			+ '• <b>Global</b> — ALL traffic goes through the Main node; no rules are used.<br>'
 			+ '• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>'
 			+ 'Changing the mode re-renders the page so only relevant options stay visible'));
@@ -729,60 +729,92 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 
 		so = ss.option(form.ListValue, 'source', _('Source') + ' ⤵️');
 		/* Russia bulk lists are RU-forward only; CN/IR get geosite/geoip baked into the
-		 * engine baseline, so here they only need per-service overrides. */
-		if (_rmode_rules === 'proxy_banned_ru') {
-			so.value('refilter', _('Re-filter (Russia blocklist: 60000+ banned domains + 25000+ IPs)'));
-			so.value('russia-inside', _('itdoginfo/allow-domains - Russia Inside (1000+ entries)'));
-		}
-		so.value('youtube', _('YouTube'));
-		so.value('twitter', _('Twitter/X'));
-		so.value('tiktok', _('TikTok'));
-		so.value('telegram', _('Telegram'));
-		so.value('roblox', _('Roblox'));
-		so.value('porn', _('Adult content'));
-		so.value('ovh', _('OVH (France cloud hosting)'));
-		so.value('news', _('International news sites'));
-		so.value('meta', _('Meta (Facebook, Instagram)'));
-		so.value('hodca', _('HODCA'));
-		so.value('hetzner', _('Hetzner (Germany cloud hosting)'));
-		so.value('hdrezka', _('HDRezka'));
-		so.value('google_ai', _('Google AI services'));
-		so.value('google_play', _('Google Play'));
-		so.value('geoblock', _('GeoBlock services'));
-		so.value('anime', _('Anime streaming'));
-		so.value('cloudflare', _('Cloudflare CDN'));
-		so.value('cloudfront', _('CloudFront CDN'));
-		so.value('discord', _('Discord'));
-		so.value('digitalocean', _('DigitalOcean cloud hosting'));
+		 * engine baseline, so here they only need per-service overrides. Built in
+		 * .load() so a mode switch (silent-save + re-render) refreshes the list
+		 * IMMEDIATELY — reading persisted UCI at view-render time left Re-filter
+		 * missing until the user manually reloaded the page. */
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+			if (uci.get(data[0], 'config', 'routing_mode') === 'proxy_banned_ru') {
+				this.value('refilter', _('Re-filter (Russia blocklist: 60000+ banned domains + 25000+ IPs)'));
+				this.value('russia-inside', _('itdoginfo/allow-domains - Russia Inside (1000+ entries)'));
+			}
+			this.value('youtube', _('YouTube'));
+			this.value('twitter', _('Twitter/X'));
+			this.value('tiktok', _('TikTok'));
+			this.value('telegram', _('Telegram'));
+			this.value('roblox', _('Roblox'));
+			this.value('porn', _('Adult content'));
+			this.value('ovh', _('OVH (France cloud hosting)'));
+			this.value('news', _('International news sites'));
+			this.value('meta', _('Meta (Facebook, Instagram)'));
+			this.value('hodca', _('HODCA'));
+			this.value('hetzner', _('Hetzner (Germany cloud hosting)'));
+			this.value('hdrezka', _('HDRezka'));
+			this.value('google_ai', _('Google AI services'));
+			this.value('google_play', _('Google Play'));
+			this.value('geoblock', _('GeoBlock services'));
+			this.value('anime', _('Anime streaming'));
+			this.value('cloudflare', _('Cloudflare CDN'));
+			this.value('cloudfront', _('CloudFront CDN'));
+			this.value('discord', _('Discord'));
+			this.value('digitalocean', _('DigitalOcean cloud hosting'));
+			return this.super('load', section_id);
+		};
 		so.rmempty = false;
 		so.editable = true;
-		so.validate = function(section_id, value) {
+		/* The source validator needs the sibling `node` option; it is assigned right
+		 * after the node option is created below. */
+		let ruleNodeOption = null;
+		const validateSourceUnique = function(section_id, value) {
 			for (const sid of this.section.cfgsections()) {
 				if (sid === section_id) continue;
 				/* Compare against PENDING form values first: two freshly added
-				 * duplicates must be caught before save, not after. */
+				 * duplicates must be caught before save, not after. Only an
+				 * identical (source, node) PAIR is a real duplicate — the same
+				 * source via different outbounds (e.g. YouTube via Zapret AND
+				 * YouTube via the VPN) is a legitimate combination. */
 				let other;
 				try { other = this.formvalue(sid); } catch(e) {}
 				if (other == null)
 					other = this.cfgvalue(sid);
-				if (other === value)
-					return _('Duplicate source — a rule for this service already exists');
+				if (other !== value)
+					continue;
+				if (!ruleNodeOption)
+					return _('Duplicate rule — a rule with the same service and target already exists');
+				let otherNode, myNode;
+				try { otherNode = ruleNodeOption.formvalue(sid); } catch(e) {}
+				if (otherNode == null) otherNode = ruleNodeOption.cfgvalue(sid);
+				try { myNode = ruleNodeOption.formvalue(section_id); } catch(e) {}
+				if (myNode == null) myNode = ruleNodeOption.cfgvalue(section_id);
+				if (otherNode === myNode || otherNode == null || myNode == null)
+					return _('Duplicate rule — a rule with the same service and target already exists');
 			}
 			return true;
 		};
+		so.validate = validateSourceUnique;
 
 		so = ss.option(form.ListValue, 'node', _('Node') + ' 🔗');
-		/* "Same as main node" is meaningless while the main node is Direct — hide it
-		 * so new rules target an engine or a real node instead of the direct exit. */
-		if (uci.get('homeproxy', 'config', 'main_node') !== 'direct-out')
-			so.value('main-out', _('Same as main node'));
-		so.value('urltest', _('Separate URLTest'));
-		for (let i in proxy_nodes)
-			so.value(i, proxy_nodes[i]);
-		if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
-			so.value('byedpi-out', _('ByeDPI'));
-		if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
-			so.value('zapret-out', _('Zapret'));
+		/* Dynamic for the same reason as `source`: silent-saved main node / engine
+		 * toggles must reflect here without a manual page reload. "Same as main
+		 * node" is hidden while the main node is Direct — it would just egress
+		 * directly; engines appear only while enabled. */
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+			if (uci.get(data[0], 'config', 'main_node') !== 'direct-out')
+				this.value('main-out', _('Same as main node'));
+			this.value('urltest', _('Separate URLTest'));
+			for (let i in proxy_nodes)
+				this.value(i, proxy_nodes[i]);
+			if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
+				this.value('byedpi-out', _('ByeDPI'));
+			if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
+				this.value('zapret-out', _('Zapret'));
+			return this.super('load', section_id);
+		};
+		ruleNodeOption = so;
 		so.rmempty = false;
 		so.editable = true;
 

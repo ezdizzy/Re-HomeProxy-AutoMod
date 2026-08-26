@@ -1349,8 +1349,25 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		}
 	}
 
-	if (!length(outbounds))
-		return { outbound: null, extra: extra };
+	if (!length(outbounds)) {
+		/* Empty resolved pool (stale manual list, deleted preferred node, zero
+		 * nodes in a non-auto mode): degrade to ALL existing nodes instead of a
+		 * bare direct outbound — the latter silently killed the tunnel while the
+		 * user still had perfectly working nodes configured. Only when there are
+		 * truly no nodes at all does main-out fall back to direct. */
+		let any = [];
+		uci.foreach(uciconfig, ucinode, (cfg) => { push(any, `cfg-${cfg['.name']}-out`); });
+		if (!length(any))
+			return { outbound: null, extra: extra };
+		warn(sprintf('homeproxy: %s pool empty — falling back to all %d nodes.\n', tag, length(any)));
+		return { outbound: {
+			type: 'urltest',
+			tag: tag,
+			outbounds: any,
+			interval: strToTime(interval),
+			tolerance: strToInt(tolerance)
+		}, extra: extra };
+	}
 
 	return { outbound: {
 		type: 'urltest',

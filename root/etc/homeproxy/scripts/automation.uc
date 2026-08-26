@@ -92,6 +92,24 @@ const SHARED_CDN_PREFIXES = [
 	'172.64.', '172.65.', '172.66.', '172.67.', '172.68.', '172.69.', '172.70.', '172.71.',
 	'162.158.', '162.159.', '141.101.', '188.114.', '190.93.', '108.162.', '173.245.'
 ];
+
+/* Public resolver / big-anycast infrastructure NEVER learned as IPs. A probe of a
+ * DNS server looks exactly like a block (the responder does not serve HTTPS on :443,
+ * or DPI resets it) while the tunnel exit reaches it fine — learning 8.8.8.8 as
+ * "blocked" then tunnels every LAN DNS query, adding latency and a hard dependency
+ * on the tunnel for name resolution. Google service anycast included: same
+ * shared-fate collateral damage as CDNs above. */
+const PUBLIC_INFRA_PREFIXES = [
+	'8.8.8.', '8.8.4.',                                  /* Google DNS */
+	'1.1.1.', '1.0.0.',                                  /* Cloudflare DNS */
+	'9.9.9.', '149.112.112.',                            /* Quad9 */
+	'208.67.222.', '208.67.220.',                        /* OpenDNS */
+	'77.88.8.', '77.88.44.',                             /* Yandex DNS */
+	'94.140.14.', '94.140.15.',                          /* AdGuard DNS */
+	'74.125.', '108.177.', '172.217.', '142.250.',       /* Google service anycast */
+	'173.194.', '216.239.', '64.233.', '209.85.',
+	'185.199.108.', '185.199.109.', '185.199.110.', '185.199.111.'  /* GitHub Pages anycast */
+];
 /* Learned-IP list cap: IPs are riskier than domains (no SNI boundary), keep the list
  * small enough to audit by eye in the UI table. */
 const IP_LIST_MAX = 512;
@@ -378,6 +396,12 @@ function is_shared_cdn_ip(ip) {
 	return false;
 }
 
+function is_public_infra_ip(ip) {
+	for (let p in PUBLIC_INFRA_PREFIXES)
+		if (substr(ip, 0, length(p)) === p) return true;
+	return false;
+}
+
 /* TCP/TLS reachability for non-HTTP endpoints (Telegram DC MTProto, game servers,
  * hardcoded-IP apps). Rides the same pinned test inbounds as probe(). Exit-code
  * semantics of a TLS attempt against an arbitrary TCP endpoint:
@@ -475,9 +499,13 @@ function discover_sni(pkts, secs) {
 	let lines = split(out, '\n');
 	for (let i = 0; i < length(lines); i = i + 1) {
 		/* No {1,} quantifier — this ucode's regex engine rejects open-ended
-		 * intervals ("Repetition not preceded by valid expression"); use +. */
-		let m = match(lines[i], /([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)+)/);
-		if (m && looks_like_host(m[1])) push(hosts, m[1]);
+		 * intervals ("Repetition not preceded by valid expression"); use +.
+		 * LOWERCASE ONLY: real ClientHello SNI values are lower-case, while the
+		 * ASCII dump of surrounding TLS binary bytes regularly forms mixed-case
+		 * pseudo-hostnames ("ci.Y94.M.p", "B.Ly") that would otherwise be probed
+		 * through the tunnel and spam the exit server's resolver. */
+		let m = match(lines[i], /([a-z0-9_-]+(\.[a-z0-9_-]+)+)/);
+		if (m && looks_like_host(m[1]) && !match(m[1], /[A-Z]/)) push(hosts, m[1]);
 	}
 	return hosts;
 }
@@ -945,6 +973,12 @@ echo done > "$PRE.done"
 	function pass(run_now) {
 		enabled = uci.get('homeproxy', 'automation', 'enabled');
 		if (enabled !== '1') return;
+		/* Custom modes bring their own routing/DNS: the pinned test inbounds are
+		 * not emitted there (no preset main-out to probe against), so every probe
+		 * would just fail and pollute the state table. Stay resident — flipping
+		 * back to a preset mode resumes learning on the next service reload. */
+		let rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
+		if (rmode === 'custom' || rmode === 'custom_json') return;
 
 		let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
 		/* DNS first: it captures the domain at query time, newest-first. The per-host
@@ -981,7 +1015,8 @@ echo done > "$PRE.done"
 			 * .status off a number throws "LHS is not an array or object". */
 			if (type(pst) !== 'object' || pst.status !== 'blocked' || !(int(pst.confirms) > 0)) continue;
 			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
-				if (ip_learn === '1') ip_candidates[h] = MIN_IP_SEEN;
+				/* Never fast-track public resolver/anycast IPs into probing. */
+				if (ip_learn === '1' && !is_public_infra_ip(h)) ip_candidates[h] = MIN_IP_SEEN;
 			} else {
 				priority[h] = true;
 				domain_candidates[h] = true;
@@ -1041,7 +1076,7 @@ echo done > "$PRE.done"
 			let ipsel = [];
 			for (let ip in ip_candidates) {
 				if (length(ipsel) >= ip_cap) break;
-				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_excluded(ip)) continue;
+				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_public_infra_ip(ip) || is_excluded(ip)) continue;
 				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
 				 * probe on it (learned/fast-tracked IPs pass via their count). */
 				if (((int(ip_candidates[ip]) || 0) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
@@ -1190,6 +1225,10 @@ echo done > "$PRE.done"
 	if (has('dns')) enable_dns_log();
 
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
+
+	let routing_mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
+	if (routing_mode === 'custom' || routing_mode === 'custom_json')
+		log(`routing mode is '${routing_mode}' — learning paused (no preset pools; probes are not wired). Switch to a preset mode to resume.`);
 
 	log('automation daemon started (mode=' + mode + ', sources=' + (length(keys(disc)) ? discover_str : 'none') + ', ip_learn=' + ip_learn + ').');
 

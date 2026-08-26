@@ -4491,8 +4491,12 @@ msgid "Enable automation"
 msgstr "Включить автоматизацию"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the proxy list. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path. After toggling, press “Restart service” below."
-msgstr "Автоматически изучать заблокированные сайты: трафик, который не проходит напрямую, но работает через прокси, добавляется в список прокси. Полностью совместимо с ByeDPI и Zapret — изученные сайты просто используют ваш основной путь. После переключения нажмите «Перезапустить службу» ниже."
+msgid ""
+"Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br>"
+"<b>Mode notes:</b> active in \"Bypass blocking\" and \"Global\" (in Global the learned list is kept warm for when you switch back). Paused while the Main node is Direct — there is no proxy side to verify against. Not applicable in Custom routing / Custom JSON. After toggling, press \"Restart service\" below."
+msgstr ""
+"Автоматически изучает заблокированные сайты: трафик, который не проходит напрямую, но работает через прокси, добавляется в списки Правил маршрутизации. Полностью совместимо с ByeDPI и Zapret — изученные сайты просто используют ваш основной путь.<br>"
+"<b>Заметки по режимам:</b> активно в «Обход блокировок» и «Глобальный» (в Глобальном список поддерживается «тёплым» на случай возврата). Приостановлено, когда Основной узел — Напрямую (нет прокси-стороны для проверки). Неприменимо в Своя маршрутизация / Свой JSON. После переключения нажмите «Перезапустить службу» ниже."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Mode"
@@ -5062,6 +5066,10 @@ msgid "Duplicate source — a rule for this service already exists"
 msgstr "Дубликат — правило для этого сервиса уже существует"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Duplicate rule — a rule with the same service and target already exists"
+msgstr "Дубликат — правило с тем же сервисом и тем же назначением уже существует"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "URLTest (auto-pick fastest node)"
 msgstr "URLTest (авто-выбор самого быстрого узла)"
 
@@ -5074,8 +5082,8 @@ msgid "Separate exit for UDP traffic (games, calls). \"Follows main route\" keep
 msgstr "Отдельный выход для UDP-трафика (игры, звонки). «Без отдельного узла» держит UDP на том же пути, что и TCP."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection.<br>• <b>Global</b> — ALL traffic goes through the Main node; no rules are used.<br>• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>Changing the mode re-renders the page so only relevant options stay visible"
-msgstr "• <b>Обход блокировок (по спискам правил)</b> — повседневный режим: всё идёт напрямую, а трафик, попавший в Правила маршрутизации (YouTube, Russia Inside, Re-filter…), идёт через Основной узел — именно так открываются заблокированные сайты без туннелирования всего подключения.<br>• <b>Глобальный</b> — ВЕСЬ трафик через Основной узел; правила не используются.<br>• <b>Своя маршрутизация</b> / <b>Свой JSON</b> — полностью ручные альтернативы: своя маршрутизация и DNS с нуля вместо готовых списков.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
+msgid "• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The Automation engine (its own tab) keeps these lists current automatically.<br>• <b>Global</b> — ALL traffic goes through the Main node; no rules are used.<br>• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>Changing the mode re-renders the page so only relevant options stay visible"
+msgstr "• <b>Обход блокировок (по спискам правил)</b> — повседневный режим: всё идёт напрямую, а трафик, попавший в Правила маршрутизации (YouTube, Russia Inside, Re-filter…), идёт через Основной узел — именно так открываются заблокированные сайты без туннелирования всего подключения. Движок автоматизации (отдельная вкладка) поддерживает эти списки актуальными автоматически.<br>• <b>Глобальный</b> — ВЕСЬ трафик через Основной узел; правила не используются.<br>• <b>Своя маршрутизация</b> / <b>Свой JSON</b> — полностью ручные альтернативы: своя маршрутизация и DNS с нуля вместо готовых списков.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Bypass blocking (rule lists)"
@@ -5354,8 +5362,12 @@ msgid "Quickly set a primary DNS plus a failover candidate (added to “Alternat
 msgstr "Быстро задать основной DNS плюс резервный кандидат (добавляется в «Резервные DNS-серверы», используется DNS failover). Выберите «Свой», чтобы оставить вручную указанный DNS-сервер."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh)."
-msgstr "Гонять несколько серверов каждого пула DNS одновременно (при каждом запросе) и возвращать самый быстрый валидный ответ. Пулы «Россия» (обычный) и шифрованный «Secure» гоняются независимо, повторяя раздельную маршрутизацию. Демон качества проверяет по HTTPS, что возвращённый сервером IP действительно открывает сайт, оценивает серверы по задержке + доле «открывается» + тренду и исключает мёртвые/отравленные. Требуется движок mosdns (ставится install.sh)."
+msgid ""
+"Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh).<br>"
+"<b>Wired into:</b> \"Bypass blocking\" and region preset modes, whose DNS pools it accelerates. In Global / Custom routing / Custom JSON nothing queries its listeners — mosdns is not started there, so leave this off in those modes."
+msgstr ""
+"Гоняет несколько серверов каждого DNS-пула одновременно (каждый запрос) и возвращает самый быстрый валидный ответ. Обычный «Россия»-пул и шифрованный «Защищённый» пул гоняются независимо, зеркалируя раздельную маршрутизацию. Демон качества по HTTPS проверяет, что возвращённый сервером IP действительно открывает сайт, оценивает серверы по задержке + доле открываемых + тренду и вырезает мёртвые/отравленные. Требует движок mosdns (ставится install.sh).<br>"
+"<b>Подключено к:</b> режимам «Обход блокировок» и региональным пресетам — ускоряет именно их DNS-пулы. В Глобальном / Своя маршрутизация / Свой JSON его слушатели никто не спрашивает — mosdns там не запускается, поэтому в этих режимах держите выключенным."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Radar (10.202.10.10)"
