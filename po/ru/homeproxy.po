@@ -4054,8 +4054,8 @@ msgid "Minimum latency gap (ms) required to switch to a faster node — prevents
 msgstr "Минимальная разница задержек (мс) для переключения на более быстрый узел — предотвращает постоянное переключение между узлами с близкой задержкой."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "What \"blocked\" traffic goes through. Everything else always goes directly.<br>• <b>URLTest</b> — automatically pick the fastest node from the pool.<br>• A specific node — always use that node.<br>• <b>ByeDPI / Zapret</b> — free anti-DPI engines (no subscription needed).<br>• <b>Direct (no proxy)</b> — proxy is OFF: nothing is proxied, all traffic egresses directly (the rule lists keep working, they just point at the direct exit)."
-msgstr "Куда идёт «заблокированный» трафик. Всё остальное всегда ходит напрямую.<br>• <b>URLTest</b> — автоматический выбор самого быстрого узла из пула.<br>• Конкретный узел — всегда используется только он.<br>• <b>ByeDPI / Zapret</b> — бесплатные анти-DPI движки (без подписки).<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не проксируется, весь трафик выходит напрямую (списки правил продолжают работать, просто указывают на прямой выход)."
+msgid "Where the traffic matched by Routing Rules goes (everything unmatched always goes directly).<br>• <b>URLTest</b> — automatic selection: the fastest of your nodes is measured and used.<br>• A specific node — that node is always used.<br>• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. \"YouTube → Zapret\" while everything else uses the VPN)."
+msgstr "Куда идёт трафик, пойманный Правилами маршрутизации (всё непойманное всегда ходит напрямую).<br>• <b>URLTest</b> — автоматический выбор: измеряется и используется самый быстрый из ваших узлов.<br>• Конкретный узел — всегда используется только он.<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не туннелируется, всё выходит напрямую.<br>Движки ByeDPI / Zapret здесь не выбираются — включите их ниже и направляйте отдельные сервисы на них через Правила маршрутизации (например, «YouTube → Zapret», пока остальное ходит через VPN)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Resolves Russian domains directly, without going through the proxy."
@@ -4066,8 +4066,16 @@ msgid "Resolves blocked domains via proxy — your ISP cannot see which sites yo
 msgstr "Разрешает заблокированные домены через прокси — провайдер не видит, какие сайты вы запрашиваете. Использует зашифрованный DNS (DoH/DoT = DNS поверх HTTPS/TLS)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a \"YouTube → Zapret\" rule here automatically.</em>"
-msgstr "Маршрут по умолчанию — прямой. Добавленные правила проксируются с автоматическим приоритетом:<br>1. Небольшие списки (YouTube, Discord и т.д.)<br>2. <b>Russia Inside</b> (1000+ доменов, itdoginfo) — общий набор небольших списков (YouTube, Discord, Telegram, Meta…)<br>3. <b>Re-filter</b> (60000+ доменов + 25000+ IP) — список заблокированных в России доменов и IP (Роскомнадзор, от сообщества)<br><br><em>Примечание: установщик Zapret может автоматически добавить сюда правило «YouTube → Zapret».</em>"
+msgid "Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a \"YouTube → Zapret\" rule here automatically. Combining engines works by rules: \"YouTube → Zapret\" + everything else on the Main node, or Main node = Direct with only some services via an engine.</em>"
+msgstr "Маршрут по умолчанию — прямой. Добавленные правила проксируются с автоматическим приоритетом:<br>1. Небольшие списки (YouTube, Discord и т.д.)<br>2. <b>Russia Inside</b> (1000+ доменов, itdoginfo) — общий набор небольших списков (YouTube, Discord, Telegram, Meta…)<br>3. <b>Re-filter</b> (60000+ доменов + 25000+ IP) — список заблокированных в России доменов и IP (Роскомнадзор, от сообщества)<br><br><em>Примечание: установщик Zapret может автоматически добавить сюда правило «YouTube → Zapret». Комбинация движков собирается правилами: «YouTube → Zapret» + остальное через Основной узел, или Основной узел = Напрямую, когда лишь часть сервисов идёт через движок.</em>"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Main node is Direct: these rules currently egress directly (no tunnel). Pick a real main node or URLTest to activate them."
+msgstr "Основной узел — Напрямую: эти правила сейчас выходят напрямую (без туннеля). Выберите реальный узел или URLTest, чтобы они заработали."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Routing Rules"
+msgstr "Правила маршрутизации"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "ByeDPI"

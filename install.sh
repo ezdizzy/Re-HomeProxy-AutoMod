@@ -140,7 +140,9 @@ ensure_baseline() {
 			ok "  узлы найдены — включён URLTest (авто, все узлы)."
 			[ "$(uci -q get homeproxy.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
 		elif [ "$(uci -q get homeproxy.config.zapret_enabled)" = 1 ]; then
-			uci -q set homeproxy.config.main_node=zapret-out
+			# Zapret is an engine, not a main node: direct main + rule routes YouTube
+			# through the Zapret desync (same result, cleaner architecture).
+			uci -q set homeproxy.config.main_node=direct-out
 			add_rule youtube zapret-out
 			info "  нет подписки: интернет напрямую, YouTube — через Zapret."
 		else

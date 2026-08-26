@@ -188,18 +188,14 @@ return view.extend({
 		}
 
 		o = s.taboption('routing', form.ListValue, 'main_node', _('Main node') + ' 🔗',
-			_('What "blocked" traffic goes through. Everything else always goes directly.<br>'
-			+ '• <b>URLTest</b> — automatically pick the fastest node from the pool.<br>'
-			+ '• A specific node — always use that node.<br>'
-			+ '• <b>ByeDPI / Zapret</b> — free anti-DPI engines (no subscription needed).<br>'
-			+ '• <b>Direct (no proxy)</b> — proxy is OFF: nothing is proxied, all traffic egresses directly (the rule lists keep working, they just point at the direct exit).'));
-		o.value('urltest', _('URLTest (auto-pick fastest node)'));
+			_('Where the traffic matched by Routing Rules goes (everything unmatched always goes directly).<br>'
+			+ '• <b>URLTest</b> — automatic selection: the fastest of your nodes is measured and used.<br>'
+			+ '• A specific node — that node is always used.<br>'
+			+ '• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>'
+			+ 'ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. "YouTube → Zapret" while everything else uses the VPN).'));
+		o.value('urltest', _('URLTest'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
-			o.value('byedpi-out', _('ByeDPI'));
-		if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
-			o.value('zapret-out', _('Zapret'));
 		o.value('direct-out', _('Direct (no proxy)'));
 		o.default = 'urltest';
 		o.depends({'routing_mode': /^((?!custom).)+$/});
@@ -701,8 +697,8 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			};
 		})(o);
 
-		/* Proxy Rules start (per-service overrides — RU forward + CN/IR reverse) */
-		s.tab('ru_rules', _('Proxy Rules'));
+		/* Routing Rules start (per-service overrides — RU forward + CN/IR reverse) */
+		s.tab('ru_rules', _('Routing Rules'));
 		o = s.taboption('ru_rules', form.SectionValue, '_ru_rules', form.TypedSection, 'proxy_ru_rule');
 		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
 
@@ -718,7 +714,11 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			const _region_name = (_rmode_rules === 'bypass_cn') ? _('China') : _('Iran');
 			ss.description = _('Default route is through the proxy. %s domains and IPs (geosite + geoip) automatically go Direct. Rules added here are per-service overrides applied before that baseline — e.g. force a specific service Direct, or send it through a separate node.').format(_region_name);
 		} else {
-			ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a "YouTube → Zapret" rule here automatically.</em>');
+			ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a "YouTube → Zapret" rule here automatically. Combining engines works by rules: "YouTube → Zapret" + everything else on the Main node, or Main node = Direct with only some services via an engine.</em>');
+			/* Honest-state hint: with Main node = Direct every rule still matches but
+			 * egresses directly — say so instead of silently doing nothing useful. */
+			if (uci.get('homeproxy', 'config', 'main_node') === 'direct-out')
+				ss.description += '<br><b>' + _('Main node is Direct: these rules currently egress directly (no tunnel). Pick a real main node or URLTest to activate them.') + '</b>';
 		}
 
 		so = ss.option(form.Flag, 'enabled', _('Enable'));
