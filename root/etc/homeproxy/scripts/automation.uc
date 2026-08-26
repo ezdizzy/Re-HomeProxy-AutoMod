@@ -104,9 +104,11 @@ const PUBLIC_INFRA_PREFIXES = [
 	'1.1.1.', '1.0.0.',                                  /* Cloudflare DNS */
 	'9.9.9.', '149.112.112.',                            /* Quad9 */
 	'208.67.222.', '208.67.220.',                        /* OpenDNS */
-	'77.88.8.', '77.88.44.',                             /* Yandex DNS */
+	'77.88.',                                            /* Yandex (DNS + services) */
+	'5.255.255.', '141.8.', '213.180.',                  /* Yandex service ranges */
 	'94.140.14.', '94.140.15.',                          /* AdGuard DNS */
 	'74.125.', '108.177.', '172.217.', '142.250.',       /* Google service anycast */
+	'142.251.', '172.253.',
 	'173.194.', '216.239.', '64.233.', '209.85.',
 	'185.199.108.', '185.199.109.', '185.199.110.', '185.199.111.'  /* GitHub Pages anycast */
 ];
@@ -490,13 +492,16 @@ function tcp_reachable(host, via_proxy, timeout) {
 	return false;
 }
 
-function is_excluded(host) {
+function is_excluded(host, ignore_lists) {
 	host = trim(host);
 	if (!length(host)) return true;
 	/* Russian TLDs are NEVER learned — in Russia they must always go direct.
 	 * Hard-coded (not just the default exclude list) so no config change can
-	 * accidentally start probing .ru/.рф/.su sites. */
-	if (substr(host, -3) === '.ru' || substr(host, -3) === '.su' || substr(host, -3) === '.рф')
+	 * accidentally start probing .ru/.рф/.su sites.
+	 * BYTE-SAFE: substr(-3)==='.рф' can never match ('.рф' is 5 bytes in UTF-8,
+	 * substr slices bytes) — verified live. Regex match on the same bytes does
+	 * work; xn--p1ai covers the punycode form clients actually send. */
+	if (match(host, /\.(ru|su|рф|xn--p1ai)$/) || substr(host, -5) === '.рф')
 		return true;
 	for (let e in excludes) {
 		e = trim(e);
@@ -505,7 +510,11 @@ function is_excluded(host) {
 		if (length(host) > length(e) && substr(host, length(host) - length(e) - 1) === '.' + e)
 			return true;
 	}
-	if (direct_set[host] || proxy_set[host] || auto_set[host] || auto_ip_set[host]) return true;
+	/* Learned/manual lists are not "exclusions" — they are the working set. The
+	 * membership check exists to keep NEW candidates away from hosts already
+	 * handled; re-evaluation of LEARNED entries must bypass exactly that check
+	 * (user excludes + RU TLDs still always win). */
+	if (!ignore_lists && (direct_set[host] || proxy_set[host] || auto_set[host] || auto_ip_set[host])) return true;
 	return false;
 }
 
@@ -924,10 +933,12 @@ echo done > "$PRE.done"
 	 * or user excludes) — self-heals lists learned by older versions. If anything
 	 * was dropped, persist the cleaned list right away. */
 	let dropped = 0;
+	/* Same byte-safe RU-TLD check as is_excluded(): substr(-3)==='.рф' is dead
+	 * on UTF-8 (byte slicing). */
 	for (let d in read_lines(AUTO_LIST)) {
 		d = trim(d);
 		if (!length(d)) continue;
-		if (substr(d, -3) === '.ru' || substr(d, -3) === '.su' || substr(d, -3) === '.рф') {
+		if (match(d, /\.(ru|su|рф|xn--p1ai)$/) || substr(d, -5) === '.рф') {
 			log('dropping learned entry (RU TLD always goes direct): ' + d);
 			dropped++;
 			continue;
@@ -1116,6 +1127,7 @@ echo done > "$PRE.done"
 		 * and drop junk shapes — a single-character second-level label under some
 		 * ccTLD ("7.ua", "b.ly", "g.tj") is wildcard-ad noise, never user traffic. */
 		let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
+		let reeval_set = {};
 		let intake = (h) => {
 			h = lc(trim(h));
 			if (!looks_like_host(h)) return;
@@ -1148,10 +1160,12 @@ echo done > "$PRE.done"
 				ip_candidates[ip] = (int(ip_candidates[ip]) || 0) + 1;
 
 		if (mode === 'aggressive') {
-			for (let h in auto_set)     { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) domain_candidates[h] = true; }
+			reeval_set = {};
+			for (let h in auto_set)     { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) { domain_candidates[h] = true; reeval_set[h] = true; } }
 			/* Re-evaluated learned IPs bypass the seen-threshold via a large count. */
-			for (let h in auto_ip_set)  { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) ip_candidates[h] = MIN_IP_SEEN; }
-		}
+			for (let h in auto_ip_set)  { let st = state[h]; if (!st || !st.last_probe || (time() - st.last_probe) > reeval_interval) { ip_candidates[h] = MIN_IP_SEEN; reeval_set[h] = true; } }
+		} else
+			reeval_set = {};
 
 		/* Fast-track confirmation: hosts sitting at status 'blocked' with confirms>0
 		 * are re-added to the candidate pool EVERY pass regardless of discovery
@@ -1193,7 +1207,7 @@ echo done > "$PRE.done"
 			if (substr(dom, -1) === '.') dom = substr(dom, 0, length(dom) - 1);
 			if (substr(dom, 0, 4) === 'www.') dom = substr(dom, 4);
 			if (!looks_like_host(dom)) continue;
-			if (is_excluded(dom)) continue;
+			if (is_excluded(dom, reeval_set[dom] === true)) continue;
 			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
 			let st = state[dom];
 			/* Pending-confirm hosts re-probe after CONFIRM_RETRY, not the daily guard. */
@@ -1225,7 +1239,7 @@ echo done > "$PRE.done"
 			let ipsel = [];
 			for (let ip in ip_candidates) {
 				if (length(ipsel) >= ip_cap) break;
-				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_resolver_ip(ip) || is_local_ip(ip) || is_excluded(ip)) continue;
+				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_resolver_ip(ip) || is_local_ip(ip) || is_excluded(ip, reeval_set[ip] === true)) continue;
 				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
 				 * probe on it (learned/fast-tracked IPs pass via their count). */
 				if (((int(ip_candidates[ip]) || 0) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
@@ -1246,20 +1260,24 @@ echo done > "$PRE.done"
 				for (let i = 0; i < length(ipsel); i++) {
 					if (!needp[i]) continue;
 					if ((ipw['i' + i] && ipw['i' + i].ok)) continue;
-					push(ti, { i: 'i' + i, h: ipsel[i] });
+					push(ti, { i: 'i' + i, x: i, h: ipsel[i] });
 				}
 				let tcp_direct_ok = {}, tcp_proxy_ok = {};
 				if (length(ti)) {
 					let tw = probe_all(ti, 'tcp', timeout);
 					let tpxi = [];
-					for (let i = 0; i < length(ipsel); i++) {
-						tcp_direct_ok[i] = tw['i' + i] && tw['i' + i].ok;
-						if (!tcp_direct_ok[i] && !main_is_direct) push(tpxi, { i: 'i' + i, h: ipsel[i] });
+					/* Iterate ONLY the TCP-tested selection: tw holds results for
+					 * ti members; looping all ipsel here pushed untested (already
+					 * HTTP-healthy) IPs into the proxy wave — wasted probes. */
+					for (let t = 0; t < length(ti); t++) {
+						const i = ti[t].i;
+						tcp_direct_ok[i] = tw[i] && tw[i].ok;
+						if (!tcp_direct_ok[i] && !main_is_direct) push(tpxi, { i: i, h: ipsel[ti[t].x] });
 					}
 					if (length(tpxi)) {
 						let tpw = probe_all(tpxi, 'tcpproxy', timeout);
-						for (let i = 0; i < length(ipsel); i++)
-							tcp_proxy_ok[i] = tpw['i' + i] && tpw['i' + i].ok;
+						for (let t = 0; t < length(tpxi); t++)
+							tcp_proxy_ok[tpxi[t].i] = tpw[tpxi[t].i] && tpw[tpxi[t].i].ok;
 					}
 				}
 				for (let i = 0; i < length(ipsel); i++) {

@@ -485,6 +485,18 @@ stop_service() {
 
 	# Remove DNS hijack
 	rm -rf "$DNSMASQ_DIR/../dnsmasq-homeproxy.conf" "$DNSMASQ_DIR"
+
+	# The automation daemon enables dnsmasq query logging (logqueries/logfacility)
+	# in UCI while it runs and removes them on graceful exit — but procd kills it
+	# with SIGTERM, so on service stop the flags would stay behind: dnsmasq keeps
+	# logging every LAN query to /var/run/homeproxy/dnsmasq-q.log with nobody left
+	# to rotate it. Tear the logging down here unconditionally.
+	if [ "$(uci -q get dhcp.@dnsmasq[0].logqueries)" = "1" ] || uci -q get dhcp.@dnsmasq[0].logfacility >/dev/null 2>&1; then
+		uci -q delete dhcp.@dnsmasq[0].logqueries
+		uci -q delete dhcp.@dnsmasq[0].logfacility
+		uci commit dhcp
+		log "removed leftover dnsmasq query logging (automation teardown)."
+	fi
 	/etc/init.d/dnsmasq restart >"/dev/null" 2>&1
 
 	# Stop MultiDNS mosdns (the analyzer daemon itself is stopped by procd). Prefer
