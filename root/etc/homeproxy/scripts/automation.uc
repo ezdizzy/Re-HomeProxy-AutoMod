@@ -122,6 +122,16 @@ const IP_LIST_MAX = 512;
  * them floods the state table with meaningless 'unknown' records. */
 const MIN_IP_SEEN = 2;
 
+/* Hot-site fast lane: a LAN client stuck on a half-blocked site hammers DNS with
+ * retries — that query burst is the user's pain made observable. When a host we
+ * still hold as 'direct' goes hot in the current discovery slice, reverify it
+ * immediately (throttled by HOT_COOLDOWN) instead of waiting out the age gate,
+ * and trust a SINGLE failed probe as enough confirmation for learning (the
+ * browser's repeated organic attempts are the second witness). Worst case from
+ * "user notices the hang" to "site rides the proxy": ~1-3 daemon cycles. */
+const HOT_MIN_FREQ = 3;
+const HOT_COOLDOWN = 600;
+
 /* State hygiene: records for hosts NOT in any active list (learned/direct/proxy/
  * excluded) expire after 14 days without a probe, and the whole non-listed working
  * set is hard-capped. automation_state.json otherwise grows without bound (20k+
@@ -1104,6 +1114,11 @@ echo done > "$PRE.done"
 			 * 2 confirmations regardless of user config. */
 			let need = min_confirm + ((d.code === '000') ? 1 : 0);
 			if (is_ip && need < 2) need = 2;
+			/* Hot lane: the user's browser has been retrying this host for real
+			 * during the current burst — its organic attempts ARE the second
+			 * witness, so one failed probe is enough to learn it now. */
+			else if (!is_ip && hot_set[dom] && need > min_confirm)
+				need = min_confirm;
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;
 			if (st.confirms >= need) {
@@ -1156,6 +1171,7 @@ echo done > "$PRE.done"
 		 * ccTLD ("7.ua", "b.ly", "g.tj") is wildcard-ad noise, never user traffic. */
 		let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
 		let reeval_set = {};
+		let hot_set = {};
 		let intake = (h) => {
 			h = lc(trim(h));
 			if (!looks_like_host(h)) return;
@@ -1241,13 +1257,23 @@ echo done > "$PRE.done"
 			let st = state[dom];
 			/* Pending hosts (either direction) re-probe after CONFIRM_RETRY, not the daily guard. */
 			if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) || st.status === 'direct_pending' ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) {
-				/* Exception: the user is querying this host RIGHT NOW (it is in
-				 * the current DNS/SNI slice) and its 'direct' verdict is aging.
-				 * DPI half-blocks flap over hours — reverify actively-visited
-				 * sites long before the 24h guard expires, else a site that
-				 * passes one probe keeps hanging in the browser all day. */
+				/* Escape 1: actively queried host with an aging 'direct' verdict —
+				 * DPI half-blocks flap over hours; reverify long before 24h. */
 				const min_age = PERF ? 10800 : 21600;
-				if (!(st.status === 'direct' && domain_candidates[dom] && (now - st.last_probe) > min_age))
+				let escape = (st.status === 'direct' && domain_candidates[dom] && (now - st.last_probe) > min_age);
+				if (!escape) {
+					/* Escape 2 (hot lane): the user is hammering this host RIGHT
+					 * NOW while we still claim it works directly — emergency
+					 * reverify, throttled per-host. */
+					if (st.status === 'direct' && domain_candidates[dom] &&
+					    ((int(dns_freq[dom]) || 0) >= HOT_MIN_FREQ) &&
+					    (!st.hot_check || ((now - int(st.hot_check)) > HOT_COOLDOWN))) {
+						st.hot_check = now;
+						hot_set[dom] = true;
+						escape = true;
+					}
+				}
+				if (!escape)
 					continue;
 			}
 			push(sel, dom);

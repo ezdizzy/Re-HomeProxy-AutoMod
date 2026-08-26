@@ -363,7 +363,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 
 		o = s.taboption('routing', form.Flag, 'show_advanced_rules',
 			_('Advanced custom rules') + ' 👨‍💻',
-			_('Show Routing Nodes and Routing Rules tabs for additional custom rules.'));
+			_('Show the Custom Rules and Routing Nodes tabs for additional custom rules.'));
 		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
 		o.default = o.disabled;
 		o.rmempty = false;
@@ -1044,7 +1044,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		/* Routing nodes end */
 
 		/* Routing rules start */
-		s.tab('routing_rule', _('Routing Rules'));
+		s.tab('routing_rule', _('Custom Rules'));
 		o = s.taboption('routing_rule', form.SectionValue, '_routing_rule', form.GridSection, 'routing_rule');
 		o.depends('routing_mode', 'custom');
 		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/, 'show_advanced_rules': '1'});

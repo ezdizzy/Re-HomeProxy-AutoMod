@@ -6744,3 +6744,10 @@ msgstr "Удалить ВСЕ изученные сайты? Движок буд
 #: htdocs/luci-static/resources/view/homeproxy/dns.js
 msgid "Disable MultiDNS? The racing resolver will be stopped immediately."
 msgstr "Отключить MultiDNS? Гоночный резолвер будет остановлен немедленно."
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Custom Rules"
+msgstr "Свои правила"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Show the Custom Rules and Routing Nodes tabs for additional custom rules."
+msgstr "Показать вкладки «Свои правила» и «Узлы маршрутизации» для дополнительных пользовательских правил."
