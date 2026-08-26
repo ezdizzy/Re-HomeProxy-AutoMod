@@ -430,6 +430,47 @@ function is_local_ip(ip) {
 	return local_ips[ip] === true;
 }
 
+/* DNS resolvers THIS router actually uses, discovered at startup: WAN-provided
+ * (DHCP/PPPoE nameservers), statically configured dnsmasq upstreams and the
+ * homeproxy alt-DNS list. Probing a resolver looks exactly like a block (nothing
+ * serves HTTP on :443 there) — PUBLIC_INFRA_PREFIXES only covers well-known
+ * publics, so the ISP's own DNS must be excluded dynamically. */
+let resolver_ips = {};
+function load_resolver_ips(alt_list) {
+	resolver_ips = {};
+	let add_str = (s) => {
+		let m = match(s, /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+		if (m) resolver_ips[m[1]] = true;
+	};
+	for (let p in ['/tmp/resolv.conf.d/resolv.conf.auto', '/tmp/resolv.conf.auto']) {
+		let c = readfile(p);
+		if (!c) continue;
+		for (let l in split(c, /[\r\n]/)) {
+			let m = match(trim(l), /^nameserver\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+			if (m) resolver_ips[m[1]] = true;
+		}
+	}
+	let stat = uci.get('dhcp', '@dnsmasq[0]', 'server');
+	if (stat && type(stat) !== 'array') stat = [stat];
+	if (stat)
+		for (let s in stat) add_str(s);
+	for (let s in (alt_list || [])) add_str(s);
+}
+function is_resolver_ip(ip) {
+	return is_public_infra_ip(ip) || resolver_ips[ip] === true;
+}
+
+/* Bare IPs bypass every domain-side TLD guard: rDNS the candidate and refuse to
+ * learn it when it names a RU-TLD host (.ru/.su/.рф always go DIRECT by policy).
+ * Case: mail.ilona.su was learned as its A-record 89.250.12.19. PTR answers give
+ * punycode for IDN TLDs, hence xn--p1ai for .рф. */
+function ptr_is_ru(ip) {
+	/* Query the LOCAL dnsmasq (no GNU timeout on the router; a local resolver
+	 * answers or NXDOMAINs in milliseconds, it never hangs the daemon). */
+	let out = lc(capture(`nslookup ${shellquote(ip)} 127.0.0.1 2>/dev/null`));
+	return !!(out && match(out, /[a-z0-9.-]+\.(ru|su|xn--p1ai)[^a-z0-9-]/));
+}
+
 /* TCP/TLS reachability for non-HTTP endpoints (Telegram DC MTProto, game servers,
  * hardcoded-IP apps). Rides the same pinned test inbounds as probe(). Exit-code
  * semantics of a TLS attempt against an arbitrary TCP endpoint:
@@ -876,6 +917,7 @@ echo done > "$PRE.done"
 
 	direct_set = {}; proxy_set = {}; auto_ip_set = {}; auto_set = {};
 	load_local_ips();
+	load_resolver_ips(alt_dns);
 	for (let d in read_lines(RES + '/direct_list.txt')) direct_set[trim(d)] = true;
 	for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
 	/* Load the learned list but drop entries that are now excluded (.ru/.рф/.su
@@ -894,18 +936,28 @@ echo done > "$PRE.done"
 	}
 	/* Sanitize on load: infrastructure IPs must never live in the learned set —
 	 * a poisoned entry survives in-memory even after the list file is cleaned
-	 * externally until the next restart. */
+	 * externally until the next restart. Also rDNS-sweep the (capped) learned
+	 * IPs for RU-TLD hosts — bare IPs bypass the domain-side .ru/.su/.рф guard,
+	 * so a poisoned entry like mail.ilona.su's A-record self-heals here. */
 	let ip_dropped = 0;
+	let ip_idx = 0;
 	for (let d in read_lines(AUTO_IP_LIST)) {
 		d = trim(d);
+		ip_idx++;
 		if (!length(d)) continue;
-		if (is_public_infra_ip(d)) {
-			log('dropping learned IP (public resolver/anycast infrastructure): ' + d);
+		if (is_resolver_ip(d)) {
+			log('dropping learned IP (DNS resolver/anycast infrastructure): ' + d);
 			ip_dropped++;
 			continue;
 		}
 		if (is_local_ip(d)) {
 			log('dropping learned IP (router own address): ' + d);
+			ip_dropped++;
+			continue;
+		}
+		/* PTR lookups cost up to ~3s each — sweep only small lists. */
+		if (ip_idx <= 48 && ptr_is_ru(d)) {
+			log('dropping learned IP (RU-TLD rDNS, always direct): ' + d);
 			ip_dropped++;
 			continue;
 		}
@@ -994,7 +1046,7 @@ echo done > "$PRE.done"
 			 * NEVER be learned no matter how the probe verdicts look — private/
 			 * router-own addresses (probing self always "fails" direct), shared
 			 * CDNs and public resolver/anycast infra (collateral tunneling). */
-			if (is_ip && (is_private_ip(dom) || is_shared_cdn_ip(dom) || is_public_infra_ip(dom) || is_local_ip(dom))) {
+			if (is_ip && (is_private_ip(dom) || is_shared_cdn_ip(dom) || is_resolver_ip(dom) || is_local_ip(dom))) {
 				st.status = 'direct';
 				st.confirms = 0;
 				return;
@@ -1018,6 +1070,15 @@ echo done > "$PRE.done"
 			st.confirms = (st.confirms || 0) + 1;
 			if (st.confirms >= need) {
 				if (is_ip) {
+					/* Last line of defence before the write: rDNS the candidate —
+					 * a bare IP naming a RU-TLD host is RU infrastructure that
+					 * always goes direct, never a learnable block. */
+					if (ptr_is_ru(dom)) {
+						log('not learning IP (RU-TLD rDNS, always direct): ' + dom);
+						st.status = 'direct';
+						st.confirms = 0;
+						return;
+					}
 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; }
 				} else if (!auto_set[dom]) {
 					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++;
@@ -1103,8 +1164,8 @@ echo done > "$PRE.done"
 			 * .status off a number throws "LHS is not an array or object". */
 			if (type(pst) !== 'object' || pst.status !== 'blocked' || !(int(pst.confirms) > 0)) continue;
 			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
-				/* Never fast-track public resolver/anycast or router-own IPs into probing. */
-				if (ip_learn === '1' && !is_public_infra_ip(h) && !is_local_ip(h)) ip_candidates[h] = MIN_IP_SEEN;
+				/* Never fast-track resolver/anycast or router-own IPs into probing. */
+				if (ip_learn === '1' && !is_resolver_ip(h) && !is_local_ip(h)) ip_candidates[h] = MIN_IP_SEEN;
 			} else {
 				priority[h] = true;
 				domain_candidates[h] = true;
@@ -1164,7 +1225,7 @@ echo done > "$PRE.done"
 			let ipsel = [];
 			for (let ip in ip_candidates) {
 				if (length(ipsel) >= ip_cap) break;
-				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_public_infra_ip(ip) || is_local_ip(ip) || is_excluded(ip)) continue;
+				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_resolver_ip(ip) || is_local_ip(ip) || is_excluded(ip)) continue;
 				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
 				 * probe on it (learned/fast-tracked IPs pass via their count). */
 				if (((int(ip_candidates[ip]) || 0) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
