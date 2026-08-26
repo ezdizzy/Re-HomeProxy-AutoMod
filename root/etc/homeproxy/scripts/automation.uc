@@ -1047,11 +1047,38 @@ echo done > "$PRE.done"
 		 * tcp_direct: the TCP/TLS fallback proved the endpoint reachable DIRECTLY
 		 * even though HTTP probes failed (proprietary protocol) -> never learn it. */
 		if (d.ok || tcp_direct) {
-			st.status = 'direct';
+			if (tcp_direct) {
+				st.status = 'direct';
+				st.confirms = 0;
+				return;
+			}
+			/* Direct success needs CONFIRMATIONS, mirroring the blocked-side gate:
+			 * on DPI half-blocked routes the site answers maybe 1-in-N attempts —
+			 * one lucky probe used to pin the host as "works directly" for a full
+			 * day while real browsing kept dying (ERR_HTTP2_PING_FAILED class).
+			 * At least two consecutive passing probes, CONFIRM_RETRY apart, are
+			 * required before the host is trusted to the direct path. */
+			let dneed = (min_confirm < 2) ? 2 : min_confirm;
 			st.confirms = 0;
+			if ((st.status === 'direct_pending') && st.dconfirms)
+				st.dconfirms = st.dconfirms + 1;
+			else
+				st.dconfirms = 1;
+			if (st.dconfirms >= dneed) {
+				st.status = 'direct';
+				delete st.dconfirms;
+			} else {
+				st.status = 'direct_pending';
+			}
 			return;
 		}
 		let p_ok = p && p.ok;
+		if (p_ok || (p && p.block)) {
+			/* Direct failure: a host that just passed once may fail now (flaky
+			 * DPI half-blocks alternate verdicts) — invalidate its direct
+			 * confirmation streak so it can never be trusted from one lucky hit. */
+			delete st.dconfirms;
+		}
 		if (p_ok) {
 			/* Hard guard, independent of every intake path: some IP classes must
 			 * NEVER be learned no matter how the probe verdicts look — private/
@@ -1103,6 +1130,7 @@ echo done > "$PRE.done"
 			 * non-HTTP endpoint). These were persisted verbatim and drowned the
 			 * state table in 11k+ meaningless records — drop them instead; a
 			 * recurring host simply gets re-probed on a later pass. */
+			delete st.dconfirms;
 			delete state[dom];
 		}
 	}
@@ -1176,7 +1204,10 @@ echo done > "$PRE.done"
 			let pst = state[h];
 			/* type() guard: state holds non-record scalars (__dns_offset); reading
 			 * .status off a number throws "LHS is not an array or object". */
-			if (type(pst) !== 'object' || pst.status !== 'blocked' || !(int(pst.confirms) > 0)) continue;
+			if (type(pst) !== 'object') continue;
+			const pending_confirm = (pst.status === 'blocked' && int(pst.confirms) > 0)
+			                     || (pst.status === 'direct_pending' && pst.dconfirms && int(pst.dconfirms) > 0);
+			if (!pending_confirm) continue;
 			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
 				/* Never fast-track resolver/anycast or router-own IPs into probing. */
 				if (ip_learn === '1' && !is_resolver_ip(h) && !is_local_ip(h)) ip_candidates[h] = MIN_IP_SEEN;
@@ -1199,19 +1230,26 @@ echo done > "$PRE.done"
 		let sel = [];
 		for (let oi = 0; oi < length(cand); oi++) {
 			if (length(sel) >= dom_cap) break;
-			/* Probe the ACTUAL candidate host (the exact domain the user queried /
-			 * the SNI their client sent) — NOT the collapsed base domain. Many
-			 * blocks are subdomain-scoped (e.g. app.kilo.ai is blocked while
-			 * kilo.ai works), and probing only the base domain hides them. */
+			/* Probe the ACTUAL candidate host — no www/base collapsing:
+			 * apex hosts often 301-redirect to www, and a passing redirect
+			 * masked a half-blocked www target entirely (itgid.com case). */
 			let dom = trim(cand[oi]);
 			if (substr(dom, -1) === '.') dom = substr(dom, 0, length(dom) - 1);
-			if (substr(dom, 0, 4) === 'www.') dom = substr(dom, 4);
 			if (!looks_like_host(dom)) continue;
 			if (is_excluded(dom, reeval_set[dom] === true)) continue;
 			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
 			let st = state[dom];
-			/* Pending-confirm hosts re-probe after CONFIRM_RETRY, not the daily guard. */
-			if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) continue;
+			/* Pending hosts (either direction) re-probe after CONFIRM_RETRY, not the daily guard. */
+			if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) || st.status === 'direct_pending' ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) {
+				/* Exception: the user is querying this host RIGHT NOW (it is in
+				 * the current DNS/SNI slice) and its 'direct' verdict is aging.
+				 * DPI half-blocks flap over hours — reverify actively-visited
+				 * sites long before the 24h guard expires, else a site that
+				 * passes one probe keeps hanging in the browser all day. */
+				const min_age = PERF ? 10800 : 21600;
+				if (!(st.status === 'direct' && domain_candidates[dom] && (now - st.last_probe) > min_age))
+					continue;
+			}
 			push(sel, dom);
 		}
 		if (length(sel)) {
@@ -1245,7 +1283,11 @@ echo done > "$PRE.done"
 				if (((int(ip_candidates[ip]) || 0) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
 				if (length(keys(auto_ip_set)) >= IP_LIST_MAX && !auto_ip_set[ip]) continue;
 				let st = state[ip];
-				if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) continue;
+				if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) || st.status === 'direct_pending' ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) {
+					const min_age_ip = PERF ? 10800 : 21600;
+					if (!(st.status === 'direct' && ip_candidates[ip] && (now - st.last_probe) > min_age_ip))
+						continue;
+				}
 				push(ipsel, ip);
 			}
 			if (length(ipsel)) {
