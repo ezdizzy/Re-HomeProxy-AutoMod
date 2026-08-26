@@ -189,7 +189,7 @@ return view.extend({
 
 		o = s.taboption('routing', form.ListValue, 'main_node', _('Main node') + ' 🔗',
 			_('Where the traffic matched by Routing Rules goes (everything unmatched always goes directly).<br>'
-			+ '• <b>URLTest</b> — automatic selection: the fastest of your nodes is measured and used.<br>'
+			+ '• <b>URLTest</b> — automatic node selection by periodic latency measurement (Auto / Preferred + auto / Manual — configured below once selected).<br>'
 			+ '• A specific node — that node is always used.<br>'
 			+ '• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>'
 			+ 'ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. "YouTube → Zapret" while everything else uses the VPN).'));
@@ -247,7 +247,7 @@ return view.extend({
 		o.value('auto', _('Auto — all nodes (recommended)'));
 		o.value('prefer', _('Preferred node + auto'));
 		o.value('manual', _('Manual node list'));
-		o.default = 'manual';
+		o.default = 'auto';
 		o.depends('main_node', 'urltest');
 		o.rmempty = false;
 
@@ -299,7 +299,7 @@ return view.extend({
 		o.value('auto', _('Auto — all nodes (recommended)'));
 		o.value('prefer', _('Preferred node + auto'));
 		o.value('manual', _('Manual node list'));
-		o.default = 'manual';
+		o.default = 'auto';
 		o.depends('main_udp_node', 'urltest');
 		o.rmempty = false;
 
@@ -353,11 +353,11 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.ListValue, 'routing_mode', _('Routing mode'),
-			_('• <b>Russia (Proxy Banned)</b> — default route Direct, banned/proxied lists go through the Main node (YouTube, Russia Inside, Re-filter…).<br>'
-			+ '• <b>Global</b> — ALL traffic goes through the Main node.<br>'
-			+ '• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual rule/DNS configuration.<br>'
-			+ 'Changing the mode re-renders the page so only relevant options stay visible.'));
-		o.value('proxy_banned_ru', _('Russia (Proxy Banned)'));
+			_('• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection.<br>'
+			+ '• <b>Global</b> — ALL traffic goes through the Main node; no rules are used.<br>'
+			+ '• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>'
+			+ 'Changing the mode re-renders the page so only relevant options stay visible'));
+		o.value('proxy_banned_ru', _('Bypass blocking (rule lists)'));
 		o.value('global', _('Global'));
 		o.value('custom', _('Custom routing'));
 		o.value('custom_json', _('Custom JSON'));
@@ -715,10 +715,11 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			ss.description = _('Default route is through the proxy. %s domains and IPs (geosite + geoip) automatically go Direct. Rules added here are per-service overrides applied before that baseline — e.g. force a specific service Direct, or send it through a separate node.').format(_region_name);
 		} else {
 			ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a "YouTube → Zapret" rule here automatically. Combining engines works by rules: "YouTube → Zapret" + everything else on the Main node, or Main node = Direct with only some services via an engine.</em>');
-			/* Honest-state hint: with Main node = Direct every rule still matches but
-			 * egresses directly — say so instead of silently doing nothing useful. */
+			/* Honest-state hint: with Main node = Direct every "Same as main node"
+			 * rule still matches but egresses directly — say so, hide the pointless
+			 * option for NEW rules, and point at the engines. */
 			if (uci.get('homeproxy', 'config', 'main_node') === 'direct-out')
-				ss.description += '<br><b>' + _('Main node is Direct: these rules currently egress directly (no tunnel). Pick a real main node or URLTest to activate them.') + '</b>';
+				ss.description += '<br><b>' + _('Main node is Direct: rules pointing at "Same as main node" currently egress directly (no tunnel). Switch them to Zapret/ByeDPI, or choose a real main node / URLTest.') + '</b>';
 		}
 
 		so = ss.option(form.Flag, 'enabled', _('Enable'));
@@ -771,7 +772,10 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		};
 
 		so = ss.option(form.ListValue, 'node', _('Node') + ' 🔗');
-		so.value('main-out', _('Same as main node'));
+		/* "Same as main node" is meaningless while the main node is Direct — hide it
+		 * so new rules target an engine or a real node instead of the direct exit. */
+		if (uci.get('homeproxy', 'config', 'main_node') !== 'direct-out')
+			so.value('main-out', _('Same as main node'));
 		so.value('urltest', _('Separate URLTest'));
 		for (let i in proxy_nodes)
 			so.value(i, proxy_nodes[i]);

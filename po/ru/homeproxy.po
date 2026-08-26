@@ -4054,8 +4054,8 @@ msgid "Minimum latency gap (ms) required to switch to a faster node — prevents
 msgstr "Минимальная разница задержек (мс) для переключения на более быстрый узел — предотвращает постоянное переключение между узлами с близкой задержкой."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Where the traffic matched by Routing Rules goes (everything unmatched always goes directly).<br>• <b>URLTest</b> — automatic selection: the fastest of your nodes is measured and used.<br>• A specific node — that node is always used.<br>• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. \"YouTube → Zapret\" while everything else uses the VPN)."
-msgstr "Куда идёт трафик, пойманный Правилами маршрутизации (всё непойманное всегда ходит напрямую).<br>• <b>URLTest</b> — автоматический выбор: измеряется и используется самый быстрый из ваших узлов.<br>• Конкретный узел — всегда используется только он.<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не туннелируется, всё выходит напрямую.<br>Движки ByeDPI / Zapret здесь не выбираются — включите их ниже и направляйте отдельные сервисы на них через Правила маршрутизации (например, «YouTube → Zapret», пока остальное ходит через VPN)."
+msgid "Where the traffic matched by Routing Rules goes (everything unmatched always goes directly).<br>• <b>URLTest</b> — automatic node selection by periodic latency measurement (Auto / Preferred + auto / Manual — configured below once selected).<br>• A specific node — that node is always used.<br>• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. \"YouTube → Zapret\" while everything else uses the VPN)."
+msgstr "Куда идёт трафик, пойманный Правилами маршрутизации (всё непойманное всегда ходит напрямую).<br>• <b>URLTest</b> — автоматический выбор узла по периодическим замерам задержки (Авто / Предпочтительный + авто / Список вручную — настраивается ниже после включения).<br>• Конкретный узел — всегда используется только он.<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не туннелируется, всё выходит напрямую.<br>Движки ByeDPI / Zapret здесь не выбираются — включите их ниже и направляйте отдельные сервисы на них через Правила маршрутизации (например, «YouTube → Zapret», пока остальное ходит через VPN)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Resolves Russian domains directly, without going through the proxy."
@@ -4070,8 +4070,8 @@ msgid "Default route is Direct. Added rules are proxied, with automatic priority
 msgstr "Маршрут по умолчанию — прямой. Добавленные правила проксируются с автоматическим приоритетом:<br>1. Небольшие списки (YouTube, Discord и т.д.)<br>2. <b>Russia Inside</b> (1000+ доменов, itdoginfo) — общий набор небольших списков (YouTube, Discord, Telegram, Meta…)<br>3. <b>Re-filter</b> (60000+ доменов + 25000+ IP) — список заблокированных в России доменов и IP (Роскомнадзор, от сообщества)<br><br><em>Примечание: установщик Zapret может автоматически добавить сюда правило «YouTube → Zapret». Комбинация движков собирается правилами: «YouTube → Zapret» + остальное через Основной узел, или Основной узел = Напрямую, когда лишь часть сервисов идёт через движок.</em>"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Main node is Direct: these rules currently egress directly (no tunnel). Pick a real main node or URLTest to activate them."
-msgstr "Основной узел — Напрямую: эти правила сейчас выходят напрямую (без туннеля). Выберите реальный узел или URLTest, чтобы они заработали."
+msgid "Main node is Direct: rules pointing at \"Same as main node\" currently egress directly (no tunnel). Switch them to Zapret/ByeDPI, or choose a real main node / URLTest."
+msgstr "Основной узел — Напрямую: правила с «Как основной узел» сейчас выходят напрямую (без туннеля). Переключите их на Zapret/ByeDPI или верните реальный основной узел / URLTest."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Routing Rules"
@@ -5074,8 +5074,12 @@ msgid "Separate exit for UDP traffic (games, calls). \"Follows main route\" keep
 msgstr "Отдельный выход для UDP-трафика (игры, звонки). «Без отдельного узла» держит UDP на том же пути, что и TCP."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "• <b>Russia (Proxy Banned)</b> — default route Direct, banned/proxied lists go through the Main node (YouTube, Russia Inside, Re-filter…).<br>• <b>Global</b> — ALL traffic goes through the Main node.<br>• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual rule/DNS configuration.<br>Changing the mode re-renders the page so only relevant options stay visible"
-msgstr "• <b>Россия (Обход блокировок)</b> — маршрут по умолчанию прямой, списки заблокированных сайтов идут через Основной узел (YouTube, Russia Inside, Re-filter…).<br>• <b>Глобальный</b> — ВЕСЬ трафик идёт через Основной узел.<br>• <b>Своя маршрутизация</b> / <b>Свой JSON</b> — полностью ручная настройка правил и DNS.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
+msgid "• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection.<br>• <b>Global</b> — ALL traffic goes through the Main node; no rules are used.<br>• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>Changing the mode re-renders the page so only relevant options stay visible"
+msgstr "• <b>Обход блокировок (по спискам правил)</b> — повседневный режим: всё идёт напрямую, а трафик, попавший в Правила маршрутизации (YouTube, Russia Inside, Re-filter…), идёт через Основной узел — именно так открываются заблокированные сайты без туннелирования всего подключения.<br>• <b>Глобальный</b> — ВЕСЬ трафик через Основной узел; правила не используются.<br>• <b>Своя маршрутизация</b> / <b>Свой JSON</b> — полностью ручные альтернативы: своя маршрутизация и DNS с нуля вместо готовых списков.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Bypass blocking (rule lists)"
+msgstr "Обход блокировок (по спискам правил)"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Electro/Begzar (78.157.42.100)"
