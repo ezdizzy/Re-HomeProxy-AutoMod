@@ -245,8 +245,12 @@ if (routing_mode === 'custom')
 else
 	udp_timeout = uci.get(uciconfig, 'infra', 'udp_timeout');
 
+/* self_mark is needed in EVERY mode, not just redirect: firewall_post.ut return-
+ * rules expect route.default_mark as the loop guard for the core's own egress.
+ * Reading it only under redirect left tproxy/tun configs unstamped — the mangle
+ * output chain then re-captured the core's own traffic (DNS included) into tproxy. */
+self_mark = uci.get(uciconfig, 'infra', 'self_mark') || '100';
 if (match(proxy_mode, /redirect/)) {
-	self_mark = uci.get(uciconfig, 'infra', 'self_mark') || '100';
 	redirect_port = uci.get(uciconfig, 'infra', 'redirect_port') || '5331';
 }
 if (match(proxy_mode, /tproxy/))
@@ -677,8 +681,14 @@ function get_outbound(cfg) {
 			return (zapret_enabled === '1') ? 'zapret-out' : 'direct-out';
 		default:
 			const node = uci.get(uciconfig, cfg, 'node');
-			if (isEmpty(node))
-				die(sprintf("%s's node is missing, please check your configuration.", cfg));
+			if (isEmpty(node)) {
+				/* A dangling reference (rule/node pointing at a deleted proxy node)
+				 * must not kill the whole generation — the service would keep running
+				 * on a stale config with no hint why. Skip with a warning instead;
+				 * downstream has_outbound()/null checks drop the dead reference. */
+				warn(sprintf('homeproxy: %s references a missing node — skipping.\n', cfg));
+				return null;
+			}
 			else if (node === 'urltest')
 				return 'cfg-' + cfg + '-out';
 			else
@@ -1355,18 +1365,24 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		 * bare direct outbound — the latter silently killed the tunnel while the
 		 * user still had perfectly working nodes configured. Only when there are
 		 * truly no nodes at all does main-out fall back to direct. */
-		let any = [];
-		uci.foreach(uciconfig, ucinode, (cfg) => { push(any, `cfg-${cfg['.name']}-out`); });
+		let any = [], any_extra = [];
+		uci.foreach(uciconfig, ucinode, (cfg) => {
+			push(any, `cfg-${cfg['.name']}-out`);
+			push(any_extra, cfg['.name']);
+		});
 		if (!length(any))
 			return { outbound: null, extra: extra };
 		warn(sprintf('homeproxy: %s pool empty — falling back to all %d nodes.\n', tag, length(any)));
+		/* extra MUST list the same sids as the urltest references: the caller emits
+		 * one outbound per extra entry — an empty extra here left the group pointing
+		 * at outbounds that were never emitted (fatal "non-existent outbound"). */
 		return { outbound: {
 			type: 'urltest',
 			tag: tag,
 			outbounds: any,
 			interval: strToTime(interval),
 			tolerance: strToInt(tolerance)
-		}, extra: extra };
+		}, extra: any_extra };
 	}
 
 	return { outbound: {
@@ -1535,6 +1551,11 @@ if (!isEmpty(main_node)) {
 				 * otherwise push_outbound() appends a null outbound and the next line
 				 * dereferences it, crashing config generation (no file is written). */
 				if (isEmpty(outbound)) return;
+				/* Duplicate tag guard: two routing nodes (or a routing node + the main
+				 * URLTest pool) may reference the SAME proxy node — a second emission
+				 * of 'cfg-X-out' is a fatal "duplicate tag" for the core. */
+				if (has_outbound('cfg-' + cfg.node + '-out'))
+					return;
 				if (outbound.type in ['wireguard', 'amneziawg']) {
 					push(config.endpoints, generate_endpoint(outbound));
 					config.endpoints[length(config.endpoints)-1].bind_interface = cfg.bind_interface;
@@ -1587,6 +1608,9 @@ if (!isEmpty(main_node)) {
 			 * otherwise push_outbound() appends a null outbound and the next line
 			 * dereferences it, crashing config generation (no file is written). */
 			if (isEmpty(outbound)) return;
+			/* Duplicate tag guard: same rationale as the advanced block above. */
+			if (has_outbound('cfg-' + cfg.node + '-out'))
+				return;
 			if (outbound.type in ['wireguard', 'amneziawg']) {
 				push(config.endpoints, generate_endpoint(outbound));
 				config.endpoints[length(config.endpoints)-1].bind_interface = cfg.bind_interface;
@@ -1613,6 +1637,9 @@ if (!isEmpty(main_node)) {
 	});
 
 	for (let i in filter(urltest_nodes, (l) => !~index(routing_nodes, l))) {
+		/* Duplicate tag guard: the node may already have been emitted as a routing
+		 * node target above (two urltest groups sharing a member). */
+		if (has_outbound('cfg-' + i + '-out')) continue;
 		const urltest_node = uci.get_all(uciconfig, i);
 		if (!urltest_node) continue;
 		if (urltest_node.type in ['wireguard', 'amneziawg'])
