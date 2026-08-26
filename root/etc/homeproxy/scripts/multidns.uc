@@ -170,27 +170,45 @@ function to_list(v) {
 	return filter(a, (x) => length(trim(x)) && x !== 'wan');
 }
 
-/* Auto-detect the provider's DNS servers as learned by netifd on the WAN
- * interface(s) (/tmp/resolv.conf.d/resolv.conf.auto). Loopback, unspecified and
- * link-local entries are filtered; the list is capped at 3. Best effort: an
- * unreadable file simply yields no extra servers. */
+/* Auto-detect the provider's DNS servers. Sources in priority order:
+ *  1) ubus network.interface.* status → "dns-server": authoritative runtime
+ *     state for EVERY WAN type — static (manual DNS list), DHCP and PPPoE
+ *     (usepeerdns) alike. The old file-only reader silently missed static-WAN
+ *     routers whose netifd layout differs.
+ *  2) netifd resolver files: /tmp/resolv.conf.d/resolv.conf.auto (modern) and
+ *     /tmp/resolv.conf.auto (legacy 21.02/older vendor trees).
+ * Loopback, unspecified, ULA and link-local entries are filtered; capped at 4.
+ * Best effort: an unreachable source simply yields no extra servers. */
 function wan_dns_servers() {
 	let out = [];
-	try {
-		let c = readfile('/tmp/resolv.conf.d/resolv.conf.auto');
-		if (!c) return out;
+	const add_ip = (ip) => {
+		if (!length(ip)) return;
+		ip = trim(ip);
+		if (!match(ip, /^([0-9]{1,3}\.){3}[0-9]{1,3}$/) && !match(ip, /^[0-9A-Fa-f:.]+:[0-9A-Fa-f:.]*$/)) return;
+		if (match(ip, /^127\./)) return;
+		if (match(ip, /^[0.]+$/)) return;
+		if (ip === '::1' || match(ip, /^fe80:/i)) return;
+		if (match(ip, /^f[cd]/i)) return;          /* ULA / fc00::/7 */
+		if (index(out, ip) < 0 && length(out) < 4) push(out, ip);
+	};
+	let line;
+	/* 1) ubus dump for every published interface (one shell pass). */
+	const tmpf = '/var/run/homeproxy/multidns/wan_dns.tmp';
+	system(`( ubus list 'network.interface.*' 2>/dev/null | while read _if; do ubus call "$_if" status 2>/dev/null | jsonfilter -e '@["dns-server"][*]' 2>/dev/null; done ) > ${shellquote(tmpf)} 2>/dev/null`);
+	line = readfile(tmpf);
+	system(`rm -f ${shellquote(tmpf)} 2>/dev/null`);
+	if (line)
+		for (let l in split(line, /\n/))
+			add_ip(trim(l));
+	/* 2) netifd resolver files (both layouts), nameserver lines only. */
+	for (let p in ['/tmp/resolv.conf.d/resolv.conf.auto', '/tmp/resolv.conf.auto']) {
+		let c = readfile(p);
+		if (!c) continue;
 		for (let l in split(c, '\n')) {
 			let m = match(l, /^\s*nameserver\s+([0-9A-Fa-f:.]+)\s*$/);
-			if (!m) continue;
-			let ip = m[1];
-			if (match(ip, /^127\./)) continue;
-			if (match(ip, /^[0.]+$/)) continue;
-			if (match(ip, /^::1$/)) continue;
-			if (match(ip, /^fe80:/i)) continue;
-			if (index(out, ip) < 0) push(out, ip);
-			if (length(out) >= 3) break;
+			if (m) add_ip(m[1]);
 		}
-	} catch (e) { /* best effort */ }
+	}
 	return out;
 }
 

@@ -158,7 +158,8 @@ return view.extend({
 		 * and no dropped connections, so batching windows serve no purpose. The daemon
 		 * keeps honoring the defaults for old configs. */
 		o = s.option(form.TextValue, 'exclude', _('Never auto-learn'),
-			_('Domains / IPs excluded from learning (substring & domain match). One entry per line or comma-separated; lines starting with # are comments, blank lines allowed - organize the list as you like. Defaults cover LAN and local names.'));
+			_('Domains / IPs excluded from learning (substring & domain match). One entry per line or comma-separated; lines starting with # are comments, blank lines allowed - organize the list as you like.') + ' '
+			+ _('Defaults when empty: localhost, local, lan, in-addr.arpa, ip6.arpa.'));
 		o.placeholder = 'localhost\nlocal\nlan\n# my own notes:\n# example.com\nin-addr.arpa,ip6.arpa';
 		o.rows = 8;
 		o.monospace = true;

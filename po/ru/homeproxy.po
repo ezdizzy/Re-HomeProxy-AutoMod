@@ -5439,12 +5439,11 @@ msgstr "Никогда не изучать"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid ""
-"Domains / IPs excluded from learning (substring & domain match). One entry per line or comma-separated; lines starting with # are comments, blank lines allowed - organize the list as you like. Defaults cover LAN and local names."
-msgstr ""
-"Домены/IP, исключённые из обучения (подстрока и совпадение домена). По одной записи на "
-"строку или через запятую; строки с # — комментарии, пустые строки разрешены — "
-"организуйте список как удобно. По умолчанию покрывает LAN и локальные имена."
+msgid "Domains / IPs excluded from learning (substring & domain match). One entry per line or comma-separated; lines starting with # are comments, blank lines allowed - organize the list as you like."
+msgstr "Домены/IP, исключённые из обучения (подстрока и совпадение домена). По одной записи на строку или через запятую; строки с # — комментарии, пустые строки разрешены — организуйте список как удобно."
+
+msgid "Defaults when empty: localhost, local, lan, in-addr.arpa, ip6.arpa."
+msgstr "По умолчанию при пустом поле: localhost, local, lan, in-addr.arpa, ip6.arpa."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -6751,3 +6750,4 @@ msgstr "Свои правила"
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Show the Custom Rules and Routing Nodes tabs for additional custom rules."
 msgstr "Показать вкладки «Свои правила» и «Узлы маршрутизации» для дополнительных пользовательских правил."
+

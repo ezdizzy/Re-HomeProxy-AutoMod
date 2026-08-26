@@ -259,5 +259,15 @@ uci.foreach(uciconfig, uciserver, (cfg) => {
 		uci.delete(uciconfig, cfg['.name'], 'domain_strategy');
 });
 
+/* automation.exclude: normalize any pre-list-format value into a plain string.
+ * The current TextValue widget cannot render UCI lists (field shows blank), and
+ * an array reaching the daemon breaks its replace()/split() chain — a stale
+ * list from very old builds must become a comma string exactly once. */
+const exv = uci.get(uciconfig, 'automation', 'exclude');
+if (type(exv) === 'array') {
+	uci.delete(uciconfig, 'automation', 'exclude');
+	uci.set(uciconfig, 'automation', 'exclude', join(',', exv));
+}
+
 if (!isEmpty(uci.changes(uciconfig)))
 	uci.commit(uciconfig);

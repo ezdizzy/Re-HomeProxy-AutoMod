@@ -472,6 +472,15 @@ function load_resolver_ips(alt_list) {
 	if (stat)
 		for (let s in stat) add_str(s);
 	for (let s in (alt_list || [])) add_str(s);
+	/* WAN-provided resolvers for ANY interface type (static manual DNS, DHCP,
+	 * PPPoE usepeerdns) — same authoritative source multidns.uc uses. */
+	const wtmp = RUN_DIR + '/guard_wan_dns.tmp';
+	system(`( ubus list 'network.interface.*' 2>/dev/null | while read _if; do ubus call "$_if" status 2>/dev/null | jsonfilter -e '@["dns-server"][*]' 2>/dev/null; done ) > ${shellquote(wtmp)} 2>/dev/null`);
+	let wl = readfile(wtmp);
+	system(`rm -f ${shellquote(wtmp)} 2>/dev/null`);
+	if (wl)
+		for (let l in split(wl, /\n/))
+			add_str(trim(l));
 }
 function is_resolver_ip(ip) {
 	return is_public_infra_ip(ip) || resolver_ips[ip] === true;
@@ -926,9 +935,14 @@ echo done > "$PRE.done"
 	let flush_min_entries = int(uci.get('homeproxy', 'automation', 'flush_min_entries') || '1') || 1;
 	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '0';
 	/* Exclude list: newline- or comma-separated; '#' starts a comment (to end of
-	 * line) so users can annotate/organize entries. Blank pieces are dropped. */
-	let raw_ex = replace(uci.get('homeproxy', 'automation', 'exclude')
-		|| 'localhost,local,lan,in-addr.arpa,ip6.arpa', /#[^\n]*/g, '');
+	 * line) so users can annotate/organize entries. Blank pieces are dropped.
+	 * Legacy safety: very old builds could store this option as a UCI LIST —
+	 * join it instead of feeding an array into replace()/split() (type error
+	 * would fatal the daemon). */
+	let ex_opt = uci.get('homeproxy', 'automation', 'exclude');
+	if (type(ex_opt) === 'array')
+		ex_opt = join(',', ex_opt);
+	let raw_ex = replace(ex_opt || 'localhost,local,lan,in-addr.arpa,ip6.arpa', /#[^\n]*/g, '');
 	excludes = split(raw_ex, /[,\n]/);
 	excludes = filter(excludes, (x) => length(trim(x)));
 
