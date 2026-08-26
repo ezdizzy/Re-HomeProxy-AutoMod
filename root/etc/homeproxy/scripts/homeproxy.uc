@@ -4,7 +4,7 @@
  * Copyright (C) 2023 ImmortalWrt.org
  */
 
-import { mkstemp, readfile, writefile, access } from 'fs';
+import { open, readfile, writefile, access } from 'fs';
 import { urldecode_params } from 'luci.http';
 
 /* Global variables start */
@@ -26,20 +26,36 @@ export function isBinary(str) {
 	return false;
 };
 
+let exec_seq = 0;
 export function executeCommand(...args) {
-	let outfd = mkstemp();
-	let errfd = mkstemp();
+	/* Named temp files instead of mkstemp(): mkstemp streams never expose their
+	 * path and older ucode lacks fs.remove, so those files leaked into /tmp on
+	 * every invocation. Unique per-call names via a sequence counter + rm after
+	 * reading keep this leak-free and re-entrant. */
+	const uniq = `${time()}.${++exec_seq}`;
+	const outf = RUN_DIR + '/exec.' + uniq + '.out';
+	const errf = RUN_DIR + '/exec.' + uniq + '.err';
 
-	const exitcode = system(`${join(' ', args)} >&${outfd.fileno()} 2>&${errfd.fileno()}`);
+	const exitcode = system(`${join(' ', args)} > ${shellQuote(outf)} 2> ${shellQuote(errf)}`);
 
-	outfd.seek(0);
-	errfd.seek(0);
+	/* Read to EOF, not a fixed 512KB cap: subscription bodies beyond the old cap
+	 * were silently truncated mid-line — the parser then dropped the tail nodes
+	 * and the removal phase DELETED them from the config as "disappeared". */
+	let stdout = '', stderr = '', chunk;
+	let outfd = open(outf, 'r');
+	if (outfd) {
+		while ((chunk = outfd.read(65536)) && length(chunk))
+			stdout += chunk;
+		outfd.close();
+	}
+	let errfd = open(errf, 'r');
+	if (errfd) {
+		while ((chunk = errfd.read(65536)) && length(chunk))
+			stderr += chunk;
+		errfd.close();
+	}
 
-	const stdout = outfd.read(1024 * 512) ?? '';
-	const stderr = errfd.read(1024 * 512) ?? '';
-
-	outfd.close();
-	errfd.close();
+	system(`rm -f ${shellQuote(outf)} ${shellQuote(errf)} 2>/dev/null`);
 
 	const binary = isBinary(stdout);
 

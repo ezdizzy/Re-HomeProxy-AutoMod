@@ -7,7 +7,6 @@
 
 'use strict';
 
-import { md5 } from 'digest';
 import { open } from 'fs';
 import { connect } from 'ubus';
 import { cursor } from 'uci';
@@ -19,6 +18,23 @@ import {
 	wGET, decodeBase64Str, getTime, isEmpty, parseURL,
 	validation, HP_DIR, RUN_DIR
 } from 'homeproxy';
+
+/* The ucode 'digest' module is NOT shipped on OpenWrt 23.05 legacy builds (the
+ * CI legacy ipk deliberately drops that dependency; import_link.uc hit this
+ * before) — an unconditional import here made subscription updates crash at
+ * load time on legacy. Use the same dependency-free FNV-1a hash as import_link:
+ * collision-safe for realistic node counts and stable across runs. NOTE: hash
+ * values differ from the old md5 ones — the first update after this change
+ * re-creates subscription node sections once (user tweaks on them are lost). */
+function strhash(s) {
+	let h = 2166136261;
+	const n = length(s);
+	for (let i = 0; i < n; i++) {
+		h = (h ^ ord(s, i)) & 0xFFFFFFFF;
+		h = (h * 16777619) & 0xFFFFFFFF;
+	}
+	return sprintf('%08x', h);
+}
 
 /* UCI config start */
 const uci = cursor();
@@ -1077,7 +1093,7 @@ function main() {
 
 	for (let url in subscription_urls) {
 		url = replace(url, /#.*$/, '');
-		const groupHash = md5(url);
+		const groupHash = strhash(url);
 		node_cache[groupHash] = {};
 
 		/* Try Hiddify JSON format first: User-Agent triggers sing-box JSON on Hiddify Manager servers */
@@ -1143,19 +1159,29 @@ function main() {
 				    type(parsed[0]) === 'object' && parsed[0].outbounds) {
 					/* Xray/V2Ray JSON config array */
 					nodes = filter(map(parsed, cfg => parse_xray_config(cfg)), c => !isEmpty(c));
-				} else {
-					nodes = parsed.servers || parsed;
-
-					/* Shadowsocks SIP008 format */
-					if (nodes[0].server && nodes[0].method)
+				} else if (type(parsed) === 'object' && type(parsed.servers) === 'array') {
+					/* Shadowsocks SIP008 format — index-guarded: an arbitrary JSON
+					 * object used to fall through here and crash on nodes[0] of a
+					 * non-array, masking the real "unsupported format" error. */
+					nodes = parsed.servers;
+					if (length(nodes) && type(nodes[0]) === 'object' &&
+					    nodes[0].server && nodes[0].method)
 						map(nodes, (_, i) => nodes[i].nodetype = 'sip008');
+				} else {
+					log(sprintf('Unsupported subscription JSON from %s.', url));
+					nodes = [];
 				}
 			} catch(e) {
-				const decoded = decodeBase64Str(res);
-				if (decoded)
-					nodes = split(trim(replace(decoded, / /g, '_')), '\n');
+				/* Base64 (or plain link-list). Strip ALL whitespace first: CRLF
+				 * line endings left a trailing \r on every link (broken ports,
+				 * whole subscription rejected), and inner spaces broke the decode.
+				 * The old `replace(decoded,/ /g,'_')` corrupted decoded LABELS. */
+				const b64 = replace(res, /[ \t\r\n]+/g, '');
+				const decoded = decodeBase64Str(b64);
+				if (decoded && match(trim(decoded), /^(ss|ssr|vmess|vless|trojan|hysteria2?|tuic|socks|http|ssh|wireguard|mieru|anytls):\/\//))
+					nodes = filter(split(decoded, /[\r\n]+/), (l) => length(trim(l)));
 				else
-					nodes = split(trim(res), '\n');
+					nodes = filter(split(trim(res), /[\r\n]+/), (l) => length(trim(l)));
 			}
 		}
 
@@ -1169,8 +1195,8 @@ function main() {
 
 			const label = config.label;
 			config.label = null;
-			const confHash = md5(sprintf('%J', config)),
-			      nameHash = md5(label);
+			const confHash = strhash(sprintf('%J', config)),
+			      nameHash = strhash(groupHash + '|' + label);
 			config.label = label;
 
 			if (filter_check(config.label))
@@ -1247,7 +1273,11 @@ function main() {
 			if (node.isExisting)
 				return null;
 
-			const nameHash = md5(node.label);
+			/* Section id includes the group hash: two subscriptions shipping the
+			 * same label ("Server1" from template providers) previously produced
+			 * the SAME section id — the second silently overwrote the first's
+			 * node while "added" counted both. */
+			const nameHash = strhash(groupHash + '|' + node.label);
 			uci.set(uciconfig, nameHash, 'node');
 			map(keys(node), (v) => uci.set(uciconfig, nameHash, v, node[v]));
 
@@ -1273,7 +1303,9 @@ function main() {
 						return true;
 					});
 					if (!length(main_urltest_nodes)) {
-						uci.set(uciconfig, ucimain, 'main_urltest_nodes', main_urltest_nodes);
+						/* An EMPTY list must be deleted, not set([]): an empty UCI
+						 * list write leaves a stale/absent value mismatch behind. */
+						uci.delete(uciconfig, ucimain, 'main_urltest_nodes');
 						urltest_empty = true;
 					}
 				} else if (ut_mode === 'prefer') {
