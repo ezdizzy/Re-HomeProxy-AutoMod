@@ -28,6 +28,16 @@ log() {
 	echo -e "$(date "+%Y-%m-%d %H:%M:%S") [DAEMON] $*" >> "$LOG_PATH"
 }
 
+# Deadlock guard. rc.common's default lock() waits FOREVER on fd 1000; a long-lived
+# daemon inheriting that fd pins the lock indefinitely and every subsequent
+# stop/start/restart queues behind it forever (observed in the wild: mosdns kept an
+# inherited locked fd and wedged all service actions until reboot). Bound the wait:
+# after 90s proceed anyway — two overlapping actions are recoverable, a permanent
+# wedge is not.
+lock() {
+	flock -w 90 1000 || log "Warning: init lock busy >90s (wedged holder?) — proceeding without exclusive lock."
+}
+
 start_service() {
 	mkdir -p "$RUN_DIR"
 
@@ -157,11 +167,20 @@ start_service() {
 			return 1
 		fi
 	else
+		# Keep the last known-good generated config on tmpfs: if a bad subscription /
+		# node edit breaks generation, roll back to it instead of leaving the router
+		# with no tunnel at all ("user can crank anything" protection).
+		[ -e "$RUN_DIR/hiddify-c.json" ] && cp "$RUN_DIR/hiddify-c.json" "$RUN_DIR/hiddify-c.json.lastgood"
 		rm -f "$RUN_DIR/hiddify-c.json"
 		ucode "$HP_DIR/scripts/generate_client.uc"
 		if [ ! -e "$RUN_DIR/hiddify-c.json" ]; then
-			log "Error: failed to generate client config."
-			return 1
+			if [ -e "$RUN_DIR/hiddify-c.json.lastgood" ]; then
+				cp "$RUN_DIR/hiddify-c.json.lastgood" "$RUN_DIR/hiddify-c.json"
+				log "Error: failed to generate client config — rolled back to last good config; service keeps running with previous nodes."
+			else
+				log "Error: failed to generate client config."
+				return 1
+			fi
 		fi
 	fi
 
@@ -227,8 +246,25 @@ start_service() {
 	# emit CRLF into the nft file, which nft rejects wholesale — silently dropping every
 	# homeproxy chain since fw4 loads all-or-nothing.
 	ucode "$HP_DIR/scripts/firewall_pre.uc"
-	utpl -S "$HP_DIR/scripts/firewall_post.ut" | tr -d '\r' > "$RUN_DIR/fw4_post.nft"
-	fw4 reload >"/dev/null" 2>&1
+	local _fwtmp="$RUN_DIR/fw4_post.raw"
+	utpl -S "$HP_DIR/scripts/firewall_post.ut" > "$_fwtmp" 2>"$RUN_DIR/fw4_render.err"
+	if [ $? -eq 0 ]; then
+		tr -d '\r' < "$_fwtmp" > "$RUN_DIR/fw4_post.nft"
+	else
+		log "Warning: firewall template render FAILED — interception chains may be missing (see $RUN_DIR/fw4_render.err)."
+	fi
+	rm -f "$_fwtmp"
+	# Capture fw4 output instead of discarding it: a failed nft render/reload used to
+	# vanish without a trace while the whole interception silently stayed down.
+	fw4 reload >"$RUN_DIR/fw4_reload.log" 2>&1 || \
+		log "Warning: fw4 reload returned an error — check $RUN_DIR/fw4_reload.log."
+
+	# Kick the Clash health-check for main-out once the core is up: at cold start the
+	# Fallback/GLOBAL groups race the tunnel coming up and can pin themselves to
+	# direct-out with a stale "dead node" verdict until their next interval.
+	( sleep 8
+	  wget -qO- --timeout=8 'http://127.0.0.1:9090/proxies/main-out/delay?timeout=5000&url=http://www.gstatic.com/generate_204' >/dev/null 2>&1
+	) >/dev/null 2>&1 &
 
 	# Setup TUN policy routing (after the core has brought up the tun device).
 	# In `tun`/`redirect_tun` mode the firewall stamps client traffic with tun_mark; that
@@ -478,12 +514,17 @@ reload_service() {
 	local rpid
 	rpid=$(cat "$RUN_DIR/.reload_running" 2>/dev/null)
 	if [ -n "$rpid" ] && kill -0 "$rpid" 2>/dev/null; then
-		log "reload suppressed (debounce: another reload is in progress)."
+		log "reload suppressed (debounce: another reload is in progress) — scheduling a deferred retry."
+		( sleep 30; /etc/init.d/$CONF reload ) >/dev/null 2>&1 &
 		return
 	fi
 	# (b) a reload finished moments ago — its config state is already current.
 	if [ $((now - last)) -lt 20 ]; then
-		log "reload suppressed (debounce: $((now - last))s since previous reload finished)."
+		log "reload suppressed (debounce: $((now - last))s since previous reload finished) — scheduling a deferred retry."
+		# A suppressed reload used to be DROPPED entirely: rapid mode flips could
+		# leave the service running the pre-flip config with no further trigger.
+		# Re-arm one retry after the debounce window instead.
+		( sleep $((25 - (now - last))); /etc/init.d/$CONF reload ) >/dev/null 2>&1 &
 		return
 	fi
 

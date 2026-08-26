@@ -426,7 +426,9 @@ const methods = {
 				for (let name in proxies) {
 					if (name === 'GLOBAL') continue;
 					const p = proxies[name];
-					if ((p.type === 'URLTest' || p.type === 'Fallback' || p.type === 'Selector') && p.now) {
+					/* p.now must itself be a proxy: a Fallback group that collapsed
+					 * to direct-out must NOT be reported as the "proxy" IP. */
+					if ((p.type === 'URLTest' || p.type === 'Fallback' || p.type === 'Selector') && p.now && !nonProxy(p.now)) {
 						proxyNodeName = p.now;
 						break;
 					}
@@ -437,6 +439,30 @@ const methods = {
 				proxyNodeName = 'main-out';
 			if (proxyNodeName)
 				proxyEntry = lastHistory(proxyNodeName);
+
+			/* Active measurement fallback. Fixed-node setups have no automatic delay
+			 * history, and a startup health-check race can leave the group pointing
+			 * at direct-out (or history empty) right after a reload — both looked
+			 * like "No data" in the UI while the tunnel was actually fine. Ask the
+			 * tunnel itself for its exit IP; that is always the truthful answer. */
+			if (!proxyEntry || !proxyEntry.ipinfo?.ip || proxyNodeName === 'direct-out') {
+				const mfd = popen('curl -s --max-time 8 -x socks5h://127.0.0.1:5337 \'http://ip-api.com/json/?fields=query,countryCode,org\' 2>/dev/null');
+				if (mfd) {
+					const mraw = trim(mfd.read('all'));
+					mfd.close();
+					try {
+						const mj = json(mraw);
+						if (mj?.query) {
+							proxyEntry = {
+								ipinfo: { ip: mj.query, country_code: mj.countryCode, org: mj.org },
+								delay: null
+							};
+							if (!proxyNodeName || proxyNodeName === 'direct-out')
+								proxyNodeName = 'main-out';
+						}
+					} catch(e) { /* tunnel down / no network — keep whatever we had */ }
+				}
+			}
 
 			const toEntry = (h, name) => h ? {
 				ip:      h.ipinfo?.ip,
