@@ -162,6 +162,18 @@ const methods = {
 			system(`mkdir -p ${HP_DIR}/resources`);
 			atomic_write(file, content ?? '');
 
+			/* Apply the edit IMMEDIATELY: a static-list save used to leave the
+			 * core routing by the PREVIOUS ruleset until some later restart —
+			 * deleted entries kept proxying (and added ones stayed direct) with
+			 * zero feedback. proxy_list feeds the watched local rule-set file →
+			 * hot sync; anything else takes the full regenerate+reload path. */
+			if (req.args?.type === 'proxy_list') {
+				apply_learned_list_hot();
+			} else {
+				system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
+				system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			}
+
 			return { result: true };
 		}
 	},
