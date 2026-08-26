@@ -178,10 +178,15 @@ return view.extend({
 			+ '<b>Wired into:</b> "Bypass blocking" and region preset modes, whose DNS pools it accelerates. In Global / Custom routing / Custom JSON nothing queries its listeners — mosdns is not started there, so leave this off in those modes.'));
 		so.rmempty = false;
 		/* Safety switch: when the user disables MultiDNS, hard-stop the racing
-		 * resolver so DNS reverts to the standard upstreams. */
+		 * resolver so DNS reverts to the standard upstreams. Ask first — this
+		 * kills the running resolver IMMEDIATELY (before any save/apply), so an
+		 * accidental toggle must be revertible. */
 		so.onchange = function(ev, section_id, value) {
-			if (!value || value === '0')
+			if (!value || value === '0') {
+				if (!window.confirm(_('Disable MultiDNS? The racing resolver will be stopped immediately.')))
+					return false;
 				mdDisable().catch(function() {});
+			}
 		};
 
 		so = ss.option(form.Flag, 'use_plain', _('Race plain (Russia) DNS pool'),
@@ -200,8 +205,8 @@ return view.extend({
 			_('Send the secure pool’s DoH/DoT queries through the proxy tunnel (SOCKS5) so your ISP cannot see which sites you look up. Disable to resolve them directly (still encrypted).'));
 		so.default = '1';
 		so.rmempty = false;
-		so.depends('enabled', '1');
-		so.depends('use_secure', '1');
+		/* One object = AND (multiple .depends() calls would be OR). */
+		so.depends({ 'enabled': '1', 'use_secure': '1' });
 
 		so = ss.option(form.Value, 'bench_interval', _('Quality check interval (seconds)'),
 			_('How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 120s — lower reacts faster to a bad server but verifies sites more often.'));
@@ -209,9 +214,9 @@ return view.extend({
 		so.default = '120';
 		so.placeholder = '120';
 		so.rmempty = false;
-		so.depends('enabled', '1');
-		so.depends('use_plain', '1');
-		so.depends('use_secure', '1');
+		/* Visible with EITHER pool: single-pool setups still run the analyzer. */
+		so.depends({ 'enabled': '1', 'use_plain': '1' });
+		so.depends({ 'enabled': '1', 'use_secure': '1' });
 
 		/* Live quality monitor — hosted by a dummy option inside the MultiDNS tab
 		 * (same pattern the Client page used), so it never leaks into other tabs. */

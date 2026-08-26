@@ -39,10 +39,11 @@ function resolveTag(tag) {
 		const label = uci.get('homeproxy', m[1], 'label');
 		if (label) return label;
 	}
-	/* Fixed tags: look up the backing UCI section via the 'main' config section */
+	/* Fixed tags: look up the backing UCI option via the 'config' section
+	 * ('main' was a typo — no such section exists, labels never resolved). */
 	const specials = { 'main-out': 'main_node', 'main-udp-out': 'main_udp_node' };
 	if (specials[tag]) {
-		const section = uci.get('homeproxy', 'main', specials[tag]);
+		const section = uci.get('homeproxy', 'config', specials[tag]);
 		if (section) {
 			const label = uci.get('homeproxy', section, 'label');
 			if (label) return label;
@@ -1053,8 +1054,6 @@ return view.extend({
 	},
 
 	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus, mdnsStatus, mosdnsStatus]) {
-		const routingMode = uci.get('homeproxy', 'config', 'routing_mode') || '';
-		const isRuMode = routingMode === 'proxy_banned_ru';
 		let m, s, o;
 
 		m = new form.Map('homeproxy');
@@ -1121,8 +1120,10 @@ return view.extend({
 		 * so there are no local list-version files to display here. */
 
 
-		if (!isRuMode) {
-			o = s.option(form.Value, 'github_token', _('GitHub token'));
+		/* The token is needed in EVERY routing mode: the GitHub API rate limit
+		 * applies regardless of mode (ByeDPI/Zapret/app update checks run in RU
+		 * mode too), so it must not be hidden behind a non-RU gate. */
+		o = s.option(form.Value, 'github_token', _('GitHub token'));
 			o.description = _('Used to check for ByeDPI and Zapret updates. Without a token, GitHub limits anonymous requests to 60/hour. Create at github.com → Settings → Developer settings → Personal access tokens (no scopes needed).');
 			o.password = true;
 			o.renderWidget = function() {
@@ -1140,7 +1141,6 @@ return view.extend({
 
 				return node;
 			}
-		}
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Application'));
 		s.anonymous = true;

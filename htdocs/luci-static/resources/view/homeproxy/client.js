@@ -264,6 +264,15 @@ return view.extend({
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends({ 'main_node': 'urltest', 'main_urltest_mode': 'manual' });
+		/* An empty manual pool reaches the generator as a stale list and silently
+		 * degrades routing — validate non-empty like the per-rule URLTest option. */
+		o.validate = function(section_id) {
+			let value = this.section.formvalue(section_id, 'main_urltest_nodes');
+			if (section_id && !value.length)
+				return _('Expecting: %s').format(_('non-empty value'));
+
+			return true;
+		}
 		o.retain = true;
 		o.rmempty = false;
 
@@ -316,6 +325,13 @@ return view.extend({
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends({ 'main_udp_node': 'urltest', 'main_udp_urltest_mode': 'manual' });
+		o.validate = function(section_id) {
+			let value = this.section.formvalue(section_id, 'main_udp_urltest_nodes');
+			if (section_id && !value.length)
+				return _('Expecting: %s').format(_('non-empty value'));
+
+			return true;
+		}
 		o.retain = true;
 		o.rmempty = false;
 
@@ -1996,9 +2012,10 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			return callWriteDomainList('proxy_list', value);
 		}
 		so.remove = function(/* ... */) {
-			let routing_mode = this.section.formvalue('config', 'routing_mode');
-			if (routing_mode !== 'custom')
-				return callWriteDomainList('proxy_list', '');
+			/* Outside custom mode the widget is not rendered, so save() calls
+			 * remove() — it must NOT wipe the list file: combined with the
+			 * silent-save on mode change, one accidental click destroyed a
+			 * hand-curated proxy_list/direct_list with no confirmation. */
 			return true;
 		}
 		so.validate = function(section_id, value) {
@@ -2028,9 +2045,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			return callWriteDomainList('direct_list', value);
 		}
 		so.remove = function(/* ... */) {
-			let routing_mode = this.section.formvalue('config', 'routing_mode');
-			if (routing_mode !== 'custom')
-				return callWriteDomainList('direct_list', '');
+			/* See the proxy list twin above: never wipe the file from remove(). */
 			return true;
 		}
 		so.validate = function(section_id, value) {

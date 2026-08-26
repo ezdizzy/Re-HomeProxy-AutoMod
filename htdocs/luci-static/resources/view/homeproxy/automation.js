@@ -198,7 +198,7 @@ return view.extend({
 		});
 
 		const actions = E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
-			btn(_('Test now'), function() { return callTestNow(); }),
+			btn(_('Test now'), function() { return callTestNow().then(refresh); }),
 			btn(_('Backup list'), function() {
 				return callBackup().then(function(r) {
 					if (!r || r.result === false) {
@@ -210,6 +210,8 @@ return view.extend({
 			}),
 			btn(_('Restore list'), function() { fileInput.click(); }),
 			btn(_('Clear learned'), function() {
+				if (!window.confirm(_('Delete ALL learned sites? The engine will re-learn them from scratch.')))
+					return Promise.resolve();
 				return callClear().then(refresh);
 			}),
 			btn(_('Clear log'), function() {

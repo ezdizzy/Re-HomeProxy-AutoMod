@@ -29,6 +29,15 @@ function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
 }
 
+/* Atomic list write (temp + rename): a direct writefile() can be caught mid-write
+ * by the automation daemon or the core's rule-set watcher reading the file — a
+ * truncated parse then blanks the learned set or kills hot reload. */
+function atomic_write(path, content) {
+	const tmp = path + '.tmp';
+	writefile(tmp, content);
+	system(`mv -f ${shellquote(tmp)} ${shellquote(path)}`);
+}
+
 /* Optional GitHub mirror (uci homeproxy.config.github_mirror), used ONLY as a
  * FALLBACK: gh_fetch tries GitHub first and swaps to the mirror only if GitHub
  * fails — a healthy GitHub is never bypassed. Mirrors core_mgmt.uc's helpers. */
@@ -151,7 +160,7 @@ const methods = {
 			}
 
 			system(`mkdir -p ${HP_DIR}/resources`);
-			writefile(file, content);
+			atomic_write(file, content ?? '');
 
 			return { result: true };
 		}
@@ -2140,7 +2149,7 @@ const methods = {
 					content += '\n';
 			}
 			system('mkdir -p ' + HP_DIR + '/resources');
-			writefile(file, content);
+			atomic_write(file, content ?? '');
 			/* Regenerate so the edited learned list takes effect immediately (hot reload). */
 			apply_learned_list_hot();
 			return { result: true };
@@ -2175,10 +2184,18 @@ const methods = {
 
 	automation_backup: {
 		call: function(req) {
-			const file = HP_DIR + '/resources/auto_proxy_list.txt';
+			/* v2 format: domains, then an '# type: ip' marker line, then learned
+			 * IPs. Old backups (domains only) restore unchanged. */
+			const dom_file = HP_DIR + '/resources/auto_proxy_list.txt';
+			const ip_file = HP_DIR + '/resources/auto_proxy_ip.txt';
 			let content = '';
-			if (access(file))
-				content = readfile(file);
+			if (access(dom_file))
+				content = trim(readfile(dom_file) ?? '') + '\n';
+			if (access(ip_file)) {
+				const ips = trim(readfile(ip_file) ?? '');
+				if (length(ips))
+					content += '# type: ip\n' + ips + '\n';
+			}
 			return { result: true, content: content };
 		}
 	},
@@ -2186,31 +2203,56 @@ const methods = {
 	automation_restore: {
 		args: { content: 'content' },
 		call: function(req) {
-			const file = HP_DIR + '/resources/auto_proxy_list.txt';
+			const dom_file = HP_DIR + '/resources/auto_proxy_list.txt';
+			const ip_file = HP_DIR + '/resources/auto_proxy_ip.txt';
 			let content = req.args?.content;
 			if (!content)
 				return { result: false, error: 'empty content' };
-			let incoming = filter(split(content, /[\r\n]/), (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
-			let existing = {};
-			if (access(file)) {
-				for (let l in split(trim(readfile(file)), /[\r\n]/))
-					if (length(trim(l))) existing[trim(l)] = true;
+			/* Split the backup at the optional IP marker; everything before it
+			 * (or the whole file in the old format) is domain data. */
+			let dom_lines = [], ip_lines = [];
+			let target = dom_lines;
+			for (let l in split(content, /[\r\n]/)) {
+				l = trim(l);
+				if (!length(l))
+					continue;
+				if (match(l, /^#\s*type:\s*ip\s*$/)) {
+					target = ip_lines;
+					continue;
+				}
+				if (match(l, /^\s*#/))
+					continue;
+				push(target, l);
 			}
-			let added = 0;
-			for (let d in incoming) {
-				d = trim(d);
-				if (!length(d) || existing[d]) continue;
-				existing[d] = true;
-				added++;
-			}
-			if (!added)
+			if (!length(dom_lines) && !length(ip_lines))
+				return { result: false, error: 'no entries found' };
+
+			const merge_into = (file, lines, is_ip) => {
+				let existing = {};
+				if (access(file))
+					for (let l in split(trim(readfile(file) ?? ''), /[\r\n]/))
+						if (length(trim(l))) existing[trim(l)] = true;
+				let added = 0;
+				for (let d in lines) {
+					d = trim(d);
+					if (!length(d) || existing[d]) continue;
+					existing[d] = true;
+					added++;
+				}
+				if (added) {
+					system('mkdir -p ' + HP_DIR + '/resources');
+					atomic_write(file, join('\n', sort(keys(existing))) + '\n');
+				}
+				return added;
+			};
+			const added_dom = merge_into(dom_file, dom_lines, false);
+			const added_ip = merge_into(ip_file, filter(ip_lines, (x) => match(x, /^(\d{1,3}\.){3}\d{1,3}$/)), true);
+
+			if (!added_dom && !added_ip)
 				return { result: true, added: 0 };
-			let arr = sort(keys(existing));
-			system('mkdir -p ' + HP_DIR + '/resources');
-			writefile(file, join('\n', arr) + '\n');
 			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
 			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-			return { result: true, added: added };
+			return { result: true, added: added_dom + added_ip };
 		}
 	}
 
