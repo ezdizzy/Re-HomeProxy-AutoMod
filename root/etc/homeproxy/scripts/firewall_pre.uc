@@ -10,18 +10,15 @@ const cfgname = 'homeproxy';
 const uci = cursor();
 uci.load(cfgname);
 
-const routing_mode = uci.get(cfgname, 'config', 'routing_mode') || 'proxy_banned_ru',
-      proxy_mode = uci.get(cfgname, 'config', 'proxy_mode') || 'redirect_tproxy';
+const proxy_mode = uci.get(cfgname, 'config', 'proxy_mode') || 'redirect_tproxy';
 
-let outbound_node, tun_name;
+let tun_name;
 if (match(proxy_mode, /tun/)) {
-	if (routing_mode === 'custom')
-		outbound_node = uci.get(cfgname, 'routing', 'default_outbound') || 'nil';
-	else
-		outbound_node = uci.get(cfgname, 'config', 'main_node') || 'nil';
-
-	if (outbound_node !== 'nil')
-		tun_name = uci.get(cfgname, 'infra', 'tun_name') || 'singtun0';
+	/* No main_node gate here: generate_client maps nil → direct-out and still
+	 * brings up the TUN device — skipping the fw4 accept rules left traffic
+	 * entering the tun interface with no forward/input allowance (black hole
+	 * on NO-PROXY + TUN). */
+	tun_name = uci.get(cfgname, 'infra', 'tun_name') || 'singtun0';
 }
 
 const server_enabled = uci.get(cfgname, 'server', 'enabled');

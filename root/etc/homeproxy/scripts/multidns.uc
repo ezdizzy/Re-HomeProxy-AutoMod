@@ -894,7 +894,10 @@ function build_mosdns_conf() {
 	}
 
 	/* --- servers (listeners) --- */
-	if (use_plain !== '0') {
+	/* Plain listener only when seq_plain actually exists (either pool non-empty):
+	 * with both pools empty the reference to $seq_plain made mosdns fail to start,
+	 * and generate_client would repoint russia-dns at a dead 5453. */
+	if (use_plain !== '0' && (have_plain || have_secure)) {
 		push(lines, '  - type: udp_server');
 		push(lines, '    args:');
 		push(lines, '      entry: seq_plain');
