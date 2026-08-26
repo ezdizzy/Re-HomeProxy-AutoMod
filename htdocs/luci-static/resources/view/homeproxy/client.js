@@ -188,17 +188,26 @@ return view.extend({
 		}
 
 		o = s.taboption('routing', form.ListValue, 'main_node', _('Main node') + ' 🔗',
-			_('In this mode: only blocked domains are routed through this node — all other traffic goes direct.'));
-		o.value('nil', _('Disable'));
-		o.value('urltest', _('URLTest'));
+			_('What "blocked" traffic goes through. Everything else always goes directly.<br>'
+			+ '• <b>URLTest</b> — automatically pick the fastest node from the pool.<br>'
+			+ '• A specific node — always use that node.<br>'
+			+ '• <b>ByeDPI / Zapret</b> — free anti-DPI engines (no subscription needed).<br>'
+			+ '• <b>Direct (no proxy)</b> — proxy is OFF: nothing is proxied, all traffic egresses directly (the rule lists keep working, they just point at the direct exit).'));
+		o.value('urltest', _('URLTest (auto-pick fastest node)'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		o.value('byedpi-out', _('ByeDPI'));
-		o.value('zapret-out', _('Zapret'));
+		if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
+			o.value('byedpi-out', _('ByeDPI'));
+		if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
+			o.value('zapret-out', _('Zapret'));
 		o.value('direct-out', _('Direct (no proxy)'));
-		o.default = 'nil';
+		o.default = 'urltest';
 		o.depends({'routing_mode': /^((?!custom).)+$/});
 		o.rmempty = false;
+		o.onchange = function(ev, section_id, value) {
+			if (!section_id) return;
+			Promise.resolve(this.map.save(null, true)).catch(function() {});
+		};
 
 		/* Live: which node URLTest currently has selected. Only shown in URLTest mode
 		 * (depends on main_node='urltest'); hidden when a specific node is the main node. */
@@ -274,14 +283,17 @@ return view.extend({
 		o.placeholder = '150';
 		o.depends('main_node', 'urltest');
 
-		o = s.taboption('routing', form.ListValue, 'main_udp_node', _('Main UDP node'));
-		o.value('nil', _('Disable'));
+		o = s.taboption('routing', form.ListValue, 'main_udp_node', _('Main UDP node'),
+			_('Separate exit for UDP traffic (games, calls). "Follows main route" keeps UDP on the same path as TCP.'));
+		o.value('nil', _('No separate UDP node (UDP follows the main route)'));
 		o.value('same', _('Same as main node'));
 		o.value('urltest', _('URLTest'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		o.value('byedpi-out', _('ByeDPI'));
-		o.value('zapret-out', _('Zapret'));
+		if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
+			o.value('byedpi-out', _('ByeDPI'));
+		if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
+			o.value('zapret-out', _('Zapret'));
 		o.value('direct-out', _('Direct (no proxy)'));
 		o.default = 'nil';
 		o.depends({'routing_mode': /^((?!custom|proxy_banned_ru).)+$/, 'proxy_mode': /^((?!redirect$).)+$/});
@@ -344,16 +356,25 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		o.default = o.disabled;
 		o.rmempty = false;
 
-		o = s.taboption('routing', form.ListValue, 'routing_mode', _('Routing mode'));
+		o = s.taboption('routing', form.ListValue, 'routing_mode', _('Routing mode'),
+			_('• <b>Russia (Proxy Banned)</b> — default route Direct, banned/proxied lists go through the Main node (YouTube, Russia Inside, Re-filter…).<br>'
+			+ '• <b>Global</b> — ALL traffic goes through the Main node.<br>'
+			+ '• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual rule/DNS configuration.<br>'
+			+ 'Changing the mode re-renders the page so only relevant options stay visible.'));
 		o.value('proxy_banned_ru', _('Russia (Proxy Banned)'));
 		o.value('global', _('Global'));
 		o.value('custom', _('Custom routing'));
 		o.value('custom_json', _('Custom JSON'));
 		o.default = 'proxy_banned_ru';
 		o.rmempty = false;
+		/* Silent-save on ANY mode change: the whole view gates its sections on the
+		 * persisted routing_mode, so switching modes must persist + re-render
+		 * immediately — otherwise Proxy Rules keep a stale source list (Re-filter
+		 * vanishing/appearing), main-out gating goes stale and users get locked out
+		 * of valid combinations until a manual page reload. */
 		o.onchange = function(ev, section_id, value) {
-			if (section_id && (value === 'custom' || value === 'custom_json'))
-				this.map.save(null, true);
+			if (!section_id) return;
+			Promise.resolve(this.map.save(null, true)).catch(function() {});
 		}
 
 		o = s.taboption('routing', form.Value, 'routing_port', _('Routing ports'),
@@ -697,7 +718,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			const _region_name = (_rmode_rules === 'bypass_cn') ? _('China') : _('Iran');
 			ss.description = _('Default route is through the proxy. %s domains and IPs (geosite + geoip) automatically go Direct. Rules added here are per-service overrides applied before that baseline — e.g. force a specific service Direct, or send it through a separate node.').format(_region_name);
 		} else {
-			ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)');
+			ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a "YouTube → Zapret" rule here automatically.</em>');
 		}
 
 		so = ss.option(form.Flag, 'enabled', _('Enable'));
@@ -736,8 +757,15 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		so.editable = true;
 		so.validate = function(section_id, value) {
 			for (const sid of this.section.cfgsections()) {
-				if (sid !== section_id && this.cfgvalue(sid) === value)
-					return _('Duplicate source — only the first rule will take effect');
+				if (sid === section_id) continue;
+				/* Compare against PENDING form values first: two freshly added
+				 * duplicates must be caught before save, not after. */
+				let other;
+				try { other = this.formvalue(sid); } catch(e) {}
+				if (other == null)
+					other = this.cfgvalue(sid);
+				if (other === value)
+					return _('Duplicate source — a rule for this service already exists');
 			}
 			return true;
 		};
@@ -747,8 +775,10 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		so.value('urltest', _('Separate URLTest'));
 		for (let i in proxy_nodes)
 			so.value(i, proxy_nodes[i]);
-		so.value('byedpi-out', _('ByeDPI'));
-		so.value('zapret-out', _('Zapret'));
+		if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
+			so.value('byedpi-out', _('ByeDPI'));
+		if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
+			so.value('zapret-out', _('Zapret'));
 		so.rmempty = false;
 		so.editable = true;
 

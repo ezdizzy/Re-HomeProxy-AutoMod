@@ -4054,8 +4054,8 @@ msgid "Minimum latency gap (ms) required to switch to a faster node — prevents
 msgstr "Минимальная разница задержек (мс) для переключения на более быстрый узел — предотвращает постоянное переключение между узлами с близкой задержкой."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "In this mode: only blocked domains are routed through this node — all other traffic goes direct."
-msgstr "В этом режиме: через этот узел проходят только заблокированные домены — весь остальной трафик идёт напрямую."
+msgid "What \"blocked\" traffic goes through. Everything else always goes directly.<br>• <b>URLTest</b> — automatically pick the fastest node from the pool.<br>• A specific node — always use that node.<br>• <b>ByeDPI / Zapret</b> — free anti-DPI engines (no subscription needed).<br>• <b>Direct (no proxy)</b> — proxy is OFF: nothing is proxied, all traffic egresses directly (the rule lists keep working, they just point at the direct exit)."
+msgstr "Куда идёт «заблокированный» трафик. Всё остальное всегда ходит напрямую.<br>• <b>URLTest</b> — автоматический выбор самого быстрого узла из пула.<br>• Конкретный узел — всегда используется только он.<br>• <b>ByeDPI / Zapret</b> — бесплатные анти-DPI движки (без подписки).<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не проксируется, весь трафик выходит напрямую (списки правил продолжают работать, просто указывают на прямой выход)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Resolves Russian domains directly, without going through the proxy."
@@ -4066,8 +4066,8 @@ msgid "Resolves blocked domains via proxy — your ISP cannot see which sites yo
 msgstr "Разрешает заблокированные домены через прокси — провайдер не видит, какие сайты вы запрашиваете. Использует зашифрованный DNS (DoH/DoT = DNS поверх HTTPS/TLS)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-msgid "Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)"
-msgstr "Маршрут по умолчанию — прямой. Добавленные правила проксируются с автоматическим приоритетом:<br>1. Небольшие списки (YouTube, Discord и т.д.)<br>2. <b>Russia Inside</b> (1000+ доменов, itdoginfo) — общий набор небольших списков (YouTube, Discord, Telegram, Meta…)<br>3. <b>Re-filter</b> (60000+ доменов + 25000+ IP) — список заблокированных в России доменов и IP (Роскомнадзор, от сообщества)"
+msgid "Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a \"YouTube → Zapret\" rule here automatically.</em>"
+msgstr "Маршрут по умолчанию — прямой. Добавленные правила проксируются с автоматическим приоритетом:<br>1. Небольшие списки (YouTube, Discord и т.д.)<br>2. <b>Russia Inside</b> (1000+ доменов, itdoginfo) — общий набор небольших списков (YouTube, Discord, Telegram, Meta…)<br>3. <b>Re-filter</b> (60000+ доменов + 25000+ IP) — список заблокированных в России доменов и IP (Роскомнадзор, от сообщества)<br><br><em>Примечание: установщик Zapret может автоматически добавить сюда правило «YouTube → Zapret».</em>"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "ByeDPI"
@@ -5050,8 +5050,24 @@ msgid "Domain fronting port"
 msgstr "Порт domain fronting"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
-msgid "Duplicate source — only the first rule will take effect"
-msgstr "Дублирующийся источник — сработает только первое правило"
+msgid "Duplicate source — a rule for this service already exists"
+msgstr "Дубликат — правило для этого сервиса уже существует"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "URLTest (auto-pick fastest node)"
+msgstr "URLTest (авто-выбор самого быстрого узла)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "No separate UDP node (UDP follows the main route)"
+msgstr "Без отдельного UDP-узла (UDP следует основному маршруту)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Separate exit for UDP traffic (games, calls). \"Follows main route\" keeps UDP on the same path as TCP."
+msgstr "Отдельный выход для UDP-трафика (игры, звонки). «Без отдельного узла» держит UDP на том же пути, что и TCP."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "• <b>Russia (Proxy Banned)</b> — default route Direct, banned/proxied lists go through the Main node (YouTube, Russia Inside, Re-filter…).<br>• <b>Global</b> — ALL traffic goes through the Main node.<br>• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual rule/DNS configuration.<br>Changing the mode re-renders the page so only relevant options stay visible"
+msgstr "• <b>Россия (Обход блокировок)</b> — маршрут по умолчанию прямой, списки заблокированных сайтов идут через Основной узел (YouTube, Russia Inside, Re-filter…).<br>• <b>Глобальный</b> — ВЕСЬ трафик идёт через Основной узел.<br>• <b>Своя маршрутизация</b> / <b>Свой JSON</b> — полностью ручная настройка правил и DNS.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Electro/Begzar (78.157.42.100)"

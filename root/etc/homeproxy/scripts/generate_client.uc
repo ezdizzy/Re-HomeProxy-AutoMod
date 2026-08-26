@@ -129,9 +129,14 @@ let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outb
 
 if (routing_mode !== 'custom') {
 	main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
-	if (main_node === 'nil') {
-		warn('homeproxy: no main_node configured, skipping config generation.\n');
-		exit(0);
+	if (main_node === 'nil' || isEmpty(main_node)) {
+		/* Legacy 'nil' used to abort generation entirely, leaving the service
+		 * dead (or silently running a stale config). That is never what a user
+		 * picking "Disable" wants: treat it as an explicit no-proxy setup —
+		 * main-out becomes a plain direct outbound so the whole rule engine
+		 * stays valid and traffic egresses directly. */
+		warn('homeproxy: main_node not configured — generating a NO-PROXY config (main-out = direct).\n');
+		main_node = 'direct-out';
 	}
 	main_udp_node = uci.get(uciconfig, ucimain, 'main_udp_node') || 'nil';
 	dedicated_udp_node = !isEmpty(main_udp_node) && !(main_udp_node in ['same', main_node]);
