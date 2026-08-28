@@ -1871,24 +1871,10 @@ if (!isEmpty(main_node)) {
 			outbound: 'main-out'
 		});
 
-		/* Custom proxy list → main-out. The learned sites share this rule-set via the
-		 * watched local file, so they hot-reload without a restart. Always emitted
-		 * (empty rule-set is a no-op) so hot reloads work even from an empty list. */
-		push(config.route.rules, {
-			rule_set: 'proxy-domain',
-			action: 'route',
-			outbound: 'main-out'
-		});
-
-		/* Learned IP list (Automation, B) → main-out. References the watched local
-		 * rule-set file (auto-ip); hot-reloaded, so newly learned IPs apply immediately. */
-		if (automation_enabled === '1' && !isEmpty(main_node))
-			push(config.route.rules, {
-				rule_set: 'auto-ip',
-				action: 'route',
-				outbound: 'main-out'
-			});
-
+		/* Custom proxy list + learned sites and auto-ip rules are emitted BELOW the
+		 * user's per-service rules (see ru_rules loop): first-match-wins routing
+		 * means an earlier learned rule HIJACKED service rules — learned YouTube
+		 * shards outranked YouTube→Zapret and the site silently rode the main proxy. */
 		/* Per-rule outbounds and rule sets
 		 * Priority order: specific services first → russia-inside → refilter (largest list last) */
 		const ru_source_priority = (s) => s === 'refilter' ? 2 : s === 'russia-inside' ? 1 : 0;
@@ -2019,6 +2005,26 @@ if (!isEmpty(main_node)) {
 					});
 			}
 		}
+
+		/* Custom proxy list → main-out. The learned sites share this rule-set via the
+		 * watched local file, so they hot-reload without a restart. Always emitted
+		 * (empty rule-set is a no-op) so hot reloads work even from an empty list.
+		 * Placed AFTER the per-service rules above: automation-learned entries must
+		 * never outrank an explicit user rule (see comment at their old position). */
+		push(config.route.rules, {
+			rule_set: 'proxy-domain',
+			action: 'route',
+			outbound: 'main-out'
+		});
+
+		/* Learned IP list (Automation, B) → main-out. References the watched local
+		 * rule-set file (auto-ip); hot-reloaded, so newly learned IPs apply immediately. */
+		if (automation_enabled === '1' && !isEmpty(main_node))
+			push(config.route.rules, {
+				rule_set: 'auto-ip',
+				action: 'route',
+				outbound: 'main-out'
+			});
 		/* Reverse: region baseline -> direct (lowest priority, AFTER per-service overrides).
 		 * MUST include geoip (IP) so non-sniffable UDP / no-SNI gets the direct decision. */
 		if (is_bypass_mode(routing_mode)) {

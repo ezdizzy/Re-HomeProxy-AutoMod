@@ -516,9 +516,44 @@ function tcp_reachable(host, via_proxy, timeout) {
 	return false;
 }
 
+	let engine_protect = {};
+	function load_engine_protect() {
+		engine_protect = {};
+		/* Hosts already covered by a per-service rule routed to an ENGINE (Zapret /
+		 * ByeDPI) must never be learned: routing order puts user rules above the
+		 * learned lists, so a learned copy would be dead weight — and BEFORE the
+		 * order fix it actively hijacked e.g. YouTube away from Zapret. The full
+		 * domain set lives in remote .srs lists we cannot parse, so presets ship a
+		 * plain-text companion (resources/engine_<source>.txt). */
+		uci.foreach('homeproxy', 'proxy_ru_rule', (cfg) => {
+			if (cfg.enabled !== '1') return;
+			if (cfg.node !== 'zapret-out' && cfg.node !== 'byedpi-out') return;
+			const src = trim(cfg.source || '');
+			if (!length(src)) return;
+			engine_protect[src] = true;
+			for (let d in read_lines(RES + '/engine_' + src + '.txt')) {
+				d = trim(d);
+				if (length(d) && substr(d, 0, 1) !== '#')
+					engine_protect[d] = true;
+			}
+		});
+	}
+	function is_engine_protected(host) {
+		host = trim(host);
+		if (!length(host)) return false;
+		for (;;) {
+			if (engine_protect[host]) return true;
+			const dot = index(host, '.');
+			if (dot < 0) return false;
+			host = substr(host, dot + 1);
+		}
+	}
+
 function is_excluded(host, ignore_lists) {
 	host = trim(host);
 	if (!length(host)) return true;
+	/* Engine-covered hosts are absolute — user rules outrank learning. */
+	if (is_engine_protected(host)) return true;
 	/* Russian TLDs are NEVER learned — in Russia they must always go direct.
 	 * Hard-coded (not just the default exclude list) so no config change can
 	 * accidentally start probing .ru/.рф/.su sites.
@@ -554,6 +589,19 @@ function is_excluded(host, ignore_lists) {
 		}
 		return false;
 	}
+
+/* Tracker/telemetry farms mint UNLIMITED unique subdomains
+ * (<uuid>-netseer-ipaddr-assoc.xz.fbcdn.net — 100+ state entries seen). Collapse
+ * a leading hex/UUID label onto the base domain: routing by suffix on the base
+ * covers every variant, so one probe/entry replaces thousands. MODULE scope and
+ * ABOVE all callers: this ucode build neither hoists function declarations nor
+ * shares closures between sibling nested functions (hot_set lesson). */
+function collapse_uuid_host(h) {
+	const parts = split(h, '.');
+	if (length(parts) >= 3 && match(parts[0], /^[0-9a-f]{8,}(-[0-9a-f]{4,})*$/i))
+		return join('.', slice(parts, 1));
+	return h;
+}
 
 /* ── Discovery ──────────────────────────────────────────────────────────── */
 
@@ -972,6 +1020,15 @@ echo done > "$PRE.done"
 			dropped++;
 			continue;
 		}
+		/* Self-heal legacy UUID-minted entries: collapse to the base domain —
+		 * routing by suffix on the base covers every minted variant. */
+		const cd = collapse_uuid_host(d);
+		if (cd !== d) {
+			log('collapsing learned entry to base domain: ' + d + ' -> ' + cd);
+			auto_set[cd] = true;
+			dropped++;
+			continue;
+		}
 		auto_set[d] = true;
 	}
 	/* Sanitize on load: infrastructure IPs must never live in the learned set —
@@ -1184,15 +1241,19 @@ echo done > "$PRE.done"
 		main_is_direct = (main_node_now === 'direct-out' || main_node_now === 'nil' || rmode === 'global');
 		if (rmode === 'global' || main_is_direct) return;
 
+		load_engine_protect();
+
 		/* Candidate intake: normalise case (DNS queries and SNI keep client-side
 		 * case; mixed-case duplicates like "zz.rw"/"ZZ.rw" would be probed twice)
 		 * and drop junk shapes — a single-character second-level label under some
 		 * ccTLD ("7.ua", "b.ly", "g.tj") is wildcard-ad noise, never user traffic. */
-		let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
+	let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
 		let reeval_set = {};
 		hot_set = {};
 		let intake = (h) => {
 			h = lc(trim(h));
+			if (!looks_like_host(h)) return;
+			h = collapse_uuid_host(h);
 			if (!looks_like_host(h)) return;
 			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
 				/* Bare-IP literal from the DNS/SNI log belongs to the IP pipeline

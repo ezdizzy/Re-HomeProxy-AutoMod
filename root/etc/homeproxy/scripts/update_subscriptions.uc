@@ -1193,7 +1193,11 @@ function main() {
 			if (isEmpty(config))
 				continue;
 
-			const label = config.label;
+			/* Normalize: some parsers yield label:null — string concat with null
+			 * is a fatal in this ucode build. */
+			let label = config.label;
+			if (type(label) !== 'string')
+				label = '';
 			config.label = null;
 			const confHash = strhash(sprintf('%J', config)),
 			      nameHash = strhash(groupHash + '|' + label);
@@ -1277,7 +1281,7 @@ function main() {
 			 * same label ("Server1" from template providers) previously produced
 			 * the SAME section id — the second silently overwrote the first's
 			 * node while "added" counted both. */
-			const nameHash = strhash(groupHash + '|' + node.label);
+			const nameHash = strhash(groupHash + '|' + (node.label || ''));
 			uci.set(uciconfig, nameHash, 'node');
 			map(keys(node), (v) => uci.set(uciconfig, nameHash, v, node[v]));
 

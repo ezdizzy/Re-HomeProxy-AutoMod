@@ -265,9 +265,16 @@ return view.extend({
 			o.value(i, proxy_nodes[i]);
 		o.depends({ 'main_node': 'urltest', 'main_urltest_mode': 'manual' });
 		/* An empty manual pool reaches the generator as a stale list and silently
-		 * degrades routing — validate non-empty like the per-rule URLTest option. */
+		 * degrades routing — validate non-empty like the per-rule URLTest option.
+		 * Guard by the PERSISTED mode, not widget visibility: LuCI runs validate()
+		 * for hidden options too, and during a mode switch the stale formvalue
+		 * made "URLTest nodes must not be empty" fire for non-URLTest mains. */
 		o.validate = function(section_id) {
-			let value = this.section.formvalue(section_id, 'main_urltest_nodes');
+			if (this.map.data.get('homeproxy', 'config', 'main_node') !== 'urltest')
+				return true;
+			if (this.map.data.get('homeproxy', 'config', 'main_urltest_mode') !== 'manual')
+				return true;
+			let value = this.section.formvalue(section_id, 'main_urltest_nodes') || [];
 			if (section_id && !value.length)
 				return _('Expecting: %s').format(_('non-empty value'));
 
@@ -325,8 +332,13 @@ return view.extend({
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends({ 'main_udp_node': 'urltest', 'main_udp_urltest_mode': 'manual' });
+		/* See the main TCP twin above: persist-mode guard, formvalue may be stale. */
 		o.validate = function(section_id) {
-			let value = this.section.formvalue(section_id, 'main_udp_urltest_nodes');
+			if (this.map.data.get('homeproxy', 'config', 'main_udp_node') !== 'urltest')
+				return true;
+			if (this.map.data.get('homeproxy', 'config', 'main_udp_urltest_mode') !== 'manual')
+				return true;
+			let value = this.section.formvalue(section_id, 'main_udp_urltest_nodes') || [];
 			if (section_id && !value.length)
 				return _('Expecting: %s').format(_('non-empty value'));
 

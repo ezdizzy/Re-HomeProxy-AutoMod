@@ -1,0 +1,17 @@
+# Domains covered by the "YouTube" routing-rule preset (itdoginfo allow-domains).
+# The automation engine must NEVER learn these as blocked: a YouTube→Zapret/ByeDPI
+# rule already handles them, and a learned entry would only waste probe budget and
+# misreport the site as proxied. Suffix semantics: bare label covers all subdomains.
+youtube.com
+youtu.be
+youtube-nocookie.com
+youtubeui.com
+youtubeembeddedplayer.googleapis.com
+youtubei.googleapis.com
+youtube-api.googleapis.com
+googlevideo.com
+video.google.com
+ytimg.com
+ggpht.com
+gvt1.com
+wide-youtube.l.google.com
