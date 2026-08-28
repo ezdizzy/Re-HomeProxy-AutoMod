@@ -270,6 +270,7 @@ return view.extend({
 
 		function renderTable(learned) {
 			if (!learned || !learned.length) {
+				renderTable._sig = null;
 				tableEl.innerHTML = '';
 				tableEl.appendChild(E('em', {}, [ _('Nothing learned yet. Browse the web or press “Test now”.') ]));
 				return;
@@ -277,6 +278,15 @@ return view.extend({
 			if (!learned.every(function(e) { return e && (e.host || e.ip); })) {
 				return;
 			}
+			/* The table is rebuilt on every poll; rebuilding identical data is what
+			 * makes it jump back to the top while the user scrolls it. Skip identical
+			 * rebuilds, and when the data DID change, carry the scroll position over. */
+			const sig = JSON.stringify(learned);
+			if (sig === renderTable._sig)
+				return;
+			renderTable._sig = sig;
+			const prevWrap = tableEl.firstElementChild;
+			const scrollTop = (prevWrap && prevWrap.tagName === 'DIV') ? prevWrap.scrollTop : 0;
 			function imp(node, styles) {
 				for (var k in styles) node.style.setProperty(k, styles[k], 'important');
 			}
@@ -333,6 +343,7 @@ return view.extend({
 			imp(wrap, { 'max-height': '340px', overflow: 'auto', 'margin-top': '4px' });
 			wrap.appendChild(table);
 			tableEl.appendChild(wrap);
+			wrap.scrollTop = scrollTop;
 		}
 
 		function refresh() {

@@ -22,9 +22,17 @@ const css = '				\
 	text-align: left;		\
 }					\
 #log_textarea pre {			\
-	padding: .5rem;			\
-	word-break: break-all;		\
+	max-height: 300px;		\
+	overflow: auto;			\
+	white-space: pre-wrap;		\
+	word-break: break-word;		\
 	margin: 0;			\
+	padding: 8px;			\
+	background: #1e1e1e;		\
+	color: #ddd;			\
+	border: 1px solid #333;		\
+	border-radius: 4px;		\
+	font-size: 0.85em;		\
 }					\
 .description {				\
 	background-color: #33ccff;	\
@@ -191,11 +199,16 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 	poll.add(L.bind(() => {
 		return fs.read_direct(String.format('%s/%s.log', hp_dir, filename), 'text')
 		.then((res) => {
+			/* The pre is rebuilt on every poll; keep the reader's scroll position
+			 * so the box does not jump back to the top every refresh. */
+			const prev = log_textarea.querySelector('pre');
+			const scrollTop = prev ? prev.scrollTop : 0;
 			log = E('pre', { 'wrap': 'pre' }, [
 				res.trim() || _('Log is empty.')
 			]);
 
 			dom.content(log_textarea, log);
+			log.scrollTop = scrollTop;
 		}).catch((err) => {
 			if (err.toString().includes('NotFoundError'))
 				log = E('pre', { 'wrap': 'pre' }, [

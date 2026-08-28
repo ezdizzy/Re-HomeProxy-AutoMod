@@ -5045,7 +5045,7 @@ msgstr "Включает полноценное HTTP-тестирование с
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
 msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Configure on the Client Settings page."
-msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Настройки: на странице «Настройки клиента».
+msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Настройки: на странице «Настройки клиента»."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -6775,4 +6775,9 @@ msgstr "Свои правила"
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Show the Custom Rules and Routing Nodes tabs for additional custom rules."
 msgstr "Показать вкладки «Свои правила» и «Узлы маршрутизации» для дополнительных пользовательских правил."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used."
+msgstr "Разрешает заблокированные домены через прокси — провайдер не видит, какие сайты вы запрашиваете. Использует шифрованный DNS (DoH/DoT). Можно добавить несколько — MultiDNS опрашивает их все, без него используется первая запись."
+
 
