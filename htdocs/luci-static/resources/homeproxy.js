@@ -86,6 +86,22 @@ return baseclass.extend({
 		}
 	}),
 
+	/* FNV-1a 32-bit — MUST byte-match strhash() in update_subscriptions.uc /
+	 * import_link.uc, or the "Sub (…)" node tabs stop matching their nodes'
+	 * grouphash (79971d7 moved the daemon to this hash; node.js still compared
+	 * the old MD5). ucode on this build does EXACT 64-bit integer math
+	 * (verified live: URL → 32d94a75), so the multiply must be BigInt — plain
+	 * JS number math rounds above 2^53 and drifts. charCodeAt equals ucode
+	 * ord() for ASCII URLs (all subscription URLs in practice). */
+	calcStringFNV(s) {
+		let h = 2166136261n;
+		for (let i = 0; i < s.length; i++) {
+			h = (h ^ BigInt(s.charCodeAt(i))) & 0xFFFFFFFFn;
+			h = (h * 16777619n) & 0xFFFFFFFFn;
+		}
+		return h.toString(16).padStart(8, '0');
+	},
+
 	calcStringMD5(e) {
 		/* Thanks to https://stackoverflow.com/a/41602636 */
 		let h = (a, b) => {

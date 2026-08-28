@@ -1942,11 +1942,14 @@ return view.extend({
 				zapret_candidates = parsed.candidates;
 		} catch (e) { /* fall back to builtin below */ }
 
-		/* Cache subscription information, it will be called multiple times */
+		/* Cache subscription information, it will be called multiple times.
+		 * Hash with the SAME FNV-1a the subscription daemon uses (grouphash on
+		 * nodes); the old MD5 here made every "Sub (…)" tab stay empty while the
+		 * nodes fell into the plain "Nodes" list. */
 		let subinfo = [];
 		for (let suburl of (uci.get(data[0], 'subscription', 'subscription_url') || [])) {
 			const url = new URL(suburl);
-			const urlhash = hp.calcStringMD5(suburl.replace(/#.*$/, ''));
+			const urlhash = hp.calcStringFNV(suburl.replace(/#.*$/, ''));
 			const title = url.hash ? decodeURIComponent(url.hash.slice(1)) : url.hostname;
 			subinfo.push({ 'hash': urlhash, 'title': title });
 		}
