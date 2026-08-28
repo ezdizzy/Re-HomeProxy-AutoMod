@@ -11,6 +11,117 @@ msgstr ""
 msgid "— select a preset —"
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "%d alive, %d down, %d total"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Active node"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Alive"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Chain"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Close all connections"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Connections"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Connections monitoring is unavailable"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Core"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Delay"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Downloaded"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Failed to close connections"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "No active connections"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "No nodes configured"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+#: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
+
+msgid "Node Monitoring"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Node monitoring is unavailable"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Not in config"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Rule"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Running"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Timeout"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Unmeasured"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Unsupported by core"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Uploaded"
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2931
 msgid "%d/%d passed"
 msgstr ""

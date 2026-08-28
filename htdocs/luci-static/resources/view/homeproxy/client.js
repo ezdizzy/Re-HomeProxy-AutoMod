@@ -310,13 +310,15 @@ return view.extend({
 		o = s.taboption('routing', form.Value, 'main_urltest_interval', _('Test interval'),
 			_('How often each node is tested (seconds). Lower = faster failover, higher = less overhead.'));
 		o.datatype = 'uinteger';
-		o.placeholder = '180';
+		o.placeholder = '30';
+		o.default = '30';
 		o.depends('main_node', 'urltest');
 
 		o = s.taboption('routing', form.Value, 'main_urltest_tolerance', _('Test tolerance'),
 			_('Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values.'));
 		o.datatype = 'uinteger';
 		o.placeholder = '150';
+		o.default = '150';
 		o.depends('main_node', 'urltest');
 
 		o = s.taboption('routing', form.ListValue, 'main_udp_node', _('Main UDP node'),
@@ -387,13 +389,15 @@ return view.extend({
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_interval', _('Test interval'),
 			_('The test interval in seconds.'));
 		o.datatype = 'uinteger';
-		o.placeholder = '180';
+		o.placeholder = '30';
+		o.default = '30';
 		o.depends('main_udp_node', 'urltest');
 
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_tolerance', _('Test tolerance'),
 			_('The test tolerance in milliseconds.'));
 		o.datatype = 'uinteger';
 		o.placeholder = '150';
+		o.default = '150';
 		o.depends('main_udp_node', 'urltest');
 
 		o = s.taboption('routing', form.Flag, 'proxy_calls',

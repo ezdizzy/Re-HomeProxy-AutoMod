@@ -50,6 +50,14 @@
 			"path": "homeproxy/status"
 		}
 	},
+	"admin/services/homeproxy/monitor": {
+		"title": "Node Monitoring",
+		"order": 25,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/monitor"
+		}
+	},
 	"admin/services/homeproxy/diagnostics": {
 		"title": "Diagnostics",
 		"order": 40,

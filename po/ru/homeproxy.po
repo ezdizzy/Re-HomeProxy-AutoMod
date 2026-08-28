@@ -10,6 +10,117 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js:206
 
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "%d alive, %d down, %d total"
+msgstr "Работают: %d, не отвечают: %d, всего: %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Active node"
+msgstr "Активный узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Alive"
+msgstr "Работает"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Chain"
+msgstr "Цепочка"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Close all connections"
+msgstr "Закрыть все соединения"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Connections"
+msgstr "Соединения"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Connections monitoring is unavailable"
+msgstr "Мониторинг соединений недоступен"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Core"
+msgstr "Ядро"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Delay"
+msgstr "Задержка"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Downloaded"
+msgstr "Получено"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Failed to close connections"
+msgstr "Не удалось закрыть соединения"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "No active connections"
+msgstr "Нет активных соединений"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "No nodes configured"
+msgstr "Узлы не настроены"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+#: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
+
+msgid "Node Monitoring"
+msgstr "Мониторинг узлов"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Node monitoring is unavailable"
+msgstr "Мониторинг узлов недоступен"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Not in config"
+msgstr "Не в конфигурации"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Rule"
+msgstr "Правило"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Running"
+msgstr "Работает"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Timeout"
+msgstr "Таймаут"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Unmeasured"
+msgstr "Нет данных"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Unsupported by core"
+msgstr "Не поддерживается ядром"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Uploaded"
+msgstr "Отправлено"
+
 msgid "%s log"
 msgstr "Журнал %s"
 

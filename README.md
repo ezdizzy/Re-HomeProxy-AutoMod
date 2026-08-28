@@ -37,7 +37,12 @@ This mod adds the following on top of the original Re-HomeProxy app:
   auto-prunes dead/polluted servers and IPs. Configure it on the dedicated **DNS Settings** page; install/update mosdns
   from its card on **Core & Tools**.
 - **URLTest with three modes** — **Auto** (all imported nodes), **Preferred node + auto** (your chosen node first, the
-  fastest of the rest when it dies or slows down) and **Manual node list** (classic explicit selection).
+  fastest of the rest when it dies or slows down) and **Manual node list** (classic explicit selection). Test interval and
+  tolerance are configurable (30 s / 150 ms by default); node types the active core cannot build (e.g. MIERU on
+  hiddify-core) are kept out of the pool, so a dead node can no longer stick.
+- **Node Monitoring tab** — a Podkop/Forkop-style dashboard: status cards (core, active node with latency, Zapret, ByeDPI,
+  alive-node counter), a per-node latency/status/pool table and **connection monitoring** — a live list of active
+  connections with hosts, chains, rules and traffic (plus a "Close all connections" button).
 - **Tun TCP/UDP fix** — corrected Tun mode delivery of `tun_mark` flows into the tun device with a loop guard, so Tun
   routing works correctly.
 - **In-app self-update** — on the **Core & Tools** tab you can check for a new version and update the LuCI app (and the
@@ -74,6 +79,8 @@ This mod adds the following on top of the original Re-HomeProxy app:
 - **Subscription support** — import nodes from subscription links (sing-box JSON / Hiddify, base64 / plain share-links,
   and Xray/V2Ray JSON configs) and update them on demand.
 - **Diagnostics** — a built-in page to check core/system health, inspect ports, and generate a shareable report.
+- **Node Monitoring** — a visual dashboard: which nodes are alive, their latency, Zapret/ByeDPI usage and active
+  connections (the **Node Monitoring** tab).
 - **Automation** — auto-detect blocked sites and route them through the proxy/ByeDPI/Zapret (see *AutoMod modifications*).
 - **In-app self-update** — update the LuCI app from the **Core & Tools** tab.
 - **Modern web interface** — clean, responsive LuCI UI with node management, ACL traffic routing, and NFT rule control.
