@@ -609,15 +609,31 @@ function is_excluded(host, ignore_lists) {
 
 /* Tracker/telemetry farms mint UNLIMITED unique subdomains
  * (<uuid>-netseer-ipaddr-assoc.xz.fbcdn.net — 100+ state entries seen). Collapse
- * a leading hex/UUID label onto the base domain: routing by suffix on the base
- * covers every variant, so one probe/entry replaces thousands. MODULE scope and
- * ABOVE all callers: this ucode build neither hoists function declarations nor
- * shares closures between sibling nested functions (hot_set lesson). */
+ * a leading CANONICAL UUID (8-4-4-4-12 hex) onto the base domain: routing by
+ * suffix on the base covers every variant, so one probe/entry replaces
+ * thousands. The UUID is matched as a PREFIX of the first label, not the whole
+ * label: farms fuse it with a text suffix INSIDE the same label
+ * ("<uuid>-netseer-ipaddr-assoc"), and the old whole-label regex silently
+ * missed every real mint (live-verified NO MATCH on the router). Requiring the
+ * full 8-4-4-4-12 shape keeps hex-looking non-UUID hosts like
+ * "deadbeef-corp.com" untouched. MODULE scope and ABOVE all callers: this
+ * ucode build neither hoists function declarations nor shares closures between
+ * sibling nested functions (hot_set lesson). */
 function collapse_uuid_host(h) {
 	const parts = split(h, '.');
-	if (length(parts) >= 3 && match(parts[0], /^[0-9a-f]{8,}(-[0-9a-f]{4,})*$/i))
+	if (length(parts) < 3) return h;
+	if (!match(parts[0], /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i))
+		return h;
+	/* Pure-UUID label: the label disappears entirely
+	 * (<uuid>.xz.fbcdn.net -> xz.fbcdn.net). Fused one: keep the text tail
+	 * (<uuid>-netseer-ipaddr-assoc.xz.fbcdn.net ->
+	 * netseer-ipaddr-assoc.xz.fbcdn.net). */
+	if (length(parts[0]) === 36)
 		return join('.', slice(parts, 1));
-	return h;
+	if (substr(parts[0], 36, 1) !== '-')
+		return h;
+	const rest = substr(parts[0], 37);
+	return (length(rest) ? rest + '.' : '') + join('.', slice(parts, 1));
 }
 
 /* ── Discovery ──────────────────────────────────────────────────────────── */
@@ -1038,8 +1054,10 @@ echo done > "$PRE.done"
 			continue;
 		}
 		/* Self-heal legacy UUID-minted entries: collapse to the base domain —
-		 * routing by suffix on the base covers every minted variant. */
-		const cd = collapse_uuid_host(d);
+		 * routing by suffix on the base covers every variant. Older builds also
+		 * wrote UPPERCASE minted variants (no lc() in intake) — lowercase the
+		 * result so exactly one canonical entry remains. */
+		const cd = lc(collapse_uuid_host(d));
 		if (cd !== d) {
 			log('collapsing learned entry to base domain: ' + d + ' -> ' + cd);
 			auto_set[cd] = true;
@@ -1083,6 +1101,25 @@ echo done > "$PRE.done"
 		write_auto_ip_list(auto_ip_set);
 	let state = load_state();
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
+	/* Legacy sweep: old builds PERSISTED 'unknown' records (both probes
+	 * inconclusive — transient/junk/non-HTTP endpoints); one DNS-storm burst
+	 * could add hundreds, and 720 such records were seen long after the
+	 * build that wrote them was gone (PRUNE_AGE is 14 days). Current code
+	 * never writes this status (classify drops it on sight) — purge the
+	 * accumulated backlog once at startup. */
+	let unknown_dropped = 0;
+	for (let h in keys(state)) {
+		if (h === '__dns_offset') continue;
+		if (type(state[h]) !== 'object') { delete state[h]; continue; }
+		if (state[h].status === 'unknown' && !auto_set[h] && !auto_ip_set[h]) {
+			delete state[h];
+			unknown_dropped++;
+		}
+	}
+	if (unknown_dropped > 0) {
+		save_state(state);
+		log('purged ' + unknown_dropped + ' legacy unknown-status state records');
+	}
 
 	/* When the main path is plain Direct there is no proxy side to probe: auto-proxy-in
 	 * routes to a direct outbound, so the "proxy" probe is a copy of the direct one and
