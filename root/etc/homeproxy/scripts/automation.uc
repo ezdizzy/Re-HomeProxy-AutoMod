@@ -131,6 +131,12 @@ const MIN_IP_SEEN = 2;
  * "user notices the hang" to "site rides the proxy": ~1-3 daemon cycles. */
 const HOT_MIN_FREQ = 3;
 const HOT_COOLDOWN = 600;
+/* Persistent-pain override: when the user keeps hammering a host for this many
+ * consecutive passes while the verdict is still direct/direct_pending, the probe
+ * is judged LIARS (short GET catches a lucky DPI window; the real H2 page dies) —
+ * force-learn with a proxy-reachability verification. */
+const PAIN_PASSES = 3;
+const FORCE_LEARN_MAX = 2;
 
 /* State hygiene: records for hosts NOT in any active list (learned/direct/proxy/
  * excluded) expire after 14 days without a probe, and the whole non-listed working
@@ -1305,7 +1311,22 @@ echo done > "$PRE.done"
 			if (type(cst) === 'object') {
 				const sv = int(cst.sight || 0) + 1;
 				cst.sight = (sv > 6) ? 6 : sv;
+				cst.sight_t = time();
 			}
+		}
+		/* Persistent-pain counter: climbs every pass the user keeps hammering a
+		 * direct-verdict host; resets the moment pain stops or verdict flips.
+		 * Sight counts only if FRESH (seen within 10 min) — a single long-past
+		 * storm must never keep a host permanently hot. */
+		for (let h in keys(domain_candidates)) {
+			const cst = state[h];
+			if (type(cst) !== 'object') continue;
+			const eff_sight = ((time() - int(cst.sight_t || 0)) < 600) ? int(cst.sight || 0) : 0;
+			if ((eff_sight >= HOT_MIN_FREQ) &&
+			    (cst.status === 'direct' || cst.status === 'direct_pending'))
+				cst.pain_passes = int(cst.pain_passes || 0) + 1;
+			else if (cst.pain_passes)
+				cst.pain_passes = 0;
 		}
 
 		let priority = {};
@@ -1357,9 +1378,10 @@ echo done > "$PRE.done"
 				if (!escape) {
 					/* Escape 2 (hot lane): the user is hammering this host —
 					 * within this pass (dns_freq) or accumulated across recent
-					 * passes (st.sight). Emergency reverify, per-host cooldown. */
+					 * passes (fresh st.sight). Emergency reverify, cooldown. */
+					const eff_sight = ((time() - int(st.sight_t || 0)) < 600) ? int(st.sight || 0) : 0;
 					const hot_freq = (int(dns_freq[dom]) || 0) >= HOT_MIN_FREQ;
-					const hot_sight = (st.sight && int(st.sight) >= HOT_MIN_FREQ);
+					const hot_sight = eff_sight >= HOT_MIN_FREQ;
 					if (st.status === 'direct' && domain_candidates[dom] &&
 					    (hot_freq || hot_sight) &&
 					    (!st.hot_check || ((now - int(st.hot_check)) > HOT_COOLDOWN))) {
@@ -1389,6 +1411,53 @@ echo done > "$PRE.done"
 				/* A client may resolve a BARE IP literal (dnsmasq logs it like a name);
 				 * classify by content so the UI Type column stays truthful. */
 				classify(sel[i], d_res, p_res, !!match(sel[i], /^(\d{1,3}\.){3}\d{1,3}$/));
+			}
+
+			/* ── Persistent-pain override ────────────────────────────────────
+			 * The user kept hammering a direct-verdict host for PAIN_PASSES
+			 * passes while probes kept "passing" — short GETs slip through the
+			 * DPI window but the real page dies (chat.qwen.ai pattern). The
+			 * user's sustained suffering outranks the probe: verify the PROXY
+			 * reaches the host and learn it outright. */
+			let force = [];
+			for (let i = 0; i < length(sel); i++) {
+				const dom = sel[i];
+				const fst = state[dom];
+				if (!fst || type(fst) !== 'object') continue;
+				if (auto_set[dom] || is_excluded(dom)) continue;
+				if ((int(fst.pain_passes || 0) >= PAIN_PASSES) && length(force) < FORCE_LEARN_MAX)
+					push(force, { i: 'f' + length(force), h: dom, dwi: 'd' + i, pwi: 'p' + i });
+			}
+			if (length(force) && !main_is_direct) {
+				/* Direct-passing hosts never got a proxy wave — measure now. */
+				let extra = [];
+				for (let f in force)
+					if (dwave[f.dwi] && dwave[f.dwi].ok)
+						push(extra, { i: f.i, h: f.h });
+				let fwave = length(extra) ? probe_all(extra, 'proxy', timeout) : {};
+				for (let f in force) {
+					const dom = f.h;
+					const p_ok = (pwave[f.pwi] && pwave[f.pwi].ok) || (fwave[f.i] && fwave[f.i].ok);
+					const fst = state[dom];
+					if (p_ok) {
+						auto_set[dom] = true;
+						fst.status = 'blocked';
+						fst.confirms = 0;
+						fst.direct = (dwave[f.dwi] || {}).code || '000';
+						fst.proxy = (fwave[f.i] || pwave[f.pwi] || {}).code || '200';
+						fst.added = time();
+						fst.pain_passes = 0;
+						fst.sight = 0;
+						delete fst.dconfirms;
+						write_auto_list(auto_set);
+						log('learned (persistent user pain overrides passing probes): ' + dom);
+						pending_reload = true;
+						pending_new++;
+					} else {
+						log('pain override skipped — proxy cannot reach ' + dom);
+						fst.pain_passes = 0;
+					}
+				}
 			}
 		}
 
