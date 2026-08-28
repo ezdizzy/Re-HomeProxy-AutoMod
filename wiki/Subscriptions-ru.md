@@ -16,7 +16,7 @@
 | `vmess://` | VMess (формат v2rayN) |
 | `ss://` | Shadowsocks / Shadowsocks 2022 |
 | `trojan://` | Trojan |
-| `hysteria://`, `hysteria2://`, `hy2://` | Hysteria / Hysteria2 |
+| `hysteria://`, `hysteria2://`, `hy2://` | Hysteria / Hysteria2 — hysteria2 включает **port hopping** (официальные multi-port ссылки `host:443,5000-6000`, сторонний параметр `?mport=` и sing-box JSON `server_ports` без фиксированного порта) |
 | `tuic://` | TUIC |
 | `naive://` | NaïveProxy |
 | `mieru://` | Mieru |

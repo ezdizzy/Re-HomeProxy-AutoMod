@@ -15,6 +15,24 @@ import { parseURL, decodeBase64Str, validation, isEmpty } from 'homeproxy';
 import { connect } from 'ubus';
 const sing_features = connect().call('luci.homeproxy', 'singbox_get_features', {}) || {};
 
+/* Hysteria2 port-hopping spec: "443", "443-8443", "443,5000-6000" (colon ranges
+ * accepted too) → sing-box server_ports entries ("min:max"); null on garbage. */
+export function parse_port_list(list) {
+	let ports = [];
+	for (let tok in split('' + list, ',')) {
+		tok = trim(tok);
+		if (match(tok, /^\d+$/))
+			push(ports, tok + ':' + tok);
+		else if (match(tok, /^\d+-\d+$/))
+			push(ports, replace(tok, /-/, ':'));
+		else if (match(tok, /^\d+:\d+$/))
+			push(ports, tok);
+		else
+			return null;
+	}
+	return length(ports) ? ports : null;
+};
+
 export function parse_uri(uri, log) {
 	if (type(log) != 'function') log = function() {};
 	let config, url, params;
@@ -105,29 +123,82 @@ export function parse_uri(uri, log) {
 			break;
 		case 'hysteria2':
 		case 'hy2':
-			/* https://v2.hysteria.network/docs/developers/URI-Scheme/ */
-			url = parseURL('http://' + uri[1]) || {};
-			params = url.searchParams || {};
+			/* https://v2.hysteria.network/docs/developers/URI-Scheme/
+			 * Manual parse: the official URI carries port hopping in the PORT
+			 * component (hysteria2://pass@host:443,5000-6000/) which parseURL
+			 * rejects as a non-numeric port (dropping the whole node), and
+			 * third-party links may use ?mport= instead. */
+			let hy2_str = trim(uri[1]);
+			let hy2_label = null;
+
+			const hy2_hash = index(hy2_str, '#');
+			if (hy2_hash >= 0) {
+				hy2_label = urldecode(substr(hy2_str, hy2_hash + 1));
+				hy2_str = substr(hy2_str, 0, hy2_hash);
+			}
 
 			if (!sing_features.with_quic) {
-				log(sprintf('Skipping unsupported %s node: %s.', uri[0], urldecode(url.hash) || url.hostname));
+				log(sprintf('Skipping unsupported %s node: %s.', uri[0], hy2_label || ''));
 				log(sprintf('Please rebuild sing-box with %s support!', 'QUIC'));
 				return null;
 			}
 
+			let hy2_params = {};
+			const hy2_q = index(hy2_str, '?');
+			if (hy2_q >= 0) {
+				hy2_params = urldecode_params(substr(hy2_str, hy2_q + 1)) || {};
+				hy2_str = substr(hy2_str, 0, hy2_q);
+			}
+			hy2_str = replace(hy2_str, /\/+$/, '');
+
+			let hy2_pass = null;
+			const hy2_at = index(hy2_str, '@');
+			if (hy2_at >= 0) {
+				hy2_pass = urldecode(substr(hy2_str, 0, hy2_at));
+				hy2_str = substr(hy2_str, hy2_at + 1);
+			}
+
+			/* host:ports — the host may be a bracketed IPv6 */
+			let hy2_host = hy2_str, hy2_portlist = null;
+			if (substr(hy2_str, 0, 1) === '[') {
+				const hy2_close = index(hy2_str, ']');
+				if (hy2_close >= 0) {
+					hy2_host = substr(hy2_str, 1, hy2_close - 1);
+					if (substr(hy2_str, hy2_close + 1, 1) === ':')
+						hy2_portlist = substr(hy2_str, hy2_close + 2);
+				}
+			} else {
+				const hy2_colon = index(hy2_str, ':');
+				if (hy2_colon >= 0) {
+					hy2_host = substr(hy2_str, 0, hy2_colon);
+					hy2_portlist = substr(hy2_str, hy2_colon + 1);
+				}
+			}
+
+			let hy2_hop = null, hy2_port = hy2_portlist;
+			if (hy2_portlist && match(hy2_portlist, /[,-]/)) {
+				/* Official multi-port: first port is primary, all listed ports hop */
+				hy2_hop = parse_port_list(hy2_portlist);
+				hy2_port = replace(split(hy2_portlist, ',')[0], /[-:].*/, '');
+			}
+			if (!hy2_hop && hy2_params.mport) {
+				/* Third-party (v2rayN et al.): hopping rides in ?mport= */
+				hy2_hop = parse_port_list(hy2_params.mport);
+				hy2_port = hy2_port || replace(split('' + hy2_params.mport, ',')[0], /[-:].*/, '');
+			}
+
 			config = {
-				label: url.hash ? urldecode(url.hash) : null,
+				label: hy2_label,
 				type: 'hysteria2',
-				address: url.hostname,
-				port: url.port,
-				password: url.username ? (
-					urldecode(url.username + (url.password ? (':' + url.password) : ''))
-				) : null,
-				hysteria_obfs_type: params.obfs,
-				hysteria_obfs_password: params['obfs-password'],
+				address: hy2_host,
+				port: hy2_port || '443',
+				password: hy2_pass,
+				hysteria_obfs_type: hy2_params.obfs || null,
+				hysteria_obfs_password: hy2_params['obfs-password'] || hy2_params.obfsPassword || null,
+				hysteria_hopping_port: hy2_hop,
 				tls: '1',
-				tls_insecure: (params.insecure === '1') ? '1' : '0',
-				tls_sni: params.sni
+				tls_insecure: (hy2_params.insecure in ['1', 'true'] || hy2_params.allow_insecure in ['1', 'true']) ? '1' : '0',
+				tls_sni: hy2_params.sni
 			};
 
 			break;
@@ -165,6 +236,7 @@ export function parse_uri(uri, log) {
 		case 'socks':
 		case 'socks4':
 		case 'socks4a':
+		case 'socks5':
 		case 'socsk5':
 		case 'socks5h':
 			url = parseURL('http://' + uri[1]) || {};
@@ -400,6 +472,7 @@ export function parse_uri(uri, log) {
 				tls: '1',
 				tls_sni: params.sni,
 				tls_alpn: params.alpn ? split(urldecode(params.alpn), ',') : null,
+				tls_insecure: (params.allow_insecure in ['1', 'true'] || params.insecure in ['1', 'true']) ? '1' : '0',
 			};
 
 			break;
@@ -674,6 +747,11 @@ export function parse_uri(uri, log) {
 		} else if (!config.label)
 			config.label = (validation('ip6addr', config.address) ?
 				`[${config.address}]` : config.address) + ':' + config.port;
+	} else if (type(uri) === 'array' && !isEmpty(uri[0]) &&
+	           match(uri[0], /^[a-zA-Z][a-zA-Z0-9+.-]{0,15}$/)) {
+		/* Looks like a link scheme we have no parser for (ssr://, snell://, …) —
+		 * say so instead of silently dropping the line. */
+		log(sprintf('Skipping unsupported link scheme: %s://', uri[0]));
 	}
 
 	return config;

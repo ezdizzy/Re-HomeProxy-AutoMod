@@ -16,7 +16,7 @@ The **Import share links** button accepts one link per line. Supported schemes:
 | `vmess://` | VMess (v2rayN format) |
 | `ss://` | Shadowsocks / Shadowsocks 2022 |
 | `trojan://` | Trojan |
-| `hysteria://`, `hysteria2://`, `hy2://` | Hysteria / Hysteria2 |
+| `hysteria://`, `hysteria2://`, `hy2://` | Hysteria / Hysteria2 — hysteria2 incl. **port hopping** (official multi-port links `host:443,5000-6000`, third-party `?mport=`, and sing-box JSON `server_ports` without a fixed port) |
 | `tuic://` | TUIC |
 | `naive://` | NaïveProxy |
 | `mieru://` | Mieru |

@@ -337,30 +337,52 @@ function parseShareLink(uri, features) {
 
 			break;
 		case 'hysteria2':
-		case 'hy2':
-			/* https://v2.hysteria.network/docs/developers/URI-Scheme/ */
+		case 'hy2': {
+			/* https://v2.hysteria.network/docs/developers/URI-Scheme/
+			 * The official URI carries port hopping in the PORT component
+			 * (hysteria2://pass@host:443,5000-6000/) which URL() silently drops
+			 * as a non-numeric port; third-party links use ?mport= instead. */
+			if (!features.with_quic)
+				return null;
+
+			const toPortRanges = (s) => {
+				const list = s.split(',').map(p => p.trim()).filter(p => p)
+					.map(p => /^[0-9]+$/.test(p) ? (p + ':' + p) : p.replace('-', ':'))
+					.filter(p => /^[0-9]+:[0-9]+$/.test(p));
+				return list.length ? list : null;
+			};
+
+			let hopping = null;
+			const hy2m = uri[1].match(/^((?:[^@\/?#]+)@)?(\[[^\]]*\]|[^\/?#]+?):([0-9][0-9,\-]*)([\/?#].*)?$/);
+			if (hy2m && /[-,]/.test(hy2m[3])) {
+				hopping = toPortRanges(hy2m[3]);
+				uri[1] = (hy2m[1] || '') + hy2m[2] + ':' + hy2m[3].split(/[,-]/)[0] + (hy2m[4] || '');
+			}
+
 			url = new URL('http://' + uri[1]);
 			params = url.searchParams;
 
-			if (!features.with_quic)
-				return null;
+			if (!hopping && params.get('mport'))
+				hopping = toPortRanges(params.get('mport'));
 
 			config = {
 				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
 				type: 'hysteria2',
 				address: url.hostname,
-				port: url.port || '80',
+				port: url.port || '443',
 				password: url.username ? (
 					decodeURIComponent(url.username + (url.password ? (':' + url.password) : ''))
 				) : null,
 				hysteria_obfs_type: params.get('obfs'),
-				hysteria_obfs_password: params.get('obfs-password'),
+				hysteria_obfs_password: params.get('obfs-password') || params.get('obfsPassword'),
+				hysteria_hopping_port: hopping,
 				tls: '1',
 				tls_sni: params.get('sni'),
 				tls_insecure: (params.get('insecure') === '1' || params.get('allow_insecure') === '1') ? '1' : '0'
 			};
 
 			break;
+		}
 		case 'mieru':
 			/* https://github.com/enfein/mieru */
 			url = new URL('http://' + uri[1]);
@@ -418,6 +440,7 @@ function parseShareLink(uri, features) {
 		case 'socks':
 		case 'socks4':
 		case 'socks4a':
+		case 'socks5':
 		case 'socsk5':
 		case 'socks5h':
 			url = new URL('http://' + uri[1]);
