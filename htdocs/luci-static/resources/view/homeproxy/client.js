@@ -580,6 +580,7 @@ return view.extend({
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
+			}
 
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
@@ -965,6 +966,7 @@ return view.extend({
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
+			}
 
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
@@ -1463,6 +1465,7 @@ return view.extend({
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
+			}
 
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
@@ -1742,6 +1745,7 @@ return view.extend({
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
+			}
 
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
