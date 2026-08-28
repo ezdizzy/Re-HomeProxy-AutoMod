@@ -1,0 +1,6 @@
+# Twitch — companion for the "twitch" routing preset (itdoginfo allow-domains).
+twitch.tv
+twitchcdn.net
+ttvnw.net
+jtvnw.net
+ext-twitch.tv

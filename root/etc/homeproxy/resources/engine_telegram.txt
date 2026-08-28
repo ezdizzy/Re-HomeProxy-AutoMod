@@ -1,0 +1,11 @@
+# Telegram — companion for the "telegram" routing preset (itdoginfo allow-domains).
+# Never learned by automation when a telegram→Zapret/ByeDPI rule is enabled.
+telegram.org
+t.me
+telegram.me
+telegram.dog
+telesco.pe
+tdesktop.com
+telegram-cdn.org
+cdn-telegram.org
+core.telegram.org

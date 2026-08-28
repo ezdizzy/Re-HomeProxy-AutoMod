@@ -1,0 +1,8 @@
+# X/Twitter — companion for the "twitter" routing preset (itdoginfo allow-domains).
+x.com
+twitter.com
+twimg.com
+t.co
+twtrcdn.com
+periscope.tv
+pscp.tv

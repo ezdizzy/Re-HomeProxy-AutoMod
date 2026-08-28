@@ -1295,6 +1295,19 @@ echo done > "$PRE.done"
 		 * are re-added to the candidate pool EVERY pass regardless of discovery
 		 * sources AND get absolute priority over fresh candidates — finishing a
 		 * learn beats starting one. IPs ride along with the seen-threshold bypass. */
+		/* Persistent sighting accumulator: browser DNS caches / built-in DoH
+		 * BYPASS dnsmasq, so a retry storm often yields just ONE SNI/clash
+		 * sighting per pass — dns_freq (per-pass) never reached the hot
+		 * threshold and the hot lane stayed silent for hours (chat.qwen.ai
+		 * case). st.sight accumulates ACROSS passes and decays when unseen. */
+		for (let h in keys(domain_candidates)) {
+			const cst = state[h];
+			if (type(cst) === 'object') {
+				const sv = int(cst.sight || 0) + 1;
+				cst.sight = (sv > 6) ? 6 : sv;
+			}
+		}
+
 		let priority = {};
 		for (let h in keys(state)) {
 			let pst = state[h];
@@ -1342,15 +1355,18 @@ echo done > "$PRE.done"
 				const min_age = PERF ? 10800 : 21600;
 				let escape = (st.status === 'direct' && domain_candidates[dom] && (now - st.last_probe) > min_age);
 				if (!escape) {
-					/* Escape 2 (hot lane): the user is hammering this host RIGHT
-					 * NOW while we still claim it works directly — emergency
-					 * reverify, throttled per-host. */
+					/* Escape 2 (hot lane): the user is hammering this host —
+					 * within this pass (dns_freq) or accumulated across recent
+					 * passes (st.sight). Emergency reverify, per-host cooldown. */
+					const hot_freq = (int(dns_freq[dom]) || 0) >= HOT_MIN_FREQ;
+					const hot_sight = (st.sight && int(st.sight) >= HOT_MIN_FREQ);
 					if (st.status === 'direct' && domain_candidates[dom] &&
-					    ((int(dns_freq[dom]) || 0) >= HOT_MIN_FREQ) &&
+					    (hot_freq || hot_sight) &&
 					    (!st.hot_check || ((now - int(st.hot_check)) > HOT_COOLDOWN))) {
 						st.hot_check = now;
 						hot_set[dom] = true;
 						escape = true;
+						log('hot lane: user is hammering ' + dom + ' while verdict is direct — re-probing');
 					}
 				}
 				if (!escape)

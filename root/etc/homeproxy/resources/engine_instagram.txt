@@ -1,0 +1,6 @@
+# Instagram — companion for the "instagram" routing preset (itdoginfo allow-domains).
+instagram.com
+instagr.am
+cdninstagram.com
+ig.me
+igcdn.com

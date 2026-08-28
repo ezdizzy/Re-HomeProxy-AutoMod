@@ -1,0 +1,10 @@
+# Facebook — companion for the "facebook" routing preset (itdoginfo allow-domains).
+# NOTE: base domains only — the netseer UUID-subdomain flood collapses to
+# xz.fbcdn.net / xx.fbcdn.net bases, which these entries already cover.
+facebook.com
+fb.com
+fb.me
+fbcdn.net
+facebook.net
+messenger.com
+m.me

@@ -1,0 +1,8 @@
+# OpenAI / ChatGPT — companion for the "openai" routing preset (itdoginfo allow-domains).
+openai.com
+chatgpt.com
+oaistatic.com
+oaiusercontent.com
+sora.com
+chat.openai.com
+api.openai.com

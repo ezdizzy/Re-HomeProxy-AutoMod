@@ -1,0 +1,11 @@
+# Discord — companion for the "discord" routing preset (itdoginfo allow-domains).
+# The automation engine never learns these: a <source>→Zapret/ByeDPI rule owns them.
+discord.com
+discord.gg
+discordapp.com
+discordapp.net
+discord.media
+discordstatus.com
+media.discordapp.net
+cdn.discordapp.com
+gateway.discord.gg
