@@ -489,7 +489,7 @@ function generate_outbound(node) {
 		version: (node.type === 'shadowtls') ? strToInt(node.shadowtls_version) : ((node.type === 'socks') ? node.socks_version : null),
 		/* Mieru */
 		portBindings: (is_hiddify && node.type === 'mieru' && node.mieru_protocol && node.mieru_port_range) ? [
-			{ protocol: node.mieru_protocol, portRange: node.mieru_port_range }
+			{ protocol: node.mieru_protocol, portRange: replace(node.mieru_port_range, /:/g, '-') }
 		] : null,
 		multiplexing: (node.type === 'mieru') ? node.mieru_multiplexing : null,
 		handshake_mode: (is_hiddify && node.type === 'mieru') ? node.mieru_handshake_mode : null,
@@ -1329,20 +1329,8 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 	interval = isEmpty(interval) ? '30' : interval;
 	tolerance = isEmpty(tolerance) ? '150' : tolerance;
 
-	/* hiddify-core builds a mieru outbound it cannot actually use: the core marks
-	 * the outbound type "Invalid" in the clash API and a dead Invalid member
-	 * POISONS the URLTest group — the selector sticks to it and never fails over
-	 * even while every other member is alive (device-confirmed on hiddify-core
-	 * 4.1.0). Exclude types the active core rejects from the pool; a mieru node
-	 * chosen directly as main node stays the user's explicit choice. */
-	let pool_skip = (cfg) => (is_hiddify && cfg.type === 'mieru');
-
 	if (mode === 'auto') {
 		uci.foreach(uciconfig, ucinode, (cfg) => {
-			if (pool_skip(cfg)) {
-				warn(sprintf('homeproxy: node %s (%s) excluded from URLTest pool %s — core reports the type as invalid.\n', cfg['.name'], cfg.type, tag));
-				return;
-			}
 			push(outbounds, `cfg-${cfg['.name']}-out`);
 			push(extra, cfg['.name']);
 		});
@@ -1353,7 +1341,7 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 			push(extra, pref);
 		}
 		uci.foreach(uciconfig, ucinode, (cfg) => {
-			if (cfg['.name'] === pref || pool_skip(cfg))
+			if (cfg['.name'] === pref)
 				return;
 			push(rest, `cfg-${cfg['.name']}-out`);
 			push(extra, cfg['.name']);
@@ -1386,8 +1374,6 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		 * truly no nodes at all does main-out fall back to direct. */
 		let any = [], any_extra = [];
 		uci.foreach(uciconfig, ucinode, (cfg) => {
-			if (pool_skip(cfg))
-				return;
 			push(any, `cfg-${cfg['.name']}-out`);
 			push(any_extra, cfg['.name']);
 		});

@@ -38,8 +38,9 @@ This mod adds the following on top of the original Re-HomeProxy app:
   from its card on **Core & Tools**.
 - **URLTest with three modes** — **Auto** (all imported nodes), **Preferred node + auto** (your chosen node first, the
   fastest of the rest when it dies or slows down) and **Manual node list** (classic explicit selection). Test interval and
-  tolerance are configurable (30 s / 150 ms by default); node types the active core cannot build (e.g. MIERU on
-  hiddify-core) are kept out of the pool, so a dead node can no longer stick.
+  tolerance are configurable (30 s / 150 ms by default); existing connections are interrupted on switch. The mieru
+  emission for hiddify-core is fixed (port-range format) — such a node used to become "Invalid" and stall URLTest
+  failover; the monitor flags nodes the core cannot build.
 - **Node Monitoring tab** — a Podkop/Forkop-style dashboard: status cards (core, active node with latency, Zapret, ByeDPI,
   alive-node counter), a per-node latency/status/pool table and **connection monitoring** — a live list of active
   connections with hosts, chains, rules and traffic (plus a "Close all connections" button).

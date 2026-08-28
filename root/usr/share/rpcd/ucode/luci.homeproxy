@@ -745,7 +745,7 @@ const methods = {
 				const cp = (is_main && main_node !== 'urltest') ? proxies['main-out'] : proxies[tag];
 				const hist = cp?.history;
 				const delay = (hist && length(hist)) ? hist[length(hist) - 1].delay : null;
-				const excl = unsupported(ctype);
+				const excl = (cp && cp.type === 'Invalid');
 				const in_tcp = tcp_pool(sid), in_udp = udp_pool(sid);
 				let selected = false;
 				if (main_node === 'urltest')
@@ -756,7 +756,7 @@ const methods = {
 					selected = true;
 
 				let status;
-				if (excl && (in_tcp || in_udp))
+				if (excl)
 					status = 'unsupported';
 				else if (!cp)
 					status = 'not_in_config';
