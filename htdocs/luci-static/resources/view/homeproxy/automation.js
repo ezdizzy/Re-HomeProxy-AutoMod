@@ -173,6 +173,13 @@ return view.extend({
 		const countsEl = E('div', { 'class': 'automation-counts' });
 		const tableEl = E('div', { 'class': 'automation-table' });
 		const logEl = E('pre', { 'class': 'automation-log', style: 'max-height:300px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin:0; padding:8px; background:#1e1e1e; color:#ddd; border:1px solid #333; border-radius:4px; font-size:0.85em' });
+		/* Honest-state banner: the daemon is deliberately inert (no discovery, no
+		 * probes, no learning) whenever the routing setup gives it nothing to do —
+		 * say so instead of showing a live-looking monitor. */
+		const pauseEl = E('div', {
+			'class': 'automation-paused',
+			style: 'display:none; margin:8px 0; padding:8px 12px; border:1px solid #b8860b; background:#fff8e1; color:#7a5b00; border-radius:4px'
+		});
 
 		const fileInput = E('input', {
 			type: 'file',
@@ -224,6 +231,7 @@ return view.extend({
 		const panel = E('div', { 'class': 'automation-panel cbi-section' }, [
 			E('h3', {}, [ _('Monitor') ]),
 			countsEl,
+			pauseEl,
 			E('h4', {}, [ _('Learned sites') ]),
 			tableEl,
 			actions,
@@ -232,6 +240,13 @@ return view.extend({
 			E('h4', {}, [ _('Engine log') ]),
 			logEl
 		]);
+
+		const pauseReasons = {
+			disabled: _('Automation is disabled — enable it above to start learning.'),
+			custom: _('Automation is paused: Custom routing is active — the engine has no preset pools to learn from. Switch to "Bypass blocking" to resume.'),
+			global: _('Automation is paused: Global mode tunnels everything — there is nothing left to learn. Switch to "Bypass blocking" to resume.'),
+			direct: _('Automation is paused: Main node is Direct (no proxy) — there is no proxy side to verify against. Choose URLTest or a node as Main node to resume.')
+		};
 
 		function fmtTime(ts) {
 			if (!ts) return '—';
@@ -328,6 +343,13 @@ return view.extend({
 					_('Learned (blocked)') + ': <b>' + (c.learned || 0) + '</b> &nbsp;|&nbsp; ' +
 					_('Direct') + ': <b>' + (c.direct || 0) + '</b> &nbsp;|&nbsp; ' +
 					_('Unknown') + ': <b>' + (c.unknown || 0) + '</b>';
+				const reason = pauseReasons[st.paused];
+				if (reason) {
+					pauseEl.textContent = '⏸ ' + reason;
+					pauseEl.style.display = 'block';
+				} else {
+					pauseEl.style.display = 'none';
+				}
 				renderTable(st.learned);
 				logEl.textContent = st.log || '';
 			}).catch(function(e) {

@@ -1802,8 +1802,27 @@ const methods = {
 			let efd = popen('uci -q get homeproxy.automation.enabled 2>/dev/null');
 			if (efd) { enabled = trim(efd.read('all')); efd.close(); }
 
+			/* Why the engine is (or is not) allowed to learn right now — mirrors the
+			 * daemon's pass() gate so the UI can show an honest paused banner:
+			 * '' = learning active; 'disabled' | 'custom' | 'global' | 'direct'. */
+			let paused = '';
+			if (enabled !== '1')
+				paused = 'disabled';
+			let rmfd = popen('uci -q get homeproxy.config.routing_mode 2>/dev/null');
+			let rmode = 'proxy_banned_ru';
+			if (rmfd) { rmode = trim(rmfd.read('all')) || 'proxy_banned_ru'; rmfd.close(); }
+			let mnfd = popen('uci -q get homeproxy.config.main_node 2>/dev/null');
+			let mnode = 'nil';
+			if (mnfd) { mnode = trim(mnfd.read('all')) || 'nil'; mnfd.close(); }
+			if (paused === '')
+				paused = (rmode === 'custom' || rmode === 'custom_json') ? 'custom'
+				       : (rmode === 'global') ? 'global'
+				       : (mnode === 'direct-out' || mnode === 'nil') ? 'direct'
+				       : '';
+
 			return {
 				enabled: enabled,
+				paused: paused,
 				learned: learned,
 				counts: { blocked: length(blocked), direct: length(direct), unknown: length(unknown), learned: length(learned) },
 				log: log_tail

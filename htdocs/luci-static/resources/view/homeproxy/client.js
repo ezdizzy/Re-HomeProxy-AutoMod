@@ -188,7 +188,7 @@ return view.extend({
 		}
 
 		o = s.taboption('routing', form.ListValue, 'main_node', _('Main node') + ' 🔗',
-			_('Where the traffic matched by Routing Rules goes (everything unmatched always goes directly).<br>'
+			_('The exit for traffic matched by Routing Rules.<br>'
 			+ '• <b>URLTest</b> — automatic node selection by periodic latency measurement (Auto / Preferred + auto / Manual — configured below once selected).<br>'
 			+ '• A specific node — that node is always used.<br>'
 			+ '• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>'
@@ -250,6 +250,10 @@ return view.extend({
 		o.default = 'auto';
 		o.depends('main_node', 'urltest');
 		o.rmempty = false;
+		/* Retain: without it a save made while the main node is not URLTest
+		 * deletes the mode from UCI (rmempty=false + hidden => remove()), and
+		 * switching back to URLTest silently reset the user's mode to Auto. */
+		o.retain = true;
 
 		o = s.taboption('routing', form.ListValue, 'main_urltest_preferred', _('URLTest node'),
 			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
@@ -257,7 +261,21 @@ return view.extend({
 			o.value(i, proxy_nodes[i]);
 		o.depends({ 'main_node': 'urltest', 'main_urltest_mode': 'prefer' });
 		o.retain = true;
-		o.rmempty = false;
+		/* No rmempty=false: the framework's own empty check ("Option must not be
+		 * empty") ignores custom validators and hard-blocks saving whenever this
+		 * field is visible with no selectable nodes. The guarded validate below
+		 * keeps a proper error for the actively-misconfigured case instead. */
+		o.validate = function(section_id) {
+			if (this.map.data.get('homeproxy', 'config', 'main_node') !== 'urltest')
+				return true;
+			if (this.map.data.get('homeproxy', 'config', 'main_urltest_mode') !== 'prefer')
+				return true;
+			let value = this.section.formvalue(section_id, 'main_urltest_preferred');
+			if (section_id && !value)
+				return _('Expecting: %s').format(_('non-empty value'));
+
+			return true;
+		}
 
 		o = s.taboption('routing', hp.CBIStaticList, 'main_urltest_nodes', _('URLTest nodes'),
 			_('List of nodes to test.'));
@@ -281,7 +299,13 @@ return view.extend({
 			return true;
 		}
 		o.retain = true;
-		o.rmempty = false;
+		/* No rmempty=false here: LuCI's parse() rejects empty values of
+		 * non-rmempty options with "Option must not be empty" BEFORE custom
+		 * validators are consulted (element validity is cached and stays true
+		 * for untouched widgets). rmempty=true lets the framework silently skip
+		 * the empty write; the guarded validate above still blocks the real
+		 * misconfiguration (URLTest + manual + nothing selected) with a proper
+		 * message when the widget validates. */
 
 		o = s.taboption('routing', form.Value, 'main_urltest_interval', _('Test interval'),
 			_('How often each node is tested (seconds). Lower = faster failover, higher = less overhead.'));
@@ -318,6 +342,8 @@ return view.extend({
 		o.default = 'auto';
 		o.depends('main_udp_node', 'urltest');
 		o.rmempty = false;
+		/* Retain: see the main TCP mode twin above. */
+		o.retain = true;
 
 		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_preferred', _('URLTest node'),
 			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
@@ -325,7 +351,18 @@ return view.extend({
 			o.value(i, proxy_nodes[i]);
 		o.depends({ 'main_udp_node': 'urltest', 'main_udp_urltest_mode': 'prefer' });
 		o.retain = true;
-		o.rmempty = false;
+		/* No rmempty=false: see the main TCP preferred twin above. */
+		o.validate = function(section_id) {
+			if (this.map.data.get('homeproxy', 'config', 'main_udp_node') !== 'urltest')
+				return true;
+			if (this.map.data.get('homeproxy', 'config', 'main_udp_urltest_mode') !== 'prefer')
+				return true;
+			let value = this.section.formvalue(section_id, 'main_udp_urltest_preferred');
+			if (section_id && !value)
+				return _('Expecting: %s').format(_('non-empty value'));
+
+			return true;
+		}
 
 		o = s.taboption('routing', hp.CBIStaticList, 'main_udp_urltest_nodes', _('URLTest nodes'),
 			_('List of nodes to test.'));
@@ -345,7 +382,7 @@ return view.extend({
 			return true;
 		}
 		o.retain = true;
-		o.rmempty = false;
+		/* No rmempty=false: see the main TCP list twin above. */
 
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_interval', _('Test interval'),
 			_('The test interval in seconds.'));
@@ -359,30 +396,35 @@ return view.extend({
 		o.placeholder = '150';
 		o.depends('main_udp_node', 'urltest');
 
-o = s.taboption('routing', form.Flag, 'proxy_calls',
+		o = s.taboption('routing', form.Flag, 'proxy_calls',
 			_('Proxy calls') + ' 📞',
 			_('Route VoIP call ports (WhatsApp, Telegram, FaceTime, etc.) through the proxy.'));
-		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
+		/* Hidden while the main node is Direct: the flag promises proxy routing
+		 * that cannot happen without a proxy path. */
+		o.depends({'routing_mode': 'proxy_banned_ru', 'main_node': /^(?!direct-out$|nil$)/});
 		o.default = o.enabled;
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Flag, 'no_proxy_torrents',
 			_('Do not proxify torrents') + ' 🧲',
 			_('Force torrent traffic (BitTorrent protocol + common ports) to bypass the proxy.'));
-		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
+		o.depends({'routing_mode': 'proxy_banned_ru', 'main_node': /^(?!direct-out$|nil$)/});
 		o.default = o.enabled;
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.Flag, 'show_advanced_rules',
 			_('Advanced custom rules') + ' 👨‍💻',
 			_('Show the Custom Rules and Routing Nodes tabs for additional custom rules.'));
-		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
+		o.depends({'routing_mode': 'proxy_banned_ru'});
 		o.default = o.disabled;
 		o.rmempty = false;
+		/* Retain: a save made in another routing mode used to delete the flag,
+		 * silently hiding the advanced tabs again after returning. */
+		o.retain = true;
 
 		o = s.taboption('routing', form.ListValue, 'routing_mode', _('Routing mode'),
-			_('• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The Automation engine (its own tab) keeps these lists current automatically.<br>'
-			+ '• <b>Global</b> — ALL traffic goes through the Main node; no rules are used.<br>'
+			_('• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The Automation engine (its own page) keeps these lists current automatically.<br>'
+			+ '• <b>Global</b> — ALL traffic goes through the Main node; per-service rules are not used.<br>'
 			+ '• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>'
 			+ 'Changing the mode re-renders the page so only relevant options stay visible'));
 		o.value('proxy_banned_ru', _('Bypass blocking (rule lists)'));
@@ -414,7 +456,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 					if (!stubValidator.apply('port', i) && !stubValidator.apply('portrange', i))
 						return _('Expecting: %s').format(_('valid port value'));
 					if (ports.includes(i))
-						return _('Port %s alrealy exists!').format(i);
+						return _('Port %s already exists!').format(i);
 					ports = ports.concat(i);
 				}
 			}
@@ -441,6 +483,9 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		o.default = o.enabled;
 		o.rmempty = false;
 		o.depends({'routing_mode': 'custom_json', '!reverse': true});
+		/* Retain: without it a save made in Custom JSON (where this flag is
+		 * hidden) deleted it from UCI, silently losing the user's IPv6 choice. */
+		o.retain = true;
 		o.cfgvalue = function(section_id) {
 			const stored = uci.get('homeproxy', section_id, 'ipv6_support');
 			if (stored != null) return stored;
@@ -535,10 +580,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
-			} else if (/^bypass_(cn|ir)$/.test(_rm)) {
-				this.value('region-dns', _('Region DNS') + ' 🔓');
-				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
-			}
+
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
 					this.value(res['.name'], res.label);
@@ -725,30 +767,22 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			};
 		})(o);
 
-		/* Routing Rules start (per-service overrides — RU forward + CN/IR reverse) */
+		/* Routing Rules start (per-service overrides) */
 		s.tab('ru_rules', _('Routing Rules'));
 		o = s.taboption('ru_rules', form.SectionValue, '_ru_rules', form.TypedSection, 'proxy_ru_rule');
-		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/});
+		o.depends({'routing_mode': 'proxy_banned_ru'});
 
 		ss = o.subsection;
 		ss.addremove = true;
 		ss.anonymous = true;
 		ss.sortable = true;
 		ss.nodescriptions = true;
-		/* Forward (RU) vs reverse (CN/IR) invert the meaning of these rules, so the
-		 * description must follow the current mode. */
-		const _rmode_rules = uci.get('homeproxy', 'config', 'routing_mode');
-		if (_rmode_rules === 'bypass_cn' || _rmode_rules === 'bypass_ir') {
-			const _region_name = (_rmode_rules === 'bypass_cn') ? _('China') : _('Iran');
-			ss.description = _('Default route is through the proxy. %s domains and IPs (geosite + geoip) automatically go Direct. Rules added here are per-service overrides applied before that baseline — e.g. force a specific service Direct, or send it through a separate node.').format(_region_name);
-		} else {
-			ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a "YouTube → Zapret" rule here automatically. Combining engines works by rules: "YouTube → Zapret" + everything else on the Main node, or Main node = Direct with only some services via an engine.</em>');
-			/* Honest-state hint: with Main node = Direct every "Same as main node"
-			 * rule still matches but egresses directly — say so, hide the pointless
-			 * option for NEW rules, and point at the engines. */
-			if (uci.get('homeproxy', 'config', 'main_node') === 'direct-out')
-				ss.description += '<br><b>' + _('Main node is Direct: rules pointing at "Same as main node" currently egress directly (no tunnel). Switch them to Zapret/ByeDPI, or choose a real main node / URLTest.') + '</b>';
-		}
+		ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a "YouTube → Zapret" rule here automatically. Combining engines works by rules: "YouTube → Zapret" + everything else on the Main node, or Main node = Direct with only some services via an engine.</em>');
+		/* Honest-state hint: with Main node = Direct every "Same as main node"
+		 * rule still matches but egresses directly — say so, hide the pointless
+		 * option for NEW rules, and point at the engines. */
+		if (uci.get('homeproxy', 'config', 'main_node') === 'direct-out')
+			ss.description += '<br><b>' + _('Main node is Direct: rules pointing at "Same as main node" currently egress directly (no tunnel). Switch them to Zapret/ByeDPI, or choose a real main node / URLTest.') + '</b>';
 
 		so = ss.option(form.Flag, 'enabled', _('Enable'));
 		so.default = so.enabled;
@@ -833,6 +867,11 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			delete this.vallist;
 			if (uci.get(data[0], 'config', 'main_node') !== 'direct-out')
 				this.value('main-out', _('Same as main node'));
+			else if (section_id && uci.get(data[0], section_id, 'node') === 'main-out')
+				/* Direct mode: keep main-out selectable ONLY for rules that already
+				 * store it — hiding it entirely made those rules render a blank
+				 * selection while UCI still said main-out. */
+				this.value('main-out', _('Same as main node'));
 			this.value('urltest', _('Separate URLTest'));
 			for (let i in proxy_nodes)
 				this.value(i, proxy_nodes[i]);
@@ -873,7 +912,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		s.tab('routing_node', _('Routing Nodes'));
 		o = s.taboption('routing_node', form.SectionValue, '_routing_node', form.GridSection, 'routing_node');
 		o.depends('routing_mode', 'custom');
-		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/, 'show_advanced_rules': '1'});
+		o.depends({'routing_mode': 'proxy_banned_ru', 'show_advanced_rules': '1'});
 
 		ss = o.subsection;
 		ss.addremove = true;
@@ -896,13 +935,20 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 
 		so = ss.option(form.ListValue, 'node', _('Node'),
 			_('Outbound node'));
-		/* "Same as main node" exists in every mode EXCEPT custom routing and custom JSON */
-		const _rmode = uci.get('homeproxy', 'config', 'routing_mode');
-		if (_rmode !== 'custom' && _rmode !== 'custom_json')
-			so.value('main-out', _('Same as main node') + ' 🔗');
-		so.value('urltest', _('URLTest'));
-		for (let i in proxy_nodes)
-			so.value(i, proxy_nodes[i]);
+		/* "Same as main node" exists in every mode EXCEPT custom routing and custom
+		 * JSON. Built in .load() so a mode switch refreshes the list immediately
+		 * instead of keeping the render-time view. */
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+			const rm = uci.get(data[0], 'config', 'routing_mode');
+			if (rm !== 'custom' && rm !== 'custom_json')
+				this.value('main-out', _('Same as main node') + ' 🔗');
+			this.value('urltest', _('URLTest'));
+			for (let i in proxy_nodes)
+				this.value(i, proxy_nodes[i]);
+			return this.super('load', section_id);
+		};
 		so.validate = L.bind(hp.validateUniqueValue, this, data[0], 'routing_node', 'node');
 		so.editable = true;
 
@@ -919,10 +965,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
-			} else if (/^bypass_(cn|ir)$/.test(_rm)) {
-				this.value('region-dns', _('Region DNS') + ' 🔓');
-				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
-			}
+
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
 					this.value(res['.name'], res.label);
@@ -954,7 +997,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			delete this.vallist;
 
 			this.value('', _('Direct'));
-			if (/^(proxy_banned_ru|bypass_cn|bypass_ir)$/.test(uci.get(data[0], 'config', 'routing_mode')))
+			if (uci.get(data[0], 'config', 'routing_mode') === 'proxy_banned_ru')
 				this.value('main-out', _('Same as main node') + ' 🔗');
 			uci.sections(data[0], 'routing_node', (res) => {
 				if (res['.name'] !== section_id && res.enabled === '1')
@@ -991,7 +1034,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			so.value(i, proxy_nodes[i]);
 		so.depends('node', 'urltest');
 		so.validate = function(section_id) {
-			let value = this.section.formvalue(section_id, 'urltest_nodes');
+			let value = this.section.formvalue(section_id, 'urltest_nodes') || [];
 			if (section_id && !value.length)
 				return _('Expecting: %s').format(_('non-empty value'));
 
@@ -1025,7 +1068,10 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		so.placeholder = '180';
 		so.validate = function(section_id, value) {
 			if (section_id && value) {
-				let idle_timeout = this.section.formvalue(section_id, 'idle_timeout') || '1800';
+				/* The sibling option is 'urltest_idle_timeout' — 'idle_timeout'
+				 * never existed, so the comparison always ran against the
+				 * fallback and user-set idle timeouts were ignored. */
+				let idle_timeout = this.section.formvalue(section_id, 'urltest_idle_timeout') || '1800';
 				if (parseInt(value) > parseInt(idle_timeout))
 					return _('Test interval must be less or equal than idle timeout.');
 			}
@@ -1059,7 +1105,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 		s.tab('routing_rule', _('Custom Rules'));
 		o = s.taboption('routing_rule', form.SectionValue, '_routing_rule', form.GridSection, 'routing_rule');
 		o.depends('routing_mode', 'custom');
-		o.depends({'routing_mode': /^(proxy_banned_ru|bypass_cn|bypass_ir)$/, 'show_advanced_rules': '1'});
+		o.depends({'routing_mode': 'proxy_banned_ru', 'show_advanced_rules': '1'});
 
 		ss = o.subsection;
 		ss.addremove = true;
@@ -1417,10 +1463,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
-			} else if (/^bypass_(cn|ir)$/.test(_rm)) {
-				this.value('region-dns', _('Region DNS') + ' 🔓');
-				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
-			}
+
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
 					this.value(res['.name'], res.label);
@@ -1699,10 +1742,7 @@ o = s.taboption('routing', form.Flag, 'proxy_calls',
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
-			} else if (/^bypass_(cn|ir)$/.test(_rm)) {
-				this.value('region-dns', _('Region DNS') + ' 🔓');
-				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
-			}
+
 			uci.sections(data[0], 'dns_server', (res) => {
 				if (res.enabled === '1')
 					this.value(res['.name'], res.label);

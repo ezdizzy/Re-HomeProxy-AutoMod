@@ -503,6 +503,31 @@ msgstr ""
 msgid "Cannot remove: ByeDPI is selected as Main Node. Change Main Node first."
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Cannot remove: Zapret is selected as Main Node. Change Main Node first."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is disabled — enable it above to start learning."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is paused: Custom routing is active — the engine has no preset pools to learn from. Switch to \"Bypass blocking\" to resume."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is paused: Global mode tunnels everything — there is nothing left to learn. Switch to \"Bypass blocking\" to resume."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is paused: Main node is Direct (no proxy) — there is no proxy side to verify against. Choose URLTest or a node as Main node to resume."
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1815
 #: htdocs/luci-static/resources/view/homeproxy/server.js:821
 msgid "certificate"
@@ -1350,7 +1375,7 @@ msgid "enabled, but nfqws2 not running"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js:656
-msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test all strategies\" feature in Client → ByeDPI tab."
+msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test all strategies\" feature in the ByeDPI node settings."
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1101
@@ -3010,7 +3035,7 @@ msgid "Path"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1522
-msgid "Peer pubkic key"
+msgid "Peer public key"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:616
@@ -3055,7 +3080,7 @@ msgid "Port"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:554
-msgid "Port %s alrealy exists!"
+msgid "Port %s already exists!"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1163

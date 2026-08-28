@@ -2227,7 +2227,7 @@ msgstr "Путь"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:911
 
-msgid "Peer pubkic key"
+msgid "Peer public key"
 msgstr "Публичный ключ узла"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:329
@@ -2284,7 +2284,7 @@ msgstr "Порт"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:276
 
-msgid "Port %s alrealy exists!"
+msgid "Port %s already exists!"
 msgstr "Порт %s уже существует!"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:582
@@ -4829,8 +4829,8 @@ msgstr "Минимальная разница задержек (мс) для п�
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Where the traffic matched by Routing Rules goes (everything unmatched always goes directly).<br>• <b>URLTest</b> — automatic node selection by periodic latency measurement (Auto / Preferred + auto / Manual — configured below once selected).<br>• A specific node — that node is always used.<br>• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. \"YouTube → Zapret\" while everything else uses the VPN)."
-msgstr "Куда идёт трафик, пойманный Правилами маршрутизации (всё непойманное всегда ходит напрямую).<br>• <b>URLTest</b> — автоматический выбор узла по периодическим замерам задержки (Авто / Предпочтительный + авто / Список вручную — настраивается ниже после включения).<br>• Конкретный узел — всегда используется только он.<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не туннелируется, всё выходит напрямую.<br>Движки ByeDPI / Zapret здесь не выбираются — включите их ниже и направляйте отдельные сервисы на них через Правила маршрутизации (например, «YouTube → Zapret», пока остальное ходит через VPN)."
+msgid "The exit for traffic matched by Routing Rules.<br>• <b>URLTest</b> — automatic node selection by periodic latency measurement (Auto / Preferred + auto / Manual — configured below once selected).<br>• A specific node — that node is always used.<br>• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. \"YouTube → Zapret\" while everything else uses the VPN)."
+msgstr "Куда идёт трафик, пойманный Правилами маршрутизации.<br>• <b>URLTest</b> — автоматический выбор узла по периодическим замерам задержки (Авто / Предпочтительный + авто / Список вручную — настраивается ниже после включения).<br>• Конкретный узел — всегда используется только он.<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не туннелируется, всё выходит напрямую.<br>Движки ByeDPI / Zapret здесь не выбираются — включите их ниже и направляйте отдельные сервисы на них через Правила маршрутизации (например, «YouTube → Zapret», пока остальное ходит через VPN)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5039,13 +5039,13 @@ msgstr "Тестирование стратегий ByeDPI"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test all strategies\" feature in Client → ByeDPI tab."
-msgstr "Включает полноценное HTTP-тестирование стратегий ByeDPI. Необходим для функции «Проверить все стратегии» во вкладке Клиент → ByeDPI."
+msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test all strategies\" feature in the ByeDPI node settings."
+msgstr "Включает полноценное HTTP-тестирование стратегий ByeDPI. Необходим для функции «Проверить все стратегии» в настройках узла ByeDPI."
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Configure in the Client → ByeDPI tab."
-msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Настройки: вкладка Клиент → ByeDPI."
+msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Configure on the Client Settings page."
+msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Настройки: на странице «Настройки клиента».
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5061,6 +5061,11 @@ msgstr "ByeDPI (ciadpi) не установлен. Установить сейч
 
 msgid "Cannot remove: ByeDPI is selected as Main Node. Change Main Node first."
 msgstr "Нельзя удалить: ByeDPI выбран в качестве основного узла. Сначала смените основной узел."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Cannot remove: Zapret is selected as Main Node. Change Main Node first."
+msgstr "Нельзя удалить: Zapret выбран в качестве основного узла. Сначала смените основной узел."
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
@@ -5534,6 +5539,26 @@ msgstr "Восстановить список (из файла)"
 
 msgid "Backup list downloads the learned sites to your computer. Restore list uploads a file and adds any missing sites (existing ones are kept). Use this to avoid re-learning from scratch after a router reset."
 msgstr "«Скачать список» выгружает изученные сайты на ваш компьютер. «Восстановить список» загружает файл и добавляет недостающие сайты (существующие сохраняются). Используйте это, чтобы не проходить обучение заново после сброса роутера."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is disabled — enable it above to start learning."
+msgstr "Автоматизация выключена — включите её выше, чтобы начать обучение."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is paused: Custom routing is active — the engine has no preset pools to learn from. Switch to \"Bypass blocking\" to resume."
+msgstr "Автоматизация на паузе: активна своя маршрутизация — движку не из чего учиться. Переключитесь на «Обход блокировок», чтобы продолжить."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is paused: Global mode tunnels everything — there is nothing left to learn. Switch to \"Bypass blocking\" to resume."
+msgstr "Автоматизация на паузе: Глобальный режим туннелирует всё — учить больше нечему. Переключитесь на «Обход блокировок», чтобы продолжить."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is paused: Main node is Direct (no proxy) — there is no proxy side to verify against. Choose URLTest or a node as Main node to resume."
+msgstr "Автоматизация на паузе: Основной узел — Напрямую (без прокси) — нечего проверять через прокси. Выберите URLTest или узел в качестве Основного узла, чтобы продолжить."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js:137
 
@@ -6028,8 +6053,8 @@ msgstr "Отдельный выход для UDP-трафика (игры, зв�
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The Automation engine (its own tab) keeps these lists current automatically.<br>• <b>Global</b> — ALL traffic goes through the Main node; no rules are used.<br>• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>Changing the mode re-renders the page so only relevant options stay visible"
-msgstr "• <b>Обход блокировок (по спискам правил)</b> — повседневный режим: всё идёт напрямую, а трафик, попавший в Правила маршрутизации (YouTube, Russia Inside, Re-filter…), идёт через Основной узел — именно так открываются заблокированные сайты без туннелирования всего подключения. Движок автоматизации (отдельная вкладка) поддерживает эти списки актуальными автоматически.<br>• <b>Глобальный</b> — ВЕСЬ трафик через Основной узел; правила не используются.<br>• <b>Своя маршрутизация</b> / <b>Свой JSON</b> — полностью ручные альтернативы: своя маршрутизация и DNS с нуля вместо готовых списков.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
+msgid "• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The Automation engine (its own page) keeps these lists current automatically.<br>• <b>Global</b> — ALL traffic goes through the Main node; per-service rules are not used.<br>• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>Changing the mode re-renders the page so only relevant options stay visible"
+msgstr "• <b>Обход блокировок (по спискам правил)</b> — повседневный режим: всё идёт напрямую, а трафик, попавший в Правила маршрутизации (YouTube, Russia Inside, Re-filter…), идёт через Основной узел — именно так открываются заблокированные сайты без туннелирования всего подключения. Движок автоматизации (отдельная страница) поддерживает эти списки актуальными автоматически.<br>• <b>Глобальный</b> — ВЕСЬ трафик через Основной узел; правила для отдельных сервисов не используются.<br>• <b>Своя маршрутизация</b> / <b>Свой JSON</b> — полностью ручные альтернативы: своя маршрутизация и DNS с нуля вместо готовых списков.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 

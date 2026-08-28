@@ -182,6 +182,10 @@ let auto_ip_set = {};
 let hot_set = {};
 let last_reeval = 0;
 let last_prune = 0;
+/* Tracks whether WE enabled dnsmasq query logging. The enable/disable pair
+ * restarts dnsmasq, so it must run only on the paused↔active edge, never per
+ * pass. Kept module-level: pass() is where the mode gate lives. */
+let dns_log_on = false;
 /* Plain-view DNS cache for the serial probe() path (self-heal/reeval re-probe the
  * same learned hosts hourly): skip the triple nslookup while the answer is fresh.
  * Module-level because resolve_plain_view is a top-level helper (no closures over
@@ -1083,8 +1087,11 @@ echo done > "$PRE.done"
 	/* When the main path is plain Direct there is no proxy side to probe: auto-proxy-in
 	 * routes to a direct outbound, so the "proxy" probe is a copy of the direct one and
 	 * nothing can ever be learned. Skip proxy probes entirely (saves the probe budget);
-	 * the daemon stays alive so enabling a real main node + reload resumes learning. */
-	let main_is_direct = (uci.get('homeproxy', 'config', 'main_node') === 'direct-out');
+	 * the daemon stays alive so enabling a real main node + reload resumes learning.
+	 * Mirrors the per-pass gate: 'nil' main and Global mode are equally unlearnable. */
+	let main_node_start = uci.get('homeproxy', 'config', 'main_node') || 'nil';
+	let main_is_direct = (main_node_start === 'direct-out' || main_node_start === 'nil' ||
+	                      (uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru') === 'global');
 	if (main_is_direct)
 		log('main node is Direct (no proxy) — proxy-side probes disabled, learning paused.');
 
@@ -1247,12 +1254,29 @@ echo done > "$PRE.done"
 		 * - custom/custom_json: pinned test inbounds are not emitted there;
 		 * - Global: EVERYTHING tunnels anyway — nothing to learn;
 		 * - Main node Direct: no proxy side to verify against.
-		 * Stay resident — flipping back to a learnable setup resumes on reload. */
+		 * Stay resident — flipping back to a learnable setup resumes on the next
+		 * pass. While paused the pass is FULLY inert: no discovery, no probes,
+		 * no state churn — and dnsmasq query logging is torn down (its 4 MB
+		 * self-rotation lives in discover_dns(), which never runs here; an
+		 * always-on log would grow until reboot). */
 		let rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
-		if (rmode === 'custom' || rmode === 'custom_json') return;
 		let main_node_now = uci.get('homeproxy', 'config', 'main_node') || 'nil';
 		main_is_direct = (main_node_now === 'direct-out' || main_node_now === 'nil' || rmode === 'global');
-		if (rmode === 'global' || main_is_direct) return;
+		if (rmode === 'custom' || rmode === 'custom_json' || rmode === 'global' || main_is_direct) {
+			if (dns_log_on) {
+				if (has('dns')) disable_dns_log();
+				dns_log_on = false;
+				log('learning paused (' + (rmode === 'global' ? 'Global mode' :
+				    (main_is_direct ? 'main node is Direct' : rmode)) +
+				    ') — dnsmasq query logging disabled.');
+			}
+			return false;
+		}
+		if (has('dns') && !dns_log_on) {
+			enable_dns_log();
+			dns_log_on = true;
+			log('learning resumed — dnsmasq query logging enabled.');
+		}
 
 		load_engine_protect();
 
@@ -1636,16 +1660,26 @@ echo done > "$PRE.done"
 			do_reload();
 		else if (pending_reload && run_now)
 			do_reload();
+
+		return true;
 	}
-
-	/* Enable DNS query logging if we discover via dns. */
-	if (has('dns')) enable_dns_log();
-
-	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
 	let routing_mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 	if (routing_mode === 'custom' || routing_mode === 'custom_json')
 		log(`routing mode is '${routing_mode}' — learning paused (no preset pools; probes are not wired). Switch to a preset mode to resume.`);
+
+	/* Enable DNS query logging only when the CURRENT setup is learnable: its 4 MB
+	 * self-rotation lives in discover_dns(), which never runs while paused — an
+	 * always-on log would grow until reboot. pass() flips logging on the
+	 * paused↔active edge when the routing mode / main node changes. */
+	let _learnable_start = (routing_mode !== 'custom' && routing_mode !== 'custom_json' &&
+	                        routing_mode !== 'global' && !main_is_direct);
+	if (has('dns') && _learnable_start) {
+		enable_dns_log();
+		dns_log_on = true;
+	}
+
+	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 
 	log('automation daemon started (mode=' + mode + ', sources=' + (length(keys(disc)) ? discover_str : 'none') + ', ip_learn=' + ip_learn + ').');
 
@@ -1661,15 +1695,19 @@ echo done > "$PRE.done"
 			let run_now = false;
 			if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); run_now = true; }
 
-			pass(run_now);
+			let ran = pass(run_now);
 
 			/* DNS failover (C) at most once per minute. */
 			let now = time();
 			if (dns_failover === '1' && (now - last_failover) > 60) { last_failover = now; dns_failover_check(); }
 
-		/* Persist dns log offset so we don't re-scan from the start after a restart. */
-		state.__dns_offset = dns_log_offset;
-		save_state(state);
+		/* Persist dns log offset so we don't re-scan from the start after a restart.
+		 * Skipped while the pass was paused/inert: nothing consumed the log, so the
+		 * offset must NOT advance — and the flash/tmpfs write is pure churn. */
+		if (ran) {
+			state.__dns_offset = dns_log_offset;
+			save_state(state);
+		}
 
 		for (let i = 0; i < 10; i++) {
 			sleep(1);

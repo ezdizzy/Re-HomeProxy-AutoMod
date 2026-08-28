@@ -72,7 +72,7 @@ function getIPInfo(o, type) {
 			const delayStr = (entry.delay && entry.delay !== 65535) ? ` — ${entry.delay} ms` : '';
 			const meta = [entry.country, entry.org].filter(Boolean).join(', ');
 			const label = entry.ip + (meta ? ` (${meta})` : '') + delayStr;
-			lines.push(E('span', {}, [ 'IP: ', E('strong', { 'style': 'color:green' }, label) ]));
+			lines.push(E('span', {}, [ _('IP') + ': ', E('strong', { 'style': 'color:green' }, label) ]));
 		}
 
 		return E('span', {}, lines.map((l) => E('div', {}, [ l ])));
@@ -571,11 +571,11 @@ function buildByeDPICard(byedpi, isMainNode) {
 		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
 			_('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea</a>. ' +
 			  'Packages by <a href="https://github.com/1andrevich/ByeDPI-OpenWrt" target="_blank">1andrevich/ByeDPI-OpenWrt</a>. ' +
-			  'Configure in the Client → ByeDPI tab.'))
+			  'Configure on the Client Settings page.'))
 	]);
 }
 
-function buildZapretCard(zapret) {
+function buildZapretCard(zapret, isMainNode) {
 	let installed = zapret?.installed || false;
 	let version   = zapret?.version   || null;
 	const running    = zapret?.running    || false;
@@ -648,7 +648,8 @@ function buildZapretCard(zapret) {
 	const removeBtn = E('button', {
 		class: 'btn cbi-button cbi-button-negative',
 		style: 'margin-left:4px',
-		disabled: !installed || null,
+		disabled: !installed || isMainNode || null,
+		title: isMainNode ? _('Cannot remove: Zapret is selected as Main Node. Change Main Node first.') : '',
 		click: async function() {
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
@@ -761,7 +762,7 @@ function buildCurlCard(curl) {
 			msgEl
 		]),
 		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
-			_('Enables real HTTP-based ByeDPI strategy testing. Required for the "Test all strategies" feature in Client → ByeDPI tab.'))
+			_('Enables real HTTP-based ByeDPI strategy testing. Required for the "Test all strategies" feature in the ByeDPI node settings.'))
 	]);
 }
 
@@ -1188,7 +1189,7 @@ return view.extend({
 		o.default = buildCurlCard(curlStatus);
 
 		o = s.option(form.DummyValue, '_zapret_card');
-		o.default = buildZapretCard(zapretStatus);
+		o.default = buildZapretCard(zapretStatus, uci.get('homeproxy', 'config', 'main_node') === 'zapret-out');
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('MultiDNS / mosdns'));
 		s.anonymous = true;
