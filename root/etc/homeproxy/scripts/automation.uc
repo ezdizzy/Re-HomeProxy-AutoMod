@@ -137,6 +137,13 @@ const HOT_COOLDOWN = 600;
  * force-learn with a proxy-reachability verification. */
 const PAIN_PASSES = 3;
 const FORCE_LEARN_MAX = 2;
+/* Pain requires an in-pass BURST: >= PAIN_BURST sightings of the same host
+ * within ONE pass (any source: dns lines, clash connections, SNI). Steady
+ * background pollers (connectivity checks, device telemetry, update pings)
+ * appear in every pass and rack up sight exactly like real pain, yet nobody
+ * suffers — their cadence is one quiet query per pass and it never bursts.
+ * The burst separates "browser retrying a dying page" from "a cron job". */
+const PAIN_BURST = 5;
 
 /* State hygiene: records for hosts NOT in any active list (learned/direct/proxy/
  * excluded) expire after 14 days without a probe, and the whole non-listed working
@@ -1315,18 +1322,26 @@ echo done > "$PRE.done"
 			}
 		}
 		/* Persistent-pain counter: climbs every pass the user keeps hammering a
-		 * direct-verdict host; resets the moment pain stops or verdict flips.
-		 * Sight counts only if FRESH (seen within 10 min) — a single long-past
-		 * storm must never keep a host permanently hot. */
+		 * direct-verdict host — but only while the episode carries a burst
+		 * (>= PAIN_BURST in-pass sightings now, or seen within the last
+		 * 10 min of this episode). Sight counts only if FRESH (seen within
+		 * 10 min) — a single long-past storm must never keep a host
+		 * permanently hot; a stale burst must never re-arm the counter. */
 		for (let h in keys(domain_candidates)) {
 			const cst = state[h];
 			if (type(cst) !== 'object') continue;
 			const eff_sight = ((time() - int(cst.sight_t || 0)) < 600) ? int(cst.sight || 0) : 0;
-			if ((eff_sight >= HOT_MIN_FREQ) &&
+			if ((int(dns_freq[h]) || 0) >= PAIN_BURST)
+				cst.pain_burst = time();
+			const burst = ((int(dns_freq[h]) || 0) >= PAIN_BURST) ||
+			              ((time() - int(cst.pain_burst || 0)) < 600);
+			if ((eff_sight >= HOT_MIN_FREQ) && burst &&
 			    (cst.status === 'direct' || cst.status === 'direct_pending'))
 				cst.pain_passes = int(cst.pain_passes || 0) + 1;
-			else if (cst.pain_passes)
+			else if (cst.pain_passes) {
 				cst.pain_passes = 0;
+				delete cst.pain_burst;
+			}
 		}
 
 		let priority = {};
@@ -1448,6 +1463,7 @@ echo done > "$PRE.done"
 						fst.added = time();
 						fst.pain_passes = 0;
 						fst.sight = 0;
+						delete fst.pain_burst;
 						delete fst.dconfirms;
 						write_auto_list(auto_set);
 						log('learned (persistent user pain overrides passing probes): ' + dom);
@@ -1456,6 +1472,7 @@ echo done > "$PRE.done"
 					} else {
 						log('pain override skipped — proxy cannot reach ' + dom);
 						fst.pain_passes = 0;
+						delete fst.pain_burst;
 					}
 				}
 			}

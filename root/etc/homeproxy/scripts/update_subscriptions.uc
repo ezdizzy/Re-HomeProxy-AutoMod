@@ -1280,8 +1280,12 @@ function main() {
 			/* Section id includes the group hash: two subscriptions shipping the
 			 * same label ("Server1" from template providers) previously produced
 			 * the SAME section id — the second silently overwrote the first's
-			 * node while "added" counted both. */
-			const nameHash = strhash(groupHash + '|' + (node.label || ''));
+			 * node while "added" counted both. NOTE: the loop variable groupHash
+			 * is const INSIDE the per-URL loop above and out of scope here —
+			 * each parsed node carries its own .grouphash (set when queued). */
+			const ghash = node.grouphash || '';
+			const nlabel = (type(node.label) === 'string') ? node.label : '';
+			const nameHash = strhash(ghash + '|' + nlabel);
 			uci.set(uciconfig, nameHash, 'node');
 			map(keys(node), (v) => uci.set(uciconfig, nameHash, v, node[v]));
 
