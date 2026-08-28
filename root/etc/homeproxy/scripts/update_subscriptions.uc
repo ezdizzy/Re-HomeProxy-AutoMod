@@ -41,6 +41,13 @@ function strhash(s) {
 	return sprintf('%08x', h);
 }
 
+/* Some exports put scalars where sing-box/Xray schemas expect objects (mieru
+ * "transport": "UDP", hysteria2 "obfs": "salamander", ...) — property access on
+ * a scalar is a fatal "left-hand side expression is not an array or object". */
+function as_obj(v) {
+	return (type(v) === 'object') ? v : {};
+}
+
 /* UCI config start */
 const uci = cursor();
 
@@ -104,14 +111,16 @@ function log(...args) {
 function parse_singbox_outbound(ob, companion_map) {
 	const proxy_types = ['vless', 'vmess', 'trojan', 'shadowsocks', 'naive',
 	                     'tuic', 'hysteria', 'hysteria2', 'wireguard', 'ssh', 'mieru', 'anytls', 'socks', 'http'];
-	if (!(ob.type in proxy_types)) return null;
+	if (type(ob) !== 'object' || !(ob.type in proxy_types)) return null;
 	/* Skip hidden companion outbounds (e.g. ShadowTLS wrappers tagged §hide§) */
 	if (ob.tag && match(ob.tag, /§hide§/)) return null;
 
-	const tls = ob.tls || {};
-	const utls = tls.utls || {};
-	const reality = tls.reality || {};
-	const tr = ob.transport || {};
+	const tls = as_obj(ob.tls);
+	const utls = as_obj(tls.utls);
+	const reality = as_obj(tls.reality);
+	/* mieru (and some panels) use a STRING transport ("UDP"/"TCP"/"ws") — it is
+	 * read as mieru_protocol below; only an object carries V2Ray transport. */
+	const tr = as_obj(ob.transport);
 
 	let config = {
 		label: ob.tag || null,
@@ -138,7 +147,7 @@ function parse_singbox_outbound(ob, companion_map) {
 			config.grpc_servicename = tr.service_name || null;
 			break;
 		case 'ws':
-			config.ws_host = (tr.headers && tr.headers.Host) ? tr.headers.Host : null;
+			config.ws_host = (type(tr.headers) === 'object' && tr.headers.Host) ? tr.headers.Host : null;
 			config.ws_path = tr.path || null;
 			break;
 		case 'httpupgrade':
@@ -162,8 +171,8 @@ function parse_singbox_outbound(ob, companion_map) {
 				config.xhttp_headers = sprintf('%J', tr.headers);
 			/* Split download — hiddify `downloadSettings` or sing-box `download`. */
 			let dl = tr.downloadSettings || tr.download;
-			if (dl) {
-				let dl_tls = dl.tls || {};
+			if (type(dl) === 'object') {
+				let dl_tls = as_obj(dl.tls);
 				config.xhttp_download_path = dl.path || null;
 				config.xhttp_download_host = dl.host || null;
 				config.xhttp_download_server = dl.server || dl.address || null;
@@ -194,14 +203,14 @@ function parse_singbox_outbound(ob, companion_map) {
 	case 'shadowsocks':
 		config.shadowsocks_encrypt_method = ob.method || null;
 		if (ob.detour && companion_map[ob.detour]) {
-			const stls = companion_map[ob.detour];
+			const stls = as_obj(companion_map[ob.detour]);
 			config.address = stls.server || null;
 			config.port = (stls.server_port != null) ? '' + stls.server_port : null;
 			config.shadowtls_enabled = '1';
 			config.shadowtls_password = stls.password || null;
 			config.shadowtls_version = (stls.version != null) ? '' + stls.version : '3';
-			const stls_tls = stls.tls || {};
-			const stls_utls = stls_tls.utls || {};
+			const stls_tls = as_obj(stls.tls);
+			const stls_utls = as_obj(stls_tls.utls);
 			config.tls = stls_tls.enabled ? '1' : '0';
 			config.tls_sni = stls_tls.server_name || null;
 			config.tls_insecure = stls_tls.insecure ? '1' : null;
@@ -236,10 +245,12 @@ function parse_singbox_outbound(ob, companion_map) {
 	case 'hysteria2':
 		config.hysteria_up_mbps = (ob.up_mbps != null) ? '' + ob.up_mbps : null;
 		config.hysteria_down_mbps = (ob.down_mbps != null) ? '' + ob.down_mbps : null;
-		if (ob.obfs) {
+		if (type(ob.obfs) === 'object') {
 			config.hysteria_obfs_type = ob.obfs.type || null;
 			config.hysteria_obfs_password = ob.obfs.password || null;
-		}
+		} else if (ob.obfs)
+			/* String shorthand ("obfs": "salamander") used by some panels */
+			config.hysteria_obfs_type = '' + ob.obfs;
 		/* Port hopping: server_ports entries are "min:max"; hop_interval is a
 		 * duration string ("30s") which strToTime() passes through untouched.
 		 * Hopping-only nodes ship NO server_port — the first range's floor
@@ -281,17 +292,25 @@ function parse_singbox_outbound(ob, companion_map) {
 		config.socks_version = (ob.version != null) ? '' + ob.version : null;
 		break;
 	case 'mieru':
+		/* The generator forces server_port=0 for mieru and passes the port ONLY
+		 * via mieru_port_range — every imported mieru needs that range set. */
 		config.port = '0';
-		if (ob.portBindings && ob.portBindings[0]) {
+		if (type(ob.portBindings) === 'array' && type(ob.portBindings[0]) === 'object') {
 			/* Hiddify format */
 			config.mieru_protocol = ob.portBindings[0].protocol || null;
 			config.mieru_port_range = ob.portBindings[0].portRange || null;
-		} else if (ob.server_ports && ob.server_ports[0]) {
-			/* sing-box format — transport may be absent, infer from tag */
+		} else if (type(ob.server_ports) === 'array' && ob.server_ports[0]) {
+			/* sing-box multi-port format */
 			config.mieru_port_range = ob.server_ports[0] || null;
-			config.mieru_protocol = ob.transport ||
-				(match(ob.tag, /UDP/i) ? 'UDP' : (match(ob.tag, /TCP/i) ? 'TCP' : null));
 		}
+		/* Protocol: sing-box schema carries it as a STRING transport ("UDP"/"TCP");
+		 * absent → infer from the tag. */
+		config.mieru_protocol = (type(ob.transport) === 'string') ? ob.transport :
+			((ob.tag && match(ob.tag, /UDP/i)) ? 'UDP' : ((ob.tag && match(ob.tag, /TCP/i)) ? 'TCP' : null));
+		/* Single-port mieru (server + server_port, no ranges): synthesize the
+		 * "min:max" range so the generator emits a usable outbound. */
+		if (isEmpty(config.mieru_port_range) && ob.server_port != null && ob.server_port !== 0)
+			config.mieru_port_range = ob.server_port + ':' + ob.server_port;
 		config.mieru_multiplexing = ob.multiplexing || null;
 		config.mieru_handshake_mode = ob.handshake_mode || null;
 		break;
@@ -305,15 +324,16 @@ function parse_singbox_outbound(ob, companion_map) {
  * outbounds don't carry it). Mirrors parse_singbox_outbound for the Xray schema. */
 function parse_xray_outbound(ob, remarks) {
 	const proxy_types = ['vless', 'vmess', 'trojan', 'shadowsocks', 'socks', 'http', 'hysteria'];
+	if (type(ob) !== 'object') return null;
 	const proto = ob.protocol;
 	if (!(proto in proxy_types)) return null;
 
-	const st = ob.settings || {};
-	const ss = ob.streamSettings || {};
+	const st = as_obj(ob.settings);
+	const ss = as_obj(ob.streamSettings);
 	const net = ss.network || 'tcp';
 	const security = ss.security || 'none';
-	const tls_s = ss.tlsSettings || {};
-	const reality = ss.realitySettings || {};
+	const tls_s = as_obj(ss.tlsSettings);
+	const reality = as_obj(ss.realitySettings);
 
 	/* Hysteria (v1/v2): non-standard Xray shape — server is in settings.{address,port}
 	 * and auth in streamSettings.hysteriaSettings. Needs QUIC support in sing-box. */
@@ -322,7 +342,7 @@ function parse_xray_outbound(ob, remarks) {
 			log(sprintf('Skipping hysteria node (sing-box has no QUIC): %s.', remarks || st.address));
 			return null;
 		}
-		const hyS = ss.hysteriaSettings || {};
+		const hyS = as_obj(ss.hysteriaSettings);
 		const is_v2 = (('' + (st.version || hyS.version || '2')) === '2');
 		let hcfg = {
 			label: remarks || null,
@@ -337,9 +357,13 @@ function parse_xray_outbound(ob, remarks) {
 		};
 		if (is_v2) {
 			hcfg.password = hyS.auth || null;
-			if (hyS.obfs) {
+			if (type(hyS.obfs) === 'object') {
 				hcfg.hysteria_obfs_type = hyS.obfs.type || null;
 				hcfg.hysteria_obfs_password = hyS.obfs.password || null;
+			} else if (hyS.obfs) {
+				/* Xray shorthand: "obfs": "salamander" + "obfsPassword": "..." */
+				hcfg.hysteria_obfs_type = '' + hyS.obfs;
+				hcfg.hysteria_obfs_password = hyS.obfsPassword || null;
 			}
 		} else {
 			hcfg.hysteria_protocol = 'udp';
@@ -401,36 +425,37 @@ function parse_xray_outbound(ob, remarks) {
 		config.transport = (net === 'h2') ? 'http' : net;
 		switch (config.transport) {
 		case 'ws':
-			const wsS = ss.wsSettings || {};
-			config.ws_host = (wsS.headers && wsS.headers.Host) ? wsS.headers.Host : (wsS.host || null);
+			const wsS = as_obj(ss.wsSettings);
+			config.ws_host = (type(wsS.headers) === 'object' && wsS.headers.Host) ? wsS.headers.Host : (wsS.host || null);
 			config.ws_path = wsS.path || null;
 			break;
 		case 'grpc':
-			const grpcS = ss.grpcSettings || {};
+			const grpcS = as_obj(ss.grpcSettings);
 			config.grpc_servicename = grpcS.serviceName || null;
 			break;
 		case 'httpupgrade':
-			const huS = ss.httpupgradeSettings || {};
+			const huS = as_obj(ss.httpupgradeSettings);
 			config.httpupgrade_host = huS.host || null;
 			config.http_path = huS.path || null;
 			break;
 		case 'http':
-			const hS = ss.httpSettings || {};
+			const hS = as_obj(ss.httpSettings);
 			config.http_host = hS.host ? ((type(hS.host) === 'array') ? hS.host : [hS.host]) : null;
 			config.http_path = hS.path || null;
 			break;
 		case 'xhttp':
-			const xS = ss.xhttpSettings || {};
+			const xS = as_obj(ss.xhttpSettings);
 			config.http_path = xS.path || null;
 			config.http_host = xS.host || null;
 			config.xhttp_mode = xS.mode || null;
 			break;
 		}
-	} else if (net === 'tcp' && ss.tcpSettings && ss.tcpSettings.header &&
+	} else if (net === 'tcp' && type(ss.tcpSettings) === 'object' &&
+	           type(ss.tcpSettings.header) === 'object' &&
 	           ss.tcpSettings.header.type === 'http') {
 		config.transport = 'http';
-		const req = ss.tcpSettings.header.request || {};
-		config.http_host = (req.headers && req.headers.Host) ?
+		const req = as_obj(ss.tcpSettings.header.request);
+		config.http_host = (type(req.headers) === 'object' && req.headers.Host) ?
 			((type(req.headers.Host) === 'array') ? req.headers.Host : [req.headers.Host]) : null;
 		config.http_path = (type(req.path) === 'array') ? req.path[0] : (req.path || null);
 	}
@@ -447,13 +472,18 @@ function parse_xray_config(cfg) {
 
 	const skip = ['freedom', 'blackhole', 'dns', 'loopback'];
 	let chosen = null;
-	for (let ob in cfg.outbounds)
+	for (let ob in cfg.outbounds) {
+		if (type(ob) !== 'object')
+			continue;
 		if (ob.tag === 'proxy') {
 			chosen = ob;
 			break;
 		}
+	}
 	if (!chosen)
 		for (let ob in cfg.outbounds) {
+			if (type(ob) !== 'object')
+				continue;
 			if (ob.protocol in skip)
 				continue;
 			if (ob.tag && match(ob.tag, /upstream/))
@@ -497,10 +527,10 @@ function main() {
 		if (!isEmpty(res) && match(trim(res), /^\s*\{/)) {
 			let sub_json;
 			try { sub_json = json(res); } catch(e) {}
-			if (sub_json && sub_json.outbounds) {
+			if (sub_json && type(sub_json.outbounds) === 'array') {
 				const companion_map = {};
 				for (let ob in sub_json.outbounds) {
-					if (ob.tag && match(ob.tag, /§hide§/))
+					if (type(ob) === 'object' && ob.tag && match(ob.tag, /§hide§/))
 						companion_map[ob.tag] = ob;
 				}
 				nodes = filter(

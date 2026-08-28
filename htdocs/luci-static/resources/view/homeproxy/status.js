@@ -354,6 +354,48 @@ const callMosdnsRemove = rpc.declare({
 	expect: { '': {} }
 });
 
+const callByeDPICheckUpdate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'byedpi_check_update',
+	expect: { '': {} }
+});
+
+const callZapretCheckUpdate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'zapret_check_update',
+	expect: { '': {} }
+});
+
+const callMosdnsCheckUpdate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'mosdns_check_update',
+	expect: { '': {} }
+});
+
+/* "Check update" button for GitHub-packaged tools (ByeDPI / Zapret / mosdns):
+ * asks the backend for the latest release tag and reports it against the
+ * installed version (same interaction as the core cards). */
+function buildCheckUpdateBtn(callFn, remoteEl) {
+	return E('button', {
+		class: 'btn cbi-button',
+		click: async function() {
+			this.disabled = true;
+			remoteEl.textContent = _('Checking...');
+			remoteEl.style.color = 'gray';
+			const ret = await L.resolveDefault(callFn(), {});
+			this.disabled = false;
+			if (ret.error) {
+				remoteEl.textContent = ret.error;
+				remoteEl.style.color = 'red';
+				return;
+			}
+			remoteEl.textContent = _('Latest') + ': v' + ret.latest_version;
+			remoteEl.style.color = ret.update_available ? 'darkorange' :
+				(ret.installed_version ? 'green' : 'gray');
+		}
+	}, [ _('Check update') ]);
+}
+
 function buildMosdnsCard(mdns, mos) {
 	mdns = mdns || {};
 	mos  = mos  || {};
@@ -444,22 +486,32 @@ function buildMosdnsCard(mdns, mos) {
 		}
 	}, [ _('Remove') ]);
 
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const checkBtn = buildCheckUpdateBtn(callMosdnsCheckUpdate, remoteEl);
+
 	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'mosdns (MultiDNS)'),
 			statusEl,
 			runEl,
+			checkBtn,
+			remoteEl,
 			installBtn,
 			removeBtn,
 			msgEl
 		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#555' }, [
+		/* '\u00a0' — real NBSP: E() escapes strings, a literal '&nbsp;' here would
+		 * render as visible text (that exact bug). The description must go through
+		 * innerHTML: it contains HTML links E() would also escape. */
+		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#555' },
 			_('MultiDNS') + ': ' + (enabled ? _('Enabled') : _('Disabled')) +
-			' &nbsp;|&nbsp; ' + _('Plain pool') + ' (' + _('Russia') + '): ' + ru +
-			' &nbsp;|&nbsp; ' + _('Secure pool') + ': ' + sec
-		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
-			_('Per-query DNS racing engine for MultiDNS: races every server in each pool in parallel and returns the fastest valid answer, while the quality daemon verifies over HTTPS that the returned IPs actually open sites and prunes dead/polluted servers. Binary from <a href="https://github.com/IrineSistiana/mosdns" target="_blank">IrineSistiana/mosdns</a> releases.'))
+			'\u00a0|\u00a0' + _('Plain pool') + ' (' + _('Russia') + '): ' + ru +
+			'\u00a0|\u00a0' + _('Secure pool') + ': ' + sec),
+		(() => {
+			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' });
+			el.innerHTML = _('Per-query DNS racing engine for MultiDNS: races every server in each pool in parallel and returns the fastest valid answer, while the quality daemon verifies over HTTPS that the returned IPs actually open sites and prunes dead/polluted servers. Binary from <a href="https://github.com/IrineSistiana/mosdns" target="_blank">IrineSistiana/mosdns</a> releases.');
+			return el;
+		})()
 	]);
 }
 
@@ -572,19 +624,28 @@ function buildByeDPICard(byedpi, isMainNode) {
 		}
 	}, [ _('Remove') ]);
 
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const checkBtn = buildCheckUpdateBtn(callByeDPICheckUpdate, remoteEl);
+
 	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'ciadpi (ByeDPI)'),
 			statusEl,
 			runEl,
+			checkBtn,
+			remoteEl,
 			installBtn,
 			removeBtn,
 			msgEl
 		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
-			_('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea</a>. ' +
+		(() => {
+			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' });
+			/* innerHTML: the description contains HTML links E() would escape */
+			el.innerHTML = _('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea</a>. ' +
 			  'Packages by <a href="https://github.com/1andrevich/ByeDPI-OpenWrt" target="_blank">1andrevich/ByeDPI-OpenWrt</a>. ' +
-			  'Configure on the Client Settings page.'))
+			  'Configure on the Client Settings page.');
+			return el;
+		})()
 	]);
 }
 
@@ -687,19 +748,28 @@ function buildZapretCard(zapret, isMainNode) {
 	if (installed && !kmodOk)
 		setMsg(_('Warning: kmod-nft-queue is not installed — Zapret cannot intercept traffic without it.'), 'red');
 
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const checkBtn = buildCheckUpdateBtn(callZapretCheckUpdate, remoteEl);
+
 	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'nfqws2 (Zapret 2)'),
 			statusEl,
 			runEl,
+			checkBtn,
+			remoteEl,
 			installBtn,
 			removeBtn,
 			msgEl
 		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
-			_('Packet-level (NFQUEUE) DPI bypass by <a href="https://github.com/bol-van/zapret2" target="_blank">bol-van</a> (nfqws2). ' +
+		(() => {
+			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' });
+			/* innerHTML: the description contains HTML links E() would escape */
+			el.innerHTML = _('Packet-level (NFQUEUE) DPI bypass by <a href="https://github.com/bol-van/zapret2" target="_blank">bol-van</a> (nfqws2). ' +
 			  'Packages by <a href="https://github.com/1andrevich/zapret2-openwrt" target="_blank">1andrevich/zapret2-openwrt</a>. ' +
-			  'Configure in the Node Settings → Zapret tab.'))
+			  'Configure in the Node Settings → Zapret tab.');
+			return el;
+		})()
 	]);
 }
 

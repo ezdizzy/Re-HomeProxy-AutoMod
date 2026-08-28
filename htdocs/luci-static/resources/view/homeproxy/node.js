@@ -963,6 +963,27 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'amneziawg');
 	o.rmempty = false;
 
+	/* Grid table cell: show the port the node ACTUALLY uses. Mieru imports with
+	 * port=0 (the real port is carried by mieru_port_range — the generator forces
+	 * server_port=0 and passes only the range), and hysteria(2) port hopping
+	 * ranges live in hysteria_hopping_port, so print them instead of the bare
+	 * (derived or zero) primary port. The edit modal is unaffected. */
+	o.textvalue = function(section_id) {
+		const ntype = uci.get(data[0], section_id, 'type'),
+		      p = uci.get(data[0], section_id, 'port'),
+		      hop = uci.get(data[0], section_id, 'hysteria_hopping_port'),
+		      mieru_range = uci.get(data[0], section_id, 'mieru_port_range');
+		if (ntype === 'mieru' && mieru_range != null && mieru_range !== '')
+			return '' + (Array.isArray(mieru_range) ? mieru_range.join(', ') : mieru_range);
+		if ((ntype === 'hysteria2' || ntype === 'hysteria') && hop != null &&
+		    (!Array.isArray(hop) || hop.length)) {
+			const ranges = Array.isArray(hop) ? hop.join(', ') : '' + hop;
+			if (ranges)
+				return (p ? p + ' ' : '') + '(' + ranges + ')';
+		}
+		return (p != null && p !== '') ? '' + p : null;
+	};
+
 	o = s.option(form.Value, 'username', _('Username'));
 	o.depends('type', 'http');
 	o.depends('type', 'mieru');
