@@ -9,7 +9,11 @@
 
 import { access, error, lstat, popen, readfile, writefile } from 'fs';
 import { cursor } from 'uci';
-import { sync_learned_rulesets } from '/etc/homeproxy/scripts/homeproxy.uc';
+import {
+	sync_learned_rulesets,
+	sync_manual_direct_ruleset,
+	sync_ru_geo_rulesets
+} from '/etc/homeproxy/scripts/homeproxy.uc';
 
 /* Apply an edited learned list WITHOUT a service restart: rewrite the watched local
  * rule-set files (proxy_domain.json / auto_ip.json) — the core hot-reloads them.
@@ -23,6 +27,7 @@ function apply_learned_list_hot() {
 		return;
 	}
 	sync_learned_rulesets();
+	sync_manual_direct_ruleset();
 }
 
 /* Kanged from ucode/luci */
@@ -37,6 +42,30 @@ function atomic_write(path, content) {
 	const tmp = path + '.tmp';
 	writefile(tmp, content);
 	system(`mv -f ${shellquote(tmp)} ${shellquote(path)}`);
+}
+
+/* ── Automation table helpers (entry add/delete/manual status, RU-geo) ──
+ * Declared ABOVE `const methods` (rpcd ucode rejects function declarations
+ * inside the object literal — monitor_nodes lesson) and above atomic_write
+ * users (no forward references — ucode has no function hoisting). */
+
+function auto_read_set(file) {
+	let s = {};
+	if (access(file)) {
+		let c = trim(readfile(file) ?? '');
+		if (length(c))
+			for (let l in split(c, /[\r\n]/)) {
+				let x = trim(l);
+				if (length(x) && !match(x, /^#/))
+					s[x] = true;
+			}
+	}
+	return s;
+}
+
+function auto_write_set(file, s) {
+	let arr = sort(keys(s));
+	atomic_write(file, length(arr) ? join('\n', arr) + '\n' : '');
 }
 
 /* Optional GitHub mirror (uci homeproxy.config.github_mirror), used ONLY as a
@@ -150,6 +179,68 @@ function installed_pkg_version(pkg, rx) {
 
 const HP_DIR = '/etc/homeproxy';
 const RUN_DIR = '/var/run/homeproxy';
+
+/* After list edits: rewrite the watched rule-set files (hot reload) and ping the
+ * daemon so it re-reads its working sets within one pass. Without the hot-reload
+ * marker (fresh install / migration edge) the full regenerate+reload path runs
+ * once so the new rule-sets enter the running config. */
+function automation_apply_files(geo_too) {
+	if (!access('/var/run/homeproxy/.learned_hotreload')) {
+		system('ucode /etc/homeproxy/scripts/generate_client.uc >/dev/null 2>&1');
+		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+	} else {
+		sync_learned_rulesets();
+		sync_manual_direct_ruleset();
+		if (geo_too)
+			sync_ru_geo_rulesets();
+	}
+	system('touch ' + RUN_DIR + '/automation.reload' + (geo_too ? '_geo' : ''));
+}
+
+/* Validate a manual entry: FQDN, IPv4[/plen] or IPv6[/plen]; lowercase form back. */
+function valid_automation_entry(e) {
+	e = lc(trim(e ?? ''));
+	if (!length(e) || length(e) > 253) return null;
+	if (match(e, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(\/\d{1,2})?$/)) {
+		let m = match(e, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/);
+		if (int(m[1]) > 255 || int(m[2]) > 255 || int(m[3]) > 255 || int(m[4]) > 255) return null;
+		return e;
+	}
+	if (index(e, ':') >= 0 && match(e, /^[0-9a-f:]+(\/\d{1,3})?$/)) return e;
+	if (match(e, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/) && index(e, '.') > 0 && !match(e, /\.\./))
+		return e;
+	return null;
+}
+
+function auto_entry_type(e) {
+	return (match(e, /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/) || (index(e, ':') >= 0 && match(e, /^[0-9a-f:]+(\/\d{1,3})?$/))) ? 'ip' : 'domain';
+}
+
+/* Read the RU-geo meta + freshness for the UI (hand-built JSON, numbers only). */
+function ru_geo_read_meta() {
+	let meta = { updated: 0, geoip: 0, geoip_v4: 0, geoip_v6: 0, geosite: 0, categories: 0, categories_failed: 0 };
+	const mf = HP_DIR + '/resources/ru_geo.meta';
+	if (access(mf)) {
+		try {
+			let m = json(readfile(mf) || '{}');
+			if (type(m) === 'object') {
+				meta.updated = int(m.updated) || 0;
+				meta.geoip = int(m.geoip) || 0;
+				meta.geoip_v4 = int(m.geoip_v4) || 0;
+				meta.geoip_v6 = int(m.geoip_v6) || 0;
+				meta.geosite = int(m.geosite) || 0;
+				meta.categories = int(m.categories) || 0;
+				meta.categories_failed = int(m.categories_failed) || 0;
+			}
+		} catch (e) { /* corrupt meta = not updated */ }
+	}
+	meta.installed = access(HP_DIR + '/resources/ru_geoip.txt') && access(HP_DIR + '/resources/ru_geosite.txt');
+	meta.updating = access('/tmp/ru_geo_lock') || access('/tmp/ru_geo/updating');
+	let gfd = popen('uci -q get homeproxy.automation.geo_protect 2>/dev/null');
+	meta.protect = gfd ? (trim(gfd.read('all')) || '1') : '1';
+	if (gfd) gfd.close();
+	return meta;
+}
 
 function get_active_core() {
 	/* Mirror init.d / generate_client.uc precedence: honor preferred_core when that core
@@ -2056,6 +2147,8 @@ const methods = {
 			const state_file = RUN_DIR + '/automation_state.json';
 			const auto_list = HP_DIR + '/resources/auto_proxy_list.txt';
 			const auto_ip = HP_DIR + '/resources/auto_proxy_ip.txt';
+			const manual_proxy = HP_DIR + '/resources/manual_proxy.txt';
+			const manual_direct = HP_DIR + '/resources/manual_direct.txt';
 			const log_file = RUN_DIR + '/automation.log';
 
 			let state = {};
@@ -2063,23 +2156,17 @@ const methods = {
 				try { state = json(readfile(state_file)) || {}; } catch (e) { state = {}; }
 			}
 
+			/* Unified entries view for the table: learned (engine) + manual pins.
+			 * List-file membership is the routing truth; state only decorates. */
 			let learned = [];
-			if (access(auto_list)) {
-				let c = trim(readfile(auto_list));
-				if (length(c))
-					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
-						push(learned, { host: trim(x), type: 'domain' });
-			}
-			if (access(auto_ip)) {
-				let c = trim(readfile(auto_ip));
-				if (length(c))
-					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
-						push(learned, { host: trim(x), type: 'ip' });
-			}
-
-			/* Attach per-entry metadata from the daemon state (added time, last check, reason). */
-			for (let i, e in learned) {
-				let st = state[e.host];
+			let entries = [];
+			const push_entry = (host, src) => {
+				host = trim(host);
+				if (!length(host)) return;
+				const typ = (match(host, /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/) ||
+				             (index(host, ':') >= 0 && match(host, /^[0-9a-fA-F:]+(\/\d{1,3})?$/))) ? 'ip' : 'domain';
+				const e = { host: host, type: typ, src: src };
+				let st = state[host];
 				if (type(st) === 'object') {
 					e.status = st.status || 'blocked';
 					e.added = st.added || st.last_probe || 0;
@@ -2087,12 +2174,39 @@ const methods = {
 					e.direct = st.direct || '';
 					e.proxy = st.proxy || '';
 				} else {
-					e.status = 'blocked';
+					e.status = (src === 'learned') ? 'blocked' : src;
 					e.added = 0;
 					e.last_probe = 0;
 				}
+				push(entries, e);
+				if (src === 'learned')
+					push(learned, e);
+			};
+			if (access(auto_list)) {
+				let c = trim(readfile(auto_list));
+				if (length(c))
+					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
+						push_entry(trim(x), 'learned');
 			}
-			sort(learned, (a, b) => (b.added || 0) - (a.added || 0));
+			if (access(auto_ip)) {
+				let c = trim(readfile(auto_ip));
+				if (length(c))
+					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
+						push_entry(trim(x), 'learned');
+			}
+			if (access(manual_proxy)) {
+				let c = trim(readfile(manual_proxy));
+				if (length(c))
+					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
+						push_entry(trim(x), 'manual_proxy');
+			}
+			if (access(manual_direct)) {
+				let c = trim(readfile(manual_direct));
+				if (length(c))
+					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
+						push_entry(trim(x), 'manual_direct');
+			}
+			sort(entries, (a, b) => (b.added || 0) - (a.added || 0));
 
 			let blocked = [], direct = [], unknown = [];
 			for (let h in state) {
@@ -2130,11 +2244,25 @@ const methods = {
 				       : (mnode === 'direct-out' || mnode === 'nil') ? 'direct'
 				       : '';
 
+			let n_manual_proxy = 0, n_manual_direct = 0, n_learned = 0;
+			for (let i, e in entries) {
+				if (e.src === 'learned') n_learned++;
+				else if (e.src === 'manual_proxy') n_manual_proxy++;
+				else if (e.src === 'manual_direct') n_manual_direct++;
+			}
+
 			return {
 				enabled: enabled,
 				paused: paused,
 				learned: learned,
-				counts: { blocked: length(blocked), direct: length(direct), unknown: length(unknown), learned: length(learned) },
+				entries: entries,
+				counts: {
+					blocked: length(blocked), direct: length(direct), unknown: length(unknown),
+					learned: n_learned, manual: n_manual_proxy + n_manual_direct,
+					manual_proxy: n_manual_proxy, manual_direct: n_manual_direct,
+					total: length(entries)
+				},
+				geo: ru_geo_read_meta(),
 				log: log_tail
 			};
 		}
@@ -2610,6 +2738,137 @@ const methods = {
 			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
 			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 			return { result: true, added: added_dom + added_ip };
+		}
+	},
+
+	/* ── Automation table: per-entry management (Automation tab, "List") ── */
+
+	automation_entry_add: {
+		args: { entry: 'entry', action: 'action' },
+		call: function(req) {
+			const entry = valid_automation_entry(req.args?.entry);
+			const action = req.args?.action || 'proxy';
+			if (!entry)
+				return { result: false, error: 'invalid entry (use a domain or IP)' };
+			if (action !== 'proxy' && action !== 'direct')
+				return { result: false, error: 'invalid action' };
+			const is_ip = (auto_entry_type(entry) === 'ip');
+
+			/* Manual "always proxy" pins never touch the auto lists; the learned
+			 * lists only accept RU-safe hosts (the daemon purges violations, but
+			 * never create them in the first place here). */
+			if (action === 'proxy') {
+				const proxy_set = auto_read_set(HP_DIR + '/resources/manual_proxy.txt');
+				proxy_set[entry] = true;
+				auto_write_set(HP_DIR + '/resources/manual_proxy.txt', proxy_set);
+				/* Remove a direct pin if present — the new status supersedes it. */
+				const direct_set = auto_read_set(HP_DIR + '/resources/manual_direct.txt');
+				if (direct_set[entry]) {
+					delete direct_set[entry];
+					auto_write_set(HP_DIR + '/resources/manual_direct.txt', direct_set);
+				}
+			} else {
+				const direct_set = auto_read_set(HP_DIR + '/resources/manual_direct.txt');
+				direct_set[entry] = true;
+				auto_write_set(HP_DIR + '/resources/manual_direct.txt', direct_set);
+				/* Remove it from the learned lists (it is now user-pinned direct). */
+				const auto_set = auto_read_set(HP_DIR + '/resources/auto_proxy_list.txt');
+				if (auto_set[entry]) {
+					delete auto_set[entry];
+					auto_write_set(HP_DIR + '/resources/auto_proxy_list.txt', auto_set);
+				}
+				const auto_ips = auto_read_set(HP_DIR + '/resources/auto_proxy_ip.txt');
+				if (auto_ips[entry]) {
+					delete auto_ips[entry];
+					auto_write_set(HP_DIR + '/resources/auto_proxy_ip.txt', auto_ips);
+				}
+			}
+			automation_apply_files(false);
+			return { result: true, entry: entry, action: action };
+		}
+	},
+
+	automation_entry_delete: {
+		args: { entry: 'entry' },
+		call: function(req) {
+			const entry = lc(trim(req.args?.entry ?? ''));
+			if (!length(entry))
+				return { result: false, error: 'missing entry' };
+			let removed = false;
+			const rm = (file) => {
+				const s = auto_read_set(file);
+				if (s[entry]) {
+					delete s[entry];
+					auto_write_set(file, s);
+					return true;
+				}
+				return false;
+			};
+			if (rm(HP_DIR + '/resources/auto_proxy_list.txt')) removed = true;
+			if (rm(HP_DIR + '/resources/auto_proxy_ip.txt')) removed = true;
+			if (rm(HP_DIR + '/resources/manual_proxy.txt')) removed = true;
+			if (rm(HP_DIR + '/resources/manual_direct.txt')) removed = true;
+			if (!removed)
+				return { result: false, error: 'entry not found' };
+			automation_apply_files(false);
+			return { result: true };
+		}
+	},
+
+	automation_entry_action: {
+		args: { entry: 'entry', action: 'action' },
+		call: function(req) {
+			const entry = lc(trim(req.args?.entry ?? ''));
+			const action = req.args?.action;
+			if (!length(entry))
+				return { result: false, error: 'missing entry' };
+			if (action !== 'auto' && action !== 'proxy' && action !== 'direct')
+				return { result: false, error: 'invalid action' };
+
+			/* Drop the current pins first. */
+			let touched = false;
+			const mp = auto_read_set(HP_DIR + '/resources/manual_proxy.txt');
+			if (mp[entry]) { delete mp[entry]; auto_write_set(HP_DIR + '/resources/manual_proxy.txt', mp); touched = true; }
+			const md = auto_read_set(HP_DIR + '/resources/manual_direct.txt');
+			if (md[entry]) { delete md[entry]; auto_write_set(HP_DIR + '/resources/manual_direct.txt', md); touched = true; }
+
+			if (action === 'proxy') {
+				/* Moving to manual proxy: leave the learned entry in place (it keeps
+				 * the probe metadata) and add the pin; if not learned, the pin alone
+				 * routes it via the proxy lists. */
+				const proxy_set = auto_read_set(HP_DIR + '/resources/manual_proxy.txt');
+				proxy_set[entry] = true;
+				auto_write_set(HP_DIR + '/resources/manual_proxy.txt', proxy_set);
+			} else if (action === 'direct') {
+				const direct_set = auto_read_set(HP_DIR + '/resources/manual_direct.txt');
+				direct_set[entry] = true;
+				auto_write_set(HP_DIR + '/resources/manual_direct.txt', direct_set);
+				/* Remove from learned lists so the daemon stops tracking it as blocked
+				 * and the auto-direct rule is the only relevant one. */
+				const auto_set = auto_read_set(HP_DIR + '/resources/auto_proxy_list.txt');
+				if (auto_set[entry]) { delete auto_set[entry]; auto_write_set(HP_DIR + '/resources/auto_proxy_list.txt', auto_set); }
+				const auto_ips = auto_read_set(HP_DIR + '/resources/auto_proxy_ip.txt');
+				if (auto_ips[entry]) { delete auto_ips[entry]; auto_write_set(HP_DIR + '/resources/auto_proxy_ip.txt', auto_ips); }
+			}
+			automation_apply_files(false);
+			return { result: true };
+		}
+	},
+
+	/* ── RU-geo databases (RU never via proxy) ─────────────────────────── */
+
+	automation_geo_update: {
+		call: function(req) {
+			if (access('/tmp/ru_geo_lock'))
+				return { result: false, error: 'update already running' };
+			system('ucode ' + HP_DIR + '/scripts/ru_geo_build.uc >/dev/null 2>&1 &');
+			return { result: true, started: true };
+		}
+	},
+
+	automation_geo_status: {
+		call: function(req) {
+			return { meta: ru_geo_read_meta() };
 		}
 	}
 

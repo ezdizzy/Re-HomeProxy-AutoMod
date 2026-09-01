@@ -15,7 +15,7 @@ import { cursor } from 'uci';
 import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
 	removeBlankAttrs, validation, HP_DIR, RUN_DIR,
-	sync_learned_rulesets
+	sync_learned_rulesets, sync_manual_direct_ruleset, sync_ru_geo_rulesets
 } from 'homeproxy';
 
 const ubus = connect();
@@ -1857,12 +1857,44 @@ if (!isEmpty(main_node)) {
 			path: HP_DIR + '/resources/auto_ip.json'
 		});
 
+	/* RU-geo databases (RU-protect): watched local rule-set files refreshed by
+	 * ru_geo_update.sh. Always emitted (possibly empty) so the geo_update path
+	 * hot-reloads the files without a service restart. */
+	push(config.route.rule_set, {
+		type: 'local',
+		tag: 'ru-geoip',
+		format: 'source',
+		path: HP_DIR + '/resources/ru_geoip.json'
+	});
+	push(config.route.rule_set, {
+		type: 'local',
+		tag: 'ru-geosite',
+		format: 'source',
+		path: HP_DIR + '/resources/ru_geosite.json'
+	});
+
 	if (is_selective_mode(routing_mode)) {
 		/* Resolve domains before routing — prevents the proxy server from doing its own DNS
 		 * resolution, and (reverse) lets the geoip baseline match by IP. */
 		push(config.route.rules, {
 			action: 'resolve',
 			strategy: (ipv6_support !== '1') ? 'ipv4_only' : null
+		});
+
+		/* Manual "always direct" pins from the Automation table (watched local
+		 * rule-set resources/auto_direct.json → hot reload). Placed FIRST among
+		 * the routing rules: it is the user's most specific, most recent intent
+		 * (a single host forced to direct outranks every list-based rule). */
+		push(config.route.rule_set, {
+			type: 'local',
+			tag: 'auto-direct',
+			format: 'source',
+			path: HP_DIR + '/resources/auto_direct.json'
+		});
+		push(config.route.rules, {
+			rule_set: 'auto-direct',
+			action: 'route',
+			outbound: 'direct-out'
 		});
 
 		/* Advanced custom routing rules (highest priority) */
@@ -2088,6 +2120,20 @@ if (!isEmpty(main_node)) {
 			}
 		}
 
+		/* RU-protect ("Russian internet never via proxy"): the downloaded RU-geo
+		 * databases (watched local rule-sets resources/ru_geoip.json + ru_geosite.json,
+		 * refreshed by ru_geo_update.sh) are matched BEFORE the proxy lists, so a
+		 * stale/learned/static-list hit on RU infrastructure can never tunnel RU
+		 * traffic — RU services' anti-fraud flags VPN exits. Placed AFTER the
+		 * per-service rules (user rules keep priority) and BEFORE the proxy-domain /
+		 * auto-ip learned rules. Toggled by homeproxy.automation.geo_protect (default on). */
+		if ((uci.get(uciconfig, 'automation', 'geo_protect') || '1') !== '0')
+			push(config.route.rules, {
+				rule_set: [ 'ru-geoip', 'ru-geosite' ],
+				action: 'route',
+				outbound: 'direct-out'
+			});
+
 		/* Custom proxy list → main-out. The learned sites share this rule-set via the
 		 * watched local file, so they hot-reload without a restart. Always emitted
 		 * (empty rule-set is a no-op) so hot reloads work even from an empty list.
@@ -2279,8 +2325,12 @@ if (is_selective_mode(routing_mode) || routing_mode === 'custom') {
 system('mkdir -p ' + RUN_DIR);
 
 /* Write the watched learned-list rule-set files (proxy_domain.json / auto_ip.json) so they
- * exist before the core starts. Automation rewrites them on every learn → hot reload. */
+ * exist before the core starts. Automation rewrites them on every learn → hot reload.
+ * Also the manual "always direct" pins (auto_direct.json) and the RU-geo rule-set files
+ * (ru_geoip.json / ru_geosite.json — stale-only rewrite, see sync_ru_geo_rulesets). */
 sync_learned_rulesets();
+sync_manual_direct_ruleset();
+sync_ru_geo_rulesets();
 
 writefile(RUN_DIR + '/hiddify-c.json', sprintf('%.J\n', removeBlankAttrs(config)));
 

@@ -156,6 +156,11 @@ const PERF_STATE_CAP = 12000;
 const STATE_FILE = RUN_DIR + '/automation_state.json';
 const AUTO_LIST = RES + '/auto_proxy_list.txt';
 const AUTO_IP_LIST = RES + '/auto_proxy_ip.txt';
+const MANUAL_PROXY_LIST = RES + '/manual_proxy.txt';
+const MANUAL_DIRECT_LIST = RES + '/manual_direct.txt';
+const RU_GEOIP = RES + '/ru_geoip.txt';
+const RU_GEOSITE = RES + '/ru_geosite.txt';
+const RELOAD_MARKER = RUN_DIR + '/automation.reload';
 const TRIGGER_FILE = RUN_DIR + '/automation.trigger';
 const LOG_FILE = RUN_DIR + '/automation.log';
 const DNS_LOG = '/var/log/dnsmasq-q.log';
@@ -191,6 +196,24 @@ let dns_log_on = false;
  * Module-level because resolve_plain_view is a top-level helper (no closures over
  * main() locals on this ucode build). */
 let pv_cache = {};
+
+/* Manual per-entry overrides (Automation table):
+ *   manual_proxy_set  — "always via proxy": protected from self-healing, never re-verdicted;
+ *   manual_direct_set — "always direct": never learned/probed, routed via auto-direct rule. */
+let manual_proxy_set = {};
+let manual_direct_set = {};
+
+/* RU-geo working sets. DECLARATIONS here, functions below (after read_lines):
+ * this ucode build has no function hoisting, so helpers must be declared
+ * above their callers. */
+let ru_ip4 = {};
+let ru_ip6 = {};
+let ru_dom_set = {};
+let ru_dom_exact = {};
+let ru_dom_kw = [];
+let geo_ip_count = 0;
+let geo_dom_count = 0;
+let geo_loaded = false;
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -236,6 +259,120 @@ function read_lines(path) {
 	c = trim(c);
 	if (!length(c)) return [];
 	return filter(split(c, /[\r\n]/), (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
+}
+
+/* ── RU-geo database (loaded from resources/ru_geoip.txt + ru_geosite.txt,
+ * refreshed by ru_geo_build.uc) ──────────────────────────────────────────
+ * Goal: the ENTIRE Russian internet is excluded from learning and from
+ * proxying: RU services (banks, marketplaces, VK on .com TLDs, RU-hosted
+ * CDNs) must never be learned as "blocked" and never ride the tunnel —
+ * their anti-fraud systems flag VPN/proxy exits. IPv4 networks are stored
+ * as sorted (start, end) numeric ranges bucketed by first octet for a
+ * binary-search lookup; IPv6 is a conservative first-hextet bucket match
+ * (RU v6 candidates are over-excluded on purpose — they simply never get
+ * learned, direct remains their default path). */
+function load_ru_geo() {
+	ru_ip4 = {}; ru_ip6 = {}; ru_dom_set = {}; ru_dom_exact = {}; ru_dom_kw = [];
+	geo_ip_count = 0; geo_dom_count = 0;
+	geo_loaded = true;
+
+	/* Networks: `a.b.c.d/plen` v4 lines → numeric ranges; v6 lines → hextet bucket. */
+	let per_octet = {};
+	for (let l in read_lines(RU_GEOIP)) {
+		let m = match(l, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/);
+		if (m) {
+			let o1 = int(m[1]), o2 = int(m[2]), o3 = int(m[3]), o4 = int(m[4]), pl = int(m[5]);
+			if (o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255 || pl < 1 || pl > 32) continue;
+			/* Doubles are exact below 2^53 — full 32-bit arithmetic is safe.
+			 * Bitwise ops would coerce through int32 (sign trap) — use modular math. */
+			let ip = o1 * 16777216 + o2 * 65536 + o3 * 256 + o4;
+			let size = 1;
+			for (let i = 0; i < 32 - pl; i++) size *= 2;
+			let start = ip - (ip % size);
+			if (!per_octet[o1]) per_octet[o1] = [];
+			push(per_octet[o1], { s: start, e: start + size - 1 });
+			geo_ip_count++;
+			continue;
+		}
+		if (match(l, /^[0-9a-fA-F:]+\/[0-9]+$/)) {
+			let hm = match(lc(l), /^([0-9a-f]{1,4})[:]/);
+			if (hm) {
+				if (!ru_ip6[hm[1]]) ru_ip6[hm[1]] = 0;
+				ru_ip6[hm[1]]++;
+				geo_ip_count++;
+			}
+		}
+	}
+	/* Sort each first-octet bucket by start and store as flat arrays. */
+	for (let o in keys(per_octet)) {
+		let arr = per_octet[o];
+		sort(arr, (a, b) => a.s - b.s);
+		ru_ip4[o] = arr;
+	}
+
+	/* Domains: prefixed geosite-source lines (domain:/full:/keyword:), bare lines
+	 * treated as suffix entries. */
+	for (let x in read_lines(RU_GEOSITE)) {
+		let m = match(x, /^(domain|full|keyword):(.+)$/);
+		if (m) {
+			let v = lc(trim(m[2]));
+			if (!length(v)) continue;
+			if (m[1] === 'domain') { ru_dom_set[v] = true; geo_dom_count++; }
+			else if (m[1] === 'full') { ru_dom_exact[v] = true; geo_dom_count++; }
+			else { push(ru_dom_kw, v); geo_dom_count++; }
+		} else if (!match(x, ':')) {
+			let v = lc(x);
+			if (length(v)) { ru_dom_set[v] = true; geo_dom_count++; }
+		}
+	}
+	log(`RU-geo database loaded: ${geo_ip_count} networks, ${geo_dom_count} domain entries.`);
+}
+
+function is_ru_ip(ip) {
+	if (!geo_loaded) return false;
+	if (!length(ip)) return false;
+	let m = match(ip, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (m) {
+		let o1 = int(m[1]), o2 = int(m[2]), o3 = int(m[3]), o4 = int(m[4]);
+		if (o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255) return false;
+		let bucket = ru_ip4[o1];
+		if (!bucket) return false;
+		let ipn = o1 * 16777216 + o2 * 65536 + o3 * 256 + o4;
+		let lo = 0, hi = length(bucket) - 1;
+		while (lo <= hi) {
+			let mid = int((lo + hi) / 2);
+			let r = bucket[mid];
+			if (ipn < r.s) hi = mid - 1;
+			else if (ipn > r.e) lo = mid + 1;
+			else return true;
+		}
+		return false;
+	}
+	if (index(ip, ':') >= 0) {
+		let hm = match(lc(ip), /^([0-9a-f]{1,4})/);
+		return !!(hm && ru_ip6[hm[1]]);
+	}
+	return false;
+}
+
+function is_ru_domain(host) {
+	host = lc(trim(host));
+	if (!length(host)) return false;
+	/* TLDs are the baseline guard (hard-coded, works without the geo database). */
+	if (match(host, /\.(ru|su|рф|xn--p1ai)$/) || substr(host, -5) === '.рф')
+		return true;
+	if (!geo_loaded || (!geo_dom_count && !length(ru_dom_kw)))
+		return false;
+	if (ru_dom_exact[host]) return true;
+	for (let k in ru_dom_kw)
+		if (index(host, k) >= 0) return true;
+	let h = host;
+	for (;;) {
+		if (ru_dom_set[h]) return true;
+		let dot = index(h, '.');
+		if (dot < 0) return false;
+		h = substr(h, dot + 1);
+	}
 }
 
 function load_state() {
@@ -372,7 +509,7 @@ function probe(host, via_proxy, timeout) {
 			}
 		}
 		if (!ip)
-			return { code: '000', ok: false, block: false, fp: '' };
+			return { code: '000', ok: false, block: false, fp: '', ip: null };
 		pin = ` --resolve ${shellquote(host + ':443:' + ip)}`;
 	}
 	let proxy_arg = via_proxy
@@ -409,13 +546,13 @@ function probe(host, via_proxy, timeout) {
 				block = true;
 		}
 		let ok = (c === 'ok') && !block;
-		return { code: code, ok: ok, block: block, fp: fp };
+		return { code: code, ok: ok, block: block, fp: fp, ip: via_proxy ? null : ip };
 	}
 	let wget_port = via_proxy ? AUTO_PROXY_PORT : AUTO_DIRECT_PORT;
 	let proxy_env = `http_proxy=http://127.0.0.1:${wget_port} https_proxy=http://127.0.0.1:${wget_port}`;
 	let rc = system(`${proxy_env} /usr/bin/wget -q -T ${timeout} -t 1 --no-check-certificate -O /dev/null ${shellquote('https://' + host)} 2>/dev/null`, timeout * 1000 + 2000);
 	let ok = (rc === 0);
-	return { code: ok ? '200' : '000', ok: ok, block: false, fp: '' };
+	return { code: ok ? '200' : '000', ok: ok, block: false, fp: '', ip: null };
 }
 
 function is_private_ip(ip) {
@@ -579,6 +716,16 @@ function is_excluded(host, ignore_lists) {
 	 * work; xn--p1ai covers the punycode form clients actually send. */
 	if (match(host, /\.(ru|su|рф|xn--p1ai)$/) || substr(host, -5) === '.рф')
 		return true;
+	/* Manual pins are decided by the user — the engine must not re-probe or
+	 * re-verdict them. */
+	if (manual_proxy_set[host] || manual_direct_set[host]) return true;
+	/* RU-geo database extends the TLD guard to RU services on non-RU TLDs and
+	 * to RU networks (IP candidates). Works even without the database (TLDs
+	 * above); with it, sberbank.com / RU-hosted CDNs etc. are covered too. */
+	if (geo_loaded) {
+		if (is_ru_domain(host)) return true;
+		if (match(host, /^\d{1,3}(\.\d{1,3}){3}$/) && is_ru_ip(host)) return true;
+	}
 	for (let e in excludes) {
 		e = trim(e);
 		if (!length(e)) continue;
@@ -906,6 +1053,7 @@ if [ "$SIDE" = direct ]; then
 	done
 	if [ -z "$IP" ]; then printf '000' > "$PRE.code"; : > "$PRE.body"; echo done > "$PRE.done"; exit 0; fi
 	PIN="--resolve $H:443:$IP"
+	printf '%s' "$IP" > "$PRE.ip"
 fi
 rm -f "$PRE.code" "$PRE.body"
 if [ "$SIDE" = tcp ] || [ "$SIDE" = tcpproxy ]; then
@@ -949,20 +1097,22 @@ echo done > "$PRE.done"
 			let pre = RUN_DIR + '/pw.' + items[k].i;
 			let raw = trim(readfile(pre + '.code') || '');
 			let body = readfile(pre + '.body') || '';
+			let ipraw = trim(readfile(pre + '.ip') || '');
 			let res;
 			if (side === 'tcp' || side === 'tcpproxy') {
 				let ok = false;
 				for (let c in TCP_OK_EXIT) if (raw === c) ok = true;
-				res = { code: length(raw) ? raw : '-1', ok: ok, block: false, fp: '' };
+				res = { code: length(raw) ? raw : '-1', ok: ok, block: false, fp: '', ip: null };
 			} else {
 				let c = classify_code(raw);
 				let block = (c === 'block');
 				if (c === 'ok' && length(body) < 32768 && body_blocked(body))
 					block = true;
-				res = { code: length(raw) ? raw : '000', ok: (c === 'ok') && !block, block: block, fp: fingerprint(body) };
+				res = { code: length(raw) ? raw : '000', ok: (c === 'ok') && !block, block: block, fp: fingerprint(body),
+				        ip: (side === 'direct' && length(ipraw)) ? ipraw : null };
 			}
 			out[items[k].i] = res;
-			system(`rm -f ${shellquote(pre)}.code ${shellquote(pre)}.body ${shellquote(pre)}.done 2>/dev/null`);
+			system(`rm -f ${shellquote(pre)}.code ${shellquote(pre)}.body ${shellquote(pre)}.done ${shellquote(pre)}.ip 2>/dev/null`);
 		}
 		return out;
 	}
@@ -979,7 +1129,7 @@ echo done > "$PRE.done"
 	/* Stale worker leftovers from a crashed pass would poison later reads only if
 	 * ids collide; ids embed the pass-unique selection index, and every wave
 	 * deletes its files after harvest — a startup sweep is belt & braces. */
-	system(`rm -f ${RUN_DIR}/pw.*.done ${RUN_DIR}/pw.*.code ${RUN_DIR}/pw.*.body 2>/dev/null`);
+	system(`rm -f ${RUN_DIR}/pw.*.done ${RUN_DIR}/pw.*.code ${RUN_DIR}/pw.*.body ${RUN_DIR}/pw.*.ip 2>/dev/null`);
 
 	let min_confirm = int(uci.get('homeproxy', 'automation', 'min_confirm') || '1') || 1;
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
@@ -1034,71 +1184,104 @@ echo done > "$PRE.done"
 	alt_dns = uci.get('homeproxy', 'config', 'alt_dns_servers') || [];
 	if (type(alt_dns) !== 'array') alt_dns = [ alt_dns ];
 
-	direct_set = {}; proxy_set = {}; auto_ip_set = {}; auto_set = {};
-	load_local_ips();
-	load_resolver_ips(alt_dns);
-	for (let d in read_lines(RES + '/direct_list.txt')) direct_set[trim(d)] = true;
-	for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
-	/* Load the learned list but drop entries that are now excluded (.ru/.рф/.su
-	 * or user excludes) — self-heals lists learned by older versions. If anything
-	 * was dropped, persist the cleaned list right away. */
-	let dropped = 0;
-	/* Same byte-safe RU-TLD check as is_excluded(): substr(-3)==='.рф' is dead
-	 * on UTF-8 (byte slicing). */
-	for (let d in read_lines(AUTO_LIST)) {
-		d = trim(d);
-		if (!length(d)) continue;
-		if (match(d, /\.(ru|su|рф|xn--p1ai)$/) || substr(d, -5) === '.рф') {
-			log('dropping learned entry (RU TLD always goes direct): ' + d);
-			dropped++;
-			continue;
+	/* Reload the working sets from the list files. Runs at startup AND on the
+	 * reload marker (RPC table edits / geo updates) so user changes reach the
+	 * running daemon within one pass instead of requiring a restart. */
+	function reload_lists() {
+		direct_set = {}; proxy_set = {}; auto_ip_set = {}; auto_set = {};
+		manual_proxy_set = {}; manual_direct_set = {};
+		load_local_ips();
+		load_resolver_ips(alt_dns);
+		for (let d in read_lines(RES + '/direct_list.txt')) direct_set[trim(d)] = true;
+		for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
+		for (let d in read_lines(MANUAL_PROXY_LIST)) { d = trim(d); if (length(d)) manual_proxy_set[d] = true; }
+		for (let d in read_lines(MANUAL_DIRECT_LIST)) { d = trim(d); if (length(d)) manual_direct_set[d] = true; }
+		/* Load the learned list but drop entries that are now excluded (.ru/.рф/.su,
+		 * RU-geo database, user's "always direct" pins) — self-heals lists learned by
+		 * older versions. If anything was dropped, persist the cleaned list right away. */
+		let dropped = 0;
+		/* Same byte-safe RU-TLD check as is_excluded(): substr(-3)==='.рф' is dead
+		 * on UTF-8 (byte slicing). */
+		for (let d in read_lines(AUTO_LIST)) {
+			d = trim(d);
+			if (!length(d)) continue;
+			if (match(d, /\.(ru|su|рф|xn--p1ai)$/) || substr(d, -5) === '.рф') {
+				log('dropping learned entry (RU TLD always goes direct): ' + d);
+				dropped++;
+				continue;
+			}
+			/* Self-heal legacy UUID-minted entries: collapse to the base domain —
+			 * routing by suffix on the base covers every variant. Older builds also
+			 * wrote UPPERCASE minted variants (no lc() in intake) — lowercase the
+			 * result so exactly one canonical entry remains. */
+			const cd = lc(collapse_uuid_host(d));
+			if (cd !== d) {
+				log('collapsing learned entry to base domain: ' + d + ' -> ' + cd);
+				auto_set[cd] = true;
+				dropped++;
+				continue;
+			}
+			if (manual_direct_set[d]) {
+				log('dropping learned entry (user pinned always-direct): ' + d);
+				dropped++;
+				continue;
+			}
+			if (geo_loaded && is_ru_domain(d)) {
+				log('dropping learned entry (RU-geo database, always direct): ' + d);
+				dropped++;
+				continue;
+			}
+			auto_set[d] = true;
 		}
-		/* Self-heal legacy UUID-minted entries: collapse to the base domain —
-		 * routing by suffix on the base covers every variant. Older builds also
-		 * wrote UPPERCASE minted variants (no lc() in intake) — lowercase the
-		 * result so exactly one canonical entry remains. */
-		const cd = lc(collapse_uuid_host(d));
-		if (cd !== d) {
-			log('collapsing learned entry to base domain: ' + d + ' -> ' + cd);
-			auto_set[cd] = true;
-			dropped++;
-			continue;
+		/* Sanitize on load: infrastructure IPs must never live in the learned set —
+		 * a poisoned entry survives in-memory even after the list file is cleaned
+		 * externally until the next restart. Also rDNS-sweep the (capped) learned
+		 * IPs for RU-TLD hosts — bare IPs bypass the domain-side .ru/.su/.рф guard,
+		 * so a poisoned entry like mail.ilona.su's A-record self-heals here. */
+		let ip_dropped = 0;
+		let ip_idx = 0;
+		for (let d in read_lines(AUTO_IP_LIST)) {
+			d = trim(d);
+			ip_idx++;
+			if (!length(d)) continue;
+			if (is_resolver_ip(d)) {
+				log('dropping learned IP (DNS resolver/anycast infrastructure): ' + d);
+				ip_dropped++;
+				continue;
+			}
+			if (is_local_ip(d)) {
+				log('dropping learned IP (router own address): ' + d);
+				ip_dropped++;
+				continue;
+			}
+			if (manual_direct_set[d]) {
+				log('dropping learned IP (user pinned always-direct): ' + d);
+				ip_dropped++;
+				continue;
+			}
+			if (geo_loaded && is_ru_ip(d)) {
+				log('dropping learned IP (RU-geo database, always direct): ' + d);
+				ip_dropped++;
+				continue;
+			}
+			/* PTR lookups cost up to ~3s each — sweep only small lists. */
+			if (ip_idx <= 48 && ptr_is_ru(d)) {
+				log('dropping learned IP (RU-TLD rDNS, always direct): ' + d);
+				ip_dropped++;
+				continue;
+			}
+			auto_ip_set[d] = true;
 		}
-		auto_set[d] = true;
+		if (dropped > 0)
+			write_auto_list(auto_set);
+		if (ip_dropped > 0)
+			write_auto_ip_list(auto_ip_set);
+		return (dropped + ip_dropped);
 	}
-	/* Sanitize on load: infrastructure IPs must never live in the learned set —
-	 * a poisoned entry survives in-memory even after the list file is cleaned
-	 * externally until the next restart. Also rDNS-sweep the (capped) learned
-	 * IPs for RU-TLD hosts — bare IPs bypass the domain-side .ru/.su/.рф guard,
-	 * so a poisoned entry like mail.ilona.su's A-record self-heals here. */
-	let ip_dropped = 0;
-	let ip_idx = 0;
-	for (let d in read_lines(AUTO_IP_LIST)) {
-		d = trim(d);
-		ip_idx++;
-		if (!length(d)) continue;
-		if (is_resolver_ip(d)) {
-			log('dropping learned IP (DNS resolver/anycast infrastructure): ' + d);
-			ip_dropped++;
-			continue;
-		}
-		if (is_local_ip(d)) {
-			log('dropping learned IP (router own address): ' + d);
-			ip_dropped++;
-			continue;
-		}
-		/* PTR lookups cost up to ~3s each — sweep only small lists. */
-		if (ip_idx <= 48 && ptr_is_ru(d)) {
-			log('dropping learned IP (RU-TLD rDNS, always direct): ' + d);
-			ip_dropped++;
-			continue;
-		}
-		auto_ip_set[d] = true;
-	}
-	if (dropped > 0)
-		write_auto_list(auto_set);
-	if (ip_dropped > 0)
-		write_auto_ip_list(auto_ip_set);
+
+	if (!geo_loaded)
+		load_ru_geo();
+	reload_lists();
 	let state = load_state();
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 	/* Legacy sweep: old builds PERSISTED 'unknown' records (both probes
@@ -1178,6 +1361,24 @@ echo done > "$PRE.done"
 		st.direct = d.code;
 		st.proxy = p ? p.code : 'n/a';
 		st.type = is_ip ? 'ip' : 'domain';
+
+		/* ── RU-geo hard gate (highest priority) ─────────────────────────
+		 * Russian networks, RU domains (incl. non-RU TLDs via the geo database)
+		 * and hosts whose plain-view (RU-facing) answer lands in RU networks
+		 * are NEVER learned — their anti-fraud systems flag VPN/proxy exits,
+		 * and RU traffic must always ride direct in "Bypass blocking" mode. */
+		if (is_ip ? is_ru_ip(dom) : is_ru_domain(dom)) {
+			st.status = 'direct';
+			st.confirms = 0;
+			delete st.dconfirms;
+			return;
+		}
+		if (!is_ip && d.ip && is_ru_ip(d.ip)) {
+			st.status = 'direct';
+			st.confirms = 0;
+			delete st.dconfirms;
+			return;
+		}
 
 		/* A host is learned as BLOCKED only when direct is NOT ok (fails, times out,
 		 * gets a 4xx/5xx, or a 200 block-page) AND the proxy reaches a real page.
@@ -1608,7 +1809,8 @@ echo done > "$PRE.done"
 
 		/* Self-healing (both modes): hourly, re-probe DIRECT a couple of learned
 		 * entries older than 7 days. An entry answering directly HEAL_CONFIRM times
-		 * in a row no longer needs the proxy — remove it from the lists. */
+		 * in a row no longer needs the proxy — remove it from the lists.
+		 * Manual "always proxy" pins are NEVER unlearned here (that is their point). */
 		if ((now - last_reeval) > REEVAL_PERIOD) {
 			last_reeval = now;
 			let healed = [];
@@ -1616,6 +1818,7 @@ echo done > "$PRE.done"
 			for (let lst in [auto_set, auto_ip_set]) {
 				/* keys() snapshot: entries are deleted from lst during iteration. */
 				for (let h in keys(lst)) {
+					if (manual_proxy_set[h] || manual_direct_set[h]) continue;
 					if (rechecked >= REEVAL_BATCH) break;
 					let st = state[h];
 					if (st && st.last_probe && (now - st.last_probe) < REEVAL_AGE) continue;
@@ -1654,6 +1857,9 @@ echo done > "$PRE.done"
 			let keep = {};
 			for (let d in read_lines(RES + '/direct_list.txt')) keep[trim(d)] = true;
 			for (let d in read_lines(RES + '/proxy_list.txt')) keep[trim(d)] = true;
+			/* Manual pins are user decisions — their state records survive pruning. */
+			for (let d in manual_proxy_set) keep[d] = true;
+			for (let d in manual_direct_set) keep[d] = true;
 			for (let h in keys(state)) {
 				if (h === '__dns_offset') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
@@ -1720,27 +1926,60 @@ echo done > "$PRE.done"
 
 	log('automation daemon started (mode=' + mode + ', sources=' + (length(keys(disc)) ? discover_str : 'none') + ', ip_learn=' + ip_learn + ').');
 
-		let last_failover = 0;
-		while (true) {
-			enabled = uci.get('homeproxy', 'automation', 'enabled');
-			if (enabled !== '1') {
-				log('automation disabled, exiting.');
-				if (has('dns')) disable_dns_log();
-				return;
+	let last_failover = 0;
+	let last_geo_check = 0;
+	while (true) {
+		enabled = uci.get('homeproxy', 'automation', 'enabled');
+		if (enabled !== '1') {
+			log('automation disabled, exiting.');
+			if (has('dns')) disable_dns_log();
+			return;
+		}
+
+		/* External edits (Automation table RPC: add/delete/manual status, RU-geo
+		 * updates) leave a reload marker; re-read the working sets within one
+		 * pass instead of waiting for a daemon restart. */
+		if (access(RELOAD_MARKER + '_geo')) {
+			system('rm -f ' + shellquote(RELOAD_MARKER + '_geo'));
+			load_ru_geo();
+			reload_lists();
+			log('reload marker (geo): RU-geo database + working sets reloaded.');
+		} else if (access(RELOAD_MARKER)) {
+			system('rm -f ' + shellquote(RELOAD_MARKER));
+			reload_lists();
+			log('reload marker: working sets reloaded.');
+		}
+
+		let run_now = false;
+		if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); run_now = true; }
+
+		let ran = pass(run_now);
+
+		/* DNS failover (C) at most once per minute. */
+		let now = time();
+		if (dns_failover === '1' && (now - last_failover) > 60) { last_failover = now; dns_failover_check(); }
+
+		/* RU-geo auto-update (hourly check, background execution): refresh the
+		 * downloaded databases when they are older than the configured interval. */
+		if ((now - last_geo_check) > 3600) {
+			last_geo_check = now;
+			if ((uci.get('homeproxy', 'automation', 'geo_auto_update') || '0') === '1') {
+				let hours = int(uci.get('homeproxy', 'automation', 'geo_update_hours') || '24') || 24;
+				let upd = 0;
+				try {
+					let mf = RES + '/ru_geo.meta';
+					if (access(mf)) { let m = json(readfile(mf) || '{}'); upd = int(m && m.updated) || 0; }
+				} catch (e) { upd = 0; }
+				if ((now - upd) > hours * 3600) {
+					log('RU-geo database is stale (> ' + hours + 'h) — updating in background.');
+					system('ucode ' + HP_DIR + '/scripts/ru_geo_build.uc >/dev/null 2>&1 &');
+				}
 			}
+		}
 
-			let run_now = false;
-			if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); run_now = true; }
-
-			let ran = pass(run_now);
-
-			/* DNS failover (C) at most once per minute. */
-			let now = time();
-			if (dns_failover === '1' && (now - last_failover) > 60) { last_failover = now; dns_failover_check(); }
-
-		/* Persist dns log offset so we don't re-scan from the start after a restart.
-		 * Skipped while the pass was paused/inert: nothing consumed the log, so the
-		 * offset must NOT advance — and the flash/tmpfs write is pure churn. */
+	/* Persist dns log offset so we don't re-scan from the start after a restart.
+	 * Skipped while the pass was paused/inert: nothing consumed the log, so the
+	 * offset must NOT advance — and the flash/tmpfs write is pure churn. */
 		if (ran) {
 			state.__dns_offset = dns_log_offset;
 			save_state(state);
@@ -1749,6 +1988,7 @@ echo done > "$PRE.done"
 		for (let i = 0; i < 10; i++) {
 			sleep(1);
 			if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); break; }
+			if (access(RELOAD_MARKER) || access(RELOAD_MARKER + '_geo')) break;
 			if (uci.get('homeproxy', 'automation', 'enabled') !== '1') { if (has('dns')) disable_dns_log(); return; }
 		}
 	}

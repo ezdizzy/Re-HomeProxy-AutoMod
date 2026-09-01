@@ -6892,3 +6892,293 @@ msgid "Resolves blocked domains via proxy — your ISP cannot see which sites yo
 msgstr "Разрешает заблокированные домены через прокси — провайдер не видит, какие сайты вы запрашиваете. Использует шифрованный DNS (DoH/DoT). Можно добавить несколько — MultiDNS опрашивает их все, без него используется первая запись."
 
 
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "+ Add"
+msgstr "+ Добавить"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Add failed: "
+msgstr "Ошибка добавления: "
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "All entries"
+msgstr "Все записи"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Always direct"
+msgstr "Всегда напрямую"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Always proxy"
+msgstr "Всегда через прокси"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Always via proxy"
+msgstr "Всегда через прокси"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is active — learning blocked sites."
+msgstr "Автоматизация активна — обучение заблокированных сайтов идёт."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Automation is disabled — enable it in Settings to start learning."
+msgstr "Автоматизация выключена — включите её во вкладке «Настройки», чтобы начать обучение."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Blocked"
+msgstr "Заблокирован"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Blocked only"
+msgstr "Только заблокированные"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "categories"
+msgstr "категорий"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Delete entry"
+msgstr "Удалить запись"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Delete entry %s?"
+msgstr "Удалить запись %s?"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Direct (pending)"
+msgstr "Напрямую (ожидание)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Direct only"
+msgstr "Только напрямую"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Direct verdicts"
+msgstr "Вердикт «напрямую»"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "disabled (switch in Settings)"
+msgstr "выключена (переключатель в «Настройках»)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Domain-name sources to watch for candidates. Raw-IP destinations are a separate switch below (“Learn IP destinations”)."
+msgstr "Источники домённых имён для поиска кандидатов. IP-адреса — отдельный переключатель ниже («Учить IP-адреса»)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "eco: classic serial probing for weak routers. perf: up to 64 domains / 32 IPs per pass probed in parallel batches (16 at once) — needs a multi-core router with 1 GB RAM (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
+msgstr "eco: классическая последовательная проверка для слабых роутеров. perf: до 64 доменов / 32 IP за проход параллельными пачками (по 16) — нужен многоядерный роутер с 1 ГБ ОЗУ (например, GL.iNet Flint 2). auto: определяется по числу ядер и памяти."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Entries"
+msgstr "Записей"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Entry added: %s."
+msgstr "Запись добавлена: %s."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "example.com or 1.2.3.4"
+msgstr "example.com или 1.2.3.4"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Hard guard: traffic matching the RU-geo databases (networks + domains, see the “RU-geo databases” tab) and .ru/.su/.рф domains is always routed DIRECT, even if it matches a learned or static proxy list entry. RU services (banks, marketplaces, delivery) flag VPN exits — this keeps them off the tunnel."
+msgstr "Жёсткий барьер: трафик, попадающий в RU-гео-базы (сети + домены, вкладка «RU-гео-базы») и в домены .ru/.su/.рф, всегда идёт НАПРЯМУЮ — даже если он совпал с изученной или статической записью прокси-списков. Сервисы РФ (банки, маркетплейсы, доставка) распознают VPN-выходы — эта защита держит их вне туннеля."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Invalid entry: use a domain name or an IP address."
+msgstr "Некорректная запись: укажите домен или IP-адрес."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Learned (engine)"
+msgstr "Выученные (движком)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Manual pins"
+msgstr "Ручные закрепления"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Manual status: “Always via proxy” keeps the site on the proxy and protects it from automatic un-learning; “Always direct” removes it from the learned lists and forces the direct path; “Auto” returns the entry to the engine. A deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that."
+msgstr "Ручной статус: «Всегда через прокси» держит сайт на прокси и защищает его от автоматического удаления; «Всегда напрямую» убирает его из изученных списков и принудительно пускает напрямую; «Авто» возвращает запись под управление движка. Удалённая запись может быть выучена заново, если она действительно заблокирована — чтобы этого избежать, закрепите её как «Всегда напрямую»."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "networks %s, domains %s, %s"
+msgstr "сетей: %s, доменов: %s, %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "never updated"
+msgstr "не обновлялась"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "not downloaded"
+msgstr "не загружена"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "not installed — update on the “RU-geo databases” tab"
+msgstr "не установлены — обновите на вкладке «RU-гео-базы»"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Nothing matches the search / filter."
+msgstr "Ничего не найдено по поиску/фильтру."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Overview"
+msgstr "Обзор"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "pinned by user"
+msgstr "закреплено пользователем"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "RU domains (geosite)"
+msgstr "Домены РФ (geosite)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "RU networks (geoip)"
+msgstr "Сети РФ (geoip)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "RU-geo databases"
+msgstr "RU-гео-базы"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "RU-geo databases:"
+msgstr "RU-гео-базы:"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "RU-geo update interval (hours)"
+msgstr "Интервал обновления RU-гео-баз (часы)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "RU-geo update started in the background — this page will show the new date in a minute."
+msgstr "Обновление RU-гео-баз запущено в фоне — через минуту на этой странице появится новая дата."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "RU-protect"
+msgstr "RU-защита"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "RU-protect: Russian internet never via proxy"
+msgstr "RU-защита: российский интернет — никогда через прокси"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Search by name or IP…"
+msgstr "Поиск по имени или IP…"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Search: “%s”."
+msgstr "Поиск: «%s»."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Settings"
+msgstr "Настройки"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Showing %d of %d entries."
+msgstr "Показано %d из %d записей."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Sites"
+msgstr "Список сайтов"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "The databases list all Russian networks and the domains of major RU services (whitelist of the Ministry of Digital Development + banks, marketplaces, Yandex/VK/Mail.ru stacks). They exclude the whole Russian internet from learning and proxying (RU-protect) and purge poisoned entries. Sources: GrimbirdUsers/ru-routing-dat via GitHub / jsDelivr mirrors, ipdeny.com fallback."
+msgstr "Базы содержат все российские сети и домены крупных сервисов РФ (белый список Минцифры + банки, маркетплейсы, стеки Яндекс/VK/Mail.ru). Они исключают весь российский интернет из обучения и проксирования (RU-защита) и вычищают отравленные записи. Источники: GrimbirdUsers/ru-routing-dat через GitHub / зеркала jsDelivr, резерв — ipdeny.com."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "The engine daemon checks the database age hourly and re-downloads it in the background when it is older than the interval below. Manual updates are always available on the “RU-geo databases” tab."
+msgstr "Демон движка ежечасно проверяет возраст базы и в фоне перекачивает её, если она старше интервала ниже. Ручное обновление доступно всегда на вкладке «RU-гео-базы»."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Unreachable"
+msgstr "Недоступен"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Update failed to start: "
+msgstr "Не удалось запустить обновление: "
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Update now"
+msgstr "Обновить сейчас"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Update RU-geo databases automatically"
+msgstr "Обновлять RU-гео-базы автоматически"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "updated %d days ago"
+msgstr "обновлено %d дн. назад"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "updated today"
+msgstr "обновлено сегодня"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "updated yesterday"
+msgstr "обновлено вчера"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "updating…"
+msgstr "обновляется…"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps."
+msgstr "Следит за повторяющимися IP-адресами в conntrack (игры, дата-центры Telegram, приложения без SNI) и выучивает те, что недоступны напрямую, но отвечают через прокси. По умолчанию выключено — включите, если пользуетесь такими приложениями."
