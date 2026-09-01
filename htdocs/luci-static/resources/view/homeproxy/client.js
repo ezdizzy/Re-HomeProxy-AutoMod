@@ -29,6 +29,7 @@ const callServiceList = rpc.declare({
 const callActiveNode = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'clash_active_node',
+	params: ['tag'],
 	expect: { '': {} }
 });
 
@@ -212,7 +213,10 @@ return view.extend({
 		o.cfgvalue = function() {
 			const el = E('span', { 'style': 'color:gray' }, '—');
 			poll.add(L.bind(function() {
-				return L.resolveDefault(callActiveNode(), {}).then(function(ret) {
+				/* Focused query: resolve the main-out group itself (descends nested
+				 * urltest pools, e.g. prefer mode's main-out-alt) instead of the
+				 * GLOBAL-follow heuristic, which can latch onto a stale group. */
+				return L.resolveDefault(callActiveNode('main-out'), {}).then(function(ret) {
 					if (ret && !ret.error && ret.node) {
 						const m = ret.node.match(/^cfg-(.+)-out$/);
 						const name = (m && proxy_nodes[m[1]]) ? proxy_nodes[m[1]] : ret.node;
@@ -238,7 +242,7 @@ return view.extend({
 		};
 
 		o = s.taboption('routing', form.DummyValue, '_urltest_info', _('URLTest'),
-			_('Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> uses your chosen node first and falls back to the rest when it is dead or too slow; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool.'));
+			_('Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> keeps your chosen node as long as it responds and fails over to the fastest of the rest only when it stops responding; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool.'));
 		o.depends('main_node', 'urltest');
 		o.rawhtml = true;
 		o.cfgvalue = function() { return ''; };
@@ -256,7 +260,7 @@ return view.extend({
 		o.retain = true;
 
 		o = s.taboption('routing', form.ListValue, 'main_urltest_preferred', _('URLTest node'),
-			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
+			_('Always used while it responds — it is never replaced by a faster node. If it stops responding, traffic fails over to the fastest of the remaining nodes (tolerance applies inside that fallback pool); the preferred node returns after Save & Apply or when the fallback node stops responding.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends({ 'main_node': 'urltest', 'main_urltest_mode': 'prefer' });
@@ -315,7 +319,7 @@ return view.extend({
 		o.depends('main_node', 'urltest');
 
 		o = s.taboption('routing', form.Value, 'main_urltest_tolerance', _('Test tolerance'),
-			_('Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values.'));
+			_('Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values. In "Preferred node + auto" mode it applies to the fallback pool only (the preferred node is never replaced by a faster one).'));
 		o.datatype = 'uinteger';
 		o.placeholder = '150';
 		o.default = '150';
@@ -348,7 +352,7 @@ return view.extend({
 		o.retain = true;
 
 		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_preferred', _('URLTest node'),
-			_('Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance.'));
+			_('Always used while it responds — it is never replaced by a faster node. If it stops responding, traffic fails over to the fastest of the remaining nodes (tolerance applies inside that fallback pool); the preferred node returns after Save & Apply or when the fallback node stops responding.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
 		o.depends({ 'main_udp_node': 'urltest', 'main_udp_urltest_mode': 'prefer' });
@@ -394,7 +398,7 @@ return view.extend({
 		o.depends('main_udp_node', 'urltest');
 
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_tolerance', _('Test tolerance'),
-			_('The test tolerance in milliseconds.'));
+			_('Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values. In "Preferred node + auto" mode it applies to the fallback pool only (the preferred node is never replaced by a faster one).'));
 		o.datatype = 'uinteger';
 		o.placeholder = '150';
 		o.default = '150';

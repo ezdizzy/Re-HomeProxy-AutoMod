@@ -197,11 +197,12 @@ function buildConnectivitySection(view, coreType) {
 	/* Active node — live status (which node sing-box has selected), auto-updating;
 	 * sing-box can't report exit IP, so this stands in for the IP rows. */
 	/* Live active-node row. `tag` selects which outbound group to resolve:
-	   undefined → the main (TCP) node via GLOBAL; 'main-udp-out' → the dedicated UDP node. */
+	   'main-out' (default) → the main (TCP) node — the focused query follows the
+	   group chain (incl. nested prefer-mode pools); 'main-udp-out' → the dedicated UDP node. */
 	function activeNodeRow(labelText, tag) {
 		const resultEl = E('span', { 'class': 'diag-gray' }, '—');
 		poll.add(L.bind(function() {
-			return L.resolveDefault(callActiveNode(tag), {}).then(function(ret) {
+			return L.resolveDefault(callActiveNode(tag || 'main-out'), {}).then(function(ret) {
 				if (ret && !ret.error && ret.node) {
 					const type  = ret.type ? ' (' + ret.type + ')' : '';
 					/* Same 4-colour scheme as the status/client pages: 65535 ms is the

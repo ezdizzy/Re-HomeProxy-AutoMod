@@ -352,6 +352,10 @@ msgstr ""
 msgid "Also learn destinations reached by raw IP (games/apps without SNI). Routes the IP via the proxy. Off by default — enable if you run such apps."
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Always used while it responds — it is never replaced by a faster node. If it stops responding, traffic fails over to the fastest of the remaining nodes (tolerance applies inside that fallback pool); the preferred node returns after Save & Apply or when the fallback node stops responding."
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1273
 #: htdocs/luci-static/resources/view/homeproxy/server.js:440
 msgid "Alter ID"
@@ -471,7 +475,7 @@ msgid "Automatically learn blocked sites: traffic that fails directly but works 
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:235
-msgid "Automatically picks the fastest node by periodically measuring latency. Traffic is always sent through the lowest-latency node in the pool.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the URLTest pool."
+msgid "Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> keeps your chosen node as long as it responds and fails over to the fastest of the rest only when it stops responding; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool."
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js:101
@@ -2671,7 +2675,7 @@ msgid "Minimum idle sessions"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:254
-msgid "Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values."
+msgid "Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values. In \"Preferred node + auto\" mode it applies to the fallback pool only (the preferred node is never replaced by a faster one)."
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1689

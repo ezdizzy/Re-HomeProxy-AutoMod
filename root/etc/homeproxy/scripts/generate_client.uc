@@ -1309,14 +1309,70 @@ config.outbounds = [
 
 /* Build a URLTest outbound from one of three pool modes:
  *   auto   — every imported node participates (no list to maintain);
- *   prefer — the preferred node first, the rest raced behind it via a nested
- *            urltest (preferred is used as long as it is alive and within
- *            tolerance of the best alternative);
+ *   prefer — the preferred node first, the rest behind a nested urltest
+ *            (main-out-alt). The top-level group runs with a huge tolerance
+ *            (PREFER_HOLD_TOLERANCE): the core only replaces a member whose
+ *            history entry is MISSING (failed probe = treated as dead), so the
+ *            preferred node is kept while it answers, regardless of latency.
+ *            Without this the group drifted to the fastest node and — the worst
+ *            part — never returned to the preferred one (a slower preferred
+ *            node can never beat the pool's best by the tolerance again).
  *   manual — only the explicitly selected nodes (legacy behavior).
+ *
+ * STICKY SELECTION: the core keeps urltest state in RAM only (clash cache_file
+ * does NOT persist urltest picks), so every regen+restart (UCI save, WAN up
+ * trigger, subscription update) re-picked "first member with history" from a
+ * fresh measurement — the node changed while the tolerance said otherwise.
+ * init.d snapshots the running picks into $RUN_DIR/urltest_sticky before the
+ * core stops; here each pool puts that node FIRST (the core's startup rule is
+ * "first member with history wins unless another is faster by > tolerance"),
+ * which makes the tolerance effectively apply across restarts too.
+ *
  * Returns { outbound, extra } where extra is the flat list of node sections
  * used (for endpoint/outbound emission) and outbound may be null when the pool
  * ends up empty (caller falls back to a plain direct outbound so the config
  * stays valid and DNS/internet keep working). */
+
+/* A preferred node must never lose its place to a merely-faster node. The core
+ * compares uint16 ms delays: switch iff current > other + tolerance (mod
+ * 65536). 30000 exceeds any real measured delay (probe timeout caps at ~15s)
+ * without overflowing uint16, so "beaten by > tolerance" becomes impossible
+ * while the preferred node still answers. Do NOT raise this to 65535: the
+ * uint16 addition wraps and inverts the comparison for slow nodes. */
+const PREFER_HOLD_TOLERANCE = 30000;
+
+/* Sticky pick per group tag ("main-out=cfg-<sid>-out" lines written by init.d
+ * from the live Clash API while the old core was still running). */
+let urltest_sticky = {};
+const sticky_raw = readfile(RUN_DIR + '/urltest_sticky');
+if (sticky_raw)
+	for (let sticky_line in split(trim(sticky_raw), '\n')) {
+		const sm = match(sticky_line, /^([^=\s]+)=(\S+)$/);
+		if (sm)
+			urltest_sticky[sm[1]] = sm[2];
+	}
+
+/* Front the previously-running member of a pool (snapshot written by init.d
+ * into $RUN_DIR/urltest_sticky before the old core stopped). The core's
+ * startup selection is "first member with history wins unless another member
+ * is faster by > tolerance", so fronting the old pick keeps the group on the
+ * same node across regen+restarts — the configured tolerance then also applies
+ * across restarts instead of re-picking whatever measured fastest that instant.
+ * Returns the reordered tag list, or null when there is nothing to move. */
+function sticky_first(tag_key, tags) {
+	const raw_tag = urltest_sticky[tag_key];
+	if (isEmpty(raw_tag))
+		return null;
+	const i = index(tags, raw_tag);
+	if (i <= 0)
+		return null; /* absent from the (new) pool or already first */
+	let nt = [raw_tag];
+	for (let k, v in tags)
+		if (k != i)
+			push(nt, v);
+	return nt;
+}
+
 function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) {
 	let outbounds = [],
 	    extra = [],
@@ -1334,6 +1390,9 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 			push(outbounds, `cfg-${cfg['.name']}-out`);
 			push(extra, cfg['.name']);
 		});
+		const re = sticky_first(tag, outbounds);
+		if (re)
+			outbounds = re;
 	} else if (mode === 'prefer') {
 		if (!isEmpty(preferred) && uci.get_all(uciconfig, preferred) != null) {
 			pref = preferred;
@@ -1347,6 +1406,12 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 			push(extra, cfg['.name']);
 		});
 		if (length(rest)) {
+			/* Front the last failover pick inside the fallback pool only: the
+			 * top-level order stays [preferred, alt] so a restart always hands
+			 * traffic back to the preferred node while it answers. */
+			const re = sticky_first(tag + '-alt', rest);
+			if (re)
+				rest = re;
 			push(config.outbounds, {
 				type: 'urltest',
 				tag: tag + '-alt',
@@ -1364,6 +1429,9 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 			push(outbounds, `cfg-${k}-out`);
 			push(extra, k);
 		}
+		const re = sticky_first(tag, outbounds);
+		if (re)
+			outbounds = re;
 	}
 
 	if (!length(outbounds)) {
@@ -1383,6 +1451,9 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		/* extra MUST list the same sids as the urltest references: the caller emits
 		 * one outbound per extra entry — an empty extra here left the group pointing
 		 * at outbounds that were never emitted (fatal "non-existent outbound"). */
+		const re = sticky_first(tag, any);
+		if (re)
+			any = re;
 		return { outbound: {
 			type: 'urltest',
 			tag: tag,
@@ -1398,7 +1469,9 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		tag: tag,
 		outbounds: outbounds,
 		interval: strToTime(interval),
-		tolerance: strToInt(tolerance),
+		/* prefer: hold the preferred node while it answers (see header comment);
+		 * the user tolerance still governs the fallback pool and manual/auto. */
+		tolerance: (mode === 'prefer') ? PREFER_HOLD_TOLERANCE : strToInt(tolerance),
 		idle_timeout: (strToInt(interval) > 1800) ? `${interval * 2}s` : null,
 		interrupt_exist_connections: true
 	}, extra: extra };

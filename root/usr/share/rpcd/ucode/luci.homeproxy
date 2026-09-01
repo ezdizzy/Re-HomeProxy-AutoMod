@@ -197,6 +197,22 @@ function clash_api(path) {
 	try { return json(raw); } catch(e) { return null; }
 }
 
+/* Follow a Clash group chain down to the LEAF outbound tag (urltest groups may
+ * nest: main-out -> main-out-alt -> cfg-X-out). Returns the leaf tag, or the
+ * input tag when it is not a nested group (or the chain loops / hits a
+ * non-group outbound such as direct-out/block-out). */
+function clash_leaf_tag(proxies, tag) {
+	let seen = {};
+	for (let i = 0; i < 4 && tag && !seen[tag]; i++) {
+		seen[tag] = true;
+		const p = proxies[tag];
+		if (!p || (p.type !== 'URLTest' && p.type !== 'Selector' && p.type !== 'Fallback') || !p.now)
+			break;
+		tag = p.now;
+	}
+	return tag;
+}
+
 function proc_running(name) {
 	const fd = popen(`pidof ${name} 2>/dev/null`);
 	if (!fd)
@@ -533,6 +549,10 @@ const methods = {
 			/* Last fallback: main-out (route-based modes use it directly) */
 			if (!proxyNodeName && proxies['main-out'])
 				proxyNodeName = 'main-out';
+			/* Prefer-mode nests pools (main-out -> main-out-alt): resolve to the
+			 * leaf so the history/IP lookup reads the real node, not the group. */
+			if (proxyNodeName)
+				proxyNodeName = clash_leaf_tag(proxies, proxyNodeName);
 			if (proxyNodeName)
 				proxyEntry = lastHistory(proxyNodeName);
 
@@ -628,8 +648,12 @@ const methods = {
 				const p = proxies[wantTag];
 				if (!p)
 					return { error: 'no active proxy node' };
-				if ((p.type === 'URLTest' || p.type === 'Fallback' || p.type === 'Selector') && p.now)
-					return { node: p.now, type: proxies[p.now]?.type || null, delay: lastDelay(p.now), group: wantTag, group_type: p.type };
+				if ((p.type === 'URLTest' || p.type === 'Fallback' || p.type === 'Selector') && p.now) {
+					/* Descend nested groups (prefer mode: main-out -> main-out-alt ->
+					 * cfg-X-out) so the UI shows the real node, not the group tag. */
+					const leaf = clash_leaf_tag(proxies, p.now);
+					return { node: leaf, type: proxies[leaf]?.type || null, delay: lastDelay(leaf), group: wantTag, group_type: p.type };
+				}
 				return { node: wantTag, type: p.type || null, delay: lastDelay(wantTag), group: null, group_type: null };
 			}
 
@@ -672,6 +696,10 @@ const methods = {
 
 			if (!nodeName)
 				return { error: 'no active proxy node' };
+
+			/* Descend nested groups so the UI always shows the real node
+			 * (prefer mode reports main-out-alt as the group pick). */
+			nodeName = clash_leaf_tag(proxies, nodeName);
 
 			return {
 				node:       nodeName,
@@ -725,10 +753,16 @@ const methods = {
 			};
 
 			/* Active outbound tags: URLTest group's pick, else the main-out
-			 * outbound itself (a specific node is emitted AS main-out). */
-			const active_tag = (main_node === 'urltest') ? (proxies['main-out']?.now || null)
+			 * outbound itself (a specific node is emitted AS main-out).
+			 * Nested groups (prefer mode: main-out -> main-out-alt) are followed
+			 * down to the leaf cfg-<sid>-out so the "selected" row and the
+			 * active-node card show the real node. */
+			const active_tag = (main_node === 'urltest')
+				? ((proxies['main-out']?.now) ? clash_leaf_tag(proxies, proxies['main-out'].now) : null)
 				: (proxies['main-out'] ? 'main-out' : null);
-			const active_udp_tag = (main_udp_node === 'urltest') ? (proxies['main-udp-out']?.now || null) : null;
+			const active_udp_tag = (main_udp_node === 'urltest')
+				? ((proxies['main-udp-out']?.now) ? clash_leaf_tag(proxies, proxies['main-udp-out'].now) : null)
+				: null;
 
 			const last_delay = (tag) => {
 				const h = proxies[tag]?.history;

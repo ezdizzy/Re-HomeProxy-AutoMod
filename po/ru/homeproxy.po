@@ -4896,8 +4896,8 @@ msgstr "Время в секундах: меньше = узлы тестирую
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> uses your chosen node first and falls back to the rest when it is dead or too slow; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool."
-msgstr "Автоматически выбирает самый быстрый узел, периодически измеряя задержку. <b>Авто</b> использует все импортированные узлы; <b>Приоритетный узел + авто</b> сначала использует выбранный узел и переключается на остальные, когда он мёртв или слишком медленный; <b>Список узлов вручную</b> использует только выбранные узлы.<br>Если есть проблемы с подключением и узел долго остаётся оранжевым/серым — попробуйте убрать его из пула."
+msgid "Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> keeps your chosen node as long as it responds and fails over to the fastest of the rest only when it stops responding; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool."
+msgstr "Автоматически выбирает самый быстрый узел, периодически измеряя задержку. <b>Авто</b> использует все импортированные узлы; <b>Приоритетный узел + авто</b> удерживает выбранный узел, пока он отвечает, и переключается на самый быстрый из остальных только когда он перестаёт отвечать; <b>Список узлов вручную</b> использует только выбранные узлы.<br>Если есть проблемы с подключением и узел долго остаётся оранжевым/серым — попробуйте убрать его из пула."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -4926,8 +4926,8 @@ msgstr "Узел URLTest"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Used first; traffic switches to the fastest of the remaining nodes when it is dead or slower than the best alternative by more than the tolerance."
-msgstr "Используется первым; трафик переключается на самый быстрый из остальных узлов, когда он мёртв или медленнее лучшей альтернативы более чем на допуск."
+msgid "Always used while it responds — it is never replaced by a faster node. If it stops responding, traffic fails over to the fastest of the remaining nodes (tolerance applies inside that fallback pool); the preferred node returns after Save & Apply or when the fallback node stops responding."
+msgstr "Используется всегда, пока отвечает — никогда не заменяется более быстрым узлом. Если перестаёт отвечать, трафик уходит на самый быстрый из остальных узлов (допуск действует внутри этого запасного пула); приоритетный узел возвращается после сохранения настроек или когда запасной узел перестаёт отвечать."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -4935,8 +4935,8 @@ msgid "Direct (no proxy)"
 msgstr "Напрямую (без прокси)"
 
 
-msgid "Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values."
-msgstr "Минимальная разница задержек (мс) для переключения на более быстрый узел — предотвращает постоянное переключение между узлами с близкой задержкой."
+msgid "Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values. In \"Preferred node + auto\" mode it applies to the fallback pool only (the preferred node is never replaced by a faster one)."
+msgstr "Минимальная разница задержек (мс) для переключения на более быстрый узел — предотвращает постоянное переключение между узлами с близкой задержкой. В режиме «Приоритетный узел + авто» действует только для запасного пула (приоритетный узел никогда не заменяется более быстрым)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 

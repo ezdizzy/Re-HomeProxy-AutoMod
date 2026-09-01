@@ -432,7 +432,32 @@ start_service() {
 	log "$(basename $PROG) started."
 }
 
+# Snapshot the CURRENT urltest group picks (Clash API, core still alive) into
+# $RUN_DIR/urltest_sticky. generate_client.uc fronts that node in each pool, so
+# a regen+restart keeps the running selection unless it is slower than another
+# node by more than the configured tolerance — otherwise every restart re-picked
+# "fastest right now" and the node changed although the tolerance said otherwise.
+# The core keeps urltest state in RAM only (cache_file does NOT persist it).
+snapshot_urltest_picks() {
+	local base="http://127.0.0.1:9090/proxies" tmp="$RUN_DIR/urltest_sticky.tmp" tag now
+	: > "$tmp"
+	for tag in main-out main-out-alt main-udp-out main-udp-out-alt; do
+		now=$(wget -qO- --timeout=2 "$base/$tag" 2>/dev/null | sed -ne 's/.*"now":[ ]*"\([^"]*\)".*/\1/p')
+		[ -n "$now" ] && printf '%s=%s\n' "$tag" "$now" >> "$tmp"
+	done
+	# Only replace when the core answered at least once: a dead core (boot,
+	# crash-respawn) must not wipe the last known picks.
+	if [ -s "$tmp" ]; then
+		mv -f "$tmp" "$RUN_DIR/urltest_sticky"
+	else
+		rm -f "$tmp"
+	fi
+}
+
 stop_service() {
+	# Must run BEFORE procd kills the core instance: it reads the live Clash API.
+	snapshot_urltest_picks
+
 	sed -i "/#${CONF}_autosetup/d" "/etc/crontabs/root" 2>"/dev/null"
 	/etc/init.d/cron restart >"/dev/null" 2>&1
 
