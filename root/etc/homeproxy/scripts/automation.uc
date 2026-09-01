@@ -492,6 +492,11 @@ function resolve_plain_view(host) {
 
 function probe(host, via_proxy, timeout) {
 	let pin = '';
+	/* FUNCTION scope, NOT inside the if-block: the final return below reads
+	 * `ip` after the block has exited, and this ucode build has block-scoped
+	 * `let` — an in-block declaration made the direct probe die with
+	 * "access to undeclared variable ip" (self-heal path, daemon fatal). */
+	let ip = null;
 	if (!via_proxy) {
 		/* Plain-view resolution is mandatory for the direct probe: if the plain
 		 * public DNS can't answer (RKN blocks it intermittently), the user's
@@ -499,7 +504,6 @@ function probe(host, via_proxy, timeout) {
 		 * (000) instead of falling back to a possibly proxy-side DNS answer.
 		 * EXCEPT for literal IPs: there is nothing to resolve, and nslookup of an
 		 * IP literal is unreliable — probing https://IP directly is exact. */
-		let ip = null;
 		if (match(host, /^\d{1,3}(\.\d{1,3}){3}$/)) {
 			ip = host;
 		} else {
