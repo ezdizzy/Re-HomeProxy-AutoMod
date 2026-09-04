@@ -130,6 +130,9 @@ return view.extend({
 		let m, s, o;
 		let features = data[1];
 
+		/* Shared design system (Automation look) for the standard tab bars. */
+		hp.uiStyle();
+
 		m = new form.Map('homeproxy', _('Re:HomeProxy AutoMod Server'),
 			_('The modern multi-core proxy platform. Fork of ImmortalWrt.'));
 

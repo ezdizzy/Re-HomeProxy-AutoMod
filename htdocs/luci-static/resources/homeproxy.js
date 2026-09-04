@@ -230,6 +230,15 @@ table.hpui-table tbody tr:hover td { background: rgba(128,128,128,.13); }
 .hpui-log { max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; padding: 8px; background: #1e1e1e; color: #ddd; border: 1px solid #333; border-radius: 6px; font-size: 0.85em; }
 .hpui-pre { font-family: monospace; font-size: .82em; background: #1e1e1e; color: #ddd; border: 1px solid #333; padding: .5em .8em; white-space: pre-wrap; word-break: break-all; border-radius: 6px; margin: .3em 0 0; max-height: 14em; overflow-y: auto; }
 .hpui-hint { font-size: .88em; opacity: .8; margin: 8px 0; }
+/* LuCI standard tab bars (Client/DNS/Node/Server settings, grid modals) get the
+ * same look as the hpui-tabs above. Scoped to pages calling uiStyle(); LuCI
+ * navigation is a full page load, so other apps are never affected. */
+ul.cbi-tabmenu { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px 0; padding: 0; background: none; border-bottom: 2px solid rgba(128,128,128,.3); border-radius: 0; }
+ul.cbi-tabmenu > li { flex: 0 1 auto; display: flex; align-items: center; height: auto; max-width: none; margin: 0; background: rgba(128,128,128,.10); border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; box-shadow: none; }
+ul.cbi-tabmenu > li > a, ul.cbi-tabmenu > li > div { display: block; padding: 7px 16px; color: inherit; text-decoration: none; text-shadow: none; font-weight: 500; font-size: 1em; line-height: 1.4; white-space: nowrap; border-radius: 6px 6px 0 0; outline: none; }
+ul.cbi-tabmenu > li:hover { background: rgba(128,128,128,.20); }
+ul.cbi-tabmenu > li.cbi-tab, ul.cbi-tabmenu > li.cbi-tab:hover { background: rgba(128,128,128,.26); border-color: rgba(128,128,128,.4); }
+ul.cbi-tabmenu > li.cbi-tab > a, ul.cbi-tabmenu > li.cbi-tab > div { font-weight: 700; }
 `;
 
 		document.head.appendChild(E('style', { id: 'hp-ui-style' }, [ css ]));

@@ -1977,6 +1977,9 @@ return view.extend({
 		let routing_mode = uci.get(data[0], 'config', 'routing_mode');
 		let features = data[1];
 
+		/* Shared design system (Automation look) for the standard tab bars. */
+		hp.uiStyle();
+
 		/* Parse the Zapret candidate list once; each entry = {name, args, group}.
 		 * 'args' is the stable key (used for match/apply); 'name' is display-only. */
 		let zapret_candidates = null;
