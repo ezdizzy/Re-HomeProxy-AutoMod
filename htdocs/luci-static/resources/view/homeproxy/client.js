@@ -109,9 +109,9 @@ function renderStatus(isRunning, features) {
 	let spanTemp = '<em><span style="color:%s"><strong>%s (%s) %s</strong></span></em>';
 	let renderHTML;
 	if (isRunning)
-		renderHTML = spanTemp.format('green', _('Re:HomeProxy AutoMod'), coreStr, _('RUNNING'));
+		renderHTML = spanTemp.format('#3fbf5f', _('Re:HomeProxy AutoMod'), coreStr, _('RUNNING'));
 	else
-		renderHTML = spanTemp.format('red', _('Re:HomeProxy AutoMod'), coreStr, _('NOT RUNNING'));
+		renderHTML = spanTemp.format('#e05252', _('Re:HomeProxy AutoMod'), coreStr, _('NOT RUNNING'));
 
 	return renderHTML;
 }

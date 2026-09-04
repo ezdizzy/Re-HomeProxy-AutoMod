@@ -988,6 +988,10 @@ msgstr ""
 msgid "Diagnostics Report"
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:706
+msgid "Report"
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/client.js:916
 msgid "DigitalOcean cloud hosting"
 msgstr ""

@@ -31,11 +31,8 @@ const css = '				\
 	background: #1e1e1e;		\
 	color: #ddd;			\
 	border: 1px solid #333;		\
-	border-radius: 4px;		\
+	border-radius: 6px;		\
 	font-size: 0.85em;		\
-}					\
-.description {				\
-	background-color: #33ccff;	\
 }';
 
 const hp_dir = '/var/run/homeproxy';
@@ -67,11 +64,11 @@ function getIPInfo(o, type) {
 		expect: { '': {} }
 	});
 
-	const resultEl = E('strong', { 'style': 'color:gray' }, _('unchecked'));
+	const resultEl = E('strong', { 'style': 'color:#9a9a9a' }, _('unchecked'));
 
 	const formatIPInfo = (entry, nodeTag) => {
 		if (!entry)
-			return E('strong', { 'style': 'color:red' }, _('No data'));
+			return E('strong', { 'style': 'color:#e05252' }, _('No data'));
 
 		const lines = [];
 		if (nodeTag)
@@ -80,7 +77,7 @@ function getIPInfo(o, type) {
 			const delayStr = (entry.delay && entry.delay !== 65535) ? ` — ${entry.delay} ms` : '';
 			const meta = [entry.country, entry.org].filter(Boolean).join(', ');
 			const label = entry.ip + (meta ? ` (${meta})` : '') + delayStr;
-			lines.push(E('span', {}, [ _('IP') + ': ', E('strong', { 'style': 'color:green' }, label) ]));
+			lines.push(E('span', {}, [ _('IP') + ': ', E('strong', { 'style': 'color:#3fbf5f' }, label) ]));
 		}
 
 		return E('span', {}, lines.map((l) => E('div', {}, [ l ])));
@@ -93,7 +90,7 @@ function getIPInfo(o, type) {
 				return L.resolveDefault(callIPInfo(), {}).then((ret) => {
 					const el = o.default.firstElementChild.nextElementSibling;
 					if (ret.error) {
-						dom.content(el, E('span', { 'style': 'color:red' }, ret.error));
+						dom.content(el, E('span', { 'style': 'color:#e05252' }, ret.error));
 						return;
 					}
 					const entry = ret[type];
@@ -121,17 +118,17 @@ function getConnStat(o, site) {
 				return L.resolveDefault(callConnStat(site), {}).then((ret) => {
                                         let ele = o.default.firstElementChild.nextElementSibling;
 					if (ret.result) {
-						ele.style.setProperty('color', 'green');
+						ele.style.setProperty('color', '#3fbf5f');
                                                 ele.innerHTML = _('passed');
 					} else {
-						ele.style.setProperty('color', 'red');
+						ele.style.setProperty('color', '#e05252');
                                                 ele.innerHTML = _('failed');
 					}
 				});
 			})
 		}, [ _('Check') ]),
 		' ',
-		E('strong', { 'style': 'color:gray' }, _('unchecked')),
+		E('strong', { 'style': 'color:#9a9a9a' }, _('unchecked')),
 	]);
 }
 
@@ -381,17 +378,17 @@ function buildCheckUpdateBtn(callFn, remoteEl) {
 		click: async function() {
 			this.disabled = true;
 			remoteEl.textContent = _('Checking...');
-			remoteEl.style.color = 'gray';
+			remoteEl.style.color = '#9a9a9a';
 			const ret = await L.resolveDefault(callFn(), {});
 			this.disabled = false;
 			if (ret.error) {
 				remoteEl.textContent = ret.error;
-				remoteEl.style.color = 'red';
+				remoteEl.style.color = '#e05252';
 				return;
 			}
 			remoteEl.textContent = _('Latest') + ': v' + ret.latest_version;
-			remoteEl.style.color = ret.update_available ? 'darkorange' :
-				(ret.installed_version ? 'green' : 'gray');
+			remoteEl.style.color = ret.update_available ? '#d99a1b' :
+				(ret.installed_version ? '#3fbf5f' : '#9a9a9a');
 		}
 	}, [ _('Check update') ]);
 }
@@ -407,15 +404,15 @@ function buildMosdnsCard(mdns, mos) {
 	const sec        = (mdns.active && mdns.active.secure) ? mdns.active.secure.length : 0;
 
 	const statusEl = E('strong', {
-		style: installed ? 'color:green' : 'color:gray'
+		style: installed ? 'color:#3fbf5f' : 'color:#9a9a9a'
 	}, installed ? (version ? version : _('Installed')) : _('Not installed'));
 
 	const runEl = E('span', {
-		style: 'margin-left:6px; font-size:0.9em; color:' + (running ? 'green' : 'gray')
+		style: 'margin-left:6px; font-size:0.9em; color:' + (running ? '#3fbf5f' : '#9a9a9a')
 	}, running ? _('running') : _('stopped'));
 
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
-	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || 'gray'; };
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
 
 	const installBtn = E('button', {
 		class: 'btn cbi-button cbi-button-action',
@@ -426,27 +423,27 @@ function buildMosdnsCard(mdns, mos) {
 			installBtn.disabled = true;
 			removeBtn.disabled  = true;
 			statusEl.textContent = _('Installing...');
-			statusEl.style.color = 'gray';
+			statusEl.style.color = '#9a9a9a';
 
 			const fail = (msg) => {
 				installed = prevInstalled;
 				version   = prevVersion;
 				statusEl.textContent = installed ? (version || _('Installed')) : _('Not installed');
-				statusEl.style.color = installed ? 'green' : 'gray';
+				statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 				installBtn.disabled = false;
 				removeBtn.disabled  = !installed;
-				setMsg(msg, 'red');
+				setMsg(msg, '#e05252');
 			};
 
-			setMsg(_('Checking requirements...'), 'gray');
+			setMsg(_('Checking requirements...'), '#9a9a9a');
 			const prep = await L.resolveDefault(callMosdnsPrepareInstall(), {});
 			if (prep.error) return fail(prep.error);
 
-			setMsg(_('Downloading...'), 'gray');
+			setMsg(_('Downloading...'), '#9a9a9a');
 			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
 			if (!dl.result) return fail(dl.error || _('Download failed'));
 
-			setMsg(_('Installing package...'), 'gray');
+			setMsg(_('Installing package...'), '#9a9a9a');
 			const inst = await L.resolveDefault(callMosdnsInstallPkg(prep.tmp_path), {});
 			if (!inst.result) return fail(inst.error || _('Installation failed'));
 
@@ -454,11 +451,11 @@ function buildMosdnsCard(mdns, mos) {
 			installed = fresh.installed || false;
 			version   = fresh.version || null;
 			statusEl.textContent = installed ? (version || _('Installed')) : _('Unknown');
-			statusEl.style.color = installed ? 'green' : 'gray';
+			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 			installBtn.textContent = _('Update');
 			installBtn.disabled = false;
 			removeBtn.disabled  = false;
-			setMsg(_('Installed successfully'), 'green');
+			setMsg(_('Installed successfully'), '#3fbf5f');
 		}
 	}, [ installed ? _('Update') : _('Install') ]);
 
@@ -469,27 +466,27 @@ function buildMosdnsCard(mdns, mos) {
 		click: async function() {
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
-			setMsg(_('Removing...'), 'gray');
+			setMsg(_('Removing...'), '#9a9a9a');
 			const ret = await L.resolveDefault(callMosdnsRemove(), {});
 			installBtn.disabled = false;
 			if (ret.result) {
 				installed = false;
 				version   = null;
 				statusEl.textContent = _('Not installed');
-				statusEl.style.color = 'gray';
+				statusEl.style.color = '#9a9a9a';
 				installBtn.textContent = _('Install');
-				setMsg(_('Removed successfully — MultiDNS disabled'), 'green');
+				setMsg(_('Removed successfully — MultiDNS disabled'), '#3fbf5f');
 			} else {
 				removeBtn.disabled = false;
-				setMsg(ret.error || _('Removal failed'), 'red');
+				setMsg(ret.error || _('Removal failed'), '#e05252');
 			}
 		}
 	}, [ _('Remove') ]);
 
-	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, '');
 	const checkBtn = buildCheckUpdateBtn(callMosdnsCheckUpdate, remoteEl);
 
-	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
+	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'mosdns (MultiDNS)'),
 			statusEl,
@@ -503,12 +500,12 @@ function buildMosdnsCard(mdns, mos) {
 		/* '\u00a0' — real NBSP: E() escapes strings, a literal '&nbsp;' here would
 		 * render as visible text (that exact bug). The description must go through
 		 * innerHTML: it contains HTML links E() would also escape. */
-		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#555' },
+		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' },
 			_('MultiDNS') + ': ' + (enabled ? _('Enabled') : _('Disabled')) +
 			'\u00a0|\u00a0' + _('Plain pool') + ' (' + _('Russia') + '): ' + ru +
 			'\u00a0|\u00a0' + _('Secure pool') + ': ' + sec),
 		(() => {
-			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' });
+			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' });
 			el.innerHTML = _('Per-query DNS racing engine for MultiDNS: races every server in each pool in parallel and returns the fastest valid answer, while the quality daemon verifies over HTTPS that the returned IPs actually open sites and prunes dead/polluted servers. Binary from <a href="https://github.com/IrineSistiana/mosdns" target="_blank">IrineSistiana/mosdns</a> releases.');
 			return el;
 		})()
@@ -542,15 +539,15 @@ function buildByeDPICard(byedpi, isMainNode) {
 	const canInstall = !!pkgMgr;
 
 	const statusEl = E('strong', {
-		style: installed ? 'color:green' : 'color:gray'
+		style: installed ? 'color:#3fbf5f' : 'color:#9a9a9a'
 	}, installed ? (version ? 'v' + version : _('Installed')) : _('Not installed'));
 
 	const runEl = E('span', {
-		style: 'margin-left:6px; font-size:0.9em; color:' + (running ? 'green' : 'gray')
+		style: 'margin-left:6px; font-size:0.9em; color:' + (running ? '#3fbf5f' : '#9a9a9a')
 	}, running ? _('running') : _('stopped'));
 
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
-	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || 'gray'; };
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
 
 	const installBtn = E('button', {
 		class: 'btn cbi-button cbi-button-action',
@@ -563,27 +560,27 @@ function buildByeDPICard(byedpi, isMainNode) {
 			installBtn.disabled = true;
 			removeBtn.disabled  = true;
 			statusEl.textContent = _('Installing...');
-			statusEl.style.color = 'gray';
+			statusEl.style.color = '#9a9a9a';
 
 			const fail = (msg) => {
 				installed = prevInstalled;
 				version   = prevVersion;
 				statusEl.textContent = installed ? (version ? 'v' + version : _('Installed')) : _('Not installed');
-				statusEl.style.color = installed ? 'green' : 'gray';
+				statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 				installBtn.disabled = false;
 				removeBtn.disabled  = !installed;
-				setMsg(msg, 'red');
+				setMsg(msg, '#e05252');
 			};
 
-			setMsg(_('Checking requirements...'), 'gray');
+			setMsg(_('Checking requirements...'), '#9a9a9a');
 			const prep = await L.resolveDefault(callByeDPIPrepareInstall(), {});
 			if (prep.error) return fail(prep.error);
 
-			setMsg(_('Downloading...'), 'gray');
+			setMsg(_('Downloading...'), '#9a9a9a');
 			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
 			if (!dl.result) return fail(dl.error || _('Download failed'));
 
-			setMsg(_('Installing package...'), 'gray');
+			setMsg(_('Installing package...'), '#9a9a9a');
 			const inst = await L.resolveDefault(callByeDPIInstallPkg(prep.tmp_path, prep.pkg_manager), {});
 			if (!inst.result) return fail(inst.error || _('Installation failed'));
 
@@ -591,11 +588,11 @@ function buildByeDPICard(byedpi, isMainNode) {
 			installed = fresh.installed || false;
 			version   = fresh.version   || null;
 			statusEl.textContent = installed ? (version ? 'v' + version : _('Installed')) : _('Unknown');
-			statusEl.style.color = installed ? 'green' : 'gray';
+			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 			installBtn.textContent = _('Update');
 			installBtn.disabled = false;
 			removeBtn.disabled  = false;
-			setMsg(_('Installed successfully'), 'green');
+			setMsg(_('Installed successfully'), '#3fbf5f');
 		}
 	}, [ installed ? _('Update') : _('Install') ]);
 
@@ -607,27 +604,27 @@ function buildByeDPICard(byedpi, isMainNode) {
 		click: async function() {
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
-			setMsg(_('Removing...'), 'gray');
+			setMsg(_('Removing...'), '#9a9a9a');
 			const ret = await L.resolveDefault(callByeDPIRemove(), {});
 			installBtn.disabled = false;
 			if (ret.result) {
 				installed = false;
 				version   = null;
 				statusEl.textContent = _('Not installed');
-				statusEl.style.color = 'gray';
+				statusEl.style.color = '#9a9a9a';
 				installBtn.textContent = _('Install');
-				setMsg(_('Removed successfully'), 'green');
+				setMsg(_('Removed successfully'), '#3fbf5f');
 			} else {
 				removeBtn.disabled = false;
-				setMsg(ret.error || _('Removal failed'), 'red');
+				setMsg(ret.error || _('Removal failed'), '#e05252');
 			}
 		}
 	}, [ _('Remove') ]);
 
-	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, '');
 	const checkBtn = buildCheckUpdateBtn(callByeDPICheckUpdate, remoteEl);
 
-	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
+	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'ciadpi (ByeDPI)'),
 			statusEl,
@@ -639,7 +636,7 @@ function buildByeDPICard(byedpi, isMainNode) {
 			msgEl
 		]),
 		(() => {
-			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' });
+			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' });
 			/* innerHTML: the description contains HTML links E() would escape */
 			el.innerHTML = _('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea</a>. ' +
 			  'Packages by <a href="https://github.com/1andrevich/ByeDPI-OpenWrt" target="_blank">1andrevich/ByeDPI-OpenWrt</a>. ' +
@@ -658,15 +655,15 @@ function buildZapretCard(zapret, isMainNode) {
 	const canInstall = !!pkgMgr;
 
 	const statusEl = E('strong', {
-		style: installed ? 'color:green' : 'color:gray'
+		style: installed ? 'color:#3fbf5f' : 'color:#9a9a9a'
 	}, installed ? (version ? 'v' + version : _('Installed')) : _('Not installed'));
 
 	const runEl = E('span', {
-		style: 'margin-left:6px; font-size:0.9em; color:' + (running ? 'green' : 'gray')
+		style: 'margin-left:6px; font-size:0.9em; color:' + (running ? '#3fbf5f' : '#9a9a9a')
 	}, running ? _('running') : _('stopped'));
 
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
-	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || 'gray'; };
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
 
 	const installBtn = E('button', {
 		class: 'btn cbi-button cbi-button-action',
@@ -679,27 +676,27 @@ function buildZapretCard(zapret, isMainNode) {
 			installBtn.disabled = true;
 			removeBtn.disabled  = true;
 			statusEl.textContent = _('Installing...');
-			statusEl.style.color = 'gray';
+			statusEl.style.color = '#9a9a9a';
 
 			const fail = (msg) => {
 				installed = prevInstalled;
 				version   = prevVersion;
 				statusEl.textContent = installed ? (version ? 'v' + version : _('Installed')) : _('Not installed');
-				statusEl.style.color = installed ? 'green' : 'gray';
+				statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 				installBtn.disabled = false;
 				removeBtn.disabled  = !installed;
-				setMsg(msg, 'red');
+				setMsg(msg, '#e05252');
 			};
 
-			setMsg(_('Checking requirements...'), 'gray');
+			setMsg(_('Checking requirements...'), '#9a9a9a');
 			const prep = await L.resolveDefault(callZapretPrepareInstall(), {});
 			if (prep.error) return fail(prep.error);
 
-			setMsg(_('Downloading...'), 'gray');
+			setMsg(_('Downloading...'), '#9a9a9a');
 			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
 			if (!dl.result) return fail(dl.error || _('Download failed'));
 
-			setMsg(_('Installing package...'), 'gray');
+			setMsg(_('Installing package...'), '#9a9a9a');
 			const inst = await L.resolveDefault(callZapretInstallPkg(prep.tmp_path, prep.pkg_manager), {});
 			if (!inst.result) return fail(inst.error || _('Installation failed'));
 
@@ -708,14 +705,14 @@ function buildZapretCard(zapret, isMainNode) {
 			version   = fresh.version   || null;
 			kmodOk    = (fresh.kmod_ok != null) ? fresh.kmod_ok : true;
 			statusEl.textContent = installed ? (version ? 'v' + version : _('Installed')) : _('Unknown');
-			statusEl.style.color = installed ? 'green' : 'gray';
+			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 			installBtn.textContent = _('Update');
 			installBtn.disabled = false;
 			removeBtn.disabled  = false;
 			if (installed && !kmodOk)
-				setMsg(_('Installed, but kmod-nft-queue is missing — Zapret cannot intercept traffic without it.'), 'red');
+				setMsg(_('Installed, but kmod-nft-queue is missing — Zapret cannot intercept traffic without it.'), '#e05252');
 			else
-				setMsg(_('Installed successfully'), 'green');
+				setMsg(_('Installed successfully'), '#3fbf5f');
 		}
 	}, [ installed ? _('Update') : _('Install') ]);
 
@@ -727,31 +724,31 @@ function buildZapretCard(zapret, isMainNode) {
 		click: async function() {
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
-			setMsg(_('Removing...'), 'gray');
+			setMsg(_('Removing...'), '#9a9a9a');
 			const ret = await L.resolveDefault(callZapretRemove(), {});
 			installBtn.disabled = false;
 			if (ret.result) {
 				installed = false;
 				version   = null;
 				statusEl.textContent = _('Not installed');
-				statusEl.style.color = 'gray';
+				statusEl.style.color = '#9a9a9a';
 				installBtn.textContent = _('Install');
-				setMsg(_('Removed successfully'), 'green');
+				setMsg(_('Removed successfully'), '#3fbf5f');
 			} else {
 				removeBtn.disabled = false;
-				setMsg(ret.error || _('Removal failed'), 'red');
+				setMsg(ret.error || _('Removal failed'), '#e05252');
 			}
 		}
 	}, [ _('Remove') ]);
 
 	/* nfqws2's NFQUEUE rule needs kmod-nft-queue; warn up-front if it's missing. */
 	if (installed && !kmodOk)
-		setMsg(_('Warning: kmod-nft-queue is not installed — Zapret cannot intercept traffic without it.'), 'red');
+		setMsg(_('Warning: kmod-nft-queue is not installed — Zapret cannot intercept traffic without it.'), '#e05252');
 
-	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, '');
 	const checkBtn = buildCheckUpdateBtn(callZapretCheckUpdate, remoteEl);
 
-	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
+	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'nfqws2 (Zapret 2)'),
 			statusEl,
@@ -763,7 +760,7 @@ function buildZapretCard(zapret, isMainNode) {
 			msgEl
 		]),
 		(() => {
-			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' });
+			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' });
 			/* innerHTML: the description contains HTML links E() would escape */
 			el.innerHTML = _('Packet-level (NFQUEUE) DPI bypass by <a href="https://github.com/bol-van/zapret2" target="_blank">bol-van</a> (nfqws2). ' +
 			  'Packages by <a href="https://github.com/1andrevich/zapret2-openwrt" target="_blank">1andrevich/zapret2-openwrt</a>. ' +
@@ -779,11 +776,11 @@ function buildCurlCard(curl) {
 	const canInstall = !!pkgMgr;
 
 	const statusEl = E('strong', {
-		style: installed ? 'color:green' : 'color:gray'
+		style: installed ? 'color:#3fbf5f' : 'color:#9a9a9a'
 	}, installed ? _('Installed') : _('Not installed'));
 
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
-	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || 'gray'; };
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
 
 	const installBtn = E('button', {
 		class: 'btn cbi-button cbi-button-action',
@@ -794,21 +791,21 @@ function buildCurlCard(curl) {
 			installBtn.disabled = true;
 			removeBtn.disabled  = true;
 			statusEl.textContent = _('Installing...');
-			statusEl.style.color = 'gray';
-			setMsg('', 'gray');
+			statusEl.style.color = '#9a9a9a';
+			setMsg('', '#9a9a9a');
 			const ret = await L.resolveDefault(callCurlInstall(), {});
 			if (ret.result) {
 				installed = true;
 				statusEl.textContent = _('Installed');
-				statusEl.style.color = 'green';
+				statusEl.style.color = '#3fbf5f';
 				installBtn.textContent = _('Reinstall');
 				removeBtn.disabled  = false;
-				setMsg(_('Installed successfully'), 'green');
+				setMsg(_('Installed successfully'), '#3fbf5f');
 			} else {
 				statusEl.textContent = _('Not installed');
-				statusEl.style.color = 'gray';
+				statusEl.style.color = '#9a9a9a';
 				installBtn.disabled = false;
-				setMsg(ret.error || _('Installation failed'), 'red');
+				setMsg(ret.error || _('Installation failed'), '#e05252');
 			}
 		}
 	}, [ _('Install') ]);
@@ -820,23 +817,23 @@ function buildCurlCard(curl) {
 		click: async function() {
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
-			setMsg(_('Removing...'), 'gray');
+			setMsg(_('Removing...'), '#9a9a9a');
 			const ret = await L.resolveDefault(callCurlRemove(), {});
 			installBtn.disabled = false;
 			if (ret.result) {
 				installed = false;
 				statusEl.textContent = _('Not installed');
-				statusEl.style.color = 'gray';
+				statusEl.style.color = '#9a9a9a';
 				installBtn.textContent = _('Install');
-				setMsg(_('Removed successfully'), 'green');
+				setMsg(_('Removed successfully'), '#3fbf5f');
 			} else {
 				removeBtn.disabled = false;
-				setMsg(ret.error || _('Removal failed'), 'red');
+				setMsg(ret.error || _('Removal failed'), '#e05252');
 			}
 		}
 	}, [ _('Remove') ]);
 
-	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
+	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'curl'),
 			statusEl,
@@ -844,7 +841,7 @@ function buildCurlCard(curl) {
 			removeBtn,
 			msgEl
 		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
+		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' },
 			_('Enables real HTTP-based ByeDPI strategy testing. Required for the "Test all strategies" feature in the ByeDPI node settings.'))
 	]);
 }
@@ -855,12 +852,12 @@ function buildAppCard(appStatus) {
 	const pkgMgr = appStatus?.pkg_manager || null;
 
 	const statusEl = E('strong', {
-		style: installed ? 'color:green' : 'color:gray'
+		style: installed ? 'color:#3fbf5f' : 'color:#9a9a9a'
 	}, installed ? (version ? 'Re:HomeProxy AutoMod v' + version : _('Installed')) : _('Not installed'));
 
-	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, '');
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
-	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || 'gray'; };
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
 
 	let updateAvailable = false;
 
@@ -869,25 +866,25 @@ function buildAppCard(appStatus) {
 		click: async function() {
 			checkBtn.disabled = true;
 			remoteEl.textContent = _('Checking...');
-			remoteEl.style.color = 'gray';
+			remoteEl.style.color = '#9a9a9a';
 			const ret = await L.resolveDefault(callAppCheckUpdate(), {});
 			checkBtn.disabled = false;
 			if (ret.error) {
 				remoteEl.textContent = ret.error;
-				remoteEl.style.color = 'red';
+				remoteEl.style.color = '#e05252';
 				updateBtn.disabled = true;
 				return;
 			}
 			remoteEl.textContent = _('Latest') + ': v' + ret.latest_version;
 			updateAvailable = !!ret.update_available;
 			if (updateAvailable) {
-				remoteEl.style.color = 'darkorange';
+				remoteEl.style.color = '#d99a1b';
 				updateBtn.disabled = false;
-				setMsg(_('Update available'), 'darkorange');
+				setMsg(_('Update available'), '#d99a1b');
 			} else {
-				remoteEl.style.color = 'green';
+				remoteEl.style.color = '#3fbf5f';
 				updateBtn.disabled = true;
-				setMsg(_('Up to date'), 'green');
+				setMsg(_('Up to date'), '#3fbf5f');
 			}
 		}
 	}, [ _('Check update') ]);
@@ -899,23 +896,23 @@ function buildAppCard(appStatus) {
 			updateBtn.disabled = true;
 			checkBtn.disabled = true;
 			statusEl.textContent = _('Preparing...');
-			statusEl.style.color = 'gray';
-			setMsg('', 'gray');
+			statusEl.style.color = '#9a9a9a';
+			setMsg('', '#9a9a9a');
 
 			const prep = await L.resolveDefault(callAppPrepareInstall(), {});
 			if (prep.error) {
 				statusEl.textContent = version ? 'Re:HomeProxy AutoMod v' + version : _('Installed');
-				statusEl.style.color = 'green';
+				statusEl.style.color = '#3fbf5f';
 				updateBtn.disabled = false;
 				checkBtn.disabled = false;
-				setMsg(prep.error, 'red');
+				setMsg(prep.error, '#e05252');
 				return;
 			}
 
-			setMsg(_('Downloading...'), 'gray');
+			setMsg(_('Downloading...'), '#9a9a9a');
 			const dlApp = await L.resolveDefault(callCoreDownload(prep.app.dl_url, prep.app.tmp_path), {});
 			if (!dlApp.result) {
-				setMsg(dlApp.error || _('Download failed'), 'red');
+				setMsg(dlApp.error || _('Download failed'), '#e05252');
 				updateBtn.disabled = false;
 				checkBtn.disabled = false;
 				return;
@@ -926,24 +923,24 @@ function buildAppCard(appStatus) {
 				if (dlI18n.result) i18nPath = prep.i18n.tmp_path;
 			}
 
-			setMsg(_('Installing...'), 'gray');
+			setMsg(_('Installing...'), '#9a9a9a');
 			const inst = await L.resolveDefault(
 				callAppInstallPkg(prep.app.tmp_path, i18nPath, prep.pkg_manager), {});
 			if (!inst.result) {
-				setMsg(inst.error || _('Installation failed'), 'red');
+				setMsg(inst.error || _('Installation failed'), '#e05252');
 				updateBtn.disabled = false;
 				checkBtn.disabled = false;
 				return;
 			}
 
-			setMsg(_('Installed — reloading...'), 'green');
+			setMsg(_('Installed — reloading...'), '#3fbf5f');
 			/* The package postinst restarts rpcd after a short delay; wait long enough
 			 * for the new rpcd (with the updated methods) to be serving before reload. */
 			setTimeout(() => window.location.reload(), 5000);
 		}
 	}, [ _('Update') ]);
 
-	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
+	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'Re:HomeProxy AutoMod'),
 			statusEl,
@@ -952,7 +949,7 @@ function buildAppCard(appStatus) {
 			updateBtn,
 			msgEl
 		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' },
+		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' },
 			_('The LuCI app itself. "Check update" compares your installed version with the latest GitHub release; "Update" downloads and installs the new app (and the Russian translation) in place.'))
 	]);
 }
@@ -1000,28 +997,28 @@ function buildCoreCard(core, coreInfo) {
 	let version   = coreData.version   || null;
 
 	const statusEl = E('strong', {
-		style: installed ? 'color:green' : 'color:gray'
+		style: installed ? 'color:#3fbf5f' : 'color:#9a9a9a'
 	}, installed ? 'v' + version : _('Not installed'));
 
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
-	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || 'gray'; };
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
 
-	const remoteEl = E('span', { style: 'font-size:0.9em; color:gray' }, '');
+	const remoteEl = E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, '');
 
 	const checkBtn = E('button', {
 		class: 'btn cbi-button',
 		click: async function() {
 			checkBtn.disabled = true;
 			remoteEl.textContent = _('Checking...');
-			remoteEl.style.color = 'gray';
+			remoteEl.style.color = '#9a9a9a';
 			const ret = await L.resolveDefault(callCoreCheckRemote(core), {});
 			checkBtn.disabled = false;
 			if (ret.error) {
 				remoteEl.textContent = ret.error;
-				remoteEl.style.color = 'red';
+				remoteEl.style.color = '#e05252';
 			} else {
 				remoteEl.textContent = _('Latest') + ': v' + ret.version;
-				remoteEl.style.color = installed && version === ret.version ? 'green' : 'darkorange';
+				remoteEl.style.color = installed && version === ret.version ? '#3fbf5f' : '#d99a1b';
 			}
 		}
 	}, [ _('Check update') ]);
@@ -1034,32 +1031,32 @@ function buildCoreCard(core, coreInfo) {
 		installBtn.disabled = true;
 		removeBtn.disabled  = true;
 		statusEl.textContent = _('Installing...');
-		statusEl.style.color = 'gray';
+		statusEl.style.color = '#9a9a9a';
 
 		const fail = (msg) => {
 			installed = prevInstalled;
 			version   = prevVersion;
 			statusEl.textContent = installed ? 'v' + (version || '?') : _('Not installed');
-			statusEl.style.color = installed ? 'green' : 'gray';
+			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 			installBtn.disabled = false;
 			removeBtn.disabled  = !installed;
-			setMsg(msg, 'red');
+			setMsg(msg, '#e05252');
 		};
 
-		setMsg(_('Checking requirements...'), 'gray');
+		setMsg(_('Checking requirements...'), '#9a9a9a');
 		const prep = await L.resolveDefault(callCorePrepare(core, ''), {});
 		if (prep.error) return fail(prep.error);
 
 		const compact = (prep.variant === 'upx');
-		setMsg(prep.note || _('Downloading...'), prep.note ? 'darkorange' : 'gray');
+		setMsg(prep.note || _('Downloading...'), prep.note ? '#d99a1b' : '#9a9a9a');
 		const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
 		if (!dl.result) return fail(dl.error || _('Download failed'));
 
-		setMsg(_('Installing package...'), 'gray');
+		setMsg(_('Installing package...'), '#9a9a9a');
 		const inst = await L.resolveDefault(callCoreInstallPkg(core, prep.tmp_path, prep.pkg_manager), {});
 		if (!inst.result) return fail(inst.error || _('Installation failed'));
 
-		setMsg(_('Installing kernel modules...'), 'gray');
+		setMsg(_('Installing kernel modules...'), '#9a9a9a');
 		await L.resolveDefault(callCoreInstallKmods(prep.pkg_manager), {});
 
 		const fresh = await L.resolveDefault(callCoreInfo(), {});
@@ -1067,11 +1064,11 @@ function buildCoreCard(core, coreInfo) {
 		installed = fd.installed || false;
 		version   = fd.version   || null;
 		statusEl.textContent = installed ? 'v' + version : _('Unknown');
-		statusEl.style.color = installed ? 'green' : 'gray';
+		statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 		installBtn.textContent = _('Update');
 		installBtn.disabled = false;
 		removeBtn.disabled  = false;
-		setMsg(compact ? _('Installed successfully (compact build)') : _('Installed successfully'), 'green');
+		setMsg(compact ? _('Installed successfully (compact build)') : _('Installed successfully'), '#3fbf5f');
 	};
 
 	const installBtn = E('button', {
@@ -1089,7 +1086,7 @@ function buildCoreCard(core, coreInfo) {
 		click: async function() {
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
-			setMsg(_('Removing...'), 'gray');
+			setMsg(_('Removing...'), '#9a9a9a');
 
 			const ret = await L.resolveDefault(callCoreRemove(core), {});
 
@@ -1098,17 +1095,17 @@ function buildCoreCard(core, coreInfo) {
 				installed = false;
 				version   = null;
 				statusEl.textContent = _('Not installed');
-				statusEl.style.color = 'gray';
+				statusEl.style.color = '#9a9a9a';
 				installBtn.textContent = _('Install');
-				setMsg(_('Removed successfully'), 'green');
+				setMsg(_('Removed successfully'), '#3fbf5f');
 			} else {
 				removeBtn.disabled = false;
-				setMsg(ret.error || _('Removal failed'), 'red');
+				setMsg(ret.error || _('Removal failed'), '#e05252');
 			}
 		}
 	}, [ _('Remove') ]);
 
-	return E('div', { style: 'margin-bottom:12px; padding:8px 10px; border:1px solid #ddd; border-radius:4px' }, [
+	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, name),
 			statusEl,
@@ -1118,7 +1115,7 @@ function buildCoreCard(core, coreInfo) {
 			removeBtn,
 			msgEl
 		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; color:#666' }, desc)
+		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' }, desc)
 	]);
 }
 
@@ -1139,6 +1136,9 @@ return view.extend({
 
 	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus, mdnsStatus, mosdnsStatus]) {
 		let m, s, o;
+
+		/* Shared design system (Automation look): translucent panels, palette. */
+		hp.uiStyle();
 
 		m = new form.Map('homeproxy');
 
@@ -1167,7 +1167,7 @@ return view.extend({
 				'placeholder': '/path/to/hiddify-core',
 				'style': 'width:260px; margin-right:4px'
 			});
-			const detectMsg = E('span', { 'style': 'margin-left:8px; font-size:0.9em; color:gray' }, '');
+			const detectMsg = E('span', { 'style': 'margin-left:8px; font-size:0.9em; color:#9a9a9a' }, '');
 			const detectBtn = E('button', {
 				'class': 'btn cbi-button cbi-button-action',
 				'click': async function() {
@@ -1175,29 +1175,29 @@ return view.extend({
 					if (!path) return;
 					detectBtn.disabled = true;
 					detectMsg.textContent = _('Detecting...');
-					detectMsg.style.color = 'gray';
+					detectMsg.style.color = '#9a9a9a';
 					const ret = await L.resolveDefault(callDetectCustomCore(path), {});
 					detectBtn.disabled = false;
 					if (ret.result) {
 						const typeName = ret.type === 'hiddify' ? 'hiddify-core' : 'sing-box';
 						detectMsg.textContent = _('Detected') + ': ' + typeName + (ret.version ? ' v' + ret.version : '') + ' — ' + _('reload page to apply');
-						detectMsg.style.color = 'green';
+						detectMsg.style.color = '#3fbf5f';
 					} else {
 						detectMsg.textContent = ret.error || _('Detection failed');
-						detectMsg.style.color = 'red';
+						detectMsg.style.color = '#e05252';
 					}
 				}
 			}, [ _('Detect') ]);
 
 			o.default = E('div', {}, [
-				E('strong', { 'style': 'color:red' }, _('No core installed')),
+				E('strong', { 'style': 'color:#e05252' }, _('No core installed')),
 				E('details', { 'style': 'margin-top:6px' }, [
-					E('summary', { 'style': 'cursor:pointer; color:#666; font-size:0.9em' }, _('I have a custom core path')),
+					E('summary', { 'style': 'cursor:pointer; opacity:.75; font-size:0.9em' }, _('I have a custom core path')),
 					E('div', { 'style': 'margin-top:6px' }, [ pathInput, detectBtn, detectMsg ])
 				])
 			]);
 		} else {
-			o.default = E('strong', { 'style': 'color:green' }, coreName + coreVer + coreCustomSuffix);
+			o.default = E('strong', { 'style': 'color:#3fbf5f' }, coreName + coreVer + coreCustomSuffix);
 		}
 
 		/* Region rule-sets (geosite/geoip .srs) are versioned and refreshed by the core itself,
@@ -1238,7 +1238,7 @@ return view.extend({
 		o = s.option(form.DummyValue, '_core_env');
 		const tmpMB     = coreInfo.tmp_free_kb     != null ? Math.round(coreInfo.tmp_free_kb     / 1024) : '?';
 		const overlayMB = coreInfo.overlay_free_kb != null ? Math.round(coreInfo.overlay_free_kb / 1024) : '?';
-		o.default = E('div', { style: 'font-size:0.9em; color:#555; padding:2px 0 6px' }, [
+		o.default = E('div', { style: 'font-size:0.9em; opacity:.85; padding:2px 0 6px' }, [
 			_('Package manager') + ': ',
 			E('strong', {}, coreInfo.pkg_manager || _('none detected')),
 			E('span', { style: 'margin:0 8px' }, '|'),
@@ -1247,12 +1247,12 @@ return view.extend({
 			E('span', { style: 'margin:0 8px' }, '|'),
 			_('Free /tmp') + ': ',
 			E('strong', {
-				style: (coreInfo.tmp_free_kb != null && coreInfo.tmp_free_kb < 30720) ? 'color:red' : 'color:green'
+				style: (coreInfo.tmp_free_kb != null && coreInfo.tmp_free_kb < 30720) ? 'color:#e05252' : 'color:#3fbf5f'
 			}, tmpMB + ' MB'),
 			E('span', { style: 'margin:0 8px' }, '|'),
 			_('Free overlay') + ': ',
 			E('strong', {
-				style: (coreInfo.overlay_free_kb != null && coreInfo.overlay_free_kb < 30720) ? 'color:red' : 'color:green'
+				style: (coreInfo.overlay_free_kb != null && coreInfo.overlay_free_kb < 30720) ? 'color:#e05252' : 'color:#3fbf5f'
 			}, overlayMB + ' MB')
 		]);
 

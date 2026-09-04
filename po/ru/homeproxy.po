@@ -4707,6 +4707,11 @@ msgstr "Отчёт диагностики"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
+msgid "Report"
+msgstr "Отчёт"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
 msgid "Re:HomeProxy AutoMod Diagnostics"
 msgstr "Диагностика Re:HomeProxy AutoMod"
 

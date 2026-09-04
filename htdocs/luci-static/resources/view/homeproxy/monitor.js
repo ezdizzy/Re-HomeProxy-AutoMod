@@ -8,6 +8,7 @@
 
 'use strict';
 'require dom';
+'require homeproxy as hp';
 'require poll';
 'require rpc';
 'require uci';
@@ -32,28 +33,30 @@ const callMonitorConnectionsClose = rpc.declare({
 	expect: { '': {} }
 });
 
-/* Same 4-colour scheme as the "Active URLTest node" line in Client Settings:
- * red = confirmed dead (65535 timeout sentinel), orange = slow (>=3000 ms),
- * green = healthy, gray = not measured yet. */
+/* Same 4-colour scheme as the "Active URLTest node" line in Client Settings —
+ * palette matches the Automation tab: red = confirmed dead (65535 timeout
+ * sentinel), orange = slow (>=3000 ms), green = healthy, gray = unmeasured. */
+const C_RED = '#e05252', C_GREEN = '#3fbf5f', C_AMBER = '#e07b00', C_GREY = '#9a9a9a';
+
 function delayView(delay) {
 	if (delay === 65535)
-		return { color: 'red', text: _('Timeout') };
+		return { color: C_RED, text: _('Timeout') };
 	if (delay == null)
-		return { color: 'gray', text: '—' };
+		return { color: C_GREY, text: '—' };
 	if (delay >= 3000)
-		return { color: 'orange', text: delay + ' ms' };
-	return { color: 'green', text: delay + ' ms' };
+		return { color: C_AMBER, text: delay + ' ms' };
+	return { color: C_GREEN, text: delay + ' ms' };
 }
 
 function statusView(status) {
 	switch (status) {
-		case 'alive':         return { color: 'green',  text: _('Alive') };
-		case 'timeout':       return { color: 'red',    text: _('Timeout') };
-		case 'unmeasured':    return { color: 'gray',   text: _('Unmeasured') };
-		case 'unsupported':   return { color: 'orange', text: _('Unsupported by core') };
-		case 'not_in_config': return { color: 'gray',   text: _('Not in config') };
+		case 'alive':         return { color: C_GREEN, text: _('Alive') };
+		case 'timeout':       return { color: C_RED,   text: _('Timeout') };
+		case 'unmeasured':    return { color: C_GREY,  text: _('Unmeasured') };
+		case 'unsupported':   return { color: C_AMBER, text: _('Unsupported by core') };
+		case 'not_in_config': return { color: C_GREY,  text: _('Not in config') };
 	}
-	return { color: 'gray', text: status || '—' };
+	return { color: C_GREY, text: status || '—' };
 }
 
 function fmtBytes(n) {
@@ -78,21 +81,18 @@ function imp(node, styles) {
 }
 
 function cardWrap(titleEl, bodyEl) {
-	return E('div', { 'style': 'border:1px solid rgba(128,128,128,.35); border-radius:8px; padding:8px 12px; min-width:170px' }, [
+	/* Same translucent card as the Automation stat cards (hpui-card). */
+	return E('div', { 'class': 'hpui-card', 'style': 'min-width:170px' }, [
 		E('div', { 'style': 'font-weight:bold; margin-bottom:4px' }, [ titleEl ]),
 		E('div', {}, [ bodyEl ])
 	]);
 }
 
 function makeTable(headers) {
-	const table = E('table', { 'class': 'table cbi-section-table' });
-	imp(table, { width: '100%', 'border-collapse': 'collapse' });
+	const table = E('table', { 'class': 'hpui-table' });
 	const tr = E('tr', {});
-	for (const h of headers) {
-		const th = E('th', {}, [ h ]);
-		imp(th, { 'text-align': 'left', padding: '4px 8px', 'border-bottom': '1px solid rgba(128,128,128,.35)' });
-		tr.appendChild(th);
-	}
+	for (const h of headers)
+		tr.appendChild(E('th', {}, [ h ]));
 	table.appendChild(E('thead', {}, [ tr ]));
 	table._tbody = E('tbody', {});
 	table.appendChild(table._tbody);
@@ -102,8 +102,7 @@ function makeTable(headers) {
 function addRow(table, cells) {
 	const tr = E('tr', {});
 	for (const c of cells) {
-		const td = E('td', {});
-		imp(td, { padding: '4px 8px', 'border-bottom': '1px solid rgba(128,128,128,.15)', 'white-space': 'nowrap' });
+		const td = E('td', { 'style': 'white-space:nowrap' });
 		if (c.el) td.appendChild(c.el);
 		else {
 			const span = E('span', { 'style': 'color:' + (c.color || 'inherit') }, [ c.text == null ? '—' : String(c.text) ]);
@@ -121,6 +120,9 @@ return view.extend({
 	},
 
 	render: function() {
+		/* Shared design system (Automation look): cards, table, palette. */
+		hp.uiStyle();
+
 		const coreBody = E('div', {}, [ '—' ]);
 		const activeBody = E('div', {}, [ '—' ]);
 		const zapretBody = E('div', {}, [ '—' ]);
@@ -188,12 +190,12 @@ return view.extend({
 				else if (n.status === 'timeout') down++;
 			}
 			nodesBody.innerHTML = '';
-			nodesBody.appendChild(E('span', { 'style': 'font-weight:bold; color:' + (alive ? 'green' : 'red') },
+			nodesBody.appendChild(E('span', { 'style': 'font-weight:bold; color:' + (alive ? C_GREEN : C_RED) },
 				[ _('%d alive, %d down, %d total').format(alive, down, nodes.length) ]));
 
 			if (!st.clash_ok) {
 				nodeTableWrap.innerHTML = '';
-				nodeTableWrap.appendChild(E('em', { 'style': 'color:red' }, [ _('Node monitoring is unavailable') ]));
+				nodeTableWrap.appendChild(E('em', { 'style': 'color:#e05252' }, [ _('Node monitoring is unavailable') ]));
 				return;
 			}
 			if (!nodes.length) {
@@ -223,7 +225,7 @@ return view.extend({
 					{ el: nameEl },
 					{ text: n.type, color: 'inherit' },
 					{ text: serverText(n), color: 'inherit' },
-					{ text: n.in_pool ? '✓' : '—', color: n.in_pool ? 'green' : 'gray' },
+					{ text: n.in_pool ? '✓' : '—', color: n.in_pool ? C_GREEN : C_GREY },
 					{ text: dv.text, color: dv.color },
 					{ text: sv.text, color: sv.color }
 				]);
@@ -232,8 +234,8 @@ return view.extend({
 			}
 
 			nodeTableWrap.innerHTML = '';
-			const wrap = E('div', {});
-			imp(wrap, { 'max-height': '420px', overflow: 'auto', 'margin-top': '4px' });
+			const wrap = E('div', { 'class': 'hpui-wrap' });
+			imp(wrap, { 'max-height': '420px' });
 			wrap.appendChild(table);
 			nodeTableWrap.appendChild(wrap);
 			wrap.scrollTop = scrollTop;
@@ -242,10 +244,10 @@ return view.extend({
 		function engineBody(st, key) {
 			const e = st[key] || {};
 			let color, text;
-			if (!e.installed) { color = 'gray'; text = _('Not installed'); }
-			else if (!e.enabled) { color = 'gray'; text = _('Disabled'); }
-			else if (e.running) { color = 'green'; text = _('Running'); }
-			else { color = 'red'; text = _('Stopped'); }
+			if (!e.installed) { color = C_GREY;  text = _('Not installed'); }
+			else if (!e.enabled) { color = C_GREY; text = _('Disabled'); }
+			else if (e.running) { color = C_GREEN; text = _('Running'); }
+			else { color = C_RED; text = _('Stopped'); }
 			const el = E('div', {}, [ E('span', { 'style': 'color:' + color, 'font-weight': 'bold' }, [ text ]) ]);
 			if (e.version)
 				el.appendChild(document.createTextNode(' ' + e.version));
@@ -260,7 +262,7 @@ return view.extend({
 					zapretBody.textContent = '—';
 					byedpiBody.textContent = '—';
 					nodesBody.innerHTML = '';
-					nodesBody.appendChild(E('em', { 'style': 'color:red' }, [ _('Node monitoring is unavailable') ]));
+					nodesBody.appendChild(E('em', { 'style': 'color:#e05252' }, [ _('Node monitoring is unavailable') ]));
 					return;
 				}
 
@@ -268,12 +270,12 @@ return view.extend({
 				coreBody.innerHTML = '';
 				if (st.core) {
 					coreBody.appendChild(E('span', {
-						'style': 'color:' + (st.core.running ? 'green' : 'red') + '; font-weight:bold'
+						'style': 'color:' + (st.core.running ? C_GREEN : C_RED) + '; font-weight:bold'
 					}, [ st.core.running ? _('Running') : _('Stopped') ]));
 					coreBody.appendChild(document.createTextNode(
 						' ' + (st.core.type || '') + (st.core.version ? ' ' + st.core.version : '')));
 				} else {
-					coreBody.appendChild(E('span', { 'style': 'color:red' }, [ _('Not installed') ]));
+					coreBody.appendChild(E('span', { 'style': 'color:#e05252' }, [ _('Not installed') ]));
 				}
 
 				/* Active node card */
@@ -283,11 +285,11 @@ return view.extend({
 					const dv = delayView(selected.delay);
 					activeBody.appendChild(E('span', { 'style': 'color:' + dv.color, 'font-weight': 'bold' },
 						[ selected.label + (dv.text === '—' ? '' : ' — ' + dv.text) ]));
-					activeBody.appendChild(E('div', { 'style': 'color:gray; font-size:.85em' },
+					activeBody.appendChild(E('div', { 'style': 'color:#9a9a9a; font-size:.85em' },
 						[ (st.main_node === 'urltest') ? _('URLTest') + ' · ' + modeText(st.urltest_mode) : _('Main node') ]));
 				} else {
-					activeBody.appendChild(E('span', { 'style': 'color:gray' }, [ _('No active node') ]));
-					activeBody.appendChild(E('div', { 'style': 'color:gray; font-size:.85em' },
+					activeBody.appendChild(E('span', { 'style': 'color:#9a9a9a' }, [ _('No active node') ]));
+					activeBody.appendChild(E('div', { 'style': 'color:#9a9a9a; font-size:.85em' },
 						[ (st.main_node === 'urltest') ? _('URLTest') + ' · ' + modeText(st.urltest_mode) : _('Main node') ]));
 				}
 
@@ -299,7 +301,7 @@ return view.extend({
 				renderNodeTable(st);
 			}).catch(function(e) {
 				nodesBody.innerHTML = '';
-				nodesBody.appendChild(E('em', { 'style': 'color:red' }, [ _('Node monitoring is unavailable') ]));
+				nodesBody.appendChild(E('em', { 'style': 'color:#e05252' }, [ _('Node monitoring is unavailable') ]));
 			});
 		}
 
@@ -314,7 +316,7 @@ return view.extend({
 
 			if (r.error) {
 				connTableWrap.innerHTML = '';
-				connTableWrap.appendChild(E('em', { 'style': 'color:red' }, [ _('Connections monitoring is unavailable') ]));
+				connTableWrap.appendChild(E('em', { 'style': 'color:#e05252' }, [ _('Connections monitoring is unavailable') ]));
 				return;
 			}
 			if (!conns.length) {
@@ -331,17 +333,17 @@ return view.extend({
 				const chain = (c.chain || []).map(chainLabel).join(' → ');
 				addRow(table, [
 					{ text: c.host || c.destination || '—', color: 'inherit' },
-					{ text: (c.network || '').toUpperCase(), color: 'gray' },
+					{ text: (c.network || '').toUpperCase(), color: C_GREY },
 					{ text: chain || '—', color: 'inherit' },
-					{ text: c.rule || '—', color: 'gray' },
+					{ text: c.rule || '—', color: C_GREY },
 					{ text: fmtBytes(c.download), color: 'inherit' },
 					{ text: fmtBytes(c.upload), color: 'inherit' }
 				]);
 			}
 
 			connTableWrap.innerHTML = '';
-			const wrap = E('div', {});
-			imp(wrap, { 'max-height': '380px', overflow: 'auto', 'margin-top': '4px' });
+			const wrap = E('div', { 'class': 'hpui-wrap' });
+			imp(wrap, { 'max-height': '380px' });
 			wrap.appendChild(table);
 			connTableWrap.appendChild(wrap);
 			wrap.scrollTop = scrollTop;
@@ -352,7 +354,7 @@ return view.extend({
 				renderConnTable(r || { error: 'no data' });
 			}).catch(function(e) {
 				connTableWrap.innerHTML = '';
-				connTableWrap.appendChild(E('em', { 'style': 'color:red' }, [ _('Connections monitoring is unavailable') ]));
+				connTableWrap.appendChild(E('em', { 'style': 'color:#e05252' }, [ _('Connections monitoring is unavailable') ]));
 			});
 		}
 

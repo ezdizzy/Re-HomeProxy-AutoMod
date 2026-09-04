@@ -13,23 +13,21 @@
 'require ui';
 'require view';
 
+/* Diagnostics-specific additions on top of the shared hpui design system
+ * (hp.uiStyle() — same visual language as the Automation tab). */
 const css = '\
-.diag-section { margin-bottom: 1.5em; }\
+.diag-section { margin: 0; }\
 .diag-row { display:flex; align-items:baseline; margin:.35em 0; gap:.6em; }\
-.diag-label { min-width:11em; color:#666; font-size:.9em; flex-shrink:0; }\
-.diag-ok   { color: #2a2; font-weight: bold; }\
-.diag-fail { color: #c33; font-weight: bold; }\
-.diag-warn { color: #c80; font-weight: bold; }\
-.diag-gray { color: #888; }\
-.diag-pre { font-family:monospace; font-size:.82em; background:#f5f5f5; border:1px solid #ddd;\
-  padding:.5em .8em; white-space:pre-wrap; word-break:break-all; border-radius:3px;\
-  margin:.3em 0 0; max-height:14em; overflow-y:auto; }\
-.diag-input { padding:.25em .4em; border:1px solid #ccc; border-radius:3px;\
-  font-size:.9em; width:14em; }\
-.diag-btn { margin-right:.4em; }\
+.diag-label { min-width:11em; opacity:.75; font-size:.9em; flex-shrink:0; }\
+.diag-ok   { color: #3fbf5f; font-weight: bold; }\
+.diag-fail { color: #e05252; font-weight: bold; }\
+.diag-warn { color: #d99a1b; font-weight: bold; }\
+.diag-gray { color: #9a9a9a; }\
 .diag-port-line { font-family:monospace; font-size:.82em; margin:.1em 0; }\
+.diag-btn { margin-right:.4em; }\
 #diag-report-area { width:100%; height:22em; font-family:monospace; font-size:.8em;\
-  white-space:pre; overflow:auto; background:#f5f5f5; border:1px solid #ddd; padding:.5em; }\
+  white-space:pre; overflow:auto; background:#1e1e1e; color:#ddd; border:1px solid #333;\
+  border-radius:6px; padding:.5em; }\
 ';
 
 /* ── RPC declarations ─────────────────────────────────────────────────── */
@@ -129,13 +127,14 @@ function resolveTag(tag) {
 
 function statusBadge(ok, text) {
 	/* ucode serialises booleans as integers 0/1 — use loose checks so both
-	   JS booleans and integers work. null/undefined → "uncertain" (orange ?). */
+	   JS booleans and integers work. null/undefined → "uncertain" (amber ?).
+	   Rendered as a badge chip — same look as the Automation tables. */
 	const isOk   = !!ok;
 	const isWarn = ok == null;    /* catches null AND undefined */
 	const icon   = isOk ? '✓ ' : isWarn ? '? ' : '✗ ';
-	const cls    = isOk ? 'diag-ok' : isWarn ? 'diag-warn' : 'diag-fail';
+	const cls    = isOk ? 'hpui-b-green' : isWarn ? 'hpui-b-amber' : 'hpui-b-red';
 	const label  = text || (isOk ? _('OK') : isWarn ? '?' : _('FAIL'));
-	return E('strong', { 'class': cls }, icon + label);
+	return E('span', { 'class': 'hpui-badge ' + cls }, icon + label);
 }
 
 function row(label, value) {
@@ -146,12 +145,12 @@ function row(label, value) {
 }
 
 function pre(text) {
-	return E('div', { 'class': 'diag-pre' }, text || _('(empty)'));
+	return E('div', { 'class': 'hpui-pre' }, text || _('(empty)'));
 }
 
 function sectionCard(title, id, rows) {
-	return E('div', { 'class': 'cbi-section diag-section' }, [
-		E('h3', {}, title),
+	return E('div', { 'class': 'hpui-panel diag-section' }, [
+		E('h4', {}, title),
 		E('div', { 'id': id }, rows)
 	]);
 }
@@ -283,7 +282,7 @@ function buildCoreSection(view) {
 				row(_('Zapret 2'),        statusBadge(ret.zapret_installed,   ret.zapret_installed   ? _('installed') : _('not found'))),
 				row(_('mosdns'),          statusBadge(ret.mosdns_installed,  ret.mosdns_installed  ? _('installed') : _('not found'))),
 				ret.binary ? row(_('Active binary'), E('code', {}, ret.binary)) : null,
-				ret.version ? row(_('Version'), E('span', { 'class': 'diag-pre', 'style': 'max-height:5em' }, ret.version)) : null,
+				ret.version ? row(_('Version'), E('span', { 'class': 'hpui-pre', 'style': 'max-height:5em' }, ret.version)) : null,
 				row(_('Running'),         statusBadge(ret.running, ret.running ? _('yes') + (ret.pid ? ' (PID ' + ret.pid + ')' : '') : _('no'))),
 				ret.byedpi_installed ? row(_('ByeDPI running'), statusBadge(ret.byedpi_running, ret.byedpi_running ? _('yes') + (ret.byedpi_pid ? ' (PID ' + ret.byedpi_pid + ')' : '') : _('no'))) : null,
 				ret.zapret_installed ? row(_('Zapret 2 running'), statusBadge(ret.zapret_running, ret.zapret_running ? _('yes') + (ret.zapret_pid ? ' (PID ' + ret.zapret_pid + ')' : '') : _('no'))) : null,
@@ -653,6 +652,9 @@ return view.extend({
 
 	render: function(data) {
 		const features = (data && data[0]) || {};
+
+		/* Shared design system (Automation look) + page-specific tweaks. */
+		hp.uiStyle();
 		document.head.appendChild(E('style', {}, [ css ]));
 
 		const core   = buildCoreSection(this);
@@ -675,6 +677,45 @@ return view.extend({
 			]);
 		});
 
+		/* ── Tabbed layout (same interaction as the Automation tab) ────── */
+		const TABS = [
+			[ 'overview', _('Overview') ],
+			[ 'config',   _('Configuration') ],
+			[ 'dns',      _('DNS') ],
+			[ 'network',  _('Network') ],
+			[ 'report',   _('Report') ]
+		];
+
+		const panes = {};
+		for (let t in TABS)
+			panes[TABS[t][0]] = E('div', { 'class': 'hpui-pane' });
+
+		const tabBar = E('div', { 'class': 'hpui-tabs' });
+		for (let i in TABS) {
+			const idx = parseInt(i, 10);
+			const key = TABS[i][0];
+			const b = E('button', {
+				'class': 'hpui-tab' + (idx === 0 ? ' active' : ''),
+				type: 'button'
+			}, [ TABS[i][1] ]);
+			b.addEventListener('click', function() {
+				for (let k in panes)
+					panes[k].classList.toggle('active', k === key);
+				for (let j = 0; j < tabBar.children.length; j++)
+					tabBar.children[j].classList.toggle('active', j === idx);
+			});
+			tabBar.appendChild(b);
+		}
+		panes.overview.classList.add('active');
+
+		panes.overview.appendChild(core.el);
+		panes.overview.appendChild(conn.el);
+		panes.config.appendChild(config.el);
+		panes.dns.appendChild(dns.el);
+		panes.dns.appendChild(mdns.el);
+		panes.network.appendChild(nft.el);
+		panes.report.appendChild(report.el);
+
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('Re:HomeProxy AutoMod Diagnostics')),
 			E('div', { 'class': 'cbi-section', 'style': 'padding-bottom:.5em' }, [
@@ -685,13 +726,12 @@ return view.extend({
 				E('em', { 'class': 'diag-gray', 'style': 'margin-left:.8em; font-size:.9em' },
 					_('Runs Core, Config, Network, and Connectivity checks simultaneously.'))
 			]),
-			core.el,
-			config.el,
-			dns.el,
-			mdns.el,
-			nft.el,
-			conn.el,
-			report.el
+			tabBar,
+			panes.overview,
+			panes.config,
+			panes.dns,
+			panes.network,
+			panes.report
 		]);
 	},
 

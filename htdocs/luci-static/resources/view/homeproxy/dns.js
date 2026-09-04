@@ -25,6 +25,7 @@
 'require poll';
 'require rpc';
 'require validation';
+'require homeproxy as hp';
 
 let stubValidator = {
 	factory: validation,
@@ -41,6 +42,9 @@ let stubValidator = {
 
 return view.extend({
 	render: function() {
+		/* Shared design system (Automation look) for the quality monitor. */
+		hp.uiStyle();
+
 		const m = new form.Map('homeproxy', _('DNS Settings'));
 
 		const mdDisable = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_disable', expect: { '': {} } });
@@ -164,7 +168,7 @@ return view.extend({
 		fon.cfgvalue = function() { return ''; };
 		fon.write = function() { return undefined; };
 		fon.renderWidget = function(section_id, option_index, cfgvalue) {
-			return E('div', { 'class': 'automation-hint', 'style': 'margin-bottom:8px' }, [
+			return E('div', { 'class': 'hpui-banner', 'style': 'margin-bottom:8px' }, [
 				_('Redundant with MultiDNS: when MultiDNS is enabled it already races every server in each pool and returns the fastest live answer, so a single failed primary is bypassed automatically. Reserve DNS is therefore ignored while MultiDNS is on — use one or the other.')
 			]);
 		};
@@ -234,8 +238,8 @@ return view.extend({
 		const mdReload = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_reload', expect: { '': {} } });
 		const mdReset = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_reset', expect: { '': {} } });
 
-		const mdStatusEl = E('div', { 'class': 'automation-counts' });
-		const mdTableEl = E('div', { 'class': 'automation-table' });
+		const mdStatusEl = E('div', { 'class': 'hpui-hint' });
+		const mdTableEl = E('div', {});
 
 		function mdRefresh() {
 			return mdStatus().then(function(st) {
@@ -251,14 +255,14 @@ return view.extend({
 			});
 		}
 
-		const mdActions = E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
+		const mdActions = E('div', { 'style': 'margin-top:10px' }, [
 			mdBtn(_('Rebuild pools'), function() { return mdReload(); }),
 			mdBtn(_('Reset trends'), function() { return mdReset().then(mdRefresh); }),
 			mdBtn(_('Disable & restore DNS'), function() { return mdDisable().then(mdRefresh); })
 		]);
 
-		const mdPanel = E('div', { 'class': 'automation-panel cbi-section' }, [
-			E('h3', {}, [ _('DNS quality monitor') ]),
+		const mdPanel = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', {}, [ _('DNS quality monitor') ]),
 			mdStatusEl,
 			mdTableEl,
 			mdActions,
@@ -300,18 +304,14 @@ return view.extend({
 				mdTableEl.appendChild(E('em', {}, [ _('No data yet — enable MultiDNS and wait for the first quality check.') ]));
 				return;
 			}
-			const table = E('table', { 'class': 'table cbi-section-table' });
+			/* Shared design system table (Automation look): sticky grey header,
+			 * translucent row hover. */
+			const table = E('table', { 'class': 'hpui-table' });
 			const headers = [ _('Server'), _('Pool'), _('Score'), _('Latency'), _('Open %'), _('Live %'), _('Success %'), _('Trend'), _('Status') ];
 			const thead = E('thead', {});
 			const htr = E('tr', {});
-			for (let h of headers) {
-				const th = E('th', {}, [ h ]);
-				th.style.setProperty('background', '#707070', 'important');
-				th.style.setProperty('color', '#f2f2f2', 'important');
-				th.style.setProperty('padding', '3px 6px', 'important');
-				th.style.setProperty('border', '1px solid #555', 'important');
-				htr.appendChild(th);
-			}
+			for (let h of headers)
+				htr.appendChild(E('th', {}, [ h ]));
 			thead.appendChild(htr);
 			table.appendChild(thead);
 			const tbody = E('tbody', {});
@@ -322,22 +322,23 @@ return view.extend({
 				let open = (e.open != null) ? (e.open + '%') : '—';
 				let live = (e.live != null) ? (e.live + '%') : '—';
 				let succ = (e.success != null) ? (e.success + '%') : '—';
-				let status = e.pruned ? _('pruned') : _('active');
 				let trend = '';
 				if (e.samples >= 2) trend = '≈'; /* trend history shown via score stability */
-				const cells = [ String(e.server), pool, String(e.score != null ? e.score : '—'), lat, open, live, succ, trend, status ];
+				const cells = [ String(e.server), pool, String(e.score != null ? e.score : '—'), lat, open, live, succ, trend ];
 				const tr = E('tr', {});
-				for (let i = 0; i < cells.length; i++) {
-					const td = E('td', {}, [ cells[i] ]);
-					td.style.setProperty('border', '1px solid #d0d0d0', 'important');
-					td.style.setProperty('padding', '3px 6px', 'important');
-					tr.appendChild(td);
-				}
+				for (let i = 0; i < cells.length; i++)
+					tr.appendChild(E('td', {}, [ cells[i] ]));
+				tr.appendChild(E('td', {}, [
+					E('span', { 'class': 'hpui-badge ' + (e.pruned ? 'hpui-b-grey' : 'hpui-b-green') },
+						[ e.pruned ? _('pruned') : _('active') ])
+				]));
 				tbody.appendChild(tr);
 			}
 			table.appendChild(tbody);
 			mdTableEl.innerHTML = '';
-			mdTableEl.appendChild(table);
+			const wrap = E('div', { 'class': 'hpui-wrap' });
+			wrap.appendChild(table);
+			mdTableEl.appendChild(wrap);
 		}
 
 		poll.add(mdRefresh, 10);
