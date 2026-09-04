@@ -1805,7 +1805,7 @@ return view.extend({
 		so.depends('action', 'route');
 		so.modalonly = true;
 
-		so = ss.taboption('field_other', form.Flag, 'dns_disable_cache', _('Disable dns cache'),
+		so = ss.taboption('field_other', form.Flag, 'dns_disable_cache', _('Disable DNS cache'),
 			_('Disable cache and save cache in this query.'));
 		so.depends('action', 'route');
 		so.depends('action', 'route-options');
@@ -1935,7 +1935,7 @@ return view.extend({
 		/* Custom routing settings end */
 
 		/* Rule set settings start */
-		s.tab('ruleset', _('Rule Set'));
+		s.tab('ruleset', _('Rule set'));
 		o = s.taboption('ruleset', form.SectionValue, '_ruleset', form.GridSection, 'ruleset');
 		o.depends('routing_mode', 'custom');
 

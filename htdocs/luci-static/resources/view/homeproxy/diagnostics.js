@@ -316,7 +316,7 @@ function buildCoreSection(view) {
 				E('button', {
 					'class': 'btn cbi-button cbi-button-negative diag-btn',
 					'click': ui.createHandlerFn(view, restart)
-				}, _('Restart Service')),
+				}, _('Restart service')),
 				restartMsgEl
 			]),
 			resultsEl

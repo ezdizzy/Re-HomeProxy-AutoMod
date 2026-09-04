@@ -437,8 +437,8 @@ msgstr "BBR"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js:235
 
-msgid "BaiDu"
-msgstr "BaiDu"
+msgid "Baidu"
+msgstr "Baidu"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:556
 #: htdocs/luci-static/resources/view/homeproxy/server.js:277
@@ -740,6 +740,9 @@ msgstr "Отладка"
 #: htdocs/luci-static/resources/view/homeproxy/node.js:710
 
 msgid "Default"
+msgstr "По умолчанию"
+
+msgid "default"
 msgstr "По умолчанию"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:382
@@ -2229,6 +2232,9 @@ msgstr "Узлы"
 msgid "None"
 msgstr "Нет"
 
+msgid "none"
+msgstr "Нет"
+
 #: htdocs/luci-static/resources/view/homeproxy/node.js:573
 #: htdocs/luci-static/resources/view/homeproxy/server.js:294
 
@@ -2444,6 +2450,11 @@ msgstr "Предпочтительное ядро"
 #: htdocs/luci-static/resources/view/homeproxy/node.js:903
 
 msgid "Private key"
+msgstr "Приватный ключ"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+
+msgid "private key"
 msgstr "Приватный ключ"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:683
@@ -2799,6 +2810,9 @@ msgstr "не обнаружен"
 msgid "Not installed"
 msgstr "Не установлено"
 
+msgid "Installed"
+msgstr "Установлен"
+
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
 msgid "Latest"
@@ -2873,6 +2887,12 @@ msgstr "Ошибка установки"
 
 msgid "Unknown"
 msgstr "Неизвестно"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+
+msgid "unknown"
+msgstr "неизвестно"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
@@ -2960,7 +2980,7 @@ msgstr "Правило маршрутизации"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1311
 
-msgid "Rule Set"
+msgid "Rule set"
 msgstr "Набор правил"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:646
@@ -3033,7 +3053,7 @@ msgstr "Сервер"
 
 #: root/usr/share/luci/menu.d/luci-app-homeproxy-hiddify.json:30
 
-msgid "Server Settings"
+msgid "Server settings"
 msgstr "Настройки сервера"
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js:607
@@ -4496,6 +4516,11 @@ msgstr "Проверка ядра…"
 msgid "RPC error"
 msgstr "Ошибка RPC"
 
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "rpc error"
+msgstr "Ошибка RPC"
+
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
 msgid "Hiddify-core"
@@ -4548,7 +4573,7 @@ msgstr "Ошибка перезапуска"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
-msgid "Restart Service"
+msgid "Restart service"
 msgstr "Перезапустить службу"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
@@ -5466,10 +5491,10 @@ msgstr "Включить автоматизацию"
 
 msgid ""
 "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br>"
-"<b>Mode notes:</b> active only in \"Bypass blocking\". Automatically paused in Global (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in Custom routing / Custom JSON. After toggling, press \"Restart service\" below."
+"<b>Mode notes:</b> active only in \"Bypass blocking\". Automatically paused in Global (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in Custom routing / Custom JSON. After toggling, press \"Restart service\" on the Overview tab."
 msgstr ""
 "Автоматически изучает заблокированные сайты: трафик, который не проходит напрямую, но работает через прокси, добавляется в списки Правил маршрутизации. Полностью совместимо с ByeDPI и Zapret — изученные сайты просто используют ваш основной путь.<br>"
-"<b>Заметки по режимам:</b> активно только в «Обход блокировок». Автоматически приостановлено в Глобальном (весь трафик и так туннелируется — нечего изучать), при Основном узле «Напрямую» (нет прокси-стороны для проверки) и в Своя маршрутизация / Свой JSON. После переключения нажмите «Перезапустить службу» ниже."
+"<b>Заметки по режимам:</b> активно только в «Обход блокировок». Автоматически приостановлено в Глобальном (весь трафик и так туннелируется — нечего изучать), при Основном узле «Напрямую» (нет прокси-стороны для проверки) и в Своя маршрутизация / Свой JSON. После переключения нажмите «Перезапустить службу» на вкладке «Обзор»."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -5870,6 +5895,20 @@ msgstr "Проверка DNS MultiDNS…"
 
 msgid "running — racing all pool servers"
 msgstr "запущен — гонка всех серверов пула"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "not running"
+msgstr "не запущен"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "running"
+msgstr "работает"
+
+msgid "stopped"
+msgstr "остановлен"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
@@ -6457,6 +6496,11 @@ msgstr "Нет ответа — возможно, mosdns не запущен"
 msgid "no core installed"
 msgstr "ядро не установлено"
 
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "No core installed"
+msgstr "Ядро не установлено"
+
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
 msgid "No strategy set — pick a preset or enter options first"
@@ -6693,8 +6737,8 @@ msgstr "Zapret 2"
 
 #: htdocs/luci-static/resources/view/homeproxy/dns.js
 
-msgid "DNS servers & pools"
-msgstr "DNS-серверы и пулы"
+msgid "DNS servers"
+msgstr "DNS-серверы"
 
 #: htdocs/luci-static/resources/view/homeproxy/dns.js
 
@@ -6982,6 +7026,9 @@ msgstr "Вердикт «напрямую»"
 
 msgid "disabled (switch in Settings)"
 msgstr "выключена (переключатель в «Настройках»)"
+
+msgid "enabled"
+msgstr "включена"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
