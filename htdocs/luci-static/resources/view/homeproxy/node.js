@@ -2516,14 +2516,14 @@ return view.extend({
 				  'is destination-sensitive (typical of fixed <code>--fake --ttl</code>). ' +
 				  'Requires curl; without it, only confirms ByeDPI starts.'));
 			o.render = function(option_index, section_id) {
-				const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em; color:gray' }, '');
+				const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em; color:#9a9a9a' }, '');
 				const btn = E('button', {
 					'class': 'btn cbi-button cbi-button-action',
 					'click': ui.createHandlerFn(this, () => {
 						const el = document.querySelector('[name*=".byedpi_cmd_opts"]');
 						const opts = el ? el.value.trim() : '';
 						btn.disabled = true;
-						msgEl.style.color = 'gray';
+						msgEl.style.color = '#9a9a9a';
 						msgEl.textContent = _('Testing...');
 						return L.resolveDefault(callByeDPITest(opts, '15335'), {}).then((ret) => {
 							btn.disabled = false;
@@ -2532,19 +2532,19 @@ return view.extend({
 								ret.results.forEach((r, i) => {
 									if (i) frag.push(document.createTextNode(' · '));
 									frag.push(E('span', {
-										style: 'font-weight:bold; color:' + (r.ok ? 'green' : '#cc3300'),
+										style: 'font-weight:bold; color:' + (r.ok ? '#3fbf5f' : '#e05252'),
 										title: r.host + ' → ' + (r.ok ? r.code : (r.reason || 'fail'))
 									}, (r.label || r.tag) + (r.ok ? ' ✓' : ' ✗')));
 								});
-								frag.push(E('span', { style: 'color:gray; margin-left:6px' },
+								frag.push(E('span', { style: 'color:#9a9a9a; margin-left:6px' },
 									'(' + ret.passed + '/' + ret.total + ')'));
 								while (msgEl.firstChild) msgEl.removeChild(msgEl.firstChild);
 								frag.forEach((n) => msgEl.appendChild(n));
 							} else if (ret.result) {
-								msgEl.style.color = 'green';
+								msgEl.style.color = '#3fbf5f';
 								msgEl.textContent = _('✓ ByeDPI started (install curl for full test)');
 							} else {
-								msgEl.style.color = 'red';
+								msgEl.style.color = '#e05252';
 								msgEl.textContent = ret.error || _('Test failed');
 							}
 						});
@@ -2594,7 +2594,7 @@ return view.extend({
 						stopBtn.textContent = _('Stop');
 						stopBtn.style.display = '';
 						progressEl.style.display = '';
-						progressEl.style.color = 'gray';
+						progressEl.style.color = '#9a9a9a';
 						progressEl.textContent = _('Preparing...');
 						tableEl.style.display = '';
 						tableEl.innerHTML = '';
@@ -2609,7 +2609,7 @@ return view.extend({
 						for (let k = 0; k < orderedIdx.length; k++) {
 							const i = orderedIdx[k];
 							const dotsCell = E('td', {
-								style: 'white-space:nowrap; padding:2px 8px; font-size:0.95em; color:gray'
+								style: 'white-space:nowrap; padding:2px 8px; font-size:0.95em; color:#9a9a9a'
 							}, '–');
 							const applyBtn = E('button', {
 								'class': 'btn cbi-button cbi-button-save',
@@ -2619,11 +2619,11 @@ return view.extend({
 								})(i)
 							}, [ _('Apply') ]);
 
-							tableEl.appendChild(E('tr', { style: 'border-bottom:1px solid #f0f0f0' }, [
+							tableEl.appendChild(E('tr', { style: 'border-bottom:1px solid rgba(128,128,128,.18)' }, [
 								dotsCell,
-								E('td', { style: 'padding:2px 8px; color:#555; white-space:nowrap' },
+								E('td', { style: 'padding:2px 8px; color:inherit; white-space:nowrap' },
 									BYEDPI_PRESETS[i].name),
-								E('td', { style: 'padding:2px 8px; color:#888; font-family:monospace; font-size:0.85em; word-break:break-all' },
+								E('td', { style: 'padding:2px 8px; color:#9a9a9a; font-family:monospace; font-size:0.85em; word-break:break-all' },
 									BYEDPI_PRESETS[i].args),
 								E('td', { style: 'padding:2px 4px; white-space:nowrap' }, [ applyBtn ])
 							]));
@@ -2649,11 +2649,11 @@ return view.extend({
 											const frag = [];
 											ret.results.forEach(function(r) {
 												frag.push(E('span', {
-													style: 'font-weight:bold; margin-right:4px; color:' + (r.ok ? 'green' : '#cc3300'),
+													style: 'font-weight:bold; margin-right:4px; color:' + (r.ok ? '#3fbf5f' : '#e05252'),
 													title: (r.label || r.tag) + ' (' + r.host + ') → ' + (r.ok ? r.code : (r.reason || 'fail'))
 												}, r.ok ? '●' : '○'));
 											});
-											frag.push(E('span', { style: 'color:#888; margin-left:2px' },
+											frag.push(E('span', { style: 'color:#9a9a9a; margin-left:2px' },
 												ret.passed + '/' + ret.total));
 											while (dotsCell.firstChild) dotsCell.removeChild(dotsCell.firstChild);
 											frag.forEach(function(n) { dotsCell.appendChild(n); });
@@ -2661,7 +2661,7 @@ return view.extend({
 											else if (ret.passed > 0) { partial++; applyBtn.style.visibility = ''; }
 										} else {
 											dotsCell.textContent = ret.result ? '✓' : '✗';
-											dotsCell.style.color = ret.result ? 'green' : '#cc3300';
+											dotsCell.style.color = ret.result ? '#3fbf5f' : '#e05252';
 										}
 									});
 								};
@@ -2674,10 +2674,10 @@ return view.extend({
 								(partial > 0 ? ', ' + partial + ' ' + _('partial') : '') +
 								((fullPass + partial) > 0 ? ' — ' + _('click Apply next to a strategy (prefer all-green)') : '');
 							if (stopRequested) {
-								progressEl.style.color = '#c80';
+								progressEl.style.color = '#d99a1b';
 								progressEl.textContent = _('Stopped') + ' — ' + fullPass + ' ' + _('work on all sites') + tail;
 							} else {
-								progressEl.style.color = fullPass > 0 ? 'green' : (partial > 0 ? '#c80' : '#cc3300');
+								progressEl.style.color = fullPass > 0 ? '#3fbf5f' : (partial > 0 ? '#d99a1b' : '#e05252');
 								progressEl.textContent = _('Done') + ': ' + fullPass + ' / ' + BYEDPI_PRESETS.length +
 									' ' + _('work on all sites') + tail;
 							}
@@ -2686,7 +2686,7 @@ return view.extend({
 					})
 				}, [ _('Test all strategies') ]);
 
-				const hintEl = E('div', { style: 'font-size:0.85em; color:#666; margin-bottom:6px' },
+				const hintEl = E('div', { style: 'font-size:0.85em; opacity:.8; margin-bottom:6px' },
 					_('Probes each preset against 4 sites (YouTube video CDN, Telegram, Discord, Speedtest). ' +
 					  '● = TLS handshake got through, ○ = blocked; hover a dot for the site and result. ' +
 					  'Tests a fixed preset list. You can Stop it anytime. ~12 min total.'));
@@ -2696,7 +2696,7 @@ return view.extend({
 						btn.disabled = false;
 					} else {
 						hintEl.textContent = _('Requires curl. Install it on the Status page first.');
-						hintEl.style.color = '#c00';
+						hintEl.style.color = '#e05252';
 					}
 				});
 
@@ -2846,7 +2846,7 @@ return view.extend({
 				  '<b>YouTube</b>, <b>Telegram</b>, <b>Discord</b>, <b>Speedtest.net</b> — and checks whether each TLS handshake completes. ' +
 				  'Does not touch your live connection. A site that fails here means the strategy breaks it.'));
 			o.render = function(option_index, section_id) {
-				const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em; color:gray' }, '');
+				const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em; color:#9a9a9a' }, '');
 				const btn = E('button', {
 					'class': 'btn cbi-button cbi-button-action',
 					'click': ui.createHandlerFn(this, async () => {
@@ -2860,18 +2860,18 @@ return view.extend({
 							: (uci.get('homeproxy', 'config', 'zapret_cmd_opts') || '');
 						opts = opts.trim();
 						btn.disabled = true;
-						msgEl.style.color = 'gray';
+						msgEl.style.color = '#9a9a9a';
 						msgEl.textContent = _('Testing...');
 						if (!opts) {
 							btn.disabled = false;
-							msgEl.style.color = 'red';
+							msgEl.style.color = '#e05252';
 							msgEl.textContent = _('No strategy set — pick a preset or enter options first');
 							return;
 						}
 						const r0 = await resolveHosts();
 						if (!r0.ok) {
 							btn.disabled = false;
-							msgEl.style.color = 'red';
+							msgEl.style.color = '#e05252';
 							msgEl.textContent = r0.error;
 							return;
 						}
@@ -2880,22 +2880,22 @@ return view.extend({
 							let data = {};
 							try { data = JSON.parse(ret.output || '{}'); } catch (e) {}
 							if (data.error) {
-								msgEl.style.color = 'red';
+								msgEl.style.color = '#e05252';
 								msgEl.textContent = data.error;
 							} else if (data.results && data.results.length) {
 								const frag = [];
 								data.results.forEach((r, i) => {
 									if (i) frag.push(document.createTextNode(' · '));
 									frag.push(E('span', {
-										style: 'font-weight:bold; color:' + (r.ok ? 'green' : '#cc3300'),
+										style: 'font-weight:bold; color:' + (r.ok ? '#3fbf5f' : '#e05252'),
 										title: r.host + (r.ok ? (' → ' + r.tls + 's') : (' → ' + (r.reason || 'fail')))
 									}, (r.label || r.tag) + (r.ok ? ' ✓' : ' ✗')));
 								});
-								frag.push(E('span', { style: 'color:gray; margin-left:6px' }, '(' + data.ok + '/' + data.total + ')'));
+								frag.push(E('span', { style: 'color:#9a9a9a; margin-left:6px' }, '(' + data.ok + '/' + data.total + ')'));
 								while (msgEl.firstChild) msgEl.removeChild(msgEl.firstChild);
 								frag.forEach((n) => msgEl.appendChild(n));
 							} else {
-								msgEl.style.color = 'red';
+								msgEl.style.color = '#e05252';
 								msgEl.textContent = _('Test failed');
 							}
 						});
@@ -2921,7 +2921,7 @@ return view.extend({
 				let running = false, stop = false;
 				const runBtn  = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Run full test') ]);
 				const stopBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', style: 'margin-left:6px; display:none' }, [ _('Stop') ]);
-				const prog = E('span', { style: 'margin-left:8px; font-size:0.9em; color:gray' }, '');
+				const prog = E('span', { style: 'margin-left:8px; font-size:0.9em; color:#9a9a9a' }, '');
 				const list = E('div', { style: 'margin-top:8px' });
 
 				function addRow(p, idx, data) {
@@ -2930,15 +2930,15 @@ return view.extend({
 					const err = data && data.error;
 					const pass = ok > 0 && !err;
 					const r = E('div', { style: 'padding:2px 0; font-size:0.9em' });
-					r.appendChild(E('span', { style: 'font-weight:bold; color:' + (pass ? 'green' : '#999') }, pass ? '✓ ' : '✗ '));
+					r.appendChild(E('span', { style: 'font-weight:bold; color:' + (pass ? '#3fbf5f' : '#9a9a9a') }, pass ? '✓ ' : '✗ '));
 					r.appendChild(E('span', {}, p.name));
-					r.appendChild(E('span', { style: 'color:gray; margin-left:6px' }, err ? err : ('(' + ok + '/' + total + ')')));
+					r.appendChild(E('span', { style: 'color:#9a9a9a; margin-left:6px' }, err ? err : ('(' + ok + '/' + total + ')')));
 					if (pass) {
 						const ap = E('a', { href: '#', style: 'margin-left:10px' }, _('Apply'));
 						ap.addEventListener('click', function(ev) {
 							ev.preventDefault();
 							applyPreset(idx);
-							prog.style.color = 'green';
+							prog.style.color = '#3fbf5f';
 							prog.textContent = _('Applied: %s — now Save & Apply').format(p.name);
 						});
 						r.appendChild(ap);
@@ -2953,11 +2953,11 @@ return view.extend({
 					/* Resolve the test hosts ONCE up front and reuse the IPs for every
 					 * candidate. If DNS isn't ready (Apply just restarted it), stop with
 					 * one clear message instead of grinding out 36 failures. */
-					prog.style.color = 'gray';
+					prog.style.color = '#9a9a9a';
 					prog.textContent = _('Resolving test hosts…');
 					const r0 = await resolveHosts();
 					if (!r0.ok) {
-						prog.style.color = '#cc3300';
+						prog.style.color = '#e05252';
 						prog.textContent = r0.error;
 						runBtn.disabled = false; stopBtn.style.display = 'none'; running = false;
 						return;
@@ -2967,7 +2967,7 @@ return view.extend({
 					for (let i = 0; i < N; i++) {
 						if (stop) break;
 						const p = ZAPRET_PRESETS[i];
-						prog.style.color = 'gray';
+						prog.style.color = '#9a9a9a';
 						prog.textContent = _('Testing %d/%d: %s').format(i + 1, N, p.name);
 						let data = {};
 						try {
@@ -2977,7 +2977,7 @@ return view.extend({
 						if (data && data.ok > 0 && !data.error) passed++;
 						addRow(p, i, data);
 					}
-					prog.style.color = stop ? '#cc3300' : 'green';
+					prog.style.color = stop ? '#e05252' : '#3fbf5f';
 					prog.textContent = (stop ? _('Stopped') : _('Done')) + ' — ' + _('%d/%d passed').format(passed, ZAPRET_PRESETS.length);
 					runBtn.disabled = false; stopBtn.style.display = 'none'; running = false;
 				}

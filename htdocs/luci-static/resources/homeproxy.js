@@ -232,13 +232,40 @@ table.hpui-table tbody tr:hover td { background: rgba(128,128,128,.13); }
 .hpui-hint { font-size: .88em; opacity: .8; margin: 8px 0; }
 /* LuCI standard tab bars (Client/DNS/Node/Server settings, grid modals) get the
  * same look as the hpui-tabs above. Scoped to pages calling uiStyle(); LuCI
- * navigation is a full page load, so other apps are never affected. */
+ * navigation is a full page load, so other apps are never affected.
+ * NOTE: the bootstrap theme marks inactive tabs as li.cbi-tab-disabled and
+ * styles them (incl. :hover) with higher specificity than a plain ul>li rule —
+ * so the disabled state MUST be re-styled explicitly or hover/normal states
+ * silently fall back to the theme gradient. */
 ul.cbi-tabmenu { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px 0; padding: 0; background: none; border-bottom: 2px solid rgba(128,128,128,.3); border-radius: 0; }
-ul.cbi-tabmenu > li { flex: 0 1 auto; display: flex; align-items: center; height: auto; max-width: none; margin: 0; background: rgba(128,128,128,.10); border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; box-shadow: none; }
+ul.cbi-tabmenu > li { flex: 0 1 auto; display: flex; align-items: center; height: auto; max-width: none; margin: 0; background: rgba(128,128,128,.10); border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; box-shadow: none; color: inherit; cursor: pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease; }
 ul.cbi-tabmenu > li > a, ul.cbi-tabmenu > li > div { display: block; padding: 7px 16px; color: inherit; text-decoration: none; text-shadow: none; font-weight: 500; font-size: 1em; line-height: 1.4; white-space: nowrap; border-radius: 6px 6px 0 0; outline: none; }
 ul.cbi-tabmenu > li:hover { background: rgba(128,128,128,.20); }
-ul.cbi-tabmenu > li.cbi-tab, ul.cbi-tabmenu > li.cbi-tab:hover { background: rgba(128,128,128,.26); border-color: rgba(128,128,128,.4); }
+/* !important guards: the bootstrap theme styles the disabled/hover states via
+ * .cbi-tabmenu > .cbi-tab-disabled(:hover) and must never win back these
+ * states — belt and suspenders on top of the higher-specificity selectors. */
+ul.cbi-tabmenu > li.cbi-tab-disabled { background: rgba(128,128,128,.10) !important; border-color: transparent !important; color: inherit !important; }
+ul.cbi-tabmenu > li.cbi-tab-disabled:hover { background: rgba(128,128,128,.20) !important; }
+ul.cbi-tabmenu > li.cbi-tab { background: rgba(128,128,128,.26) !important; border-color: rgba(128,128,128,.4) !important; }
 ul.cbi-tabmenu > li.cbi-tab > a, ul.cbi-tabmenu > li.cbi-tab > div { font-weight: 700; }
+ul.cbi-tabmenu > li > a:hover, ul.cbi-tabmenu > li:hover > a, ul.cbi-tabmenu > li:hover > div { color: inherit; text-decoration: none; }
+/* Blue hover glow — the "highlight" the theme draws around BUTTONS on hover
+ * (this is what makes the Automation/Diagnostics tab buttons glow; standard
+ * LuCI tabs are li>a links, so the theme never glowed them). Replicated here.
+ * MUST stay the LAST cbi-tabmenu rule: its !important border-color overrides
+ * the transparent/gray !important borders above on hover/focus. */
+ul.cbi-tabmenu > li:hover, ul.cbi-tabmenu > li:focus-within, ul.cbi-tabmenu > li.cbi-tab:hover { box-shadow: 0 0 8px rgba(82,168,236,.6); border-color: rgba(82,168,236,.8) !important; }
+/* TypedSection "Delete" buttons: LuCI renders each button on its own line
+ * ABOVE the rule block. The float puts it on the rule's top line as a
+ * fallback; client.js additionally relocates the Routing-Rules buttons into
+ * the rule's first option row (next to the Enable checkbox). */
+.cbi-section-remove.right { float: right; margin-left: 12px; }
+button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
+/* Tabbed content area: a translucent panel right under the tab bar, so the
+ * standard settings pages read like the Automation cards. Theme has no rules
+ * for .cbi-section-node-tabbed, so this cannot clash; modals inherit it too. */
+.cbi-section-node-tabbed { background: rgba(128,128,128,.07); border: 1px solid rgba(128,128,128,.3); border-radius: 8px; padding: 12px 14px; }
+.cbi-tab-descr { opacity: .85; }
 `;
 
 		document.head.appendChild(E('style', { id: 'hp-ui-style' }, [ css ]));

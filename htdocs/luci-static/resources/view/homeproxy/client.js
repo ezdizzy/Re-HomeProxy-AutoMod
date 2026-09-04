@@ -214,7 +214,7 @@ return view.extend({
 		o = s.taboption('routing', form.DummyValue, '_active_urltest_node', _('Active URLTest node'));
 		o.depends('main_node', 'urltest');
 		o.cfgvalue = function() {
-			const el = E('span', { 'style': 'color:gray' }, '—');
+			const el = E('span', { 'style': 'color:#9a9a9a' }, '—');
 			poll.add(L.bind(function() {
 				/* Focused query: resolve the main-out group itself (descends nested
 				 * urltest pools, e.g. prefer mode's main-out-alt) instead of the
@@ -795,6 +795,35 @@ return view.extend({
 		 * option for NEW rules, and point at the engines. */
 		if (uci.get('homeproxy', 'config', 'main_node') === 'direct-out')
 			ss.description += '<br><b>' + _('Main node is Direct: rules pointing at "Same as main node" currently egress directly (no tunnel). Switch them to Zapret/ByeDPI, or choose a real main node / URLTest.') + '</b>';
+
+		/* Per-rule Delete placement: LuCI renders each remove button on its own
+		 * line ABOVE the rule block — visually detached from the rule it removes.
+		 * Relocate it into the rule's first option row, right next to the
+		 * "Enable" checkbox, so the association is obvious. Pure DOM reshuffle:
+		 * the button (with its LuCI click handler) is moved as-is and the
+		 * now-empty .cbi-section-remove wrapper is dropped; the stock layout is
+		 * kept as fallback if the expected nodes are not found. */
+		const origRenderContents = ss.renderContents;
+		ss.renderContents = function(cfgsections, nodes) {
+			const relocate = function(sectionEl) {
+				for (const sid of cfgsections) {
+					const btn = sectionEl.querySelector('.cbi-section-remove button[data-section-id="%s"]'.format(sid));
+					if (!btn)
+						continue;
+					const wrap = btn.closest('.cbi-section-remove');
+					const nodeEl = sectionEl.querySelector('.cbi-section-node[data-section-id="%s"]'.format(sid));
+					const field = nodeEl ? nodeEl.querySelector('.cbi-value-field') : null;
+					if (!field)
+						continue;
+					btn.classList.add('hp-rule-delete');
+					field.appendChild(btn);
+					wrap.parentNode.removeChild(wrap);
+				}
+				return sectionEl;
+			};
+			const res = origRenderContents.apply(this, arguments);
+			return (res && typeof res.then === 'function') ? res.then(relocate) : relocate(res);
+		};
 
 		so = ss.option(form.Flag, 'enabled', _('Enable'));
 		so.default = so.enabled;

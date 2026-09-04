@@ -266,7 +266,7 @@ return view.extend({
 			mdStatusEl,
 			mdTableEl,
 			mdActions,
-			E('p', { 'class': 'automation-hint' }, [ _('MultiDNS races all configured DNS servers and shows their measured latency / success / open-ratio. A server that consistently fails (dead, or returns IPs that do not open the site) is pruned from the live pool and re-checked; the others race on every query (mosdns picks the fastest valid answer).') ])
+			E('p', { 'class': 'hpui-hint' }, [ _('MultiDNS races all configured DNS servers and shows their measured latency / success / open-ratio. A server that consistently fails (dead, or returns IPs that do not open the site) is pruned from the live pool and re-checked; the others race on every query (mosdns picks the fastest valid answer).') ])
 		]);
 
 		so = ss.option(form.Flag, 'verify_user_domains', _('Verify real user domains'),
