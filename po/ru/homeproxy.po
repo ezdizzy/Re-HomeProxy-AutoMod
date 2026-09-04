@@ -3054,7 +3054,7 @@ msgstr "Сервер"
 #: root/usr/share/luci/menu.d/luci-app-homeproxy-hiddify.json:30
 
 msgid "Server settings"
-msgstr "Настройки сервера"
+msgstr "Режим сервера"
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js:607
 
