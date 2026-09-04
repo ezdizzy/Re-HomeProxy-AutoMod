@@ -3051,7 +3051,17 @@ msgstr "Сохранить настройки подписок"
 msgid "Server"
 msgstr "Сервер"
 
-#: root/usr/share/luci/menu.d/luci-app-homeproxy-hiddify.json:30
+#: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json:38
+
+msgid "Server Settings"
+msgstr "Режим сервера"
+
+#: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json:62
+
+msgid "Diagnostics"
+msgstr "Диагностика"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
 
 msgid "Server settings"
 msgstr "Режим сервера"
