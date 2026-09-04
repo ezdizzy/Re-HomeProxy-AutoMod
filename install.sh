@@ -290,10 +290,45 @@ apply_gh_mirror() {
 	fi
 }
 
-# Приложение уже установлено?
+# Приложение уже установлено? (раньше детект был по файлам rpcd/конфига — они есть
+# и у оригинальной homeproxy, из-за чего «установка поверх» чужой версии молча
+# превращалась в «режим настройки»). Теперь — только наш пакет/наши файлы.
 APP_INSTALLED=0
-if [ -f /etc/config/homeproxy ] && [ -f /usr/share/rpcd/ucode/luci.homeproxy ] && command -v ucode >/dev/null 2>&1; then
-	APP_INSTALLED=1
+own_pkg_installed && APP_INSTALLED=1
+
+# Чужая homeproxy-версия: конфликтует файлами, установщик не должен «становиться
+# поверх». При предлагаемом удалении конфиг чужого пакета сохраняется в бэкап.
+FOREIGN_PKG=$(foreign_homeproxy_pkg)
+if [ "$APP_INSTALLED" = 0 ] && [ -n "$FOREIGN_PKG" ]; then
+	warn "════════════════════════════════════════════════════════════"
+	warn "  Обнаружена ЧУЖАЯ (оригинальная) версия homeproxy: пакет"
+	warn "  '$FOREIGN_PKG' установлен. Она конфликтует с Re:HomeProxy AutoMod"
+	warn "  (те же конфиги и rpcd-объекты) — поверх ставить нельзя."
+	ask "$FOREIGN_PKG будет удалён, Re:HomeProxy AutoMod установлен. Продолжить? [Д/н]:"
+	if ! is_yes "$REPLY"; then
+		die "Установка отменена. Сначала удалите '$FOREIGN_PKG': $( [ "$PM" = apk ] && echo "apk del $FOREIGN_PKG" || echo "opkg remove $FOREIGN_PKG" )."
+	fi
+	info "  останавливаю службу и удаляю '$FOREIGN_PKG'..."
+	/etc/init.d/homeproxy stop >/dev/null 2>&1
+	if [ "$PM" = apk ]; then apk del "$FOREIGN_PKG" >/dev/null 2>&1; else opkg remove "$FOREIGN_PKG" >/dev/null 2>&1; fi
+	# Чужой пакет часто остаётся в списке (conffiles не даёт удалить) — жёстко добиваем.
+	if [ -n "$(foreign_homeproxy_pkg)" ]; then
+		if [ "$PM" = apk ]; then apk del --force "$FOREIGN_PKG" >/dev/null 2>&1; else opkg remove --force-removal-of-dependent-packages "$FOREIGN_PKG" >/dev/null 2>&1; fi
+	fi
+	if [ -f /etc/config/homeproxy ]; then
+		ask "  Сохранить текущий конфиг /etc/config/homeproxy как homeproxy.foreign.bak? [Д/н]: (рекомендуется — чтобы поставились наши дефолты)"
+		if ! is_no "$REPLY"; then
+			mv /etc/config/homeproxy /etc/config/homeproxy.foreign.bak
+			ok "  конфиг сохранён как /etc/config/homeproxy.foreign.bak"
+		fi
+	fi
+	# Убедимся, что чужой пакет ушёл
+	[ -z "$(foreign_homeproxy_pkg)" ] || die "Не удалось удалить '$FOREIGN_PKG' — установите его удаление вручную и повторите."
+fi
+if [ "$APP_INSTALLED" = 1 ] && [ -n "$(foreign_homeproxy_pkg)" ]; then
+	warn "  ⚠ ВАЖНО: одновременно установлены и Re:HomeProxy AutoMod, и '$(foreign_homeproxy_pkg)'."
+	warn "    Они конфликтуют (общие файлы). Рекомендуется удалить чужой пакет"
+	warn "    ($( [ "$PM" = apk ] && echo "apk del $(foreign_homeproxy_pkg)" || echo "opkg remove $(foreign_homeproxy_pkg)" )) и переустановить Re:HomeProxy AutoMod (п.10 в меню)."
 fi
 
 # ------------------------------------------------- Проверка версии и пакеты приложения
@@ -323,6 +358,28 @@ app_installed_version() {
 	fi
 }
 
+# Наш пакет/файлы установлены? (пакет — надёжный источник; файл — на случай
+# установки без менеджера пакетов).
+own_pkg_installed() {
+	[ -n "$(app_installed_version)" ] && return 0
+	[ -f /usr/share/luci/menu.d/luci-app-re-homeproxy.json ] && return 0
+	return 1
+}
+
+# Чужая (оригинальная) homeproxy-версия: другой пакет с теми же файлами.
+# Его наличие нельзя молча игнорировать — файлы (/etc/config/homeproxy,
+# rpcd-объект) конфликтуют, и «установка поверх» не происходит на самом деле.
+foreign_homeproxy_pkg() {
+	for _p in luci-app-homeproxy luci-app-homeproxy-hiddify; do
+		if [ "$PM" = apk ]; then
+			apk info -e "$_p" >/dev/null 2>&1 && { echo "$_p"; return 0; }
+		else
+			opkg status "$_p" 2>/dev/null | grep -q "^Status: install" && { echo "$_p"; return 0; }
+		fi
+	done
+	return 1
+}
+
 # Последняя версия из GitHub-релиза (пусто, если GitHub недоступен).
 app_latest_version() {
 	api "https://api.github.com/repos/${HP_REPO}/releases/latest" \
@@ -349,7 +406,7 @@ app_install_pkgs() {
 	if [ "$PM" = apk ]; then
 		apk add /tmp/app.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  apk add завершился ошибкой."; return 1; }
 	else
-		opkg update >/dev/null 2>&1; opkg install /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  opkg install завершился ошибкой."; return 1; }
+		opkg update >/dev/null 2>&1; opkg install --force-reinstall /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  opkg install завершился ошибкой."; return 1; }
 	fi
 	rm -f /tmp/app.$EXT
 
@@ -387,6 +444,43 @@ app_update_if_needed() {
 	else
 		ok "  приложение актуально ($INST)."
 	fi
+}
+
+# Переустановить приложение заново из последнего релиза (той же/новой версии).
+app_reinstall() {
+	info "  переустанавливаю приложение из последнего релиза..."
+	ensure_key
+	if app_install_pkgs; then
+		ok "  приложение переустановлено."
+		/etc/init.d/rpcd restart >/dev/null 2>&1; sleep 2
+		heal_configs
+		apply_and_check
+	else
+		warn "  переустановка не удалась — прежняя версия оставлена на месте."
+	fi
+}
+
+# Проверить и восстановить критические конфиги (firewall includes и др.).
+heal_configs() {
+	info "  проверяю критические конфиги (firewall includes и др.)..."
+	RES=$(ucode /etc/homeproxy/scripts/config_heal.uc repair 2>/dev/null)
+	if printf '%s' "$RES" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+		ok "  конфигурация в порядке."
+	elif [ -n "$RES" ]; then
+		if printf '%s' "$RES" | grep -q '"repaired":[[:space:]]*\[[^]]'; then
+			ok "  критические конфиги восстановлены."
+			info "  применяю правила (рестарт службы)..."
+			/etc/init.d/homeproxy restart >/dev/null 2>&1
+		else
+			warn "  часть проблем не удалось исправить автоматически:"
+			echo "$RES"
+			return 1
+		fi
+	else
+		warn "  config_heal.uc недоступен — переустановите приложение."
+		return 1
+	fi
+	return 0
 }
 
 # ------------------------------------------------- 1. LuCI-приложение + ключ
@@ -747,8 +841,10 @@ menu() {
 		echo "  7) ByeDPI (установить/обновить)"
 		echo "  8) Ядро прокси (установить/обновить)"
 		echo "  9) Обновить узлы из подписок"
+		echo "  10) Переустановить приложение (скачать и поставить заново)"
+		echo "  11) Восстановить критические конфиги (firewall includes и др.)"
 		echo "  0) Выход"
-		ask "  Выбор [0-9]:"
+		ask "  Выбор [0-11]:"
 		case "$REPLY" in
 			1) subscription_add && apply_and_check ;;
 			2) share_link_add && apply_and_check ;;
@@ -812,6 +908,8 @@ menu() {
 					apply_and_check
 				fi ;;
 			0|"") info "  Готово. Откройте LuCI → Services → Re:HomeProxy AutoMod."; break ;;
+			10) app_reinstall ;;
+			11) heal_configs ;;
 			*) warn "  неизвестный пункт." ;;
 		esac
 	done

@@ -52,6 +52,23 @@ start_service() {
 		fi
 	fi
 
+	# Heal critical configs (firewall includes etc.) before anything else. The
+	# firewall includes are normally written ONCE at package install (uci-defaults);
+	# a damaged /etc/config/firewall silently kills all interception. Repair mode
+	# without fw4 reload: start_service renders + reloads fw4 below anyway.
+	# sprintf('%J') emits '"ok": true' with a space — match accordingly.
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/config_heal.uc" ]; then
+		_heal="$(/usr/bin/ucode "$HP_DIR/scripts/config_heal.uc" repair-noreload 2>/dev/null)"
+		case "$_heal" in
+			*'"ok": true'*) : ;;
+			*"issues"*) log "config heal: ISSUES: $_heal" ;;
+			"") log "config heal: no report (config_heal.uc failed?)" ;;
+		esac
+		case "$_heal" in
+			*'"repaired": ["'*) log "config heal: repaired: $_heal" ;;
+		esac
+	fi
+
 	# Ensure the automation section exists. The LuCI Automation tab renders a NamedSection
 	# for `homeproxy.automation`; if that section is absent from /etc/config/homeproxy
 	# (e.g. carried over from an older build or the upstream core package, since conffiles
@@ -270,6 +287,21 @@ start_service() {
 	# vanish without a trace while the whole interception silently stayed down.
 	fw4 reload >"$RUN_DIR/fw4_reload.log" 2>&1 || \
 		log "Warning: fw4 reload returned an error — check $RUN_DIR/fw4_reload.log."
+
+	# Self-heal pass 2: if interception rules are STILL absent from the live fw4
+	# table after reload, the whole ruleset failed to assemble — in the wild this
+	# was a FOREIGN broken firewall include (another package's bad .nft file makes
+	# nft reject the entire ruleset, so every homeproxy chain silently disappears).
+	# config_heal repair-rules finds the offender via fw4 stderr, disables it and
+	# re-applies the ruleset. Bounded to the ucode presence check.
+	if ! nft list table inet fw4 2>/dev/null | grep -q homeproxy; then
+		log "config heal: interception rules missing after fw4 reload — running repair-rules."
+		/usr/bin/ucode "$HP_DIR/scripts/config_heal.uc" repair-rules 2>/dev/null \
+			>> "$RUN_DIR/fw4_reload.log"
+		nft list table inet fw4 2>/dev/null | grep -q homeproxy \
+			&& log "config heal: interception rules RESTORED." \
+			|| log "Warning: interception rules still missing — check fw4_reload.log."
+	fi
 
 	# Kick the Clash health-check for main-out once the core is up: at cold start the
 	# Fallback/GLOBAL groups race the tunnel coming up and can pin themselves to

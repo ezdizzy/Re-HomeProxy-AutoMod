@@ -497,9 +497,14 @@ return view.extend({
 
 		function chips(entry) {
 			const mk = (mode, label, active, cls) => {
+				const TIPS = {
+					auto:   _('Auto mode: entry status is determined automatically'),
+					proxy:  _('Always via proxy'),
+					direct: _('Always direct')
+				};
 				const b = E('button', {
 					'class': 'hpchip' + (active ? (' on' + (cls ? ' ' + cls : '')) : ''),
-					type: 'button', title: entry.host
+					type: 'button', title: TIPS[mode] || entry.host
 				}, [ label ]);
 				b.addEventListener('click', function() {
 					if (this.classList.contains('on')) return;

@@ -1130,6 +1130,31 @@ const methods = {
 		}
 	},
 
+	diag_config_heal: {
+		args: { repair: 'repair' },
+		call: function(req) {
+			/* length() on a boolean throws in ucode — compare identity instead. */
+			const mode = (req.args?.repair === true) ? 'repair' : 'check';
+			/* system() + capture-файл вместо popen(): запуск ucode-скрипта из rpcd
+			 * через popen() не сработал (возвращал null), тогда как system() —
+			 * проверенный здесь путь (так же вызывает ru_geo_build.uc). */
+			const outf = RUN_DIR + '/config_heal.out';
+			system('/usr/bin/ucode ' + shellquote(HP_DIR + '/scripts/config_heal.uc') +
+				' ' + shellquote(mode) + ' > ' + shellquote(outf) + ' 2>&1');
+			const out = trim(readfile(outf) || '');
+			system('rm -f ' + shellquote(outf));
+			let res;
+			try { res = json(out); } catch(e) { return { error: 'config_heal.uc failed: ' + out }; }
+			if (mode === 'repair') {
+				/* Apply the repaired firewall/internals immediately (user-triggered
+				 * repair must take effect at once, not on the next service start). */
+				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+				res.service_restarted = true;
+			}
+			return res;
+		}
+	},
+
 	diag_dns_ru: {
 		call: function() {
 			let fd = popen('uci get homeproxy.config.routing_mode 2>/dev/null');

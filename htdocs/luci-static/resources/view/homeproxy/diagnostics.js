@@ -39,13 +39,20 @@ const callCoreCheck = rpc.declare({
 	method: 'diag_core_check',
 	expect: { '': {} }
 });
-
 const callConfigCheck = rpc.declare({
 	object: 'luci.homeproxy',
+
 	method: 'diag_config_check',
+
 	expect: { '': {} }
 });
 
+const callConfigHeal = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'diag_config_heal',
+	params: [ 'repair' ],
+	expect: { '': {} }
+});
 const callDnsRu = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'diag_dns_ru',
@@ -321,6 +328,7 @@ function buildCoreSection(view) {
 
 function buildConfigSection(view) {
 	const resultsEl = E('div', {});
+	const healEl = E('div', {});
 
 	function run() {
 		spinner(resultsEl, _('Checking config…'));
@@ -345,13 +353,63 @@ function buildConfigSection(view) {
 		});
 	}
 
+	function heal(repair) {
+		dom.content(healEl, E('em', { 'class': 'diag-gray' },
+			repair ? _('Verifying and repairing configuration…') : _('Verifying configuration…')));
+		return L.resolveDefault(callConfigHeal(repair), {})
+			.then(function(ret) {
+				if (!ret || ret.error) {
+					dom.content(healEl, E('span', { 'class': 'diag-fail' }, ret ? ret.error : _('RPC error')));
+					return;
+				}
+
+				const itemRow = function(item, cls) {
+					return E('div', { 'class': cls }, '• ' + item);
+				};
+
+				dom.content(healEl, [
+					row(_('Integrity'), statusBadge(ret.ok,
+						ret.ok ? _('OK') : _('issues found'))),
+					ret.repaired && ret.repaired.length ? E('div', {}, [
+						E('div', { 'class': 'diag-label' }, _('Repaired')),
+						ret.repaired.map(function(i) { return itemRow(i, 'diag-ok'); })
+					]) : null,
+					ret.issues && ret.issues.length ? E('div', {}, [
+						E('div', { 'class': 'diag-label' }, _('Issues')),
+						ret.issues.map(function(i) { return itemRow(i, 'diag-fail'); })
+					]) : null,
+					ret.warnings && ret.warnings.length ? E('div', {}, [
+						E('div', { 'class': 'diag-label' }, _('Warnings')),
+						ret.warnings.map(function(w) { return itemRow(w, 'diag-warn'); })
+					]) : null,
+					ret.ok ? E('div', { 'class': 'diag-ok' }, _('All critical configuration is intact')) : null,
+					ret.checked && ret.checked.length ? E('div', {}, [
+						E('div', { 'class': 'diag-label' }, _('Checked')),
+						pre(ret.checked.join('\n'))
+					]) : null,
+					ret.service_restarted ? E('div', { 'class': 'diag-gray' }, _('Service restart initiated')) : null
+				].filter(Boolean));
+			});
+	}
+
 	return {
 		el: sectionCard(_('Configuration'), 'diag-config', [
 			E('div', { 'class': 'diag-row' }, [
 				E('button', {
 					'class': 'btn cbi-button cbi-button-action diag-btn',
 					'click': ui.createHandlerFn(view, run)
-				}, _('Check'))
+				}, _('Check')),
+				E('button', {
+					'class': 'btn cbi-button diag-btn',
+					'click': ui.createHandlerFn(view, function() { return heal(false); }),
+					'title': _('Verify critical configuration files and firewall includes')
+				}, _('Verify Configuration')),
+				E('button', {
+					'class': 'btn cbi-button cbi-button-negative diag-btn',
+					'click': ui.createHandlerFn(view, function() { return heal(true); }),
+					'title': _('Restore damaged critical configuration (firewall includes, app config)')
+				}, _('Repair Configuration')),
+				healEl
 			]),
 			resultsEl
 		]),

@@ -5339,3 +5339,78 @@ msgstr ""
 
 msgid "Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps."
 msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Auto mode: entry status is determined automatically"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Verifying configuration…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Verifying and repairing configuration…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Verify Configuration"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Repair Configuration"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Verify critical configuration files and firewall includes"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Restore damaged critical configuration (firewall includes, app config)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Integrity"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "issues found"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Repaired"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Issues"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Warnings"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "All critical configuration is intact"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Checked"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Service restart initiated"
+msgstr ""

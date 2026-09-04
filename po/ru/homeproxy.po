@@ -7182,3 +7182,78 @@ msgstr "обновляется…"
 
 msgid "Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps."
 msgstr "Следит за повторяющимися IP-адресами в conntrack (игры, дата-центры Telegram, приложения без SNI) и выучивает те, что недоступны напрямую, но отвечают через прокси. По умолчанию выключено — включите, если пользуетесь такими приложениями."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Auto mode: entry status is determined automatically"
+msgstr "Авто: статус записи определяется автоматически"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Verifying configuration…"
+msgstr "Проверка конфигурации…"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Verifying and repairing configuration…"
+msgstr "Проверка и восстановление конфигурации…"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Verify Configuration"
+msgstr "Проверять конфигурацию"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Repair Configuration"
+msgstr "Восстановить конфигурацию"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Verify critical configuration files and firewall includes"
+msgstr "Проверить критические файлы конфигурации и firewall-включения"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Restore damaged critical configuration (firewall includes, app config)"
+msgstr "Восстановить повреждённые критические настройки (firewall-включения, конфиг приложения)"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Integrity"
+msgstr "Целостность"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "issues found"
+msgstr "обнаружены проблемы"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Repaired"
+msgstr "Восстановлено"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Issues"
+msgstr "Проблемы"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Warnings"
+msgstr "Предупреждения"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "All critical configuration is intact"
+msgstr "Вся критическая конфигурация в порядке"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Checked"
+msgstr "Проверено"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Service restart initiated"
+msgstr "Перезапуск службы инициирован"
