@@ -326,12 +326,13 @@ function buildCoreSection(view) {
 }
 
 function buildConfigSection(view) {
+	/* All three buttons share one results area below the row: whichever
+	 * check runs last replaces the previous output there. */
 	const resultsEl = E('div', {});
-	const healEl = E('div', {});
 
 	function run() {
 		spinner(resultsEl, _('Checking config…'));
-		return L.resolveDefault(callConfigCheck(), {}).then(function(ret) {
+		return L.resolveDefault(callConfigCheck(), { error: _('RPC error') }).then(function(ret) {
 			if (!ret || ret.error) {
 				dom.content(resultsEl, E('span', { 'class': 'diag-fail' }, ret ? ret.error : _('RPC error')));
 				return;
@@ -353,12 +354,12 @@ function buildConfigSection(view) {
 	}
 
 	function heal(repair) {
-		dom.content(healEl, E('em', { 'class': 'diag-gray' },
+		dom.content(resultsEl, E('em', { 'class': 'diag-gray' },
 			repair ? _('Verifying and repairing configuration…') : _('Verifying configuration…')));
-		return L.resolveDefault(callConfigHeal(repair), {})
+		return L.resolveDefault(callConfigHeal(repair), { error: _('RPC error') })
 			.then(function(ret) {
 				if (!ret || ret.error) {
-					dom.content(healEl, E('span', { 'class': 'diag-fail' }, ret ? ret.error : _('RPC error')));
+					dom.content(resultsEl, E('span', { 'class': 'diag-fail' }, ret ? ret.error : _('RPC error')));
 					return;
 				}
 
@@ -366,7 +367,7 @@ function buildConfigSection(view) {
 					return E('div', { 'class': cls }, '• ' + item);
 				};
 
-				dom.content(healEl, [
+				dom.content(resultsEl, [
 					row(_('Integrity'), statusBadge(ret.ok,
 						ret.ok ? _('OK') : _('issues found'))),
 					ret.repaired && ret.repaired.length ? E('div', {}, [
@@ -407,8 +408,7 @@ function buildConfigSection(view) {
 					'class': 'btn cbi-button cbi-button-negative diag-btn',
 					'click': ui.createHandlerFn(view, function() { return heal(true); }),
 					'title': _('Restore damaged critical configuration (firewall includes, app config)')
-				}, _('Repair Configuration')),
-				healEl
+				}, _('Repair Configuration'))
 			]),
 			resultsEl
 		]),

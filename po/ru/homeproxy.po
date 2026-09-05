@@ -7253,7 +7253,7 @@ msgstr "Авто: статус записи определяется автом�
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
 msgid "Verifying configuration…"
-msgstr "Проверка конфигурации…"
+msgstr "Проверка целостности…"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
@@ -7263,7 +7263,7 @@ msgstr "Проверка и восстановление конфигураци�
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
 msgid "Verify Configuration"
-msgstr "Проверять конфигурацию"
+msgstr "Проверить целостность"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 

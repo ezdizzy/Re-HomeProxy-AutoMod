@@ -1131,7 +1131,9 @@ const methods = {
 	},
 
 	diag_config_heal: {
-		args: { repair: 'repair' },
+		/* Boolean typehint (rpcd maps it to BLOBMSG_TYPE_INT8); a string
+		 * typehint made ubus reject the JS boolean arg with Invalid argument. */
+		args: { repair: true },
 		call: function(req) {
 			/* length() on a boolean throws in ucode — compare identity instead. */
 			const mode = (req.args?.repair === true) ? 'repair' : 'check';
