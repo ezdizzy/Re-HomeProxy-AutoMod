@@ -563,6 +563,50 @@ install_mosdns() {
 	return 0
 }
 
+# ------------------------------------------------- 2.6-2.7 native automation helpers (probe_pool, sni_sniffer)
+# Оба опциональны: без них автоматизация работает штатно (shell-воркеры + tcpdump).
+# Бинарники arch-специфичны и НЕ входят в пакет (пакет arch-independent) — скачиваются
+# с релизов этого репозитория по архитектуре роутера.
+go_arch_mapping() {
+	case "$ARCH" in
+		aarch64_*) GOASSET=arm64 ;;
+		arm_cortex-a7*|arm_cortex-a9*|arm_cortex-a15*|arm_cortex-a8*|arm_mpcore*) GOASSET=armv7 ;;
+		arm_cortex-a5*|arm926ej-s|arm_fa526) GOASSET=armv6 ;;
+		x86_64) GOASSET=amd64 ;;
+		mipsel_24kc|mipsel_74kc) GOASSET=mipsle-softfloat ;;
+		*) GOASSET="" ;;
+	esac
+}
+
+install_go_tool() {
+	TOOL="$1"
+	if [ -x "/usr/bin/$TOOL" ]; then ok "  $TOOL уже установлен."; return 0; fi
+	info "  ставлю $TOOL (нативный помощник автоматизации)..."
+	go_arch_mapping
+	if [ -z "$GOASSET" ]; then
+		warn "  $TOOL: нет готового бинарника для архитектуры $ARCH — пропускаю (автоматизация обойдётся без него)."
+		return 1
+	fi
+	if ! command -v unzip >/dev/null 2>&1; then
+		if [ "$PM" = apk ]; then apk add unzip >/dev/null 2>&1; else opkg install unzip >/dev/null 2>&1; fi
+	fi
+	if command -v unzip >/dev/null 2>&1 && \
+	   dl "https://github.com/${HP_REPO}/releases/latest/download/${TOOL}-linux-${GOASSET}.zip" "/tmp/${TOOL}.zip"; then
+		unzip -o "/tmp/${TOOL}.zip" -d "/tmp/${TOOL}" >/dev/null 2>&1
+		TBIN=$(find "/tmp/${TOOL}" -type f -name "$TOOL" | head -1)
+		if [ -n "$TBIN" ]; then
+			cp "$TBIN" "/usr/bin/$TOOL" && chmod 0755 "/usr/bin/$TOOL" && ok "  $TOOL установлен ($GOASSET)."
+		else
+			warn "  $TOOL: бинарник не найден в архиве — пропускаю."
+		fi
+		rm -rf "/tmp/${TOOL}" "/tmp/${TOOL}.zip"
+	else
+		warn "  $TOOL: не удалось скачать (GitHub заблокирован? попробуйте GH_MIRROR=...) — автоматизация обойдётся без него."
+		return 1
+	fi
+	return 0
+}
+
 # ------------------------------------------------- 3. подписка / конфигурация
 subscription_add() {
 	ask "  Вставьте URL подписки (например https://ваш-провайдер/sub):"
@@ -677,10 +721,13 @@ ask_automation() {
 	info "  БЕЗ подписки обнаружение работает, но маршрутизировать сайты через прокси нечем —"
 	info "  они добавятся в список и заработают после добавления подписки/узла."
 	ask "  Включить сейчас? [Д/н]:"
-	if is_no "$REPLY"; then info "  Включить позже: Automation."; return 0; fi
+if is_no "$REPLY"; then info "  Включить позже: Automation."; return 0; fi
 	# tcpdump нужен источнику SNI (ловит DoH-клиентов и приложения с hardcoded IP);
 	# без него SNI молча неактивен, остальные источники работают.
-	command -v tcpdump >/dev/null 2>&1 || { info "  ставлю tcpdump (источник SNI)..."; if [ "$PM" = apk ]; then apk add tcpdump >/dev/null 2>&1; else opkg install tcpdump >/dev/null 2>&1; fi; }
+	# probe_pool — нативный батч-пробировщик (HTTP/2, один процесс на волну вместо кучи shell-воркеров)
+	install_go_tool probe_pool || true  # не фатально, фолбэк на shell-воркеры
+	# sni_sniffer — захват TLS ClientHello без tcpdump (kernel BPF + JSONL-файл событий)
+	install_go_tool sni_sniffer || true  # не фатально, фолбэк на tcpdump
 	uci -q set homeproxy.automation.enabled=1
 	# Источники кандидатов: канонический СПИСОК (dns/clash/sni) под новый MultiValue-UI.
 	# Старое значение 'all' демон понимает, но виджет его не показывает как выбранные пункты.
