@@ -6,3 +6,4 @@ LOCAL_*.md
 
 # Go helper build artifacts (built in CI, never committed)
 .github/go/*/bin/
+.github/binaries/
