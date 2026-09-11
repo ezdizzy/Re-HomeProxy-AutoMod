@@ -32,7 +32,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 )
 
 const version = "1.1.0"
@@ -104,12 +103,24 @@ func (e *eventFile) close() {
 }
 
 var (
-	events  eventFile
-	seenMu  sync.Mutex
-	seen    = make(map[string]int64)
-	ch      = make(chan sniEvent, 256)
-	iface   string
-	dataDir string
+	events     eventFile
+	seenMu     sync.Mutex
+	seen       = make(map[string]int64)
+	ch         = make(chan sniEvent, 256)
+	iface      string
+	dataDir    string
+	nofilter   bool
+	debugPkt   bool
+	stages     [8]uint64
+
+	// startCapture is provided by the platform file (capture_linux.go);
+	// AF_PACKET packet capture does not exist outside Linux.
+	startCapture = func() error {
+		return fmt.Errorf("packet capture requires linux (build the binary with GOOS=linux)")
+	}
+	// platformCleanup releases capture-side resources (e.g. IFF_PROMISC);
+	// no-op unless the platform file overrides it.
+	platformCleanup = func() {}
 )
 
 func main() {
@@ -117,6 +128,8 @@ func main() {
 	flag.StringVar(&dataDir, "file", defaultFile, "JSONL event file to append to")
 	debug := flag.Bool("debug", false, "log every captured SNI to stderr")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	flag.BoolVar(&nofilter, "nofilter", false, "do not attach the kernel BPF filter (debug)")
+	flag.BoolVar(&debugPkt, "pktdebug", false, "log packet counters and frame heads (debug)")
 	flag.Parse()
 
 	if *showVersion {
@@ -140,89 +153,18 @@ func main() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
+		platformCleanup()
+		log.Printf("FINAL stats: total=%d ipv4=%d tcp=%d dport443=%d psh=%d chrec=%d sni=%d dedup-pass=%d",
+			stages[0], stages[1], stages[2], stages[3], stages[4], stages[5], stages[6], stages[7])
 		events.close()
 		os.Exit(0)
 	}()
 
-	if err := capture(); err != nil {
+	if err := startCapture(); err != nil {
 		log.Printf("sni_sniffer: capture failed: %v", err)
 		events.close()
 		os.Exit(1)
 	}
-}
-
-func capture() error {
-	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(htons(uint16(syscall.ETH_P_ALL))))
-	if err != nil {
-		return fmt.Errorf("raw socket (need CAP_NET_RAW/root): %w", err)
-	}
-	defer syscall.Close(fd)
-
-	ni, err := net.InterfaceByName(iface)
-	if err != nil {
-		return fmt.Errorf("interface %s: %w", iface, err)
-	}
-	var sll syscall.SockaddrLinklayer
-	sll.Protocol = htons(uint16(syscall.ETH_P_ALL))
-	sll.Ifindex = ni.Index
-	if err := syscall.Bind(fd, &sll); err != nil {
-		return fmt.Errorf("bind %s: %w", iface, err)
-	}
-
-	if err := attachFilter(fd); err != nil {
-		log.Printf("sni_sniffer: kernel filter not attached (%v) — parsing all packets", err)
-	} else {
-		log.Printf("sni_sniffer %s: capturing ClientHello on %s -> %s", version, iface, dataDir)
-	}
-
-	buf := make([]byte, 65536)
-	for {
-		n, _, err := syscall.Recvfrom(fd, buf, 0)
-		if err != nil {
-			if err == syscall.EINTR {
-				continue
-			}
-			return fmt.Errorf("recvfrom: %w", err)
-		}
-		if n >= minPacketLen {
-			parsePacket(buf[:n])
-		}
-	}
-}
-
-// Kernel filter, byte offsets assume Ethernet + 20-byte IP header (the same
-// assumption as the tcpdump `tcp[13] & 8` heuristic):
-//   [12:14] ethertype == 0x0800
-//   [23]    IP protocol == 6 (TCP)
-//   [36:38] TCP dst port == 443
-//   [47]    TCP flags, test PSH (0x08)
-func attachFilter(fd int) error {
-	const (
-		ldh = 0x28
-		ldb = 0x30
-		jeq = 0x15
-		jset = 0x45
-		ret = 0x06
-		acceptK = 0x00040000
-	)
-	filter := []syscall.SockFilter{
-		{Code: ldh, Jt: 0, Jf: 1, K: 0x0000000c},
-		{Code: jeq, Jt: 0, Jf: 3, K: 0x00000800}, // not IPv4
-		{Code: ldb, Jt: 0, Jf: 1, K: 0x00000017},
-		{Code: jeq, Jt: 0, Jf: 2, K: 0x00000006}, // not TCP
-		{Code: ldh, Jt: 0, Jf: 1, K: 0x00000024}, // TCP dst port
-		{Code: jeq, Jt: 0, Jf: 3, K: 0x000001bb}, // not 443
-		{Code: ldb, Jt: 0, Jf: 0, K: 0x0000002f}, // TCP flags (tcp[13])
-		{Code: jset, Jt: 1, Jf: 0, K: 0x00000008},
-		{Code: ret, Jt: 0, Jf: 0, K: acceptK},
-		{Code: ret, Jt: 0, Jf: 0, K: 0x00000000},
-	}
-	prog := syscall.SockFprog{
-		Len:    uint16(len(filter)),
-		Filter: &filter[0],
-	}
-	return syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_ATTACH_FILTER,
-		int(uintptr(unsafe.Pointer(&prog))))
 }
 
 func parsePacket(p []byte) {
@@ -233,6 +175,7 @@ func parsePacket(p []byte) {
 	if !dedup(sni) {
 		return
 	}
+	stages[7]++
 	select {
 	case ch <- sniEvent{
 		TS:   time.Now().Unix(),
@@ -247,6 +190,10 @@ func parsePacket(p []byte) {
 // sniFromPacket extracts the SNI hostname (and src/dst IPs) from one captured
 // frame; empty string when the packet carries no ClientHello.
 func sniFromPacket(p []byte) (sni, src, dst string) {
+	if len(p) < minPacketLen {
+		return
+	}
+	stages[0]++
 	// Skip VLAN tags (802.1Q single tag): ethertype then sits at 16, payload +4.
 	if p[12] == 0x81 && p[13] == 0x00 && len(p) >= minPacketLen+4 {
 		p = p[4:]
@@ -257,16 +204,19 @@ func sniFromPacket(p []byte) (sni, src, dst string) {
 	if binary.BigEndian.Uint16(p[12:14]) != 0x0800 {
 		return // not IPv4
 	}
+	stages[1]++
 	if p[23] != 6 { // not TCP
 		return
 	}
+	stages[2]++
 	ihl := int(p[14]&0x0f) * 4
 	if ihl < 20 {
 		return
 	}
-	// Kernel filter already dropped fragments-with-offset; still verify DF/frag
-	// cheaply: skip fragmented non-first packets (flags/offset field != 0x4000-only).
-	frag := binary.BigEndian.Uint16(p[20+6 : 20+8])
+	// Skip fragmented non-first packets: IP flags/offset lives at IP header
+	// offset 6:8 (ethernet 14 + 6). DF-only frames read 0x4000 here; a non-zero
+	// fragment offset (0x1fff mask) means a continuation we cannot parse.
+	frag := binary.BigEndian.Uint16(p[14+6 : 14+8])
 	if frag&0x1fff != 0 {
 		return
 	}
@@ -278,10 +228,12 @@ func sniFromPacket(p []byte) (sni, src, dst string) {
 	if dport != 443 {
 		return
 	}
+	stages[3]++
 	flags := p[tcp+13]
 	if flags&0x08 == 0 { // no PSH — not carrying payload
 		return
 	}
+	stages[4]++
 	tcpHdrLen := int(p[tcp+12]>>4) * 4
 	if tcpHdrLen < 20 {
 		return
@@ -294,6 +246,7 @@ func sniFromPacket(p []byte) (sni, src, dst string) {
 	if sni == "" {
 		return
 	}
+	stages[6]++
 	src = net.IP(p[26:30]).String()
 	dst = net.IP(p[30:34]).String()
 	return sni, src, dst
@@ -318,6 +271,7 @@ func parseClientHello(body []byte) string {
 	if len(hs) < 4 || hs[0] != 0x01 { // not ClientHello
 		return ""
 	}
+	stages[5]++
 	pos := 4 // skip handshake header
 	// client version (2) + random (32)
 	if len(hs) < pos+34 {
@@ -408,8 +362,4 @@ func dedup(host string) bool {
 	}
 	seen[host] = now
 	return true
-}
-
-func htons(i uint16) uint16 {
-	return i<<8 | i>>8
 }

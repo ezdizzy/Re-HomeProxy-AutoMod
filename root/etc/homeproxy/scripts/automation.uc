@@ -1264,7 +1264,7 @@ if [ "$SIDE" = tcp ] || [ "$SIDE" = tcpproxy ]; then
 fi
 curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code} %{time_total}' -k --connect-timeout "$TO" --max-time "$TO" $HTTP2_FLAG $PX $PIN "https://$H" > "$PRE.code" 2>/dev/null
 C=$(cat "$PRE.code" 2>/dev/null)
-if [ -z "$C" ] || [ "${C%% *}" = "000" ] || [ -z "${C%% *}" ]; then
+if [ -z "$C" ] || [ "\${C%% *}" = "000" ] || [ -z "\${C%% *}" ]; then
 	[ "$SIDE" = direct ] && PIN="--resolve $H:80:$IP"
 	rm -f "$PRE.code" "$PRE.body"
 	curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code} %{time_total}' -k --connect-timeout "$TO" --max-time "$TO" $HTTP2_FLAG $PX $PIN "http://$H" > "$PRE.code" 2>/dev/null
@@ -2375,7 +2375,7 @@ echo done > "$PRE.done"
 		if (resource_aware) {
 			let load1 = num(split(readfile('/proc/loadavg') || '', ' ')[0]);
 			let mem_avail = 0;
-			let mm = match(readfile('/proc/meminfo') || '', /^MemAvailable:\s+([0-9]+)/);
+			let mm = match(readfile('/proc/meminfo') || '', /MemAvailable:\s+([0-9]+)/);
 			if (mm) mem_avail = int(mm[1]) || 0;
 			if (load1 > sys_cores * 0.7 || (mem_avail > 0 && mem_avail < 100 * 1024)) {
 				cycle_sleep = 30;

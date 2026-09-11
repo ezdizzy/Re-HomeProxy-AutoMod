@@ -52,8 +52,7 @@ const GEOSITE_BASES = [
 /* CDN/cloud IP→ASN ranges (free IPtoASN TSV; best-effort — the engine works
  * without this file, it only makes IP-learning more conservative). */
 const CDN_TSV_URLS = [
-	'https://iptoasn.com/data/ip2asn_v4.tsv.gz',
-	'https://raw.githubusercontent.com/gonzalezantonio89/iptoasn-mirror/main/data/ip2asn_v4.tsv.gz'
+	'https://iptoasn.com/data/ip2asn-v4.tsv.gz'
 ];
 /* Shared-fate CDN/cloud ASNs — their addresses serve blocked and unblocked
  * services alike, so a learned IP there reroutes unrelated traffic. */
@@ -139,18 +138,36 @@ function int_to_ip(n) {
 	return sprintf('%d.%d.%d.%d', int(n / 16777216) % 256, int(n / 65536) % 256, int(n / 256) % 256, n % 256);
 }
 
-/* Expand an inclusive integer range into the minimal sorted CIDR list. */
+/* Dotted-quad -> 32-bit integer (doubles; exact below 2^53). Returns NaN on
+ * anything that is not exactly four octets. */
+function ip_to_int(ip) {
+	let o = split(ip, '.');
+	if (length(o) != 4)
+		return NaN;
+	let n = 0;
+	for (let i, x in o) {
+		x = int(trim(x));
+		if (x != x || x < 0 || x > 255)
+			return NaN;
+		n = n * 256 + x;
+	}
+	return n;
+}
+
+/* Expand an inclusive integer range into the minimal sorted CIDR list.
+ * For each step pick the LARGEST power-of-two block that is aligned with s
+ * and fits inside [s, e] — starting the probe at size=1 (p=32) would match
+ * trivially and degenerate every range into /32s (verified live). */
 function range_to_cidrs(s, e, out) {
 	while (s <= e) {
-		let p = 32;
-		while (p > 0) {
-			let size = CDN_POW2[32 - p];
-			if (s % size == 0 && (s + size - 1) <= e)
-				break;
-			p--;
+		let size = 2147483648;
+		let p = 1;
+		while (p < 32 && (s % size != 0 || s + size - 1 > e)) {
+			size = int(size / 2);
+			p++;
 		}
 		push(out, int_to_ip(s) + '/' + p);
-		s += CDN_POW2[32 - p];
+		s += size;
 	}
 }
 
@@ -161,6 +178,13 @@ function range_to_cidrs(s, e, out) {
 function build_cdn_ranges() {
 	if (!fetch_any(TMP + '/cdn_tsv.gz', CDN_TSV_URLS))
 		return -1;
+	/* A dead source can still yield an HTTP error page (non-gzip), which
+	 * passes the size>0 check — verify the payload decompresses (verified
+	 * live: iptoasn 404 page was silently accepted before this check). */
+	if (system(`gunzip -t ${shellq(TMP + '/cdn_tsv.gz')} 2>/dev/null`) != 0) {
+		log('warn: CDN source returned a non-gzip payload');
+		return -1;
+	}
 	system(`gunzip -f -c ${shellq(TMP + '/cdn_tsv.gz')} > ${shellq(TMP + '/cdn_tsv.tsv')} 2>/dev/null`);
 	let fd = open(TMP + '/cdn_tsv.tsv', 'r');
 	if (!fd) return -1;
@@ -172,7 +196,10 @@ function build_cdn_ranges() {
 		if (length(parts) < 3) continue;
 		let asn = trim(parts[2]);
 		if (!KNOWN_CDN_ASNS[asn]) continue;
-		let rs = int(trim(parts[0])), re = int(trim(parts[1]));
+		/* IPtoASN v4 TSV carries DOTTED-QUAD range bounds
+		 * ("1.0.0.0\t1.0.0.255\t13335\t...") — verified live; parsing them
+		 * with int() yielded garbage /32s like 0.0.0.1. */
+		let rs = ip_to_int(trim(parts[0])), re = ip_to_int(trim(parts[1]));
 		if (rs != rs || re != re || rs > re || rs < 0 || re > 4294967295) continue;
 		range_to_cidrs(rs, re, ranges);
 		if (length(ranges) > 40000) { log('warn: CDN ranges exceeded 40k entries — truncated'); break; }
@@ -271,6 +298,14 @@ function do_update() {
 	let cdn_note = 'cdn ranges unavailable';
 	if (type(cdn_ranges) === 'array') {
 		cdn_ranges = sort(cdn_ranges);
+		/* One range can be covered by several known ASNs — keep a single
+		 * copy so the engine's bucket table stays compact. */
+		let uniq = [];
+		for (let i, r in cdn_ranges) {
+			if (!i || cdn_ranges[i - 1] != r)
+				push(uniq, r);
+		}
+		cdn_ranges = uniq;
 		atomic_txt(RES + '/cdn_ip4.txt', join('\n', cdn_ranges) + '\n');
 		cdn_note = sprintf('%d cdn ranges', length(cdn_ranges));
 	} else {
