@@ -29,7 +29,13 @@ This mod adds the following on top of the original Re-HomeProxy app:
   Raw IP destinations are covered too (games, Telegram data centers, apps without SNI): recurring conntrack addresses are
   verified with a TCP probe through both paths, shared CDN ranges are excluded, and learned entries self-heal — an
   unblocked site returns to the direct path on its own. The learned list is applied with a hot reload — no restart, no
-  dropped connections.
+  dropped connections. The engine is adaptive: probe timeouts and confirmation thresholds follow per-host behavior,
+  candidates are prioritized by a weighted score across sources (DNS / Clash / SNI), cycle pacing respects CPU load and
+  free memory, and plain-view DNS resolves through the local mosdns plain listener when MultiDNS is active. Two optional
+  native helpers (Go binaries downloaded per-architecture from releases) speed things up further: **probe_pool** batches
+  a whole probe wave into one HTTP/2-capable process instead of many shell workers, and **sni_sniffer** captures TLS
+  ClientHello names continuously with a kernel packet filter instead of tcpdump. Without them everything falls back to
+  the classic methods automatically.
 - **DNS Settings page** — every DNS setting in one menu: server pools (plain "Russia" 🔓 + encrypted "Secure" 🔒),
   reserve DNS for setups without MultiDNS, and the **MultiDNS** engine with a live quality monitor.
 - **MultiDNS (mosdns engine)** — a DNS accelerator: every query is raced in parallel across all servers of the pool,
