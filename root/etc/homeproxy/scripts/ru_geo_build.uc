@@ -49,6 +49,36 @@ const GEOSITE_BASES = [
 	'https://fastly.jsdelivr.net/gh/GrimbirdUsers/ru-routing-dat@main/data-geosite/',
 	'https://cdn.jsdelivr.net/gh/GrimbirdUsers/ru-routing-dat@main/data-geosite/'
 ];
+/* CDN/cloud IP→ASN ranges (free IPtoASN TSV; best-effort — the engine works
+ * without this file, it only makes IP-learning more conservative). */
+const CDN_TSV_URLS = [
+	'https://iptoasn.com/data/ip2asn_v4.tsv.gz',
+	'https://raw.githubusercontent.com/gonzalezantonio89/iptoasn-mirror/main/data/ip2asn_v4.tsv.gz'
+];
+/* Shared-fate CDN/cloud ASNs — their addresses serve blocked and unblocked
+ * services alike, so a learned IP there reroutes unrelated traffic. */
+const KNOWN_CDN_ASNS = {
+	'13335': 1,   // Cloudflare
+	'15169': 1,   // Google
+	'16509': 1,   // Amazon AWS
+	'14618': 1,   // Amazon CloudFront
+	'54113': 1,   // Fastly
+	'20940': 1,   // Akamai
+	'24940': 1,   // Hetzner
+	'16276': 1,   // OVH
+	'14061': 1,   // DigitalOcean
+	'63949': 1,   // Linode
+	'20473': 1,   // Vultr/Choopa
+	'36352': 1,   // Leaseweb
+	'60068': 1,   // CDN77
+	'19551': 1,   // Incapsula/Imperva
+	'395747': 1,  // BunnyCDN
+	'200325': 1,  // BunnyCDN (alt)
+	'394406': 1,  // Azion
+	'395962': 1,  // G-Core Labs
+	'202425': 1,  // CacheFly
+	'197847': 1,  // KeyCDN
+};
 const TOP_CAT = 'category-ru-whitelist';
 
 function shellq(s) {
@@ -93,6 +123,62 @@ function atomic_txt(path, content) {
 	let tmp = path + '.tmp';
 	writefile(tmp, content);
 	system('mv -f ' + shellq(tmp) + ' ' + shellq(path));
+}
+
+/* ── CDN ranges (cdn_ip4.txt) ──────────────────────────────────────────────
+ * 32-bit math in doubles (exact below 2^53); bitwise operators are avoided
+ * on purpose — they coerce through int32 and trap on the sign bit. */
+const CDN_POW2 = [
+	1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
+	65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608,
+	16777216, 33554432, 67108864, 134217728, 268435456, 536870912,
+	1073741824, 2147483648, 4294967296
+];
+
+function int_to_ip(n) {
+	return sprintf('%d.%d.%d.%d', int(n / 16777216) % 256, int(n / 65536) % 256, int(n / 256) % 256, n % 256);
+}
+
+/* Expand an inclusive integer range into the minimal sorted CIDR list. */
+function range_to_cidrs(s, e, out) {
+	while (s <= e) {
+		let p = 32;
+		while (p > 0) {
+			let size = CDN_POW2[32 - p];
+			if (s % size == 0 && (s + size - 1) <= e)
+				break;
+			p--;
+		}
+		push(out, int_to_ip(s) + '/' + p);
+		s += CDN_POW2[32 - p];
+	}
+}
+
+/* Download the IPtoASN v4 TSV and build resources/cdn_ip4.txt (CIDR ranges of
+ * KNOWN_CDN_ASNS). Streaming line reader — the full table is ~350k rows and
+ * must not be slurped into one array on a 128 MB router. Returns the range
+ * count or -1 on failure (the previous file stays in place). */
+function build_cdn_ranges() {
+	if (!fetch_any(TMP + '/cdn_tsv.gz', CDN_TSV_URLS))
+		return -1;
+	system(`gunzip -f -c ${shellq(TMP + '/cdn_tsv.gz')} > ${shellq(TMP + '/cdn_tsv.tsv')} 2>/dev/null`);
+	let fd = open(TMP + '/cdn_tsv.tsv', 'r');
+	if (!fd) return -1;
+	let ranges = [];
+	for (let line = fd.read('line'); length(line); line = fd.read('line')) {
+		line = trim(line);
+		if (!length(line)) continue;
+		let parts = split(line, '\t');
+		if (length(parts) < 3) continue;
+		let asn = trim(parts[2]);
+		if (!KNOWN_CDN_ASNS[asn]) continue;
+		let rs = int(trim(parts[0])), re = int(trim(parts[1]));
+		if (rs != rs || re != re || rs > re || rs < 0 || re > 4294967295) continue;
+		range_to_cidrs(rs, re, ranges);
+		if (length(ranges) > 40000) { log('warn: CDN ranges exceeded 40k entries — truncated'); break; }
+	}
+	fd.close();
+	return length(ranges) ? ranges : -1;
 }
 
 /* Download one geosite category, strip regexp/@attribute lines, return its body
@@ -177,20 +263,36 @@ function do_update() {
 
 	/* Deduplicate + persist. */
 	let doms = sort(keys(dom_seen));
+
+	/* CDN/cloud ranges for IP-learning exclusions (Phase 4). Strictly
+	 * optional: a failed download keeps the previous cdn_ip4.txt and never
+	 * fails the RU-geo update itself. */
+	let cdn_ranges = build_cdn_ranges();
+	let cdn_note = 'cdn ranges unavailable';
+	if (type(cdn_ranges) === 'array') {
+		cdn_ranges = sort(cdn_ranges);
+		atomic_txt(RES + '/cdn_ip4.txt', join('\n', cdn_ranges) + '\n');
+		cdn_note = sprintf('%d cdn ranges', length(cdn_ranges));
+	} else {
+		if (access(RES + '/cdn_ip4.txt'))
+			cdn_note = 'cdn ranges kept from the previous update';
+		log('warn: CDN range source unreachable — IP-learning exclusions stay as-is');
+	}
+
 	atomic_txt(RES + '/ru_geoip.txt', join('\n', nets) + '\n');
 	atomic_txt(RES + '/ru_geosite.txt', join('\n', doms) + '\n');
 
 	/* Meta (hand-built JSON: %.J printf is unsupported on this build). */
 	atomic_txt(RES + '/ru_geo.meta', sprintf(
-		'{"updated": %d, "geoip": %d, "geoip_v4": %d, "geoip_v6": %d, "geosite": %d, "categories": %d, "categories_failed": %d}\n',
-		time(), v4 + v6, v4, v6, length(doms), cat_count, cat_failed));
+		'{"updated": %d, "geoip": %d, "geoip_v4": %d, "geoip_v6": %d, "geosite": %d, "categories": %d, "categories_failed": %d, "cdn_ranges": "%s"}\n',
+		time(), v4 + v6, v4, v6, length(doms), cat_count, cat_failed, cdn_note));
 
 	/* Regenerate the watched rule-set JSONs (stale-source check inside) and
 	 * ping the daemon so it re-reads the databases. */
 	sync_ru_geo_rulesets();
 	try { writefile(RELOAD_MARKER, 'geo\n'); } catch (e) { /* tmpfs always writable */ }
 
-	log(`RU-geo database updated: ${v4} v4 + ${v6} v6 networks, ${length(doms)} domain entries from ${cat_count} categories.`);
+	log(`RU-geo database updated: ${v4} v4 + ${v6} v6 networks, ${length(doms)} domain entries from ${cat_count} categories (${cdn_note}).`);
 	return { err: null, geoip: v4 + v6, geosite: length(doms), categories: cat_count };
 }
 

@@ -251,6 +251,68 @@ return view.extend({
 		o.default = o.enabled;
 		o.rmempty = false;
 
+		/* Phase 1: Adaptive behavior options */
+		o = s.option(form.Flag, 'adaptive_timeout', _('Adaptive probe timeout'),
+			_('Adjust the probe timeout per host from the moving average (EWMA) of observed response times: fast hosts are measured quickly, slow ones get extra headroom instead of failing spuriously. Stored per host in the engine state.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		o = s.option(form.Flag, 'adaptive_confirm', _('Adaptive confirmation threshold'),
+			_('Hard blocks (4xx/5xx or a recognizable block page) are learned at the confirmation threshold below; transient failures (timeout/no response) require one extra confirmation. Fewer false learns on flaky connections.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		o = s.option(form.Flag, 'resource_aware', _('Resource-aware scheduling'),
+			_('The engine watches CPU load and free memory and adjusts its cycle pause: backs off when the router is busy, speeds up when idle.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		o = s.option(form.Flag, 'http2_probe', _('Enable HTTP/2 probing'),
+			_('Send probes over HTTP/2 when the installed curl supports it (checked at engine start; the flag is ignored otherwise). Modern sites often answer faster and more reliably over h2.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		/* Phase 1: Discovery source weights (weighted cross-correlation).
+		 * Each sighting adds its source weight to a per-host score; the probe
+		 * budget is spent on the highest-scoring candidates first. */
+		o = s.option(form.Value, 'discover_weight_dns', _('Discovery weight: DNS log'),
+			_('Weight of a DNS query-log sighting in the candidate priority score.'));
+		o.datatype = 'ufloat';
+		o.placeholder = '1.0';
+
+		o = s.option(form.Value, 'discover_weight_clash', _('Discovery weight: Clash API'),
+			_('Weight of an active Clash API connection sighting (live traffic = strong signal).'));
+		o.datatype = 'ufloat';
+		o.placeholder = '1.5';
+
+		o = s.option(form.Value, 'discover_weight_sni', _('Discovery weight: TLS SNI'),
+			_('Weight of a TLS ClientHello (SNI) sighting. Catches DoH clients and hardcoded-IP apps.'));
+		o.datatype = 'ufloat';
+		o.placeholder = '1.2';
+
+		/* Phase 2: probe_pool native backend (optional Go helper) */
+		o = s.option(form.Flag, 'probe_pool_enabled', _('Use the native probe_pool helper'),
+			_('When the probe_pool binary is installed (via the console installer), probe waves run as one native batch process instead of a shell worker per host — HTTP/2, connection reuse, no extra forks. Verdicts are computed by the same engine logic; if the helper is missing or fails, the classic shell workers are used automatically.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		/* Phase 4: CDN-range IP exclusion (cdn_ip4.txt from RU-geo update) */
+		o = s.option(form.Flag, 'asn_enabled', _('Exclude CDN/cloud address ranges from IP learning'),
+			_('Never learn IPs belonging to big CDN/cloud providers (Cloudflare, Google, AWS, Akamai, Hetzner and others): one learned prefix there would reroute unrelated services sharing the same addresses. The range list is refreshed by the RU-geo databases update.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		/* Phase 5: native SNI sniffer (optional Go helper) */
+		o = s.option(form.Flag, 'sni_sniffer_enabled', _('Use the native SNI sniffer helper'),
+			_('When the sni_sniffer binary is installed (via the console installer), TLS ClientHello names are captured continuously by a tiny daemon with a kernel packet filter. Without the helper — or when it cannot run — the engine falls back to the classic tcpdump bursts.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'sni_sniffer_interface', _('SNI capture interface'),
+			_('Network interface the SNI capture (native sniffer or tcpdump) listens on.'));
+		o.datatype = 'string';
+		o.placeholder = 'br-lan';
+
 		o = s.option(form.Flag, 'geo_auto_update', _('Update RU-geo databases automatically'),
 			_('The engine daemon checks the database age hourly and re-downloads it in the background when it is older than the interval below. Manual updates are always available on the “RU-geo databases” tab.'));
 		o.default = o.disabled;

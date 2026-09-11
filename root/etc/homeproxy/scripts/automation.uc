@@ -214,6 +214,18 @@ let ru_dom_kw = [];
 let geo_ip_count = 0;
 let geo_dom_count = 0;
 let geo_loaded = false;
+/* Phase 4: CDN/ASN exclusion ranges (resources/cdn_ip4.txt, built by
+ * ru_geo_build.uc from the free IPtoASN database): IPv4 ranges of known
+ * CDN/cloud providers — shared fate, never learned as IPs. */
+const CDN_IP4 = RES + '/cdn_ip4.txt';
+let cdn_ip4 = {};
+let cdn_ip_count = 0;
+/* Gate read in main(), consumed by the top-level is_excluded() (no closures
+ * over main() locals on this ucode build). */
+let asn_enabled = true;
+/* CPU core count + resource-aware cycle state, measured once at startup. */
+let sys_cores = 1;
+let last_cycle_sleep = 10;
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -221,6 +233,16 @@ function shellquote(s) {
 
 function first_of(v) {
 	return (type(v) === 'array') ? (length(v) ? v[0] : '') : v;
+}
+
+/* String → number with a guaranteed fallback. ucode has no float() builtin
+ * ("Calling undeclared function") — arithmetic coercion ('1.5' * 1.0) is the
+ * only safe parse. Weights/scores are floats, so a NaN-free helper is used
+ * everywhere host_score math happens. */
+function num(v) {
+	if (type(v) === 'int' || type(v) === 'double') return v + 0.0;
+	let n = trim('' + v) * 1.0;
+	return (n == n) ? n : 0.0;   /* NaN == NaN is false → 0.0 */
 }
 
 function capture(cmd) {
@@ -326,6 +348,32 @@ function load_ru_geo() {
 		}
 	}
 	log(`RU-geo database loaded: ${geo_ip_count} networks, ${geo_dom_count} domain entries.`);
+
+	/* Phase 4: CDN/cloud IPv4 ranges for IP-exclusion (best-effort: the file
+	 * is optional and only matters when ip_learn is enabled). Same bucketed
+	 * range storage as ru_geoip.txt so lookups are the cheap binary search. */
+	cdn_ip4 = {};
+	cdn_ip_count = 0;
+	let cdn_octet = {};
+	for (let l in read_lines(CDN_IP4)) {
+		let m = match(l, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/);
+		if (!m) continue;
+		let o1 = int(m[1]), o2 = int(m[2]), o3 = int(m[3]), o4 = int(m[4]), pl = int(m[5]);
+		if (o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255 || pl < 1 || pl > 32) continue;
+		let ip = o1 * 16777216 + o2 * 65536 + o3 * 256 + o4;
+		let size = 1;
+		for (let i = 0; i < 32 - pl; i++) size *= 2;
+		let start = ip - (ip % size);
+		if (!cdn_octet[o1]) cdn_octet[o1] = [];
+		push(cdn_octet[o1], { s: start, e: start + size - 1 });
+		cdn_ip_count++;
+	}
+	for (let o in keys(cdn_octet)) {
+		let arr = cdn_octet[o];
+		sort(arr, (a, b) => a.s - b.s);
+		cdn_ip4[o] = arr;
+	}
+	log(`CDN exclusion ranges loaded: ${cdn_ip_count} networks.`);
 }
 
 function is_ru_ip(ip) {
@@ -467,11 +515,39 @@ function fingerprint(b) {
  * from Russia and pins the connection to that answer with --resolve — the same
  * RU-facing resolution a browser would use. The proxy probe keeps `socks5h`
  * (resolve at the tunnel end) so locally poisoned answers can't break the
- * proxy-side measurement. */
+ * proxy-side measurement.
+ *
+ * Plain-view DNS resolution: prefer local mosdns plain listener (127.0.0.1:5453)
+ * when MultiDNS is active (mdns_ok), which races RU-facing plain upstreams and
+ * returns the fastest valid answer — exactly the same view the user's browser gets.
+ * Fallback to direct nslookup to 8.8.8.8/1.1.1.1/77.88.8.8 if mosdns unavailable. */
 function resolve_plain_view(host) {
 	let ce = pv_cache[host];
 	if (type(ce) === 'object' && ce.ip && (time() - int(ce.t)) < 600)
 		return ce.ip;
+
+	/* Try the local mosdns plain listener first — it races RU plain upstreams
+	 * and gives the same RU-facing view as the user's browser. Guarded by the
+	 * same condition multidns itself uses (enabled flag + binary + running
+	 * process): a UCI-only check would turn every lookup into a dead-port
+	 * timeout when mosdns actually failed to start. uci cursor instead of
+	 * `uci -q get` spawns; pidof is one cheap fork per cache miss. */
+	if (uci &&
+	    (uci.get('homeproxy', 'multidns', 'enabled') || '0') === '1' &&
+	    access('/usr/bin/mosdns') && system('pidof mosdns >/dev/null 2>&1') === 0) {
+		let mdns_plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
+		let out = capture(`nslookup -port=${mdns_plain_port} ${shellquote(host)} 127.0.0.1 2>/dev/null`);
+		for (let l in split(out, '\n')) {
+			let m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
+			if (m && m[2] !== '127.0.0.1') {
+				pv_cache[host] = { ip: m[2], t: time() };
+				if (length(keys(pv_cache)) > 400) pv_cache = {};
+				return m[2];
+			}
+		}
+	}
+
+	/* Fallback: direct nslookup to public resolvers (same as before). */
 	let out = capture(`nslookup -type=A ${shellquote(host)} 8.8.8.8 2>/dev/null`);
 	if (!match(out, /Address/)) {
 		out = capture(`nslookup -type=A ${shellquote(host)} 1.1.1.1 2>/dev/null`);
@@ -479,7 +555,6 @@ function resolve_plain_view(host) {
 			out = capture(`nslookup -type=A ${shellquote(host)} 77.88.8.8 2>/dev/null`);
 	}
 	for (let l in split(out, '\n')) {
-		/* Tolerate both "Address: <ip>" and indexed "Address 1: <ip> name" forms. */
 		let m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
 		if (m && m[2] !== '127.0.0.1') {
 			pv_cache[host] = { ip: m[2], t: time() };
@@ -644,6 +719,29 @@ function is_resolver_ip(ip) {
 	return is_public_infra_ip(ip) || resolver_ips[ip] === true;
 }
 
+/* CDN/cloud ranges (cdn_ip4.txt): binary search over the first-octet buckets,
+ * same shape as is_ru_ip(). CDN space is NEVER learned as IPs — one learned
+ * prefix there reroutes unrelated services sharing the same addresses. */
+function is_cdn_ip(ip) {
+	if (!cdn_ip_count || !length(ip)) return false;
+	let m = match(ip, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (!m) return false;
+	let o1 = int(m[1]), o2 = int(m[2]), o3 = int(m[3]), o4 = int(m[4]);
+	if (o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255) return false;
+	let bucket = cdn_ip4[o1];
+	if (!bucket) return false;
+	let ipn = o1 * 16777216 + o2 * 65536 + o3 * 256 + o4;
+	let lo = 0, hi = length(bucket) - 1;
+	while (lo <= hi) {
+		let mid = int((lo + hi) / 2);
+		let r = bucket[mid];
+		if (ipn < r.s) hi = mid - 1;
+		else if (ipn > r.e) lo = mid + 1;
+		else return true;
+	}
+	return false;
+}
+
 /* Bare IPs bypass every domain-side TLD guard: rDNS the candidate and refuse to
  * learn it when it names a RU-TLD host (.ru/.su/.рф always go DIRECT by policy).
  * Case: mail.ilona.su was learned as its A-record 89.250.12.19. PTR answers give
@@ -729,6 +827,12 @@ function is_excluded(host, ignore_lists) {
 	if (geo_loaded) {
 		if (is_ru_domain(host)) return true;
 		if (match(host, /^\d{1,3}(\.\d{1,3}){3}$/) && is_ru_ip(host)) return true;
+		/* CDN/cloud ASNs (shared fate — never learn IPs from CDNs; ranges come
+		 * from cdn_ip4.txt built by ru_geo_build.uc, no runtime whois needed). */
+		if (asn_enabled && match(host, /^\d{1,3}(\.\d{1,3}){3}$/) && is_cdn_ip(host)) {
+			log('excluding IP (CDN/cloud range): ' + host);
+			return true;
+		}
 	}
 	for (let e in excludes) {
 		e = trim(e);
@@ -820,17 +924,100 @@ function discover_conntrack() {
 
 /* SNI discovery (source `sni`): capture TLS ClientHello packets on the LAN bridge
  * and extract the server_name (SNI) hostnames. This catches DoH clients, apps with
- * hardcoded IPs and games that never hit the dnsmasq log. Best-effort — requires
- * tcpdump and returns nothing ([]) when it is absent. The normal probe/classify
- * step still filters junk, so false candidates are never learned. */
+ * hardcoded IPs and games that never hit the dnsmasq log. Best-effort — prefers
+ * the native sni_sniffer helper (kernel BPF filter, JSON-lines event file), falls
+ * back to a bounded tcpdump ASCII dump. The normal probe/classify step still
+ * filters junk, so false candidates are never learned. */
+const SNI_SNIFFER_BIN = '/usr/bin/sni_sniffer';
+const SNI_EVENTS = RUN_DIR + '/sni_events.jsonl';
+let sni_events_offset = 0;
+let sni_last_spawn = 0;
+
+/* Spawn the native sniffer once (idempotent: pidof guard + a 10-minute
+ * respawn cooldown so a binary that cannot run — wrong arch, no CAP_NET_RAW —
+ * does not turn into a spawn loop). The daemon keeps running across automation
+ * restarts — it only dies on reboot, which is fine: its kernel BPF filter
+ * drops everything but ClientHello packets, so idle cost is negligible. */
+function ensure_sni_sniffer(iface) {
+	if (!access(SNI_SNIFFER_BIN)) return false;
+	if (system('pidof sni_sniffer >/dev/null 2>&1') === 0) return true;
+	if ((time() - sni_last_spawn) < 600)
+		return false;
+	sni_last_spawn = time();
+	/* Stale event file from a previous run: rotate it away, the reader will
+	 * treat the fresh file as new (offset stays 0 because the path is new). */
+	if (access(SNI_EVENTS)) {
+		let sz = 0;
+		try { sz = stat(SNI_EVENTS).size || 0; } catch (e) { sz = 0; }
+		if (sz > 0)
+			system(`mv -f ${shellquote(SNI_EVENTS)} ${shellquote(SNI_EVENTS + '.old')} 2>/dev/null; rm -f ${shellquote(SNI_EVENTS + '.old')} 2>/dev/null`);
+	}
+	sni_events_offset = 0;
+	system(`${shellquote(SNI_SNIFFER_BIN)} -iface ${shellquote(iface)} -file ${shellquote(SNI_EVENTS)} >/dev/null 2>&1 &`);
+	return true;
+}
+
 function discover_sni(pkts, secs) {
+	let sni_sniffer_enabled = (uci.get('homeproxy', 'automation', 'sni_sniffer_enabled') || '1') !== '0';
+	let iface = uci.get('homeproxy', 'automation', 'sni_sniffer_interface') || 'br-lan';
+
+	/* Native sniffer: read new JSONL events since the last pass. The file is
+	 * appended by the Go daemon and self-truncated above ~512 KB; a shrunk
+	 * file means truncation → re-read from the start. */
+	if (sni_sniffer_enabled && access(SNI_SNIFFER_BIN)) {
+		let spawned = ensure_sni_sniffer(iface);
+		if (!spawned) {
+			log('sni_sniffer binary present but could not be started — falling back to tcpdump');
+		} else {
+			/* give a freshly spawned sniffer a moment to attach its filter */
+			if (!access(SNI_EVENTS)) sleep(secs);
+			if (access(SNI_EVENTS)) {
+				let size = stat(SNI_EVENTS).size;
+				let mtime = 0;
+				try { mtime = stat(SNI_EVENTS).mtime || 0; } catch (e) { mtime = 0; }
+				if (size < sni_events_offset) sni_events_offset = 0;
+				let fd = open(SNI_EVENTS, 'r');
+				if (fd) {
+					fd.seek(sni_events_offset);
+					let hosts = [];
+					for (let line = fd.read('line'); length(line); line = fd.read('line')) {
+						line = trim(line);
+						if (!length(line)) continue;
+						let evt = null;
+						try { evt = json(line); } catch (e) { continue; }
+						if (type(evt) !== 'object' || !evt.host) continue;
+						let h = lc(trim(evt.host));
+						if (looks_like_host(h)) push(hosts, h);
+					}
+					sni_events_offset = size;
+					fd.close();
+					if (length(hosts) > 0)
+						log(`sni_sniffer: captured ${length(hosts)} SNI hosts`);
+					/* The sniffer "owns" the SNI source while its event file is
+					 * fresh (touched in the last 15 min — ClientHello traffic is
+					 * constant on an active LAN). tcpdump runs only when the
+					 * file went silent, i.e. the sniffer is stuck or crashed. */
+					if ((time() - mtime) < 900)
+						return hosts;
+					log('sni_sniffer event file is stale — restarting it and using tcpdump this pass');
+					sni_events_offset = 0;
+					if (access(SNI_EVENTS))
+						system(`rm -f ${shellquote(SNI_EVENTS)} 2>/dev/null`);
+					system('killall sni_sniffer >/dev/null 2>&1; true');
+					ensure_sni_sniffer(iface);
+				}
+			}
+		}
+	}
+
+	/* Fallback: tcpdump ASCII dump (original method) */
 	if (!access('/usr/sbin/tcpdump') && !access('/usr/bin/tcpdump')) return [];
 	let tmp = RUN_DIR + '/sni.tmp';
 	/* PSH set (tcp[13]&8 != 0) + dst port 443 → ClientHello/first data. ASCII dump
 	 * (-A) reveals the plaintext SNI. Bounded by pkts/secs (perf profile widens
 	 * both). Best-effort — requires tcpdump and returns nothing ([]) when it is
 	 * absent. The normal probe/classify step still filters junk. */
-	system(`tcpdump -i br-lan -s 160 -A -c ${pkts} 'tcp port 443 and (tcp[13] & 8 != 0)' > ` + shellquote(tmp) + ` 2>/dev/null & TDPID=$!; sleep ${secs}; kill $TDPID 2>/dev/null`);
+	system(`tcpdump -i ${shellquote(iface)} -s 160 -A -c ${pkts} 'tcp port 443 and (tcp[13] & 8 != 0)' > ` + shellquote(tmp) + ` 2>/dev/null & TDPID=$!; sleep ${secs}; kill $TDPID 2>/dev/null`);
 	let out = readfile(tmp) || '';
 	if (!length(out)) return [];
 	let hosts = [];
@@ -1025,6 +1212,11 @@ function main() {
 		let mem_mb = mm ? int(mm[1]) / 1024 : 128;
 		perf_mode = (cores >= 4 || mem_mb >= 900) ? 'perf' : 'eco';
 	}
+	/* Core count feeds the resource-aware scheduler too (computed once). */
+	sys_cores = 0;
+	for (let l in split(readfile('/proc/cpuinfo') || '', '\n'))
+		if (substr(l, 0, 9) === 'processor') sys_cores = sys_cores + 1;
+	if (sys_cores < 1) sys_cores = 1;
 	const PERF = (perf_mode === 'perf');
 	const dom_cap = PERF ? PERF_DOM_CAP : ECO_DOM_CAP;
 	const ip_cap = PERF ? PERF_IP_CAP : ECO_IP_CAP;
@@ -1038,11 +1230,13 @@ function main() {
 	 * parallel. Mirrors the serial probe() exactly — plain-view DNS resolution
 	 * with --resolve pinning for direct, socks5 vs socks5h through the pinned
 	 * test inbounds, HTTPS first with a plain-HTTP retry. Writes <prefix>.code,
-	 * <prefix>.body and a <prefix>.done marker when finished. */
+	 * <prefix>.body and a <prefix>.done marker when finished. The code file
+	 * carries "<http_code> <time_total>" — curl's own stopwatch, no BusyBox
+	 * date(1) arithmetic (busybox date lacks %N, so %s%3N was garbage). */
 	const WORKER = RUN_DIR + '/probe_worker.sh';
 	writefile(WORKER, `#!/bin/sh
-# automation.uc probe worker: <host> <direct|proxy|tcp|tcpproxy> <port> <timeout> <prefix>
-H="$1"; SIDE="$2"; PORT="$3"; TO="$4"; PRE="$5"
+# automation.uc probe worker: <host> <direct|proxy|tcp|tcpproxy> <port> <timeout> <prefix> <http2>
+H="$1"; SIDE="$2"; PORT="$3"; TO="$4"; PRE="$5"; HTTP2="$6"
 case "$SIDE" in
 	proxy|tcpproxy) PX="-x socks5h://127.0.0.1:$PORT" ;;
 	*)              PX="-x socks5://127.0.0.1:$PORT" ;;
@@ -1055,39 +1249,156 @@ if [ "$SIDE" = direct ]; then
 		[ -n "$IP" ] && break
 		sleep 1
 	done
-	if [ -z "$IP" ]; then printf '000' > "$PRE.code"; : > "$PRE.body"; echo done > "$PRE.done"; exit 0; fi
+	if [ -z "$IP" ]; then printf '000 0' > "$PRE.code"; : > "$PRE.body"; echo done > "$PRE.done"; exit 0; fi
 	PIN="--resolve $H:443:$IP"
 	printf '%s' "$IP" > "$PRE.ip"
 fi
 rm -f "$PRE.code" "$PRE.body"
+HTTP2_FLAG=""
+if [ "$HTTP2" = "1" ] && [ "$SIDE" != "tcp" ] && [ "$SIDE" != "tcpproxy" ]; then
+	HTTP2_FLAG="--http2"
+fi
 if [ "$SIDE" = tcp ] || [ "$SIDE" = tcpproxy ]; then
 	curl -s -o /dev/null -k --connect-timeout "$TO" --max-time "$TO" $PX "https://$H" >/dev/null 2>&1
 	echo $? > "$PRE.code"; : > "$PRE.body"; echo done > "$PRE.done"; exit 0
 fi
-curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code}' -k --connect-timeout "$TO" --max-time "$TO" $PX $PIN "https://$H" > "$PRE.code" 2>/dev/null
+curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code} %{time_total}' -k --connect-timeout "$TO" --max-time "$TO" $HTTP2_FLAG $PX $PIN "https://$H" > "$PRE.code" 2>/dev/null
 C=$(cat "$PRE.code" 2>/dev/null)
-if [ -z "$C" ] || [ "$C" = "000" ]; then
+if [ -z "$C" ] || [ "${C%% *}" = "000" ] || [ -z "${C%% *}" ]; then
 	[ "$SIDE" = direct ] && PIN="--resolve $H:80:$IP"
 	rm -f "$PRE.code" "$PRE.body"
-	curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code}' -k --connect-timeout "$TO" --max-time "$TO" $PX $PIN "http://$H" > "$PRE.code" 2>/dev/null
+	curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code} %{time_total}' -k --connect-timeout "$TO" --max-time "$TO" $HTTP2_FLAG $PX $PIN "http://$H" > "$PRE.code" 2>/dev/null
 fi
 echo done > "$PRE.done"
 `);
 	system(`chmod +x ${WORKER} 2>/dev/null`);
 
+	/* probe_pool native Go backend (Phase 2), FILE-based one-shot batch mode.
+	 * The daemon writes a JSON request (hosts + pinned plain-view resolutions)
+	 * to a temp file, runs `/usr/bin/probe_pool -in <in> -out <out>` (one
+	 * process per wave chunk: in-process parallel probes with keep-alive
+	 * transports, HTTP/2, no per-host sh/nslookup/curl forks) and parses the
+	 * JSON response. Semantics match the shell worker exactly: the ucode side
+	 * re-derives ok/block from the raw code + body (block-page signatures run
+	 * HERE, not in the binary), so a probe_pool bug can never change verdicts —
+	 * only availability. Any failure returns null → probe_wave() falls back to
+	 * shell workers for the rest of the daemon lifetime. */
+	const PROBE_POOL_BIN = '/usr/bin/probe_pool';
+	const PP_IN = RUN_DIR + '/pp.in.json';
+	const PP_OUT = RUN_DIR + '/pp.out.json';
+	/* Optimistic: the binary's presence is re-checked per batch; the flag only
+	 * latches FAILURES so a broken install cannot slow every wave down. */
+	let probe_pool_available = true;
+	let probe_pool_enabled = (uci.get('homeproxy', 'automation', 'probe_pool_enabled') || '1') !== '0';
+	if (probe_pool_enabled && access(PROBE_POOL_BIN))
+		log('probe_pool native backend available — batches will use it (shell workers stay as fallback)');
+	else
+		log('probe_pool not installed — using shell workers');
+
+	function probe_pool_batch(items, side, timeout, http2_flag) {
+		if (!probe_pool_available || !probe_pool_enabled || !access(PROBE_POOL_BIN))
+			return null;
+		if (side !== 'tcp' && side !== 'tcpproxy' && !have_curl())
+			return null;
+
+		let resolve = {};
+		let hosts = [];
+		let skipped = {};
+		for (let k = 0; k < length(items); k++) {
+			let h = items[k].h;
+			let entry = { id: items[k].i, host: h, side: side, timeout_ms: timeout * 1000 };
+			if (side === 'direct') {
+				if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
+					resolve[h] = h;   /* literal: nothing to resolve */
+				} else {
+					let ip = resolve_plain_view(h);
+					if (!ip) {
+						/* Mirror the shell worker: unresolvable → 000, no probe. */
+						skipped[items[k].i] = { code: '000', ok: false, block: false, fp: '', ip: null, rtt_ms: 0 };
+						continue;
+					}
+					resolve[h] = ip;
+				}
+			}
+			entry.http2 = !!http2_flag && (side !== 'tcp' && side !== 'tcpproxy');
+			push(hosts, entry);
+		}
+		if (!length(hosts)) return (length(keys(skipped)) === length(items)) ? skipped : null;
+
+		let req = {
+			direct_proxy: `socks5://127.0.0.1:${AUTO_DIRECT_PORT}`,
+			proxy_proxy: `socks5h://127.0.0.1:${AUTO_PROXY_PORT}`,
+			resolve: resolve,
+			http2: !!http2_flag && (side !== 'tcp' && side !== 'tcpproxy'),
+			hosts: hosts
+		};
+		writefile(PP_IN, sprintf('%.J', req));
+		system(`rm -f ${shellquote(PP_OUT)} 2>/dev/null`);
+		/* Wall clock: hosts run CONCURRENTLY (workers = min(16, 4*cores)), so a
+		 * chunk costs ~2 attempts x timeout + process/DNS slack, not n x that. */
+		let rc = system(`${shellquote(PROBE_POOL_BIN)} -in ${shellquote(PP_IN)} -out ${shellquote(PP_OUT)} 2>>${shellquote(LOG_FILE)}`, timeout * 2000 + 15000);
+		if (rc !== 0 || !access(PP_OUT)) {
+			log(`probe_pool batch failed (rc=${rc}) — falling back to shell workers`);
+			probe_pool_available = false;
+			return null;
+		}
+		let resp;
+		try { resp = json(readfile(PP_OUT) || ''); } catch (e) { resp = null; }
+		if (type(resp) !== 'object' || type(resp.results) !== 'array') {
+			log('probe_pool produced an unparsable response — falling back to shell workers');
+			probe_pool_available = false;
+			return null;
+		}
+		system(`rm -f ${shellquote(PP_IN)} ${shellquote(PP_OUT)} 2>/dev/null`);
+
+		let out = skipped;
+		for (let r in resp.results) {
+			let res = resp.results[r];
+			if (!res || !exists(res, 'id')) continue;
+			if (side === 'tcp' || side === 'tcpproxy') {
+				let ok = false;
+				for (let c in TCP_OK_EXIT) if ('' + res.code === '' + c) ok = true;
+				out[res.id] = { code: ('' + res.code), ok: ok, block: false, fp: '', ip: null, rtt_ms: int(res.rtt_ms) || 0 };
+			} else {
+				let code = '' + (res.code || '000');
+				let body = '' + (res.body_head || '');
+				let blen = int(res.body_len) || length(body);
+				let c = classify_code(code);
+				let block = (c === 'block');
+				/* Same block-page rule as the shell path: 2xx/3xx with a small
+				 * body carrying a signature. body_head is the first 8 KB,
+				 * body_len the full size — the <32768 guard stays honest. */
+				if (c === 'ok' && blen < 32768 && body_blocked(body))
+					block = true;
+				out[res.id] = { code: code, ok: (c === 'ok') && !block, block: block,
+					fp: '' + (res.fp || ''), ip: (side === 'direct' && res.ip) ? res.ip : null,
+					rtt_ms: int(res.rtt_ms) || 0 };
+			}
+		}
+		/* A missing result for a dispatched host must never be read as success:
+		 * classify treats it as an unproven candidate → fabricate 000. */
+		for (let k = 0; k < length(items); k++)
+			if (!exists(out, items[k].i))
+				out[items[k].i] = { code: '000', ok: false, block: false, fp: '', ip: null, rtt_ms: 0 };
+		return out;
+	}
+
 	/* Run one probe side for a batch of hosts CONCURRENTLY. items:
-	 * [{ i: <string id>, h: <host> }] → { <id>: { code, ok, block, fp } }.
-	 * Launches a worker per host (chunked to `par` in-flight by probe_all),
-	 * waits for .done markers within a generous deadline, then classifies each
-	 * result exactly like the serial probe() did. Workers that miss the
-	 * deadline are still harvested from their files on next pass's cleanup of
-	 * stale pw.* prefixes at startup below. */
-	function probe_wave(items, side, timeout) {
+	 * [{ i: <string id>, h: <host> }] → { <id>: { code, ok, block, fp, rtt_ms } }.
+	 * Tries probe_pool first (native batch), falls back to shell workers. */
+	function probe_wave(items, side, timeout, http2_flag) {
+		/* The pool pays off when several hosts are probed at once (perf mode):
+		 * one process per chunk instead of par x (sh + nslookup + curl). */
+		if (par > 1 && length(items) > 1) {
+			let pool_res = probe_pool_batch(items, side, timeout, http2_flag);
+			if (pool_res !== null) return pool_res;
+		}
 		let out = {};
 		let port = (side === 'proxy' || side === 'tcpproxy') ? AUTO_PROXY_PORT : AUTO_DIRECT_PORT;
+		let h2 = (http2_flag && (side !== 'tcp' && side !== 'tcpproxy')) ? '1' : '0';
 		for (let k = 0; k < length(items); k++) {
 			let pre = RUN_DIR + '/pw.' + items[k].i;
-			system(`${WORKER} ${shellquote(items[k].h)} ${side} ${port} ${timeout} ${shellquote(pre)} >/dev/null 2>&1 &`);
+			system(`${WORKER} ${shellquote(items[k].h)} ${side} ${port} ${timeout} ${shellquote(pre)} ${h2} >/dev/null 2>&1 &`);
 		}
 		let deadline = time() + timeout * 6 + 20;
 		while (time() < deadline) {
@@ -1099,21 +1410,26 @@ echo done > "$PRE.done"
 		}
 		for (let k = 0; k < length(items); k++) {
 			let pre = RUN_DIR + '/pw.' + items[k].i;
+			/* "<code> <seconds>" per the worker's -w format; bare code still parses.
+			 * POSIX ERE only: no (?:...) non-capturing groups on this engine. */
 			let raw = trim(readfile(pre + '.code') || '');
+			let cm = match(raw, /^(\S+)(\s+([0-9.]+))?$/);
+			let code = cm ? cm[1] : raw;
+			let rtt_ms = (cm && cm[3]) ? int(num(cm[3]) * 1000.0) || 0 : 0;
 			let body = readfile(pre + '.body') || '';
 			let ipraw = trim(readfile(pre + '.ip') || '');
 			let res;
 			if (side === 'tcp' || side === 'tcpproxy') {
 				let ok = false;
-				for (let c in TCP_OK_EXIT) if (raw === c) ok = true;
-				res = { code: length(raw) ? raw : '-1', ok: ok, block: false, fp: '', ip: null };
+				for (let c in TCP_OK_EXIT) if (code === '' + c) ok = true;
+				res = { code: length(code) ? code : '-1', ok: ok, block: false, fp: '', ip: null, rtt_ms: rtt_ms };
 			} else {
-				let c = classify_code(raw);
+				let c = classify_code(code);
 				let block = (c === 'block');
 				if (c === 'ok' && length(body) < 32768 && body_blocked(body))
 					block = true;
-				res = { code: length(raw) ? raw : '000', ok: (c === 'ok') && !block, block: block, fp: fingerprint(body),
-				        ip: (side === 'direct' && length(ipraw)) ? ipraw : null };
+				res = { code: length(code) ? code : '000', ok: (c === 'ok') && !block, block: block, fp: fingerprint(body),
+				        ip: (side === 'direct' && length(ipraw)) ? ipraw : null, rtt_ms: rtt_ms };
 			}
 			out[items[k].i] = res;
 			system(`rm -f ${shellquote(pre)}.code ${shellquote(pre)}.body ${shellquote(pre)}.done ${shellquote(pre)}.ip 2>/dev/null`);
@@ -1121,11 +1437,11 @@ echo done > "$PRE.done"
 		return out;
 	}
 
-	function probe_all(items, side, timeout) {
+	function probe_all(items, side, timeout, http2_flag) {
 		let merged = {};
 		for (let s = 0; s < length(items); s += par) {
 			let chunk = slice(items, s, s + par);
-			let m = probe_wave(chunk, side, timeout);
+			let m = probe_wave(chunk, side, timeout, http2_flag);
 			for (let k in keys(m)) merged[k] = m[k];
 		}
 		return merged;
@@ -1137,6 +1453,32 @@ echo done > "$PRE.done"
 
 	let min_confirm = int(uci.get('homeproxy', 'automation', 'min_confirm') || '1') || 1;
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
+
+	/* Phase 1: adaptive behavior options. http2_probe needs a curl actually
+	 * built with HTTP/2: `--http2` on a non-h2 curl build errors out EVERY
+	 * probe, so the feature string gates the flag at startup. */
+	let adaptive_timeout = (uci.get('homeproxy', 'automation', 'adaptive_timeout') || '1') !== '0';
+	let adaptive_confirm = (uci.get('homeproxy', 'automation', 'adaptive_confirm') || '1') !== '0';
+	let resource_aware = (uci.get('homeproxy', 'automation', 'resource_aware') || '1') !== '0';
+	let http2_probe = false;
+	if ((uci.get('homeproxy', 'automation', 'http2_probe') || '1') !== '0') {
+		if (have_curl() && match(capture('curl --version'), /HTTP2/)) {
+			http2_probe = true;
+			log('HTTP/2 probing enabled (curl supports h2)');
+		} else {
+			log('http2_probe requested but curl lacks HTTP2 support — flag disabled');
+		}
+	}
+
+	/* SNI sniffer options are read in discover_sni(); nothing to latch here. */
+
+	/* Discovery source weights (Phase 1: weighted cross-correlation).
+	 * ucode has no float() builtin — weights go through num(). Conntrack IP
+	 * candidates bypass intake (they are counts, not host scores), so there
+	 * is deliberately no conntrack weight. */
+	let w_dns = num(uci.get('homeproxy', 'automation', 'discover_weight_dns') || '1.0') || 1.0;
+	let w_clash = num(uci.get('homeproxy', 'automation', 'discover_weight_clash') || '1.5') || 1.5;
+	let w_sni = num(uci.get('homeproxy', 'automation', 'discover_weight_sni') || '1.2') || 1.2;
 	/* Discovery sources. The new UI stores an ARRAY of domain sources (MultiValue:
 	 * dns / clash / sni). Legacy values were one string: all | both | clash | dns |
 	 * sni | conntrack. Raw-IP learning is governed SOLELY by ip_learn now — legacy
@@ -1169,6 +1511,7 @@ echo done > "$PRE.done"
 	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '10') || 10;
 	let flush_min_entries = int(uci.get('homeproxy', 'automation', 'flush_min_entries') || '1') || 1;
 	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '0';
+	asn_enabled = (uci.get('homeproxy', 'automation', 'asn_enabled') || '1') !== '0';
 	/* Exclude list: newline- or comma-separated; '#' starts a comment (to end of
 	 * line) so users can annotate/organize entries. Blank pieces are dropped.
 	 * Legacy safety: very old builds could store this option as a UCI LIST —
@@ -1286,6 +1629,7 @@ echo done > "$PRE.done"
 	if (!geo_loaded)
 		load_ru_geo();
 	reload_lists();
+
 	let state = load_state();
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 	/* Legacy sweep: old builds PERSISTED 'unknown' records (both probes
@@ -1358,13 +1702,28 @@ echo done > "$PRE.done"
 		pending_new = 0;
 	}
 
-	function classify(dom, d, p, is_ip, tcp_direct) {
+	function classify(dom, d, p, is_ip, tcp_direct, rtt_direct, rtt_proxy) {
 		if (!state[dom]) state[dom] = {};
 		let st = state[dom];
 		st.last_probe = time();
 		st.direct = d.code;
 		st.proxy = p ? p.code : 'n/a';
 		st.type = is_ip ? 'ip' : 'domain';
+
+		/* Track EWMA RTT for adaptive timeouts (Phase 1).
+		 * RTT in milliseconds; alpha=0.3 for EWMA smoothing. */
+		if (adaptive_timeout) {
+			if (rtt_direct && rtt_direct > 0) {
+				st.ewma_rtt_direct = st.ewma_rtt_direct
+					? int(st.ewma_rtt_direct * 0.7 + rtt_direct * 0.3)
+					: rtt_direct;
+			}
+			if (rtt_proxy && rtt_proxy > 0) {
+				st.ewma_rtt_proxy = st.ewma_rtt_proxy
+					? int(st.ewma_rtt_proxy * 0.7 + rtt_proxy * 0.3)
+					: rtt_proxy;
+			}
+		}
 
 		/* ── RU-geo hard gate (highest priority) ─────────────────────────
 		 * Russian networks, RU domains (incl. non-RU TLDs via the geo database)
@@ -1450,7 +1809,26 @@ echo done > "$PRE.done"
 			 * strong block signal and learns at the normal min_confirm. Learned IPs
 			 * are riskier than domains (no SNI boundary): they always need at least
 			 * 2 confirmations regardless of user config. */
-			let need = min_confirm + ((d.code === '000') ? 1 : 0);
+			let need = min_confirm;
+			if (adaptive_confirm) {
+				let dcode = ('' + (d.code || '000'));
+				let dn = int(dcode);
+				if (dcode === '000') {
+					/* Transient (timeout/RST/DNS-n/a): cautious, +1 confirmation. */
+					need = min_confirm + 1;
+				} else if (d.block || (dn == dn && dn >= 400 && dn <= 599)) {
+					/* Hard block (4xx/5xx or a 200 block page): strong signal,
+					 * learn at min_confirm — FASTER than the legacy rule that
+					 * slowed everything but 000 down. */
+					need = min_confirm;
+				} else {
+					/* Anything else is not a recognizable block shape: cautious. */
+					need = min_confirm + 1;
+				}
+			} else {
+				/* Legacy behavior */
+				need = min_confirm + ((d.code === '000') ? 1 : 0);
+			}
 			if (is_ip && need < 2) need = 2;
 			/* Hot lane: the user's browser has been retrying this host for real
 			 * during the current burst — its organic attempts ARE the second
@@ -1522,45 +1900,44 @@ echo done > "$PRE.done"
 
 		load_engine_protect();
 
-		/* Candidate intake: normalise case (DNS queries and SNI keep client-side
+/* Candidate intake: normalise case (DNS queries and SNI keep client-side
 		 * case; mixed-case duplicates like "zz.rw"/"ZZ.rw" would be probed twice)
 		 * and drop junk shapes — a single-character second-level label under some
 		 * ccTLD ("7.ua", "b.ly", "g.tj") is wildcard-ad noise, never user traffic. */
-	let domain_candidates = {}, ip_candidates = {}, dns_freq = {};
-		let reeval_set = {};
-		hot_set = {};
-		let intake = (h) => {
-			h = lc(trim(h));
-			if (!looks_like_host(h)) return;
-			h = collapse_uuid_host(h);
-			if (!looks_like_host(h)) return;
-			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
-				/* Bare-IP literal from the DNS/SNI log belongs to the IP pipeline
-				 * (seen-threshold + private/local/infra filters), NOT to domains:
-				 * routing it into domain_candidates let it bypass every IP guard
-				 * and get learned straight from classify(). */
-				if (ip_learn === '1') ip_candidates[h] = (int(ip_candidates[h]) || 0) + 1;
-				return;
-			}
-			let parts = split(h, '.');
-			if (length(parts) >= 2 && length(parts[length(parts) - 2]) <= 1)
-				return;
-			domain_candidates[h] = true;
-			dns_freq[h] = (int(dns_freq[h]) || 0) + 1;
-		};
-		/* DNS first: it captures the domain at query time, newest-first. The per-host
-		 * query COUNT from this slice doubles as a priority score — the probe budget
-		 * goes to what the user actually hammers first, not to hash order.
-		 * Clash/SNI fill in the gaps. conntrack is counted per IP (MIN_IP_SEEN gate). */
-		if (has('dns'))
-			for (let i, h in discover_dns()) intake(h);
-		if (has('clash'))     for (let i, h in discover_clash(timeout)) intake(h);
-		if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) intake(h);
-		/* Raw-IP candidates are collected ONLY when IP learning is enabled — the old
-		 * separate 'conntrack' discovery source is merged into the ip_learn switch. */
-		if (ip_learn === '1')
-			for (let i, ip in discover_conntrack())
-				ip_candidates[ip] = (int(ip_candidates[ip]) || 0) + 1;
+	let domain_candidates = {}, ip_candidates = {}, host_score = {};
+	let reeval_set = {};
+	hot_set = {};
+	let intake = (h, source_weight) => {
+		h = lc(trim(h));
+		if (!looks_like_host(h)) return;
+		h = collapse_uuid_host(h);
+		if (!looks_like_host(h)) return;
+		if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
+			/* Bare-IP literal from the DNS/SNI log belongs to the IP pipeline
+			 * (seen-threshold + private/local/infra filters), NOT to domains:
+			 * routing it into domain_candidates let it bypass every IP guard
+			 * and get learned straight from classify(). */
+			if (ip_learn === '1') ip_candidates[h] = (int(ip_candidates[h]) || 0) + 1;
+			return;
+		}
+		let parts = split(h, '.');
+		if (length(parts) >= 2 && length(parts[length(parts) - 2]) <= 1)
+			return;
+		domain_candidates[h] = true;
+		host_score[h] = num(host_score[h]) + source_weight;
+	};
+	/* DNS first: it captures the domain at query time, newest-first. Weighted score
+	 * combines per-source counts so the probe budget goes to what the user actually
+	 * hammers most across all sources, not just DNS hash order. */
+	if (has('dns'))
+		for (let i, h in discover_dns()) intake(h, w_dns);
+	if (has('clash'))     for (let i, h in discover_clash(timeout)) intake(h, w_clash);
+	if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) intake(h, w_sni);
+	/* Raw-IP candidates are collected ONLY when IP learning is enabled — the old
+	 * separate 'conntrack' discovery source is merged into the ip_learn switch. */
+	if (ip_learn === '1')
+		for (let i, ip in discover_conntrack())
+			ip_candidates[ip] = (int(ip_candidates[ip]) || 0) + 1;
 
 		if (mode === 'aggressive') {
 			reeval_set = {};
@@ -1576,9 +1953,9 @@ echo done > "$PRE.done"
 		 * learn beats starting one. IPs ride along with the seen-threshold bypass. */
 		/* Persistent sighting accumulator: browser DNS caches / built-in DoH
 		 * BYPASS dnsmasq, so a retry storm often yields just ONE SNI/clash
-		 * sighting per pass — dns_freq (per-pass) never reached the hot
-		 * threshold and the hot lane stayed silent for hours (chat.qwen.ai
-		 * case). st.sight accumulates ACROSS passes and decays when unseen. */
+		 * sighting per pass — host_score (per-pass weighted) replaces dns_freq
+		 * for cross-source burst detection. st.sight accumulates ACROSS passes
+		 * and decays when unseen. */
 		for (let h in keys(domain_candidates)) {
 			const cst = state[h];
 			if (type(cst) === 'object') {
@@ -1589,7 +1966,7 @@ echo done > "$PRE.done"
 		}
 		/* Persistent-pain counter: climbs every pass the user keeps hammering a
 		 * direct-verdict host — but only while the episode carries a burst
-		 * (>= PAIN_BURST in-pass sightings now, or seen within the last
+		 * (>= PAIN_BURST in-pass weighted score now, or seen within the last
 		 * 10 min of this episode). Sight counts only if FRESH (seen within
 		 * 10 min) — a single long-past storm must never keep a host
 		 * permanently hot; a stale burst must never re-arm the counter. */
@@ -1597,9 +1974,9 @@ echo done > "$PRE.done"
 			const cst = state[h];
 			if (type(cst) !== 'object') continue;
 			const eff_sight = ((time() - int(cst.sight_t || 0)) < 600) ? int(cst.sight || 0) : 0;
-			if ((int(dns_freq[h]) || 0) >= PAIN_BURST)
+			if (num(host_score[h]) >= PAIN_BURST)
 				cst.pain_burst = time();
-			const burst = ((int(dns_freq[h]) || 0) >= PAIN_BURST) ||
+			const burst = (num(host_score[h]) >= PAIN_BURST) ||
 			              ((time() - int(cst.pain_burst || 0)) < 600);
 			if ((eff_sight >= HOT_MIN_FREQ) && burst &&
 			    (cst.status === 'direct' || cst.status === 'direct_pending'))
@@ -1632,11 +2009,11 @@ echo done > "$PRE.done"
 
 		/* ── Domain learning: select up to dom_cap candidates, then run the direct
 		 * wave and (for failures) the proxy wave CONCURRENTLY via probe workers.
-		 * Selection order: pending-confirmations first, then by DNS query count. ── */
+		 * Selection order: pending-confirmations first, then by weighted host_score. ── */
 		let cand = [];
 		for (let h in keys(priority)) push(cand, h);
 		let rest = sort(filter(keys(domain_candidates), (h) => !priority[h]),
-			(a, b) => ((int(dns_freq[b]) || 0) - (int(dns_freq[a]) || 0)));
+			(a, b) => (num(host_score[b]) - num(host_score[a])));
 		for (let x in rest) push(cand, x);
 		let sel = [];
 		for (let oi = 0; oi < length(cand); oi++) {
@@ -1658,10 +2035,10 @@ echo done > "$PRE.done"
 				let escape = (st.status === 'direct' && domain_candidates[dom] && (now - st.last_probe) > min_age);
 				if (!escape) {
 					/* Escape 2 (hot lane): the user is hammering this host —
-					 * within this pass (dns_freq) or accumulated across recent
+					 * within this pass (host_score) or accumulated across recent
 					 * passes (fresh st.sight). Emergency reverify, cooldown. */
 					const eff_sight = ((time() - int(st.sight_t || 0)) < 600) ? int(st.sight || 0) : 0;
-					const hot_freq = (int(dns_freq[dom]) || 0) >= HOT_MIN_FREQ;
+					const hot_freq = num(host_score[dom]) >= HOT_MIN_FREQ;
 					const hot_sight = eff_sight >= HOT_MIN_FREQ;
 					if (st.status === 'direct' && domain_candidates[dom] &&
 					    (hot_freq || hot_sight) &&
@@ -1680,18 +2057,18 @@ echo done > "$PRE.done"
 		if (length(sel)) {
 			let ditems = [];
 			for (let i = 0; i < length(sel); i++) push(ditems, { i: 'd' + i, h: sel[i] });
-			let dwave = probe_all(ditems, 'direct', timeout);
+			let dwave = probe_all(ditems, 'direct', timeout, http2_probe);
 			let pitems = [];
 			for (let i = 0; i < length(sel); i++)
 				if (!(dwave['d' + i] && dwave['d' + i].ok))
 					push(pitems, { i: 'p' + i, h: sel[i] });
-			let pwave = main_is_direct ? {} : probe_all(pitems, 'proxy', timeout);
+			let pwave = main_is_direct ? {} : probe_all(pitems, 'proxy', timeout, http2_probe);
 			for (let i = 0; i < length(sel); i++) {
-				let d_res = dwave['d' + i] || { code: '000', ok: false, block: false, fp: '' };
+				let d_res = dwave['d' + i] || { code: '000', ok: false, block: false, fp: '', rtt_ms: 0 };
 				let p_res = pwave['p' + i] || null;
 				/* A client may resolve a BARE IP literal (dnsmasq logs it like a name);
 				 * classify by content so the UI Type column stays truthful. */
-				classify(sel[i], d_res, p_res, !!match(sel[i], /^(\d{1,3}\.){3}\d{1,3}$/));
+				classify(sel[i], d_res, p_res, !!match(sel[i], /^(\d{1,3}\.){3}\d{1,3}$/), false, d_res.rtt_ms || 0, (p_res && p_res.rtt_ms) || 0);
 			}
 
 			/* ── Persistent-pain override ────────────────────────────────────
@@ -1715,7 +2092,7 @@ echo done > "$PRE.done"
 				for (let f in force)
 					if (dwave[f.dwi] && dwave[f.dwi].ok)
 						push(extra, { i: f.i, h: f.h });
-				let fwave = length(extra) ? probe_all(extra, 'proxy', timeout) : {};
+				let fwave = length(extra) ? probe_all(extra, 'proxy', timeout, http2_probe) : {};
 				for (let f in force) {
 					const dom = f.h;
 					const p_ok = (pwave[f.pwi] && pwave[f.pwi].ok) || (fwave[f.i] && fwave[f.i].ok);
@@ -1767,11 +2144,11 @@ echo done > "$PRE.done"
 			if (length(ipsel)) {
 				let di = [];
 				for (let i = 0; i < length(ipsel); i++) push(di, { i: 'i' + i, h: ipsel[i] });
-				let idw = probe_all(di, 'direct', timeout);
+				let idw = probe_all(di, 'direct', timeout, http2_probe);
 				let needp = {}, pi = [];
 				for (let i = 0; i < length(ipsel); i++)
 					if (!(idw['i' + i] && idw['i' + i].ok)) { needp[i] = true; push(pi, { i: 'i' + i, h: ipsel[i] }); }
-				let ipw = main_is_direct ? {} : probe_all(pi, 'proxy', timeout);
+				let ipw = main_is_direct ? {} : probe_all(pi, 'proxy', timeout, http2_probe);
 				let ti = [];
 				for (let i = 0; i < length(ipsel); i++) {
 					if (!needp[i]) continue;
@@ -1797,16 +2174,16 @@ echo done > "$PRE.done"
 					}
 				}
 				for (let i = 0; i < length(ipsel); i++) {
-					let d_res = idw['i' + i] || { code: '000', ok: false, block: false, fp: '' };
+					let d_res = idw['i' + i] || { code: '000', ok: false, block: false, fp: '', rtt_ms: 0 };
 					let p_res = ipw['i' + i] || null;
 					let tdok = !!tcp_direct_ok[i];
 					if (!d_res.ok && !(p_res && p_res.ok) && !tdok && tcp_proxy_ok[i]) {
 						/* TCP dead direct + alive via proxy = a learnable block the
 						 * HTTP layer cannot see. Fabricate an ok proxy result so the
 						 * normal confirm/learn path handles it unchanged. */
-						p_res = { code: 'TCP', ok: true, block: false, fp: '' };
+						p_res = { code: 'TCP', ok: true, block: false, fp: '', rtt_ms: 0 };
 					}
-					classify(ipsel[i], d_res, p_res, true, tdok);
+					classify(ipsel[i], d_res, p_res, true, tdok, d_res.rtt_ms || 0, (p_res && p_res.rtt_ms) || 0);
 				}
 			}
 		}
@@ -1989,7 +2366,34 @@ echo done > "$PRE.done"
 			save_state(state);
 		}
 
-		for (let i = 0; i < 10; i++) {
+		/* Resource-aware scheduling (Phase 1): adapt the cycle interval to the
+		 * system load. Backs off when the router is busy or memory-starved,
+		 * speeds up on idle boxes. The MODE is logged only when it changes —
+		 * an every-cycle log line would spam the bounded 50 KB log out of
+		 * existence. */
+		let cycle_sleep = 10;
+		if (resource_aware) {
+			let load1 = num(split(readfile('/proc/loadavg') || '', ' ')[0]);
+			let mem_avail = 0;
+			let mm = match(readfile('/proc/meminfo') || '', /^MemAvailable:\s+([0-9]+)/);
+			if (mm) mem_avail = int(mm[1]) || 0;
+			if (load1 > sys_cores * 0.7 || (mem_avail > 0 && mem_avail < 100 * 1024)) {
+				cycle_sleep = 30;
+			} else if (load1 < sys_cores * 0.3 && (mem_avail <= 0 || mem_avail > 300 * 1024)) {
+				cycle_sleep = 5;
+			}
+			if (cycle_sleep !== last_cycle_sleep) {
+				if (cycle_sleep === 30)
+					log(`resource-aware: high load (${sprintf('%.2f', load1)}/${sys_cores} cores) or low mem (${mem_avail} kB) — cycle slowed to ${cycle_sleep}s`);
+				else if (cycle_sleep === 5)
+					log(`resource-aware: low load (${sprintf('%.2f', load1)}/${sys_cores} cores), ample mem (${mem_avail} kB) — cycle sped up to ${cycle_sleep}s`);
+				else
+					log(`resource-aware: load normal — cycle back to ${cycle_sleep}s`);
+				last_cycle_sleep = cycle_sleep;
+			}
+		}
+
+		for (let i = 0; i < cycle_sleep; i++) {
 			sleep(1);
 			if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); break; }
 			if (access(RELOAD_MARKER) || access(RELOAD_MARKER + '_geo')) break;

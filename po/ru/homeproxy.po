@@ -7042,16 +7042,6 @@ msgstr "включена"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Domain-name sources to watch for candidates. Raw-IP destinations are a separate switch below (“Learn IP destinations”)."
-msgstr "Источники домённых имён для поиска кандидатов. IP-адреса — отдельный переключатель ниже («Учить IP-адреса»)."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "eco: classic serial probing for weak routers. perf: up to 64 domains / 32 IPs per pass probed in parallel batches (16 at once) — needs a multi-core router with 1 GB RAM (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
-msgstr "eco: классическая последовательная проверка для слабых роутеров. perf: до 64 доменов / 32 IP за проход параллельными пачками (по 16) — нужен многоядерный роутер с 1 ГБ ОЗУ (например, GL.iNet Flint 2). auto: определяется по числу ядер и памяти."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
 msgid "Entries"
 msgstr "Записей"
 
@@ -7157,6 +7147,77 @@ msgstr "Обновление RU-гео-баз запущено в фоне — �
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
+msgid "Adaptive probe timeout"
+msgstr "Адаптивный тайм-аут проверки"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Adjust the probe timeout per host from the moving average (EWMA) of observed response times: fast hosts are measured quickly, slow ones get extra headroom instead of failing spuriously. Stored per host in the engine state."
+msgstr "Подстраивает тайм-аут проверки под каждый хост по скользящему среднему (EWMA) наблюдаемого времени ответа: быстрые хосты проверяются быстро, медленные получают запас вместо ложных сбоев. Хранится по каждому хосту в состоянии движка."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Adaptive confirmation threshold"
+msgstr "Адаптивный порог подтверждений"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Hard blocks (4xx/5xx or a recognizable block page) are learned at the confirmation threshold below; transient failures (timeout/no response) require one extra confirmation. Fewer false learns on flaky connections."
+msgstr "Жёсткие блоки (4xx/5xx или распознанная страница блокировки) изучаются с обычным порогом подтверждений; временные сбои (таймаут/нет ответа) требуют одного дополнительного подтверждения. Меньше ложного обучения на нестабильных соединениях."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Resource-aware scheduling"
+msgstr "Ресурсо-осведомлённое планирование"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "The engine watches CPU load and free memory and adjusts its cycle pause: backs off when the router is busy, speeds up when idle."
+msgstr "Движок следит за загрузкой CPU и свободной памятью и меняет паузу между циклами: уступает ресурсы под нагрузкой, ускоряется в простое."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Enable HTTP/2 probing"
+msgstr "Включить проверку через HTTP/2"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Send probes over HTTP/2 when the installed curl supports it (checked at engine start; the flag is ignored otherwise). Modern sites often answer faster and more reliably over h2."
+msgstr "Отправлять пробы по HTTP/2, если установленный curl его поддерживает (проверяется при старте движка; иначе флаг игнорируется). Современные сайты часто отвечают по h2 быстрее и надёжнее."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Discovery weight: DNS log"
+msgstr "Вес источника: журнал DNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Weight of a DNS query-log sighting in the candidate priority score."
+msgstr "Вес вхождения из журнала DNS-запросов в приоритизационный балл кандидата."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Discovery weight: Clash API"
+msgstr "Вес источника: Clash API"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Weight of an active Clash API connection sighting (live traffic = strong signal)."
+msgstr "Вес вхождения из активных соединений Clash API (живой трафик = сильный сигнал)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Discovery weight: TLS SNI"
+msgstr "Вес источника: TLS SNI"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Weight of a TLS ClientHello (SNI) sighting. Catches DoH clients and hardcoded-IP apps."
+msgstr "Вес вхождения из TLS ClientHello (SNI). Ловит DoH-клиенты и приложения с жёсткими IP."
+
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
 msgid "RU-protect"
 msgstr "RU-защита"
 
@@ -7242,10 +7303,6 @@ msgstr "обновляется…"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps."
-msgstr "Следит за повторяющимися IP-адресами в conntrack (игры, дата-центры Telegram, приложения без SNI) и выучивает те, что недоступны напрямую, но отвечают через прокси. По умолчанию выключено — включите, если пользуетесь такими приложениями."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
 
 msgid "Auto mode: entry status is determined automatically"
 msgstr "Авто: статус записи определяется автоматически"
@@ -7319,3 +7376,43 @@ msgstr "Проверено"
 
 msgid "Service restart initiated"
 msgstr "Перезапуск службы инициирован"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Use the native probe_pool helper"
+msgstr "Использовать нативный помощник probe_pool"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "When the probe_pool binary is installed (via the console installer), probe waves run as one native batch process instead of a shell worker per host — HTTP/2, connection reuse, no extra forks. Verdicts are computed by the same engine logic; if the helper is missing or fails, the classic shell workers are used automatically."
+msgstr "Если установлен бинарник probe_pool (через консольный установщик), волны проверок выполняются одним нативным батч-процессом вместо shell-воркера на каждый хост — HTTP/2, переиспользование соединений, без лишних форков. Вердикты вычисляет та же логика движка; если помощника нет или он сбоит, автоматически используются классические shell-воркеры."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Exclude CDN/cloud address ranges from IP learning"
+msgstr "Исключить CDN/облачные диапазоны адресов из IP-обучения"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Never learn IPs belonging to big CDN/cloud providers (Cloudflare, Google, AWS, Akamai, Hetzner and others): one learned prefix there would reroute unrelated services sharing the same addresses. The range list is refreshed by the RU-geo databases update."
+msgstr "Никогда не изучать IP крупных CDN/облачных провайдеров (Cloudflare, Google, AWS, Akamai, Hetzner и др.): один выученный префикс там перенаправил бы в туннель чужие сервисы на тех же адресах. Список диапазонов обновляется вместе с RU-гео-базами."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Use the native SNI sniffer helper"
+msgstr "Использовать нативный сниффер SNI"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "When the sni_sniffer binary is installed (via the console installer), TLS ClientHello names are captured continuously by a tiny daemon with a kernel packet filter. Without the helper — or when it cannot run — the engine falls back to the classic tcpdump bursts."
+msgstr "Если установлен бинарник sni_sniffer (через консольный установщик), имена из TLS ClientHello захватывает непрерывно крошечный демон с фильтром пакетов на уровне ядра. Без помощника — или когда он не может запуститься — движок возвращается к классическим запускам tcpdump."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "SNI capture interface"
+msgstr "Интерфейс захвата SNI"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Network interface the SNI capture (native sniffer or tcpdump) listens on."
+msgstr "Сетевой интерфейс, на котором захватывается SNI (нативный сниффер или tcpdump)."
