@@ -8,6 +8,8 @@
 *.sh    text eol=lf
 *.js    text eol=lf
 *.json  text eol=lf
+*.go    text eol=lf
+*.mod   text eol=lf
 
 # Extensionless router scripts
 root/etc/init.d/*               text eol=lf

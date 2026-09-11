@@ -34,7 +34,7 @@ if [ "$RELEASE_TYPE" == "release" ]; then
 	fi
 else
 	# NOTE: the CI checks out a shallow clone, so `git rev-list --count HEAD` is always 1.
-	# Use a timestamp-based version so every build gets a UNIQUE package version вЂ”
+	# Use a timestamp-based version so every build gets a UNIQUE package version —
 	# otherwise reinstalling from a newer release with the same version string makes the
 	# package manager skip the file overwrite and the device keeps stale code.
 	# IMPORTANT: Alpine `apk` rejects hyphens in versions (only digits/dots/_suffix allowed),
@@ -113,7 +113,12 @@ add_group_and_user
 . ${IPKG_INSTROOT}/lib/functions.sh
 export root="${IPKG_INSTROOT}"
 export pkgname="'"$PKG_NAME"'"
-default_prerm' > "$TEMP_DIR/pre-deinstall"
+add_group_and_user
+[ -n "${IPKG_INSTROOT}" ] || { rm -f /tmp/luci-indexcache.*
+	rm -rf /tmp/luci-modulecache/
+	killall -HUP rpcd 2>/dev/null
+	exit 0
+}' > "$TEMP_DIR/pre-deinstall"
 
 	apk mkpkg \
 		--info "name:$PKG_NAME" \
@@ -150,16 +155,16 @@ c = c.replace("import { md5 } from 'digest';\n", "")
 c = c.replace("import { open } from 'fs';", "import { open, popen } from 'fs';")
 md5_fn = """
 function md5(s) {
-\tconst tmp = '/tmp/.hp_md5tmp';
-\tconst f = open(tmp, 'w');
-\tif (!f) return '';
-\tf.write(s);
-\tf.close();
-\tconst fd = popen('md5sum < /tmp/.hp_md5tmp');
-\tif (!fd) return '';
-\tconst out = trim(fd.read('line'));
-\tfd.close();
-\treturn split(out, ' ')[0] || '';
+	const tmp = '/tmp/.hp_md5tmp';
+	const f = open(tmp, 'w');
+	if (!f) return '';
+	f.write(s);
+	f.close();
+	const fd = popen('md5sum < /tmp/.hp_md5tmp');
+	if (!fd) return '';
+	const out = trim(fd.read('line'));
+	fd.close();
+	return split(out, ' ')[0] || '';
 }
 
 """
@@ -176,7 +181,7 @@ PYEOF
 
 	# Rename handling (ipk): do NOT Provides the old names. opkg treats an installed
 	# package that is also Provided as *satisfying* the dependency and then never
-	# fires Conflicts вЂ” so old + new would coexist. Dropping Provides and keeping
+	# fires Conflicts — so old + new would coexist. Dropping Provides and keeping
 	# Conflicts+Replaces makes opkg cleanly replace the old pkg. (Nothing depends on
 	# the old names: the i18n packages depend on $PKG_NAME.) The apk path uses the
 	# Alpine rename idiom instead: provides + replaces (see the apk mkpkg call above).
@@ -222,7 +227,7 @@ fi
 }' > "$TEMP_PKG_DIR/CONTROL/postinst"
 	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst"
 
-	echo -e "[ -n "\${IPKG_INSTROOT}" ] || {
+	echo -e "[ -n \"\${IPKG_INSTROOT}\" ] || {
 	(. /etc/uci-defaults/$PKG_NAME) && rm -f /etc/uci-defaults/$PKG_NAME
 	rm -f /tmp/luci-indexcache
 	rm -rf /tmp/luci-modulecache/
@@ -246,6 +251,14 @@ default_prerm $0 $@' > "$TEMP_PKG_DIR/CONTROL/prerm"
 fi
 
 rm -rf "$TEMP_DIR"
+
+# Native automation helpers (probe_pool, sni_sniffer) are NOT built here and
+# NOT part of the package: they are arch-specific while the package is
+# arch-independent ("all"). The workflow builds them via build-go.sh and
+# publishes per-arch zips as release assets; install.sh downloads the right
+# one on the router (graceful fallback to shell workers when absent).
+# Go sources live in .github/go/ precisely so `cp -fpR root/*` can never leak
+# them into the package tree.
 
 # Build i18n package for Russian
 I18N_PKG_NAME="luci-i18n-homeproxy-ru"
@@ -303,4 +316,3 @@ else
 fi
 
 rm -rf "$I18N_TEMP_DIR"
-

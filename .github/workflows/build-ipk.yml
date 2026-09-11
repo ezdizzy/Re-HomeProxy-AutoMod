@@ -69,7 +69,7 @@ jobs:
         run: |
           sudo -E rm -rf /var/lib/man-db/auto-update
           sudo -E apt-get update -qq
-          sudo -E apt-get install -y build-essential curl fakeroot libssl-dev lua5.1 meson ninja-build
+          sudo -E apt-get install -y build-essential curl fakeroot libssl-dev lua5.1 meson ninja-build zip
 
           pushd apk-tools
           meson setup build \
@@ -95,6 +95,11 @@ jobs:
 
           curl -fLO "https://raw.githubusercontent.com/openwrt/openwrt/master/scripts/ipkg-build"
           sudo install -m0755 ipkg-build /usr/local/bin/ipkg-build
+
+      - name: Setup Go (native automation helpers)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
 
       - name: Determine release tag / publish flag
         id: tag
@@ -142,6 +147,11 @@ jobs:
             fi
           done
 
+      - name: Build native automation helpers (probe_pool, sni_sniffer)
+        run: |
+          bash .github/build-go.sh
+          echo "GO_BIN_DIR=$(ls -d .github/binaries)" >> $GITHUB_ENV
+
       - name: Build ipk file
         run: |
           pushd .github
@@ -186,6 +196,12 @@ jobs:
           name: ${{ env.I18N_IPK_ASSET_NAME }}
           path: .github/${{ env.I18N_IPK_ASSET_NAME }}
 
+      - name: Publishing Go helper zips to GitHub Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: automation-native-helpers
+          path: ${{ env.GO_BIN_DIR }}/*.zip
+
       - name: Publishing signing public key to GitHub Artifacts
         if: env.APK_SIGN_KEY != ''
         uses: actions/upload-artifact@v7
@@ -193,7 +209,7 @@ jobs:
           name: homeproxy-hiddify.pub
           path: .github/homeproxy-hiddify.pub
 
-      - name: Publish release to GitHub Releases
+      - name: Publish APK/IPK packages to GitHub Release
         if: steps.tag.outputs.publish_release == 'true'
         uses: svenstaro/upload-release-action@v2
         with:
@@ -208,6 +224,16 @@ jobs:
             Re:HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}
 
             Self-updating build of the Re-HomeProxy fork. See README for install / update instructions.
+
+      - name: Publish Go helper zips to GitHub Release
+        if: steps.tag.outputs.publish_release == 'true'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ github.token }}
+          file: ${{ env.GO_BIN_DIR }}/*.zip
+          file_glob: true
+          overwrite_files: false
+          tag: ${{ steps.tag.outputs.release_tag }}
 
       - name: Publish legacy release to GitHub Releases
         if: steps.tag.outputs.publish_release == 'true'

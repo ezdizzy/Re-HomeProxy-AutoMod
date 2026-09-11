@@ -3,3 +3,6 @@
 LOCAL_DOCS/
 LOCAL_CHANGELOG.md
 LOCAL_*.md
+
+# Go helper build artifacts (built in CI, never committed)
+.github/go/*/bin/
