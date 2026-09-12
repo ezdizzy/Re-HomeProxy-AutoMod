@@ -194,7 +194,7 @@ return view.extend({
 		o.default = 'balanced';
 
 		o = s.option(form.ListValue, 'performance', _('Performance profile'),
-			_('eco: classic serial probing for weak routers. perf: up to 64 domains / 32 IPs per pass probed in parallel batches (16 at once) — needs a multi-core router with 1 GB RAM (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory.'));
+			_('eco: serial probing for weak routers (still uses the native probe_pool batch when the helper is installed, capped at 8 concurrent probes). perf: up to 64 domains / 32 IPs per pass in parallel batches (16 at once) — for multi-core routers (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory.'));
 		o.value('auto', _('Auto (detect by hardware)'));
 		o.value('eco', _('Eco — serial, weak routers'));
 		o.value('perf', _('Performance — parallel, strong routers'));
@@ -401,9 +401,11 @@ return view.extend({
 		const ovCards = E('div', { 'class': 'hpauto-cards' });
 		const pauseEl = E('div', { 'class': 'hpauto-banner', style: 'display:none' });
 		const geoLine = E('div', { 'class': 'hpauto-hint' });
+		const helperLine = E('div', { 'class': 'hpauto-hint' });
 		panes.overview.appendChild(ovCards);
 		panes.overview.appendChild(pauseEl);
 		panes.overview.appendChild(geoLine);
+		panes.overview.appendChild(helperLine);
 		panes.overview.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Test now'), function() { return callTestNow().then(refresh); }),
 			btn(_('Restart service'), function() { return callRestart(); })
@@ -745,6 +747,23 @@ return view.extend({
 					? _('networks %s, domains %s, %s').format(g.geoip || 0, g.geosite || 0, fmtAge(g.updated) || '—')
 					: _('not installed — update on the “RU-geo databases” tab'))
 					+ (g.updating ? ' · <b>' + _('updating…') + '</b>' : '');
+				/* Native helpers + engine profile (like the mosdns card on Core
+				 * & Tools, but inline where the engine is configured). probe_pool
+				 * is a one-shot batch prober — only presence applies; sni_sniffer
+				 * is a resident daemon — running state applies. DOM building:
+				 * colored E() spans must not be stringified into innerHTML. */
+				const h = st.helpers || {};
+				const prof = (st.profile === 'perf');
+				const hspan = (ok, txt) => E('span', { style: 'color:' + (ok ? '#3fbf5f' : (ok === false ? '#9a9a9a' : '#d99a1b')) }, [ txt ]);
+				helperLine.innerHTML = '';
+				helperLine.appendChild(document.createTextNode(_('Engine profile') + ': '));
+				helperLine.appendChild(E('b', {}, [ prof ? _('performance (parallel)') : _('eco (serial)') ]));
+				helperLine.appendChild(document.createTextNode(' · ' + _('Native helpers') + ': probe_pool — '));
+				helperLine.appendChild(hspan(!!h.probe_pool, h.probe_pool ? _('installed') : _('not installed')));
+				helperLine.appendChild(document.createTextNode(' · sni_sniffer — '));
+				helperLine.appendChild(h.sni_running ? hspan(true, _('running'))
+					: (h.sni_sniffer ? hspan(null, _('stopped')) : hspan(false, _('not installed'))));
+				helperLine.appendChild(document.createTextNode('.'));
 				renderTable();
 				renderGeo(g);
 				logEl.textContent = st.log || '';

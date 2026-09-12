@@ -2278,6 +2278,38 @@ const methods = {
 				else if (e.src === 'manual_direct') n_manual_direct++;
 			}
 
+			/* Native automation helpers visibility (probe_pool = one-shot batch
+			 * prober: presence is what matters; sni_sniffer = resident daemon:
+			 * running state matters). Mirrors the mosdns card on Core & Tools,
+			 * but shown inline on the Automation overview. */
+			let helpers = {
+				probe_pool: !!access('/usr/bin/probe_pool'),
+				sni_sniffer: !!access('/usr/bin/sni_sniffer'),
+				sni_running: false
+			};
+			if (helpers.sni_sniffer) {
+				let pfd = popen('pidof sni_sniffer 2>/dev/null');
+				if (pfd) {
+					helpers.sni_running = length(trim(pfd.read('all'))) > 0;
+					pfd.close();
+				}
+			}
+
+			/* Engine performance profile — the same detection the daemon runs at
+			 * startup: explicit UCI value first, then cores/memory autodetect. */
+			let perf_cfg = 'auto';
+			let pcfd = popen('uci -q get homeproxy.automation.performance 2>/dev/null');
+			if (pcfd) { perf_cfg = trim(pcfd.read('all')) || 'auto'; pcfd.close(); }
+			let profile = perf_cfg;
+			if (profile !== 'eco' && profile !== 'perf') {
+				let cores = 0;
+				for (let l in split(readfile('/proc/cpuinfo') || '', '\n'))
+					if (substr(l, 0, 9) === 'processor') cores = cores + 1;
+				let mm = match(readfile('/proc/meminfo') || '', /^MemTotal:\s+([0-9]+)/);
+				let mem_mb = mm ? int(mm[1]) / 1024 : 128;
+				profile = (cores >= 4 || mem_mb >= 900) ? 'perf' : 'eco';
+			}
+
 			return {
 				enabled: enabled,
 				paused: paused,
@@ -2290,6 +2322,8 @@ const methods = {
 					total: length(entries)
 				},
 				geo: ru_geo_read_meta(),
+				helpers: helpers,
+				profile: profile,
 				log: log_tail
 			};
 		}

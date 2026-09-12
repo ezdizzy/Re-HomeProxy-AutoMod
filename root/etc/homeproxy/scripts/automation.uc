@@ -1226,6 +1226,15 @@ function main() {
 	const sni_secs = PERF ? 8 : 5;
 	log(`performance profile: ${perf_mode} (dom_cap=${dom_cap}, ip_cap=${ip_cap}, parallel=${par})`);
 
+	/* PERFORMANCE PROFILE constraint of this ucode build: a nested function only
+	 * closes over main() locals declared LEXICALLY BEFORE its own definition —
+	 * anything else resolves to a (missing) global at runtime and fatals with
+	 * "access to undeclared variable" (the asn_enabled lesson, hit again by
+	 * host_timeout() which reads the EWMA state). state + adaptive_timeout are
+	 * therefore declared here, BEFORE the probe helper definitions below. */
+	let state = load_state();
+	let adaptive_timeout = (uci.get('homeproxy', 'automation', 'adaptive_timeout') || '1') !== '0';
+
 	/* Probe worker: one measurement per invocation, safe to run many copies in
 	 * parallel. Mirrors the serial probe() exactly — plain-view DNS resolution
 	 * with --resolve pinning for direct, socks5 vs socks5h through the pinned
@@ -1273,6 +1282,34 @@ echo done > "$PRE.done"
 `);
 	system(`chmod +x ${WORKER} 2>/dev/null`);
 
+	/* Plain-view resolver worker (parallel DNS for native batches): same
+	 * semantics as resolve_plain_view() — the local mosdns plain listener
+	 * (the RU-facing view the user's browser gets) when MultiDNS is actually
+	 * running, public resolvers as fallback. Writes the resolved IPv4 (may be
+	 * EMPTY on failure) to <prefix>.ip and a done marker, so the daemon can
+	 * run many of these concurrently instead of one serial nslookup per host
+	 * (the serial loop was the dominant cost of large native batches). */
+	const RSOLVER = RUN_DIR + '/resolve_worker.sh';
+	writefile(RSOLVER, `#!/bin/sh
+# automation.uc plain-view resolver: <host> <prefix>
+H="$1"; PRE="$2"
+RES=""
+if [ -x /usr/bin/mosdns ] && pidof mosdns >/dev/null 2>&1 && [ "$(uci -q get homeproxy.multidns.enabled)" = "1" ]; then
+	PORT=$(uci -q get homeproxy.multidns.plain_port 2>/dev/null)
+	[ -n "$PORT" ] || PORT=5453
+	RES=$(nslookup -port=$PORT "$H" 127.0.0.1 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
+fi
+if [ -z "$RES" ]; then
+	for R in 8.8.8.8 1.1.1.1 77.88.8.8; do
+		RES=$(nslookup -type=A "$H" "$R" 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
+		[ -n "$RES" ] && break
+	done
+fi
+printf '%s' "$RES" > "$PRE.ip"
+echo done > "$PRE.done"
+`);
+	system(`chmod +x ${RSOLVER} 2>/dev/null`);
+
 	/* probe_pool native Go backend (Phase 2), FILE-based one-shot batch mode.
 	 * The daemon writes a JSON request (hosts + pinned plain-view resolutions)
 	 * to a temp file, runs `/usr/bin/probe_pool -in <in> -out <out>` (one
@@ -1295,23 +1332,106 @@ echo done > "$PRE.done"
 	else
 		log('probe_pool not installed — using shell workers');
 
+	/* Adaptive per-host probe timeout (Phase 1, made real): hosts with a
+	 * recorded EWMA response time are measured with a timeout scaled to THEIR
+	 * observed speed — fast hosts fail fast (the freed budget goes to other
+	 * candidates in the same pass), slow ones get headroom instead of failing
+	 * spuriously. Clamped to [2s, 2x base]; hosts without history keep the
+	 * configured base. Returns SECONDS. Only the batch waves use it — the
+	 * hourly self-heal re-probe is 2 hosts and keeps the base timeout. */
+	function host_timeout(h, side, base) {
+		if (!adaptive_timeout) return base;
+		let st = state[h];
+		if (!st || type(st) !== 'object') return base;
+		let ew = int((side === 'proxy' || side === 'tcpproxy') ? st.ewma_rtt_proxy : st.ewma_rtt_direct) || 0;
+		if (ew <= 0) return base;
+		let ms = int(ew * 3 + 1000);
+		if (ms < 2000) ms = 2000;
+		let cap = base * 2000;
+		if (ms > cap) ms = cap;
+		let s = int(ms / 1000);
+		return (s < 2) ? 2 : s;
+	}
+
+	/* Resolve a batch of direct-side hosts CONCURRENTLY. The old code resolved
+	 * them one-by-one through resolve_plain_view() — for a 16-64 host batch
+	 * that meant up to minutes of serial nslookup forks BEFORE the native
+	 * batch ever dispatched. Workers run the exact resolve_plain_view()
+	 * semantics (mosdns plain listener first, public fallback), bounded by
+	 * inflight_cap so a weak router never forks more than a few at once, and
+	 * by an overall deadline: leftover unresolved hosts are reported as
+	 * unresolvable (000), exactly like the serial path. Fresh pv_cache hits
+	 * are served without forking, new answers are written back. */
+	function resolve_wave(hosts) {
+		let res = {}, need = [];
+		for (let k = 0; k < length(hosts); k++) {
+			let h = hosts[k];
+			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) { res[h] = h; continue; }
+			let ce = pv_cache[h];
+			if (type(ce) === 'object' && ce.ip && (time() - int(ce.t)) < 600) { res[h] = ce.ip; continue; }
+			push(need, { h: h, pre: RUN_DIR + '/rs.' + k });
+		}
+		if (length(need)) {
+			/* Stale leftovers from an earlier pass (e.g. after a deadline exit)
+			 * must never be read as fresh answers. */
+			system(`rm -f ${RUN_DIR}/rs.*.ip ${RUN_DIR}/rs.*.done 2>/dev/null`);
+			const inflight_cap = PERF ? 16 : 8;
+			let spawned = 0;
+			let deadline = time() + 12;
+			for (;;) {
+				let running = 0;
+				for (let k = 0; k < spawned; k++)
+					if (!access(need[k].pre + '.done')) running++;
+				/* Top up the in-flight window. */
+				while (spawned < length(need) && running < inflight_cap) {
+					system(`${RSOLVER} ${shellquote(need[spawned].h)} ${shellquote(need[spawned].pre)} >/dev/null 2>&1 &`);
+					spawned++;
+					running++;
+				}
+				let left = 0;
+				for (let k = 0; k < spawned; k++)
+					if (!access(need[k].pre + '.done')) left++;
+				if (!left || time() >= deadline) break;
+				sleep(150);
+			}
+			for (let k = 0; k < length(need); k++) {
+				let ip = trim(readfile(need[k].pre + '.ip') || '');
+				system(`rm -f ${shellquote(need[k].pre)}.ip ${shellquote(need[k].pre)}.done 2>/dev/null`);
+				if (length(ip)) {
+					res[need[k].h] = ip;
+					pv_cache[need[k].h] = { ip: ip, t: time() };
+				}
+			}
+			if (length(keys(pv_cache)) > 400) pv_cache = {};
+		}
+		return res;
+	}
+
 	function probe_pool_batch(items, side, timeout, http2_flag) {
 		if (!probe_pool_available || !probe_pool_enabled || !access(PROBE_POOL_BIN))
 			return null;
 		if (side !== 'tcp' && side !== 'tcpproxy' && !have_curl())
 			return null;
 
+		/* Direct-side plain-view resolution happens ONCE for the whole batch,
+		 * concurrently (resolve_wave). Unresolvable hosts become 000 without
+		 * probing — mirroring the shell worker's behavior. */
+		let need_resolve = [];
+		if (side === 'direct')
+			for (let k = 0; k < length(items); k++)
+				push(need_resolve, items[k].h);
+		let resolved = (side === 'direct') ? resolve_wave(need_resolve) : {};
 		let resolve = {};
 		let hosts = [];
 		let skipped = {};
 		for (let k = 0; k < length(items); k++) {
 			let h = items[k].h;
-			let entry = { id: items[k].i, host: h, side: side, timeout_ms: timeout * 1000 };
+			let entry = { id: items[k].i, host: h, side: side, timeout_ms: host_timeout(h, side, timeout) * 1000 };
 			if (side === 'direct') {
 				if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
 					resolve[h] = h;   /* literal: nothing to resolve */
 				} else {
-					let ip = resolve_plain_view(h);
+					let ip = resolved[h];
 					if (!ip) {
 						/* Mirror the shell worker: unresolvable → 000, no probe. */
 						skipped[items[k].i] = { code: '000', ok: false, block: false, fp: '', ip: null, rtt_ms: 0 };
@@ -1335,8 +1455,9 @@ echo done > "$PRE.done"
 		writefile(PP_IN, sprintf('%.J', req));
 		system(`rm -f ${shellquote(PP_OUT)} 2>/dev/null`);
 		/* Wall clock: hosts run CONCURRENTLY (workers = min(16, 4*cores)), so a
-		 * chunk costs ~2 attempts x timeout + process/DNS slack, not n x that. */
-		let rc = system(`${shellquote(PROBE_POOL_BIN)} -in ${shellquote(PP_IN)} -out ${shellquote(PP_OUT)} 2>>${shellquote(LOG_FILE)}`, timeout * 2000 + 15000);
+		 * chunk costs ~2 attempts x the largest per-host (adaptive) timeout +
+		 * slack, not n x that. */
+		let rc = system(`${shellquote(PROBE_POOL_BIN)} -in ${shellquote(PP_IN)} -out ${shellquote(PP_OUT)} 2>>${shellquote(LOG_FILE)}`, timeout * 4000 + 15000);
 		if (rc !== 0 || !access(PP_OUT)) {
 			log(`probe_pool batch failed (rc=${rc}) — falling back to shell workers`);
 			probe_pool_available = false;
@@ -1385,11 +1506,12 @@ echo done > "$PRE.done"
 
 	/* Run one probe side for a batch of hosts CONCURRENTLY. items:
 	 * [{ i: <string id>, h: <host> }] → { <id>: { code, ok, block, fp, rtt_ms } }.
-	 * Tries probe_pool first (native batch), falls back to shell workers. */
+	 * Tries probe_pool first (native batch), falls back to shell workers. The
+	 * pool is used in EVERY profile when more than one host is pending — it is
+	 * I/O-bound (curl timeouts dominate), so even a 2-core router gains far
+	 * more from one batched process than serial shell workers would give. */
 	function probe_wave(items, side, timeout, http2_flag) {
-		/* The pool pays off when several hosts are probed at once (perf mode):
-		 * one process per chunk instead of par x (sh + nslookup + curl). */
-		if (par > 1 && length(items) > 1) {
+		if (length(items) > 1) {
 			let pool_res = probe_pool_batch(items, side, timeout, http2_flag);
 			if (pool_res !== null) return pool_res;
 		}
@@ -1398,9 +1520,10 @@ echo done > "$PRE.done"
 		let h2 = (http2_flag && (side !== 'tcp' && side !== 'tcpproxy')) ? '1' : '0';
 		for (let k = 0; k < length(items); k++) {
 			let pre = RUN_DIR + '/pw.' + items[k].i;
-			system(`${WORKER} ${shellquote(items[k].h)} ${side} ${port} ${timeout} ${shellquote(pre)} ${h2} >/dev/null 2>&1 &`);
+			let hto = host_timeout(items[k].h, side, timeout);
+			system(`${WORKER} ${shellquote(items[k].h)} ${side} ${port} ${hto} ${shellquote(pre)} ${h2} >/dev/null 2>&1 &`);
 		}
-		let deadline = time() + timeout * 6 + 20;
+		let deadline = time() + timeout * 8 + 25;
 		while (time() < deadline) {
 			let left = 0;
 			for (let k = 0; k < length(items); k++)
@@ -1439,8 +1562,16 @@ echo done > "$PRE.done"
 
 	function probe_all(items, side, timeout, http2_flag) {
 		let merged = {};
-		for (let s = 0; s < length(items); s += par) {
-			let chunk = slice(items, s, s + par);
+		/* Chunk size: with the native pool installed and healthy, feed it
+		 * bigger batches even in eco (capped at 8 concurrent probes so weak
+		 * routers stay comfortable); perf keeps its full 16-wide chunks. When
+		 * the pool is absent or has latched FAILED, eco falls back to its
+		 * classic serial (par = 1) shell workers. */
+		let step = par;
+		if (length(items) > 1 && probe_pool_enabled && probe_pool_available && access(PROBE_POOL_BIN))
+			step = PERF ? par : 8;
+		for (let s = 0; s < length(items); s += step) {
+			let chunk = slice(items, s, s + step);
 			let m = probe_wave(chunk, side, timeout, http2_flag);
 			for (let k in keys(m)) merged[k] = m[k];
 		}
@@ -1449,15 +1580,16 @@ echo done > "$PRE.done"
 	/* Stale worker leftovers from a crashed pass would poison later reads only if
 	 * ids collide; ids embed the pass-unique selection index, and every wave
 	 * deletes its files after harvest — a startup sweep is belt & braces. */
-	system(`rm -f ${RUN_DIR}/pw.*.done ${RUN_DIR}/pw.*.code ${RUN_DIR}/pw.*.body ${RUN_DIR}/pw.*.ip 2>/dev/null`);
+	system(`rm -f ${RUN_DIR}/pw.*.done ${RUN_DIR}/pw.*.code ${RUN_DIR}/pw.*.body ${RUN_DIR}/pw.*.ip ${RUN_DIR}/rs.*.ip ${RUN_DIR}/rs.*.done 2>/dev/null`);
 
 	let min_confirm = int(uci.get('homeproxy', 'automation', 'min_confirm') || '1') || 1;
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
 
-	/* Phase 1: adaptive behavior options. http2_probe needs a curl actually
-	 * built with HTTP/2: `--http2` on a non-h2 curl build errors out EVERY
-	 * probe, so the feature string gates the flag at startup. */
-	let adaptive_timeout = (uci.get('homeproxy', 'automation', 'adaptive_timeout') || '1') !== '0';
+	/* Phase 1: adaptive behavior options. adaptive_timeout is declared EARLY
+	 * (before the probe helpers, see the closure note); only the http2 flag is
+	 * latched here. http2_probe needs a curl actually built with HTTP/2:
+	 * `--http2` on a non-h2 curl build errors out EVERY probe, so the feature
+	 * string gates the flag at startup. */
 	let adaptive_confirm = (uci.get('homeproxy', 'automation', 'adaptive_confirm') || '1') !== '0';
 	let resource_aware = (uci.get('homeproxy', 'automation', 'resource_aware') || '1') !== '0';
 	let http2_probe = false;
@@ -1630,7 +1762,8 @@ echo done > "$PRE.done"
 		load_ru_geo();
 	reload_lists();
 
-	let state = load_state();
+	/* state was loaded early (ucode closure constraint — see the note above
+	 * the probe helper definitions). */
 	if (state.__dns_offset) dns_log_offset = int(state.__dns_offset) || 0;
 	/* Legacy sweep: old builds PERSISTED 'unknown' records (both probes
 	 * inconclusive — transient/junk/non-HTTP endpoints); one DNS-storm burst

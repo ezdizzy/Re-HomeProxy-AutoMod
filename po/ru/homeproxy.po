@@ -5514,11 +5514,37 @@ msgstr "Профиль производительности"
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
 msgid ""
-"eco: classic serial probing for weak routers. perf: up to 64 domains / 32 IPs per pass probed in parallel batches (16 at once) — needs a multi-core router with 1 GB RAM (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
+"eco: serial probing for weak routers (still uses the native probe_pool batch when the helper is installed, capped at 8 concurrent probes). perf: up to 64 domains / 32 IPs per pass in parallel batches (16 at once) — for multi-core routers (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
 msgstr ""
-"eco: классические последовательные пробы для слабых роутеров. perf: до 64 доменов / 32 IP за "
-"проход параллельными батчами (по 16 одновременно) — нужен многоядерный роутер с 1 ГБ ОЗУ "
+"eco: последовательные пробы для слабых роутеров (при установленном помощнике probe_pool "
+"используется нативный батч, ограничение — 8 одновременных проб). perf: до 64 доменов / 32 IP за "
+"проход параллельными батчами (по 16 одновременно) — для многоядерных роутеров "
 "(например, GL.iNet Flint 2). auto: определяется по числу ядер и памяти."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Engine profile"
+msgstr "Профиль движка"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "performance (parallel)"
+msgstr "производительность (параллельно)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "eco (serial)"
+msgstr "eco (последовательно)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Native helpers"
+msgstr "Нативные помощники"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "not installed"
+msgstr "не установлен"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
