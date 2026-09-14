@@ -2343,6 +2343,76 @@ const methods = {
 		}
 	},
 
+	/* Geo-sensitive services diagnostic (ч.51): answers WHY a geo-gated service
+	 * (Google Gemini / ChatGPT / ...) still refuses through a "working" proxy.
+	 * Measures the tunnel exit (country + ASN classification) through the user's
+	 * mixed port and the geo seed coverage — the two facts that decide whether
+	 * the fix is routing (seeds missing) or the exit node itself. */
+	automation_geo_diag: {
+		call: function(req) {
+			const seeds = [
+				'gemini.google.com',
+				'aistudio.google.com',
+				'ai.google.dev',
+				'generativelanguage.googleapis.com',
+				'alkalimakersuite-pa.clients6.google.com',
+				'aisandbox-pa.googleapis.com',
+				'push.clients6.google.com'
+			];
+			const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
+			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
+			let mixed = '5330';
+			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
+
+			const curlj = (url) => {
+				const f = '/tmp/geo_diag.json';
+				system(`rm -f ${shellquote(f)}`);
+				system(`curl -s --max-time 12 -o ${shellquote(f)} -x socks5h://127.0.0.1:${mixed} ${shellquote(url)} 2>/dev/null`);
+				if (!access(f)) return null;
+				const c = readfile(f);
+				system('rm -f ' + shellquote(f));
+				let j = null;
+				try { j = json(c || ''); } catch (e) { j = null; }
+				return j;
+			};
+			const g = curlj('https://api.ip.sb/geoip');
+			let exit = null;
+			if (type(g) === 'object') {
+				exit = {
+					ip: g.ip || null,
+					country: g.country || g.country_code || null,
+					country_code: g.country_code || g.countryCode || null,
+					asn: (g.asn != null) ? ('AS' + g.asn) : (g.asn_organization || null),
+					org: g.isp || g.organization || null
+				};
+				if (!exit.country_code && exit.country)
+					exit.country_code = substr(exit.country, 0, 2);
+			}
+
+			/* Seed coverage: which of the geo hosts are actually routed via the
+			 * proxy lists right now (list files are the routing truth). ucode
+			 * has no RegExp constructor — match by exact line equality. */
+			const auto_list = HP_DIR + '/resources/auto_proxy_list.txt';
+			const in_auto = {};
+			if (access(auto_list)) {
+				const lines = split(readfile(auto_list) || '', '\n');
+				for (let s in seeds)
+					for (let l in lines)
+						if (trim(l) === s) { in_auto[s] = true; break; }
+			}
+
+			return {
+				mixed_port: mixed,
+				exit: exit,
+				exit_verdict: (exit && exit.country_code && UNSUPPORTED[exit.country_code]) ? 'unsupported_country'
+					: exit ? 'supported_country'
+					: 'probe_failed',
+				seeds: seeds,
+				seeds_covered: length(keys(in_auto))
+			};
+		}
+	},
+
 	/* --- mosdns engine management (MultiDNS racing engine, Core & Tools tab) ---
 	 * mosdns is NOT an OpenWrt package: install.sh fetches the static binary from
 	 * IrineSistiana/mosdns GitHub releases. These RPCs mirror that (install/update/

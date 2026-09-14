@@ -203,6 +203,28 @@ let pv_cache = {};
 let manual_proxy_set = {};
 let manual_direct_set = {};
 
+/* Geo-sensitive services (ч.51): sites whose HTML shell answers 200 from
+ * anywhere while the actual API calls inside reject "unsupported country"
+ * (Google Gemini error 1060 class). A plain GET can NOT tell a working site
+ * from a geo-refused one for these, so the engine can never learn them from
+ * traffic — and worse, once learned by accident they get self-healed OUT of
+ * the proxy lists by the 200-direct answer, which sends user traffic DIRECT
+ * to the RU-visible endpoint (mixed direct/proxy geometry is exactly what
+ * triggers Gemini's region checks). These hosts are therefore seeded into
+ * the proxy path unconditionally (when a proxy path exists), pinned against
+ * self-healing and re-evaluation. Do not grow this list casually: every
+ * entry is a guaranteed proxy route. */
+const GEO_SENSITIVE_HOSTS = [
+	'gemini.google.com',
+	'aistudio.google.com',
+	'ai.google.dev',
+	'generativelanguage.googleapis.com',
+	'alkalimakersuite-pa.clients6.google.com',
+	'aisandbox-pa.googleapis.com',
+	'push.clients6.google.com'
+];
+let geo_seed_set = {};
+
 /* RU-geo working sets. DECLARATIONS here, functions below (after read_lines):
  * this ucode build has no function hoisting, so helpers must be declared
  * above their callers. */
@@ -471,6 +493,31 @@ function body_blocked(body) {
 	for (let s in BLOCK_SIGNATURES) if (index(body, s) >= 0) return true;
 	return false;
 }
+/* Geo-refusal signatures (ч.51): services that serve a 200 page which refuses
+ * at the application level ("This country is not supported", ChatGPT/OpenAI
+ * region markers). A 200 with one of these is NOT a success: for classification
+ * it counts as "direct cannot serve this" (the RU exit is refused), and a proxy
+ * path answered with the same refusal means the current EXIT NODE is rejected
+ * (status geo_blocked). The list is deliberately narrow — a false hit would
+ * reclassify a working site — and matches whole stable phrases (EN+RU). */
+const GEO_REFUSAL_PATTERNS = [
+	"isn't currently supported in your country",
+	'not supported in your country',
+	'not available in your country',
+	'is not supported in your country',
+	'unavailable in your region',
+	'not available in your region',
+	'unsupported_country_region_territory',
+	'страна не поддерживается',
+	'не поддерживается в вашей стране',
+	'недоступен в вашей стране'
+];
+function geo_refused(body) {
+	if (!body || length(body) > 32768) return false;
+	body = lc(body);
+	for (let s in GEO_REFUSAL_PATTERNS) if (index(body, s) >= 0) return true;
+	return false;
+}
 /* Classify a raw HTTP code string: 'ok' (2xx/3xx), 'block' (4xx/5xx), 'fail' (no response). */
 function classify_code(code) {
 	let c = trim(code || '000');
@@ -615,6 +662,7 @@ function probe(host, via_proxy, timeout) {
 		let body = readfile(bodyf) || '';
 		let fp = fingerprint(body);
 		let block = (c === 'block');
+		let geo = false;
 		if (c === 'ok') {
 			/* A 2xx/3xx response is a real page UNLESS the body is small AND
 			 * carries a block-page signature (MITM block pages served with 200).
@@ -623,15 +671,18 @@ function probe(host, via_proxy, timeout) {
 			 * somewhere in their markup. */
 			if (length(body) < 32768 && body_blocked(body))
 				block = true;
+			/* 200 but the app refuses the region ("unsupported country" page):
+			 * NOT a working answer for classification purposes. */
+			geo = (length(body) < 32768) && geo_refused(body);
 		}
-		let ok = (c === 'ok') && !block;
-		return { code: code, ok: ok, block: block, fp: fp, ip: via_proxy ? null : ip };
+		let ok = (c === 'ok') && !block && !geo;
+		return { code: code, ok: ok, block: block, geo: geo, fp: fp, ip: via_proxy ? null : ip };
 	}
 	let wget_port = via_proxy ? AUTO_PROXY_PORT : AUTO_DIRECT_PORT;
 	let proxy_env = `http_proxy=http://127.0.0.1:${wget_port} https_proxy=http://127.0.0.1:${wget_port}`;
 	let rc = system(`${proxy_env} /usr/bin/wget -q -T ${timeout} -t 1 --no-check-certificate -O /dev/null ${shellquote('https://' + host)} 2>/dev/null`, timeout * 1000 + 2000);
 	let ok = (rc === 0);
-	return { code: ok ? '200' : '000', ok: ok, block: false, fp: '', ip: null };
+	return { code: ok ? '200' : '000', ok: ok, block: false, geo: false, fp: '', ip: null };
 }
 
 function is_private_ip(ip) {
@@ -1479,7 +1530,7 @@ echo done > "$PRE.done"
 			if (side === 'tcp' || side === 'tcpproxy') {
 				let ok = false;
 				for (let c in TCP_OK_EXIT) if ('' + res.code === '' + c) ok = true;
-				out[res.id] = { code: ('' + res.code), ok: ok, block: false, fp: '', ip: null, rtt_ms: int(res.rtt_ms) || 0 };
+				out[res.id] = { code: ('' + res.code), ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: int(res.rtt_ms) || 0 };
 			} else {
 				let code = '' + (res.code || '000');
 				let body = '' + (res.body_head || '');
@@ -1491,7 +1542,8 @@ echo done > "$PRE.done"
 				 * body_len the full size — the <32768 guard stays honest. */
 				if (c === 'ok' && blen < 32768 && body_blocked(body))
 					block = true;
-				out[res.id] = { code: code, ok: (c === 'ok') && !block, block: block,
+				let geo = (c === 'ok' && blen < 32768 && geo_refused(body));
+				out[res.id] = { code: code, ok: (c === 'ok') && !block && !geo, block: block, geo: geo,
 					fp: '' + (res.fp || ''), ip: (side === 'direct' && res.ip) ? res.ip : null,
 					rtt_ms: int(res.rtt_ms) || 0 };
 			}
@@ -1500,7 +1552,7 @@ echo done > "$PRE.done"
 		 * classify treats it as an unproven candidate → fabricate 000. */
 		for (let k = 0; k < length(items); k++)
 			if (!exists(out, items[k].i))
-				out[items[k].i] = { code: '000', ok: false, block: false, fp: '', ip: null, rtt_ms: 0 };
+				out[items[k].i] = { code: '000', ok: false, block: false, geo: false, fp: '', ip: null, rtt_ms: 0 };
 		return out;
 	}
 
@@ -1545,13 +1597,14 @@ echo done > "$PRE.done"
 			if (side === 'tcp' || side === 'tcpproxy') {
 				let ok = false;
 				for (let c in TCP_OK_EXIT) if (code === '' + c) ok = true;
-				res = { code: length(code) ? code : '-1', ok: ok, block: false, fp: '', ip: null, rtt_ms: rtt_ms };
+				res = { code: length(code) ? code : '-1', ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: rtt_ms };
 			} else {
 				let c = classify_code(code);
 				let block = (c === 'block');
+				let geo = (c === 'ok' && length(body) < 32768 && geo_refused(body));
 				if (c === 'ok' && length(body) < 32768 && body_blocked(body))
 					block = true;
-				res = { code: length(code) ? code : '000', ok: (c === 'ok') && !block, block: block, fp: fingerprint(body),
+				res = { code: length(code) ? code : '000', ok: (c === 'ok') && !block && !geo, block: block, geo: geo, fp: fingerprint(body),
 				        ip: (side === 'direct' && length(ipraw)) ? ipraw : null, rtt_ms: rtt_ms };
 			}
 			out[items[k].i] = res;
@@ -1758,9 +1811,39 @@ echo done > "$PRE.done"
 		return (dropped + ip_dropped);
 	}
 
+	/* Geo-sensitive seeds (ч.51): make sure the Gemini-class hosts ride the
+	 * proxy path. Runs after every reload_lists(): idempotent, and the seeds
+	 * are pinned (geo_seed_set) so self-healing and re-evaluation below never
+	 * kick them back out on a 200 geo-refusal answer. Only fills the lists
+	 * when a real proxy path exists — a direct main node would make the seed
+	 * entries pointless (and the proxy-domain rule inert anyway). */
+	function ensure_geo_seeds() {
+		const mn = uci.get('homeproxy', 'config', 'main_node') || 'nil';
+		if (mn === 'direct-out' || mn === 'nil')
+			return;
+		let added = 0;
+		for (let s in GEO_SENSITIVE_HOSTS) {
+			geo_seed_set[s] = true;
+			if (auto_set[s] || proxy_set[s] || manual_direct_set[s])
+				continue;
+			auto_set[s] = true;
+			added++;
+			if (!state[s]) state[s] = {};
+			state[s].status = 'geo';
+			state[s].type = 'domain';
+			if (!state[s].added) state[s].added = time();
+			log('geo-sensitive service seeded into the proxy path: ' + s);
+		}
+		if (added > 0) {
+			write_auto_list(auto_set);
+			save_state(state);
+		}
+	}
+
 	if (!geo_loaded)
 		load_ru_geo();
 	reload_lists();
+	ensure_geo_seeds();
 
 	/* state was loaded early (ucode closure constraint — see the note above
 	 * the probe helper definitions). */
@@ -1843,6 +1926,14 @@ echo done > "$PRE.done"
 		st.proxy = p ? p.code : 'n/a';
 		st.type = is_ip ? 'ip' : 'domain';
 
+		/* Geo-sensitive seed (Gemini class): the routing decision is PINNED and
+		 * never re-verdicted — a plain GET to the app shell answers 200 through
+		 * ANY path, so every probe path here "proves direct works" and would
+		 * flip the host back to the broken direct route. Probe codes above are
+		 * still refreshed for the UI. */
+		if (geo_seed_set[dom] === true)
+			return;
+
 		/* Track EWMA RTT for adaptive timeouts (Phase 1).
 		 * RTT in milliseconds; alpha=0.3 for EWMA smoothing. */
 		if (adaptive_timeout) {
@@ -1879,14 +1970,20 @@ echo done > "$PRE.done"
 		/* A host is learned as BLOCKED only when direct is NOT ok (fails, times out,
 		 * gets a 4xx/5xx, or a 200 block-page) AND the proxy reaches a real page.
 		 * - direct ok                       -> not blocked, leave as-is
+		 * - direct geo-refused + proxy ok   -> blocked, learn it (geo gate, ч.51)
+		 * - direct geo-refused + proxy same -> geo_blocked (exit node rejected)
 		 * - direct not ok + proxy ok        -> blocked, learn it
 		 * - direct not ok + proxy blocked   -> proxy can't help (blocked_no_proxy)
 		 * - direct not ok + proxy fail      -> both unreachable / transient (unknown)
 		 * This covers: timeout/reset, poisoning (NXDOMAIN/bogus IP), DPI 403/451/5xx,
 		 * MITM block-pages served with 200, and the 403-direct / 200-proxy case.
+		 * d.geo (200 + "unsupported country" page): the shell answers, but the
+		 * service refuses to serve this region — for THIS host that is not a
+		 * direct success, otherwise Gemini-class services would keep flipping
+		 * direct (self-heal "heals" them straight back to the broken path).
 		 * tcp_direct: the TCP/TLS fallback proved the endpoint reachable DIRECTLY
 		 * even though HTTP probes failed (proprietary protocol) -> never learn it. */
-		if (d.ok || tcp_direct) {
+		if ((d.ok && !d.geo) || tcp_direct) {
 			if (tcp_direct) {
 				st.status = 'direct';
 				st.confirms = 0;
@@ -1913,11 +2010,21 @@ echo done > "$PRE.done"
 			return;
 		}
 		let p_ok = p && p.ok;
-		if (p_ok || (p && p.block)) {
+		if (p_ok || (p && (p.block || p.geo))) {
 			/* Direct failure: a host that just passed once may fail now (flaky
 			 * DPI half-blocks alternate verdicts) — invalidate its direct
 			 * confirmation streak so it can never be trusted from one lucky hit. */
 			delete st.dconfirms;
+		}
+		/* Both sides served a "region not supported" page: the routing is fine —
+		 * the EXIT NODE itself is refused by the service (flagged DC IP or an
+		 * actually unsupported country). Nothing to learn; surface it so the
+		 * user knows a node change is the fix. */
+		if (d.geo && p && p.geo) {
+			st.status = 'geo_blocked';
+			st.confirms = 0;
+			log(`geo-refused on BOTH paths: ${dom} — current exit node is rejected by the service (node change required)`);
+			return;
 		}
 		if (p_ok) {
 			/* Hard guard, independent of every intake path: some IP classes must
@@ -1954,6 +2061,10 @@ echo done > "$PRE.done"
 					 * learn at min_confirm — FASTER than the legacy rule that
 					 * slowed everything but 000 down. */
 					need = min_confirm;
+				} else if (d.geo) {
+					/* 200 geo-refusal: the host answered, so this is not a hard
+					 * block shape — keep the cautious extra confirmation. */
+					need = min_confirm + 1;
 				} else {
 					/* Anything else is not a recognizable block shape: cautious. */
 					need = min_confirm + 1;
@@ -2333,6 +2444,10 @@ echo done > "$PRE.done"
 				/* keys() snapshot: entries are deleted from lst during iteration. */
 				for (let h in keys(lst)) {
 					if (manual_proxy_set[h] || manual_direct_set[h]) continue;
+					/* Geo-sensitive seeds are pinned: a 200 geo-refusal shell
+					 * would read as "answers direct again" and heal the host
+					 * back onto the broken direct route. */
+					if (geo_seed_set[h]) continue;
 					if (rechecked >= REEVAL_BATCH) break;
 					let st = state[h];
 					if (st && st.last_probe && (now - st.last_probe) < REEVAL_AGE) continue;
@@ -2374,6 +2489,8 @@ echo done > "$PRE.done"
 			/* Manual pins are user decisions — their state records survive pruning. */
 			for (let d in manual_proxy_set) keep[d] = true;
 			for (let d in manual_direct_set) keep[d] = true;
+			/* Geo-sensitive seeds likewise (their routing is engine-pinned). */
+			for (let d in geo_seed_set) keep[d] = true;
 			for (let h in keys(state)) {
 				if (h === '__dns_offset') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
@@ -2457,10 +2574,12 @@ echo done > "$PRE.done"
 			system('rm -f ' + shellquote(RELOAD_MARKER + '_geo'));
 			load_ru_geo();
 			reload_lists();
+			ensure_geo_seeds();
 			log('reload marker (geo): RU-geo database + working sets reloaded.');
 		} else if (access(RELOAD_MARKER)) {
 			system('rm -f ' + shellquote(RELOAD_MARKER));
 			reload_lists();
+			ensure_geo_seeds();
 			log('reload marker: working sets reloaded.');
 		}
 

@@ -7005,6 +7005,56 @@ msgstr "Всегда через прокси"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
+msgid "Geo (proxied)"
+msgstr "Гео (через прокси)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo-blocked (node)"
+msgstr "Гео-отказ (узел)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo diagnostics"
+msgstr "Гео-диагностика"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo diagnostics failed."
+msgstr "Не удалось выполнить гео-диагностику."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "geo-sensitive service — always routed via proxy"
+msgstr "гео-чувствительный сервис — всегда маршрутизируется через прокси"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "the service refuses the current exit node — switch node and re-test"
+msgstr "сервис отклоняет текущий узел выхода — смените узел и повторите проверку"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Tunnel exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d."
+msgstr "Выход туннеля: %s (%s), %s. %s Гео-чувствительных хостов через прокси: %d из %d."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "exit country is NOT supported by geo-gated services — switch nodes"
+msgstr "страна выхода НЕ поддерживается сервисами с гео-гейтом — смените узлы"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "exit country is supported; if a service still refuses it, the exit IP is flagged — try another node"
+msgstr "страна выхода поддерживается; если сервис всё равно отказывает, IP выхода помечен как прокси — попробуйте другой узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "could not probe the tunnel exit (proxy down?)"
+msgstr "не удалось проверить выход туннеля (прокси не работает?)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
 msgid "Always via proxy"
 msgstr "Всегда через прокси"
 

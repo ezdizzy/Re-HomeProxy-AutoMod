@@ -74,6 +74,12 @@ const callTestNow = rpc.declare({
 	expect: { '': {} }
 });
 
+const callGeoDiag = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_geo_diag',
+	expect: { '': {} }
+});
+
 const callBackup = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'automation_backup',
@@ -408,6 +414,21 @@ return view.extend({
 		panes.overview.appendChild(helperLine);
 		panes.overview.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Test now'), function() { return callTestNow().then(refresh); }),
+			btn(_('Geo diagnostics'), function() {
+				return callGeoDiag().then(function(r) {
+					if (!r)
+						return ui.addNotification(null, E('p', {}, _('Geo diagnostics failed.')), 'error');
+					const e = r.exit || {};
+					const verdict = (r.exit_verdict === 'unsupported_country')
+						? _('exit country is NOT supported by geo-gated services — switch nodes')
+						: (r.exit_verdict === 'supported_country')
+							? _('exit country is supported; if a service still refuses it, the exit IP is flagged — try another node')
+							: _('could not probe the tunnel exit (proxy down?)');
+					const text = _('Tunnel exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d.')
+						.format(e.ip || '—', e.country_code || '—', e.asn || (e.org || '—'), verdict, r.seeds_covered || 0, (r.seeds || []).length);
+					ui.addNotification(null, E('p', {}, text), (r.exit_verdict === 'unsupported_country') ? 'warning' : 'info');
+				});
+			}),
 			btn(_('Restart service'), function() { return callRestart(); })
 		]));
 
@@ -534,6 +555,10 @@ return view.extend({
 				return E('span', { 'class': 'hpbadge hpb-mproxy' }, [ _('Always proxy') ]);
 			if (e.src === 'manual_direct')
 				return E('span', { 'class': 'hpbadge hpb-mdirect' }, [ _('Always direct') ]);
+			if (e.status === 'geo')
+				return E('span', { 'class': 'hpbadge hpb-mproxy' }, [ _('Geo (proxied)') ]);
+			if (e.status === 'geo_blocked')
+				return E('span', { 'class': 'hpbadge hpb-noproxy' }, [ _('Geo-blocked (node)') ]);
 			if (e.status === 'blocked')
 				return E('span', { 'class': 'hpbadge hpb-blocked' }, [ _('Blocked') ]);
 			if (e.status === 'direct')
@@ -546,6 +571,10 @@ return view.extend({
 		}
 
 		function reasonText(e) {
+			if (e.status === 'geo')
+				return _('geo-sensitive service — always routed via proxy');
+			if (e.status === 'geo_blocked')
+				return _('the service refuses the current exit node — switch node and re-test');
 			if (e.src !== 'learned')
 				return _('pinned by user');
 			if (e.status === 'blocked') {
