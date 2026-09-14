@@ -446,6 +446,24 @@ start_service() {
 		procd_close_instance
 	fi
 
+	# URLTest failover watchdog: some core builds keep a STALE delay history for
+	# a node whose probes timeout, so the urltest group keeps riding the dead
+	# node ("Таймаут") instead of switching to a working member — internet gone
+	# for hours. The watchdog polls the Clash API, and when a group stays on a
+	# dead node while another member is verifiably alive, it dead-marks the node
+	# (generate_client.uc sinks it and refuses to front it via the sticky
+	# snapshot) and restarts the service (rate-limited) so a fresh core picks a
+	# living node. Only relevant when the main node IS a urltest group.
+	local main_node_wd
+	config_get main_node_wd "config" "main_node" ""
+	if [ "$main_node_wd" = "urltest" ]; then
+		mkdir -p "$RUN_DIR"
+		procd_open_instance "urltest"
+		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/urltest_watchdog.uc"
+		procd_set_param respawn
+		procd_close_instance
+	fi
+
 	# Subscription auto-update cron. This install half was dropped in the init rewrite
 	# (commit 4f3511f) while the stop_service cleanup below was kept, leaving the UI
 	# "Auto update" checkbox wired to nothing. Restored verbatim from upstream: when

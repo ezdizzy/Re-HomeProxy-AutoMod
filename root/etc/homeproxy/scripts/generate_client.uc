@@ -1352,6 +1352,34 @@ if (sticky_raw)
 			urltest_sticky[sm[1]] = sm[2];
 	}
 
+/* Node tags the URLTest watchdog (urltest_watchdog.uc) saw stuck dead
+ * ($RUN_DIR/urltest_dead, outbound tags like cfg-<sid>-out). A sticky pick
+ * pointing at such a node must NOT be fronted on the next (re)start — the whole
+ * point of the watchdog restart is to move OFF it — and the node itself sinks
+ * to the END of every pool so a fresh core never starts on it. Marks fade when
+ * the node measures alive again (watchdog removes them). */
+let urltest_dead = {};
+const dead_raw = readfile(RUN_DIR + '/urltest_dead');
+if (dead_raw)
+	for (let dead_line in split(trim(dead_raw), '\n')) {
+		const dt = trim(dead_line);
+		if (length(dt))
+			urltest_dead[dt] = true;
+	}
+
+/* Sink dead-marked nodes to the end of the pool. Returns null when nothing
+ * needs reordering (also used as a "no marks" fast path). */
+function dead_last(tags) {
+	if (isEmpty(urltest_dead))
+		return null;
+	let alive = [], dead = [];
+	for (let t in tags)
+		push((urltest_dead[t] != null) ? dead : alive, t);
+	if (!length(dead))
+		return null;
+	return [...alive, ...dead];
+}
+
 /* Front the previously-running member of a pool (snapshot written by init.d
  * into $RUN_DIR/urltest_sticky before the old core stopped). The core's
  * startup selection is "first member with history wins unless another member
@@ -1362,6 +1390,9 @@ if (sticky_raw)
 function sticky_first(tag_key, tags) {
 	const raw_tag = urltest_sticky[tag_key];
 	if (isEmpty(raw_tag))
+		return null;
+	/* A dead-marked node must never be fronted by the sticky snapshot. */
+	if (urltest_dead[raw_tag] != null)
 		return null;
 	const i = index(tags, raw_tag);
 	if (i <= 0)
@@ -1412,6 +1443,9 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 			const re = sticky_first(tag + '-alt', rest);
 			if (re)
 				rest = re;
+			const de = dead_last(rest);
+			if (de)
+				rest = de;
 			push(config.outbounds, {
 				type: 'urltest',
 				tag: tag + '-alt',
@@ -1454,6 +1488,9 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		const re = sticky_first(tag, any);
 		if (re)
 			any = re;
+		const de = dead_last(any);
+		if (de)
+			any = de;
 		return { outbound: {
 			type: 'urltest',
 			tag: tag,
@@ -1463,6 +1500,14 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 			interrupt_exist_connections: true
 		}, extra: any_extra };
 	}
+
+	/* Watchdog dead marks: sink dead-marked nodes to the END of the final pool
+	 * (auto/manual pools and the prefer top-level [preferred, alt]). A fresh
+	 * core picks "first member with history" after its first probe round, so a
+	 * dead node at the tail never wins the startup race against living ones. */
+	const dl = dead_last(outbounds);
+	if (dl)
+		outbounds = dl;
 
 	return { outbound: {
 		type: 'urltest',
