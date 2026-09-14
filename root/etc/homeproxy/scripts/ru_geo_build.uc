@@ -202,7 +202,7 @@ function build_cdn_ranges() {
 		let rs = ip_to_int(trim(parts[0])), re = ip_to_int(trim(parts[1]));
 		if (rs != rs || re != re || rs > re || rs < 0 || re > 4294967295) continue;
 		range_to_cidrs(rs, re, ranges);
-		if (length(ranges) > 40000) { log('warn: CDN ranges exceeded 40k entries — truncated'); break; }
+		if (length(ranges) > 40000) { log('warn: CDN ranges exceeded 40k entries - truncated'); break; }
 	}
 	fd.close();
 	return length(ranges) ? ranges : -1;
@@ -229,7 +229,7 @@ function fetch_cat_lines(cat) {
 			return out;
 		}
 	}
-	log(`warn: category '${cat}' could not be downloaded — skipped`);
+	log(`warn: category '${cat}' could not be downloaded - skipped`);
 	return null;
 }
 
@@ -311,7 +311,7 @@ function do_update() {
 	} else {
 		if (access(RES + '/cdn_ip4.txt'))
 			cdn_note = 'cdn ranges kept from the previous update';
-		log('warn: CDN range source unreachable — IP-learning exclusions stay as-is');
+		log('warn: CDN range source unreachable - IP-learning exclusions stay as-is');
 	}
 
 	atomic_txt(RES + '/ru_geoip.txt', join('\n', nets) + '\n');
@@ -335,7 +335,7 @@ function do_update() {
 function main() {
 	/* Lock: another update already running (RPC + daemon auto-update can race). */
 	if (system(`mkdir ${shellq(LOCK_DIR)} 2>/dev/null`) !== 0) {
-		log('another RU-geo update is already running — skipped.');
+		log('another RU-geo update is already running - skipped.');
 		return;
 	}
 

@@ -2343,14 +2343,16 @@ const methods = {
 		}
 	},
 
-	/* Geo-sensitive services diagnostic (ч.51): answers WHY a geo-gated service
+	/* Geo-sensitive services diagnostic (ч.51/ч.53): answers WHY a geo-gated service
 	 * (Google Gemini / ChatGPT / ...) still refuses through a "working" proxy.
 	 * Measures the tunnel exit (country + ASN classification) through the user's
 	 * mixed port and the geo seed coverage — the two facts that decide whether
 	 * the fix is routing (seeds missing) or the exit node itself. */
 	automation_geo_diag: {
 		call: function(req) {
-			const seeds = [
+			/* Shared seed list (resources/geo_sensitive.txt); built-in copy as
+			 * fallback so the diagnostic works even before the resource ships. */
+			let seeds = [
 				'gemini.google.com',
 				'aistudio.google.com',
 				'ai.google.dev',
@@ -2359,6 +2361,18 @@ const methods = {
 				'aisandbox-pa.googleapis.com',
 				'push.clients6.google.com'
 			];
+			const gs_raw = readfile(HP_DIR + '/resources/geo_sensitive.txt');
+			if (gs_raw) {
+				const gs_lines = split(gs_raw, /[\r\n]/);
+				let parsed = [];
+				for (let gl in gs_lines) {
+					gl = trim(replace(gl, /#.*$/, ''));
+					if (length(gl))
+						push(parsed, gl);
+				}
+				if (length(parsed))
+					seeds = parsed;
+			}
 			const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
 			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
 			let mixed = '5330';
@@ -2409,6 +2423,60 @@ const methods = {
 					: 'probe_failed',
 				seeds: seeds,
 				seeds_covered: length(keys(in_auto))
+			};
+		}
+	},
+
+	/* Geo-aware exit scan (ч.53): start/steer the automation daemon's
+	 * per-node geo scan and read its results. `action: "start"` drops the
+	 * trigger file (the daemon scans between passes and re-pins the geo-out
+	 * selector); "status" returns the last scan (exit country/ASN + per-node
+	 * Google AI / OpenAI geo verdicts) from the automation state. */
+	automation_geo_scan: {
+		args: { action: 'action' },
+		call: function(req) {
+			const action = (req && req.args && req.args.action) || 'status';
+			const state_file = RUN_DIR + '/automation_state.json';
+			const trigger = RUN_DIR + '/automation.geo_scan';
+			const enabled_fd = popen('uci -q get homeproxy.automation.geo_scan 2>/dev/null');
+			let opt = '1';
+			if (enabled_fd) { opt = trim(enabled_fd.read('all')) || '1'; enabled_fd.close(); }
+			if (opt === '0')
+				return { enabled: false };
+
+			if (action === 'start') {
+				system('touch ' + shellquote(trigger) + ' 2>/dev/null');
+				return { started: true };
+			}
+
+			let st = {};
+			if (access(state_file)) {
+				try { st = json(readfile(state_file)) || {}; } catch (e) { st = {}; }
+			}
+			const gs = st.__geo_scan;
+			if (type(gs) !== 'object')
+				return { enabled: true, scanned: false };
+			/* UI shows plain node names, not the cfg-...-out tags. */
+			let nodes = [];
+			if (type(gs.nodes) === 'object')
+				for (let tag in keys(gs.nodes)) {
+					const n = gs.nodes[tag];
+					push(nodes, {
+						node: replace(replace(tag, /^cfg-/, ''), /-out$/, ''),
+						country: (n && n.country) || null,
+						asn: (n && n.asn) || null,
+						google: (n && n.google) || 'fail',
+						openai: (n && n.openai) || 'fail',
+						selected: (tag === gs.selected)
+					});
+				}
+			sort(nodes, (a, b) => (b.selected === true ? 1 : 0) - (a.selected === true ? 1 : 0));
+			return {
+				enabled: true,
+				scanned: true,
+				ts: gs.ts || 0,
+				selected: gs.selected || null,
+				nodes: nodes
 			};
 		}
 	},
@@ -2490,8 +2558,18 @@ const methods = {
 			for (let tool in tools)
 				res[tool] = install_one(tool);
 			/* The daemon picks the helpers up on its next pass; restarting the
-			 * automation instance makes it immediate (and spawns sni_sniffer). */
-			if ((res.probe_pool?.installed) || (res.sni_sniffer?.installed))
+			 * automation instance makes it immediate (and spawns sni_sniffer).
+			 * probe_pool (>= 1.2.0) runs as a RESIDENT daemon spawned by the
+			 * automation daemon - kill it so the freshly installed binary is
+			 * the one that gets spawned (the next batch respawns it).
+			 * Explicit checks instead of `?.`: the automation daemon keeps the
+			 * conservative ч.47 style (optional chaining is fine in rpcd ucode
+			 * but was flagged as unguaranteed for router builds). */
+			const pp_installed = (type(res.probe_pool) === 'object' && res.probe_pool.installed === true);
+			const sni_installed = (type(res.sni_sniffer) === 'object' && res.sni_sniffer.installed === true);
+			if (pp_installed)
+				system('killall probe_pool >/dev/null 2>&1; true');
+			if (pp_installed || sni_installed)
 				system("ubus call service event '{\"type\":\"instance.restart\",\"data\":{\"name\":\"homeproxy\",\"instance\":\"automation\"}}' 2>/dev/null");
 			return res;
 		}

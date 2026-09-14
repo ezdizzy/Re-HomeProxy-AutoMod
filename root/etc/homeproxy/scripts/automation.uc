@@ -203,7 +203,7 @@ let pv_cache = {};
 let manual_proxy_set = {};
 let manual_direct_set = {};
 
-/* Geo-sensitive services (ч.51): sites whose HTML shell answers 200 from
+/* Geo-sensitive services (ч.51/ч.53): sites whose HTML shell answers 200 from
  * anywhere while the actual API calls inside reject "unsupported country"
  * (Google Gemini error 1060 class). A plain GET can NOT tell a working site
  * from a geo-refused one for these, so the engine can never learn them from
@@ -212,9 +212,14 @@ let manual_direct_set = {};
  * to the RU-visible endpoint (mixed direct/proxy geometry is exactly what
  * triggers Gemini's region checks). These hosts are therefore seeded into
  * the proxy path unconditionally (when a proxy path exists), pinned against
- * self-healing and re-evaluation. Do not grow this list casually: every
- * entry is a guaranteed proxy route. */
-const GEO_SENSITIVE_HOSTS = [
+ * self-healing and re-evaluation, and (ч.53) routed via the dedicated geo-out
+ * exit picked by the geo scan. The list lives in resources/geo_sensitive.txt
+ * so the daemon, the rpcd diagnostics and generate_client (routing rule) all
+ * share ONE source; the built-in array below is the fallback when the file is
+ * missing. Do not grow this list casually: every entry is a guaranteed proxy
+ * route. */
+const GEO_SENSITIVE_FILE = RES + '/geo_sensitive.txt';
+let GEO_SENSITIVE_HOSTS = [
 	'gemini.google.com',
 	'aistudio.google.com',
 	'ai.google.dev',
@@ -303,6 +308,24 @@ function read_lines(path) {
 	c = trim(c);
 	if (!length(c)) return [];
 	return filter(split(c, /[\r\n]/), (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
+}
+
+/* Load the shared geo-sensitive seed list (plain lines, '#' comments; the
+ * built-in array above is the fallback when the file is missing/empty).
+ * DECLARED AFTER read_lines on purpose: this ucode build binds free
+ * identifiers lexically - a function cannot see module bindings defined
+ * below it (the ч.49 closure rule, hit at module scope this time). */
+function load_geo_sensitive() {
+	const lines = read_lines(GEO_SENSITIVE_FILE);
+	let out = [];
+	for (let l in lines) {
+		l = trim(replace(l, /#.*$/, ''));
+		if (!length(l) || !match(l, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/))
+			continue;
+		push(out, l);
+	}
+	if (length(out))
+		GEO_SENSITIVE_HOSTS = out;
 }
 
 /* ── RU-geo database (loaded from resources/ru_geoip.txt + ru_geosite.txt,
@@ -1018,7 +1041,7 @@ function discover_sni(pkts, secs) {
 	if (sni_sniffer_enabled && access(SNI_SNIFFER_BIN)) {
 		let spawned = ensure_sni_sniffer(iface);
 		if (!spawned) {
-			log('sni_sniffer binary present but could not be started — falling back to tcpdump');
+			log('sni_sniffer binary present but could not be started - falling back to tcpdump');
 		} else {
 			/* give a freshly spawned sniffer a moment to attach its filter */
 			if (!access(SNI_EVENTS)) sleep(secs);
@@ -1050,7 +1073,7 @@ function discover_sni(pkts, secs) {
 					 * file went silent, i.e. the sniffer is stuck or crashed. */
 					if ((time() - mtime) < 900)
 						return hosts;
-					log('sni_sniffer event file is stale — restarting it and using tcpdump this pass');
+					log('sni_sniffer event file is stale - restarting it and using tcpdump this pass');
 					sni_events_offset = 0;
 					if (access(SNI_EVENTS))
 						system(`rm -f ${shellquote(SNI_EVENTS)} 2>/dev/null`);
@@ -1160,14 +1183,14 @@ function dns_reachable(server) {
 function do_failover_reload() {
 	system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
 	if (!access(RUN_DIR + '/hiddify-c.json')) {
-		log('DNS failover: regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
+		log('DNS failover: regenerate FAILED - see ' + RUN_DIR + '/generate_client.log');
 		return;
 	}
 	/* The uci.commit() in the failover paths above already fires the service's procd
 	 * reload-trigger (procd_add_reload_trigger homeproxy) — that single reload applies
 	 * the regenerated config. Calling /etc/init.d/homeproxy reload here AS WELL produced
 	 * a second full stop/start right after the trigger's one. */
-	log('DNS failover: config regenerated, UCI committed — service reload happens via the procd config trigger.');
+	log('DNS failover: config regenerated, UCI committed - service reload happens via the procd config trigger.');
 }
 
 	function dns_failover_check() {
@@ -1333,55 +1356,39 @@ echo done > "$PRE.done"
 `);
 	system(`chmod +x ${WORKER} 2>/dev/null`);
 
-	/* Plain-view resolver worker (parallel DNS for native batches): same
-	 * semantics as resolve_plain_view() — the local mosdns plain listener
-	 * (the RU-facing view the user's browser gets) when MultiDNS is actually
-	 * running, public resolvers as fallback. Writes the resolved IPv4 (may be
-	 * EMPTY on failure) to <prefix>.ip and a done marker, so the daemon can
-	 * run many of these concurrently instead of one serial nslookup per host
-	 * (the serial loop was the dominant cost of large native batches). */
-	const RSOLVER = RUN_DIR + '/resolve_worker.sh';
-	writefile(RSOLVER, `#!/bin/sh
-# automation.uc plain-view resolver: <host> <prefix>
-H="$1"; PRE="$2"
-RES=""
-if [ -x /usr/bin/mosdns ] && pidof mosdns >/dev/null 2>&1 && [ "$(uci -q get homeproxy.multidns.enabled)" = "1" ]; then
-	PORT=$(uci -q get homeproxy.multidns.plain_port 2>/dev/null)
-	[ -n "$PORT" ] || PORT=5453
-	RES=$(nslookup -port=$PORT "$H" 127.0.0.1 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
-fi
-if [ -z "$RES" ]; then
-	for R in 8.8.8.8 1.1.1.1 77.88.8.8; do
-		RES=$(nslookup -type=A "$H" "$R" 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
-		[ -n "$RES" ] && break
-	done
-fi
-printf '%s' "$RES" > "$PRE.ip"
-echo done > "$PRE.done"
-`);
-	system(`chmod +x ${RSOLVER} 2>/dev/null`);
-
-	/* probe_pool native Go backend (Phase 2), FILE-based one-shot batch mode.
-	 * The daemon writes a JSON request (hosts + pinned plain-view resolutions)
-	 * to a temp file, runs `/usr/bin/probe_pool -in <in> -out <out>` (one
-	 * process per wave chunk: in-process parallel probes with keep-alive
-	 * transports, HTTP/2, no per-host sh/nslookup/curl forks) and parses the
-	 * JSON response. Semantics match the shell worker exactly: the ucode side
-	 * re-derives ok/block from the raw code + body (block-page signatures run
-	 * HERE, not in the binary), so a probe_pool bug can never change verdicts —
-	 * only availability. Any failure returns null → probe_wave() falls back to
-	 * shell workers for the rest of the daemon lifetime. */
+	/* probe_pool native Go backend (Phase 2 + ч.53): RESIDENT batch prober.
+	 * The daemon spawns `/usr/bin/probe_pool -daemon -dir <RUN_DIR>` once and
+	 * keeps it warm across cycles: the process watches pp.in.json (written
+	 * atomically: temp + rename), answers pp.out.json (also atomic) and
+	 * reuses TLS keep-alive connections plus plain-view DNS answers between
+	 * batches. A heartbeat file (pp.daemon.json, 5 s) detects a dead/wedged
+	 * daemon. Fallback ladder, fully automatic per batch:
+	 *   resident daemon -> one-shot `probe_pool -in/-out` -> shell workers.
+	 * Plain-view DNS resolution moved INTO the binary (request field
+	 * resolve_hosts; the response echoes the answers for pv_cache) - the old
+	 * resolve_worker.sh nslookup forks are gone. Semantics match the shell
+	 * worker exactly: the ucode side re-derives ok/block from the raw code +
+	 * body (block-page signatures run HERE, not in the binary), so a
+	 * probe_pool bug can never change verdicts - only availability. Any
+	 * failure returns null -> probe_wave() falls back to shell workers for
+	 * the rest of the daemon lifetime. */
 	const PROBE_POOL_BIN = '/usr/bin/probe_pool';
 	const PP_IN = RUN_DIR + '/pp.in.json';
+	const PP_IN_TMP = RUN_DIR + '/pp.in.json.tmp';
 	const PP_OUT = RUN_DIR + '/pp.out.json';
+	const PP1_IN = RUN_DIR + '/pp1.in.json';
+	const PP1_OUT = RUN_DIR + '/pp1.out.json';
+	const PP_HB = RUN_DIR + '/pp.daemon.json';
 	/* Optimistic: the binary's presence is re-checked per batch; the flag only
 	 * latches FAILURES so a broken install cannot slow every wave down. */
 	let probe_pool_available = true;
 	let probe_pool_enabled = (uci.get('homeproxy', 'automation', 'probe_pool_enabled') || '1') !== '0';
+	let pp_seq = 0;
+	let pp_last_respawn = 0;
 	if (probe_pool_enabled && access(PROBE_POOL_BIN))
-		log('probe_pool native backend available — batches will use it (shell workers stay as fallback)');
+		log('probe_pool native backend available - resident daemon mode (one-shot and shell workers stay as fallback)');
 	else
-		log('probe_pool not installed — using shell workers');
+		log('probe_pool not installed - using shell workers');
 
 	/* Adaptive per-host probe timeout (Phase 1, made real): hosts with a
 	 * recorded EWMA response time are measured with a timeout scaled to THEIR
@@ -1404,58 +1411,74 @@ echo done > "$PRE.done"
 		return (s < 2) ? 2 : s;
 	}
 
-	/* Resolve a batch of direct-side hosts CONCURRENTLY. The old code resolved
-	 * them one-by-one through resolve_plain_view() — for a 16-64 host batch
-	 * that meant up to minutes of serial nslookup forks BEFORE the native
-	 * batch ever dispatched. Workers run the exact resolve_plain_view()
-	 * semantics (mosdns plain listener first, public fallback), bounded by
-	 * inflight_cap so a weak router never forks more than a few at once, and
-	 * by an overall deadline: leftover unresolved hosts are reported as
-	 * unresolvable (000), exactly like the serial path. Fresh pv_cache hits
-	 * are served without forking, new answers are written back. */
-	function resolve_wave(hosts) {
-		let res = {}, need = [];
-		for (let k = 0; k < length(hosts); k++) {
-			let h = hosts[k];
-			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) { res[h] = h; continue; }
-			let ce = pv_cache[h];
-			if (type(ce) === 'object' && ce.ip && (time() - int(ce.t)) < 600) { res[h] = ce.ip; continue; }
-			push(need, { h: h, pre: RUN_DIR + '/rs.' + k });
+	/* Ordered plain-view resolvers for the native batch (Go side resolves
+	 * concurrently; first answer wins). Same guard as resolve_plain_view():
+	 * the local mosdns plain listener only when MultiDNS is actually running
+	 * (a UCI-only check would burn a dead-port timeout per host), then the
+	 * public RU-facing resolvers. */
+	function resolver_list() {
+		let list = [];
+		if (access('/usr/bin/mosdns') && system('pidof mosdns >/dev/null 2>&1') === 0 &&
+		    (uci.get('homeproxy', 'multidns', 'enabled') || '0') === '1') {
+			const pport = int(uci.get('homeproxy', 'multidns', 'plain_port') || '5453') || 5453;
+			push(list, sprintf('127.0.0.1:%d', pport));
 		}
-		if (length(need)) {
-			/* Stale leftovers from an earlier pass (e.g. after a deadline exit)
-			 * must never be read as fresh answers. */
-			system(`rm -f ${RUN_DIR}/rs.*.ip ${RUN_DIR}/rs.*.done 2>/dev/null`);
-			const inflight_cap = PERF ? 16 : 8;
-			let spawned = 0;
-			let deadline = time() + 12;
-			for (;;) {
-				let running = 0;
-				for (let k = 0; k < spawned; k++)
-					if (!access(need[k].pre + '.done')) running++;
-				/* Top up the in-flight window. */
-				while (spawned < length(need) && running < inflight_cap) {
-					system(`${RSOLVER} ${shellquote(need[spawned].h)} ${shellquote(need[spawned].pre)} >/dev/null 2>&1 &`);
-					spawned++;
-					running++;
-				}
-				let left = 0;
-				for (let k = 0; k < spawned; k++)
-					if (!access(need[k].pre + '.done')) left++;
-				if (!left || time() >= deadline) break;
-				sleep(150);
-			}
-			for (let k = 0; k < length(need); k++) {
-				let ip = trim(readfile(need[k].pre + '.ip') || '');
-				system(`rm -f ${shellquote(need[k].pre)}.ip ${shellquote(need[k].pre)}.done 2>/dev/null`);
-				if (length(ip)) {
-					res[need[k].h] = ip;
-					pv_cache[need[k].h] = { ip: ip, t: time() };
-				}
-			}
-			if (length(keys(pv_cache)) > 400) pv_cache = {};
+		push(list, '8.8.8.8');
+		push(list, '1.1.1.1');
+		push(list, '77.88.8.8');
+		return list;
+	}
+
+	/* Resident daemon health: running (pidof) AND heartbeating (mtime within
+	 * 30 s). A stopped-but-fresh heartbeat means it died between beats. */
+	function pp_daemon_alive() {
+		if (system('pidof probe_pool >/dev/null 2>&1') !== 0) return false;
+		if (access(PP_HB)) {
+			const mt = stat(PP_HB);
+			if (mt && mt.mtime && (time() - mt.mtime) > 30) return false;
 		}
-		return res;
+		return true;
+	}
+
+	/* Make sure the resident daemon runs (spawn at most once per 5 minutes;
+	 * a binary that cannot run - old one-shot-only build, wrong arch - must
+	 * not turn into a spawn loop). Returns whether a daemon is now usable. */
+	function pp_ensure_daemon() {
+		if (system('pidof probe_pool >/dev/null 2>&1') === 0) return pp_daemon_alive();
+		if ((time() - pp_last_respawn) < 300) return false;
+		pp_last_respawn = time();
+		system(`${shellquote(PROBE_POOL_BIN)} -daemon -dir ${shellquote(RUN_DIR)} >/dev/null 2>&1 &`);
+		for (let i = 0; i < 12 && !access(PP_HB); i++) sleep(250);
+		const ok = pp_daemon_alive();
+		if (ok) log('probe_pool resident daemon started (keep-alive + in-Go plain-view resolve)');
+		return ok;
+	}
+
+	/* Hand one batch to the resident daemon and wait for the matching answer.
+	 * Polls the response file (unique batch id guards against stale content)
+	 * until the deadline, bailing out early when the daemon disappears. */
+	function pp_dispatch(req, timeout) {
+		writefile(PP_IN_TMP, sprintf('%.J', req));
+		system(`rm -f ${shellquote(PP_OUT)} 2>/dev/null`);
+		system(`mv -f ${shellquote(PP_IN_TMP)} ${shellquote(PP_IN)} 2>/dev/null`);
+		if (!access(PP_IN)) return null;
+		const deadline = time() + timeout * 4 + 12;
+		let tick = 0;
+		for (;;) {
+			if (time() >= deadline) return null;
+			if (access(PP_OUT)) {
+				let r = null;
+				try { r = json(readfile(PP_OUT) || ''); } catch (e) { r = null; }
+				if (type(r) === 'object' && type(r.results) === 'array' && r.id === req.id) {
+					system(`rm -f ${shellquote(PP_IN)} ${shellquote(PP_OUT)} 2>/dev/null`);
+					return r;
+				}
+			}
+			/* Daemon gone mid-flight (crash/upgrade): bail out to one-shot now. */
+			tick++;
+			if (tick % 4 === 0 && system('pidof probe_pool >/dev/null 2>&1') !== 0) return null;
+			sleep(250);
+		}
 	}
 
 	function probe_pool_batch(items, side, timeout, http2_flag) {
@@ -1464,66 +1487,83 @@ echo done > "$PRE.done"
 		if (side !== 'tcp' && side !== 'tcpproxy' && !have_curl())
 			return null;
 
-		/* Direct-side plain-view resolution happens ONCE for the whole batch,
-		 * concurrently (resolve_wave). Unresolvable hosts become 000 without
-		 * probing — mirroring the shell worker's behavior. */
-		let need_resolve = [];
-		if (side === 'direct')
-			for (let k = 0; k < length(items); k++)
-				push(need_resolve, items[k].h);
-		let resolved = (side === 'direct') ? resolve_wave(need_resolve) : {};
+		/* Direct-side plain-view resolution moved INTO the binary: hosts
+		 * without a fresh pv_cache answer ride resolve_hosts, Go resolves
+		 * them concurrently (mosdns plain listener first), pins direct probes
+		 * to the answers and echoes them back for the cache. Unresolvable
+		 * hosts come back as 000 - the shell worker's exact behavior. */
 		let resolve = {};
-		let hosts = [];
-		let skipped = {};
+		let resolve_hosts = [];
+		let rh_seen = {};
 		for (let k = 0; k < length(items); k++) {
-			let h = items[k].h;
-			let entry = { id: items[k].i, host: h, side: side, timeout_ms: host_timeout(h, side, timeout) * 1000 };
-			if (side === 'direct') {
-				if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
-					resolve[h] = h;   /* literal: nothing to resolve */
-				} else {
-					let ip = resolved[h];
-					if (!ip) {
-						/* Mirror the shell worker: unresolvable → 000, no probe. */
-						skipped[items[k].i] = { code: '000', ok: false, block: false, fp: '', ip: null, rtt_ms: 0 };
-						continue;
-					}
-					resolve[h] = ip;
-				}
-			}
+			const h = items[k].h;
+			if (side !== 'direct') continue;
+			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) { resolve[h] = h; continue; }
+			const ce = pv_cache[h];
+			if (type(ce) === 'object' && ce.ip && (time() - int(ce.t)) < 600) { resolve[h] = ce.ip; continue; }
+			if (!rh_seen[h]) { rh_seen[h] = true; push(resolve_hosts, h); }
+		}
+		let hosts = [];
+		for (let k = 0; k < length(items); k++) {
+			const h = items[k].h;
+			const entry = { id: items[k].i, host: h, side: side, timeout_ms: host_timeout(h, side, timeout) * 1000 };
 			entry.http2 = !!http2_flag && (side !== 'tcp' && side !== 'tcpproxy');
 			push(hosts, entry);
 		}
-		if (!length(hosts)) return (length(keys(skipped)) === length(items)) ? skipped : null;
 
-		let req = {
+		const rid = sprintf('b%d-%d', time(), pp_seq++);
+		const req = {
+			id: rid,
 			direct_proxy: `socks5://127.0.0.1:${AUTO_DIRECT_PORT}`,
 			proxy_proxy: `socks5h://127.0.0.1:${AUTO_PROXY_PORT}`,
 			resolve: resolve,
+			resolve_hosts: resolve_hosts,
+			resolvers: resolver_list(),
 			http2: !!http2_flag && (side !== 'tcp' && side !== 'tcpproxy'),
 			hosts: hosts
 		};
-		writefile(PP_IN, sprintf('%.J', req));
-		system(`rm -f ${shellquote(PP_OUT)} 2>/dev/null`);
-		/* Wall clock: hosts run CONCURRENTLY (workers = min(16, 4*cores)), so a
-		 * chunk costs ~2 attempts x the largest per-host (adaptive) timeout +
-		 * slack, not n x that. */
-		let rc = system(`${shellquote(PROBE_POOL_BIN)} -in ${shellquote(PP_IN)} -out ${shellquote(PP_OUT)} 2>>${shellquote(LOG_FILE)}`, timeout * 4000 + 15000);
-		if (rc !== 0 || !access(PP_OUT)) {
-			log(`probe_pool batch failed (rc=${rc}) — falling back to shell workers`);
+
+		/* 1) Resident daemon (warm TLS + DNS caches). 2) One-shot process
+		 * (distinct pp1.* names - the daemon watches only pp.*). 3) null ->
+		 * shell workers, latched for the daemon lifetime. */
+		let resp = null;
+		if (pp_ensure_daemon()) {
+			resp = pp_dispatch(req, timeout);
+			if (resp === null) {
+				/* Abandoned batch: the daemon may still be chewing it - clear
+				 * the pair so it cannot answer into a stale slot (ids guard
+				 * correctness anyway, this just keeps the slot clean). */
+				system(`rm -f ${shellquote(PP_IN)} ${shellquote(PP_OUT)} 2>/dev/null`);
+				log('probe_pool resident daemon missed the batch deadline - trying one-shot');
+			}
+		}
+		if (resp === null) {
+			writefile(PP1_IN, sprintf('%.J', req));
+			system(`rm -f ${shellquote(PP1_OUT)} 2>/dev/null`);
+			const rc = system(`${shellquote(PROBE_POOL_BIN)} -in ${shellquote(PP1_IN)} -out ${shellquote(PP1_OUT)} 2>>${shellquote(LOG_FILE)}`, timeout * 4000 + 15000);
+			if (rc === 0 && access(PP1_OUT)) {
+				try { resp = json(readfile(PP1_OUT) || ''); } catch (e) { resp = null; }
+				if (type(resp) !== 'object' || type(resp.results) !== 'array') resp = null;
+			}
+			system(`rm -f ${shellquote(PP1_IN)} ${shellquote(PP1_OUT)} 2>/dev/null`);
+		}
+		if (resp === null) {
+			log('probe_pool batch failed - falling back to shell workers');
 			probe_pool_available = false;
 			return null;
 		}
-		let resp;
-		try { resp = json(readfile(PP_OUT) || ''); } catch (e) { resp = null; }
-		if (type(resp) !== 'object' || type(resp.results) !== 'array') {
-			log('probe_pool produced an unparsable response — falling back to shell workers');
-			probe_pool_available = false;
-			return null;
+		/* Warm the local cache from the echoed plain-view answers. */
+		const rmap = (type(resp.resolve) === 'object') ? resp.resolve : {};
+		for (let h in keys(rmap)) {
+			if (length(rmap[h])) {
+				pv_cache[h] = { ip: rmap[h], t: time() };
+				resolve[h] = rmap[h];
+			}
 		}
+		if (length(keys(pv_cache)) > 400) pv_cache = {};
 		system(`rm -f ${shellquote(PP_IN)} ${shellquote(PP_OUT)} 2>/dev/null`);
 
-		let out = skipped;
+		let out = {};
 		for (let r in resp.results) {
 			let res = resp.results[r];
 			if (!res || !exists(res, 'id')) continue;
@@ -1633,7 +1673,7 @@ echo done > "$PRE.done"
 	/* Stale worker leftovers from a crashed pass would poison later reads only if
 	 * ids collide; ids embed the pass-unique selection index, and every wave
 	 * deletes its files after harvest — a startup sweep is belt & braces. */
-	system(`rm -f ${RUN_DIR}/pw.*.done ${RUN_DIR}/pw.*.code ${RUN_DIR}/pw.*.body ${RUN_DIR}/pw.*.ip ${RUN_DIR}/rs.*.ip ${RUN_DIR}/rs.*.done 2>/dev/null`);
+	system(`rm -f ${RUN_DIR}/pw.*.done ${RUN_DIR}/pw.*.code ${RUN_DIR}/pw.*.body ${RUN_DIR}/pw.*.ip 2>/dev/null`);
 
 	let min_confirm = int(uci.get('homeproxy', 'automation', 'min_confirm') || '1') || 1;
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
@@ -1651,7 +1691,7 @@ echo done > "$PRE.done"
 			http2_probe = true;
 			log('HTTP/2 probing enabled (curl supports h2)');
 		} else {
-			log('http2_probe requested but curl lacks HTTP2 support — flag disabled');
+			log('http2_probe requested but curl lacks HTTP2 support - flag disabled');
 		}
 	}
 
@@ -1840,8 +1880,170 @@ echo done > "$PRE.done"
 		}
 	}
 
+	/* ── Geo-aware exit (ч.53): dedicated geo-out selector ───────────────
+	 * generate_client emits a `geo-out` selector (all proxy nodes), a
+	 * geo-test-in (:5339) inbound pinned to it by an inbound rule, and a
+	 * domain_suffix rule routing the geo-sensitive hosts through geo-out.
+	 * This scan measures EVERY node's exit (country/ASN via api.ip.sb) and
+	 * the REAL per-node geo verdict of the Google AI and OpenAI edge checks
+	 * (their unauthenticated endpoints answer differently per region), then
+	 * pins the selector to the best passing node and keeps it there
+	 * (hysteresis). The point: Gemini-class services refuse datacenter
+	 * exits one by one over time - the engine re-homes geo-sensitive
+	 * traffic automatically instead of the user hunting for a node by hand. */
+	const GEO_SCAN_INTERVAL = 1800;
+	const GEO_SCAN_MIN_GAP = 300;
+	/* First scan fires ~60 s after start (the core needs a moment to come up
+	 * after the service restart that usually precedes the daemon). */
+	let last_geo_scan = time() - GEO_SCAN_INTERVAL + 60;
+	let geo_scan_soon = 0;
+
+	function geo_node_tags() {
+		let tags = [];
+		uci.foreach('homeproxy', 'node', (cfg) => {
+			push(tags, 'cfg-' + cfg['.name'] + '-out');
+		});
+		return tags;
+	}
+
+	function geo_clash_switch(tag) {
+		const body = sprintf('{"name":"%s"}', replace(tag, '"', ''));
+		const f = RUN_DIR + '/geo_switch.out';
+		system(`rm -f ${shellquote(f)} 2>/dev/null`);
+		/* -w writes to STDOUT: capture it into the file (-o would hold the
+		 * (empty) response body instead of the status code). */
+		system(`curl -s -m 4 -o /dev/null -w '%{http_code}' -X PUT http://127.0.0.1:9090/proxies/geo-out -d ${shellquote(body)} > ${shellquote(f)} 2>/dev/null`, 8000);
+		const code = trim(readfile(f) || '');
+		system(`rm -f ${shellquote(f)} 2>/dev/null`);
+		return (code === '200' || code === '204');
+	}
+
+	function geo_probe_url(url, timeout) {
+		const bf = RUN_DIR + '/geo_probe.body';
+		const cf = RUN_DIR + '/geo_probe.code';
+		system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
+		system(`curl -sL --max-redirs 2 -o ${shellquote(bf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} -x socks5h://127.0.0.1:5339 ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`, timeout * 2000 + 5000);
+		const r = { code: trim(readfile(cf) || '000'), body: readfile(bf) || '' };
+		system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
+		return r;
+	}
+
+	function geo_probe_json(url, timeout) {
+		const r = geo_probe_url(url, timeout);
+		if (r.code !== '200') return null;
+		try { return json(r.body) || null; } catch (e) { return null; }
+	}
+
+	/* Per-node geo verdicts from the unauthenticated edge endpoints.
+	 * generativelanguage.googleapis.com (Google AI): a refused region gets
+	 * HTTP 403 "User location is not supported for the API use." BEFORE any
+	 * key validation; a served region answers with an API-key complaint
+	 * instead. api.openai.com: refused region -> "unsupported_country_
+	 * region_territory"; served region -> 401 invalid_api_key. Both run on
+	 * the same geo infrastructure as the web services (Gemini 1060 / "this
+	 * country is not supported"). */
+	function geo_verdict_google(r) {
+		const b = lc(r.body);
+		if (match(b, /location is not supported/)) return 'refused';
+		if (match(b, /api key/) || match(b, /api_key/)) return 'ok';
+		if (r.code === '200') return 'ok';
+		return 'fail';
+	}
+
+	function geo_verdict_openai(r) {
+		const b = lc(r.body);
+		if (match(b, /unsupported_country/)) return 'refused';
+		if (match(b, /invalid_api_key/) || r.code === '401') return 'ok';
+		return 'fail';
+	}
+
+	function geo_scan_run(reason, rotate) {
+		if ((uci.get('homeproxy', 'automation', 'geo_scan') || '1') === '0') return;
+		const rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
+		const mn = uci.get('homeproxy', 'config', 'main_node') || 'nil';
+		if (rmode === 'custom' || rmode === 'custom_json' || mn === 'direct-out' || mn === 'nil')
+			return;
+		const tags = geo_node_tags();
+		if (!length(tags)) return;
+		if (!have_curl()) return;
+		log(`geo scan started (${reason}, ${length(tags)} nodes)`);
+		const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
+		const prev = (type(state.__geo_scan) === 'object') ? (state.__geo_scan.selected || '') : '';
+		const results = {};
+		let best = null, best_rank = 0, prev_ok = false, found_prev = false, passing = [];
+		for (let idx = 0; idx < length(tags); idx++) {
+			const tag = tags[idx];
+			if (!geo_clash_switch(tag)) {
+				/* Core down / Clash API unreachable: retry in 5 minutes. */
+				last_geo_scan = time() - GEO_SCAN_INTERVAL + 300;
+				log('geo scan: Clash API refused the geo-out switch (core down?) - will retry');
+				return;
+			}
+			const ex = geo_probe_json('https://api.ip.sb/geoip', 10);
+			const cc = (ex && ex.country_code) ? uc(ex.country_code) : null;
+			let gp = geo_verdict_google(geo_probe_url('https://generativelanguage.googleapis.com/v1beta/models', 8));
+			const op = geo_verdict_openai(geo_probe_url('https://api.openai.com/v1/models', 8));
+			/* Hard country gate: a node egressing in an unsupported country is
+			 * refused regardless of what the edge endpoints answered. */
+			if (cc && UNSUPPORTED[cc])
+				gp = 'refused';
+			results[tag] = {
+				country: cc,
+				asn: (ex && ex.asn) ? ('AS' + ex.asn) : null,
+				google: gp,
+				openai: op
+			};
+			if (tag === prev) { found_prev = true; prev_ok = (gp === 'ok'); }
+			/* Rank: both edges served > Google only; ties keep the user's node
+			 * order (their priority), so "first passing node wins". */
+			const rank = (gp === 'ok') ? ((op === 'ok') ? 2 : 1) : 0;
+			if (rank > 0)
+				push(passing, { tag: tag, rank: rank, country: cc, asn: (ex && ex.asn) || null });
+			if (rank > best_rank) { best_rank = rank; best = tag; }
+		}
+		/* Selection:
+		 * - periodic scans hold the current pick while it still passes
+		 *   (hysteresis, no churn);
+		 * - scans triggered by an actual geo refusal ROTATE: move to another
+		 *   passing node (different country/ASN preferred) - the anonymous
+		 *   edge checks cannot see web-level per-ASN flagging (Gemini 1060
+		 *   class), so a fresh exit is the practical answer to "worked
+		 *   yesterday, refused today". */
+		let sel = null;
+		if (!rotate && prev_ok && found_prev) {
+			sel = prev;
+		} else if (length(passing) > 0) {
+			let alt = null;
+			for (let p in passing) {
+				if (p.tag === prev) continue;
+				if (!alt) { alt = p; continue; }
+				const better = (prev && found_prev &&
+					(((results[prev].country || '') !== '' && p.country !== results[prev].country) ||
+					 ((results[prev].asn || 0) !== 0 && p.asn !== results[prev].asn)));
+				if (better && (alt.tag === prev || (p.rank >= alt.rank)))
+					alt = p;
+			}
+			sel = (rotate && alt) ? alt.tag : (best || passing[0].tag);
+		} else {
+			sel = found_prev ? prev : tags[0];
+		}
+		geo_clash_switch(sel);
+		state.__geo_scan = { ts: time(), selected: sel, nodes: results };
+		save_state(state);
+		let ok_n = 0, ref_n = 0;
+		for (let t in keys(results)) {
+			if (results[t].google === 'ok') ok_n++;
+			else if (results[t].google === 'refused') ref_n++;
+		}
+		log(`geo scan done: geo-sensitive exit -> ${sel} (google ok ${ok_n}, refused ${ref_n} of ${length(tags)} nodes)`);
+		if (best_rank === 0)
+			log('geo scan: NO node passes the geo checks - geo-sensitive services stay refused until the node list changes');
+	}
+
 	if (!geo_loaded)
 		load_ru_geo();
+	/* Shared geo-sensitive seed list (resources file; built-in fallback). */
+	load_geo_sensitive();
 	reload_lists();
 	ensure_geo_seeds();
 
@@ -1877,7 +2079,7 @@ echo done > "$PRE.done"
 	let main_is_direct = (main_node_start === 'direct-out' || main_node_start === 'nil' ||
 	                      (uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru') === 'global');
 	if (main_is_direct)
-		log('main node is Direct (no proxy) — proxy-side probes disabled, learning paused.');
+		log('main node is Direct (no proxy) - proxy-side probes disabled, learning paused.');
 
 	let last_reload = 0;
 	pending_reload = false;
@@ -1904,14 +2106,14 @@ echo done > "$PRE.done"
 		/* First run / migration: the running config does not yet reference the learned
 		 * local rule-sets, so one full restart is required to inject them (generate_client
 		 * writes the marker above, enabling the hot path afterwards). */
-		log('learned rule-sets not in running config — doing full service reload to inject them.');
+		log('learned rule-sets not in running config - doing full service reload to inject them.');
 		system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
 		if (!access(RUN_DIR + '/hiddify-c.json')) {
-			log('regenerate FAILED — see ' + RUN_DIR + '/generate_client.log');
+			log('regenerate FAILED - see ' + RUN_DIR + '/generate_client.log');
 			return; /* do NOT reload onto a broken/absent config */
 		}
 		sync_learned_rulesets();
-		log('applying learned list — restarting service to load new config.');
+		log('applying learned list - restarting service to load new config.');
 		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 		last_reload = time();
 		pending_reload = false;
@@ -2023,7 +2225,13 @@ echo done > "$PRE.done"
 		if (d.geo && p && p.geo) {
 			st.status = 'geo_blocked';
 			st.confirms = 0;
-			log(`geo-refused on BOTH paths: ${dom} — current exit node is rejected by the service (node change required)`);
+			log(`geo-refused on BOTH paths: ${dom} - current exit node is rejected by the service`);
+			/* Reaction trigger (ч.53): the current exit is refused - schedule
+			 * a geo scan so the engine can move the geo-sensitive services to
+			 * a passing node automatically (rate-limited by GEO_SCAN_MIN_GAP). */
+			if ((uci.get('homeproxy', 'automation', 'geo_scan') || '1') !== '0' &&
+			    (time() - last_geo_scan) > GEO_SCAN_MIN_GAP)
+				geo_scan_soon = time() + 10;
 			return;
 		}
 		if (p_ok) {
@@ -2139,7 +2347,7 @@ echo done > "$PRE.done"
 		if (has('dns') && !dns_log_on) {
 			enable_dns_log();
 			dns_log_on = true;
-			log('learning resumed — dnsmasq query logging enabled.');
+			log('learning resumed - dnsmasq query logging enabled.');
 		}
 
 		load_engine_protect();
@@ -2290,7 +2498,7 @@ echo done > "$PRE.done"
 						st.hot_check = now;
 						hot_set[dom] = true;
 						escape = true;
-						log('hot lane: user is hammering ' + dom + ' while verdict is direct — re-probing');
+						log('hot lane: user is hammering ' + dom + ' while verdict is direct - re-probing');
 					}
 				}
 				if (!escape)
@@ -2357,7 +2565,7 @@ echo done > "$PRE.done"
 						pending_reload = true;
 						pending_new++;
 					} else {
-						log('pain override skipped — proxy cannot reach ' + dom);
+						log('pain override skipped - proxy cannot reach ' + dom);
 						fst.pain_passes = 0;
 						delete fst.pain_burst;
 					}
@@ -2492,7 +2700,7 @@ echo done > "$PRE.done"
 			/* Geo-sensitive seeds likewise (their routing is engine-pinned). */
 			for (let d in geo_seed_set) keep[d] = true;
 			for (let h in keys(state)) {
-				if (h === '__dns_offset') continue;
+				if (h === '__dns_offset' || h === '__geo_scan') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let st = state[h];
 				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
@@ -2504,7 +2712,7 @@ echo done > "$PRE.done"
 			 * them reset the confirm counter and the host never got learned. */
 			let rest = [];
 			for (let h in keys(state)) {
-				if (h === '__dns_offset') continue;
+				if (h === '__dns_offset' || h === '__geo_scan') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let cst = state[h];
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
@@ -2540,7 +2748,7 @@ echo done > "$PRE.done"
 
 	let routing_mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 	if (routing_mode === 'custom' || routing_mode === 'custom_json')
-		log(`routing mode is '${routing_mode}' — learning paused (no preset pools; probes are not wired). Switch to a preset mode to resume.`);
+		log(`routing mode is '${routing_mode}' - learning paused (no preset pools; probes are not wired). Switch to a preset mode to resume.`);
 
 	/* Enable DNS query logging only when the CURRENT setup is learnable: its 4 MB
 	 * self-rotation lives in discover_dns(), which never runs while paused — an
@@ -2604,9 +2812,30 @@ echo done > "$PRE.done"
 					if (access(mf)) { let m = json(readfile(mf) || '{}'); upd = int(m && m.updated) || 0; }
 				} catch (e) { upd = 0; }
 				if ((now - upd) > hours * 3600) {
-					log('RU-geo database is stale (> ' + hours + 'h) — updating in background.');
+					log('RU-geo database is stale (> ' + hours + 'h) - updating in background.');
 					system('ucode ' + HP_DIR + '/scripts/ru_geo_build.uc >/dev/null 2>&1 &');
 				}
+			}
+		}
+
+		/* Geo-aware exit scan (ч.53): on request (RPC trigger file, geo_blocked
+		 * reaction) and periodically. Each node switch briefly reroutes only
+		 * the geo-sensitive domains through the node being measured. */
+		if ((uci.get('homeproxy', 'automation', 'geo_scan') || '1') !== '0') {
+			const gtrig = RUN_DIR + '/automation.geo_scan';
+			if (access(gtrig)) {
+				system('rm -f ' + shellquote(gtrig) + ' 2>/dev/null');
+				geo_scan_soon = time();
+			}
+			if (geo_scan_soon && now >= geo_scan_soon) {
+				geo_scan_soon = 0;
+				/* Requested scans (RPC button or a real geo refusal) ROTATE
+				 * among passing exits - see geo_scan_run(). */
+				geo_scan_run('requested', true);
+				last_geo_scan = now;
+			} else if ((now - last_geo_scan) > GEO_SCAN_INTERVAL) {
+				geo_scan_run('periodic', false);
+				last_geo_scan = now;
 			}
 		}
 
@@ -2636,11 +2865,11 @@ echo done > "$PRE.done"
 			}
 			if (cycle_sleep !== last_cycle_sleep) {
 				if (cycle_sleep === 30)
-					log(`resource-aware: high load (${sprintf('%.2f', load1)}/${sys_cores} cores) or low mem (${mem_avail} kB) — cycle slowed to ${cycle_sleep}s`);
+					log(`resource-aware: high load (${sprintf('%.2f', load1)}/${sys_cores} cores) or low mem (${mem_avail} kB) - cycle slowed to ${cycle_sleep}s`);
 				else if (cycle_sleep === 5)
-					log(`resource-aware: low load (${sprintf('%.2f', load1)}/${sys_cores} cores), ample mem (${mem_avail} kB) — cycle sped up to ${cycle_sleep}s`);
+					log(`resource-aware: low load (${sprintf('%.2f', load1)}/${sys_cores} cores), ample mem (${mem_avail} kB) - cycle sped up to ${cycle_sleep}s`);
 				else
-					log(`resource-aware: load normal — cycle back to ${cycle_sleep}s`);
+					log(`resource-aware: load normal - cycle back to ${cycle_sleep}s`);
 				last_cycle_sleep = cycle_sleep;
 			}
 		}

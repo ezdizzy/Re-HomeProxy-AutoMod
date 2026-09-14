@@ -118,6 +118,9 @@ const zapret_voice = uci.get(uciconfig, ucimain, 'zapret_voice') || '0';
 /* Automation (auto blocked-site detection): when enabled we expose two loopback test
  * inbounds (forced direct / forced main) and merge the learned list into proxy_domain_list. */
 const automation_enabled = uci.get(uciconfig, 'automation', 'enabled');
+/* Geo-aware exit (ч.53): opt-out flag; the rest of the gate (real main node,
+ * proxy nodes present) is evaluated where the feature is wired. */
+const geo_scan_opt = uci.get(uciconfig, 'automation', 'geo_scan');
 
 let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outbound_dns,
     domain_strategy, sniff_override, dns_server, china_dns_server, iran_dns_server, russia_dns_server,
@@ -135,7 +138,7 @@ if (routing_mode !== 'custom') {
 		 * picking "Disable" wants: treat it as an explicit no-proxy setup —
 		 * main-out becomes a plain direct outbound so the whole rule engine
 		 * stays valid and traffic egresses directly. */
-		warn('homeproxy: main_node not configured — generating a NO-PROXY config (main-out = direct).\n');
+		warn('homeproxy: main_node not configured - generating a NO-PROXY config (main-out = direct).\n');
 		main_node = 'direct-out';
 	}
 	main_udp_node = uci.get(uciconfig, ucimain, 'main_udp_node') || 'nil';
@@ -686,7 +689,7 @@ function get_outbound(cfg) {
 				 * must not kill the whole generation — the service would keep running
 				 * on a stale config with no hint why. Skip with a warning instead;
 				 * downstream has_outbound()/null checks drop the dead reference. */
-				warn(sprintf('homeproxy: %s references a missing node — skipping.\n', cfg));
+				warn(sprintf('homeproxy: %s references a missing node - skipping.\n', cfg));
 				return null;
 			}
 			else if (node === 'urltest')
@@ -1124,6 +1127,49 @@ if (automation_enabled === '1' && !isEmpty(main_node))
 		set_system_proxy: is_hiddify ? false : null,
 	});
 
+/* Geo-aware exit (ч.53): a dedicated geo-out selector for the geo-sensitive
+ * hosts (Gemini class) whose exit must pass the service's region checks.
+ * Gate: same plumbing as the test inbounds (automation on, a real main node),
+ * the opt-out flag (automation.geo_scan=0) and at least one proxy node to
+ * scan. The shared seed list lives in resources/geo_sensitive.txt (built-in
+ * copy as fallback) so the engine, rpcd and this generator agree on it. */
+let geo_scan_enabled = (automation_enabled === '1' && geo_scan_opt !== '0' &&
+                        !isEmpty(main_node) && main_node !== 'direct-out');
+let geo_sensitive = [];
+if (geo_scan_enabled) {
+	const gsl_raw = readfile(HP_DIR + '/resources/geo_sensitive.txt') || '';
+	const gsl_lines = split(gsl_raw, /[\r\n]/);
+	for (let gli in gsl_lines) {
+		let gl = trim(replace(gli, /#.*$/, ''));
+		if (length(gl) && match(gl, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/))
+			push(geo_sensitive, gl);
+	}
+	if (!length(geo_sensitive))
+		geo_sensitive = [
+			'gemini.google.com',
+			'aistudio.google.com',
+			'ai.google.dev',
+			'generativelanguage.googleapis.com',
+			'alkalimakersuite-pa.clients6.google.com',
+			'aisandbox-pa.googleapis.com',
+			'push.clients6.google.com'
+		];
+	let n_geo_nodes = 0;
+	uci.foreach(uciconfig, ucinode, (cfg) => { n_geo_nodes++; });
+	if (n_geo_nodes === 0)
+		geo_scan_enabled = false;
+}
+if (geo_scan_enabled)
+	push(config.inbounds, {
+		type: 'mixed',
+		tag: 'geo-test-in',
+		listen: '127.0.0.1',
+		listen_port: 5339,
+		sniff: is_hiddify ? true : null,
+		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
+		set_system_proxy: is_hiddify ? false : null,
+	});
+
 /* MultiDNS secure-via-proxy inbound: a loopback-only mixed (SOCKS5/HTTP) inbound the
  * mosdns secure pool's DoH/DoT rides when secure_via_proxy is set. Pinned to main-out by
  * a route rule below, so the encrypted DNS query actually egresses through the proxy
@@ -1481,7 +1527,7 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		});
 		if (!length(any))
 			return { outbound: null, extra: extra };
-		warn(sprintf('homeproxy: %s pool empty — falling back to all %d nodes.\n', tag, length(any)));
+		warn(sprintf('homeproxy: %s pool empty - falling back to all %d nodes.\n', tag, length(any)));
 		/* extra MUST list the same sids as the urltest references: the caller emits
 		 * one outbound per extra entry — an empty extra here left the group pointing
 		 * at outbounds that were never emitted (fatal "non-existent outbound"). */
@@ -1649,6 +1695,55 @@ if (!isEmpty(main_node)) {
 			push_outbound(config.outbounds, urltest_node);
 			config.outbounds[length(config.outbounds)-1].tag = 'cfg-' + i + '-out';
 		}
+	}
+
+	/* geo-out selector (ч.53): every proxy node participates; the automation
+	 * geo scan re-pins the selection (Clash API PUT) to a node whose exit
+	 * passes the geo checks of the geo-sensitive services. The last
+	 * known-good pick is fronted via `default` so a core restart does not
+	 * flip geo traffic onto a possibly-refused first member before the next
+	 * scan runs (state file lives on tmpfs - after a reboot the scan re-pins
+	 * within ~60 s). Watchdog dead marks sink to the tail like everywhere. */
+	if (geo_scan_enabled) {
+		let geo_tags = [];
+		uci.foreach(uciconfig, ucinode, (cfg) => {
+			const gt = 'cfg-' + cfg['.name'] + '-out';
+			push(geo_tags, gt);
+			if (has_outbound(gt))
+				return;
+			const gnc = uci.get_all(uciconfig, cfg['.name']) || {};
+			if (gnc.type in ['wireguard', 'amneziawg']) {
+				push(config.endpoints, generate_endpoint(gnc));
+				config.endpoints[length(config.endpoints)-1].tag = gt;
+			} else {
+				push_outbound(config.outbounds, gnc);
+				config.outbounds[length(config.outbounds)-1].tag = gt;
+			}
+		});
+		if (length(geo_tags)) {
+			const gde = dead_last(geo_tags);
+			if (gde)
+				geo_tags = gde;
+			let geo_default = null;
+			try {
+				const gs_state = json(readfile(RUN_DIR + '/automation_state.json') || '');
+				if (gs_state && type(gs_state.__geo_scan) === 'object') {
+					const gsel = gs_state.__geo_scan.selected;
+					if (gsel && !isEmpty(gsel) && index(geo_tags, gsel) >= 0)
+						geo_default = gsel;
+				}
+			} catch (e) { geo_default = null; }
+			if (!geo_default || index(geo_tags, geo_default) < 0)
+				geo_default = geo_tags[0];
+			push(config.outbounds, {
+				type: 'selector',
+				tag: 'geo-out',
+				outbounds: geo_tags,
+				default: geo_default,
+				interrupt_exist_connections: true
+			});
+		} else
+			geo_scan_enabled = false;
 	}
 
 	/* Advanced routing_node outbounds for proxy_banned_ru */
@@ -1819,6 +1914,28 @@ if (automation_enabled === '1' && !isEmpty(main_node)) {
 		action: 'route',
 		outbound: 'main-out'
 	});
+}
+
+/* Geo-aware exit rules (ч.53), same "above region/learned rules" placement as
+ * the test-inbound rules so the engine's own paths are never re-routed by the
+ * normal rules:
+ * - geo-test-in (:5339) -> geo-out: the geo scan measures every node's exit
+ *   through here without touching the user's main path;
+ * - geo-sensitive domains -> geo-out: these services are served from anywhere
+ *   (200 shell) but reject "unsupported country" on their APIs - they ride
+ *   the exit that provably passes the checks instead of the main path. */
+if (geo_scan_enabled) {
+	push(config.route.rules, {
+		inbound: 'geo-test-in',
+		action: 'route',
+		outbound: 'geo-out'
+	});
+	if (length(geo_sensitive))
+		push(config.route.rules, {
+			domain_suffix: geo_sensitive,
+			action: 'route',
+			outbound: 'geo-out'
+		});
 }
 
 /* MultiDNS secure-via-proxy: pin the dedicated mdns-proxy-in inbound to main-out so the

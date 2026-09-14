@@ -1,0 +1,13 @@
+# Geo-sensitive services (Re:HomeProxy AutoMod ч.51/ч.53).
+# Sites whose HTML shell answers 200 from anywhere while their APIs reject
+# "unsupported country" (Google Gemini error 1060 class). Shared by the
+# automation engine (seeding + geo scan), rpcd diagnostics and
+# generate_client.uc (routing rule). One host per line; '#' starts a comment.
+# Do not grow this list casually: every entry is a guaranteed proxy route.
+gemini.google.com
+aistudio.google.com
+ai.google.dev
+generativelanguage.googleapis.com
+alkalimakersuite-pa.clients6.google.com
+aisandbox-pa.googleapis.com
+push.clients6.google.com

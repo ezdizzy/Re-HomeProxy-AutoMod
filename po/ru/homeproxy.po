@@ -7470,8 +7470,8 @@ msgstr "Использовать нативный помощник probe_pool"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "When the probe_pool binary is installed (via the console installer), probe waves run as one native batch process instead of a shell worker per host — HTTP/2, connection reuse, no extra forks. Verdicts are computed by the same engine logic; if the helper is missing or fails, the classic shell workers are used automatically."
-msgstr "Если установлен бинарник probe_pool (через консольный установщик), волны проверок выполняются одним нативным батч-процессом вместо shell-воркера на каждый хост — HTTP/2, переиспользование соединений, без лишних форков. Вердикты вычисляет та же логика движка; если помощника нет или он сбоит, автоматически используются классические shell-воркеры."
+msgid "When the probe_pool binary is installed (via the console installer), probe waves run inside one resident native process — HTTP/2, TLS connection reuse between cycles, DNS resolution inside the helper, no extra forks. Verdicts are computed by the same engine logic; if the helper is missing or fails, the classic shell workers are used automatically."
+msgstr "Если установлен бинарник probe_pool (через консольный установщик), волны проверок выполняются внутри одного постоянно живущего нативного процесса — HTTP/2, переиспользование TLS-соединений между циклами, DNS-резолв внутри помощника, без лишних форков. Вердикты вычисляет та же логика движка; если помощника нет или он сбоит, автоматически используются классические shell-воркеры."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -7502,3 +7502,83 @@ msgstr "Интерфейс захвата SNI"
 
 msgid "Network interface the SNI capture (native sniffer or tcpdump) listens on."
 msgstr "Сетевой интерфейс, на котором захватывается SNI (нативный сниффер или tcpdump)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo-aware exit for geo-sensitive services"
+msgstr "Гео-выход для гео-чувствительных сервисов"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Scans every proxy node in the background (exit country/ASN and the actual geo verdict of the Google AI and OpenAI edge checks) and keeps the geo-sensitive hosts (Gemini, AI Studio, ChatGPT class) on a node whose exit passes those checks — re-homing automatically when Google/OpenAI start refusing the current exit. Runs every 30 minutes, on demand (\"Scan geo exits\" on the Overview) and right after a geo-refusal is detected. Adds a geo-out routing group; everything else keeps its route."
+msgstr "Сканирует каждый прокси-узел в фоне (страна/ASN выхода и реальный гео-вердикт пограничных проверок Google AI и OpenAI) и удерживает гео-чувствительные хосты (Gemini, AI Studio, класс ChatGPT) на узле, чей выход эти проверки проходит — автоматически переезжая, когда Google/OpenAI начинают отклонять текущий выход. Запускается каждые 30 минут, по кнопке («Сканировать гео-выходы» на Обзоре) и сразу после обнаружения гео-отказа. Добавляет группу маршрутизации geo-out; остальная маршрутизация не меняется."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Scan geo exits"
+msgstr "Сканировать гео-выходы"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo scan could not be started (feature disabled or automation off)."
+msgstr "Гео-сканирование не удалось запустить (функция выключена или автоматизация отключена)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo scan started — every node is measured in turn (exit country/ASN, Google AI and OpenAI geo verdicts); the table updates when it finishes."
+msgstr "Гео-сканирование запущено — каждый узел измеряется по очереди (страна/ASN выхода, гео-вердикты Google AI и OpenAI); таблица обновится по завершении."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo-aware exit: disabled (see Settings)."
+msgstr "Гео-выход: отключён (см. Настройки)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo-aware exit: not scanned yet — press \"Scan geo exits\"."
+msgstr "Гео-выход: сканирования ещё не было — нажмите «Сканировать гео-выходы»."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo-aware exit for geo-sensitive services (Gemini etc.):"
+msgstr "Гео-выход для гео-чувствительных сервисов (Gemini и др.):"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "last scan: %s"
+msgstr "последнее сканирование: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Exit country"
+msgstr "Страна выхода"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "ASN"
+msgstr "ASN"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Google AI"
+msgstr "Google AI"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "OpenAI"
+msgstr "OpenAI"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "passes"
+msgstr "проходит"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "refused"
+msgstr "отклонён"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "n/a"
+msgstr "н/д"

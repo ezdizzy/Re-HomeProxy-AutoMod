@@ -750,7 +750,7 @@ function build_mosdns_conf() {
 		log('direct DoH fallback engaged (' + join(' ', AUTO_DOH) + ')');
 		autodoh_active = true;
 	} else if (!autodoh_injected && autodoh_active === true) {
-		log('a plaintext plain-pool server recovered — direct DoH fallback removed');
+		log('a plaintext plain-pool server recovered - direct DoH fallback removed');
 		autodoh_active = false;
 	}
 
@@ -998,7 +998,7 @@ function start_mosdns() {
 	}
 	if (!alive) {
 		let err = access(LOG_FILE + '.md') ? trim(readfile(LOG_FILE + '.md')) : '';
-		log('mosdns failed to start — resolution will not be accelerated.'
+		log('mosdns failed to start - resolution will not be accelerated.'
 			+ (err ? ' err: ' + err : ''));
 	}
 	return alive;
@@ -1103,7 +1103,7 @@ function analyze() {
 				log('plain listener serves forged answers (' + gbad + '/' + gtotal + ' bad), streak=' + st.plain_bad_streak);
 				if (autodoh && st.plain_bad_streak >= 2) {
 					st.plain_doh_latch = '1';
-					log('port-53 interception confirmed — direct DoH fallback latched ON');
+					log('port-53 interception confirmed - direct DoH fallback latched ON');
 				}
 			}
 		} else {
@@ -1168,7 +1168,7 @@ function analyze() {
 				delete st.uv_fail[dom];
 				if (st.quarantine && st.quarantine[dom]) {
 					delete st.quarantine[dom];
-					log('user domain ' + dom + ' verified clean — quarantine lifted');
+					log('user domain ' + dom + ' verified clean - quarantine lifted');
 				}
 			} else {
 				st.uv_fail[dom] = (st.uv_fail[dom] || 0) + 1;
@@ -1335,7 +1335,7 @@ function bootstrap() {
 	PROXY = '127.0.0.1:5338';  /* dedicated mdns-proxy-in → main-out */
 	self_mark = int(uci.get('homeproxy', 'infra', 'self_mark') || '100') || 100;
 	ensure_probe_table(self_mark);
-	if (!access(MOSDNS)) { log('mosdns binary missing — install mosdns to use MultiDNS.'); return; }
+	if (!access(MOSDNS)) { log('mosdns binary missing - install mosdns to use MultiDNS.'); return; }
 	ensure_data_files();
 	start_mosdns();
 	dbg('bootstrap:done alive=' + mosdns_running());
@@ -1378,7 +1378,7 @@ function main() {
 		self_mark = int(uci.get('homeproxy', 'infra', 'self_mark') || '100') || 100;
 		ensure_probe_table(self_mark);
 
-		if (!access(MOSDNS)) { log('mosdns binary missing — install mosdns to use MultiDNS.'); sleep(30); continue; }
+		if (!access(MOSDNS)) { log('mosdns binary missing - install mosdns to use MultiDNS.'); sleep(30); continue; }
 
 	log('MultiDNS analyzer started (plain=' + use_plain + ', secure=' + use_secure + ', via_proxy=' + secure_via_proxy + ').');
 	ensure_data_files();
@@ -1413,7 +1413,7 @@ function main() {
 
 			/* Fast self-heal: if mosdns died for any reason, bring it back up
 			 * within one loop tick (~5s) so DNS never stays down. */
-			if (!mosdns_running()) { log('mosdns not running — restarting.'); start_mosdns(); }
+			if (!mosdns_running()) { log('mosdns not running - restarting.'); start_mosdns(); }
 
 			if ((now - last_cfg) > 30) {
 				dbg('loop cfg-check');

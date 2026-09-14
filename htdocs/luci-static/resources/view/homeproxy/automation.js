@@ -80,6 +80,13 @@ const callGeoDiag = rpc.declare({
 	expect: { '': {} }
 });
 
+const callGeoScan = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_geo_scan',
+	params: [ 'action' ],
+	expect: { '': {} }
+});
+
 const callHelpersInstall = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'automation_helpers_install',
@@ -284,6 +291,12 @@ return view.extend({
 		o.default = o.enabled;
 		o.rmempty = false;
 
+		/* ч.53: geo-aware exit (geo-out selector + per-node geo scan) */
+		o = s.option(form.Flag, 'geo_scan', _('Geo-aware exit for geo-sensitive services'),
+			_('Scans every proxy node in the background (exit country/ASN and the actual geo verdict of the Google AI and OpenAI edge checks) and keeps the geo-sensitive hosts (Gemini, AI Studio, ChatGPT class) on a node whose exit passes those checks — re-homing automatically when Google/OpenAI start refusing the current exit. Runs every 30 minutes, on demand ("Scan geo exits" on the Overview) and right after a geo-refusal is detected. Adds a geo-out routing group; everything else keeps its route.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
 		/* Phase 1: Discovery source weights (weighted cross-correlation).
 		 * Each sighting adds its source weight to a per-host score; the probe
 		 * budget is spent on the highest-scoring candidates first. */
@@ -304,7 +317,7 @@ return view.extend({
 
 		/* Phase 2: probe_pool native backend (optional Go helper) */
 		o = s.option(form.Flag, 'probe_pool_enabled', _('Use the native probe_pool helper'),
-			_('When the probe_pool binary is installed (via the console installer), probe waves run as one native batch process instead of a shell worker per host — HTTP/2, connection reuse, no extra forks. Verdicts are computed by the same engine logic; if the helper is missing or fails, the classic shell workers are used automatically.'));
+			_('When the probe_pool binary is installed (via the console installer), probe waves run inside one resident native process — HTTP/2, TLS connection reuse between cycles, DNS resolution inside the helper, no extra forks. Verdicts are computed by the same engine logic; if the helper is missing or fails, the classic shell workers are used automatically.'));
 		o.default = o.enabled;
 		o.rmempty = false;
 
@@ -414,10 +427,14 @@ return view.extend({
 		const pauseEl = E('div', { 'class': 'hpauto-banner', style: 'display:none' });
 		const geoLine = E('div', { 'class': 'hpauto-hint' });
 		const helperLine = E('div', { 'class': 'hpauto-hint' });
+		const geoExitLine = E('div', { 'class': 'hpauto-hint' });
+		const geoExitTable = E('div', { 'class': 'hpauto-wrap', style: 'display:none; max-height:40vh' });
 		panes.overview.appendChild(ovCards);
 		panes.overview.appendChild(pauseEl);
 		panes.overview.appendChild(geoLine);
 		panes.overview.appendChild(helperLine);
+		panes.overview.appendChild(geoExitLine);
+		panes.overview.appendChild(geoExitTable);
 		panes.overview.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Test now'), function() { return callTestNow().then(refresh); }),
 			btn(_('Geo diagnostics'), function() {
@@ -433,6 +450,18 @@ return view.extend({
 					const text = _('Tunnel exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d.')
 						.format(e.ip || '—', e.country_code || '—', e.asn || (e.org || '—'), verdict, r.seeds_covered || 0, (r.seeds || []).length);
 					ui.addNotification(null, E('p', {}, text), (r.exit_verdict === 'unsupported_country') ? 'warning' : 'info');
+				});
+			}),
+			btn(_('Scan geo exits'), function() {
+				return callGeoScan('status').then(function(cur) {
+					const baseTs = (cur && cur.ts) || 0;
+					return callGeoScan('start').then(function(r) {
+						if (!r || !r.started)
+							return ui.addNotification(null, E('p', {}, _('Geo scan could not be started (feature disabled or automation off).')), 'error');
+						ui.addNotification(null, E('p', {}, _('Geo scan started — every node is measured in turn (exit country/ASN, Google AI and OpenAI geo verdicts); the table updates when it finishes.')), 'info');
+						pollGeoScan(baseTs, 0);
+						return refresh();
+					});
 				});
 			}),
 			btn(_('Install helpers'), function() {
@@ -729,6 +758,68 @@ return view.extend({
 			wrap.scrollTop = scrollTop;
 		}
 
+		/* ── Geo-aware exit (ч.53): status line + per-node verdict table ── */
+
+		function renderGeoExit(r) {
+			geoExitLine.innerHTML = '';
+			geoExitTable.innerHTML = '';
+			geoExitTable.style.display = 'none';
+			if (!r || !r.enabled) {
+				geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit: disabled (see Settings).')));
+				return;
+			}
+			if (!r.scanned) {
+				geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit: not scanned yet — press "Scan geo exits".')));
+				return;
+			}
+			const selName = String(r.selected || '').replace(/^cfg-/, '').replace(/-out$/, '');
+			geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit for geo-sensitive services (Gemini etc.):') + ' '));
+			geoExitLine.appendChild(E('b', {}, [ selName || '—' ]));
+			geoExitLine.appendChild(document.createTextNode(' · ' + _('last scan: %s').format(fmtAge(r.ts) || '—')));
+			const thead = E('tr', {}, [
+				E('th', {}, [ _('Node') ]),
+				E('th', {}, [ _('Exit country') ]),
+				E('th', {}, [ _('ASN') ]),
+				E('th', {}, [ _('Google AI') ]),
+				E('th', {}, [ _('OpenAI') ])
+			]);
+			const tbody = E('tbody', {});
+			const vspan = (v) => (v === 'ok')
+				? E('span', { style: 'color:#3fbf5f' }, [ _('passes') ])
+				: (v === 'refused')
+					? E('span', { style: 'color:#e05252' }, [ _('refused') ])
+					: E('span', { style: 'color:#9a9a9a' }, [ _('n/a') ]);
+			const nodes = r.nodes || [];
+			for (let i in nodes) {
+				const n = nodes[i];
+				tbody.appendChild(E('tr', {}, [
+					E('td', {}, [ (n.selected ? '✔ ' : '') + (n.node || '') ]),
+					E('td', {}, [ n.country || '—' ]),
+					E('td', {}, [ n.asn || '—' ]),
+					E('td', {}, [ vspan(n.google) ]),
+					E('td', {}, [ vspan(n.openai) ])
+				]));
+			}
+			geoExitTable.appendChild(E('table', { 'class': 'hpauto-table' }, [ E('thead', {}, [ thead ]), tbody ]));
+			geoExitTable.style.display = '';
+		}
+
+		/* Poll the scan result after "Scan geo exits": the daemon scans between
+		 * passes (seconds to a couple of minutes depending on the node count);
+		 * resolve when a NEWER scan timestamp appears (or give up after 10 min). */
+		function pollGeoScan(baseTs, tries) {
+			return callGeoScan('status').then(function(r) {
+				if (r && r.scanned && (r.ts || 0) > (baseTs || 0)) {
+					renderGeoExit(r);
+					return refresh();
+				}
+				if ((tries || 0) >= 120) return null;
+				return new Promise(function(resolve) {
+					window.setTimeout(function() { resolve(pollGeoScan(baseTs, (tries || 0) + 1)); }, 5000);
+				});
+			}).catch(function() {});
+		}
+
 		/* ── Geo cards ─────────────────────────────────────────────────── */
 
 		function renderGeo(geo) {
@@ -815,6 +906,8 @@ return view.extend({
 				renderTable();
 				renderGeo(g);
 				logEl.textContent = st.log || '';
+				/* Geo-aware exit status (separate RPC; never blocks the poll). */
+				callGeoScan('status').then(renderGeoExit).catch(function() {});
 			}).catch(function(e) {
 				ovCards.textContent = _('Status unavailable: ') + e;
 			});

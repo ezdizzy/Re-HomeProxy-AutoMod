@@ -1,10 +1,19 @@
 // probe_pool вЂ” native batch HTTP/TLS prober for the HomeProxy automation engine.
 //
-// One-shot mode only (no daemon, no socket): automation.uc writes a JSON request
-// file, runs `probe_pool -in req.json -out resp.json`, reads the JSON response.
-// Per batch it probes all hosts CONCURRENTLY with dedicated transports вЂ” the
-// equivalent of N parallel curl runs without the N x (fork + nslookup + curl)
-// overhead, with HTTP/2 where negotiated.
+// Two modes:
+//
+//   - RESIDENT (default when started with `-daemon -dir <dir>`): one long-lived
+//     process watches <dir>/pp.in.json (written by automation.uc via write-to-temp
+//     + rename), executes the batch and answers <dir>/pp.out.json (also atomic).
+//     The process stays warm across cycles: Go runtime startup, TLS handshakes
+//     (keep-alive transport cache) and plain-view DNS answers (resolve cache with
+//     a 10-minute TTL, the same TTL the ucode side uses) are all reused between
+//     batches. A heartbeat file (<dir>/pp.daemon.json, refreshed every 5 s) lets
+//     the orchestrator detect a dead or wedged daemon and fall back.
+//
+//   - ONE-SHOT (`-in req.json -out resp.json`): the original file-based batch
+//     mode, kept as the automatic fallback (and used while the daemon is being
+//     (re)spawned). Both modes share the exact same request/response schema.
 //
 // Semantics mirror the shell worker exactly:
 //   - HTTP sides (direct/proxy) ride the pinned test inbounds
@@ -19,6 +28,15 @@
 //   - TCP sides (tcp/tcpproxy) map outcomes to curl exit codes the daemon
 //     already understands: 0 TLS ok, 35 TLS failed after TCP connect, 7 dial
 //     refused/error, 28 dial/TLS timeout.
+//
+// Plain-view DNS moved INTO this binary (the old resolve_worker.sh forks are
+// gone): the request may carry `resolve_hosts`; every host is resolved
+// concurrently against `resolvers` (mosdns plain listener first вЂ” the
+// RU-facing view the browser gets вЂ” then public resolvers), merged into the
+// pinned `resolve` map used for direct-side probes and echoed back in the
+// response so the orchestrator can warm its own cache. Unresolved hosts yield
+// "000" results, exactly like the shell worker's behavior for unresolvable
+// hosts.
 //
 // Verdicts (ok/block) are NOT decided here вЂ” the ucode side re-derives them
 // from the raw code + body head, so this binary can never change learning
@@ -39,19 +57,28 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 const (
-	bodyReadLimit = 64 * 1024 // same cap as the shell worker's curl body capture
-	bodyHeadLimit = 8 * 1024  // body_head: enough for block-page signatures
-	maxBatch      = 256
-	dialTimeout   = 5 * time.Second
+	bodyReadLimit  = 64 * 1024 // same cap as the shell worker's curl body capture
+	bodyHeadLimit  = 8 * 1024  // body_head: enough for block-page signatures
+	maxBatch       = 256
+	dialTimeout    = 5 * time.Second
+	resolveTTL     = 600 * time.Second // same TTL as the ucode pv_cache
+	maxCache       = 1024              // resolve cache entry cap
+	maxTransports  = 64                // keep-alive transport cache cap
+	pollInterval   = 150 * time.Millisecond
+	heartbeatEvery = 5 * time.Second
 )
 
 type probeRequest struct {
@@ -63,17 +90,21 @@ type probeRequest struct {
 }
 
 type batchRequest struct {
-	DirectProxy string            `json:"direct_proxy"`
-	ProxyProxy  string            `json:"proxy_proxy"`
-	Resolve     map[string]string `json:"resolve"` // host -> plain-view IP (direct side)
-	HTTP2       bool              `json:"http2"`
-	Hosts       []probeRequest    `json:"hosts"`
+	ID           string            `json:"id,omitempty"`
+	DirectProxy  string            `json:"direct_proxy"`
+	ProxyProxy   string            `json:"proxy_proxy"`
+	Resolve      map[string]string `json:"resolve"`         // host -> plain-view IP (direct side)
+	ResolveHosts []string          `json:"resolve_hosts"`   // hosts to resolve here (plain view)
+	Resolvers    []string          `json:"resolvers"`       // ordered DNS servers ("host", "host:port")
+	HTTP2        bool              `json:"http2"`
+	Hosts        []probeRequest    `json:"hosts"`
 }
 
 type probeResult struct {
 	ID       string `json:"id"`
 	Host     string `json:"host"`
 	Code     string `json:"code"`
+	Proto    string `json:"proto,omitempty"` // negotiated ALPN: "h2" | "http/1.1"
 	FP       string `json:"fp,omitempty"`
 	BodyLen  int    `json:"body_len,omitempty"`
 	BodyHead string `json:"body_head,omitempty"`
@@ -83,17 +114,29 @@ type probeResult struct {
 }
 
 type batchResponse struct {
-	Results []probeResult `json:"results"`
+	ID      string            `json:"id,omitempty"`
+	Resolve map[string]string `json:"resolve,omitempty"`
+	Results []probeResult     `json:"results"`
 }
 
 func main() {
-	in := flag.String("in", "", "path to the JSON request file (required)")
-	out := flag.String("out", "", "path to write the JSON response (required)")
+	in := flag.String("in", "", "path to the JSON request file (one-shot mode)")
+	out := flag.String("out", "", "path to write the JSON response (one-shot mode)")
+	daemon := flag.Bool("daemon", false, "run in resident mode")
+	dir := flag.String("dir", "", "working directory for the resident mode (pp.in.json / pp.out.json)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println("probe_pool", version)
+		return
+	}
+	if *daemon {
+		if *dir == "" {
+			fmt.Fprintln(os.Stderr, "probe_pool: -daemon requires -dir")
+			os.Exit(2)
+		}
+		runDaemon(*dir)
 		return
 	}
 	if *in == "" || *out == "" {
@@ -103,18 +146,37 @@ func main() {
 
 	raw, err := os.ReadFile(*in)
 	if err != nil {
-		fail(*out, fmt.Sprintf("read request: %v", err))
+		fail(*out, "", fmt.Sprintf("read request: %v", err))
 	}
 	var req batchRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
-		fail(*out, fmt.Sprintf("parse request: %v", err))
+		fail(*out, req.ID, fmt.Sprintf("parse request: %v", err))
 	}
+	resp := runBatch(&req)
+	encoded, err := json.Marshal(resp)
+	if err != nil {
+		fail(*out, req.ID, fmt.Sprintf("encode response: %v", err))
+	}
+	if err := writeAtomic(*out, append(encoded, '\n')); err != nil {
+		fmt.Fprintf(os.Stderr, "probe_pool: write response: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runBatch executes a whole request (resolve + concurrent probes). Shared by
+// both modes so verdicts and schemas can never drift apart.
+func runBatch(req *batchRequest) batchResponse {
 	if len(req.Hosts) == 0 {
-		fail(*out, "empty batch")
+		return batchResponse{ID: req.ID, Results: []probeResult{{Code: "000", Error: "empty batch"}}}
 	}
 	if len(req.Hosts) > maxBatch {
 		req.Hosts = req.Hosts[:maxBatch]
 	}
+	if req.Resolve == nil {
+		req.Resolve = map[string]string{}
+	}
+
+	resolved := resolveHosts(req)
 
 	workers := runtime.NumCPU() * 4
 	if workers < 4 {
@@ -135,7 +197,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				results[i] = executeProbe(req, req.Hosts[i])
+				results[i] = executeProbe(*req, req.Hosts[i])
 			}
 		}()
 	}
@@ -145,25 +207,204 @@ func main() {
 	close(jobs)
 	wg.Wait()
 
-	encoded, err := json.Marshal(batchResponse{Results: results})
-	if err != nil {
-		fail(*out, fmt.Sprintf("encode response: %v", err))
-	}
-	if err := os.WriteFile(*out, append(encoded, '\n'), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "probe_pool: write response: %v\n", err)
-		os.Exit(1)
-	}
+	return batchResponse{ID: req.ID, Resolve: resolved, Results: results}
 }
 
-func fail(outPath, msg string) {
-	// The daemon treats a missing/unparsable response as "pool unavailable" and
-	// falls back to shell workers, but an explicit error record is friendlier
-	// for the log than silence.
-	resp, _ := json.Marshal(batchResponse{Results: []probeResult{{ID: "", Host: "", Code: "000", Error: msg}}})
-	_ = os.WriteFile(outPath, append(resp, '\n'), 0644)
-	fmt.Fprintf(os.Stderr, "probe_pool: %s\n", msg)
-	os.Exit(1)
+// в”Ђв”Ђ Plain-view resolution (in-Go replacement for resolve_worker.sh) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+
+var (
+	resCacheMu sync.Mutex
+	resCache   = map[string]resolveEntry{}
+	resSem     = make(chan struct{}, 32) // bounded concurrent lookups
+)
+
+type resolveEntry struct {
+	ip      string
+	expires time.Time
 }
+
+// resolveHosts fills req.Resolve for every host in req.ResolveHosts that is
+// missing a pinned IP. Answers come from the cache, the resolvers (in order),
+// and are echoed back as the returned map. A host that cannot be resolved
+// simply stays unpinned вЂ” its probe then fails with "000" like the shell
+// worker's unresolvable case.
+func resolveHosts(req *batchRequest) map[string]string {
+	servers := req.Resolvers
+	if len(servers) == 0 {
+		servers = []string{"8.8.8.8", "1.1.1.1", "77.88.8.8"}
+	}
+
+	need := map[string]bool{}
+	for _, h := range req.ResolveHosts {
+		h = strings.TrimSuffix(strings.ToLower(h), ".")
+		if h == "" || isIP(h) {
+			continue
+		}
+		if _, ok := req.Resolve[h]; ok {
+			continue
+		}
+		need[h] = true
+	}
+	if len(need) == 0 {
+		return req.Resolve
+	}
+
+	// Warm cache hits first.
+	now := time.Now()
+	resCacheMu.Lock()
+	for h := range need {
+		if e, ok := resCache[h]; ok && now.Before(e.expires) {
+			req.Resolve[h] = e.ip
+			delete(need, h)
+		}
+	}
+	resCacheMu.Unlock()
+	if len(need) == 0 {
+		return req.Resolve
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for h := range need {
+		wg.Add(1)
+		resSem <- struct{}{}
+		go func(host string) {
+			defer wg.Done()
+			defer func() { <-resSem }()
+			ip := lookupPlain(host, servers)
+			mu.Lock()
+			defer mu.Unlock()
+			if ip != "" {
+				req.Resolve[host] = ip
+				resCacheMu.Lock()
+				// Hard cap: drop the whole cache when it grows too big
+				// (next refill is cheap; entries are only an optimization).
+				if len(resCache) >= maxCache {
+					resCache = map[string]resolveEntry{}
+				}
+				resCache[host] = resolveEntry{ip: ip, expires: time.Now().Add(resolveTTL)}
+				resCacheMu.Unlock()
+			}
+		}(h)
+	}
+	wg.Wait()
+	return req.Resolve
+}
+
+// lookupPlain queries A records against the servers in order (short per-server
+// timeout) and returns the first public IPv4 answer. This is the same
+// "plain view" the user's browser sees: the local mosdns plain listener races
+// RU-facing upstreams, the public resolvers are the fallback.
+func lookupPlain(host string, servers []string) string {
+	for _, srv := range servers {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		r := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{Timeout: 3 * time.Second}
+				return d.DialContext(ctx, "udp", serverAddr(srv))
+			},
+		}
+		ips, err := r.LookupIP(ctx, "ip4", host)
+		cancel()
+		if err == nil {
+			for _, ip := range ips {
+				s := ip.String()
+				if !isPrivateIP(s) {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// serverAddr normalizes "host", "host:port" and "udp://host:port" forms into a
+// dialable "host:port".
+func serverAddr(srv string) string {
+	srv = strings.TrimPrefix(srv, "udp://")
+	srv = strings.TrimPrefix(srv, "tcp://")
+	if _, _, err := net.SplitHostPort(srv); err == nil {
+		return srv
+	}
+	return net.JoinHostPort(srv, "53")
+}
+
+func isIP(s string) bool {
+	return net.ParseIP(s) != nil
+}
+
+func isPrivateIP(s string) bool {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4[0] == 10 || v4[0] == 127 || (v4[0] == 172 && v4[1]&0xf0 == 16) || (v4[0] == 192 && v4[1] == 168) || v4[0] == 169 && v4[1] == 254
+	}
+	return true // ignore IPv6 for plain-view pinning
+}
+
+// в”Ђв”Ђ Keep-alive transport cache (the point of the resident mode) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+
+type trKey struct {
+	proxy string
+	sni   string
+	h2    bool
+}
+
+var (
+	trMu      sync.Mutex
+	trCache   = map[trKey]*http.Transport{}
+	trOrder   []trKey
+)
+
+func transportFor(proxyURL, serverName string, h2 bool) *http.Transport {
+	key := trKey{proxy: proxyURL, sni: serverName, h2: h2}
+	trMu.Lock()
+	defer trMu.Unlock()
+	if tr, ok := trCache[key]; ok {
+		return tr
+	}
+	tr := newTransport(proxyURL, serverName, h2)
+	if len(trCache) >= maxTransports {
+		// Evict everything (rare: bounded by the number of probed hosts).
+		for _, t := range trCache {
+			t.CloseIdleConnections()
+		}
+		trCache = map[trKey]*http.Transport{}
+		trOrder = nil
+	}
+	trCache[key] = tr
+	trOrder = append(trOrder, key)
+	return tr
+}
+
+func newTransport(proxyURL, serverName string, h2 bool) *http.Transport {
+	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+	if serverName != "" {
+		tlsCfg.ServerName = serverName
+	}
+	if h2 {
+		tlsCfg.NextProtos = []string{"h2", "http/1.1"}
+	}
+	tr := &http.Transport{
+		TLSClientConfig: tlsCfg,
+		// ForceAttemptHTTP2 is required for h2 when TLSClientConfig is set.
+		ForceAttemptHTTP2:   h2,
+		MaxIdleConns:        8,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	if proxyURL != "" {
+		if u, err := url.Parse(proxyURL); err == nil {
+			tr.Proxy = http.ProxyURL(u)
+		}
+	}
+	return tr
+}
+
+// в”Ђв”Ђ Probes в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 func executeProbe(req batchRequest, h probeRequest) probeResult {
 	res := probeResult{ID: h.ID, Host: h.Host, Code: "000", RTTms: 0}
@@ -195,7 +436,7 @@ func executeProbe(req batchRequest, h probeRequest) probeResult {
 	// CONNECT target; SNI and Host stay on the real hostname (curl --resolve).
 	pin := ""
 	if h.Side == "direct" {
-		if ip, ok := req.Resolve[h.Host]; ok && ip != "" {
+		if ip, ok := req.Resolve[strings.ToLower(h.Host)]; ok && ip != "" {
 			pin = ip
 			res.IP = ip
 		}
@@ -205,14 +446,15 @@ func executeProbe(req batchRequest, h probeRequest) probeResult {
 	start := time.Now()
 
 	// HTTPS first, mirroring the shell worker.
-	code, fp, bodyLen, bodyHead := httpAttempt(h, proxyURL, pin, 443, h2, timeout)
+	code, proto, fp, bodyLen, bodyHead := httpAttempt(h, proxyURL, pin, 443, h2, timeout)
 	if code == "000" {
 		// HTTPS produced no response вЂ” retry plain HTTP (HTTP-only and
 		// redirect-to-http sites). 4xx/5xx are NOT retried, same as curl flow.
-		code, fp, bodyLen, bodyHead = httpAttempt(h, proxyURL, pin, 80, h2, timeout)
+		code, proto, fp, bodyLen, bodyHead = httpAttempt(h, proxyURL, pin, 80, h2, timeout)
 	}
 
 	res.Code = code
+	res.Proto = proto
 	res.FP = fp
 	res.BodyLen = bodyLen
 	res.BodyHead = bodyHead
@@ -220,9 +462,9 @@ func executeProbe(req batchRequest, h probeRequest) probeResult {
 	return res
 }
 
-func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeout time.Duration) (code, fp string, bodyLen int, bodyHead string) {
+func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeout time.Duration) (code, proto, fp string, bodyLen int, bodyHead string) {
 	code = "000"
-	targetPort := fmt.Sprintf("%d", port)
+	targetPort := strconv.Itoa(port)
 	hostPort := net.JoinHostPort(h.Host, targetPort)
 	urlHost := hostPort
 	if pin != "" {
@@ -233,7 +475,7 @@ func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeou
 		scheme = "http"
 	}
 
-	tr := newTransport(proxyURL, h.Host, h2)
+	tr := transportFor(proxyURL, h.Host, h2)
 	client := &http.Client{
 		Transport: tr,
 		Timeout:   timeout,
@@ -260,6 +502,9 @@ func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeou
 	defer resp.Body.Close()
 
 	code = fmt.Sprintf("%d", resp.StatusCode)
+	if resp.TLS != nil && resp.TLS.NegotiatedProtocol != "" {
+		proto = resp.TLS.NegotiatedProtocol
+	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, bodyReadLimit))
 	bodyLen = len(body)
 	if bodyLen > bodyHeadLimit {
@@ -269,29 +514,6 @@ func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeou
 	}
 	fp = fingerprint(body)
 	return
-}
-
-func newTransport(proxyURL, serverName string, h2 bool) *http.Transport {
-	tlsCfg := &tls.Config{InsecureSkipVerify: true}
-	if serverName != "" {
-		tlsCfg.ServerName = serverName
-	}
-	if h2 {
-		tlsCfg.NextProtos = []string{"h2", "http/1.1"}
-	}
-	tr := &http.Transport{
-		TLSClientConfig: tlsCfg,
-		// ForceAttemptHTTP2 is required for h2 when TLSClientConfig is set.
-		ForceAttemptHTTP2: h2,
-		MaxIdleConns:      4,
-		IdleConnTimeout:   30 * time.Second,
-	}
-	if proxyURL != "" {
-		if u, err := url.Parse(proxyURL); err == nil {
-			tr.Proxy = http.ProxyURL(u)
-		}
-	}
-	return tr
 }
 
 // TCP/TLS reachability for non-HTTP endpoints. Rides the pinned SOCKS inbounds
@@ -448,4 +670,125 @@ func fingerprint(body []byte) string {
 		tail = lower[len(lower)-64:]
 	}
 	return fmt.Sprintf("%d:%s:%s", len(lower), head, tail)
+}
+
+// в”Ђв”Ђ Resident daemon mode в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+
+func runDaemon(dir string) {
+	inPath := filepath.Join(dir, "pp.in.json")
+	outPath := filepath.Join(dir, "pp.out.json")
+	hbPath := filepath.Join(dir, "pp.daemon.json")
+
+	// Graceful stop: remove the heartbeat so the orchestrator sees the daemon
+	// gone immediately (a SIGKILL leaves the file behind, but the pidof check
+	// catches that case anyway).
+	sigStop := make(chan os.Signal, 1)
+	signal.Notify(sigStop, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigStop
+		os.Remove(hbPath)
+		os.Exit(0)
+	}()
+
+	// Heartbeat: pid + timestamp, refreshed every 5 s. The orchestrator treats
+	// a stale heartbeat (>30 s) as a wedged daemon and falls back / respawns.
+	stopHB := make(chan struct{})
+	go func() {
+		t := time.NewTicker(heartbeatEvery)
+		defer t.Stop()
+		writeHeartbeat(hbPath)
+		for {
+			select {
+			case <-stopHB:
+				return
+			case <-t.C:
+				writeHeartbeat(hbPath)
+			}
+		}
+	}()
+	defer func() {
+		close(stopHB)
+		os.Remove(hbPath)
+	}()
+
+	var lastID string
+	batchDeadline := 45 * time.Second // absolute cap per batch (max 30 s probe + resolve slack)
+	for {
+		time.Sleep(pollInterval)
+		raw, err := os.ReadFile(inPath)
+		if err != nil {
+			continue
+		}
+		var req batchRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			// Half-written or corrupt input: drop it so it cannot poison
+			// every later poll (the orchestrator always writes atomically,
+			// so this should not happen in practice).
+			os.Remove(inPath)
+			continue
+		}
+		if req.ID == "" || req.ID == lastID {
+			// Already processed (or a stale duplicate left behind after a
+			// restart). The orchestrator owns the file lifecycle: it removes
+			// the input after a successful dispatch. The daemon must NOT
+			// delete it here — while a slow batch is being processed, a new
+			// batch may already have replaced the file, and removing it
+			// would silently swallow the newer request.
+			continue
+		}
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-done:
+			case <-time.After(batchDeadline):
+				// Must never wedge the loop forever on a stuck batch.
+				os.Exit(3)
+			}
+		}()
+		resp := runBatch(&req)
+		close(done)
+		lastID = req.ID
+		encoded, err := json.Marshal(resp)
+		if err != nil {
+			continue
+		}
+		if err := writeAtomic(outPath, append(encoded, '\n')); err != nil {
+			continue
+		}
+	}
+}
+
+func writeHeartbeat(path string) {
+	hb, _ := json.Marshal(map[string]interface{}{"pid": os.Getpid(), "ts": time.Now().Unix()})
+	_ = writeAtomic(path, append(hb, '\n'))
+}
+
+// writeAtomic writes via a temp file + rename so a reader never observes a
+// half-written file (the orchestrator polls the output path).
+func writeAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func fail(outPath, id, msg string) {
+	// The daemon treats a missing/unparsable response as "pool unavailable" and
+	// falls back to shell workers, but an explicit error record is friendlier
+	// for the log than silence.
+	resp, _ := json.Marshal(batchResponse{ID: id, Results: []probeResult{{ID: "", Host: "", Code: "000", Error: msg}}})
+	_ = os.WriteFile(outPath, append(resp, '\n'), 0644)
+	fmt.Fprintf(os.Stderr, "probe_pool: %s\n", msg)
+	os.Exit(1)
 }
