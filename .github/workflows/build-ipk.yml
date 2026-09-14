@@ -97,9 +97,12 @@ jobs:
           sudo install -m0755 ipkg-build /usr/local/bin/ipkg-build
 
       - name: Setup Go (native automation helpers)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.23'
+          # Both helpers are stdlib-only (no go.mod dependencies, no go.sum) —
+          # the default module cache lookup would fail on the missing go.sum.
+          cache: false
 
       - name: Determine release tag / publish flag
         id: tag
@@ -232,7 +235,6 @@ jobs:
           repo_token: ${{ github.token }}
           file: ${{ env.GO_BIN_DIR }}/*.zip
           file_glob: true
-          overwrite_files: false
           tag: ${{ steps.tag.outputs.release_tag }}
 
       - name: Publish legacy release to GitHub Releases

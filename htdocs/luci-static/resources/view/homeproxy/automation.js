@@ -80,6 +80,12 @@ const callGeoDiag = rpc.declare({
 	expect: { '': {} }
 });
 
+const callHelpersInstall = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_helpers_install',
+	expect: { '': {} }
+});
+
 const callBackup = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'automation_backup',
@@ -427,6 +433,19 @@ return view.extend({
 					const text = _('Tunnel exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d.')
 						.format(e.ip || '—', e.country_code || '—', e.asn || (e.org || '—'), verdict, r.seeds_covered || 0, (r.seeds || []).length);
 					ui.addNotification(null, E('p', {}, text), (r.exit_verdict === 'unsupported_country') ? 'warning' : 'info');
+				});
+			}),
+			btn(_('Install helpers'), function() {
+				return callHelpersInstall().then(function(r) {
+					if (!r || r.error)
+						return ui.addNotification(null, E('p', {}, _('Helpers install failed: ') + ((r && r.error) || '')), 'error');
+					const line = (t) => {
+						const d = r[t] || {};
+						return t + ' — ' + (d.installed ? _('installed') : _('failed') + ': ' + (d.error || ''));
+					};
+					ui.addNotification(null, E('p', {}, _('Native helpers') + ': ' + line('probe_pool') + ' · ' + line('sni_sniffer')),
+						(r.probe_pool && r.probe_pool.installed) || (r.sni_sniffer && r.sni_sniffer.installed) ? 'info' : 'error');
+					return refresh();
 				});
 			}),
 			btn(_('Restart service'), function() { return callRestart(); })

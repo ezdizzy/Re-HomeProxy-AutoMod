@@ -334,6 +334,7 @@ own_pkg_installed && APP_INSTALLED=1
 # Чужая homeproxy-версия: конфликтует файлами, установщик не должен «становиться
 # поверх». При предлагаемом удалении конфиг чужого пакета сохраняется в бэкап.
 FOREIGN_PKG=$(foreign_homeproxy_pkg)
+FOREIGN_REMOVED=0
 if [ "$APP_INSTALLED" = 0 ] && [ -n "$FOREIGN_PKG" ]; then
 	warn "════════════════════════════════════════════════════════════"
 	warn "  Обнаружена ЧУЖАЯ (оригинальная) версия homeproxy: пакет"
@@ -360,10 +361,32 @@ if [ "$APP_INSTALLED" = 0 ] && [ -n "$FOREIGN_PKG" ]; then
 	# Убедимся, что чужой пакет ушёл
 	[ -z "$(foreign_homeproxy_pkg)" ] || die "Не удалось удалить '$FOREIGN_PKG' — установите его удаление вручную и повторите."
 fi
-if [ "$APP_INSTALLED" = 1 ] && [ -n "$(foreign_homeproxy_pkg)" ]; then
-	warn "  ⚠ ВАЖНО: одновременно установлены и Re:HomeProxy AutoMod, и '$(foreign_homeproxy_pkg)'."
-	warn "    Они конфликтуют (общие файлы). Рекомендуется удалить чужой пакет"
-	warn "    ($( [ "$PM" = apk ] && echo "apk del $(foreign_homeproxy_pkg)" || echo "opkg remove $(foreign_homeproxy_pkg)" )) и переустановить Re:HomeProxy AutoMod (п.10 в меню)."
+if [ "$APP_INSTALLED" = 1 ] && [ -n "$FOREIGN_PKG" ]; then
+	warn "  ⚠ ВАЖНО: одновременно установлены и Re:HomeProxy AutoMod, и '$FOREIGN_PKG'."
+	warn "    Они конфликтуют (общие файлы: конфиг, rpcd-объект, скрипты)."
+	# GL.iNet-прошивки (4.8+) несут свой 'luci-app-homeproxy-hiddify' из каталога
+	# плагинов — на таком роутере предупреждение появляется даже у того, кто ставил
+	# только наш пакет: чужой был в прошивке. Поэтому не только предупреждаем, но и
+	# предлагаем удалить сразу (конфиг НЕ трогаем — он общий и наш).
+	ask "  Удалить '$FOREIGN_PKG' сейчас и переустановить Re:HomeProxy AutoMod? [Д/н]:"
+	if is_yes "$REPLY"; then
+		info "  останавливаю службу и удаляю '$FOREIGN_PKG'..."
+		/etc/init.d/homeproxy stop >/dev/null 2>&1
+		if [ "$PM" = apk ]; then apk del "$FOREIGN_PKG" >/dev/null 2>&1; else opkg remove "$FOREIGN_PKG" >/dev/null 2>&1; fi
+		# apk/opkg могут упереться в «общие» файлы — жёсткий второй заход.
+		if [ -n "$(foreign_homeproxy_pkg)" ]; then
+			if [ "$PM" = apk ]; then apk del --force "$FOREIGN_PKG" >/dev/null 2>&1; else opkg remove --force-removal-of-dependent-packages "$FOREIGN_PKG" >/dev/null 2>&1; fi
+		fi
+		if [ -z "$(foreign_homeproxy_pkg)" ]; then
+			ok "  чужой пакет удалён."
+			FOREIGN_REMOVED=1   # главный поток ниже переустановит наш пакет поверх
+		else
+			warn "  не удалось удалить '$FOREIGN_PKG' — удалите вручную ($( [ "$PM" = apk ] && echo "apk del --force $FOREIGN_PKG" || echo "opkg remove --force-removal-of-dependent-packages $FOREIGN_PKG" )) и запустите п.10 в меню."
+		fi
+	else
+		warn "  оставлено как есть. Рекомендуется удалить позже:"
+		warn "    $( [ "$PM" = apk ] && echo "apk del $FOREIGN_PKG" || echo "opkg remove $FOREIGN_PKG" ) и переустановка (п.10 в меню)."
+	fi
 fi
 
 # ------------------------------------------------- Проверка версии и пакеты приложения
@@ -455,6 +478,9 @@ app_reinstall() {
 	if app_install_pkgs; then
 		ok "  приложение переустановлено."
 		/etc/init.d/rpcd restart >/dev/null 2>&1; sleep 2
+		# Помощники НЕ входят в пакет (он arch-independent) — после переустановки
+		# гарантируем их наличие (ставятся только отсутствующие).
+		install_native_helpers
 		heal_configs
 		apply_and_check
 	else
@@ -584,7 +610,8 @@ go_arch_mapping() {
 
 install_go_tool() {
 	TOOL="$1"
-	if [ -x "/usr/bin/$TOOL" ]; then ok "  $TOOL уже установлен."; return 0; fi
+	# $2 = "force": download again even if the binary is already present (update).
+	if [ -x "/usr/bin/$TOOL" ] && [ "$2" != "force" ]; then ok "  $TOOL уже установлен."; return 0; fi
 	info "  ставлю $TOOL (нативный помощник автоматизации)..."
 	go_arch_mapping
 	if [ -z "$GOASSET" ]; then
@@ -615,6 +642,15 @@ install_go_tool() {
 		return 1
 	fi
 	return 0
+}
+
+# Установить/обновить ОБА нативных помощника одним пунктом. С force — даже если
+# уже стоят (обновление из свежего релиза); без force — только отсутствующие.
+install_native_helpers() {
+	FORCE="$1"
+	info "  нативные помощники (probe_pool, sni_sniffer)..."
+	install_go_tool probe_pool $FORCE || true  # не фатально — фолбэк на shell-воркеры
+	install_go_tool sni_sniffer $FORCE || true  # не фатально — фолбэк на tcpdump
 }
 
 # ------------------------------------------------- 3. подписка / конфигурация
@@ -735,9 +771,7 @@ if is_no "$REPLY"; then info "  Включить позже: Automation."; retur
 	# tcpdump нужен источнику SNI (ловит DoH-клиентов и приложения с hardcoded IP);
 	# без него SNI молча неактивен, остальные источники работают.
 	# probe_pool — нативный батч-пробировщик (HTTP/2, один процесс на волну вместо кучи shell-воркеров)
-	install_go_tool probe_pool || true  # не фатально, фолбэк на shell-воркеры
-	# sni_sniffer — захват TLS ClientHello без tcpdump (kernel BPF + JSONL-файл событий)
-	install_go_tool sni_sniffer || true  # не фатально, фолбэк на tcpdump
+	install_native_helpers
 	uci -q set homeproxy.automation.enabled=1
 	# Источники кандидатов: канонический СПИСОК (dns/clash/sni) под новый MultiValue-UI.
 	# Старое значение 'all' демон понимает, но виджет его не показывает как выбранные пункты.
@@ -900,8 +934,9 @@ menu() {
 		echo "  9) Обновить узлы из подписок"
 		echo "  10) Переустановить приложение (скачать и поставить заново)"
 		echo "  11) Восстановить критические конфиги (firewall includes и др.)"
+		echo "  12) Нативные помощники автоматизации (установить/обновить)"
 		echo "  0) Выход"
-		ask "  Выбор [0-11]:"
+		ask "  Выбор [0-12]:"
 		case "$REPLY" in
 			1) subscription_add && apply_and_check ;;
 			2) share_link_add && apply_and_check ;;
@@ -935,6 +970,7 @@ menu() {
 				else
 					ask "  Включить Автоматизацию? [Д/н]:"
 					if ! is_no "$REPLY"; then
+						install_native_helpers
 						uci -q set homeproxy.automation.enabled=1; uci -q commit homeproxy
 						/etc/init.d/homeproxy restart >/dev/null 2>&1
 						ok "  Автоматизация включена."
@@ -967,6 +1003,13 @@ menu() {
 			0|"") info "  Готово. Откройте LuCI → Services → Re:HomeProxy AutoMod."; break ;;
 			10) app_reinstall ;;
 			11) heal_configs ;;
+			12)
+				install_native_helpers force
+				# Новые бинарники подхватит следующий проход демона; рестарт ускоряет.
+				if [ "$(uci -q get homeproxy.automation.enabled)" = 1 ]; then
+					info "  перезапускаю службу, чтобы помощники подхватились сразу..."
+					/etc/init.d/homeproxy restart >/dev/null 2>&1
+				fi ;;
 			*) warn "  неизвестный пункт." ;;
 		esac
 	done
@@ -991,6 +1034,9 @@ summary() {
 if [ "$APP_INSTALLED" = 1 ]; then
 	ok "Приложение уже установлено — проверяю обновления и перехожу в режим настройки."
 	app_update_if_needed
+	# Чужой конфликтующий пакет только что удалили — гарантированно ставим наш
+	# пакет заново поверх (файлы могли остаться записанными от чужого пакета).
+	[ "$FOREIGN_REMOVED" = 1 ] && app_reinstall
 	/etc/init.d/rpcd restart >/dev/null 2>&1; sleep 1
 	ensure_baseline
 	apply_and_check

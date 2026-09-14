@@ -2413,6 +2413,90 @@ const methods = {
 		}
 	},
 
+	/* Native automation helpers install/update (probe_pool, sni_sniffer) straight
+	 * from this repository's latest release. The app package is arch-independent
+	 * and NEVER contains the binaries (see install.sh / build-go.sh), so an app
+	 * update delivered through LuCI cannot bring them — this RPC can. Mirrors
+	 * install.sh's install_go_tool: arch → release asset zip → unzip → /usr/bin. */
+	automation_helpers_install: {
+		call: function(req) {
+			let arch = null;
+			const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
+			if (afd) { arch = trim(afd.read('all')); afd.close(); }
+			if (!length(arch))
+				return { error: 'Cannot detect architecture' };
+
+			/* DISTRIB_ARCH → Go release asset suffix (same table as install.sh). */
+			let goasset = null;
+			if (match(arch, /^aarch64/)) goasset = 'arm64';
+			else if (match(arch, /^arm_cortex-a7/) || match(arch, /^arm_cortex-a9/) ||
+			         match(arch, /^arm_cortex-a15/) || match(arch, /^arm_cortex-a8/) ||
+			         match(arch, /^arm_mpcore/)) goasset = 'armv7';
+			else if (match(arch, /^arm_cortex-a5/) || match(arch, /^arm926ej-s/) ||
+			         match(arch, /^arm_fa526/)) goasset = 'armv6';
+			else if (arch === 'x86_64') goasset = 'amd64';
+			else if (match(arch, /^mipsel_24kc/) || match(arch, /^mipsel_74kc/)) goasset = 'mipsle-softfloat';
+			else if (match(arch, /^mips_24kc/) || match(arch, /^mips_74kc/) || match(arch, /^mips_mips32/)) goasset = 'mips-softfloat';
+			else if (match(arch, /^riscv64/)) goasset = 'riscv64';
+			if (!length(goasset))
+				return { error: 'No native helpers for architecture ' + arch };
+
+			/* unzip is required to unpack the release archive (best-effort install). */
+			if (system('command -v unzip >/dev/null 2>&1') !== 0) {
+				if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk'))
+					system('apk add unzip >/dev/null 2>&1', 60000);
+				else if (access('/bin/opkg') || access('/usr/bin/opkg'))
+					system('opkg install unzip >/dev/null 2>&1', 60000);
+			}
+			if (system('command -v unzip >/dev/null 2>&1') !== 0)
+				return { error: 'unzip is required and could not be installed' };
+
+			const install_one = (tool) => {
+				const zip = '/tmp/' + tool + '-helper.zip';
+				const dest = '/tmp/' + tool + '_pkg';
+				system(`rm -rf ${shellquote(dest)}; rm -f ${shellquote(zip)}`);
+				if (gh_fetch(`https://github.com/ezdizzy/re-homeproxy/releases/latest/download/${tool}-linux-${goasset}.zip`, zip, 60000) !== 0) {
+					system(`rm -rf ${shellquote(dest)}; rm -f ${shellquote(zip)}`);
+					return { installed: false, error: 'download failed (GitHub unreachable?)' };
+				}
+				if (system(`unzip -o ${shellquote(zip)} -d ${shellquote(dest)} >/dev/null 2>&1`, 60000) !== 0) {
+					system(`rm -rf ${shellquote(dest)}; rm -f ${shellquote(zip)}`);
+					return { installed: false, error: 'unzip failed — corrupt archive' };
+				}
+				system('rm -f ' + shellquote(zip));
+				/* Release zips store the binary under the FULL asset name
+				 * (probe_pool-linux-arm64); accept the bare name as well. */
+				let bin = null;
+				let bfd = popen('find ' + shellquote(dest) + ' -type f -name ' + shellquote(tool) + ' 2>/dev/null');
+				if (bfd) { bin = trim(bfd.read('all')); bfd.close(); }
+				if (!length(bin)) {
+					bfd = popen(`find ${shellquote(dest)} -type f -name '${tool}-*' 2>/dev/null`);
+					if (bfd) { bin = trim(bfd.read('all')); bfd.close(); }
+				}
+				if (!length(bin)) {
+					system(`rm -rf ${shellquote(dest)}`);
+					return { installed: false, error: 'binary not found in archive' };
+				}
+				/* busybox `install` applet is missing on some images — cp + chmod. */
+				const rc = system(`cp ${shellquote(bin)} /usr/bin/${tool} && chmod 0755 /usr/bin/${tool}`, 30000);
+				system(`rm -rf ${shellquote(dest)}`);
+				if (rc !== 0)
+					return { installed: false, error: 'failed to write /usr/bin/' + tool };
+				return { installed: true };
+			};
+
+			const res = { arch: arch, go_asset: goasset };
+			const tools = [ 'probe_pool', 'sni_sniffer' ];
+			for (let tool in tools)
+				res[tool] = install_one(tool);
+			/* The daemon picks the helpers up on its next pass; restarting the
+			 * automation instance makes it immediate (and spawns sni_sniffer). */
+			if ((res.probe_pool?.installed) || (res.sni_sniffer?.installed))
+				system("ubus call service event '{\"type\":\"instance.restart\",\"data\":{\"name\":\"homeproxy\",\"instance\":\"automation\"}}' 2>/dev/null");
+			return res;
+		}
+	},
+
 	/* --- mosdns engine management (MultiDNS racing engine, Core & Tools tab) ---
 	 * mosdns is NOT an OpenWrt package: install.sh fetches the static binary from
 	 * IrineSistiana/mosdns GitHub releases. These RPCs mirror that (install/update/

@@ -5543,6 +5543,16 @@ msgstr "Нативные помощники"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
+msgid "Install helpers"
+msgstr "Установить помощники"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Helpers install failed: "
+msgstr "Не удалось установить помощники: "
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
 msgid "not installed"
 msgstr "не установлен"
 
