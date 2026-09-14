@@ -10,8 +10,10 @@ TARGETS=(
 	"arm64 - - arm64"
 	"amd64 - - amd64"
 	"mipsle - softfloat mipsle-softfloat"
+	"mips - softfloat mips-softfloat"
 	"arm 7 - armv7"
 	"arm 6 - armv6"
+	"riscv64 - - riscv64"
 )
 
 mkdir -p bin

@@ -290,6 +290,41 @@ apply_gh_mirror() {
 	fi
 }
 
+# Установленная версия пакета приложения (пусто, если не определена).
+app_installed_version() {
+	if [ "$PM" = apk ]; then
+		apk info luci-app-re-homeproxy 2>/dev/null | head -1 \
+			| sed -n 's/.*luci-app-re-homeproxy-\([0-9][0-9.]*\).*/\1/p'
+	else
+		opkg status luci-app-re-homeproxy 2>/dev/null \
+			| sed -n 's/^Version: \([0-9][0-9.]*\).*/\1/p'
+	fi
+}
+
+# Наш пакет/файлы установлены? (пакет — надёжный источник; файл — на случай
+# установки без менеджера пакетов).
+# ВНИМАНИЕ: определения обязаны стоять ВЫШЕ первого вызова (POSIX sh не умеет
+# hoisting — вызов до определения давал «sh: own_pkg_installed: not found»).
+own_pkg_installed() {
+	[ -n "$(app_installed_version)" ] && return 0
+	[ -f /usr/share/luci/menu.d/luci-app-re-homeproxy.json ] && return 0
+	return 1
+}
+
+# Чужая (оригинальная) homeproxy-версия: другой пакет с теми же файлами.
+# Его наличие нельзя молча игнорировать — файлы (/etc/config/homeproxy,
+# rpcd-объект) конфликтуют, и «установка поверх» не происходит на самом деле.
+foreign_homeproxy_pkg() {
+	for _p in luci-app-homeproxy luci-app-homeproxy-hiddify; do
+		if [ "$PM" = apk ]; then
+			apk info -e "$_p" >/dev/null 2>&1 && { echo "$_p"; return 0; }
+		else
+			opkg status "$_p" 2>/dev/null | grep -q "^Status: install" && { echo "$_p"; return 0; }
+		fi
+	done
+	return 1
+}
+
 # Приложение уже установлено? (раньше детект был по файлам rpcd/конфига — они есть
 # и у оригинальной homeproxy, из-за чего «установка поверх» чужой версии молча
 # превращалась в «режим настройки»). Теперь — только наш пакет/наши файлы.
@@ -345,39 +380,6 @@ ver_lt() {
 		}
 		exit 1
 	}'
-}
-
-# Установленная версия пакета приложения (пусто, если не определена).
-app_installed_version() {
-	if [ "$PM" = apk ]; then
-		apk info luci-app-re-homeproxy 2>/dev/null | head -1 \
-			| sed -n 's/.*luci-app-re-homeproxy-\([0-9][0-9.]*\).*/\1/p'
-	else
-		opkg status luci-app-re-homeproxy 2>/dev/null \
-			| sed -n 's/^Version: \([0-9][0-9.]*\).*/\1/p'
-	fi
-}
-
-# Наш пакет/файлы установлены? (пакет — надёжный источник; файл — на случай
-# установки без менеджера пакетов).
-own_pkg_installed() {
-	[ -n "$(app_installed_version)" ] && return 0
-	[ -f /usr/share/luci/menu.d/luci-app-re-homeproxy.json ] && return 0
-	return 1
-}
-
-# Чужая (оригинальная) homeproxy-версия: другой пакет с теми же файлами.
-# Его наличие нельзя молча игнорировать — файлы (/etc/config/homeproxy,
-# rpcd-объект) конфликтуют, и «установка поверх» не происходит на самом деле.
-foreign_homeproxy_pkg() {
-	for _p in luci-app-homeproxy luci-app-homeproxy-hiddify; do
-		if [ "$PM" = apk ]; then
-			apk info -e "$_p" >/dev/null 2>&1 && { echo "$_p"; return 0; }
-		else
-			opkg status "$_p" 2>/dev/null | grep -q "^Status: install" && { echo "$_p"; return 0; }
-		fi
-	done
-	return 1
 }
 
 # Последняя версия из GitHub-релиза (пусто, если GitHub недоступен).
@@ -574,6 +576,8 @@ go_arch_mapping() {
 		arm_cortex-a5*|arm926ej-s|arm_fa526) GOASSET=armv6 ;;
 		x86_64) GOASSET=amd64 ;;
 		mipsel_24kc|mipsel_74kc) GOASSET=mipsle-softfloat ;;
+		mips_24kc|mips_74kc|mips_mips32*) GOASSET=mips-softfloat ;;
+		riscv64*) GOASSET=riscv64 ;;
 		*) GOASSET="" ;;
 	esac
 }
@@ -593,15 +597,21 @@ install_go_tool() {
 	if command -v unzip >/dev/null 2>&1 && \
 	   dl "https://github.com/${HP_REPO}/releases/latest/download/${TOOL}-linux-${GOASSET}.zip" "/tmp/${TOOL}.zip"; then
 		unzip -o "/tmp/${TOOL}.zip" -d "/tmp/${TOOL}" >/dev/null 2>&1
-		TBIN=$(find "/tmp/${TOOL}" -type f -name "$TOOL" | head -1)
+		# В zip релиза бинарник лежит под полным именем ассета (probe_pool-linux-arm64),
+		# допускаем и голое имя (probe_pool) — на случай смены формата архива.
+		TBIN=$(find "/tmp/${TOOL}" -type f \( -name "$TOOL" -o -name "${TOOL}-*" \) 2>/dev/null | head -1)
 		if [ -n "$TBIN" ]; then
 			cp "$TBIN" "/usr/bin/$TOOL" && chmod 0755 "/usr/bin/$TOOL" && ok "  $TOOL установлен ($GOASSET)."
 		else
-			warn "  $TOOL: бинарник не найден в архиве — пропускаю."
+			warn "  $TOOL: бинарник не найден в архиве — пропускаю (архив повреждён или пуст?)."
 		fi
 		rm -rf "/tmp/${TOOL}" "/tmp/${TOOL}.zip"
 	else
-		warn "  $TOOL: не удалось скачать (GitHub заблокирован? попробуйте GH_MIRROR=...) — автоматизация обойдётся без него."
+		if ! command -v unzip >/dev/null 2>&1; then
+			warn "  $TOOL: не установился unzip — некем распаковать архив — пропускаю."
+		else
+			warn "  $TOOL: не удалось скачать (GitHub заблокирован? попробуйте GH_MIRROR=...) — автоматизация обойдётся без него."
+		fi
 		return 1
 	fi
 	return 0
