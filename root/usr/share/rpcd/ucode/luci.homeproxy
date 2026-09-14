@@ -2184,30 +2184,44 @@ const methods = {
 			}
 
 			/* Unified entries view for the table: learned (engine) + manual pins.
-			 * List-file membership is the routing truth; state only decorates. */
+			 * List-file membership is the routing truth; state only decorates.
+			 * One host = ONE row: when a learned entry is also user-pinned
+			 * (manual_proxy/manual_direct), the pin supersedes the learned origin —
+			 * emitting both produced a confusing "Авто" + user-pinned duplicate
+			 * pair for the same site. */
 			let learned = [];
 			let entries = [];
+			const by_host = {};
 			const push_entry = (host, src) => {
 				host = trim(host);
 				if (!length(host)) return;
 				const typ = (match(host, /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/) ||
 				             (index(host, ':') >= 0 && match(host, /^[0-9a-fA-F:]+(\/\d{1,3})?$/))) ? 'ip' : 'domain';
-				const e = { host: host, type: typ, src: src };
-				let st = state[host];
-				if (type(st) === 'object') {
-					e.status = st.status || 'blocked';
-					e.added = st.added || st.last_probe || 0;
-					e.last_probe = st.last_probe || 0;
-					e.direct = st.direct || '';
-					e.proxy = st.proxy || '';
-				} else {
-					e.status = (src === 'learned') ? 'blocked' : src;
-					e.added = 0;
-					e.last_probe = 0;
+				let e = by_host[host];
+				if (e == null) {
+					e = { host: host, type: typ, src: src };
+					const st = state[host];
+					if (type(st) === 'object') {
+						e.status = st.status || 'blocked';
+						e.added = st.added || st.last_probe || 0;
+						e.last_probe = st.last_probe || 0;
+						e.direct = st.direct || '';
+						e.proxy = st.proxy || '';
+					} else {
+						e.status = (src === 'learned') ? 'blocked' : src;
+						e.added = 0;
+						e.last_probe = 0;
+					}
+					by_host[host] = e;
+					push(entries, e);
+					if (src === 'learned')
+						push(learned, e);
+				} else if (src !== 'learned' && e.src !== src) {
+					/* Duplicate across list files: the user pin wins. */
+					e.src = src;
+					for (let li, lv in learned)
+						if (lv.host === host) { splice(learned, li, 1); break; }
 				}
-				push(entries, e);
-				if (src === 'learned')
-					push(learned, e);
 			};
 			if (access(auto_list)) {
 				let c = trim(readfile(auto_list));
