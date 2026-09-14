@@ -1923,19 +1923,33 @@ if (automation_enabled === '1' && !isEmpty(main_node)) {
  *   through here without touching the user's main path;
  * - geo-sensitive domains -> geo-out: these services are served from anywhere
  *   (200 shell) but reject "unsupported country" on their APIs - they ride
- *   the exit that provably passes the checks instead of the main path. */
+ *   the exit that provably passes the checks instead of the main path.
+ * ч.54: QUIC to the geo-sensitive hosts is rejected. Google endpoints
+ * advertise h3 via alt-svc, and app-class clients (Gemini on Android) then
+ * hard-rely on QUIC; when the pinned exit node cannot relay UDP the app dies
+ * with a network error ("cannot connect") while browsers silently fall back
+ * to TCP. Rejecting UDP/443 makes every client take the deterministic,
+ * working TCP path through geo-out. Only port 443 is rejected - any other
+ * UDP to these hosts (if it ever appears) keeps its normal route. */
 if (geo_scan_enabled) {
 	push(config.route.rules, {
 		inbound: 'geo-test-in',
 		action: 'route',
 		outbound: 'geo-out'
 	});
-	if (length(geo_sensitive))
+	if (length(geo_sensitive)) {
+		push(config.route.rules, {
+			domain_suffix: geo_sensitive,
+			network: 'udp',
+			port: [443],
+			action: 'reject'
+		});
 		push(config.route.rules, {
 			domain_suffix: geo_sensitive,
 			action: 'route',
 			outbound: 'geo-out'
 		});
+	}
 }
 
 /* MultiDNS secure-via-proxy: pin the dedicated mdns-proxy-in inbound to main-out so the

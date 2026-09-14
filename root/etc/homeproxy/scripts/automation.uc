@@ -220,13 +220,30 @@ let manual_direct_set = {};
  * route. */
 const GEO_SENSITIVE_FILE = RES + '/geo_sensitive.txt';
 let GEO_SENSITIVE_HOSTS = [
+	/* Web (ч.51) */
 	'gemini.google.com',
 	'aistudio.google.com',
 	'ai.google.dev',
 	'generativelanguage.googleapis.com',
 	'alkalimakersuite-pa.clients6.google.com',
 	'aisandbox-pa.googleapis.com',
-	'push.clients6.google.com'
+	'push.clients6.google.com',
+	/* Android app / system assistant (ч.54) */
+	'proactivebackend-pa.googleapis.com',
+	'geller-pa.googleapis.com',
+	'assistantfrontend-pa.googleapis.com',
+	'assistant-s3-pa.googleapis.com',
+	'robinfrontend-pa.googleapis.com',
+	'taskassist-pa.googleapis.com',
+	'notifications-pa.googleapis.com',
+	'searchnotifications-pa.googleapis.com',
+	'lamssettings-pa.googleapis.com',
+	'speechs3proto2-pa.googleapis.com',
+	'alkalimining-pa.googleapis.com',
+	'jnn-pa.googleapis.com',
+	'firebaseinstallations.googleapis.com',
+	'webchannel-alkalimakersuite-pa.clients6.google.com',
+	'waa-pa.clients6.google.com'
 ];
 let geo_seed_set = {};
 

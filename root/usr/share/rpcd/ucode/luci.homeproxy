@@ -2353,13 +2353,30 @@ const methods = {
 			/* Shared seed list (resources/geo_sensitive.txt); built-in copy as
 			 * fallback so the diagnostic works even before the resource ships. */
 			let seeds = [
+				/* Web (ч.51) */
 				'gemini.google.com',
 				'aistudio.google.com',
 				'ai.google.dev',
 				'generativelanguage.googleapis.com',
 				'alkalimakersuite-pa.clients6.google.com',
 				'aisandbox-pa.googleapis.com',
-				'push.clients6.google.com'
+				'push.clients6.google.com',
+				/* Android app / system assistant (ч.54) */
+				'proactivebackend-pa.googleapis.com',
+				'geller-pa.googleapis.com',
+				'assistantfrontend-pa.googleapis.com',
+				'assistant-s3-pa.googleapis.com',
+				'robinfrontend-pa.googleapis.com',
+				'taskassist-pa.googleapis.com',
+				'notifications-pa.googleapis.com',
+				'searchnotifications-pa.googleapis.com',
+				'lamssettings-pa.googleapis.com',
+				'speechs3proto2-pa.googleapis.com',
+				'alkalimining-pa.googleapis.com',
+				'jnn-pa.googleapis.com',
+				'firebaseinstallations.googleapis.com',
+				'webchannel-alkalimakersuite-pa.clients6.google.com',
+				'waa-pa.clients6.google.com'
 			];
 			const gs_raw = readfile(HP_DIR + '/resources/geo_sensitive.txt');
 			if (gs_raw) {
@@ -2456,13 +2473,23 @@ const methods = {
 			const gs = st.__geo_scan;
 			if (type(gs) !== 'object')
 				return { enabled: true, scanned: false };
-			/* UI shows plain node names, not the cfg-...-out tags. */
+			/* UI shows plain node names, not the cfg-...-out tags. The tag
+			 * middle is the UCI node section id; its `label` option is the
+			 * human-readable name (subscription nodes carry it, ids like
+			 * "1a2bbcb2" are useless on screen). */
+			const ctx = cursor();
+			const node_label = (tag) => {
+				const sid = replace(replace(tag, /^cfg-/, ''), /-out$/, '');
+				return { sid: sid, label: ctx.get('homeproxy', sid, 'label') || sid };
+			};
 			let nodes = [];
 			if (type(gs.nodes) === 'object')
 				for (let tag in keys(gs.nodes)) {
 					const n = gs.nodes[tag];
+					const nl = node_label(tag);
 					push(nodes, {
-						node: replace(replace(tag, /^cfg-/, ''), /-out$/, ''),
+						node: nl.sid,
+						label: nl.label,
 						country: (n && n.country) || null,
 						asn: (n && n.asn) || null,
 						google: (n && n.google) || 'fail',
@@ -2476,6 +2503,7 @@ const methods = {
 				scanned: true,
 				ts: gs.ts || 0,
 				selected: gs.selected || null,
+				selected_label: gs.selected ? node_label(gs.selected).label : null,
 				nodes: nodes
 			};
 		}

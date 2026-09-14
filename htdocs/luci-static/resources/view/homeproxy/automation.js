@@ -772,7 +772,8 @@ return view.extend({
 				geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit: not scanned yet — press "Scan geo exits".')));
 				return;
 			}
-			const selName = String(r.selected || '').replace(/^cfg-/, '').replace(/-out$/, '');
+			const selName = r.selected_label ||
+				String(r.selected || '').replace(/^cfg-/, '').replace(/-out$/, '');
 			geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit for geo-sensitive services (Gemini etc.):') + ' '));
 			geoExitLine.appendChild(E('b', {}, [ selName || '—' ]));
 			geoExitLine.appendChild(document.createTextNode(' · ' + _('last scan: %s').format(fmtAge(r.ts) || '—')));
@@ -792,8 +793,10 @@ return view.extend({
 			const nodes = r.nodes || [];
 			for (let i in nodes) {
 				const n = nodes[i];
+				const nodeName = n.label || n.node || '';
 				tbody.appendChild(E('tr', {}, [
-					E('td', {}, [ (n.selected ? '✔ ' : '') + (n.node || '') ]),
+					E('td', { title: nodeName !== n.node ? n.node : null },
+						[ (n.selected ? '✔ ' : '') + nodeName ]),
 					E('td', {}, [ n.country || '—' ]),
 					E('td', {}, [ n.asn || '—' ]),
 					E('td', {}, [ vspan(n.google) ]),
