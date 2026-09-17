@@ -128,7 +128,7 @@ let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outb
     dns_disable_cache_expire, dns_independent_cache, dns_client_subnet, cache_file_store_rdrc,
     cache_file_rdrc_timeout, direct_domain_list, proxy_domain_list,
     multidns_enabled, mdns_use_plain, mdns_use_secure, mdns_secure_via_proxy,
-    mdns_ok, mdns_plain_port, mdns_secure_port, mdns_proxy_in;
+    mdns_ok, mdns_plain_port, mdns_secure_port, mdns_proxy_in, mdns_proxy_port;
 
 if (routing_mode !== 'custom') {
 	main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
@@ -192,8 +192,11 @@ if (routing_mode !== 'custom') {
 	/* Dedicated loopback inbound the secure pool's DoH/DoT rides when
 	 * secure_via_proxy is set, so the encrypted query goes through main-out and the
 	 * ISP cannot even see that a DoH server is being contacted. (The plain pool
-	 * resolves directly and needs no tunnel.) */
+	 * resolves directly and needs no tunnel.) Port is configurable
+	 * (homeproxy.multidns.proxy_port, default 5338) and MUST match the socks5
+	 * target the multidns daemon puts into the mosdns config. */
 	mdns_proxy_in = mdns_ok && mdns_use_secure && mdns_secure_via_proxy;
+	mdns_proxy_port = int(uci.get(uciconfig, 'multidns', 'proxy_port') || '5338') || 5338;
 
 	if (is_selective_mode(routing_mode)) {
 		secure_dns_server = first_of(uci.get(uciconfig, ucimain, 'secure_dns_server')) || 'https://cloudflare-dns.com/dns-query';
@@ -1154,6 +1157,21 @@ if (geo_scan_enabled) {
 			'aisandbox-pa.googleapis.com',
 			'push.clients6.google.com'
 		];
+		/* Respect manual "Always direct" pins: the geo-out rules sit ABOVE the
+		 * auto-direct rule, so a pinned seed would silently ride geo-out
+		 * despite the user's decision (ensure_geo_seeds and the automation
+		 * engine honor the pin - routing must too). Filter the pinned hosts
+		 * out of the geo rule list; the QUIC-reject follows the same list, so
+		 * the host returns to its normal direct QUIC behavior as well. */
+		let md_hosts = {};
+		const mdraw = readfile(HP_DIR + '/resources/manual_direct.txt') || '';
+		if (length(mdraw))
+			for (let mdl in split(mdraw, /[\r\n]/)) {
+				const md = lc(trim(replace(mdl, /#.*$/, '')));
+				if (length(md)) md_hosts[md] = true;
+			}
+		if (length(keys(md_hosts)))
+			geo_sensitive = filter(geo_sensitive, (g) => !md_hosts[g]);
 	let n_geo_nodes = 0;
 	uci.foreach(uciconfig, ucinode, (cfg) => { n_geo_nodes++; });
 	if (n_geo_nodes === 0)
@@ -1180,7 +1198,7 @@ if (mdns_proxy_in)
 		type: 'mixed',
 		tag: 'mdns-proxy-in',
 		listen: '127.0.0.1',
-		listen_port: 5338,
+		listen_port: mdns_proxy_port,
 		sniff: is_hiddify ? true : null,
 		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
 		set_system_proxy: is_hiddify ? false : null,
@@ -1740,7 +1758,12 @@ if (!isEmpty(main_node)) {
 				tag: 'geo-out',
 				outbounds: geo_tags,
 				default: geo_default,
-				interrupt_exist_connections: true
+				/* Do NOT interrupt existing connections on switch: the geo scan
+				 * flips this selector through EVERY node while measuring, and
+				 * interrupt=true killed each active Gemini/AI connection on
+				 * every flip (~N times per scan). New connections pick up the
+				 * current selection immediately; in-flight ones finish. */
+				interrupt_exist_connections: false
 			});
 		} else
 			geo_scan_enabled = false;

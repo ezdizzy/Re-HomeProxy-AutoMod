@@ -36,6 +36,15 @@
 
 import { access, readfile, writefile, open, stat } from 'fs';
 
+/* Local shell quote. This build of ucode has NO shellquote builtin and this
+ * file imports nothing that provides one — the original release called the
+ * bare identifier, which fatals at runtime ("access to undeclared variable")
+ * on the FIRST flush_dead()/restart (exactly when the watchdog tries to act
+ * on a dead node). Same one-liner the other daemons carry. */
+function shellquote(s) {
+	return `'${replace(s, "'", "'\\''")}'`;
+}
+
 const RUN_DIR = '/var/run/homeproxy';
 const DEAD_FILE = RUN_DIR + '/urltest_dead';
 const LOG_FILE = RUN_DIR + '/urltest_watchdog.log';
@@ -121,7 +130,8 @@ function fetch_proxies() {
 	fd.close();
 	if (!length(body))
 		return null;
-	const data = json(body);
+	let data = null;
+	try { data = json(body); } catch (e) { return null; }
 	if (type(data) !== 'object' || type(data.proxies) !== 'object')
 		return null;
 	return data.proxies;

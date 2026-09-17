@@ -53,7 +53,8 @@ const PROXY_DOMAINS_FILE = MD_DIR + '/proxy_domains.txt';
 const PROXY_IPS_FILE = MD_DIR + '/proxy_ips.txt';
 const QUARANTINE_FILE = MD_DIR + '/quarantine_domains.txt';
 const DNS_LOG = '/var/log/dnsmasq-q.log';   /* dnsmasq query log (enabled by the automation daemon) */
-let PROXY = '127.0.0.1:5338';   /* dedicated mdns-proxy-in (mixed) pinned to main-out */
+let PROXY = '127.0.0.1:5338';   /* dedicated mdns-proxy-in (mixed) pinned to main-out;
+                                 * port follows homeproxy.multidns.proxy_port (set in bootstrap/main) */
 
 /* Direct (unproxied) DoH upstreams spliced into the plain group when EVERY
  * plaintext entry of the pool is measured dead or poisoned — the wholesale
@@ -78,6 +79,13 @@ let user_dns_offset = 0;     /* incremental read position in the dnsmasq query l
 let self_mark = 100;         /* core's fwmark; hoisted for the probe table too */
 let http_budget_total = 24;  /* total HTTP-verify checks per cycle, split across pools */
 let autodoh_injected = false;/* last assemble_plain_pool() actually injected AUTO_DOH */
+
+/* Loopback host:port of the mdns-proxy-in mixed inbound (generate_client emits
+ * it from the SAME option, so the two always agree; default 5338). */
+function mdns_proxy_endpoint() {
+	const p = int(uci.get('homeproxy', 'multidns', 'proxy_port') || '5338') || 5338;
+	return '127.0.0.1:' + p;
+}
 
 function log(msg) {
 	const line = `[${sprintf('%d', time())}] [MDNS] ${msg}\n`;
@@ -1098,6 +1106,7 @@ function analyze() {
 		st.plain_poisoned = poisoned ? '1' : '0';
 		if (poisoned) {
 			st.plain_bad_streak = (st.plain_bad_streak || 0) + 1;
+			st.plain_good_streak = 0;
 			let autodoh = (uci.get('homeproxy', 'config', 'russia_dns_auto_doh') || '1') === '1';
 			if (st.plain_doh_latch !== '1') {
 				log('plain listener serves forged answers (' + gbad + '/' + gtotal + ' bad), streak=' + st.plain_bad_streak);
@@ -1108,6 +1117,18 @@ function analyze() {
 			}
 		} else {
 			st.plain_bad_streak = 0;
+			/* Unlatch: the fallback previously latched FOREVER even after the
+			 * plaintext pool fully recovered (the "fallback removed" branch was
+			 * unreachable). Require 3 consecutive clean cycles so a single
+			 * lucky answer cannot flap the pool; assemble_plain_pool() will
+			 * drop AUTO_DOH once the latch clears (and re-engage on its own if
+			 * interception returns). */
+			st.plain_good_streak = (st.plain_good_streak || 0) + 1;
+			if (st.plain_doh_latch === '1' && st.plain_good_streak >= 3) {
+				st.plain_doh_latch = '0';
+				st.plain_good_streak = 0;
+				log('plaintext pool healthy for 3 cycles - direct DoH fallback unlatched');
+			}
 		}
 	}
 
@@ -1178,7 +1199,7 @@ function analyze() {
 					for (let i = 0; i < length(got); i = i + 1)
 						dead_this[got[i]] = (dead_this[got[i]] || 0) + 1;
 					log('user domain ' + dom + ' forged across ' + st.uv_fail[dom]
-						+ ' samples — QUARANTINED to secure pool');
+						+ ' samples - QUARANTINED to secure pool');
 				}
 			}
 			verified = verified + 1;
@@ -1332,7 +1353,7 @@ function bootstrap() {
 	plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
 	secure_port = uci.get('homeproxy', 'multidns', 'secure_port') || '5454';
 	http_budget_total = int(uci.get('homeproxy', 'multidns', 'http_budget') || '24') || 24;
-	PROXY = '127.0.0.1:5338';  /* dedicated mdns-proxy-in → main-out */
+	PROXY = mdns_proxy_endpoint();
 	self_mark = int(uci.get('homeproxy', 'infra', 'self_mark') || '100') || 100;
 	ensure_probe_table(self_mark);
 	if (!access(MOSDNS)) { log('mosdns binary missing - install mosdns to use MultiDNS.'); return; }
@@ -1374,7 +1395,7 @@ function main() {
 		plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
 		secure_port = uci.get('homeproxy', 'multidns', 'secure_port') || '5454';
 		http_budget_total = int(uci.get('homeproxy', 'multidns', 'http_budget') || '24') || 24;
-		PROXY = '127.0.0.1:5338';  /* dedicated mdns-proxy-in → main-out */
+		PROXY = mdns_proxy_endpoint();
 		self_mark = int(uci.get('homeproxy', 'infra', 'self_mark') || '100') || 100;
 		ensure_probe_table(self_mark);
 
@@ -1409,7 +1430,11 @@ function main() {
 		bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '120') || 120;
 			plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
 			secure_port = uci.get('homeproxy', 'multidns', 'secure_port') || '5454';
-			PROXY = '127.0.0.1:5338';  /* dedicated mdns-proxy-in → main-out */
+			alpha = ratio100(uci.get('homeproxy', 'multidns', 'alpha') || '0.4', 40);
+			min_live_ratio = ratio100(uci.get('homeproxy', 'multidns', 'min_live_ratio') || '0.5', 50);
+			min_score = int(uci.get('homeproxy', 'multidns', 'min_score') || '20') || 20;
+			http_budget_total = int(uci.get('homeproxy', 'multidns', 'http_budget') || '24') || 24;
+			PROXY = mdns_proxy_endpoint();
 
 			/* Fast self-heal: if mosdns died for any reason, bring it back up
 			 * within one loop tick (~5s) so DNS never stays down. */

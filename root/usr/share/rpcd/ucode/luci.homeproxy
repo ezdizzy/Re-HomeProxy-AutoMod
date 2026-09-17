@@ -197,6 +197,16 @@ function automation_apply_files(geo_too) {
 	system('touch ' + RUN_DIR + '/automation.reload' + (geo_too ? '_geo' : ''));
 }
 
+/* Restart one of the service's ucode daemon instances (automation / multidns).
+ * `ubus call service event instance.restart` is a NO-OP on this procd build
+ * (known issue), so the reliable path is SIGTERM to the script process - procd
+ * sees the exit and respawns the instance (all instances run with respawn).
+ * The ubus event is still fired for builds where it does work. */
+function restart_daemon_instance(script_name, instance_name) {
+	system(`pkill -f ${shellquote(HP_DIR + '/scripts/' + script_name)} 2>/dev/null; true`);
+	system(`ubus call service event '{"type":"instance.restart","data":{"name":"homeproxy","instance":"` + instance_name + `"}}' 2>/dev/null`);
+}
+
 /* Validate a manual entry: FQDN, IPv4[/plen] or IPv6[/plen]; lowercase form back. */
 function valid_automation_entry(e) {
 	e = lc(trim(e ?? ''));
@@ -2598,7 +2608,7 @@ const methods = {
 			if (pp_installed)
 				system('killall probe_pool >/dev/null 2>&1; true');
 			if (pp_installed || sni_installed)
-				system("ubus call service event '{\"type\":\"instance.restart\",\"data\":{\"name\":\"homeproxy\",\"instance\":\"automation\"}}' 2>/dev/null");
+				restart_daemon_instance('automation.uc', 'automation');
 			return res;
 		}
 	},
@@ -2736,7 +2746,7 @@ const methods = {
 			if (rc !== 0)
 				return { result: false, error: 'failed to install /usr/bin/mosdns' };
 
-			system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+			restart_daemon_instance('multidns.uc', 'multidns');
 
 			let version = null;
 			const vfd = popen('/usr/bin/mosdns version 2>/dev/null');
@@ -2762,7 +2772,7 @@ const methods = {
 				system('rm -f ' + shellquote(pidf));
 			}
 			system('pidof mosdns >/dev/null 2>&1 && kill $(pidof mosdns) 2>/dev/null; true');
-			system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+			restart_daemon_instance('multidns.uc', 'multidns');
 			system('rm -f /usr/bin/mosdns');
 			/* Regenerate the client config so russia-dns/secure-dns revert to direct
 			 * upstreams right away (instead of pointing at the dead 5453/5454). */
@@ -2916,18 +2926,18 @@ const methods = {
 					if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');
 					system('rm -f ' + shellquote(pidf));
 				}
-				system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+				restart_daemon_instance('multidns.uc', 'multidns');
 				return { result: true };
 			}
 		},
 
-	multidns_reset: {
-		call: function(req) {
-			system('rm -f ' + RUN_DIR + '/multidns/multidns_state.json');
-			system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
-			return { result: true };
-		}
-	},
+		multidns_reset: {
+			call: function(req) {
+				system('rm -f ' + RUN_DIR + '/multidns/multidns_state.json');
+				restart_daemon_instance('multidns.uc', 'multidns');
+				return { result: true };
+			}
+		},
 
 	/* Hard kill-switch: disable MultiDNS and fully stop the racing resolver + mosdns
 	 * so DNS reverts to the standard upstreams. Always works, even if the UI toggle
@@ -2942,7 +2952,7 @@ const methods = {
 					if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');
 					system('rm -f ' + shellquote(pidf));
 				}
-				system('ubus call service event \'{"type":"instance.restart","data":{"name":"homeproxy","instance":"multidns"}}\' 2>/dev/null');
+				restart_daemon_instance('multidns.uc', 'multidns');
 				return { result: true };
 			}
 		},
@@ -2980,7 +2990,23 @@ const methods = {
 			call: function(req) {
 			system('rm -f ' + HP_DIR + '/resources/auto_proxy_list.txt');
 			system('rm -f ' + HP_DIR + '/resources/auto_proxy_ip.txt');
-			system('rm -f ' + RUN_DIR + '/automation_state.json');
+			/* Wipe the per-host state but PRESERVE __geo_scan: it pins the
+			 * geo-out selector default used by generate_client - deleting it
+			 * made the next regen drop geo traffic onto the first node until
+			 * the next geo scan (~30 min when learning is paused). */
+			const state_file = RUN_DIR + '/automation_state.json';
+			let keep = {};
+			if (access(state_file)) {
+				try {
+					const st = json(readfile(state_file) || '');
+					if (st && type(st.__geo_scan) === 'object')
+						keep.__geo_scan = st.__geo_scan;
+				} catch (e) { keep = {}; }
+			}
+			if (length(keys(keep)))
+				atomic_write(state_file, sprintf('%.J\n', keep));
+			else
+				system('rm -f ' + shellquote(state_file));
 			apply_learned_list_hot();
 			return { result: true };
 			}

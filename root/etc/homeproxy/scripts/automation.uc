@@ -1914,6 +1914,30 @@ echo done > "$PRE.done"
 	 * after the service restart that usually precedes the daemon). */
 	let last_geo_scan = time() - GEO_SCAN_INTERVAL + 60;
 	let geo_scan_soon = 0;
+	/* Core down / Clash API refused the geo-out switch: block scans until this
+	 * timestamp instead of poking last_geo_scan (the main loop overwrote that
+	 * with `now`, so the intended 5-minute retry silently became 30). */
+	let geo_scan_retry_at = 0;
+	/* Set after the first fully completed scan: the health probe below needs
+	 * the geo-test-in (:5339) plumbing to exist in the RUNNING config, which
+	 * is only guaranteed once a scan has actually measured nodes. */
+	let geo_scan_ever_ok = false;
+
+	/* Cheap liveness check of the CURRENT geo exit (no selector switching):
+	 * the periodic scan re-checks every node only every 30 min, and the
+	 * geo_blocked reaction can never fire for the geo-sensitive seeds
+	 * themselves (they are pinned and excluded from probing). So a dead or
+	 * newly-refused geo exit would break Gemini-class traffic for up to half
+	 * an hour with nobody noticing. Every GEO_HEALTH_INTERVAL seconds probe
+	 * the Google AI edge endpoint through :5339 (which rides geo-out as
+	 * pinned by the selector): three consecutive failures (dead node or a
+	 * hard geo refusal) trigger a rotating scan, shortening the worst-case
+	 * recovery from ~30 to ~11-15 minutes. Web-level per-ASN flagging
+	 * (Gemini 1060) stays invisible to anonymous endpoints - for that the
+	 * manual "Scan geo exits" button remains the tool. */
+	const GEO_HEALTH_INTERVAL = 300;
+	let geo_health_fail = 0;
+	let last_geo_health = 0;
 
 	function geo_node_tags() {
 		let tags = [];
@@ -1935,18 +1959,19 @@ echo done > "$PRE.done"
 		return (code === '200' || code === '204');
 	}
 
-	function geo_probe_url(url, timeout) {
+	function geo_probe_url(url, timeout, port) {
+		const pf = int(port) || 5339;
 		const bf = RUN_DIR + '/geo_probe.body';
 		const cf = RUN_DIR + '/geo_probe.code';
 		system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
-		system(`curl -sL --max-redirs 2 -o ${shellquote(bf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} -x socks5h://127.0.0.1:5339 ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`, timeout * 2000 + 5000);
+		system(`curl -sL --max-redirs 2 -o ${shellquote(bf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} -x socks5h://127.0.0.1:${pf} ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`, timeout * 2000 + 5000);
 		const r = { code: trim(readfile(cf) || '000'), body: readfile(bf) || '' };
 		system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
 		return r;
 	}
 
-	function geo_probe_json(url, timeout) {
-		const r = geo_probe_url(url, timeout);
+	function geo_probe_json(url, timeout, port) {
+		const r = geo_probe_url(url, timeout, port);
 		if (r.code !== '200') return null;
 		try { return json(r.body) || null; } catch (e) { return null; }
 	}
@@ -1974,6 +1999,24 @@ echo done > "$PRE.done"
 		return 'fail';
 	}
 
+	function geo_health_check() {
+		/* A scan is already pending - it will judge everything. */
+		if (geo_scan_soon) return;
+		const r = geo_probe_url('https://generativelanguage.googleapis.com/v1beta/models', 8);
+		const v = geo_verdict_google(r);
+		if (v === 'ok') {
+			geo_health_fail = 0;
+			return;
+		}
+		geo_health_fail++;
+		log(`geo health check: current geo exit failing (${geo_health_fail}/3, verdict ${v})`);
+		if (geo_health_fail >= 3) {
+			geo_health_fail = 0;
+			log('geo health check: 3 consecutive failures - requesting a rotating geo scan');
+			geo_scan_soon = time() + 5;
+		}
+	}
+
 	function geo_scan_run(reason, rotate) {
 		if ((uci.get('homeproxy', 'automation', 'geo_scan') || '1') === '0') return;
 		const rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
@@ -1985,14 +2028,25 @@ echo done > "$PRE.done"
 		if (!have_curl()) return;
 		log(`geo scan started (${reason}, ${length(tags)} nodes)`);
 		const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
+		/* Exit of the USER'S MAIN path (via auto-proxy-in :5337): a geo pick
+		 * sharing the main exit's country/ASN inherits everything that ever
+		 * gets that exit flagged (Gemini 1060 class) - and if Google flags the
+		 * shared ASN, BOTH paths die together. Selection below prefers a
+		 * geo exit that differs; the main-exit measurement is best-effort
+		 * (probe failure just disables the preference). */
+		const mex = geo_probe_json('https://api.ip.sb/geoip', 10, 5337);
+		const main_cc = (mex && mex.country_code) ? uc(mex.country_code) : null;
+		const main_asn = (mex && mex.asn) ? ('AS' + mex.asn) : null;
 		const prev = (type(state.__geo_scan) === 'object') ? (state.__geo_scan.selected || '') : '';
 		const results = {};
 		let best = null, best_rank = 0, prev_ok = false, found_prev = false, passing = [];
 		for (let idx = 0; idx < length(tags); idx++) {
 			const tag = tags[idx];
 			if (!geo_clash_switch(tag)) {
-				/* Core down / Clash API unreachable: retry in 5 minutes. */
-				last_geo_scan = time() - GEO_SCAN_INTERVAL + 300;
+				/* Core down / Clash API unreachable: retry in 5 minutes via the
+				 * dedicated retry gate (the main loop must NOT overwrite it -
+				 * that was the bug that turned the 5-min retry into 30). */
+				geo_scan_retry_at = time() + 300;
 				log('geo scan: Clash API refused the geo-out switch (core down?) - will retry');
 				return;
 			}
@@ -2022,29 +2076,39 @@ echo done > "$PRE.done"
 		 * - periodic scans hold the current pick while it still passes
 		 *   (hysteresis, no churn);
 		 * - scans triggered by an actual geo refusal ROTATE: move to another
-		 *   passing node (different country/ASN preferred) - the anonymous
-		 *   edge checks cannot see web-level per-ASN flagging (Gemini 1060
-		 *   class), so a fresh exit is the practical answer to "worked
-		 *   yesterday, refused today". */
+		 *   passing node, scored by (a) better edge verdicts, (b) difference
+		 *   from the previous geo pick (fresh exit = the practical answer to
+		 *   per-ASN web flagging) and (c) difference from the MAIN exit's
+		 *   country/ASN (shared fate, see the mex probe above). */
 		let sel = null;
 		if (!rotate && prev_ok && found_prev) {
 			sel = prev;
 		} else if (length(passing) > 0) {
-			let alt = null;
+			let alt = null, alt_score = -1;
 			for (let p in passing) {
 				if (p.tag === prev) continue;
-				if (!alt) { alt = p; continue; }
-				const better = (prev && found_prev &&
-					(((results[prev].country || '') !== '' && p.country !== results[prev].country) ||
-					 ((results[prev].asn || 0) !== 0 && p.asn !== results[prev].asn)));
-				if (better && (alt.tag === prev || (p.rank >= alt.rank)))
-					alt = p;
+				let sc = p.rank * 10;
+				if (prev && found_prev) {
+					if (((results[prev].country || '') !== '' && p.country !== results[prev].country))
+						sc += 5;
+					if (((results[prev].asn || 0) !== 0 && ('AS' + p.asn) !== results[prev].asn))
+						sc += 5;
+				}
+				if (main_cc) {
+					if (p.country !== main_cc)
+						sc += 3;
+					if (main_asn && p.asn && ('AS' + p.asn) !== main_asn)
+						sc += 3;
+				}
+				if (sc > alt_score) { alt_score = sc; alt = p; }
 			}
 			sel = (rotate && alt) ? alt.tag : (best || passing[0].tag);
 		} else {
 			sel = found_prev ? prev : tags[0];
 		}
 		geo_clash_switch(sel);
+		geo_scan_retry_at = 0;
+		geo_scan_ever_ok = true;
 		state.__geo_scan = { ts: time(), selected: sel, nodes: results };
 		save_state(state);
 		let ok_n = 0, ref_n = 0;
@@ -2357,7 +2421,7 @@ echo done > "$PRE.done"
 				dns_log_on = false;
 				log('learning paused (' + (rmode === 'global' ? 'Global mode' :
 				    (main_is_direct ? 'main node is Direct' : rmode)) +
-				    ') — dnsmasq query logging disabled.');
+				    ') - dnsmasq query logging disabled.');
 			}
 			return false;
 		}
@@ -2836,23 +2900,30 @@ echo done > "$PRE.done"
 		}
 
 		/* Geo-aware exit scan (ч.53): on request (RPC trigger file, geo_blocked
-		 * reaction) and periodically. Each node switch briefly reroutes only
-		 * the geo-sensitive domains through the node being measured. */
+		 * reaction, health check) and periodically. Each node switch briefly
+		 * reroutes only the geo-sensitive domains through the node being
+		 * measured. The retry gate (geo_scan_retry_at) is respected first so
+		 * a "core down" backoff is not reset by the loop below it. */
 		if ((uci.get('homeproxy', 'automation', 'geo_scan') || '1') !== '0') {
 			const gtrig = RUN_DIR + '/automation.geo_scan';
 			if (access(gtrig)) {
 				system('rm -f ' + shellquote(gtrig) + ' 2>/dev/null');
 				geo_scan_soon = time();
 			}
-			if (geo_scan_soon && now >= geo_scan_soon) {
-				geo_scan_soon = 0;
-				/* Requested scans (RPC button or a real geo refusal) ROTATE
-				 * among passing exits - see geo_scan_run(). */
-				geo_scan_run('requested', true);
-				last_geo_scan = now;
-			} else if ((now - last_geo_scan) > GEO_SCAN_INTERVAL) {
-				geo_scan_run('periodic', false);
-				last_geo_scan = now;
+			if (!(geo_scan_retry_at && now < geo_scan_retry_at)) {
+				if (geo_scan_soon && now >= geo_scan_soon) {
+					geo_scan_soon = 0;
+					/* Requested scans (RPC button, geo refusal or the health
+					 * check) ROTATE among passing exits - see geo_scan_run(). */
+					geo_scan_run('requested', true);
+					last_geo_scan = now;
+				} else if ((now - last_geo_scan) > GEO_SCAN_INTERVAL) {
+					geo_scan_run('periodic', false);
+					last_geo_scan = now;
+				} else if ((now - last_geo_health) > GEO_HEALTH_INTERVAL) {
+					last_geo_health = now;
+					geo_health_check();
+				}
 			}
 		}
 
