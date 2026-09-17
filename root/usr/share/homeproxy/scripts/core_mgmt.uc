@@ -88,44 +88,62 @@ const COMPACT_RAM_KB       = 98304;   /* ~96 MB free RAM to decompress + run the
 const action = ARGV[0];
 let result;
 
-if (action === 'info') {
-	const pkg_manager = detect_pkg_manager();
-	const arch = detect_arch();
+	if (action === 'info') {
+		const pkg_manager = detect_pkg_manager();
+		const arch = detect_arch();
 
-	const tmp_free_kb = free_kb('/tmp');
-	let overlay_free_kb = free_kb('/overlay');
-	if (!overlay_free_kb) overlay_free_kb = free_kb('/');
-	const ram_free_kb = free_ram_kb();
+		const tmp_free_kb = free_kb('/tmp');
+		let overlay_free_kb = free_kb('/overlay');
+		if (!overlay_free_kb) overlay_free_kb = free_kb('/');
+		const ram_free_kb = free_ram_kb();
 
-	const hiddify_installed = !!access('/usr/bin/hiddify-core');
-	let hiddify_version = null;
-	if (hiddify_installed) {
-		const fd = popen('/usr/bin/hiddify-core version 2>/dev/null');
-		if (fd) {
+		/* Parse a core's version output into display + capability info. Tags are
+		 * the only reliable capability source: e.g. sing-box-extended ships
+		 * WITHOUT with_naive_outbound (NaïveProxy dropped), while hiddify-core
+		 * has it; AmneziaWG works on both via nested `amnezia` options. */
+		function core_features(bin) {
+			let info = {};
+			const fd = popen(bin + ' version 2>/dev/null');
+			if (!fd) return info;
 			const out = fd.read('all'); fd.close();
 			const m = match(out, /version v?(\S+)/);
-			if (m) hiddify_version = m[1];
+			if (m) info.version = m[1];
+			const tm = match(out, /\nTags: ([^\n]+)/);
+			let tags = {};
+			if (tm)
+				for (let t in split(tm[1], ','))
+					tags[trim(t)] = true;
+			info.naive = ('with_naive_outbound' in tags);
+			info.quic = ('with_quic' in tags);
+			info.wireguard = ('with_wireguard' in tags);
+			info.extended = !!match(out, /-extended-/);
+			return info;
 		}
-	}
 
-	const singbox_installed = !!access('/usr/bin/sing-box');
-	let singbox_version = null;
-	let singbox_extended = false;
-	if (singbox_installed) {
-		const fd = popen('/usr/bin/sing-box version 2>/dev/null');
-		if (fd) {
-			const out = fd.read('all'); fd.close();
-			const m = match(out, /version v?(\S+)/);
-			if (m) singbox_version = m[1];
-			singbox_extended = !!match(out, /amneziawg|with_amnezia/);
-		}
-	}
+		const hiddify_installed = !!access('/usr/bin/hiddify-core');
+		const singbox_installed = !!access('/usr/bin/sing-box');
+		const hid_f = hiddify_installed ? core_features('/usr/bin/hiddify-core') : {};
+		const sb_f  = singbox_installed ? core_features('/usr/bin/sing-box') : {};
 
-	result = {
-		pkg_manager, arch, tmp_free_kb, overlay_free_kb, ram_free_kb,
-		hiddify: { installed: hiddify_installed, version: hiddify_version },
-		singbox: { installed: singbox_installed, version: singbox_version, extended: singbox_extended }
-	};
+		result = {
+			pkg_manager, arch, tmp_free_kb, overlay_free_kb, ram_free_kb,
+			hiddify: {
+				installed: hiddify_installed,
+				version: hid_f.version ?? null,
+				naive: hid_f.naive ?? false,
+				quic: hid_f.quic ?? false,
+				wireguard: hid_f.wireguard ?? false,
+				extended: hid_f.extended ?? false
+			},
+			singbox: {
+				installed: singbox_installed,
+				version: sb_f.version ?? null,
+				naive: sb_f.naive ?? false,
+				quic: sb_f.quic ?? false,
+				wireguard: sb_f.wireguard ?? false,
+				extended: sb_f.extended ?? false
+			}
+		};
 
 } else if (action === 'check_remote') {
 	const core = ARGV[1];

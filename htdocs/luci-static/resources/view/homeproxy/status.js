@@ -531,6 +531,12 @@ const callAppInstallPkg = rpc.declare({
 	expect: { '': {} }
 });
 
+const callCoreSkipped = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'core_skipped',
+	expect: { '': {} }
+});
+
 function buildByeDPICard(byedpi, isMainNode) {
 	let installed = byedpi?.installed || false;
 	let version   = byedpi?.version   || null;
@@ -990,8 +996,16 @@ function buildCoreCard(core, coreInfo) {
 	const canInstall = !!pkgMgr;
 
 	const desc = isHiddify
-		? _('hiddify-core with sing-box syntax compatibility. Supports Hiddify App protocols and advanced features. Best compatibility with Hiddify Manager protocols. Does not support AmneziaWG.')
-		: _('Extended sing-box with additional protocols including AmneziaWG and TrustTunnel support. Created by shtorm-7.');
+		? _('Fork of sing-box 1.13 by the Hiddify team (HiddifyCli). Runs every protocol this app can configure, including NaïveProxy and Hiddify\'s Mieru dialect. Best compatibility with Hiddify App / Hiddify Manager exports.')
+		: _('Extended sing-box 1.14 base by shtorm-7. Runs every protocol this app can configure plus WARP / MASQUE / TrustTunnel / MTProxy extras — but no NaïveProxy: such nodes are skipped automatically when this core runs.');
+
+	/* Verified capability line from the core's own build tags. */
+	const caps = [];
+	if (coreData.naive) caps.push(_('NaïveProxy') + ' ✓');
+	if (coreData.extended) caps.push('WARP / MASQUE / TrustTunnel ✓');
+	const capLine = caps.length
+		? E('div', { style: 'margin-top:2px; font-size:0.9em; color:#3fbf5f' }, caps.join(' · '))
+		: null;
 
 	let installed = coreData.installed || false;
 	let version   = coreData.version   || null;
@@ -1115,7 +1129,8 @@ function buildCoreCard(core, coreInfo) {
 			removeBtn,
 			msgEl
 		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' }, desc)
+		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' }, desc),
+		capLine
 	]);
 }
 
@@ -1130,11 +1145,12 @@ return view.extend({
 			L.resolveDefault(callZapretStatus(), {}),
 			L.resolveDefault(callAppStatus(), {}),
 			L.resolveDefault(callMultidnsStatus(), {}),
-			L.resolveDefault(callMosdnsStatus(), {})
+			L.resolveDefault(callMosdnsStatus(), {}),
+			L.resolveDefault(callCoreSkipped(), {})
 		]);
 	},
 
-	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus, mdnsStatus, mosdnsStatus]) {
+	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus, mdnsStatus, mosdnsStatus, coreSkipped]) {
 		let m, s, o;
 
 		/* Shared design system (Automation look): translucent panels, palette. */
@@ -1198,6 +1214,17 @@ return view.extend({
 			]);
 		} else {
 			o.default = E('strong', { 'style': 'color:#3fbf5f' }, coreName + coreVer + coreCustomSuffix);
+		}
+		o.description = _('Nodes the active core cannot load are skipped automatically (they would crash the core). Switch Preferred core in Client Settings to run them.');
+
+		/* Nodes the running core cannot load — written by generate_client.uc. */
+		if (coreSkipped?.skipped?.length) {
+			const NAME = { naive: 'NaïveProxy', hysteria: 'Hysteria', hysteria2: 'Hysteria2',
+			               tuic: 'TUIC', wireguard: 'WireGuard', amneziawg: 'AmneziaWG' };
+			const parts = coreSkipped.skipped.map((n) =>
+				'%s (%s)'.format(n.label || n.sid, NAME[n.type] || n.type));
+			o.description += '<br><em><span style="color:#d99a1b">%s</span></em>'.format(
+				_('Skipped by this core: %s.').format(parts.join(', ')));
 		}
 
 		/* Region rule-sets (geosite/geoip .srs) are versioned and refreshed by the core itself,

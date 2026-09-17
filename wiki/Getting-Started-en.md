@@ -12,8 +12,8 @@ This page walks you from a fresh install to a working connection. It assumes Re:
 
 The LuCI app is only the interface; a separate **core** binary does the proxying. Open **Core & Tools → Core management** and install one:
 
-- **hiddify-core** (default) — lighter, has a compact build for small routers.
-- **sing-box-extended** — needed for AmneziaWG/WARP and the widest protocol set.
+- **hiddify-core** (default) — lighter, has a compact build for small routers; the only core with **NaïveProxy**.
+- **sing-box-extended** — newer sing-box 1.14 base (WARP / MASQUE / TrustTunnel in the core); no NaïveProxy — such nodes are skipped automatically.
 
 The installer auto-picks a build that fits your storage. Full details: **[Core Management](Core-Management-en)**.
 

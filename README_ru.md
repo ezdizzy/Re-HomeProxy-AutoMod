@@ -69,9 +69,11 @@ Re-HomeProxy — многофункциональная система упра�
 
 - **Многоядерный движок** — работа на **hiddify-core** или **sing-box-extended** на ваш выбор. Встроенная страница
   **«Ядро и службы»** сама установит и обновит ядро и автоматически подберёт подходящую сборку под свободное место
-  (включая компактную сборку для устройств с малым объёмом памяти).
-- **Широкая поддержка протоколов** — Naive, Mieru, Hysteria, SOCKS, Shadowsocks, ShadowTLS, Trojan, VLESS (XHTTP), VMess,
-  WireGuard, **AmneziaWG / WARP** (sing-box-extended), SSH и другие.
+  (включая компактную сборку для устройств с малым объёмом памяти). Оба ядра работают со всеми протоколами приложения;
+  переключение «Предпочтительного ядра» учитывает возможности сборки — узлы, которые ядро не может загрузить,
+  пропускаются автоматически (и отображаются в интерфейсе).
+- **Широкая поддержка протоколов** — Naive (hiddify-core), Mieru, Hysteria, SOCKS, Shadowsocks, ShadowTLS, Trojan,
+  VLESS (XHTTP), VMess, WireGuard, **AmneziaWG** (оба ядра), SSH и другие.
 - **Два встроенных двига обхода DPI** — разблокировка сайтов и снятие троттлинга (например, YouTube, Discord) **без
   какой-либо VPN-подписки**:
   - **ByeDPI** ([hufrea/byedpi](https://github.com/hufrea/byedpi)) — рассинхронизирующий прокси на уровне SOCKS, 47
@@ -154,9 +156,9 @@ apk add /tmp/luci-app-re-homeproxy.apk
 Откройте **Службы → Re:HomeProxy AutoMod → Ядро и службы** и установите нужное — установщик сам подберёт сборку под
 свободное место:
 
-- **Ядро прокси** *(обязательно, выберите одно)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (по умолчанию)
-  или [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) (добавляет AmneziaWG / WARP и самый широкий набор
-  протоколов).
+- **Ядро прокси** *(обязательно, выберите одно)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (по умолчанию;
+  включает NaïveProxy) или [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) (более новая база sing-box 1.14
+  с WARP / MASQUE / TrustTunnel в ядре; без NaïveProxy — такие узлы пропускаются автоматически).
 - **ByeDPI** *(опционально)* — обход DPI на уровне SOCKS, снимает троттлинг без VPN, 47 пресетов и встроенный тестер
   стратегий.
 - **Zapret 2** *(опционально)* — обход DPI на уровне пакетов (nfqws2), назначается в правилах маршрутизации, с подобранными

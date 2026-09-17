@@ -68,9 +68,10 @@ This mod adds the following on top of the original Re-HomeProxy app:
 
 - **Multi-core engine** — run on **hiddify-core** or **sing-box-extended**, your choice per device. The built-in
   **Core & Tools** page installs and updates the core for you and automatically picks the right build for your available
-  storage (with a compact build for tight-storage devices).
-- **Wide protocol support** — Naive, Mieru, Hysteria, SOCKS, Shadowsocks, ShadowTLS, Trojan, VLESS (XHTTP), VMess,
-  WireGuard, **AmneziaWG / WARP** (sing-box-extended), SSH and more.
+  storage (with a compact build for tight-storage devices). Both cores run every protocol the app can configure;
+  **Preferred core** switching is capability-aware — nodes a core can't load are skipped automatically (and shown in the UI).
+- **Wide protocol support** — Naive (hiddify-core), Mieru, Hysteria, SOCKS, Shadowsocks, ShadowTLS, Trojan,
+  VLESS (XHTTP), VMess, WireGuard, **AmneziaWG** (both cores), SSH and more.
 - **Two built-in DPI-bypass engines** — un-throttle and unblock sites (e.g. YouTube, Discord) **without any VPN subscription**:
   - **ByeDPI** ([hufrea/byedpi](https://github.com/hufrea/byedpi)) — a SOCKS-level desync proxy, with 47 ready-made
     strategy presets and a multi-site **strategy tester** that shows which setting actually works on your ISP.
@@ -149,8 +150,9 @@ Once the key is in `/etc/apk/keys/` it is trusted permanently — no flag needed
 Open **Services → Re:HomeProxy AutoMod → Core & Tools** and install what you need — the installer auto-picks a build
 that fits your storage:
 
-- **Proxy core** *(required, pick one)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (default) or
-  [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) (adds AmneziaWG / WARP and the widest protocol set).
+- **Proxy core** *(required, pick one)* — [hiddify-core](https://github.com/hiddify/hiddify-core) (default; includes
+  NaïveProxy) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) (newer sing-box 1.14 base with
+  WARP / MASQUE / TrustTunnel in the core; no NaïveProxy — such nodes are skipped automatically).
 - **ByeDPI** *(optional)* — SOCKS-level DPI bypass that un-throttles sites without a VPN, with 47 presets and a built-in
   strategy tester.
 - **Zapret 2** *(optional)* — packet-level (nfqws2) DPI bypass selected per routing rule, with curated presets and

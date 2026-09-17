@@ -7,7 +7,7 @@
 
 'use strict';
 
-import { access, readfile, writefile } from 'fs';
+import { access, popen, readfile, writefile } from 'fs';
 import { isnan } from 'math';
 import { connect } from 'ubus';
 import { cursor } from 'uci';
@@ -107,6 +107,129 @@ else {
 }
 
 const ipv6_support = uci.get(uciconfig, ucimain, 'ipv6_support') || '0';
+
+/* ── Per-core outbound capability (Preferred core support) ─────────────────
+ * The two supported cores are different BUILDS: a node type the selected core
+ * does not compile is a hard FATAL at config load ("naive outbound is not
+ * included in this build") that crash-loops the whole service — picking
+ * sing-box-extended with a NaïveProxy node in the pool used to leave the
+ * service dead ("core does not start"). Generation is therefore
+ * capability-aware:
+ *   1. a static map type → required build tag, resolved from the selected
+ *      binary's own `version` output (both cores print a Tags line);
+ *   2. a runtime check-heal: for sing-box (has `check`; hiddify-core has no
+ *      such subcommand) the generated config is validated right after the
+ *      write — if the core still rejects an outbound/endpoint type, that type
+ *      is recorded in $RUN_DIR/core_extra_skip_<core>.json (keyed by the core
+ *      version, so a core update re-tests it) and generation re-runs without
+ *      it, bounded by the number of distinct types.
+ * Skipped nodes degrade gracefully: they drop out of pools/geo/routing, a
+ * skipped main node falls back to the URLTest pool (or direct), and the skip
+ * list is exposed to the UI via $RUN_DIR/core_skipped.json.
+ * Verified empirically (device, 2026-09-17) on hiddify-core 4.1.0
+ * (hiddify-sing-box 1.13.1) and sing-box-extended 1.14.0-extended-2.7.1:
+ * the extended build ships WITHOUT with_naive_outbound (NaïveProxy dropped);
+ * everything else this app can configure — vless / vmess / trojan /
+ * shadowsocks / shadowtls / socks / http / ssh / hysteria(2) / tuic / anytls /
+ * mieru / wireguard / amneziawg (nested `amnezia` options) — is present on
+ * both. */
+function hp_shellquote(s) {
+	return `'${replace(s, "'", "'\\''")}'`;
+}
+
+function hp_core_info() {
+	/* {path, version, tags:{}} for the core this config targets. */
+	let path = null;
+	if (is_hiddify)
+		path = '/usr/bin/hiddify-core';
+	else if (is_singbox)
+		path = '/usr/bin/sing-box';
+	else {
+		path = uci.get(uciconfig, ucimain, 'custom_core_path');
+		if (!(path && access(path)))
+			return null;
+	}
+	const fd = popen(hp_shellquote(path) + ' version 2>/dev/null');
+	if (!fd)
+		return { path: path, version: null, tags: {} };
+	const out = fd.read('all'); fd.close();
+	const vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
+	const tm = match(out, /\nTags: ([^\n]+)/);
+	let tags = {};
+	if (tm)
+		for (let t in split(tm[1], ','))
+			tags[trim(t)] = true;
+	return { path: path, version: vm ? vm[1] : null, tags: tags };
+}
+
+const hp_core = hp_core_info();
+
+/* A node type may only be emitted when the running build provides its tag. */
+const HP_TYPE_REQ_TAG = {
+	naive: 'with_naive_outbound',
+	hysteria: 'with_quic',
+	hysteria2: 'with_quic',
+	tuic: 'with_quic',
+	wireguard: 'with_wireguard',
+	amneziawg: 'with_wireguard'
+};
+
+/* Runtime-learned rejections (check-heal), keyed per core version so a core
+ * update re-tests types rejected by an older build. */
+const hp_core_id = is_hiddify ? 'hiddify' : is_singbox ? 'singbox' : 'custom';
+const hp_extra_skip_file = RUN_DIR + '/core_extra_skip_' + hp_core_id + '.json';
+let hp_extra_skip = {};
+let hp_extra_skip_stale = false;
+try {
+	const raw = readfile(hp_extra_skip_file);
+	if (raw) {
+		const st = json(raw);
+		if (type(st) === 'object' && type(st.types) === 'array' &&
+		    st.version != null && st.version === (hp_core ? hp_core.version : null))
+			for (let t in st.types)
+				hp_extra_skip[t] = true;
+		else
+			hp_extra_skip_stale = true;
+	}
+} catch (e) { hp_extra_skip = {}; }
+
+function hp_core_supports_type(t) {
+	if (!hp_core)
+		return true;
+	const req = HP_TYPE_REQ_TAG[t];
+	if (req && !(req in hp_core.tags))
+		return false;
+	if (t in hp_extra_skip)
+		return false;
+	return true;
+}
+
+/* Nodes the selected core cannot load — collected for the UI state file. */
+const hp_skipped_nodes = {};
+function hp_node_usable(sid) {
+	const t = uci.get(uciconfig, sid, 'type');
+	if (t == null)
+		return false;    /* dangling reference — existing guards handle it */
+	if (hp_core_supports_type(t))
+		return true;
+	if (!(sid in hp_skipped_nodes))
+		hp_skipped_nodes[sid] = { sid: sid, type: t, label: uci.get(uciconfig, sid, 'label') || sid };
+	return false;
+}
+
+/* foreach over proxy node sections the SELECTED CORE can actually load. */
+function foreach_node(cb) {
+	uci.foreach(uciconfig, ucinode, (cfg) => {
+		if (hp_node_usable(cfg['.name']))
+			cb(cfg);
+	});
+}
+
+/* Filter a sid list to existing AND core-supported nodes. */
+function usable_nodes(list) {
+	return filter(list || [], (k) => (uci.get_all(uciconfig, k) != null) && hp_node_usable(k));
+}
+
 const byedpi_enabled = uci.get(uciconfig, ucimain, 'byedpi_enabled');
 /* zapret: a `direct` outbound stamped with routing_mark; nft catches the mark and
  * sends the handshake to NFQUEUE where nfqws desyncs it. Separate from byedpi. */
@@ -141,7 +264,23 @@ if (routing_mode !== 'custom') {
 		warn('homeproxy: main_node not configured - generating a NO-PROXY config (main-out = direct).\n');
 		main_node = 'direct-out';
 	}
+	/* Preferred-core capability: emitting a main node the selected core cannot
+	 * load would FATAL the whole service. Degrade to the URLTest pool of the
+	 * remaining (supported) nodes; if that pool is empty too, its builder
+	 * already falls back to direct. */
+	if (!(main_node in ['direct-out', 'byedpi-out', 'zapret-out']) &&
+	    uci.get_all(uciconfig, main_node) != null && !hp_node_usable(main_node)) {
+		warn('homeproxy: main node is not supported by the selected core - falling back to URLTest pool.\n');
+		main_node = 'urltest';
+	}
 	main_udp_node = uci.get(uciconfig, ucimain, 'main_udp_node') || 'nil';
+	/* Same capability guard for the dedicated UDP node: an unsupported node
+	 * degrades to 'same' (rides the main path) instead of FATALing the core. */
+	if (!(main_udp_node in ['nil', 'urltest', 'same', 'byedpi-out', 'zapret-out']) &&
+	    uci.get_all(uciconfig, main_udp_node) != null && !hp_node_usable(main_udp_node)) {
+		warn('homeproxy: UDP node is not supported by the selected core - it follows the main path.\n');
+		main_udp_node = 'same';
+	}
 	dedicated_udp_node = !isEmpty(main_udp_node) && !(main_udp_node in ['same', main_node]);
 
 	dns_server = uci.get(uciconfig, ucimain, 'dns_server');
@@ -697,6 +836,13 @@ function get_outbound(cfg) {
 			}
 			else if (node === 'urltest')
 				return 'cfg-' + cfg + '-out';
+			else if (!hp_node_usable(node)) {
+				/* Capability guard: referencing a node the selected core cannot
+				 * load is a fatal "non-existent outbound". Reroute to the main
+				 * path (direct when there is none, e.g. custom routing). */
+				warn(sprintf('homeproxy: %s targets a node not supported by the selected core - rerouted to the main path.\n', cfg));
+				return has_outbound('main-out') ? 'main-out' : 'direct-out';
+			}
 			else
 				return 'cfg-' + node + '-out';
 		}
@@ -1173,7 +1319,7 @@ if (geo_scan_enabled) {
 		if (length(keys(md_hosts)))
 			geo_sensitive = filter(geo_sensitive, (g) => !md_hosts[g]);
 	let n_geo_nodes = 0;
-	uci.foreach(uciconfig, ucinode, (cfg) => { n_geo_nodes++; });
+	foreach_node((cfg) => { n_geo_nodes++; });
 	if (n_geo_nodes === 0)
 		geo_scan_enabled = false;
 }
@@ -1481,7 +1627,7 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 	tolerance = isEmpty(tolerance) ? '150' : tolerance;
 
 	if (mode === 'auto') {
-		uci.foreach(uciconfig, ucinode, (cfg) => {
+		foreach_node((cfg) => {
 			push(outbounds, `cfg-${cfg['.name']}-out`);
 			push(extra, cfg['.name']);
 		});
@@ -1489,12 +1635,13 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		if (re)
 			outbounds = re;
 	} else if (mode === 'prefer') {
-		if (!isEmpty(preferred) && uci.get_all(uciconfig, preferred) != null) {
+		if (!isEmpty(preferred) && uci.get_all(uciconfig, preferred) != null &&
+		    hp_node_usable(preferred)) {
 			pref = preferred;
 			push(outbounds, `cfg-${pref}-out`);
 			push(extra, pref);
 		}
-		uci.foreach(uciconfig, ucinode, (cfg) => {
+		foreach_node((cfg) => {
 			if (cfg['.name'] === pref)
 				return;
 			push(rest, `cfg-${cfg['.name']}-out`);
@@ -1524,6 +1671,8 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		for (let k in (manual_nodes || [])) {
 			if (uci.get_all(uciconfig, k) == null)
 				continue;
+			if (!hp_node_usable(k))
+				continue;
 			push(outbounds, `cfg-${k}-out`);
 			push(extra, k);
 		}
@@ -1539,7 +1688,7 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		 * user still had perfectly working nodes configured. Only when there are
 		 * truly no nodes at all does main-out fall back to direct. */
 		let any = [], any_extra = [];
-		uci.foreach(uciconfig, ucinode, (cfg) => {
+		foreach_node((cfg) => {
 			push(any, `cfg-${cfg['.name']}-out`);
 			push(any_extra, cfg['.name']);
 		});
@@ -1724,7 +1873,7 @@ if (!isEmpty(main_node)) {
 	 * within ~60 s). Watchdog dead marks sink to the tail like everywhere. */
 	if (geo_scan_enabled) {
 		let geo_tags = [];
-		uci.foreach(uciconfig, ucinode, (cfg) => {
+		foreach_node((cfg) => {
 			const gt = 'cfg-' + cfg['.name'] + '-out';
 			push(geo_tags, gt);
 			if (has_outbound(gt))
@@ -1778,7 +1927,7 @@ if (!isEmpty(main_node)) {
 			if (cfg.enabled !== '1') return;
 
 			if (cfg.node === 'urltest') {
-				const existing_urltest_nodes = filter(cfg.urltest_nodes, (k) => uci.get_all(uciconfig, k) != null);
+				const existing_urltest_nodes = usable_nodes(cfg.urltest_nodes);
 				push(config.outbounds, {
 					type: 'urltest',
 					tag: 'cfg-' + cfg['.name'] + '-out',
@@ -1796,6 +1945,9 @@ if (!isEmpty(main_node)) {
 				 * otherwise push_outbound() appends a null outbound and the next line
 				 * dereferences it, crashing config generation (no file is written). */
 				if (isEmpty(outbound)) return;
+				/* Skip a target the selected core cannot load — emitting it would
+				 * FATAL the core; get_outbound() reroutes references to main-out. */
+				if (!hp_node_usable(cfg.node)) return;
 				/* Duplicate tag guard: two routing nodes (or a routing node + the main
 				 * URLTest pool) may reference the SAME proxy node — a second emission
 				 * of 'cfg-X-out' is a fatal "duplicate tag" for the core. */
@@ -1835,7 +1987,7 @@ if (!isEmpty(main_node)) {
 			return;
 
 		if (cfg.node === 'urltest') {
-			const existing_urltest_nodes = filter(cfg.urltest_nodes, (k) => uci.get_all(uciconfig, k) != null);
+			const existing_urltest_nodes = usable_nodes(cfg.urltest_nodes);
 			push(config.outbounds, {
 				type: 'urltest',
 				tag: 'cfg-' + cfg['.name'] + '-out',
@@ -1853,6 +2005,8 @@ if (!isEmpty(main_node)) {
 			 * otherwise push_outbound() appends a null outbound and the next line
 			 * dereferences it, crashing config generation (no file is written). */
 			if (isEmpty(outbound)) return;
+			/* Skip a target the selected core cannot load (same rationale as above). */
+			if (!hp_node_usable(cfg.node)) return;
 			/* Duplicate tag guard: same rationale as the advanced block above. */
 			if (has_outbound('cfg-' + cfg.node + '-out'))
 				return;
@@ -2206,12 +2360,12 @@ if (!isEmpty(main_node)) {
 			const ut_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
 			const scan_wg = (n) => ((uci.get(uciconfig, n, 'type') || '') in ['wireguard', 'amneziawg']);
 			if (ut_mode === 'auto' || ut_mode === 'prefer') {
-				uci.foreach(uciconfig, ucinode, (c) => {
+				foreach_node((c) => {
 					if (!main_has_wg && scan_wg(c['.name']))
 						main_has_wg = true;
 				});
 			} else {
-				const ut_nodes = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [], (k) => uci.get_all(uciconfig, k) != null);
+				const ut_nodes = usable_nodes(uci.get(uciconfig, ucimain, 'main_urltest_nodes'));
 				for (let n in ut_nodes) {
 					if (scan_wg(n)) {
 						main_has_wg = true;
@@ -2241,7 +2395,7 @@ if (!isEmpty(main_node)) {
 				/* no new outbound needed — main-out / byedpi-out / zapret-out already exist */
 			} else if (!has_outbound(effective_outbound)) {
 				if (cfg.node === 'urltest') {
-					const ut_nodes = filter(cfg.urltest_nodes || [], (k) => uci.get_all(uciconfig, k) != null);
+					const ut_nodes = usable_nodes(cfg.urltest_nodes);
 					push(config.outbounds, {
 						type: 'urltest',
 						tag: effective_outbound,
@@ -2264,13 +2418,21 @@ if (!isEmpty(main_node)) {
 						}
 					}
 				} else if (!isEmpty(cfg.node)) {
-					const nc = uci.get_all(uciconfig, cfg.node) || {};
-					if (nc.type in ['wireguard', 'amneziawg']) {
-						push(config.endpoints, generate_endpoint(nc));
-						config.endpoints[length(config.endpoints)-1].tag = effective_outbound;
+					if (!hp_node_usable(cfg.node)) {
+						/* Unsupported by the selected core: no outbound is emitted,
+						 * so the rule below must not reference the dead tag — ride
+						 * the main path instead. */
+						warn('homeproxy: RU rule node not supported by the selected core - rerouted to main-out.\n');
+						effective_outbound = 'main-out';
 					} else {
-						push_outbound(config.outbounds, nc);
-						config.outbounds[length(config.outbounds)-1].tag = effective_outbound;
+						const nc = uci.get_all(uciconfig, cfg.node) || {};
+						if (nc.type in ['wireguard', 'amneziawg']) {
+							push(config.endpoints, generate_endpoint(nc));
+							config.endpoints[length(config.endpoints)-1].tag = effective_outbound;
+						} else {
+							push_outbound(config.outbounds, nc);
+							config.outbounds[length(config.outbounds)-1].tag = effective_outbound;
+						}
 					}
 				}
 			}
@@ -2532,6 +2694,57 @@ sync_manual_direct_ruleset();
 sync_ru_geo_rulesets();
 
 writefile(RUN_DIR + '/hiddify-c.json', sprintf('%.J\n', removeBlankAttrs(config)));
+
+/* ── Capability bookkeeping + runtime check-heal ──────────────────────────
+ * Expose which nodes the selected core cannot load ($RUN_DIR/core_skipped.json
+ * — rendered by the UI), then — for sing-box dialects only, since hiddify-core
+ * has no `check` subcommand — ask the core itself to validate the freshly
+ * written config. When the core rejects an outbound/endpoint type the static
+ * tag map did not know about, record it (per core version) and regenerate
+ * without it; the re-exec terminates because each pass adds one new type. */
+if (hp_core) {
+	const skipped_list = [];
+	for (let k, v in hp_skipped_nodes)
+		push(skipped_list, v);
+	writefile(RUN_DIR + '/core_skipped.json', sprintf('%.J\n', {
+		core: hp_core_id,
+		version: hp_core.version,
+		skipped: skipped_list
+	}));
+
+	if (is_singbox) {
+		const chk = popen(hp_shellquote(hp_core.path) + ' check -c ' +
+		                  hp_shellquote(RUN_DIR + '/hiddify-c.json') + ' 2>&1');
+		let out = chk ? chk.read('all') : null;
+		if (chk) chk.close();
+		if (!isEmpty(out)) {
+			let m = match(out, /\[[0-9]+\]: ([a-z0-9_]+) (outbound|endpoint) is not included/);
+			if (!m)
+				m = match(out, /unknown (outbound|endpoint) type: ([a-z0-9_]+)/);
+			const bad = m ? (m[2] || m[1]) : null;
+			if (bad) {
+				hp_extra_skip[bad] = true;
+				writefile(hp_extra_skip_file, sprintf('%.J\n', {
+					version: hp_core.version,
+					types: keys(hp_extra_skip)
+				}));
+				warn(sprintf('homeproxy: the core rejects outbound type "%s" - regenerating without it.\n', bad));
+				system('/usr/bin/ucode ' + hp_shellquote(HP_DIR + '/scripts/generate_client.uc') + ' >/dev/null 2>&1');
+				exit(0);
+			}
+			/* A non-type fatal: keep the config (init.d lastgood rollback covers a
+			 * dead core) but leave a trace in the service log for diagnostics. */
+			warn('homeproxy: core config check: ' + trim(out) + '\n');
+		} else if (hp_extra_skip_stale) {
+			/* The file held rejections from another core version and the current
+			 * config validates — persist the (now empty) current-version state. */
+			writefile(hp_extra_skip_file, sprintf('%.J\n', {
+				version: hp_core.version,
+				types: keys(hp_extra_skip)
+			}));
+		}
+	}
+}
 
 /* Marker: the running config now references the learned local rule-sets, so Automation can
  * hot-reload (rewrite the files) instead of restarting the service. Absent → do_reload falls

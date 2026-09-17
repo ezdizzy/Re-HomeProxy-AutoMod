@@ -538,8 +538,8 @@ install_core() {
 	warn "  ⚠  Без действующей подписки/конфигурации прокси-часть работать не будет:"
 	warn "     Telegram, WhatsApp, Instagram и другие заблокированные сервисы останутся недоступны."
 	warn "     Интернет при этом останется полностью рабочим (напрямую)."
-	echo "    1) hiddify-core       (по умолчанию; на малой флеш-памяти выберет компактную сборку)"
-	echo "    2) sing-box-extended  (AmneziaWG / WARP, самый широкий набор протоколов)"
+	echo "    1) hiddify-core       (по умолчанию; все протоколы приложения + NaïveProxy; на малой флеш-памяти выберет компактную сборку)"
+	echo "    2) sing-box-extended  (более новая база sing-box 1.14: WARP/MASQUE/TrustTunnel в ядре; без NaïveProxy — такие узлы будут пропускаться)"
 	ask "  Выбор [1/2] (по умолчанию 1):"
 	case "$REPLY" in 2) CORE=singbox ;; *) CORE=hiddify ;; esac
 

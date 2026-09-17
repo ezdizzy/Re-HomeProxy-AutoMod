@@ -28,7 +28,7 @@
 
 Re:HomeProxy AutoMod полностью декодирует share-формат Amnezia `vpn://` (`base64url(qCompress(zlib JSON))`) прямо в браузере — без вспомогательных утилит. Он читает контейнер внутри и автоматически распознаёт **оба** типа конфигов Amnezia:
 
-- **AmneziaWG** (`amnezia-awg` / `amnezia-awg2`) → узел **AmneziaWG** с полным набором параметров обфускации (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5`), MTU, keepalive и ключами. *Требует ядро sing-box-extended* — см. [Поддерживаемые протоколы](Supported-Protocols-ru).
+- **AmneziaWG** (`amnezia-awg` / `amnezia-awg2`) → узел **AmneziaWG** с полным набором параметров обфускации (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5`), MTU, keepalive и ключами. *Работает в обоих ядрах* — см. [Поддерживаемые протоколы](Supported-Protocols-ru).
 - **Xray** (`amnezia-xray`) → вложенный outbound Xray разбирается в узел, включая **VLESS + Reality/TLS** и транспорт (`ws`, `grpc`, `xhttp`/`splithttp`, HTTPUpgrade) с их настройками.
 
 Так что ссылка Amnezia работает, несёт ли она профиль AmneziaWG или Xray.
@@ -52,7 +52,7 @@ Re:HomeProxy AutoMod полностью декодирует share-формат 
 
 ## 2. Импорт файла .conf
 
-Кнопка **Импорт WG (.conf) файла** читает файл конфигурации **WireGuard** или **AmneziaWG** `.conf` и создаёт из него узел — удобно для готовых конфигов WARP/AmneziaWG. (Узлы AmneziaWG требуют ядро **sing-box-extended** — см. [Поддерживаемые протоколы](Supported-Protocols-ru).)
+Кнопка **Импорт WG (.conf) файла** читает файл конфигурации **WireGuard** или **AmneziaWG** `.conf` и создаёт из него узел — удобно для готовых конфигов WARP/AmneziaWG. (Узлы AmneziaWG работают в **обоих** ядрах — см. [Поддерживаемые протоколы](Supported-Protocols-ru).)
 
 ---
 
@@ -81,7 +81,7 @@ Re:HomeProxy AutoMod полностью декодирует share-формат 
 
 ## Какие протоколы можно импортировать?
 
-Зависит от установленного **ядра** — тип узла работает, только если ядро его поддерживает (например, AmneziaWG требует sing-box-extended; некоторым протоколам QUIC/Naive нужны определённые build-теги). Полную матрицу и проверку тегов сборки см. в **[Поддерживаемые протоколы](Supported-Protocols-ru)**.
+Зависит от установленного **ядра** — тип узла работает, только если ядро его поддерживает (например, NaïveProxy требует флага `with_naive_outbound`, которого нет в текущей сборке sing-box-extended — такие узлы пропускаются автоматически; полную матрицу и проверку тегов сборки см. в **[Поддерживаемые протоколы](Supported-Protocols-ru)**).
 
 ---
 

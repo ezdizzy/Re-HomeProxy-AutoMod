@@ -28,7 +28,7 @@ The **Import share links** button accepts one link per line. Supported schemes:
 
 Re:HomeProxy AutoMod fully decodes Amnezia's `vpn://` share format (`base64url(qCompress(zlib JSON))`) right in the browser — no helper tool needed. It reads the container inside and recognises **both** Amnezia config types automatically:
 
-- **AmneziaWG** (`amnezia-awg` / `amnezia-awg2`) → an **AmneziaWG** node, with the full obfuscation parameter set (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5`), MTU, keepalive and keys. *Requires the sing-box-extended core* — see [Supported Protocols](Supported-Protocols-en).
+- **AmneziaWG** (`amnezia-awg` / `amnezia-awg2`) → an **AmneziaWG** node, with the full obfuscation parameter set (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5`), MTU, keepalive and keys. *Works on both cores* — see [Supported Protocols](Supported-Protocols-en).
 - **Xray** (`amnezia-xray`) → the Xray outbound inside is parsed into a node, including **VLESS + Reality/TLS** and the transport (`ws`, `grpc`, `xhttp`/`splithttp`, HTTPUpgrade) with their settings.
 
 So an Amnezia link works whether it carries an AmneziaWG or an Xray profile.
@@ -52,7 +52,7 @@ Two options apply during import:
 
 ## 2. Import a .conf file
 
-The **Import .conf** button reads a **WireGuard** or **AmneziaWG** `.conf` file and creates a node from it — handy for WARP/AmneziaWG configs you already have. (AmneziaWG nodes require the **sing-box-extended** core — see [Supported Protocols](Supported-Protocols-en).)
+The **Import .conf** button reads a **WireGuard** or **AmneziaWG** `.conf` file and creates a node from it — handy for WARP/AmneziaWG configs you already have. (AmneziaWG nodes work on **both** cores — see [Supported Protocols](Supported-Protocols-en).)
 
 ---
 
@@ -81,7 +81,7 @@ This is useful to drop dead/region-locked nodes or to keep only a curated subset
 
 ## Which protocols can I import?
 
-That depends on the **core** you installed — a node type only works if the core supports it (e.g. AmneziaWG needs sing-box-extended; some QUIC/Naive protocols need specific build tags). See **[Supported Protocols](Supported-Protocols-en)** for the full matrix and how to check your build's tags.
+That depends on the **core** you installed — a node type only works if the core supports it (e.g. NaïveProxy needs the `with_naive_outbound` tag that sing-box-extended's current build lacks — such nodes are skipped automatically; see **[Supported Protocols](Supported-Protocols-en)** for the full matrix and how to check your build's tags).
 
 ---
 

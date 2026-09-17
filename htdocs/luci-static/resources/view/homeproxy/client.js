@@ -181,14 +181,49 @@ return view.extend({
 		s.tab('routing', _('Routing Settings'));
 
 		if (features.available_cores && features.available_cores.length > 1) {
-			o = s.taboption('routing', form.ListValue, 'preferred_core', _('Preferred core'));
+			o = s.taboption('routing', form.ListValue, 'preferred_core', _('Preferred core'),
+				_('Which core to run when both are installed. Both run every protocol this app can configure. hiddify-core additionally supports NaïveProxy; sing-box-extended is a newer sing-box base (1.14) with WARP / MASQUE / TrustTunnel, but has no NaïveProxy — such nodes are skipped automatically.'));
 			o.value('auto', _('Auto'));
 			if (features.available_cores.indexOf('hiddify') >= 0)
 				o.value('hiddify', 'hiddify-core');
 			if (features.available_cores.indexOf('singbox') >= 0)
-				o.value('singbox', 'sing-box');
+				o.value('singbox', 'sing-box-extended');
 			o.default = 'auto';
 			o.rmempty = false;
+
+			/* Live compatibility hint: nodes the SELECTED core cannot load. The
+			 * generator skips them (they would FATAL the core), so tell the user
+			 * instead of silently dropping them from the pools. */
+			o = s.taboption('routing', form.DummyValue, '_core_compat', _('Node compatibility'));
+			o.rawhtml = true;
+			o.cfgvalue = function() {
+				const cores = features.cores || {};
+				let sel = this.map.data.get('homeproxy', 'config', 'preferred_core') || 'auto';
+				if (sel === 'auto')
+					sel = (cores.hiddify?.installed) ? 'hiddify' :
+					      (cores.singbox?.installed) ? 'singbox' : null;
+				if (!sel || !cores[sel]?.installed)
+					return '';
+				const tags = cores[sel].tags || {};
+				const REQ = { naive: 'with_naive_outbound', hysteria: 'with_quic', hysteria2: 'with_quic',
+				              tuic: 'with_quic', wireguard: 'with_wireguard', amneziawg: 'with_wireguard' };
+				const NAME = { naive: 'NaïveProxy', hysteria: 'Hysteria', hysteria2: 'Hysteria2',
+				               tuic: 'TUIC', wireguard: 'WireGuard', amneziawg: 'AmneziaWG' };
+				const selName = sel === 'hiddify' ? 'hiddify-core' : 'sing-box-extended';
+				let skipped = {};
+				uci.sections(data[0], 'node', (res) => {
+					const req = REQ[res.type];
+					if (req && !tags[req])
+						skipped[res.type] = (skipped[res.type] || 0) + 1;
+				});
+				const parts = Object.keys(skipped).sort().map((t) =>
+					'%d × %s'.format(skipped[t], NAME[t] || t));
+				if (!parts.length)
+					return '<em><span style="color:#3fbf5f">%s</span></em>'.format(
+						_('All configured nodes are supported by the selected core.'));
+				return '<em><span style="color:#d99a1b">%s</span></em>'.format(
+					_('Not supported by %s and skipped in all pools: %s.').format(selName, parts.join(', ')));
+			};
 		}
 
 		o = s.taboption('routing', form.ListValue, 'main_node', _('Main node') + ' 🔗',

@@ -10,12 +10,14 @@ Re:HomeProxy AutoMod is **multi-core**: the LuCI app is the interface, and a sep
 
 | | **hiddify-core** (default) | **sing-box-extended** |
 |---|---|---|
-| Engine | Fork of sing-box by the Hiddify team | Fork of sing-box with extra build tags |
+| Engine | Fork of sing-box 1.13 by the Hiddify team | Extended sing-box 1.14 base (shtorm-7) |
 | Footprint | Lighter; a **compact build** exists for small devices | Larger (~26 MB installed) |
-| Protocols | Hiddify-app protocols, TLS fragment, XHTTP, Mieru, etc. | The widest protocol set… |
-| **AmneziaWG / WARP** | ❌ **Not supported** | ✅ **Supported** |
+| App protocols | All protocols the app can configure | All protocols the app can configure |
+| **NaïveProxy** | ✅ **Supported** | ❌ **Not supported** (dropped in this build — such nodes are **skipped automatically**) |
+| **AmneziaWG** | ✅ Supported | ✅ Supported |
+| **WARP / MASQUE / TrustTunnel** | ❌ Not exposed by the app | ✅ In the core (server/endpoint extras; not yet exposed by the app UI) |
 
-**Rule of thumb:** if you need **AmneziaWG/WARP**, or want the broadest protocol coverage and have ~40 MB free, choose **sing-box-extended**. Otherwise **hiddify-core** is the lighter default and is the only one with a compact build for tight-storage routers.
+**Rule of thumb:** both cores run everything the app can configure — the practical differences are **NaïveProxy** (hiddify-core only) and the extended core's newer sing-box base. If your subscription has NaïveProxy nodes, stay on **hiddify-core**. If you switch to **sing-box-extended**, unsupported nodes are skipped from all pools automatically (the app tells you which ones). hiddify-core is also the lighter default and the only one with a compact build for tight-storage routers.
 
 Which protocols appear in the node editor depends on the core you install — see [Supported Protocols](Supported-Protocols-en).
 

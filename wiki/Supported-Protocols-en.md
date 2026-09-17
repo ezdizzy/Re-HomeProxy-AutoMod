@@ -157,12 +157,14 @@ Modern VPN protocol with a minimal codebase and strong cryptography (Curve25519,
 
 ---
 
-## Requires the sing-box-extended core
-
-These node types are available when you install **sing-box-extended** instead of hiddify-core (pick your core on the **Core Management** page). hiddify-core does **not** support them.
+## AmneziaWG — both cores
 
 ### AmneziaWG
 An obfuscated variant of WireGuard. It adds junk packets and randomised handshake headers (the `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1`–`H4`, `I1`–`I5` parameters) so that DPI systems which detect and block plain WireGuard no longer recognise the traffic. Set the obfuscation parameters to match your AmneziaWG server (or a Cloudflare WARP endpoint running AmneziaWG). Same fast Curve25519 / ChaCha20-Poly1305 cryptography as WireGuard, but the packets no longer look like WireGuard on the wire.
+
+Works on **both** cores: the app emits a WireGuard endpoint with nested `amnezia` options, which hiddify-core (4.1.0+) and sing-box-extended both accept.
+
+> ⚠️ **NaïveProxy is the flip side:** it is compiled into hiddify-core, but **dropped** from the current sing-box-extended build (no `with_naive_outbound` tag). The app detects this from the core's own build tags and **skips NaïveProxy nodes automatically** when sing-box-extended runs — they simply drop out of the pools, and the UI tells you which nodes were skipped.
 
 ---
 
