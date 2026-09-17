@@ -932,6 +932,8 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.value('trojan', _('Trojan'));
 	if (features.with_quic)
 		o.value('tuic', _('Tuic'));
+	if (features.with_trusttunnel)
+		o.value('trusttunnel', _('TrustTunnel'));
 	if (features.with_wireguard && features.with_gvisor)
 		o.value('wireguard', _('WireGuard'));
 	o.value('amneziawg', _('AmneziaWG'));
@@ -956,6 +958,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'socks');
 	o.depends('type', 'ssh');
 	o.depends('type', 'trojan');
+	o.depends('type', 'trusttunnel');
 	o.depends('type', 'tuic');
 	o.depends('type', 'vless');
 	o.depends('type', 'vmess');
@@ -990,6 +993,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'naive');
 	o.depends('type', 'socks');
 	o.depends('type', 'ssh');
+	o.depends('type', 'trusttunnel');
 	o.modalonly = true;
 
 	o = s.option(form.Value, 'password', _('Password'));
@@ -1002,6 +1006,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'shadowsocks');
 	o.depends('type', 'ssh');
 	o.depends('type', 'trojan');
+	o.depends('type', 'trusttunnel');
 	o.depends('type', 'tuic');
 	o.depends({'type': 'shadowtls', 'shadowtls_version': '2'});
 	o.depends({'type': 'shadowtls', 'shadowtls_version': '3'});
@@ -1306,6 +1311,63 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'tuic');
 	o.modalonly = true;
 	/* Tuic config end */
+
+	/* TrustTunnel config start (sing-box-extended) */
+	o = s.option(form.ListValue, 'trusttunnel_congestion_controller', _('Congestion control algorithm'),
+		_('QUIC congestion control algorithm used by TrustTunnel.'));
+	o.value('', _('Default'));
+	o.value('bbr', _('BBR'));
+	o.value('bbr2', _('BBRv2'));
+	o.value('new_reno', _('New Reno'));
+	o.depends('type', 'trusttunnel');
+	o.modalonly = true;
+
+	o = s.option(form.MultiValue, 'trusttunnel_network', _('Network'),
+		_('Transports to relay through the tunnel. Empty = the server default.'));
+	o.value('tcp', 'TCP');
+	o.value('udp', 'UDP');
+	o.depends('type', 'trusttunnel');
+	o.modalonly = true;
+
+	o = s.option(form.Flag, 'trusttunnel_quic', _('QUIC transport'),
+		_('Run TrustTunnel over QUIC instead of plain TCP.'));
+	o.depends('type', 'trusttunnel');
+	o.modalonly = true;
+
+	o = s.option(form.Value, 'trusttunnel_cwnd', _('Congestion window'),
+		_('Custom congestion control window (advanced; leave empty for the default).'));
+	o.datatype = 'uinteger';
+	o.depends('type', 'trusttunnel');
+	o.modalonly = true;
+
+	o = s.option(form.Flag, 'trusttunnel_health_check', _('Health check'),
+		_('Periodically verify the tunnel is alive.'));
+	o.depends('type', 'trusttunnel');
+	o.modalonly = true;
+
+	o = s.option(form.Flag, 'trusttunnel_multiplex', _('Multiplex'),
+		_('Stream multiplexing over a single connection.'));
+	o.depends('type', 'trusttunnel');
+	o.modalonly = true;
+
+	o = s.option(form.Value, 'trusttunnel_mp_max_connections', _('Maximum connections'),
+		_('Maximum TLS/QUIC connections for multiplexing.'));
+	o.datatype = 'uinteger';
+	o.depends({'type': 'trusttunnel', 'trusttunnel_multiplex': '1'});
+	o.modalonly = true;
+
+	o = s.option(form.Value, 'trusttunnel_mp_min_streams', _('Minimum streams'),
+		_('Minimum multiplexed streams to keep open per connection.'));
+	o.datatype = 'uinteger';
+	o.depends({'type': 'trusttunnel', 'trusttunnel_multiplex': '1'});
+	o.modalonly = true;
+
+	o = s.option(form.Value, 'trusttunnel_mp_max_streams', _('Maximum streams'),
+		_('Maximum multiplexed streams per connection before a new one is opened.'));
+	o.datatype = 'uinteger';
+	o.depends({'type': 'trusttunnel', 'trusttunnel_multiplex': '1'});
+	o.modalonly = true;
+	/* TrustTunnel config end */
 
 	/* VMess / VLESS config start */
 	o = s.option(form.ListValue, 'vless_flow', _('Flow'));
@@ -1774,6 +1836,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'naive');
 	o.depends('type', 'shadowtls');
 	o.depends('type', 'trojan');
+	o.depends('type', 'trusttunnel');
 	o.depends('type', 'tuic');
 	o.depends('type', 'vless');
 	o.depends('type', 'vmess');
@@ -1782,7 +1845,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 			let type = this.map.lookupOption('type', section_id)[0].formvalue(section_id);
 			let tls = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
 
-			if (['anytls', 'hysteria', 'hysteria2', 'shadowtls', 'tuic'].includes(type)) {
+			if (['anytls', 'hysteria', 'hysteria2', 'shadowtls', 'trusttunnel', 'tuic'].includes(type)) {
 				tls.checked = true;
 				tls.disabled = true;
 			} else {

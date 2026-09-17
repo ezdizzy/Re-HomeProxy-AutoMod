@@ -7622,3 +7622,72 @@ msgstr "Узлы, которые не может загрузить активн
 
 msgid "Skipped by this core: %s."
 msgstr "Пропущены этим ядром: %s."
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "TrustTunnel"
+msgstr "TrustTunnel"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "BBRv2"
+msgstr "BBRv2"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "QUIC congestion control algorithm used by TrustTunnel."
+msgstr "Алгоритм QUIC-контроля перегрузки, используемый TrustTunnel."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Transports to relay through the tunnel. Empty = the server default."
+msgstr "Транспорты, передаваемые через туннель. Пусто — настройка сервера по умолчанию."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "QUIC transport"
+msgstr "Транспорт QUIC"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Run TrustTunnel over QUIC instead of plain TCP."
+msgstr "Работать TrustTunnel поверх QUIC вместо обычного TCP."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Congestion window"
+msgstr "Окно перегрузки"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Custom congestion control window (advanced; leave empty for the default)."
+msgstr "Пользовательское окно контроля перегрузки (для тонкой настройки; пусто — по умолчанию)."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Health check"
+msgstr "Проверка живости"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Periodically verify the tunnel is alive."
+msgstr "Периодически проверять, что туннель жив."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Stream multiplexing over a single connection."
+msgstr "Мультиплексирование потоков в одном соединении."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Maximum TLS/QUIC connections for multiplexing."
+msgstr "Максимум TLS/QUIC-соединений для мультиплексирования."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Minimum multiplexed streams to keep open per connection."
+msgstr "Минимум мультиплексированных потоков, удерживаемых на соединение."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Maximum multiplexed streams per connection before a new one is opened."
+msgstr "Максимум мультиплексированных потоков на соединение до открытия нового."

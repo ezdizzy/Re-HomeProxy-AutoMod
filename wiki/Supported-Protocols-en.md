@@ -168,6 +168,13 @@ Works on **both** cores: the app emits a WireGuard endpoint with nested `amnezia
 
 ---
 
+## TrustTunnel — requires the sing-box-extended core
+
+### TrustTunnel
+AdGuard's obfuscated VPN protocol: the tunnel is indistinguishable from ordinary HTTPS traffic. Supports TCP and UDP relay, QUIC transport, congestion-control selection (BBR / BBRv2 / New Reno) and stream multiplexing. Requires the `with_trusttunnel` build tag — present in sing-box-extended, absent in hiddify-core, so **nodes of this type are skipped automatically when hiddify-core runs** (subscribed nodes are still imported and stay in the node list).
+
+---
+
 ## Mieru — requires `with_quic`
 
 ### MieruTCP / MieruUDP

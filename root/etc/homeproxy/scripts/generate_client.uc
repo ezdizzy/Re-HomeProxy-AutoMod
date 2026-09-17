@@ -171,7 +171,8 @@ const HP_TYPE_REQ_TAG = {
 	hysteria2: 'with_quic',
 	tuic: 'with_quic',
 	wireguard: 'with_wireguard',
-	amneziawg: 'with_wireguard'
+	amneziawg: 'with_wireguard',
+	trusttunnel: 'with_trusttunnel'
 };
 
 /* Runtime-learned rejections (check-heal), keyed per core version so a core
@@ -739,8 +740,16 @@ function generate_outbound(node) {
 			permit_without_stream: strToBool(node.grpc_permit_without_stream)
 		} : null,
 		/* NaiveProxy */
-		quic: (node.type === 'naive') ? strToBool(node.naive_quic) : null,
+		quic: (node.type === 'naive') ? strToBool(node.naive_quic) :
+		      (node.type === 'trusttunnel') ? strToBool(node.trusttunnel_quic) : null,
 		extra_headers: (node.type === 'naive') ? (node.naive_extra_headers ? json(node.naive_extra_headers) : null) : null,
+		/* TrustTunnel (sing-box-extended only; its congestion key differs from tuic's) */
+		network: (node.type === 'trusttunnel') ? ((type(node.trusttunnel_network) === 'array') ?
+			(length(node.trusttunnel_network) ? node.trusttunnel_network : null) :
+			(isEmpty(node.trusttunnel_network) ? null : [ node.trusttunnel_network ])) : null,
+		congestion_controller: (node.type === 'trusttunnel') ? (node.trusttunnel_congestion_controller || null) : null,
+		cwnd: (node.type === 'trusttunnel') ? strToInt(node.trusttunnel_cwnd) : null,
+		health_check: (node.type === 'trusttunnel') ? strToBool(node.trusttunnel_health_check) : null,
 		/* sing-box-extended's ssh outbound has NO udp_over_tcp field → emitting it FATALs
 		 * with "unknown field udp_over_tcp" (verified on sing-box check). hiddify-core's
 		 * ssh works with it as-is (tested), so keep the ssh branch for hiddify only.
@@ -773,6 +782,18 @@ function generate_outbound(node) {
 				dl.xPaddingBytes = xhttp_padding(node.xhttp_padding_bytes);
 			outbound.transport[is_hiddify ? 'downloadSettings' : 'download'] = dl;
 		}
+	}
+
+	/* TrustTunnel (sing-box-extended) multiplex: same JSON key as the generic
+	 * mux above but a different option shape (no protocol/padding/brutal) —
+	 * replace it wholesale; removeBlankAttrs strips the null. */
+	if (node.type === 'trusttunnel') {
+		outbound.multiplex = (node.trusttunnel_multiplex === '1') ? {
+			enabled: true,
+			max_connections: strToInt(node.trusttunnel_mp_max_connections),
+			min_streams: strToInt(node.trusttunnel_mp_min_streams),
+			max_streams: strToInt(node.trusttunnel_mp_max_streams)
+		} : null;
 	}
 
 	return outbound;

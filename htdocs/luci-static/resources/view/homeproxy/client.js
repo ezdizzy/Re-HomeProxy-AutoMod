@@ -206,9 +206,11 @@ return view.extend({
 					return '';
 				const tags = cores[sel].tags || {};
 				const REQ = { naive: 'with_naive_outbound', hysteria: 'with_quic', hysteria2: 'with_quic',
-				              tuic: 'with_quic', wireguard: 'with_wireguard', amneziawg: 'with_wireguard' };
+				              tuic: 'with_quic', wireguard: 'with_wireguard', amneziawg: 'with_wireguard',
+				              trusttunnel: 'with_trusttunnel' };
 				const NAME = { naive: 'NaïveProxy', hysteria: 'Hysteria', hysteria2: 'Hysteria2',
-				               tuic: 'TUIC', wireguard: 'WireGuard', amneziawg: 'AmneziaWG' };
+				               tuic: 'TUIC', wireguard: 'WireGuard', amneziawg: 'AmneziaWG',
+				               trusttunnel: 'TrustTunnel' };
 				const selName = sel === 'hiddify' ? 'hiddify-core' : 'sing-box-extended';
 				let skipped = {};
 				uci.sections(data[0], 'node', (res) => {

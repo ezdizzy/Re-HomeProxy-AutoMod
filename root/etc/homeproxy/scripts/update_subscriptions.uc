@@ -110,7 +110,8 @@ function log(...args) {
 
 function parse_singbox_outbound(ob, companion_map) {
 	const proxy_types = ['vless', 'vmess', 'trojan', 'shadowsocks', 'naive',
-	                     'tuic', 'hysteria', 'hysteria2', 'wireguard', 'ssh', 'mieru', 'anytls', 'socks', 'http'];
+	                     'tuic', 'hysteria', 'hysteria2', 'wireguard', 'ssh', 'mieru', 'anytls',
+	                     'trusttunnel', 'socks', 'http'];
 	if (type(ob) !== 'object' || !(ob.type in proxy_types)) return null;
 	/* Skip hidden companion outbounds (e.g. ShadowTLS wrappers tagged §hide§) */
 	if (ob.tag && match(ob.tag, /§hide§/)) return null;
@@ -287,6 +288,27 @@ function parse_singbox_outbound(ob, companion_map) {
 		break;
 	case 'anytls':
 		config.anytls_padding_scheme = ob.padding_scheme || null;
+		break;
+	case 'trusttunnel':
+		/* TrustTunnel (AdGuard's obfuscated VPN; sing-box-extended only). The
+		 * node is ALWAYS imported (data survives a core switch); generate_client
+		 * skips it when the running build has no with_trusttunnel tag.
+		 * username/password land in the generic fields (emitted for non-ssh). */
+		config.trusttunnel_congestion_controller = ob.congestion_controller || null;
+		/* NetworkList: JSON array ["tcp","udp"] or a string ("tcp" / "tcp\nudp"). */
+		if (type(ob.network) === 'array')
+			config.trusttunnel_network = map(ob.network, (n) => '' + n);
+		else if (!isEmpty(ob.network))
+			config.trusttunnel_network = filter(split(replace('' + ob.network, /[,\n\r]+/g, ' '), ' '), (n) => length(n));
+		config.trusttunnel_quic = ob.quic ? '1' : null;
+		config.trusttunnel_health_check = ob.health_check ? '1' : null;
+		config.trusttunnel_cwnd = (ob.cwnd != null) ? '' + ob.cwnd : null;
+		if (type(as_obj(ob.multiplex).enabled) === 'boolean' && ob.multiplex.enabled) {
+			config.trusttunnel_multiplex = '1';
+			config.trusttunnel_mp_max_connections = (ob.multiplex.max_connections != null) ? '' + ob.multiplex.max_connections : null;
+			config.trusttunnel_mp_min_streams = (ob.multiplex.min_streams != null) ? '' + ob.multiplex.min_streams : null;
+			config.trusttunnel_mp_max_streams = (ob.multiplex.max_streams != null) ? '' + ob.multiplex.max_streams : null;
+		}
 		break;
 	case 'socks':
 		config.socks_version = (ob.version != null) ? '' + ob.version : null;
