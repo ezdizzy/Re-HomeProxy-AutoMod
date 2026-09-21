@@ -2462,10 +2462,10 @@ const methods = {
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
 
-			const curlj = (url) => {
+			const curlj = (url, port) => {
 				const f = '/tmp/geo_diag.json';
 				system(`rm -f ${shellquote(f)}`);
-				system(`curl -s --max-time 12 -o ${shellquote(f)} -x socks5h://127.0.0.1:${mixed} ${shellquote(url)} 2>/dev/null`);
+				system(`curl -s --max-time 8 -o ${shellquote(f)} -x socks5h://127.0.0.1:${port || mixed} ${shellquote(url)} 2>/dev/null`);
 				if (!access(f)) return null;
 				const c = readfile(f);
 				system('rm -f ' + shellquote(f));
@@ -2473,19 +2473,56 @@ const methods = {
 				try { j = json(c || ''); } catch (e) { j = null; }
 				return j;
 			};
-			const g = curlj('https://api.ip.sb/geoip');
-			let exit = null;
-			if (type(g) === 'object') {
-				exit = {
-					ip: g.ip || null,
-					country: g.country || g.country_code || null,
-					country_code: g.country_code || g.countryCode || null,
-					asn: (g.asn != null) ? ('AS' + g.asn) : (g.asn_organization || null),
-					org: g.isp || g.organization || null
+			/* Country/ASN with provider fallback: api.ip.sb alone proved
+			 * unreliable from VPN exits (rate limits and outright blocks) and
+			 * the diagnostic kept reporting "probe failed" with a healthy
+			 * tunnel. Every provider answers anonymously; shapes are
+			 * normalized to the same exit object. */
+			const providers = [
+				'https://api.ip.sb/geoip',
+				'https://ipwho.is/',
+				'http://ip-api.com/json/?fields=status,country,countryCode,as,asnum,query'
+			];
+			const norm = (j, src) => {
+				if (type(j) !== 'object') return null;
+				if (src === 1 && j.success === false) return null;
+				if (src === 2 && j.status && j.status !== 'success') return null;
+				const e = {
+					ip: (src === 2) ? (j.query || null) : (j.ip || null),
+					country: j.country || null,
+					country_code: (src === 2) ? (j.countryCode || null) : (j.country_code || null),
+					asn: null,
+					org: null,
+					provider: (src === 0) ? 'api.ip.sb' : (src === 1) ? 'ipwho.is' : 'ip-api.com'
 				};
-				if (!exit.country_code && exit.country)
-					exit.country_code = substr(exit.country, 0, 2);
-			}
+				if (src === 0) {
+					e.asn = (j.asn != null) ? ('AS' + j.asn) : null;
+					e.org = j.organization || j.isp || null;
+				} else if (src === 1) {
+					const cn = (type(j.connection) === 'object') ? j.connection : {};
+					e.asn = (cn.asn != null) ? ('AS' + cn.asn) : null;
+					e.org = cn.org || cn.isp || null;
+				} else {
+					e.asn = (j.asnum != null) ? ('AS' + j.asnum) : (j.as || null);
+					e.org = j.as || null;
+				}
+				if (!e.country_code && e.country)
+					e.country_code = substr(e.country, 0, 2);
+				return (e.country_code || e.ip) ? e : null;
+			};
+			const lookup = (port) => {
+				for (let i = 0; i < 3; i++) {
+					const e = norm(curlj(providers[i], port), i);
+					if (e) return e;
+				}
+				return null;
+			};
+			const exit = lookup(mixed);
+			/* The GEO exit (:5339 rides the geo-out selector) — this is the
+			 * exit Gemini-class traffic actually uses. Best-effort: null means
+			 * the geo test inbound is missing from the running config (feature
+			 * off / stale config / core down) or every provider failed. */
+			const geo_exit = lookup(5339);
 
 			/* Seed coverage: which of the geo hosts are actually routed via the
 			 * proxy lists right now (list files are the routing truth). ucode
@@ -2504,6 +2541,10 @@ const methods = {
 				exit: exit,
 				exit_verdict: (exit && exit.country_code && UNSUPPORTED[exit.country_code]) ? 'unsupported_country'
 					: exit ? 'supported_country'
+					: 'probe_failed',
+				geo_exit: geo_exit,
+				geo_exit_verdict: (geo_exit && geo_exit.country_code && UNSUPPORTED[geo_exit.country_code]) ? 'unsupported_country'
+					: geo_exit ? 'supported_country'
 					: 'probe_failed',
 				seeds: seeds,
 				seeds_covered: length(keys(in_auto))
@@ -2565,12 +2606,34 @@ const methods = {
 					});
 				}
 			sort(nodes, (a, b) => (b.selected === true ? 1 : 0) - (a.selected === true ? 1 : 0));
+			/* LIVE selector pick (Clash API): the remembered `selected` can go
+			 * stale (state lost after a reboot, member removed from the pool,
+			 * manual switch). The UI flags the divergence so the table never
+			 * lies about which node actually serves the geo traffic. */
+			let live = null, live_label = null;
+			{
+				const fd = popen('wget -qO- --timeout=3 http://127.0.0.1:9090/proxies/geo-out 2>/dev/null');
+				if (fd) {
+					const raw = trim(fd.read('all') || '');
+					fd.close();
+					if (length(raw)) {
+						let lj = null;
+						try { lj = json(raw); } catch (e) { lj = null; }
+						if (lj && type(lj.now) === 'string' && length(lj.now)) {
+							live = lj.now;
+							live_label = node_label(live).label;
+						}
+					}
+				}
+			}
 			return {
 				enabled: true,
 				scanned: true,
 				ts: gs.ts || 0,
 				selected: gs.selected || null,
 				selected_label: gs.selected ? node_label(gs.selected).label : null,
+				live: live,
+				live_label: live_label,
 				nodes: nodes
 			};
 		}

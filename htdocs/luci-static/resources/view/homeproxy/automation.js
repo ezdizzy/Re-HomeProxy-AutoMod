@@ -447,9 +447,18 @@ return view.extend({
 						: (r.exit_verdict === 'supported_country')
 							? _('exit country is supported; if a service still refuses it, the exit IP is flagged — try another node')
 							: _('could not probe the tunnel exit (proxy down?)');
-					const text = _('Tunnel exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d.')
-						.format(e.ip || '—', e.country_code || '—', e.asn || (e.org || '—'), verdict, r.seeds_covered || 0, (r.seeds || []).length);
-					ui.addNotification(null, E('p', {}, text), (r.exit_verdict === 'unsupported_country') ? 'warning' : 'info');
+					const ge = r.geo_exit || {};
+					const gverdict = (r.geo_exit_verdict === 'unsupported_country')
+						? _('geo exit country is NOT supported — run "Scan geo exits"')
+						: (r.geo_exit_verdict === 'supported_country')
+							? _('geo exit country is supported')
+							: _('could not probe the geo exit (geo test inbound missing — reload the service?)');
+					const text = _('Tunnel exit: %s (%s), %s. %s Geo exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d.')
+						.format(e.ip || '—', e.country_code || '—', e.asn || (e.org || '—'), verdict,
+							ge.ip || '—', ge.country_code || '—', ge.asn || (ge.org || '—'), gverdict,
+							r.seeds_covered || 0, (r.seeds || []).length);
+					ui.addNotification(null, E('p', {}, text),
+						(r.exit_verdict === 'unsupported_country' || r.geo_exit_verdict === 'unsupported_country') ? 'warning' : 'info');
 				});
 			}),
 			btn(_('Scan geo exits'), function() {
@@ -777,6 +786,14 @@ return view.extend({
 			geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit for geo-sensitive services (Gemini etc.):') + ' '));
 			geoExitLine.appendChild(E('b', {}, [ selName || '—' ]));
 			geoExitLine.appendChild(document.createTextNode(' · ' + _('last scan: %s').format(fmtAge(r.ts) || '—')));
+			if (r.live && r.selected && r.live !== r.selected) {
+				const liveName = r.live_label ||
+					String(r.live || '').replace(/^cfg-/, '').replace(/-out$/, '');
+				geoExitLine.appendChild(document.createTextNode(' · '));
+				geoExitLine.appendChild(E('b', { style: 'color:#d99a1b' }, [
+					_('live geo-out is %s — it differs from the last scanned pin; press "Scan geo exits"').format(liveName)
+				]));
+			}
 			const thead = E('tr', {}, [
 				E('th', {}, [ _('Node') ]),
 				E('th', {}, [ _('Exit country') ]),
@@ -794,9 +811,13 @@ return view.extend({
 			for (let i in nodes) {
 				const n = nodes[i];
 				const nodeName = n.label || n.node || '';
+				/* ⚠ marks the node the core is ACTUALLY pinned to right now
+				 * when it differs from the last scan's pin. */
+				const liveMark = (r.live && r.live !== r.selected &&
+					('cfg-' + (n.node || '') + '-out') === r.live) ? ' ⚠' : '';
 				tbody.appendChild(E('tr', {}, [
 					E('td', { title: nodeName !== n.node ? n.node : null },
-						[ (n.selected ? '✔ ' : '') + nodeName ]),
+						[ (n.selected ? '✔ ' : '') + nodeName + liveMark ]),
 					E('td', {}, [ n.country || '—' ]),
 					E('td', {}, [ n.asn || '—' ]),
 					E('td', {}, [ vspan(n.google) ]),

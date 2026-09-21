@@ -7045,8 +7045,8 @@ msgstr "сервис отклоняет текущий узел выхода —
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Tunnel exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d."
-msgstr "Выход туннеля: %s (%s), %s. %s Гео-чувствительных хостов через прокси: %d из %d."
+msgid "Tunnel exit: %s (%s), %s. %s Geo exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d."
+msgstr "Выход туннеля: %s (%s), %s. %s Гео-выход: %s (%s), %s. %s Гео-чувствительных хостов через прокси: %d из %d."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -7062,6 +7062,21 @@ msgstr "страна выхода поддерживается; если сер�
 
 msgid "could not probe the tunnel exit (proxy down?)"
 msgstr "не удалось проверить выход туннеля (прокси не работает?)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "geo exit country is NOT supported — run \"Scan geo exits\""
+msgstr "страна гео-выхода НЕ поддерживается — запустите «Сканировать гео-выходы»"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "geo exit country is supported"
+msgstr "страна гео-выхода поддерживается"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "could not probe the geo exit (geo test inbound missing — reload the service?)"
+msgstr "не удалось проверить гео-выход (гео-тестовый инбаунд отсутствует — перезапустите службу?)"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -7542,6 +7557,11 @@ msgstr "Гео-выход: сканирования ещё не было — н�
 
 msgid "Geo-aware exit for geo-sensitive services (Gemini etc.):"
 msgstr "Гео-выход для гео-чувствительных сервисов (Gemini и др.):"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "live geo-out is %s — it differs from the last scanned pin; press \"Scan geo exits\""
+msgstr "фактический гео-выход сейчас %s — он отличается от закреплённого сканированием; запустите «Сканировать гео-выходы»"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
