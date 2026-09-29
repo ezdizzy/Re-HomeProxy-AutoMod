@@ -5418,3 +5418,113 @@ msgstr ""
 
 msgid "Service restart initiated"
 msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Hot Swap"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Keep several connections alive at once and switch to a working one within seconds when the main node dies — without restarting the core. Standby nodes are verified by real probes (this also keeps their tunnels warm), existing direct connections and DNS are never affected. Requires a specific main node (with URLTest the kernel already fails over on its own). The number of hot connections is set below."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Hot connections"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "How many nodes of the failover group are kept hot: the main node plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Probe interval"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "How often each hot node is verified (seconds). Lower = faster failover (a dead main is usually replaced within ~10-20 s), higher = less background traffic."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Return to the main node"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "When the main node recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Hot Swap state"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Inactive"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Waiting for the failover daemon (service reload needed)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Active"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Switches"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Last switch"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "failback on"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "OAuth sign-in stability"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Route authentication providers (accounts.google.com, login.microsoftonline.com, appleid.apple.com, …) through the same exit as the services that use them, resolve them via encrypted DNS and force TCP (QUIC and HTTPS/SVCB records are filtered). Fixes \"Sign in with Google\" loops on proxied services: the login no longer bounces between a direct Russian IP and the proxy exit, and the exit IP stays stable during the whole flow."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Reload on WAN reconnect"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Reload the whole service when the WAN interface comes up (legacy behavior). Leave this OFF: a reload tears down every connection — including direct ones that never touch the proxy — and drops LAN DNS for a few seconds. The core switches to the new WAN interface on its own."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Waiting for daemon"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Failover active"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Standby ready"
+msgstr ""

@@ -222,11 +222,27 @@ start_service() {
 	case "$routing_mode" in
 	"bypass_cn"|"bypass_ir"|"custom"|"custom_json"|"global"|"proxy_banned_ru")
 		# All modes do DNS inside sing-box; dnsmasq just redirects to its inbound.
+		# strict-order pins 5333 as the primary server (default dnsmasq prefers
+		# whichever upstream answered fastest, which would let LAN queries drift
+		# onto the fallback below and bypass the core's split-DNS routing).
 		cat <<-EOF >> "$DNSMASQ_DIR/redirect-dns.conf"
 			no-poll
 			no-resolv
+			strict-order
 			server=127.0.0.1#$dns_port
 		EOF
+		# DNS resilience (ч.59): when MultiDNS owns the independent mosdns plain
+		# listener, register it as a SECOND resolver. dnsmasq falls to it only
+		# when :5333 does not answer (core restart / crash window), so LAN DNS
+		# keeps working instead of going dark for the whole restart. The plain
+		# pool itself races direct upstreams and falls back to its secure pool,
+		# and learned proxy-domains are routed to secure within mosdns, so the
+		# emergency path is still a proper resolver.
+		if [ "$md_en" = "1" ] && [ "$mdns_wired" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
+			local mdns_fb_port
+			config_get mdns_fb_port "multidns" "plain_port" "5453"
+			echo "server=127.0.0.1#${mdns_fb_port}" >> "$DNSMASQ_DIR/redirect-dns.conf"
+		fi
 		;;
 	esac
 	/etc/init.d/dnsmasq restart >"/dev/null" 2>&1
@@ -464,6 +480,28 @@ start_service() {
 		procd_close_instance
 	fi
 
+	# Hot Swap daemon (ч.59): keeps the standby tunnels warm and re-pins the
+	# main-out SELECTOR to a proven-alive member when the primary dies — a pure
+	# Clash API switch, NO service restart, so direct traffic and DNS never
+	# notice. The gate mirrors generate_client.uc: only when enabled AND the
+	# main node is a specific proxy node (URLTest pools have kernel failover;
+	# direct/ByeDPI/Zapret mains have nothing to switch between). The daemon
+	# itself follows $RUN_DIR/hotswap.json and idles while it is absent, so a
+	# stale gate can never make it act on a config without the selector.
+	local hotswap_en hotswap_main
+	config_get_bool hotswap_en "config" "hotswap" "0"
+	config_get hotswap_main "config" "main_node" ""
+	if [ "$hotswap_en" = "1" ] && [ -n "$hotswap_main" ] && \
+	   ! uci -q get "$CONF.$hotswap_main" >/dev/null 2>&1; then
+		: # sentinel value (urltest/direct-out/byedpi-out/zapret-out): no hotswap
+	elif [ "$hotswap_en" = "1" ] && [ -n "$hotswap_main" ]; then
+		mkdir -p "$RUN_DIR"
+		procd_open_instance "hotswap"
+		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/hotswap.uc"
+		procd_set_param respawn
+		procd_close_instance
+	fi
+
 	# Subscription auto-update cron. This install half was dropped in the init rewrite
 	# (commit 4f3511f) while the stop_service cleanup below was kept, leaving the UI
 	# "Auto update" checkbox wired to nothing. Restored verbatim from upstream: when
@@ -639,5 +677,17 @@ reload_service() {
 
 service_triggers() {
 	procd_add_reload_trigger "$CONF"
-	procd_add_interface_trigger "interface.*.up" wan /etc/init.d/$CONF reload
+	# Heritage behavior reloaded the WHOLE service on every WAN interface up
+	# event — every PPPoE redial / carrier flap tore down ALL connections
+	# (direct included) and LAN DNS for the restart window. The core survives
+	# WAN changes on its own (auto_detect_interface re-binds; the fwmark policy
+	# routing and nft rules are interface-independent), so the reload is
+	# opt-in via config.reload_on_wan (default off, ч.59).
+	config_load "$CONF"
+	local reload_on_wan
+	config_get_bool reload_on_wan "config" "reload_on_wan" "0"
+	if [ "$reload_on_wan" = "1" ]; then
+		procd_add_interface_trigger "interface.*.up" wan /etc/init.d/$CONF reload
+	fi
+	return 0
 }

@@ -24,6 +24,18 @@ web interface.
 
 This mod adds the following on top of the original Re-HomeProxy app:
 
+- **Hot Swap (hot standby)** — keeps several connections alive at once (configurable count): the main node plus hot
+  standbys that are continuously verified with real probes. When the main node dies, traffic switches to a working
+  standby within seconds **without restarting the core** — direct connections, SSH and DNS never notice. Configured on
+  the Client Settings tab (Hot Swap section for a specific main node), status shown on the Node Monitoring page.
+- **Direct-connection resilience** — the service no longer restarts "just in case": a dead node no longer triggers a
+  restart (Hot Swap switches the selector via the API; in URLTest mode the watchdog first forces the core to re-pick
+  with an API-initiated probe), the reload-on-WAN-up trigger is off by default, and LAN DNS gets a fallback resolver
+  for the core-restart window.
+- **OAuth sign-in stability** — authentication providers (accounts.google.com, login.microsoftonline.com,
+  appleid.apple.com, …) ride the same exit as the services that open them, resolve via encrypted DNS and use TCP only
+  (QUIC/HTTPS records filtered). Fixes "Sign in with Google" loops on proxied services (endless socialSignInFailed),
+  and the automation engine no longer learns auth hosts from indirect evidence.
 - **Automation tab** — automatic detection of blocked sites. A background monitor probes hosts both directly and through
   the proxy; a host that fails directly but works via the proxy is remembered and routed through the proxy / ByeDPI / Zapret.
   Raw IP destinations are covered too (games, Telegram data centers, apps without SNI): recurring conntrack addresses are

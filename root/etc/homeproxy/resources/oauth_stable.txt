@@ -1,0 +1,21 @@
+# OAuth / auth-provider hosts — "OAuth stability" (ч.59)
+#
+# These hosts ride the SAME exit (main-out) as the services that open them, so
+# "Sign in with Google / Microsoft / Apple" flows never split between a direct
+# RU IP and the proxy exit, and the exit IP stays consistent across the whole
+# flow (the split path + URLTest exit drift is what breaks the social sign-in
+# with endless reloads, e.g. Autodesk socialSignInFailed=True).
+# generate_client.uc emits for this list: route -> main-out, DNS -> secure-dns,
+# and QUIC (UDP/443) + HTTPS/SVCB records are rejected (deterministic TCP path).
+# The automation engine never auto-learns these hosts (built-in exclude).
+# One host per line; everything after # is a comment.
+accounts.google.com
+accounts.youtube.com
+myaccount.google.com
+gds.google.com
+login.microsoftonline.com
+login.live.com
+login.windows.net
+account.microsoft.com
+appleid.apple.com
+idmsa.apple.com

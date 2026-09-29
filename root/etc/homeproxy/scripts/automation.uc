@@ -203,6 +203,11 @@ let pv_cache = {};
 let manual_proxy_set = {};
 let manual_direct_set = {};
 
+/* OAuth provider hosts (ч.59, resources/oauth_stable.txt): NEVER auto-learned —
+ * their routing is the generator's oauth-domain rule (same exit as the service),
+ * and a learned entry here would only fight that rule and split OAuth flows. */
+let oauth_provider_set = {};
+
 /* Geo-sensitive services (ч.51/ч.53): sites whose HTML shell answers 200 from
  * anywhere while the actual API calls inside reject "unsupported country"
  * (Google Gemini error 1060 class). A plain GET can NOT tell a working site
@@ -919,11 +924,46 @@ function tcp_reachable(host, via_proxy, timeout) {
 		}
 	}
 
+/* OAuth provider host (ч.59): exact host or any subdomain of the curated
+ * resources/oauth_stable.txt entries. Absolute exclusion (like engine-protected
+ * hosts): the generator's oauth-domain rule owns their routing. */
+function is_oauth_provider(host) {
+	host = lc(trim(host));
+	if (!length(host)) return false;
+	for (;;) {
+		if (oauth_provider_set[host]) return true;
+		const dot = index(host, '.');
+		if (dot < 0) return false;
+		host = substr(host, dot + 1);
+	}
+}
+
+/* Auth-like host (ч.59): first label is a well-known auth noun, or the host is
+ * a known OAuth provider. OAuth chains answer probes with 302 loops and
+ * anti-bot pages, so a "direct failed / proxy works" verdict here is often an
+ * artifact of the flow itself, not a block — learning one splits the service's
+ * auth across exits (Autodesk socialSignInFailed reload loop). The learn path
+ * requires HARD evidence and one extra confirmation for these. */
+const AUTH_LABELS = ['accounts', 'login', 'auth', 'signin', 'signup', 'sso', 'oauth', 'openid', 'identity'];
+function is_auth_like(host) {
+	host = lc(trim(host));
+	if (!length(host)) return false;
+	if (is_oauth_provider(host)) return true;
+	const parts = split(host, '.');
+	if (length(parts) < 2) return false;
+	for (let a in AUTH_LABELS)
+		if (parts[0] === a) return true;
+	return false;
+}
+
 function is_excluded(host, ignore_lists) {
 	host = trim(host);
 	if (!length(host)) return true;
 	/* Engine-covered hosts are absolute — user rules outrank learning. */
 	if (is_engine_protected(host)) return true;
+	/* OAuth providers are absolute too (ч.59): the generator's oauth-domain
+	 * rule routes them; the engine must never learn or re-verdict them. */
+	if (is_oauth_provider(host)) return true;
 	/* Russian TLDs are NEVER learned — in Russia they must always go direct.
 	 * Hard-coded (not just the default exclude list) so no config change can
 	 * accidentally start probing .ru/.рф/.su sites.
@@ -1808,6 +1848,10 @@ echo done > "$PRE.done"
 		for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
 		for (let d in read_lines(MANUAL_PROXY_LIST)) { d = trim(d); if (length(d)) manual_proxy_set[d] = true; }
 		for (let d in read_lines(MANUAL_DIRECT_LIST)) { d = trim(d); if (length(d)) manual_direct_set[d] = true; }
+		/* OAuth provider list (ч.59): static curated resource, re-read here so a
+		 * package update of the file reaches a running daemon without a restart. */
+		oauth_provider_set = {};
+		for (let d in read_lines(RES + '/oauth_stable.txt')) { d = trim(d); if (length(d)) oauth_provider_set[lc(d)] = true; }
 		/* Load the learned list but drop entries that are now excluded (.ru/.рф/.su,
 		 * RU-geo database, user's "always direct" pins) — self-heals lists learned by
 		 * older versions. If anything was dropped, persist the cleaned list right away. */
@@ -1833,6 +1877,14 @@ echo done > "$PRE.done"
 			 * the RU-protect rule in the generated config). */
 			if (geo_seed_set[d] || is_geo_sensitive(d)) {
 				auto_set[d] = true;
+				continue;
+			}
+			/* OAuth providers never live in the learned list (ч.59): the
+			 * oauth-domain rule owns their routing; a learned entry here came
+			 * from an older build and only splits auth flows. */
+			if (is_oauth_provider(d)) {
+				log('dropping learned entry (OAuth provider, routed by the oauth rule): ' + d);
+				dropped++;
 				continue;
 			}
 			if (match(d, /\.(ru|su|рф|xn--p1ai)$/) || substr(d, -5) === '.рф') {
@@ -2560,11 +2612,32 @@ echo done > "$PRE.done"
 				/* Legacy behavior */
 				need = min_confirm + ((d.code === '000') ? 1 : 0);
 			}
+			/* Auth-like hosts (ч.59): OAuth chains answer probes with 302 loops
+			 * and anti-bot pages, so "direct failed / proxy works" is often an
+			 * artifact of the flow itself. Learn ONLY on hard direct-failure
+			 * evidence (unreachable 000 or 4xx/5xx block), one confirmation
+			 * stricter — and never via the hot lane below. Soft evidence (200
+			 * geo-refusal, redirect artifacts) drops the candidate instead of
+			 * splitting an auth flow across exits. */
+			if (!is_ip && is_auth_like(dom)) {
+				const acode = ('' + (d.code || '000'));
+				const an = int(acode);
+				const hard_direct = (acode === '000') || (d.block == true) ||
+				                    (an == an && an >= 400 && an <= 599);
+				if (!hard_direct) {
+					delete st.dconfirms;
+					delete state[dom];
+					return;
+				}
+				need = need + 1;
+			}
 			if (is_ip && need < 2) need = 2;
 			/* Hot lane: the user's browser has been retrying this host for real
 			 * during the current burst — its organic attempts ARE the second
-			 * witness, so one failed probe is enough to learn it now. */
-			else if (!is_ip && hot_set[dom] && need > min_confirm)
+			 * witness, so one failed probe is enough to learn it now. Auth-like
+			 * hosts are excluded: their "organic retries" are the OAuth loop
+			 * itself, exactly the traffic we must not learn from. */
+			else if (!is_ip && !is_auth_like(dom) && hot_set[dom] && need > min_confirm)
 				need = min_confirm;
 			st.status = 'blocked';
 			st.confirms = (st.confirms || 0) + 1;

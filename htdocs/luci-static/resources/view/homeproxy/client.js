@@ -33,6 +33,12 @@ const callActiveNode = rpc.declare({
 	expect: { '': {} }
 });
 
+const callHotswapStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'hotswap_status',
+	expect: { '': {} }
+});
+
 const callReadDomainList = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'acllist_read',
@@ -444,6 +450,75 @@ return view.extend({
 		o.default = '150';
 		o.depends('main_udp_node', 'urltest');
 
+		/* ── Hot Swap (ч.59): hot standby connections + transparent failover ──
+		 * Only meaningful when the main node is a SPECIFIC node: URLTest pools
+		 * already fail over inside the kernel, and direct/ByeDPI/Zapret mains
+		 * have nothing to switch between. With Hot Swap the generator turns
+		 * main-out into a Selector of [primary + backups], the daemon keeps the
+		 * standbys warm with real probes and re-pins the selector via the Clash
+		 * API when the primary dies — no service restart, direct traffic and
+		 * DNS never notice. */
+		o = s.taboption('routing', form.Flag, 'hotswap', _('Hot Swap') + ' 🔌',
+			_('Keep several connections alive at once and switch to a working one within seconds when the main node dies — without restarting the core. Standby nodes are verified by real probes (this also keeps their tunnels warm), existing direct connections and DNS are never affected. Requires a specific main node (with URLTest the kernel already fails over on its own). The number of hot connections is set below.'));
+		o.depends({'routing_mode': /^((?!custom).)+$/, 'main_node': /^(?!urltest$|direct-out$|nil$|byedpi-out$|zapret-out$)/});
+		o.default = o.disabled;
+		o.rmempty = false;
+
+		o = s.taboption('routing', form.ListValue, 'hotswap_count', _('Hot connections'),
+			_('How many nodes of the failover group are kept hot: the main node plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies.'));
+		for (let i = 2; i <= 8; i++)
+			o.value('' + i, '' + i);
+		o.default = '3';
+		o.depends('hotswap', '1');
+		o.rmempty = false;
+
+		o = s.taboption('routing', form.Value, 'hotswap_interval', _('Probe interval'),
+			_('How often each hot node is verified (seconds). Lower = faster failover (a dead main is usually replaced within ~10-20 s), higher = less background traffic.'));
+		o.datatype = 'range(5,120)';
+		o.placeholder = '10';
+		o.default = '10';
+		o.depends('hotswap', '1');
+
+		o = s.taboption('routing', form.Flag, 'hotswap_failback', _('Return to the main node'),
+			_('When the main node recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies.'));
+		o.default = o.enabled;
+		o.depends('hotswap', '1');
+		o.rmempty = false;
+
+		o = s.taboption('routing', form.DummyValue, '_hotswap_status', _('Hot Swap state'));
+		o.depends('hotswap', '1');
+		o.cfgvalue = function() {
+			const el = E('span', { 'style': 'color:#9a9a9a' }, '—');
+			poll.add(L.bind(function() {
+				return L.resolveDefault(callHotswapStatus(), {}).then(function(ret) {
+					if (!ret || ret.error || !ret.enabled) {
+						el.textContent = _('Inactive');
+						el.style.color = 'gray';
+						return;
+					}
+					if (!ret.daemon) {
+						el.textContent = _('Waiting for the failover daemon (service reload needed)');
+						el.style.color = '#d99a1b';
+						return;
+					}
+					/* Live node name: prefer the Clash leaf from the RPC, fall
+					 * back to the state file entry. */
+					let live = ret.active_label || ret.active || '—';
+					const parts = [ _('Active') + ': ' + live ];
+					if (ret.primary_label && ret.primary !== ret.active)
+						parts.push(_('Main node') + ': ' + ret.primary_label);
+					parts.push(_('Switches') + ': ' + (ret.switches || 0));
+					if (ret.last_switch)
+						parts.push(_('Last switch') + ': ' + new Date(ret.last_switch * 1000).toLocaleTimeString());
+					if (ret.failback)
+						parts.push(_('failback on'));
+					el.textContent = parts.join(' · ');
+					el.style.color = (ret.primary && ret.active && ret.active !== ret.primary) ? '#d99a1b' : 'green';
+				});
+			}));
+			return el;
+		};
+
 		o = s.taboption('routing', form.Flag, 'proxy_calls',
 			_('Proxy calls') + ' 📞',
 			_('Route VoIP call ports (WhatsApp, Telegram, FaceTime, etc.) through the proxy.'));
@@ -460,6 +535,15 @@ return view.extend({
 		o.default = o.enabled;
 		o.rmempty = false;
 
+		/* OAuth stability (ч.59): auth providers ride the same exit as the
+		 * services that open them instead of the RU-geo "always direct" split. */
+		o = s.taboption('routing', form.Flag, 'oauth_stability', _('OAuth sign-in stability') + ' 🔐',
+			_('Route authentication providers (accounts.google.com, login.microsoftonline.com, appleid.apple.com, …) through the same exit as the services that use them, resolve them via encrypted DNS and force TCP (QUIC and HTTPS/SVCB records are filtered). Fixes "Sign in with Google" loops on proxied services: the login no longer bounces between a direct Russian IP and the proxy exit, and the exit IP stays stable during the whole flow.'));
+		o.depends('routing_mode', 'proxy_banned_ru');
+		o.default = o.enabled;
+		o.rmempty = false;
+		o.retain = true;
+
 		o = s.taboption('routing', form.Flag, 'show_advanced_rules',
 			_('Advanced custom rules') + ' 👨‍💻',
 			_('Show the Custom Rules and Routing Nodes tabs for additional custom rules.'));
@@ -468,6 +552,16 @@ return view.extend({
 		o.rmempty = false;
 		/* Retain: a save made in another routing mode used to delete the flag,
 		 * silently hiding the advanced tabs again after returning. */
+		o.retain = true;
+
+		/* WAN-up reload (ч.59): legacy behavior reloaded the whole service on
+		 * every WAN up event, tearing down ALL connections on every redial.
+		 * The core re-binds on its own, so this is opt-in now. */
+		o = s.taboption('routing', form.Flag, 'reload_on_wan', _('Reload on WAN reconnect'),
+			_('Reload the whole service when the WAN interface comes up (legacy behavior). Leave this OFF: a reload tears down every connection — including direct ones that never touch the proxy — and drops LAN DNS for a few seconds. The core switches to the new WAN interface on its own.'));
+		o.depends({'routing_mode': /^((?!custom).)+$/});
+		o.default = o.disabled;
+		o.rmempty = false;
 		o.retain = true;
 
 		o = s.taboption('routing', form.ListValue, 'routing_mode', _('Routing mode'),

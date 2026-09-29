@@ -19,9 +19,13 @@
  *   1. the dead node's outbound tag is written to $RUN_DIR/urltest_dead
  *      (atomic) — generate_client.uc then refuses to FRONT it via the sticky
  *      snapshot and sinks it to the END of every pool;
- *   2. the service is restarted (rate-limited by RESTART_COOLDOWN). A fresh
- *      core starts with empty history, so its first probe round selects a
- *      living node instead of the dead one.
+ *   1b. an API-initiated delay test against the dead node forces the core to
+ *      refresh its (stale) history — cores that re-pick on a failed probe
+ *      move WITHOUT any restart (ч.59: a restart tears down direct traffic);
+ *   2. only if the core STILL rides the dead node after the forced probe, the
+ *      service is reloaded (rate-limited by RESTART_COOLDOWN). A fresh core
+ *      starts with empty history, so its first probe round selects a living
+ *      node instead of the dead one.
  * Recovery: if a dead-marked node later measures alive again, its mark is
  * dropped, so it may be fronted/selected as usual.
  *
@@ -34,7 +38,11 @@
 
 'use strict';
 
-import { access, readfile, writefile, open, stat } from 'fs';
+/* ⚠ popen comes from the fs module (NOT a global): without it the daemon
+ * died at the FIRST fetch_proxies() and procd kept respawning it (the log
+ * showed endless "watchdog started" lines ~125 s apart) — the watchdog
+ * never actually polled anything until this import was fixed (ч.59). */
+import { access, readfile, writefile, open, stat, popen } from 'fs';
 
 /* Local shell quote. This build of ucode has NO shellquote builtin and this
  * file imports nothing that provides one — the original release called the
@@ -223,10 +231,13 @@ while (true) {
 
 		/* Selected node is dead/unmeasured. Only act when a WORKING alternative
 		 * exists — otherwise the outage is upstream (WAN/exit provider) and a
-		 * restart would change nothing. */
+		 * restart would change nothing.
+		 * ⚠ ucode `for-in` over an ARRAY yields the ELEMENTS (verified live,
+		 * ч.59) — the old `const tag = members[m]` indexed the array with the
+		 * element string and always got null, so the watchdog could NEVER find
+		 * an alive alternative and never actually acted on a dead pick. */
 		let alt = null;
-		for (let m in members) {
-			const tag = members[m];
+		for (let tag in members) {
 			if (tag === now || is_group_tag(tag))
 				continue;
 			if (member_alive(proxies, tag)) {
@@ -245,14 +256,32 @@ while (true) {
 			continue;
 
 		/* 1) Dead-mark the node so generate_client.uc sinks it to the pool end
-		 *    and never fronts it via the sticky snapshot. */
+		 *    and refuses to front it via the sticky snapshot. */
 		if (deadset[now] == null) {
 			deadset[now] = true;
 			flush_dead();
 		}
 
+		/* 1b) Force a re-pick WITHOUT a restart (ч.59): a full service restart
+		 * tears down every connection on the router — direct traffic included.
+		 * Cores DELETE a member's delay history when a probe through it fails
+		 * and then re-pick, so an API-initiated delay test against the dead
+		 * node updates its history with a fresh failure and makes the group
+		 * move on its own. Only when the core still rides the dead node after
+		 * the forced probe does the restart path below fire. */
+		let fd = popen('wget -qO- --timeout=8 ' + API + '/proxies/' + now + '/delay?timeout=5000 2>/dev/null');
+		if (fd) { fd.read('all'); fd.close(); }
+		sleep(6000);
+		const after = fetch_proxies();
+		if (after && type(after[gname]) === 'object' && after[gname].now && after[gname].now !== now) {
+			log('group ' + gname + ' re-picked ' + after[gname].now + ' after a forced probe — no restart needed');
+			fail[gname] = 0;
+			continue;
+		}
+
 		/* 2) Rate-limited restart: a fresh core starts with empty history, its
-		 *    first probe round selects a living member. */
+		 *    first probe round selects a living member. reload (not restart) so
+		 *    the debounce/deferred-retry path in reload_service applies. */
 		const now_ts = time();
 		if ((now_ts - last_restart) < RESTART_COOLDOWN) {
 			log('restart suppressed (cooldown)');
@@ -261,13 +290,13 @@ while (true) {
 		}
 		last_restart = now_ts;
 		fail[gname] = 0;
-		log('RESTART to escape dead URLTest pick ' + now + ' (group ' + gname + ')');
+		log('RELOAD to escape dead URLTest pick ' + now + ' (group ' + gname + ')');
 
 		/* setsid: survive the procd kill of our own instance long enough to
-		 * trigger the restart; detached so system() returns immediately. */
+		 * trigger the reload; detached so system() returns immediately. */
 		if (system('command -v setsid >/dev/null 2>&1') === 0)
-			system('setsid sh -c ' + shellquote('/etc/init.d/homeproxy restart >/dev/null 2>&1') + ' &');
+			system('setsid sh -c ' + shellquote('/etc/init.d/homeproxy reload >/dev/null 2>&1') + ' &');
 		else
-			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+			system('/etc/init.d/homeproxy reload >/dev/null 2>&1 &');
 	}
 }

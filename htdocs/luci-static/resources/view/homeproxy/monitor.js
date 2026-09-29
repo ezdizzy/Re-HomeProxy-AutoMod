@@ -33,6 +33,12 @@ const callMonitorConnectionsClose = rpc.declare({
 	expect: { '': {} }
 });
 
+const callHotswapStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'hotswap_status',
+	expect: { '': {} }
+});
+
 /* Same 4-colour scheme as the "Active URLTest node" line in Client Settings —
  * palette matches the Automation tab: red = confirmed dead (65535 timeout
  * sentinel), orange = slow (>=3000 ms), green = healthy, gray = unmeasured. */
@@ -125,6 +131,7 @@ return view.extend({
 
 		const coreBody = E('div', {}, [ '—' ]);
 		const activeBody = E('div', {}, [ '—' ]);
+		const hotswapBody = E('div', {}, [ '—' ]);
 		const zapretBody = E('div', {}, [ '—' ]);
 		const byedpiBody = E('div', {}, [ '—' ]);
 		const nodesBody = E('div', {}, [ '—' ]);
@@ -134,6 +141,7 @@ return view.extend({
 		}, [
 			cardWrap(_('Core'), coreBody),
 			cardWrap(_('Active node'), activeBody),
+			cardWrap(_('Hot Swap') + ' 🔌', hotswapBody),
 			cardWrap(_('Zapret'), zapretBody),
 			cardWrap(_('ByeDPI'), byedpiBody),
 			cardWrap(_('Nodes'), nodesBody)
@@ -358,10 +366,37 @@ return view.extend({
 			});
 		}
 
+		function refreshHotswap() {
+			return L.resolveDefault(callHotswapStatus(), {}).then(function(r) {
+				hotswapBody.innerHTML = '';
+				if (!r || r.error || !r.enabled) {
+					hotswapBody.appendChild(E('span', { 'style': 'color:' + C_GREY }, [ _('Off') ]));
+					return;
+				}
+				if (!r.daemon) {
+					hotswapBody.appendChild(E('span', { 'style': 'color:' + C_AMBER }, [ _('Waiting for daemon') ]));
+					return;
+				}
+				const switching = (r.primary && r.active && r.active !== r.primary);
+				hotswapBody.appendChild(E('span', {
+					'style': 'color:' + (switching ? C_AMBER : C_GREEN) + '; font-weight:bold'
+				}, [ switching ? _('Failover active') : _('Standby ready') ]));
+				hotswapBody.appendChild(document.createTextNode(' · ' + (r.switches || 0)));
+				if (switching && r.last_reason) {
+					hotswapBody.appendChild(E('div', { 'style': 'color:#9a9a9a; font-size:.85em' }, [ r.last_reason ]));
+				}
+			}).catch(function(e) {
+				hotswapBody.innerHTML = '';
+				hotswapBody.appendChild(E('span', { 'style': 'color:' + C_GREY }, [ '—' ]));
+			});
+		}
+
 		poll.add(refreshNodes, 5);
 		poll.add(refreshConnections, 5);
+		poll.add(refreshHotswap, 10);
 		refreshNodes();
 		refreshConnections();
+		refreshHotswap();
 
 		return E('div', {}, [ panelNodes, panelConn ]);
 	}

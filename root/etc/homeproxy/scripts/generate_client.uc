@@ -15,7 +15,8 @@ import { cursor } from 'uci';
 import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
 	removeBlankAttrs, validation, HP_DIR, RUN_DIR,
-	sync_learned_rulesets, sync_manual_direct_ruleset, sync_ru_geo_rulesets
+	sync_learned_rulesets, sync_manual_direct_ruleset, sync_ru_geo_rulesets,
+	sync_oauth_ruleset
 } from 'homeproxy';
 
 const ubus = connect();
@@ -245,6 +246,30 @@ const automation_enabled = uci.get(uciconfig, 'automation', 'enabled');
 /* Geo-aware exit (ч.53): opt-out flag; the rest of the gate (real main node,
  * proxy nodes present) is evaluated where the feature is wired. */
 const geo_scan_opt = uci.get(uciconfig, 'automation', 'geo_scan');
+
+/* Hot Swap (ч.59): keep N "hot" connections to the node pool and transparently switch
+ * the main-out selector to a proven-alive backup when the primary dies — WITHOUT a
+ * core restart, so direct traffic and DNS never notice. Only meaningful when the main
+ * node is a specific proxy node (URLTest pools have kernel-level failover; synthetic
+ * and direct mains have nothing to switch between). The daemon (scripts/hotswap.uc)
+ * owns the actual switching; this generator only restructures main-out and writes the
+ * state contract file. */
+const hotswap_opt = (uci.get(uciconfig, ucimain, 'hotswap') || '0') === '1';
+const hotswap_count_opt = int(uci.get(uciconfig, ucimain, 'hotswap_count') || '3') || 3;
+const hotswap_interval_opt = int(uci.get(uciconfig, ucimain, 'hotswap_interval') || '10') || 10;
+const hotswap_failback_opt = (uci.get(uciconfig, ucimain, 'hotswap_failback') !== '0');
+
+/* OAuth stability (ч.59): auth-provider hosts ride the SAME exit as the services that
+ * use them (main-out) instead of the RU-geo "always direct" split, QUIC/SVCB escapes
+ * are closed, and resolution goes through the encrypted pool. See LOCAL_DOCS/08. */
+const oauth_stability_opt = (uci.get(uciconfig, ucimain, 'oauth_stability') !== '0');
+
+/* Reload on WAN up (ч.59): the heritage trigger reloaded the WHOLE service on every
+ * WAN interface up event — every PPPoE redial tore down every connection (direct
+ * included) and the DNS hijack for seconds. The core survives WAN changes on its own
+ * (auto_detect_interface re-binds; firewall marks are fwmark-based and interface
+ * independent), so the trigger is opt-in now. */
+const reload_on_wan_opt = (uci.get(uciconfig, ucimain, 'reload_on_wan') === '1');
 
 let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outbound_dns,
     domain_strategy, sniff_override, dns_server, china_dns_server, iran_dns_server, russia_dns_server,
@@ -995,6 +1020,23 @@ if (!isEmpty(main_node)) {
 			server: 'secure-dns'
 		});
 
+		/* OAuth stability (ч.59): auth providers resolve through the encrypted
+		 * pool (consistent, poison-proof) and HTTPS/SVCB records are filtered so
+		 * browsers cannot discover an h3 endpoint and escape into QUIC. Referenced
+		 * rule-set is emitted with the route rules below (proxy_banned_ru). */
+		if (oauth_stability_opt) {
+			push(config.dns.rules, {
+				rule_set: 'oauth-domain',
+				query_type: [64, 65],
+				action: 'reject'
+			});
+			push(config.dns.rules, {
+				rule_set: 'oauth-domain',
+				action: 'route',
+				server: 'secure-dns'
+			});
+		}
+
 		/* Filter out SVCB/HTTPS queries (types 64/65) for proxied domains — same rule
 		 * the bypass/global modes emit. Browsers use HTTPS records to discover
 		 * alternate endpoints and HTTP/3; letting them resolve via plain DNS leaks
@@ -1611,6 +1653,10 @@ function dead_last(tags) {
 	return [...alive, ...dead];
 }
 
+/* Hot Swap state contract for scripts/hotswap.uc (written next to
+ * core_skipped.json at the end of generation; null = feature off/inapplicable). */
+let hotswap_state = null;
+
 /* Front the previously-running member of a pool (snapshot written by init.d
  * into $RUN_DIR/urltest_sticky before the old core stopped). The core's
  * startup selection is "first member with history wins unless another member
@@ -1814,12 +1860,106 @@ if (!isEmpty(main_node)) {
 		push(config.outbounds, { type: 'direct', tag: 'main-out' });
 	} else {
 		const main_node_cfg = uci.get_all(uciconfig, main_node) || {};
-		if (main_node_cfg.type in ['wireguard', 'amneziawg']) {
-			push(config.endpoints, generate_endpoint(main_node_cfg));
-			config.endpoints[length(config.endpoints)-1].tag = 'main-out';
+		/* ── Hot Swap (ч.59) ──────────────────────────────────────────────────
+		 * With Hot Swap enabled the specific main node is emitted under its own
+		 * tag and `main-out` becomes a SELECTOR: [primary, backups…, cold spares].
+		 * The hotswap daemon (scripts/hotswap.uc) probes the active node and the
+		 * backups through the core's Clash API and re-pins the selector to a
+		 * proven-alive member when the primary dies — a pure API switch, NO core
+		 * restart, so direct traffic/DNS/other connections never notice. A fixed
+		 * main node otherwise has NO failover at all (and the URLTest watchdog
+		 * cannot pin URLTest groups — Clash API PUT is Selector-only), which is
+		 * exactly the "proxy died, internet died with it" complaint.
+		 * Needs the primary PLUS at least one other usable node; otherwise the
+		 * classic shape ("the node IS main-out") is kept. */
+		let hs_cands = [];
+		if (hotswap_opt && !isEmpty(main_node_cfg)) {
+			foreach_node((cfg) => {
+				if (cfg['.name'] === main_node)
+					return;
+				if (has_outbound('cfg-' + cfg['.name'] + '-out'))
+					return;
+				push(hs_cands, cfg['.name']);
+			});
+		}
+		if (hotswap_opt && !isEmpty(main_node_cfg) && length(hs_cands)) {
+			let hotswap_hot = [];
+			const primary_tag = 'cfg-' + main_node + '-out';
+			if (main_node_cfg.type in ['wireguard', 'amneziawg']) {
+				push(config.endpoints, generate_endpoint(main_node_cfg));
+				config.endpoints[length(config.endpoints)-1].tag = primary_tag;
+			} else {
+				push_outbound(config.outbounds, main_node_cfg);
+				config.outbounds[length(config.outbounds)-1].tag = primary_tag;
+			}
+			push(hotswap_hot, primary_tag);
+			for (let hs_sid in hs_cands) {
+				const gt = 'cfg-' + hs_sid + '-out';
+				const bnc = uci.get_all(uciconfig, hs_sid) || {};
+				if (bnc.type in ['wireguard', 'amneziawg']) {
+					push(config.endpoints, generate_endpoint(bnc));
+					config.endpoints[length(config.endpoints)-1].tag = gt;
+				} else {
+					push_outbound(config.outbounds, bnc);
+					config.outbounds[length(config.outbounds)-1].tag = gt;
+				}
+				push(hotswap_hot, gt);
+			}
+			/* The hot set is [primary + first (count-1) members]; the rest stays
+			 * in the selector as cold spares — the daemon probes them only when
+			 * it needs to fill an alive-backup slot, and they keep the group
+			 * usable even if every hot backup dies. */
+			const n_hot = (hotswap_count_opt > 1) ? hotswap_count_opt : 2;
+			let hs_cold = (length(hotswap_hot) > n_hot) ? slice(hotswap_hot, n_hot) : [];
+			hotswap_hot = (length(hotswap_hot) > n_hot) ? slice(hotswap_hot, 0, n_hot) : hotswap_hot;
+			let hs_members = [...hotswap_hot, ...hs_cold];
+			const hs_dead = dead_last(hs_members);
+			if (hs_dead)
+				hs_members = hs_dead;
+			/* Sticky: after a restart, resume on the daemon's LAST ACTIVE pick
+			 * (hotswap_state.json survives on tmpfs) instead of the urltest
+			 * sticky snapshot — the snapshot may point at any pool member and
+			 * would defeat the primary/failback model. Fallback: the primary.
+			 * A dead-marked pick is never fronted. */
+			let hs_default = null;
+			try {
+				const hs_prev = json(readfile(RUN_DIR + '/hotswap_state.json') || '');
+				if (hs_prev && type(hs_prev.active) === 'string')
+					hs_default = hs_prev.active;
+			} catch (e) { hs_default = null; }
+			if (isEmpty(hs_default) || index(hs_members, hs_default) < 0 ||
+			    urltest_dead[hs_default] != null)
+				hs_default = primary_tag;
+			push(config.outbounds, {
+				type: 'selector',
+				tag: 'main-out',
+				outbounds: hs_members,
+				default: hs_default,
+				/* Do NOT kill existing connections on switch: sessions riding a
+				 * still-healthy node (failback, rotation) must survive; the dead
+				 * primary's connections are torn down by its own tunnel error,
+				 * and clients reconnect instantly onto the new pick. */
+				interrupt_exist_connections: false
+			});
+			hotswap_state = {
+				enabled: true,
+				group: 'main-out',
+				primary: primary_tag,
+				hot: hotswap_hot,
+				count: length(hotswap_hot),
+				interval: (hotswap_interval_opt < 5) ? 5 : ((hotswap_interval_opt > 120) ? 120 : hotswap_interval_opt),
+				failback: hotswap_failback_opt
+			};
+			warn(sprintf('homeproxy: Hot Swap on - main-out selector with %d members (hot %d, primary %s).\n',
+				length(hs_members), length(hotswap_hot), primary_tag));
 		} else {
-			push_outbound(config.outbounds, main_node_cfg);
-			config.outbounds[length(config.outbounds)-1].tag = 'main-out';
+			if (main_node_cfg.type in ['wireguard', 'amneziawg']) {
+				push(config.endpoints, generate_endpoint(main_node_cfg));
+				config.endpoints[length(config.endpoints)-1].tag = 'main-out';
+			} else {
+				push_outbound(config.outbounds, main_node_cfg);
+				config.outbounds[length(config.outbounds)-1].tag = 'main-out';
+			}
 		}
 	}
 
@@ -1876,6 +2016,11 @@ if (!isEmpty(main_node)) {
 	for (let i in urltest_nodes) {
 		const urltest_node = uci.get_all(uciconfig, i);
 		if (!urltest_node) continue;
+		/* Duplicate-tag guard (Hot Swap): with Hot Swap on, the selector pool
+		 * already emitted these nodes under cfg-<sid>-out; a second emission is
+		 * a fatal "duplicate outbound tag" for the core. (The other emission
+		 * loops — advanced rules, custom routing — carry the same guard.) */
+		if (has_outbound('cfg-' + i + '-out')) continue;
 		if (urltest_node.type in ['wireguard', 'amneziawg']) {
 			push(config.endpoints, generate_endpoint(urltest_node));
 			config.endpoints[length(config.endpoints)-1].tag = 'cfg-' + i + '-out';
@@ -2502,6 +2647,36 @@ if (!isEmpty(main_node)) {
 			}
 		}
 
+		/* OAuth stability (ч.59): auth-provider hosts (accounts.google.com,
+		 * login.microsoftonline.com, …) ride the SAME exit as the services that
+		 * open them. The RU-geo whitelist below would otherwise force Google
+		 * auth hosts DIRECT while the learned service rides main-out — the
+		 * split path (plus URLTest exit drift) is what breaks "Sign in with
+		 * Google" loops (Autodesk socialSignInFailed). Order: user rules and
+		 * auto-direct pins stay ABOVE (a manual pin wins), oauth sits above
+		 * RU-protect and the learned/static proxy lists. QUIC (UDP/443) to
+		 * auth hosts is rejected so every client takes the deterministic TCP
+		 * path (same rationale as the geo-sensitive QUIC reject). */
+		if (oauth_stability_opt) {
+			push(config.route.rule_set, {
+				type: 'local',
+				tag: 'oauth-domain',
+				format: 'source',
+				path: HP_DIR + '/resources/oauth_domain.json'
+			});
+			push(config.route.rules, {
+				rule_set: 'oauth-domain',
+				network: 'udp',
+				port: [443],
+				action: 'reject'
+			});
+			push(config.route.rules, {
+				rule_set: 'oauth-domain',
+				action: 'route',
+				outbound: 'main-out'
+			});
+		}
+
 		/* RU-protect ("Russian internet never via proxy"): the downloaded RU-geo
 		 * databases (watched local rule-sets resources/ru_geoip.json + ru_geosite.json,
 		 * refreshed by ru_geo_update.sh) are matched BEFORE the proxy lists, so a
@@ -2708,13 +2883,24 @@ system('mkdir -p ' + RUN_DIR);
 
 /* Write the watched learned-list rule-set files (proxy_domain.json / auto_ip.json) so they
  * exist before the core starts. Automation rewrites them on every learn → hot reload.
- * Also the manual "always direct" pins (auto_direct.json) and the RU-geo rule-set files
- * (ru_geoip.json / ru_geosite.json — stale-only rewrite, see sync_ru_geo_rulesets). */
+ * Also the manual "always direct" pins (auto_direct.json), the RU-geo rule-set files
+ * (ru_geoip.json / ru_geosite.json — stale-only rewrite, see sync_ru_geo_rulesets),
+ * and the OAuth stability list (oauth_domain.json, ч.59). */
 sync_learned_rulesets();
 sync_manual_direct_ruleset();
 sync_ru_geo_rulesets();
+sync_oauth_ruleset();
 
 writefile(RUN_DIR + '/hiddify-c.json', sprintf('%.J\n', removeBlankAttrs(config)));
+
+/* Hot Swap state contract (ч.59): the daemon reads THIS file, not UCI, so its view
+ * always matches the generated config. Written only when the feature is active;
+ * an absent/stale file puts the daemon into idle probing of the group state. */
+if (hotswap_state) {
+	writefile(RUN_DIR + '/hotswap.json', sprintf('%.J\n', hotswap_state));
+} else {
+	system('rm -f ' + hp_shellquote(RUN_DIR + '/hotswap.json') + ' 2>/dev/null');
+}
 
 /* ── Capability bookkeeping + runtime check-heal ──────────────────────────
  * Expose which nodes the selected core cannot load ($RUN_DIR/core_skipped.json

@@ -871,6 +871,111 @@ const methods = {
 
 	/* ------- Node monitoring (Monitor tab) ------- */
 
+	/* Hot Swap status (ч.59): state from the daemon's hotswap_state.json merged
+	 * with the LIVE selector view from the Clash API. UCI labels resolve the
+	 * cfg-<sid>-out tags into node names for the UI. `daemon` is a liveness
+	 * verdict on the state heartbeat (2 min). Safe when the feature is off:
+	 * returns enabled:false and no group data. */
+	hotswap_status: {
+		call: function() {
+			const ctx = cursor();
+			const cfg = ctx.get_all('homeproxy', 'config') || {};
+			const opt = (k) => ((cfg[k] == null || cfg[k] === '') ? null : '' + cfg[k]);
+			const enabled = (opt('hotswap') === '1');
+			const main_node = opt('main_node') || 'nil';
+			const is_real_node = enabled && main_node !== 'urltest' && main_node !== 'direct-out' &&
+				main_node !== 'nil' && main_node !== 'byedpi-out' && main_node !== 'zapret-out' &&
+				ctx.get_all('homeproxy', main_node) != null;
+
+			const label_of = (tag) => {
+				if (!tag || type(tag) !== 'string')
+					return null;
+				const m = match(tag, /^cfg-(.+)-out$/);
+				if (!m)
+					return tag;
+				const lbl = ctx.get('homeproxy', m[1], 'label');
+				return (lbl && length(lbl)) ? '' + lbl : m[1];
+			};
+
+			/* Daemon state (tmpfs; missing file = feature off or not yet generated). */
+			let st = null;
+			const raw = readfile('/var/run/homeproxy/hotswap_state.json');
+			if (raw && length(trim(raw))) {
+				try { st = json(raw); } catch(e) { st = null; }
+			}
+
+			/* Live selector view. */
+			const clash = clash_api('/proxies/main-out');
+			const grp = (clash && clash.type) ? clash : null;
+
+			const reply = {
+				enabled: enabled,
+				applicable: is_real_node,
+				daemon: false,
+				active: null, active_label: null,
+				primary: null, primary_label: null,
+				switches: 0, last_switch: 0, last_reason: null,
+				interval: null, failback: null,
+				hot: [], members: []
+			};
+
+			if (st && type(st) === 'object') {
+				const upd = int(st.updated) || 0;
+				const beat = (upd > 0 && (time() - upd) <= 120);
+				reply.daemon = beat;
+				reply.active = (type(st.active) === 'string') ? st.active : null;
+				reply.primary = (type(st.primary) === 'string') ? st.primary : null;
+				reply.switches = int(st.switches) || 0;
+				reply.last_switch = int(st.last_switch) || 0;
+				reply.last_reason = (type(st.last_reason) === 'string' && length(st.last_reason)) ? st.last_reason : null;
+				reply.interval = int(st.interval) || null;
+				reply.failback = (st.failback == true);
+				if (type(st.members) === 'object') {
+					const hotlist = (type(st.hot) === 'array') ? st.hot : [];
+					for (let tag, h in st.members) {
+						push(reply.hot, {
+							tag: tag,
+							label: label_of(tag),
+							in_hot: (index(hotlist, tag) >= 0),
+							state: (h && h.state) ? '' + h.state : 'unknown',
+							last_delay: (h && h.last_delay) ? int(h.last_delay) : null
+						});
+					}
+				}
+				reply.active_label = label_of(reply.active);
+				reply.primary_label = label_of(reply.primary);
+			}
+
+			if (grp && type(grp.all) === 'array' && length(grp.all)) {
+				const now = grp.now;
+				/* ucode for-in over arrays yields the ELEMENTS (ч.59). */
+				for (let tag in grp.all) {
+					push(reply.members, {
+						tag: tag,
+						label: label_of(tag),
+						now: (tag === now)
+					});
+				}
+				/* Delays for the members come from the full /proxies dump. */
+				const all = clash_api('/proxies');
+				if (all && type(all.proxies) === 'object') {
+					for (let m in reply.members) {
+						const pj = all.proxies[m.tag];
+						const hist = (pj && pj.history && length(pj.history)) ? pj.history : null;
+						const d = hist ? hist[length(hist) - 1].delay : null;
+						m.delay = (d && d > 0 && d < 65535) ? d : null;
+					}
+					if (!reply.active || !reply.active_label) {
+						const leaf = clash_leaf_tag(all.proxies, now);
+						reply.active = leaf;
+						reply.active_label = label_of(leaf);
+					}
+				}
+			}
+			return reply;
+		}
+	},
+
 	/* One snapshot for the whole dashboard: engines, core, per-node clash state.
 	 * Mirrors generate_client build_urltest() pool logic (incl. the hiddify mieru
 	 * exclusion) so "Pool" in the UI matches what the config really contains. */
@@ -893,8 +998,19 @@ const methods = {
 			const is_hiddify = core ? (core.type === 'hiddify') : true;
 			const unsupported = (t) => (is_hiddify && t === 'mieru');
 
+			/* Hot Swap (ч.59): when the main node is a specific node with Hot
+			 * Swap enabled, main-out is a SELECTOR of [primary, backups…,
+			 * spares] — every member is part of the failover pool, and the
+			 * active node is the selector's current pick (leaf), not the
+			 * literal main-out tag. DECLARED BEFORE the pool closures: ucode
+			 * closes only over locals declared lexically earlier (ч.49). */
+			const hs_selector = (main_node !== 'urltest' && proxies['main-out'] &&
+				proxies['main-out'].type === 'Selector');
+			const hs_members = hs_selector ? (proxies['main-out'].all || []) : [];
+
 			const tcp_pool = (sid) => {
 				if (main_node === sid) return true;
+				if (hs_selector && index(hs_members, `cfg-${sid}-out`) >= 0) return true;
 				if (main_node !== 'urltest') return false;
 				if (ut_mode === 'auto' || ut_mode === 'prefer') return true;
 				const lst = list_opt('main_urltest_nodes');
@@ -914,10 +1030,19 @@ const methods = {
 			 * outbound itself (a specific node is emitted AS main-out).
 			 * Nested groups (prefer mode: main-out -> main-out-alt) are followed
 			 * down to the leaf cfg-<sid>-out so the "selected" row and the
-			 * active-node card show the real node. */
-			const active_tag = (main_node === 'urltest')
-				? ((proxies['main-out']?.now) ? clash_leaf_tag(proxies, proxies['main-out'].now) : null)
-				: (proxies['main-out'] ? 'main-out' : null);
+			 * active-node card show the real node. NOTE: no nested ternaries —
+			 * rpcd's embedded ucode rejects chained conditionals at ubus
+			 * registration (crash loop), unlike the CLI compiler. */
+			let active_tag = null;
+			if (main_node === 'urltest') {
+				if (proxies['main-out']?.now)
+					active_tag = clash_leaf_tag(proxies, proxies['main-out'].now);
+			} else if (hs_selector) {
+				if (proxies['main-out']?.now)
+					active_tag = clash_leaf_tag(proxies, proxies['main-out'].now);
+			} else if (proxies['main-out']) {
+				active_tag = 'main-out';
+			}
 			const active_udp_tag = (main_udp_node === 'urltest')
 				? ((proxies['main-udp-out']?.now) ? clash_leaf_tag(proxies, proxies['main-udp-out'].now) : null)
 				: null;
@@ -933,8 +1058,11 @@ const methods = {
 				const ctype = s.type || '';
 				const tag = `cfg-${sid}-out`;
 				const is_main = (main_node === sid);
-				/* A specific main node is emitted under the main-out tag, not cfg-X-out. */
-				const cp = (is_main && main_node !== 'urltest') ? proxies['main-out'] : proxies[tag];
+				/* A specific main node is emitted under the main-out tag, not
+				 * cfg-X-out — EXCEPT with Hot Swap, where main-out is the
+				 * selector and the node keeps its own tag (the group has no
+				 * per-node delay history). */
+				const cp = (is_main && main_node !== 'urltest' && !hs_selector) ? proxies['main-out'] : proxies[tag];
 				const hist = cp?.history;
 				const delay = (hist && length(hist)) ? hist[length(hist) - 1].delay : null;
 				/* Ground truth from the core: hinvalid-wrapped outbounds report
@@ -947,6 +1075,8 @@ const methods = {
 				const in_tcp = tcp_pool(sid), in_udp = udp_pool(sid);
 				let selected = false;
 				if (main_node === 'urltest')
+					selected = (active_tag === tag);
+				else if (hs_selector)
 					selected = (active_tag === tag);
 				else if (is_main)
 					selected = true;
