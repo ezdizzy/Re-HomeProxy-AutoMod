@@ -151,6 +151,59 @@ return view.extend({
 		const connTableWrap = E('div', {});
 		const connHead = E('div', { 'style': 'margin:6px 0' }, [ '—' ]);
 
+		/* ── Connections search/filters (ч.60) ──
+		 * Client-side filtering of the CACHED RPC snapshot: typing/selecting
+		 * re-renders instantly without a refetch; the poll refresh keeps the
+		 * filters applied. Search is a case-insensitive substring over
+		 * host/destination/chain/rule; the network select filters TCP/UDP; the
+		 * path select splits proxied (chain contains main-out / main-out-auto
+		 * / geo-out / zapret-out / byedpi-out / cfg-*-out) from direct. */
+		let connCache = null;
+		let connQuery = '';
+		let connNet = 'all';
+		let connPath = 'all';
+
+		function isProxyChain(chain) {
+			const list = chain || [];
+			for (let ci in list) {
+				const t = list[ci];
+				if (t === 'main-out' || t === 'main-out-auto' || t === 'geo-out' ||
+				    t === 'zapret-out' || t === 'byedpi-out' ||
+				    (typeof t === 'string' && t.indexOf('cfg-') === 0 && /-out$/.test(t)))
+					return true;
+			}
+			return false;
+		}
+
+		const connSearch = E('input', {
+			'type': 'text',
+			'class': 'cbi-input-text',
+			'placeholder': _('Search: host, address, chain, rule…'),
+			'style': 'flex:1 1 240px; min-width:200px'
+		});
+		connSearch.addEventListener('input', function() {
+			connQuery = (connSearch.value || '').trim().toLowerCase();
+			renderConnTable(connCache || {});
+		});
+
+		const connNetSel = E('select', { 'class': 'cbi-input-select', 'style': 'width:auto' });
+		[ ['all', _('All networks')], ['tcp', 'TCP'], ['udp', 'UDP'] ].forEach(function(pv) {
+			connNetSel.appendChild(E('option', { 'value': pv[0] }, [ pv[1] ]));
+		});
+		connNetSel.addEventListener('change', function() {
+			connNet = connNetSel.value;
+			renderConnTable(connCache || {});
+		});
+
+		const connPathSel = E('select', { 'class': 'cbi-input-select', 'style': 'width:auto' });
+		[ ['all', _('All paths')], ['proxy', _('Via proxy')], ['direct', _('Directly')] ].forEach(function(pv) {
+			connPathSel.appendChild(E('option', { 'value': pv[0] }, [ pv[1] ]));
+		});
+		connPathSel.addEventListener('change', function() {
+			connPath = connPathSel.value;
+			renderConnTable(connCache || {});
+		});
+
 		const closeBtn = E('button', {
 			'class': 'btn cbi-button cbi-button-negative',
 			'click': ui.createHandlerFn(this, function() {
@@ -171,6 +224,8 @@ return view.extend({
 		const panelConn = E('div', { 'class': 'monitor-panel cbi-section' }, [
 			E('h3', {}, [ _('Connections') ]),
 			E('div', { 'style': 'display:flex; align-items:center; gap:12px; flex-wrap:wrap' }, [ connHead, closeBtn ]),
+			E('div', { 'style': 'display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:2px 0 8px' },
+				[ connSearch, connNetSel, connPathSel ]),
 			connTableWrap
 		]);
 
@@ -314,13 +369,33 @@ return view.extend({
 		}
 
 		function renderConnTable(r) {
-			const conns = r.connections || [];
+			const all = r.connections || [];
+			/* Filters (client-side over the cached snapshot — no refetch). */
+			let conns = all;
+			if (connNet !== 'all')
+				conns = conns.filter(function(c) { return (c.network || '').toLowerCase() === connNet; });
+			if (connPath === 'proxy')
+				conns = conns.filter(function(c) { return isProxyChain(c.chain); });
+			else if (connPath === 'direct')
+				conns = conns.filter(function(c) { return !isProxyChain(c.chain); });
+			if (connQuery) {
+				const q = connQuery;
+				conns = conns.filter(function(c) {
+					const hay = ((c.host || '') + ' ' + (c.destination || '') + ' ' +
+						(c.chain || []).join(' ') + ' ' + (c.rule || '')).toLowerCase();
+					return hay.indexOf(q) !== -1;
+				});
+			}
+
 			connHead.innerHTML = '';
-			connHead.appendChild(E('span', {}, [
+			const headBits = [
 				_('Downloaded') + ': ' + fmtBytes(r.download_total) + ' · ' +
 				_('Uploaded') + ': ' + fmtBytes(r.upload_total) +
 				(r.count ? ' (' + r.count + ')' : '')
-			]));
+			];
+			if (conns.length !== all.length)
+				headBits.push(' · ' + _('showing %d of %d').format(conns.length, all.length));
+			connHead.appendChild(E('span', {}, headBits));
 
 			if (r.error) {
 				connTableWrap.innerHTML = '';
@@ -329,7 +404,7 @@ return view.extend({
 			}
 			if (!conns.length) {
 				connTableWrap.innerHTML = '';
-				connTableWrap.appendChild(E('em', {}, [ _('No active connections') ]));
+				connTableWrap.appendChild(E('em', {}, [ all.length ? _('Nothing matches the filters') : _('No active connections') ]));
 				return;
 			}
 
@@ -359,8 +434,12 @@ return view.extend({
 
 		function refreshConnections() {
 			return L.resolveDefault(callMonitorConnections(), {}).then(function(r) {
-				renderConnTable(r || { error: 'no data' });
+				/* Cache the snapshot: filter changes re-render from it without
+				 * a refetch; the next poll replaces it wholesale. */
+				connCache = r || { error: 'no data' };
+				renderConnTable(connCache);
 			}).catch(function(e) {
+				connCache = null;
 				connTableWrap.innerHTML = '';
 				connTableWrap.appendChild(E('em', { 'style': 'color:#e05252' }, [ _('Connections monitoring is unavailable') ]));
 			});
@@ -381,7 +460,11 @@ return view.extend({
 				hotswapBody.appendChild(E('span', {
 					'style': 'color:' + (switching ? C_AMBER : C_GREEN) + '; font-weight:bold'
 				}, [ switching ? _('Failover active') : _('Standby ready') ]));
-				hotswapBody.appendChild(document.createTextNode(' · ' + (r.switches || 0)));
+				/* ч.60: shape (specific node vs URLTest group) + group size. */
+				hotswapBody.appendChild(document.createTextNode(
+					' · ' + ((r.mode === 'urltest') ? _('URLTest (kernel selection)') : _('Specific node')) +
+					' · ' + _('Members') + ': ' + ((r.members || []).length) +
+					' · ' + _('Switches') + ': ' + (r.switches || 0)));
 				if (switching && r.last_reason) {
 					hotswapBody.appendChild(E('div', { 'style': 'color:#9a9a9a; font-size:.85em' }, [ r.last_reason ]));
 				}

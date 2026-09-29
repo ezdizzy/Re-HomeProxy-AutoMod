@@ -450,22 +450,25 @@ return view.extend({
 		o.default = '150';
 		o.depends('main_udp_node', 'urltest');
 
-		/* ── Hot Swap (ч.59): hot standby connections + transparent failover ──
-		 * Only meaningful when the main node is a SPECIFIC node: URLTest pools
-		 * already fail over inside the kernel, and direct/ByeDPI/Zapret mains
-		 * have nothing to switch between. With Hot Swap the generator turns
-		 * main-out into a Selector of [primary + backups], the daemon keeps the
-		 * standbys warm with real probes and re-pins the selector via the Clash
-		 * API when the primary dies — no service restart, direct traffic and
-		 * DNS never notice. */
+		/* ── Hot Swap (ч.59/ч.60): hot standby connections + transparent failover ──
+		 * Works for BOTH main shapes: a specific node (main-out becomes a
+		 * selector of [primary + backups]) and the URLTest group (the whole
+		 * group moves under main-out-auto and main-out becomes a selector over
+		 * it + the pool — normal traffic still follows the kernel's latency
+		 * choice, and when the group stays stuck on a dead node the daemon
+		 * re-pins the selector onto a proven-alive one, failing back once the
+		 * group answers again; kernel failover alone can sit on stale delay
+		 * history for hours). Direct/ByeDPI/Zapret mains have nothing to
+		 * switch between. The daemon keeps the standbys warm with real probes
+		 * — no service restart, direct traffic and DNS never notice. */
 		o = s.taboption('routing', form.Flag, 'hotswap', _('Hot Swap') + ' 🔌',
-			_('Keep several connections alive at once and switch to a working one within seconds when the main node dies — without restarting the core. Standby nodes are verified by real probes (this also keeps their tunnels warm), existing direct connections and DNS are never affected. Requires a specific main node (with URLTest the kernel already fails over on its own). The number of hot connections is set below.'));
-		o.depends({'routing_mode': /^((?!custom).)+$/, 'main_node': /^(?!urltest$|direct-out$|nil$|byedpi-out$|zapret-out$)/});
+			_('Keep several connections alive at once and switch to a working one within seconds when the active node dies — without restarting the core. Works both with a specific main node and in URLTest modes: the URLTest group keeps choosing by latency, and the daemon rescues it whenever it stays on a dead node. Standby nodes are verified by real probes (this also keeps their tunnels warm); existing direct connections and DNS are never affected. The number of hot connections and the reserve order are set below.'));
+		o.depends({'routing_mode': /^((?!custom).)+$/, 'main_node': /^(?!direct-out$|nil$|byedpi-out$|zapret-out$)/});
 		o.default = o.disabled;
 		o.rmempty = false;
 
 		o = s.taboption('routing', form.ListValue, 'hotswap_count', _('Hot connections'),
-			_('How many nodes of the failover group are kept hot: the main node plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies.'));
+			_('How many members of the failover group are kept hot: the main node (or the URLTest group) plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies.'));
 		for (let i = 2; i <= 8; i++)
 			o.value('' + i, '' + i);
 		o.default = '3';
@@ -480,43 +483,103 @@ return view.extend({
 		o.depends('hotswap', '1');
 
 		o = s.taboption('routing', form.Flag, 'hotswap_failback', _('Return to the main node'),
-			_('When the main node recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies.'));
+			_('When the main node (or the URLTest group) recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies.'));
 		o.default = o.enabled;
 		o.depends('hotswap', '1');
 		o.rmempty = false;
 
+		o = s.taboption('routing', hp.CBIStaticList, 'hotswap_nodes', _('Reserve nodes') + ' 🔌',
+			_('Priority order of the failover reserves: add nodes in order, the topmost is tried first when the active pick dies. Empty = every node may be used as a reserve (previous behavior). In URLTest mode only nodes of the URLTest pool are eligible — picks outside the pool are ignored; with a specific main node the main node itself is always first and cannot be removed.'));
+		for (let i in proxy_nodes)
+			o.value(i, proxy_nodes[i]);
+		o.depends('hotswap', '1');
+		o.retain = true;
+
 		o = s.taboption('routing', form.DummyValue, '_hotswap_status', _('Hot Swap state'));
 		o.depends('hotswap', '1');
 		o.cfgvalue = function() {
-			const el = E('span', { 'style': 'color:#9a9a9a' }, '—');
+			/* Live panel (ч.60): header (mode / switches / failback) + a member
+			 * table «Node | Role | State | Latency» merged from the selector
+			 * view (order, live pick, core delay) and the daemon's probe
+			 * state. Replaces the ч.59 single status line. */
+			const box = E('div', {}, [ E('span', { 'style': 'color:#9a9a9a' }, '—') ]);
 			poll.add(L.bind(function() {
 				return L.resolveDefault(callHotswapStatus(), {}).then(function(ret) {
+					box.innerHTML = '';
 					if (!ret || ret.error || !ret.enabled) {
-						el.textContent = _('Inactive');
-						el.style.color = 'gray';
+						box.appendChild(E('span', { 'style': 'color:gray' }, [ _('Inactive') ]));
 						return;
 					}
 					if (!ret.daemon) {
-						el.textContent = _('Waiting for the failover daemon (service reload needed)');
-						el.style.color = '#d99a1b';
+						box.appendChild(E('span', { 'style': 'color:#d99a1b' }, [ _('Waiting for the failover daemon (service reload needed)') ]));
 						return;
 					}
-					/* Live node name: prefer the Clash leaf from the RPC, fall
-					 * back to the state file entry. */
-					let live = ret.active_label || ret.active || '—';
-					const parts = [ _('Active') + ': ' + live ];
-					if (ret.primary_label && ret.primary !== ret.active)
-						parts.push(_('Main node') + ': ' + ret.primary_label);
-					parts.push(_('Switches') + ': ' + (ret.switches || 0));
+					const urltestLabel = _('URLTest (kernel selection)');
+					const modeLabel = (ret.mode === 'urltest') ? urltestLabel : _('Specific node');
+					const headBits = [ E('span', { 'style': 'font-weight:bold' }, [ _('Mode') + ': ' + modeLabel ]) ];
+					headBits.push(document.createTextNode(' · ' + _('Switches') + ': ' + (ret.switches || 0)));
 					if (ret.last_switch)
-						parts.push(_('Last switch') + ': ' + new Date(ret.last_switch * 1000).toLocaleTimeString());
+						headBits.push(document.createTextNode(' · ' + _('Last switch') + ': ' + new Date(ret.last_switch * 1000).toLocaleTimeString()));
 					if (ret.failback)
-						parts.push(_('failback on'));
-					el.textContent = parts.join(' · ');
-					el.style.color = (ret.primary && ret.active && ret.active !== ret.primary) ? '#d99a1b' : 'green';
+						headBits.push(document.createTextNode(' · ' + _('failback on')));
+					box.appendChild(E('div', { 'style': 'margin-bottom:6px' }, headBits));
+
+					const dstate = {};
+					const hlist = ret.hot || [];
+					for (let hi in hlist)
+						dstate[hlist[hi].tag] = hlist[hi];
+					const mlist = ret.members || [];
+					const rows = [];
+					for (let mi in mlist) {
+						const m = mlist[mi], d = dstate[m.tag] || {};
+						let roleEl, roleColor = 'inherit';
+						if (m.now) {
+							roleEl = _('Active');
+							roleColor = 'green';
+						} else if (m.tag === ret.primary) {
+							roleEl = (ret.mode === 'urltest') ? urltestLabel : _('Main node');
+						} else if (d.in_hot) {
+							roleEl = _('Reserve');
+							roleColor = '#d99a1b';
+						} else {
+							roleEl = _('Spare');
+							roleColor = '#9a9a9a';
+						}
+						const stTxt = (d.state === 'alive') ? _('Alive') : ((d.state === 'down') ? _('Down') : '—');
+						const stColor = (d.state === 'alive') ? 'green' : ((d.state === 'down') ? '#e05252' : '#9a9a9a');
+						const dly = (d.last_delay > 0) ? d.last_delay :
+							((m.delay > 0 && m.delay < 65535) ? m.delay : null);
+						rows.push(E('tr', {}, [
+							E('td', { 'style': 'white-space:nowrap; padding:2px 14px 2px 0' },
+								[ (m.tag === 'main-out-auto') ? urltestLabel : (m.label || m.tag) ]),
+							E('td', { 'style': 'white-space:nowrap; padding:2px 14px 2px 0' },
+								[ E('span', { 'style': 'color:' + roleColor + ((m.now) ? '; font-weight:bold' : '') }, [ roleEl ]) ]),
+							E('td', { 'style': 'white-space:nowrap; padding:2px 14px 2px 0' },
+								[ E('span', { 'style': 'color:' + stColor }, [ stTxt ]) ]),
+							E('td', { 'style': 'white-space:nowrap; padding:2px 0' }, [ dly ? (dly + ' ms') : '—' ])
+						]));
+					}
+					if (rows.length) {
+						const thead = E('tr', {}, [
+							E('th', { 'style': 'text-align:left; padding:2px 14px 2px 0' }, [ _('Node') ]),
+							E('th', { 'style': 'text-align:left; padding:2px 14px 2px 0' }, [ _('Role') ]),
+							E('th', { 'style': 'text-align:left; padding:2px 14px 2px 0' }, [ _('State') ]),
+							E('th', { 'style': 'text-align:left; padding:2px 0' }, [ _('Latency') ])
+						]);
+						const table = E('table', { 'style': 'border-collapse:collapse' }, [ thead ]);
+						for (let ri in rows)
+							table.appendChild(rows[ri]);
+						box.appendChild(table);
+					} else
+						box.appendChild(E('em', { 'style': 'color:#9a9a9a' }, [ _('The failover group is empty') ]));
+					if (ret.last_reason)
+						box.appendChild(E('div', { 'style': 'color:#d99a1b; font-size:.9em; margin-top:4px' }, [ ret.last_reason ]));
+					if (ret.primary && ret.active && ret.active !== ret.primary)
+						box.appendChild(E('div', { 'style': 'color:#d99a1b; margin-top:2px' },
+							[ _('Traffic currently rides the failover pick') ]));
 				});
-			}));
-			return el;
+			}, this));
+			return box;
 		};
 
 		o = s.taboption('routing', form.Flag, 'proxy_calls',

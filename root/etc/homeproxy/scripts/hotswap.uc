@@ -22,8 +22,13 @@
  *   sessions that still work).
  *
  * Contract ($RUN_DIR/hotswap.json, written by generate_client.uc):
- *   { enabled: true, group: "main-out", primary: "cfg-<sid>-out",
- *     hot: [tag…], count: N, interval: seconds, failback: bool }
+ *   { enabled: true, mode: "node"|"urltest", group: "main-out",
+ *     primary: "cfg-<sid>-out"|"main-out-auto", hot: [tag…], count: N,
+ *     interval: seconds, failback: bool }
+ * The daemon is mode-agnostic: with mode "urltest" the primary IS the kernel
+ * URLTest group (main-out-auto) — probing it tests the group's current pick,
+ * and a selector switch to a direct node bypasses a group stuck on a dead
+ * member until the group answers again (failback returns to the group).
  * Missing file / group with <2 members → idle loop (no respawn storm); the
  * contract is re-read every tick, so a regeneration is picked up live.
  *
@@ -180,6 +185,7 @@ function write_state(active, primary) {
 		members[k] = { state: (v.fails ? 'down' : (v.oks ? 'alive' : 'unknown')), fails: v.fails, oks: v.oks, last_delay: v.last_delay };
 	atomic_write(STATE_FILE, sprintf('%.J\n', {
 		enabled: (hs != null),
+		mode: hs ? (hs.mode || 'node') : null,
 		group: hs ? hs.group : 'main-out',
 		active: active,
 		primary: primary,
@@ -211,11 +217,13 @@ function read_contract() {
 		return null;
 	if (type(c.hot) !== 'array' || length(c.hot) < 2)
 		return null;
-	const sig = sprintf('%s|%s|%s|%d|%d', c.group, c.primary, join(',', c.hot), c.count || 0, c.failback ? 1 : 0);
+	if (c.mode !== 'urltest' && c.mode !== 'node')
+		c.mode = 'node';
+	const sig = sprintf('%s|%s|%s|%s|%d|%d', c.mode, c.group, c.primary, join(',', c.hot), c.count || 0, c.failback ? 1 : 0);
 	if (sig !== hs_sig) {
 		hs_sig = sig;
 		health = {};
-		log('contract adopted: group=' + c.group + ' primary=' + c.primary + ' hot=' + length(c.hot) + ' failback=' + (c.failback ? 'on' : 'off'));
+		log('contract adopted: mode=' + c.mode + ' group=' + c.group + ' primary=' + c.primary + ' hot=' + length(c.hot) + ' failback=' + (c.failback ? 'on' : 'off'));
 	}
 	return c;
 }

@@ -883,9 +883,15 @@ const methods = {
 			const opt = (k) => ((cfg[k] == null || cfg[k] === '') ? null : '' + cfg[k]);
 			const enabled = (opt('hotswap') === '1');
 			const main_node = opt('main_node') || 'nil';
-			const is_real_node = enabled && main_node !== 'urltest' && main_node !== 'direct-out' &&
-				main_node !== 'nil' && main_node !== 'byedpi-out' && main_node !== 'zapret-out' &&
-				ctx.get_all('homeproxy', main_node) != null;
+			/* ч.60: applicable in BOTH hot-swap shapes — a specific node AND the
+			 * URLTest group (main-out-auto under a main-out selector). The mode
+			 * itself comes from the daemon state (falls back to the UCI shape). */
+			const is_real_node = enabled && (main_node === 'urltest' ||
+				(main_node !== 'direct-out' && main_node !== 'nil' &&
+				 main_node !== 'byedpi-out' && main_node !== 'zapret-out' &&
+				 ctx.get_all('homeproxy', main_node) != null));
+			const shape_mode = (main_node === 'urltest') ? 'urltest' :
+				((is_real_node && main_node !== 'urltest') ? 'node' : null);
 
 			const label_of = (tag) => {
 				if (!tag || type(tag) !== 'string')
@@ -911,6 +917,7 @@ const methods = {
 			const reply = {
 				enabled: enabled,
 				applicable: is_real_node,
+				mode: shape_mode,
 				daemon: false,
 				active: null, active_label: null,
 				primary: null, primary_label: null,
@@ -920,6 +927,10 @@ const methods = {
 			};
 
 			if (st && type(st) === 'object') {
+				/* The daemon state is authoritative about the shape: with a
+				 * URLTest main the primary is the main-out-auto GROUP tag. */
+				if (type(st.mode) === 'string')
+					reply.mode = st.mode;
 				const upd = int(st.updated) || 0;
 				const beat = (upd > 0 && (time() - upd) <= 120);
 				reply.daemon = beat;

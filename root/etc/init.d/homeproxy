@@ -470,9 +470,14 @@ start_service() {
 	# (generate_client.uc sinks it and refuses to front it via the sticky
 	# snapshot) and restarts the service (rate-limited) so a fresh core picks a
 	# living node. Only relevant when the main node IS a urltest group.
-	local main_node_wd
+	local main_node_wd hotswap_wd
 	config_get main_node_wd "config" "main_node" ""
-	if [ "$main_node_wd" = "urltest" ]; then
+	config_get_bool hotswap_wd "config" "hotswap" "0"
+	# With Hot Swap enabled the hotswap daemon owns URLTest failover (it pins
+	# the main-out selector over the main-out-auto group). The watchdog's
+	# dead-mark + restart path would fight that selector switching, so the
+	# watchdog stays off while Hot Swap is on.
+	if [ "$main_node_wd" = "urltest" ] && [ "$hotswap_wd" != "1" ]; then
 		mkdir -p "$RUN_DIR"
 		procd_open_instance "urltest"
 		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/urltest_watchdog.uc"
@@ -480,20 +485,23 @@ start_service() {
 		procd_close_instance
 	fi
 
-	# Hot Swap daemon (ч.59): keeps the standby tunnels warm and re-pins the
-	# main-out SELECTOR to a proven-alive member when the primary dies — a pure
-	# Clash API switch, NO service restart, so direct traffic and DNS never
-	# notice. The gate mirrors generate_client.uc: only when enabled AND the
-	# main node is a specific proxy node (URLTest pools have kernel failover;
-	# direct/ByeDPI/Zapret mains have nothing to switch between). The daemon
-	# itself follows $RUN_DIR/hotswap.json and idles while it is absent, so a
-	# stale gate can never make it act on a config without the selector.
+	# Hot Swap daemon (ч.59/ч.60): keeps the standby tunnels warm and re-pins
+	# the main-out SELECTOR to a proven-alive member when the active pick dies
+	# — a pure Clash API switch, NO service restart, so direct traffic and DNS
+	# never notice. The gate mirrors generate_client.uc: enabled AND the main
+	# node is a specific proxy node OR 'urltest' (ч.60: with urltest the whole
+	# URLTest group moves under main-out-auto and main-out becomes a selector
+	# over it + the pool; direct/ByeDPI/Zapret mains have nothing to switch
+	# between). The daemon itself follows $RUN_DIR/hotswap.json and idles
+	# while it is absent, so a stale gate can never make it act on a config
+	# without the selector.
 	local hotswap_en hotswap_main
 	config_get_bool hotswap_en "config" "hotswap" "0"
 	config_get hotswap_main "config" "main_node" ""
 	if [ "$hotswap_en" = "1" ] && [ -n "$hotswap_main" ] && \
+	   [ "$hotswap_main" != "urltest" ] && \
 	   ! uci -q get "$CONF.$hotswap_main" >/dev/null 2>&1; then
-		: # sentinel value (urltest/direct-out/byedpi-out/zapret-out): no hotswap
+		: # sentinel value (direct-out/byedpi-out/zapret-out): no hotswap
 	elif [ "$hotswap_en" = "1" ] && [ -n "$hotswap_main" ]; then
 		mkdir -p "$RUN_DIR"
 		procd_open_instance "hotswap"
@@ -526,10 +534,14 @@ start_service() {
 # node by more than the configured tolerance — otherwise every restart re-picked
 # "fastest right now" and the node changed although the tolerance said otherwise.
 # The core keeps urltest state in RAM only (cache_file does NOT persist it).
+# main-out-auto / -alt are the URLTest group tags when Hot Swap restructures
+# main-out into a selector over the group (ч.60); snapshotting the selector
+# 'main-out' itself preserves the daemon's last pick too.
 snapshot_urltest_picks() {
 	local base="http://127.0.0.1:9090/proxies" tmp="$RUN_DIR/urltest_sticky.tmp" tag now
 	: > "$tmp"
-	for tag in main-out main-out-alt main-udp-out main-udp-out-alt; do
+	for tag in main-out main-out-alt main-out-auto main-out-auto-alt \
+	           main-udp-out main-udp-out-alt; do
 		now=$(wget -qO- --timeout=2 "$base/$tag" 2>/dev/null | sed -ne 's/.*"now":[ ]*"\([^"]*\)".*/\1/p')
 		[ -n "$now" ] && printf '%s=%s\n' "$tag" "$now" >> "$tmp"
 	done

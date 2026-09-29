@@ -5426,7 +5426,7 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Keep several connections alive at once and switch to a working one within seconds when the main node dies — without restarting the core. Standby nodes are verified by real probes (this also keeps their tunnels warm), existing direct connections and DNS are never affected. Requires a specific main node (with URLTest the kernel already fails over on its own). The number of hot connections is set below."
+msgid "Keep several connections alive at once and switch to a working one within seconds when the active node dies — without restarting the core. Works both with a specific main node and in URLTest modes: the URLTest group keeps choosing by latency, and the daemon rescues it whenever it stays on a dead node. Standby nodes are verified by real probes (this also keeps their tunnels warm); existing direct connections and DNS are never affected. The number of hot connections and the reserve order are set below."
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
@@ -5436,7 +5436,7 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "How many nodes of the failover group are kept hot: the main node plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies."
+msgid "How many members of the failover group are kept hot: the main node (or the URLTest group) plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies."
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
@@ -5456,7 +5456,97 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "When the main node recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies."
+msgid "When the main node (or the URLTest group) recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Reserve nodes"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Priority order of the failover reserves: add nodes in order, the topmost is tried first when the active pick dies. Empty = every node may be used as a reserve (previous behavior). In URLTest mode only nodes of the URLTest pool are eligible — picks outside the pool are ignored; with a specific main node the main node itself is always first and cannot be removed."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "URLTest (kernel selection)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Specific node"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Reserve"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Spare"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Down"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "State"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "The failover group is empty"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Traffic currently rides the failover pick"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Search: host, address, chain, rule…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "All networks"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "All paths"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Via proxy"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Directly"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "showing %d of %d"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Nothing matches the filters"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Members"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js

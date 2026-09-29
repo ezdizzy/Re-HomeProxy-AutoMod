@@ -7719,8 +7719,8 @@ msgstr "Hot Swap (горячий резерв)"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Keep several connections alive at once and switch to a working one within seconds when the main node dies — without restarting the core. Standby nodes are verified by real probes (this also keeps their tunnels warm), existing direct connections and DNS are never affected. Requires a specific main node (with URLTest the kernel already fails over on its own). The number of hot connections is set below."
-msgstr "Держит несколько соединений одновременно и за секунды переключается на рабочий, когда основной узел умирает — без рестарта ядра. Резервные узлы проверяются реальными пробами (это же согревает их туннели), прямые соединения и DNS никогда не страдают. Требуется конкретный основной узел (в режиме URLTest ядро уже переключается само). Количество горячих соединений задаётся ниже."
+msgid "Keep several connections alive at once and switch to a working one within seconds when the active node dies — without restarting the core. Works both with a specific main node and in URLTest modes: the URLTest group keeps choosing by latency, and the daemon rescues it whenever it stays on a dead node. Standby nodes are verified by real probes (this also keeps their tunnels warm); existing direct connections and DNS are never affected. The number of hot connections and the reserve order are set below."
+msgstr "Держит несколько соединений одновременно и за секунды переключается на рабочий, когда активный узел умирает — без рестарта ядра. Работает и с конкретным основным узлом, и в режимах URLTest: группа URLTest продолжает выбирать по задержке, а демон спасает её, когда она залипает на мёртвом узле. Резервные узлы проверяются реальными пробами (это же согревает их туннели); прямые соединения и DNS никогда не страдают. Количество горячих соединений и порядок резервов задаются ниже."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -7729,8 +7729,8 @@ msgstr "Горячих соединений"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "How many nodes of the failover group are kept hot: the main node plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies."
-msgstr "Сколько узлов группы отказа держать горячими: основной узел плюс резервы. Резервы проверяются непрерывно; холодный запас остаётся в группе, но зондируется только когда умирает горячий слот."
+msgid "How many members of the failover group are kept hot: the main node (or the URLTest group) plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies."
+msgstr "Сколько участников группы отказа держать горячими: основной узел (или группа URLTest) плюс резервы. Резервы проверяются непрерывно; холодный запас остаётся в группе, но зондируется только когда умирает горячий слот."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -7749,8 +7749,98 @@ msgstr "Возвращаться на основной узел"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "When the main node recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies."
-msgstr "Когда основной узел восстановится, вернуться на него после того, как он продержится стабильным некоторое время (3 удачные пробы за 30+ секунд). Выключите, чтобы оставаться на резервном узле, пока и он не умрёт."
+msgid "When the main node (or the URLTest group) recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies."
+msgstr "Когда основной узел (или группа URLTest) восстановится, вернуться на него после того, как он продержится стабильным некоторое время (3 удачные пробы за 30+ секунд). Выключите, чтобы оставаться на резервном узле, пока и он не умрёт."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Reserve nodes"
+msgstr "Резервные узлы"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Priority order of the failover reserves: add nodes in order, the topmost is tried first when the active pick dies. Empty = every node may be used as a reserve (previous behavior). In URLTest mode only nodes of the URLTest pool are eligible — picks outside the pool are ignored; with a specific main node the main node itself is always first and cannot be removed."
+msgstr "Приоритет резервов группы отказа: добавляйте узлы по порядку, верхний проверяется первым, когда активный узел умирает. Пусто = резервом может быть любой узел (как раньше). В режиме URLTest годятся только узлы из пула URLTest — выбранные вне пула игнорируются; при конкретном основном узле сам основной всегда первый и не удаляется."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "URLTest (kernel selection)"
+msgstr "URLTest (выбор ядра)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Specific node"
+msgstr "Конкретный узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Reserve"
+msgstr "Резерв"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Spare"
+msgstr "Запас"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Down"
+msgstr "Недоступен"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "State"
+msgstr "Состояние"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "The failover group is empty"
+msgstr "Группа отказоустойчивости пуста"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Traffic currently rides the failover pick"
+msgstr "Сейчас трафик идёт через резервный узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Search: host, address, chain, rule…"
+msgstr "Поиск: хост, адрес, цепочка, правило…"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "All networks"
+msgstr "Все сети"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "All paths"
+msgstr "Все пути"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Via proxy"
+msgstr "Через прокси"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Directly"
+msgstr "Напрямую"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "showing %d of %d"
+msgstr "показано %d из %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Nothing matches the filters"
+msgstr "Ничего не соответствует фильтрам"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Members"
+msgstr "Участники"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 

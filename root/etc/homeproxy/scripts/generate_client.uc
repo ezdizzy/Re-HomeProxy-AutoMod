@@ -247,17 +247,25 @@ const automation_enabled = uci.get(uciconfig, 'automation', 'enabled');
  * proxy nodes present) is evaluated where the feature is wired. */
 const geo_scan_opt = uci.get(uciconfig, 'automation', 'geo_scan');
 
-/* Hot Swap (ч.59): keep N "hot" connections to the node pool and transparently switch
- * the main-out selector to a proven-alive backup when the primary dies — WITHOUT a
- * core restart, so direct traffic and DNS never notice. Only meaningful when the main
- * node is a specific proxy node (URLTest pools have kernel-level failover; synthetic
- * and direct mains have nothing to switch between). The daemon (scripts/hotswap.uc)
- * owns the actual switching; this generator only restructures main-out and writes the
- * state contract file. */
+/* Hot Swap (ч.59/ч.60): keep N "hot" connections to the node pool and transparently
+ * switch the main-out selector to a proven-alive backup when the primary dies — WITHOUT
+ * a core restart, so direct traffic and DNS never notice. Works for BOTH main shapes:
+ *   - a specific main node: the node is emitted under its own tag and main-out becomes
+ *     a selector [primary, backups…, cold spares];
+ *   - a URLTest main: the whole build_urltest group (auto/prefer/manual, sticky,
+ *     dead-sink) moves under the tag `main-out-auto` and main-out becomes a selector
+ *     [main-out-auto, …pool nodes] — normal traffic still rides the kernel's latency
+ *     choice, and a group stalled on a dead pick is rescued by the daemon (switch to a
+ *     proven-alive node, failback to the group when it answers again).
+ * Synthetic and direct mains (ByeDPI/Zapret/direct-out) have nothing to switch between.
+ * The daemon (scripts/hotswap.uc) owns the actual switching; this generator only
+ * restructures main-out and writes the state contract file. config.hotswap_nodes is
+ * the user-picked priority order of reserve nodes (empty = all nodes, as before). */
 const hotswap_opt = (uci.get(uciconfig, ucimain, 'hotswap') || '0') === '1';
 const hotswap_count_opt = int(uci.get(uciconfig, ucimain, 'hotswap_count') || '3') || 3;
 const hotswap_interval_opt = int(uci.get(uciconfig, ucimain, 'hotswap_interval') || '10') || 10;
 const hotswap_failback_opt = (uci.get(uciconfig, ucimain, 'hotswap_failback') !== '0');
+const hotswap_nodes_opt = uci.get(uciconfig, ucimain, 'hotswap_nodes') || [];
 
 /* OAuth stability (ч.59): auth-provider hosts ride the SAME exit as the services that
  * use them (main-out) instead of the RU-geo "always direct" split, QUIC/SVCB escapes
@@ -1730,7 +1738,14 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 				outbounds: rest,
 				interval: strToTime(interval),
 				tolerance: strToInt(tolerance),
-				interrupt_exist_connections: true
+				/* Do NOT kill existing connections when the group re-ranks: an
+				 * OAuth chain (Autodesk/Google social sign-in) is pinned to the
+				 * client exit IP — a re-rank mid-flow (or a mere tolerance
+				 * flap between close-latency nodes) switched the exit and
+				 * looped socialSignInFailed forever. A dead node still tears
+				 * down its own connections via tunnel error, so real failover
+				 * latency is not lost. */
+				interrupt_exist_connections: false
 			});
 			push(outbounds, tag + '-alt');
 		}
@@ -1777,7 +1792,8 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 			outbounds: any,
 			interval: strToTime(interval),
 			tolerance: strToInt(tolerance),
-			interrupt_exist_connections: true
+			/* See the alt-group comment above: re-rank must not tear sessions. */
+			interrupt_exist_connections: false
 		}, extra: any_extra };
 	}
 
@@ -1798,7 +1814,13 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 		 * the user tolerance still governs the fallback pool and manual/auto. */
 		tolerance: (mode === 'prefer') ? PREFER_HOLD_TOLERANCE : strToInt(tolerance),
 		idle_timeout: (strToInt(interval) > 1800) ? `${interval * 2}s` : null,
-		interrupt_exist_connections: true
+		/* Re-rank must NOT tear existing connections: with 150 ms tolerance and
+		 * close-latency nodes a re-rank fired constantly and every OAuth flow
+		 * (Autodesk social sign-in) lost its pinned exit IP mid-chain — the
+		 * service answered socialSignInFailed=True and the page looped. A
+		 * genuinely dead node still kills its own sessions via tunnel error,
+		 * so real failover speed is unaffected. */
+		interrupt_exist_connections: false
 	}, extra: extra };
 }
 
@@ -1815,17 +1837,95 @@ if (!isEmpty(main_node)) {
 		const main_urltest_interval = uci.get(uciconfig, ucimain, 'main_urltest_interval');
 		const main_urltest_tolerance = uci.get(uciconfig, ucimain, 'main_urltest_tolerance');
 
-		const ut = build_urltest('main-out', main_urltest_mode, main_urltest_preferred,
+		/* Hot Swap (ч.60): with Hot Swap on, the URLTest group is emitted under
+		 * its own tag `main-out-auto` (the whole build_urltest logic — auto/
+		 * prefer/manual, sticky, dead-sink — lives inside it unchanged) and
+		 * `main-out` becomes a SELECTOR: [main-out-auto, …pool nodes]. Normal
+		 * traffic rides the group (kernel latency choice, all 3 modes kept);
+		 * when the group stalls on a dead pick the hotswap daemon re-pins the
+		 * selector onto a proven-alive node directly and fails back to the
+		 * group once it answers again. Without Hot Swap the group IS main-out
+		 * exactly as before (needs ≥1 pool node besides the group to be
+		 * meaningful — otherwise the plain group shape is kept). */
+		const hs_group = (hotswap_opt) ? 'main-out-auto' : 'main-out';
+		const ut = build_urltest(hs_group, main_urltest_mode, main_urltest_preferred,
 			main_urltest_nodes, main_urltest_interval, main_urltest_tolerance);
-		if (ut.outbound)
+		if (ut.outbound) {
 			push(config.outbounds, ut.outbound);
+			urltest_nodes = ut.extra;
+			if (hotswap_opt && length(ut.extra)) {
+				/* Selector failover targets: the group + every node of its pool
+				 * (prefer mode nests the alt subgroup too — deduped below). */
+				let hs_members = [hs_group];
+				for (let hs_sid in ut.extra) {
+					const hs_tag = 'cfg-' + hs_sid + '-out';
+					if (index(hs_members, hs_tag) < 0)
+						push(hs_members, hs_tag);
+				}
+				for (let hs_tag in ut.outbound.outbounds)
+					if (index(hs_members, hs_tag) < 0)
+						push(hs_members, hs_tag);
+				const hsd = dead_last(hs_members);
+				if (hsd)
+					hs_members = hsd;
+				/* Reserve priority from the UI (config.hotswap_nodes): user-picked
+				 * nodes that are in the group pool go first, then the rest of the
+				 * pool in pool order; picks outside the pool are ignored. */
+				let hs_cands = [];
+				for (let hs_sid in hotswap_nodes_opt)
+					if (index(ut.extra, hs_sid) >= 0 && index(hs_cands, hs_sid) < 0)
+						push(hs_cands, hs_sid);
+				for (let hs_sid in ut.extra)
+					if (index(hs_cands, hs_sid) < 0)
+						push(hs_cands, hs_sid);
+				const hs_n_hot = (hotswap_count_opt > 1) ? hotswap_count_opt : 2;
+				let hs_hot = [hs_group];
+				for (let hs_sid in hs_cands) {
+					if (length(hs_hot) >= hs_n_hot)
+						break;
+					push(hs_hot, 'cfg-' + hs_sid + '-out');
+				}
+				/* Sticky: resume on the daemon's last active pick after a restart
+				 * (it may be a direct node the daemon failed over to); a dead-
+				 * marked pick is never fronted. Otherwise the group. */
+				let hs_default = null;
+				try {
+					const hs_prev = json(readfile(RUN_DIR + '/hotswap_state.json') || '');
+					if (hs_prev && type(hs_prev.active) === 'string' &&
+					    index(hs_members, hs_prev.active) >= 0 &&
+					    urltest_dead[hs_prev.active] == null)
+						hs_default = hs_prev.active;
+				} catch (e) { hs_default = null; }
+				if (isEmpty(hs_default))
+					hs_default = hs_group;
+				push(config.outbounds, {
+					type: 'selector',
+					tag: 'main-out',
+					outbounds: hs_members,
+					default: hs_default,
+					/* Selector switches are pure API ops; never tear sessions. */
+					interrupt_exist_connections: false
+				});
+				hotswap_state = {
+					enabled: true,
+					mode: 'urltest',
+					group: 'main-out',
+					primary: hs_group,
+					hot: hs_hot,
+					count: length(hs_hot),
+					interval: (hotswap_interval_opt < 5) ? 5 : ((hotswap_interval_opt > 120) ? 120 : hotswap_interval_opt),
+					failback: hotswap_failback_opt
+				};
+				warn(sprintf('homeproxy: Hot Swap on - URLTest group %s under main-out selector with %d members (hot %d).\n',
+					hs_group, length(hs_members), length(hs_hot)));
+			}
+		}
 		else {
 			/* Empty pool (no nodes yet): keep the config valid — direct egress means
 			 * DNS + internet keep working, the user just has no proxying. */
 			warn('homeproxy: URLTest pool is empty, main-out falls back to direct.\n');
 			push(config.outbounds, { type: 'direct', tag: 'main-out' });
 		}
-		urltest_nodes = ut.extra;
 	} else if (main_node === 'byedpi-out') {
 		/* ByeDPI as main node: route through the local ByeDPI socks proxy.
 		 * byedpi-out is a synthetic tag, not a real node section, so build the
@@ -1874,8 +1974,23 @@ if (!isEmpty(main_node)) {
 		 * classic shape ("the node IS main-out") is kept. */
 		let hs_cands = [];
 		if (hotswap_opt && !isEmpty(main_node_cfg)) {
+			/* Reserve priority from the UI (config.hotswap_nodes): user-picked
+			 * nodes first (in the picked order), then the remaining usable
+			 * nodes in config order. Invalid/dangling picks and the primary
+			 * itself are skipped. */
+			for (let hs_sid in hotswap_nodes_opt) {
+				if (hs_sid === main_node || index(hs_cands, hs_sid) >= 0)
+					continue;
+				if (uci.get_all(uciconfig, hs_sid) == null || !hp_node_usable(hs_sid))
+					continue;
+				if (has_outbound('cfg-' + hs_sid + '-out'))
+					continue;
+				push(hs_cands, hs_sid);
+			}
 			foreach_node((cfg) => {
 				if (cfg['.name'] === main_node)
+					return;
+				if (index(hs_cands, cfg['.name']) >= 0)
 					return;
 				if (has_outbound('cfg-' + cfg['.name'] + '-out'))
 					return;
@@ -1943,6 +2058,7 @@ if (!isEmpty(main_node)) {
 			});
 			hotswap_state = {
 				enabled: true,
+				mode: 'node',
 				group: 'main-out',
 				primary: primary_tag,
 				hot: hotswap_hot,
