@@ -16,7 +16,7 @@ import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
 	removeBlankAttrs, validation, HP_DIR, RUN_DIR,
 	sync_learned_rulesets, sync_manual_direct_ruleset, sync_ru_geo_rulesets,
-	sync_oauth_ruleset
+	sync_oauth_ruleset, sync_auto_auth_ruleset
 } from 'homeproxy';
 
 const ubus = connect();
@@ -1040,6 +1040,18 @@ if (!isEmpty(main_node)) {
 			});
 			push(config.dns.rules, {
 				rule_set: 'oauth-domain',
+				action: 'route',
+				server: 'secure-dns'
+			});
+			/* ч.61: auth FAMILIES (learned auth-like hosts → parent domain)
+			 * get the same deterministic encrypted resolution. */
+			push(config.dns.rules, {
+				rule_set: 'auto-auth-domain',
+				query_type: [64, 65],
+				action: 'reject'
+			});
+			push(config.dns.rules, {
+				rule_set: 'auto-auth-domain',
 				action: 'route',
 				server: 'secure-dns'
 			});
@@ -2763,16 +2775,25 @@ if (!isEmpty(main_node)) {
 			}
 		}
 
-		/* OAuth stability (ч.59): auth-provider hosts (accounts.google.com,
-		 * login.microsoftonline.com, …) ride the SAME exit as the services that
-		 * open them. The RU-geo whitelist below would otherwise force Google
-		 * auth hosts DIRECT while the learned service rides main-out — the
-		 * split path (plus URLTest exit drift) is what breaks "Sign in with
-		 * Google" loops (Autodesk socialSignInFailed). Order: user rules and
-		 * auto-direct pins stay ABOVE (a manual pin wins), oauth sits above
-		 * RU-protect and the learned/static proxy lists. QUIC (UDP/443) to
-		 * auth hosts is rejected so every client takes the deterministic TCP
-		 * path (same rationale as the geo-sensitive QUIC reject). */
+		/* OAuth stability (ч.59/ч.61): auth-provider hosts (accounts.google.com,
+		 * login.microsoftonline.com, …) AND the whole DOMAIN FAMILY of every
+		 * learned auth-like host (accounts.autodesk.com learned → autodesk.com
+		 * family: profile./cdn./iam. siblings ride along) take a DEDICATED
+		 * PINNED exit `oauth-out`. ч.60 removed the connection tearing and the
+		 * live router still looped: an UNLEARNED geo-blocked sibling
+		 * (profile.autodesk.com: 403 direct / 200 proxy) stayed DIRECT with a
+		 * RU IP while accounts.* rode the proxy — the provider's risk engine
+		 * saw one identity session hopping countries → socialSignInFailed →
+		 * the autologin loop re-armed itself forever (and hammered the edge
+		 * into Cloudflare 429 rate-limiting, which kept the loop alive on its
+		 * own). oauth-out is a urltest group with the prefer-hold tolerance:
+		 * the first alive member is PINNED (a faster node never steals the
+		 * exit mid-flow), a dead one is still failed over by the kernel, and
+		 * the sticky main pick is fronted so OAuth rides the same exit the
+		 * user already uses. Order: user rules and auto-direct pins stay
+		 * ABOVE (a manual pin wins), this block sits above RU-protect and the
+		 * learned/static proxy lists. QUIC (UDP/443) is rejected for both
+		 * rule-sets so every client takes the deterministic TCP path. */
 		if (oauth_stability_opt) {
 			push(config.route.rule_set, {
 				type: 'local',
@@ -2780,17 +2801,100 @@ if (!isEmpty(main_node)) {
 				format: 'source',
 				path: HP_DIR + '/resources/oauth_domain.json'
 			});
-			push(config.route.rules, {
-				rule_set: 'oauth-domain',
-				network: 'udp',
-				port: [443],
-				action: 'reject'
+			push(config.route.rule_set, {
+				type: 'local',
+				tag: 'auto-auth-domain',
+				format: 'source',
+				path: HP_DIR + '/resources/auto_auth.json'
 			});
-			push(config.route.rules, {
-				rule_set: 'oauth-domain',
-				action: 'route',
-				outbound: 'main-out'
+			let oauth_tags = [];
+			foreach_node((cfg) => {
+				push(oauth_tags, `cfg-${cfg['.name']}-out`);
 			});
+			if (length(oauth_tags)) {
+				/* Front the current main pick (sticky snapshot taken by init.d
+				 * before the old core stopped) so the pinned OAuth exit starts
+				 * on the same node regular traffic uses; a dead-marked pick is
+				 * never fronted. */
+				const o_sticky = urltest_sticky['main-out-auto'] || urltest_sticky['main-out'];
+				if (o_sticky && index(oauth_tags, o_sticky) >= 0 && urltest_dead[o_sticky] == null) {
+					let ont = [o_sticky];
+					for (let t in oauth_tags)
+						if (t !== o_sticky)
+							push(ont, t);
+					oauth_tags = ont;
+				} else {
+					const ode = dead_last(oauth_tags);
+					if (ode)
+						oauth_tags = ode;
+				}
+				/* Emit any member the main/geo/hotswap loops have not already
+				 * emitted — a reference to a non-existent outbound is fatal. */
+				for (let t in oauth_tags) {
+					if (has_outbound(t))
+						continue;
+					const sid_m = match(t, /^cfg-(.+)-out$/);
+					if (!sid_m)
+						continue;
+					const onc = uci.get_all(uciconfig, sid_m[1]) || {};
+					if (isEmpty(onc))
+						continue;
+					if (onc.type in ['wireguard', 'amneziawg']) {
+						push(config.endpoints, generate_endpoint(onc));
+						config.endpoints[length(config.endpoints)-1].tag = t;
+					} else {
+						push_outbound(config.outbounds, onc);
+						config.outbounds[length(config.outbounds)-1].tag = t;
+					}
+				}
+				push(config.outbounds, {
+					type: 'urltest',
+					tag: 'oauth-out',
+					outbounds: oauth_tags,
+					interval: strToTime(uci.get(uciconfig, ucimain, 'main_urltest_interval') || '30'),
+					tolerance: PREFER_HOLD_TOLERANCE,
+					idle_timeout: (strToInt(uci.get(uciconfig, ucimain, 'main_urltest_interval') || '30') > 1800) ? '3600s' : null,
+					interrupt_exist_connections: false
+				});
+				push(config.route.rules, {
+					rule_set: 'oauth-domain',
+					network: 'udp',
+					port: [443],
+					action: 'reject'
+				});
+				push(config.route.rules, {
+					rule_set: 'auto-auth-domain',
+					network: 'udp',
+					port: [443],
+					action: 'reject'
+				});
+				push(config.route.rules, {
+					rule_set: 'oauth-domain',
+					action: 'route',
+					outbound: 'oauth-out'
+				});
+				push(config.route.rules, {
+					rule_set: 'auto-auth-domain',
+					action: 'route',
+					outbound: 'oauth-out'
+				});
+				warn('homeproxy: OAuth stability - providers + learned auth families on the pinned oauth-out exit.\n');
+			} else {
+				/* No usable nodes at all: keep the ч.59 shape (the pool builder
+				 * degrades main-out to direct; routing to a group with no
+				 * members would fatal the config). */
+				push(config.route.rules, {
+					rule_set: 'oauth-domain',
+					network: 'udp',
+					port: [443],
+					action: 'reject'
+				});
+				push(config.route.rules, {
+					rule_set: 'oauth-domain',
+					action: 'route',
+					outbound: 'main-out'
+				});
+			}
 		}
 
 		/* RU-protect ("Russian internet never via proxy"): the downloaded RU-geo
@@ -3006,6 +3110,7 @@ sync_learned_rulesets();
 sync_manual_direct_ruleset();
 sync_ru_geo_rulesets();
 sync_oauth_ruleset();
+sync_auto_auth_ruleset();
 
 writefile(RUN_DIR + '/hiddify-c.json', sprintf('%.J\n', removeBlankAttrs(config)));
 

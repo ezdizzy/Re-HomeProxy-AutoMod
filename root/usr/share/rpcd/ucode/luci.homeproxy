@@ -12,7 +12,8 @@ import { cursor } from 'uci';
 import {
 	sync_learned_rulesets,
 	sync_manual_direct_ruleset,
-	sync_ru_geo_rulesets
+	sync_ru_geo_rulesets,
+	sync_auto_auth_ruleset
 } from '/etc/homeproxy/scripts/homeproxy.uc';
 
 /* Apply an edited learned list WITHOUT a service restart: rewrite the watched local
@@ -28,6 +29,9 @@ function apply_learned_list_hot() {
 	}
 	sync_learned_rulesets();
 	sync_manual_direct_ruleset();
+	/* ч.61: auth families derive from the learned/pinned sets — a manual list
+	 * edit may add/remove an auth-like host, so re-derive and hot-sync too. */
+	sync_auto_auth_ruleset();
 }
 
 /* Kanged from ucode/luci */

@@ -259,6 +259,34 @@ export function sync_oauth_ruleset() {
 	return { domains: length(doms) };
 };
 
+/* Auth-family list (ч.61): REGISTERED PARENT domains of learned auth-like
+ * hosts (accounts.autodesk.com → autodesk.com), written by the automation
+ * daemon. OAuth/session flows touch sibling hosts the engine never learns
+ * (profile.*, iam.*, cdn.*) — an unlearned geo-blocked sibling stays DIRECT
+ * with a RU IP while the auth host rides the proxy, and the provider's risk
+ * engine sees one session hopping countries (Autodesk socialSignInFailed
+ * loop). The watched 'auto-auth-domain' rule-set routes the WHOLE family
+ * through the dedicated pinned OAuth exit so every identity leg is
+ * consistent. */
+export function sync_auto_auth_ruleset() {
+	let res = HP_DIR + '/resources';
+	system('mkdir -p ' + res);
+	let doms = [];
+	if (access(res + '/auto_auth.txt')) {
+		let raw = readfile(res + '/auto_auth.txt');
+		if (raw)
+			doms = filter(split(trim(raw), /[\r\n]/), (x) => {
+				x = lc(trim(x));
+				return length(x) && match(x, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/);
+			});
+	}
+	write_ruleset_file(res + '/auto_auth.json', {
+		version: 1,
+		rules: length(doms) ? [ { domain_suffix: doms } ] : []
+	});
+	return { domains: length(doms) };
+};
+
 /* RU-geo rule-sets for the "RU never via proxy" guard:
  *   ru_geoip.json   = ip_cidr from resources/ru_geoip.txt   (all RU networks, v4+v6)
  *   ru_geosite.json = domain entries from resources/ru_geosite.txt

@@ -44,7 +44,7 @@
 
 import { access, readfile, writefile, open, stat } from 'fs';
 import { cursor } from 'uci';
-import { sync_learned_rulesets, isEmpty } from 'homeproxy';
+import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty } from 'homeproxy';
 
 const HP_DIR = '/etc/homeproxy';
 const RUN_DIR = '/var/run/homeproxy';
@@ -156,6 +156,7 @@ const PERF_STATE_CAP = 12000;
 const STATE_FILE = RUN_DIR + '/automation_state.json';
 const AUTO_LIST = RES + '/auto_proxy_list.txt';
 const AUTO_IP_LIST = RES + '/auto_proxy_ip.txt';
+const AUTO_AUTH_LIST = RES + '/auto_auth.txt';
 const MANUAL_PROXY_LIST = RES + '/manual_proxy.txt';
 const MANUAL_DIRECT_LIST = RES + '/manual_direct.txt';
 const RU_GEOIP = RES + '/ru_geoip.txt';
@@ -180,6 +181,7 @@ let excludes = [];
 let direct_set = {};
 let proxy_set = {};
 let auto_ip_set = {};
+let auto_auth_set = {};
 /* Hot-lane hosts of the CURRENT pass (host → true). MODULE scope, not a pass()
  * local: classify() is a sibling nested function and this ucode build does not
  * support closures over siblings' locals ("access to undeclared variable") —
@@ -954,6 +956,76 @@ function is_auth_like(host) {
 	for (let a in AUTH_LABELS)
 		if (parts[0] === a) return true;
 	return false;
+}
+
+/* ── Auth-family routing (ч.61) ────────────────────────────────────────────
+ * The REGISTERED PARENT of every learned auth-like host goes into
+ * auto_auth.txt → the watched 'auto-auth-domain' rule-set → the whole family
+ * (profile./iam./cdn. siblings included) rides the dedicated pinned OAuth
+ * exit. Without this, an unlearned geo-blocked sibling (profile.autodesk.com
+ * answers 403 direct / 200 proxy, live-verified) stays DIRECT with a RU IP
+ * while accounts.* rides the proxy — the provider's risk engine sees one
+ * identity session hopping countries and the social sign-in loops forever. */
+function auth_family(host) {
+	host = lc(trim(host));
+	const parts = split(host, '.');
+	const n = length(parts);
+	if (n < 2) return null;
+	/* Two-level public suffixes: the parent is the three last labels. */
+	const two = (n >= 3) && match(parts[n-2] + '.' + parts[n-1],
+		/^(co|com|net|org|gov|edu)\.(uk|au|jp|br|cn|tw|hk|ua|tr|mx|in|nz|ar|sa|eg|pk|ph|my|sg|th|vn|kr|ru|za|il|id)$/);
+	const start = two ? n - 3 : n - 2;
+	if (start < 1) return null;
+	let fam = parts[start];
+	for (let i = start + 1; i < n; i++)
+		fam += '.' + parts[i];
+	return fam;
+}
+
+function is_rutld_host(host) {
+	return match(host, /\.(ru|su|рф|xn--p1ai)$/) || substr(host, -5) === '.рф';
+}
+
+/* Pure re-derivation over the learned + "always proxy" sets: add families of
+ * auth-like hosts, drop families whose hosts are gone, persist + hot-sync the
+ * watched rule-set only when something changed. Called from reload_lists()
+ * (startup / RPC edits) and right after a fresh learn. */
+function sync_auth_families() {
+	let fams = {};
+	for (let d in auto_set) {
+		if (match(d, /^[0-9.]+$/) || match(d, /^[0-9a-fA-F:]+$/))
+			continue;
+		if (!is_auth_like(d))
+			continue;
+		const f = auth_family(d);
+		if (f && !is_rutld_host(f))
+			fams[f] = true;
+	}
+	for (let d in manual_proxy_set) {
+		if (match(d, /^[0-9.]+$/) || match(d, /^[0-9a-fA-F:]+$/))
+			continue;
+		if (!is_auth_like(d))
+			continue;
+		const f = auth_family(d);
+		if (f && !is_rutld_host(f))
+			fams[f] = true;
+	}
+	let changed = false;
+	for (let f in fams)
+		if (!auto_auth_set[f]) { auto_auth_set[f] = true; changed = true; }
+	for (let f in auto_auth_set)
+		if (!fams[f]) { delete auto_auth_set[f]; changed = true; }
+	if (changed) {
+		let arr = [];
+		for (let f in auto_auth_set)
+			push(arr, f);
+		arr = sort(arr);
+		atomic_write(AUTO_AUTH_LIST, (length(arr) ? join('\n', arr) + '\n' : ''));
+		sync_auto_auth_ruleset();
+		pending_reload = true;
+		log('auth families updated: ' + join(', ', arr));
+	}
+	return length(auto_auth_set);
 }
 
 function is_excluded(host, ignore_lists) {
@@ -1953,6 +2025,9 @@ echo done > "$PRE.done"
 			write_auto_list(auto_set);
 		if (ip_dropped > 0)
 			write_auto_ip_list(auto_ip_set);
+		/* ч.61: re-derive the auth-family list (learned/pinned auth-like hosts
+		 * → their registered parent) and hot-sync the watched rule-set. */
+		sync_auth_families();
 		return (dropped + ip_dropped);
 	}
 
@@ -2655,6 +2730,9 @@ echo done > "$PRE.done"
 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; }
 				} else if (!auto_set[dom]) {
 					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++;
+					/* ч.61: a fresh auth-like learn extends its domain family. */
+					if (is_auth_like(dom))
+						sync_auth_families();
 				}
 			}
 		} else if (p && p.block) {

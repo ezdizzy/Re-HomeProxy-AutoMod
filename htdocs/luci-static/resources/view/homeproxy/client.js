@@ -601,7 +601,7 @@ return view.extend({
 		/* OAuth stability (ч.59): auth providers ride the same exit as the
 		 * services that open them instead of the RU-geo "always direct" split. */
 		o = s.taboption('routing', form.Flag, 'oauth_stability', _('OAuth sign-in stability') + ' 🔐',
-			_('Route authentication providers (accounts.google.com, login.microsoftonline.com, appleid.apple.com, …) through the same exit as the services that use them, resolve them via encrypted DNS and force TCP (QUIC and HTTPS/SVCB records are filtered). Fixes "Sign in with Google" loops on proxied services: the login no longer bounces between a direct Russian IP and the proxy exit, and the exit IP stays stable during the whole flow.'));
+			_('Route authentication providers (accounts.google.com, login.microsoftonline.com, appleid.apple.com, …) — and the whole domain family of every learned auth host (accounts.autodesk.com learned → all *.autodesk.com) — through a dedicated pinned exit: the first working node is held, faster nodes never steal it mid-flow, and a dead one is failed over automatically. DNS goes through the encrypted pool and TCP is forced (QUIC and HTTPS/SVCB records are filtered). Fixes "Sign in with Google" loops on proxied services: every leg of the identity flow rides one consistent exit instead of bouncing between countries and IPs.'));
 		o.depends('routing_mode', 'proxy_banned_ru');
 		o.default = o.enabled;
 		o.rmempty = false;
