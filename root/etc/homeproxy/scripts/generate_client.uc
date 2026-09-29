@@ -2670,6 +2670,18 @@ if (!isEmpty(main_node)) {
 		}
 		const ruleset_detour = (main_has_wg || main_node === 'byedpi-out') ? 'direct-out' : 'main-out';
 
+		/* Rule-set declaration dedup — MUST live across the WHOLE rule loop.
+		 * ⚠ ч.65: seen_rulesets used to be re-created inside the loop body, so two
+		 * enabled rules with the same source but different targets (YouTube → main-out
+		 * AND YouTube → Zapret is a legitimate, UI-supported combination) each declared
+		 * `hp-ru-<source>` again → the core died with FATAL "duplicate rule-set tag" —
+		 * in proxy_banned_ru only (global emits no hp-ru rule-sets), i.e. exactly
+		 * "switch back from Global = internet down, core crash-looping". ч.63's
+		 * filter() ban still applies: plain object lookups only. */
+		let seen_rulesets = {};
+		const has_ruleset = (tag) => !!seen_rulesets[tag];
+		const remember_ruleset = (tag) => { seen_rulesets[tag] = true; };
+
 		for (let cfg in ru_rules) {
 
 			/* 'main-out' routes through the main proxy; 'byedpi-out' through the shared ByeDPI
@@ -2747,11 +2759,8 @@ if (!isEmpty(main_node)) {
 			 * (verified live: has('hp-ru-youtube') stayed false with the tag
 			 * present), so the old filter-based dedup pushed every declaration
 			 * twice for repeated sources and the core died with "duplicate
-			 * rule-set tag". A for-in loop over the array (element semantics)
-			 * compares the tag directly. */
-			let seen_rulesets = {};
-			const has_ruleset = (tag) => !!seen_rulesets[tag];
-			const remember_ruleset = (tag) => { seen_rulesets[tag] = true; };
+			 * rule-set tag". The seen_rulesets state lives ABOVE the loop (ч.65)
+			 * so declarations dedup across ALL rules, not within one. */
 			if (cfg.source === 'refilter') {
 				if (!has_ruleset('hp-ru-refilter-domain')) {
 					remember_ruleset('hp-ru-refilter-domain');
@@ -3064,6 +3073,31 @@ sync_manual_direct_ruleset();
 sync_ru_geo_rulesets();
 sync_oauth_ruleset();
 sync_auto_auth_ruleset();
+
+/* ч.65 last line of defense: a duplicate tag among dns servers / outbounds /
+ * endpoints / rule-sets is a hard core FATAL ("duplicate rule-set tag ...") →
+ * crash-loop → the whole internet down. A fatal config must never displace the
+ * RUNNING one: exit WITHOUT writing the file — init.d then rolls back to
+ * hiddify-c.json.lastgood and the service keeps running the previous config. */
+let dup_tags = {};
+const scan_dup_tags = (arr, kind) => {
+	if (type(arr) !== 'array')
+		return;
+	for (let item in arr) {
+		const t = item?.tag;
+		if (!t)
+			continue;
+		if (dup_tags[t]) {
+			warn(sprintf('homeproxy: refusing to write a fatal config - duplicate tag "%s" (%s).\n', t, kind));
+			exit(1);
+		}
+		dup_tags[t] = kind;
+	}
+};
+scan_dup_tags(config.dns.servers, 'dns-server');
+scan_dup_tags(config.outbounds, 'outbound');
+scan_dup_tags(config.endpoints, 'endpoint');
+scan_dup_tags(config.route.rule_set, 'rule-set');
 
 writefile(RUN_DIR + '/hiddify-c.json', sprintf('%.J\n', removeBlankAttrs(config)));
 

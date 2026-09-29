@@ -68,7 +68,7 @@ This mod adds the following on top of the original Re-HomeProxy app:
   Russian translation) in place, without touching the SSH console. See *Updating the app* below.
 - **Fork default** — `install.sh` installs the LuCI app and Russian locale from `ezdizzy/re-homeproxy` by default
   (cores / ByeDPI / Zapret still come from upstream `1andrevich/*`).
-- **Interactive installer** — `install.sh` walks you through everything (subscription, MultiDNS, Automation, Zapret with
+- **Interactive installer** — `install.sh` walks you through everything (subscription, Hot Swap, MultiDNS, Automation, Zapret with
   automatic strategy testing) and **never leaves you without internet**: with no subscription it switches to direct mode
   and adds a "YouTube → Zapret" rule. Re-running the script opens a configuration menu.
 - Complete Russian (ru) translation of every tab, including Automation and DNS-failover strings.
@@ -122,7 +122,8 @@ compact build for small memory devices.*
 
 Interactive installer: it installs the LuCI app (+ Russian language), then walks you through the rest step by step — the
 proxy core (with a warning that Telegram/WhatsApp/Instagram and other blocked services won't work without a subscription),
-adding a subscription or a share-link, enabling **MultiDNS** and **Automation**, installing **Zapret 2** with automatic
+adding a subscription or a share-link, enabling **Hot Swap** (hot-standby failover, on by default), **MultiDNS** and
+**Automation**, installing **Zapret 2** with automatic
 strategy testing (starts with Hostfakesplit and checks YouTube) and **ByeDPI** (up to you).
 
 Key point: **you are never left without internet** — with no subscription the script switches to direct mode and
