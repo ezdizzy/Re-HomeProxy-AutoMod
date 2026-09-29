@@ -229,10 +229,10 @@ config homeproxy 'automation'
 	option min_confirm '1'
 	option discover 'all'
 	option reeval_interval '3600'
-	option reload_interval '300'
+	option reload_interval '10'
 	option exclude 'localhost,local,lan,in-addr.arpa,ip6.arpa'
 	option proxy_path 'main'
-	option flush_min_entries '5'
+	option flush_min_entries '1'
 	option ip_learn '0'
 `;
 

@@ -3272,6 +3272,11 @@ const methods = {
 				atomic_write(state_file, sprintf('%.J\n', keep));
 			else
 				system('rm -f ' + shellquote(state_file));
+			/* ч.62: tell the RUNNING daemon to drop its in-memory state and
+			 * re-read the emptied lists — otherwise its old auto_set resurrected
+			 * cleared entries on the next learn and stale verdicts suppressed
+			 * re-probing for a day (the "cleared the list, nothing learns" bug). */
+			system('touch ' + RUN_DIR + '/automation.reload_clear');
 			apply_learned_list_hot();
 			return { result: true };
 			}

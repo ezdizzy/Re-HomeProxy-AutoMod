@@ -1614,7 +1614,10 @@ echo done > "$PRE.done"
 		system(`rm -f ${shellquote(PP_OUT)} 2>/dev/null`);
 		system(`mv -f ${shellquote(PP_IN_TMP)} ${shellquote(PP_IN)} 2>/dev/null`);
 		if (!access(PP_IN)) return null;
-		const deadline = time() + timeout * 4 + 12;
+		/* A 16-host batch with plain-view DNS resolution measured ~20 s live; the
+		 * old timeout*4+12 (36 s) deadline left too little headroom for a batch of
+		 * slow/timeout-bound hosts — a miss re-ran the WHOLE batch one-shot. */
+		const deadline = time() + timeout * 6 + 20;
 		let tick = 0;
 		for (;;) {
 			if (time() >= deadline) return null;
@@ -1692,7 +1695,7 @@ echo done > "$PRE.done"
 		if (resp === null) {
 			writefile(PP1_IN, sprintf('%.J', req));
 			system(`rm -f ${shellquote(PP1_OUT)} 2>/dev/null`);
-			const rc = system(`${shellquote(PROBE_POOL_BIN)} -in ${shellquote(PP1_IN)} -out ${shellquote(PP1_OUT)} 2>>${shellquote(LOG_FILE)}`, timeout * 4000 + 15000);
+			const rc = system(`${shellquote(PROBE_POOL_BIN)} -in ${shellquote(PP1_IN)} -out ${shellquote(PP1_OUT)} 2>>${shellquote(LOG_FILE)}`, timeout * 6000 + 25000);
 			if (rc === 0 && access(PP1_OUT)) {
 				try { resp = json(readfile(PP1_OUT) || ''); } catch (e) { resp = null; }
 				if (type(resp) !== 'object' || type(resp.results) !== 'array') resp = null;
@@ -1716,9 +1719,14 @@ echo done > "$PRE.done"
 		system(`rm -f ${shellquote(PP_IN)} ${shellquote(PP_OUT)} 2>/dev/null`);
 
 		let out = {};
-		for (let r in resp.results) {
-			let res = resp.results[r];
-			if (!res || !exists(res, 'id')) continue;
+		/* ⚠ ч.62 CRITICAL FIX: ucode `for-in` over an ARRAY yields the ELEMENTS
+		 * (verified live ч.59, hit again here). The old `resp.results[r]` indexed
+		 * the array with the element itself → undefined → EVERY probe result was
+		 * silently dropped and the fill-up loop below fabricated 000/fail for all
+		 * hosts. Both probe sides always looked dead, classify() deleted every
+		 * record as 'unknown' and the engine learned nothing at all. */
+		for (let res in resp.results) {
+			if (!res || type(res) !== 'object' || !exists(res, 'id')) continue;
 			if (side === 'tcp' || side === 'tcpproxy') {
 				let ok = false;
 				for (let c in TCP_OK_EXIT) if ('' + res.code === '' + c) ok = true;
@@ -1813,8 +1821,14 @@ echo done > "$PRE.done"
 		 * the pool is absent or has latched FAILED, eco falls back to its
 		 * classic serial (par = 1) shell workers. */
 		let step = par;
+		/* ч.62: with the native pool healthy, perf feeds it 32-host batches
+		 * (Go side runs 16 workers → ~2 rounds per batch) — half the dispatch
+		 * overhead of 16-chunks, and a post-Clear backlog drains twice as fast.
+		 * Worst case (every host timing out on both protocols) stays inside the
+		 * dispatch deadline. eco keeps 8; a latched-failed pool falls back to
+		 * the classic serial/parallel shell workers. */
 		if (length(items) > 1 && probe_pool_enabled && probe_pool_available && access(PROBE_POOL_BIN))
-			step = PERF ? par : 8;
+			step = PERF ? 32 : 8;
 		for (let s = 0; s < length(items); s += step) {
 			let chunk = slice(items, s, s + step);
 			let m = probe_wave(chunk, side, timeout, http2_flag);
@@ -1920,6 +1934,14 @@ echo done > "$PRE.done"
 		for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
 		for (let d in read_lines(MANUAL_PROXY_LIST)) { d = trim(d); if (length(d)) manual_proxy_set[d] = true; }
 		for (let d in read_lines(MANUAL_DIRECT_LIST)) { d = trim(d); if (length(d)) manual_direct_set[d] = true; }
+		/* ч.62: LOAD the derived auth-family set from its file. It used to be
+		 * write-only in memory (module init {}): after a restart the daemon
+		 * believed the set was empty while the file still routed stale families
+		 * (autodesk.com, godaddy.com, ...) through oauth-out — Clear could never
+		 * remove them and sync_auth_families saw "no change". Loading first makes
+		 * the pure re-derivation below genuinely self-healing. */
+		auto_auth_set = {};
+		for (let d in read_lines(AUTO_AUTH_LIST)) { d = trim(d); if (length(d)) auto_auth_set[lc(d)] = true; }
 		/* OAuth provider list (ч.59): static curated resource, re-read here so a
 		 * package update of the file reaches a running daemon without a restart. */
 		oauth_provider_set = {};
@@ -2934,6 +2956,15 @@ echo done > "$PRE.done"
 				if (!escape)
 					continue;
 			}
+			/* ч.62 burst fast-learn: an in-pass burst (>= PAIN_BURST weighted
+			 * sightings) means the browser is retrying this host RIGHT NOW —
+			 * mark it for the hot lane so classify() trusts a single failed
+			 * probe (the user's organic retries are the second witness). The
+			 * hot lane used to cover only 'direct'-verdict rechecks; fresh
+			 * candidates now learn on the FIRST pass while the user actively
+			 * fights the block. Auth-like hosts stay excluded in classify. */
+			if (num(host_score[dom]) >= PAIN_BURST)
+				hot_set[dom] = true;
 			push(sel, dom);
 		}
 		if (length(sel)) {
@@ -3208,7 +3239,24 @@ echo done > "$PRE.done"
 		/* External edits (Automation table RPC: add/delete/manual status, RU-geo
 		 * updates) leave a reload marker; re-read the working sets within one
 		 * pass instead of waiting for a daemon restart. */
-		if (access(RELOAD_MARKER + '_geo')) {
+		if (access(RELOAD_MARKER + '_clear')) {
+			/* ч.62: explicit Clear (RPC) — the RPC wipes the list/state FILES, but
+			 * only the daemon can drop its IN-MEMORY sets. Without this the old
+			 * auto_set resurrected cleared entries on the next learn (the whole
+			 * set is rewritten by write_auto_list), old 'direct' verdicts
+			 * suppressed re-probing for a day, and stale auth families survived.
+			 * Per-host state is wiped; service keys survive: __geo_scan pins the
+			 * geo exit, __dns_offset keeps the discovery cursor. */
+			system('rm -f ' + shellquote(RELOAD_MARKER + '_clear'));
+			const keep_geo_scan = (type(state.__geo_scan) === 'object') ? state.__geo_scan : null;
+			state = {};
+			if (keep_geo_scan) state.__geo_scan = keep_geo_scan;
+			state.__dns_offset = dns_log_offset;
+			reload_lists();
+			ensure_geo_seeds();
+			save_state(state);
+			log('clear marker: in-memory state wiped, working sets reloaded (fresh start).');
+		} else if (access(RELOAD_MARKER + '_geo')) {
 			system('rm -f ' + shellquote(RELOAD_MARKER + '_geo'));
 			load_ru_geo();
 			reload_lists();
@@ -3322,7 +3370,7 @@ echo done > "$PRE.done"
 		for (let i = 0; i < cycle_sleep; i++) {
 			sleep(1);
 			if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); break; }
-			if (access(RELOAD_MARKER) || access(RELOAD_MARKER + '_geo')) break;
+			if (access(RELOAD_MARKER) || access(RELOAD_MARKER + '_geo') || access(RELOAD_MARKER + '_clear')) break;
 			if (uci.get('homeproxy', 'automation', 'enabled') !== '1') { if (has('dns')) disable_dns_log(); return; }
 		}
 	}
