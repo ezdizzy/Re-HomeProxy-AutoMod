@@ -183,6 +183,21 @@ export function sync_learned_rulesets() {
 			continue; /* IP-shaped lines are handled below, never as domain_suffix */
 		push(learned_domains, d);
 	}
+	/* ч.63: a learned/pinned 'www.X' host implicitly owns the X site. OAuth and
+	 * SSO redirect layers bounce through the APEX and sibling subdomains that
+	 * never appear in a DNS/SNI capture (tinkercad.com realm redirects,
+	 * api-*.tinkercad.com session endpoints) — with only 'www.X' as a suffix
+	 * those hops fell to the final (direct) rule while the site rode the proxy.
+	 * Derive the apex as a suffix so the whole service family stays on one exit. */
+	let apexes = {};
+	for (let i, d in learned_domains) {
+		const m = match(lc(d), /^www\.([a-z0-9._-]+)$/);
+		if (m)
+			apexes[m[1]] = true;
+	}
+	for (let a in keys(apexes))
+		if (index(learned_domains, a) < 0)
+			push(learned_domains, a);
 	let rules = [];
 	if (length(domains))
 		push(rules, { domain_keyword: domains });

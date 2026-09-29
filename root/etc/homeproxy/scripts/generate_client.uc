@@ -2741,10 +2741,20 @@ if (!isEmpty(main_node)) {
 				outbound: effective_outbound
 			});
 
-			/* Rule sets (remote — core handles download and 1d refresh) */
-			const has_ruleset = (tag) => filter(config.route.rule_set, (rs) => rs.tag === tag).length > 0;
+			/* Rule sets (remote — core handles download and 1d refresh).
+			 * ⚠ ч.63: NO filter() with an inner arrow here — this ucode build does
+			 * not bind the outer callable's parameter inside a nested arrow
+			 * (verified live: has('hp-ru-youtube') stayed false with the tag
+			 * present), so the old filter-based dedup pushed every declaration
+			 * twice for repeated sources and the core died with "duplicate
+			 * rule-set tag". A for-in loop over the array (element semantics)
+			 * compares the tag directly. */
+			let seen_rulesets = {};
+			const has_ruleset = (tag) => !!seen_rulesets[tag];
+			const remember_ruleset = (tag) => { seen_rulesets[tag] = true; };
 			if (cfg.source === 'refilter') {
-				if (!has_ruleset('hp-ru-refilter-domain'))
+				if (!has_ruleset('hp-ru-refilter-domain')) {
+					remember_ruleset('hp-ru-refilter-domain');
 					push(config.route.rule_set, {
 						type: 'remote',
 						tag: 'hp-ru-refilter-domain',
@@ -2753,7 +2763,9 @@ if (!isEmpty(main_node)) {
 						download_detour: ruleset_detour,
 						update_interval: '1d'
 					});
-				if (!has_ruleset('hp-ru-refilter-ip'))
+				}
+				if (!has_ruleset('hp-ru-refilter-ip')) {
+					remember_ruleset('hp-ru-refilter-ip');
 					push(config.route.rule_set, {
 						type: 'remote',
 						tag: 'hp-ru-refilter-ip',
@@ -2762,8 +2774,10 @@ if (!isEmpty(main_node)) {
 						download_detour: ruleset_detour,
 						update_interval: '1d'
 					});
+				}
 			} else {
-				if (!has_ruleset('hp-ru-' + cfg.source))
+				if (!has_ruleset('hp-ru-' + cfg.source)) {
+					remember_ruleset('hp-ru-' + cfg.source);
 					push(config.route.rule_set, {
 						type: 'remote',
 						tag: 'hp-ru-' + cfg.source,
@@ -2772,6 +2786,7 @@ if (!isEmpty(main_node)) {
 						download_detour: ruleset_detour,
 						update_interval: '1d'
 					});
+				}
 			}
 		}
 
