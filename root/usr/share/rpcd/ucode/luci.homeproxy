@@ -230,6 +230,101 @@ function auto_entry_type(e) {
 	return (match(e, /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/) || (index(e, ':') >= 0 && match(e, /^[0-9a-f:]+(\/\d{1,3})?$/))) ? 'ip' : 'domain';
 }
 
+/* Geo-sensitive seed list: resources/geo_sensitive.txt first (comments and
+ * blank lines skipped), built-in fallback when the file is missing/empty.
+ * Shared by the geo diagnostics (seed coverage) and the automation table
+ * (a learned row whose state record is missing must not fall back to the
+ * "Blocked" default when the host is an engine-pinned geo seed). */
+function geo_sensitive_seeds() {
+	let seeds = [
+		/* Web (ч.51) */
+		'gemini.google.com',
+		'aistudio.google.com',
+		'ai.google.dev',
+		'generativelanguage.googleapis.com',
+		'alkalimakersuite-pa.clients6.google.com',
+		'aisandbox-pa.googleapis.com',
+		'push.clients6.google.com',
+		/* Android app / system assistant (ч.54) */
+		'proactivebackend-pa.googleapis.com',
+		'geller-pa.googleapis.com',
+		'assistantfrontend-pa.googleapis.com',
+		'assistant-s3-pa.googleapis.com',
+		'robinfrontend-pa.googleapis.com',
+		'taskassist-pa.googleapis.com',
+		'notifications-pa.googleapis.com',
+		'searchnotifications-pa.googleapis.com',
+		'lamssettings-pa.googleapis.com',
+		'speechs3proto2-pa.googleapis.com',
+		'alkalimining-pa.googleapis.com',
+		'jnn-pa.googleapis.com',
+		'firebaseinstallations.googleapis.com',
+		'webchannel-alkalimakersuite-pa.clients6.google.com',
+		'waa-pa.clients6.google.com'
+	];
+	const raw = readfile(HP_DIR + '/resources/geo_sensitive.txt');
+	if (raw) {
+		const parsed = [];
+		for (let gl in split(raw, /[\r\n]/)) {
+			gl = trim(replace(gl, /#.*$/, ''));
+			if (length(gl))
+				push(parsed, gl);
+		}
+		if (length(parsed))
+			seeds = parsed;
+	}
+	return seeds;
+}
+
+/* "Listening ports" (Core & Tools + diagnostics report): busybox
+ * `netstat -tlnup` prints EVERY udp socket - UDP has no LISTEN state. That
+ * dragged ephemeral outbound sockets (sing-box QUIC/relay, ports from the
+ * kernel's ip_local_port_range) and per-flow TPROXY sockets (bound to the
+ * ORIGINAL destination address, e.g. 216.239.x.x:443 - one per intercepted
+ * flow, hence the confusing "duplicates") into a check labelled "listening
+ * ports". Filter to real listeners: TCP only in LISTEN state; UDP only
+ * wildcard/loopback-bound sockets on ports below the kernel's ephemeral
+ * range. Known trade-off: a service deliberately bound to an ephemeral-range
+ * port is hidden from this diagnostic. */
+function hp_listen_ports() {
+	let eph_min = 32768;
+	const pr = trim(readfile('/proc/sys/net/ipv4/ip_local_port_range') || '');
+	const pm = match(pr, /^([0-9]+)/);
+	if (pm)
+		eph_min = int(pm[1]) || 32768;
+	const fd = popen('netstat -tlnup 2>/dev/null');
+	const ports = [];
+	if (!fd)
+		return ports;
+	for (let line = fd.read('line'); length(line); line = fd.read('line')) {
+		if (!match(line, /hiddify|sing.box|ciadpi|mosdns/))
+			continue;
+		if (match(line, /^tcp/)) {
+			if (match(line, / LISTEN /))
+				push(ports, trim(line));
+			continue;
+		}
+		if (!match(line, /^udp/))
+			continue;
+		const fm = match(line, /^udp[0-9]* +[0-9]+ +[0-9]+ +([^ ]+) /);
+		if (!fm)
+			continue;
+		/* Split "addr:port" at the LAST colon (v6 forms: [::]:5333, :::5333). */
+		const am = match(fm[1], /^(.*):([0-9]+)$/);
+		if (!am)
+			continue;
+		const addr = am[1];
+		if (!(addr === '*' || addr === '0.0.0.0' || addr === '127.0.0.1' ||
+		      addr === '::' || addr === '::1' || addr === '[::]' || addr === '[::1]'))
+			continue;            /* transparent bind to the original destination (tproxy UDP NAT) */
+		if (int(am[2]) >= eph_min)
+			continue;            /* ephemeral outbound socket */
+		push(ports, trim(line));
+	}
+	fd.close();
+	return ports;
+}
+
 /* Read the RU-geo meta + freshness for the UI (hand-built JSON, numbers only). */
 function ru_geo_read_meta() {
 	let meta = { updated: 0, geoip: 0, geoip_v4: 0, geoip_v6: 0, geosite: 0, categories: 0, categories_failed: 0 };
@@ -1276,16 +1371,7 @@ const methods = {
 				result.pid = length(pid) > 0 ? pid : null;
 			}
 
-			fd = popen('netstat -tlnup 2>/dev/null');
-			if (fd) {
-				const ports = [];
-				for (let line = fd.read('line'); length(line); line = fd.read('line')) {
-					if (match(line, /hiddify|sing.box|ciadpi|mosdns/))
-						push(ports, trim(line));
-				}
-				fd.close();
-				result.listen_ports = ports;
-			}
+			result.listen_ports = hp_listen_ports();
 
 			return result;
 		}
@@ -1629,14 +1715,11 @@ const methods = {
 			add('');
 
 			add('## Listening Ports');
-			fd = popen('netstat -tlnup 2>/dev/null');
-			if (fd) {
-				for (let line = fd.read('line'); length(line); line = fd.read('line')) {
-					if (match(line, /hiddify|sing.box|ciadpi|mosdns/))
-						add(trim(line));
-				}
-				fd.close();
-			}
+			/* ч.66: filtered to real listeners (TCP LISTEN + service-bound UDP) -
+			 * the raw netstat dump mixed in ephemeral outbound sockets and
+			 * per-flow TPROXY binds that looked like confusing duplicates. */
+			for (let pl in hp_listen_ports())
+				add(pl);
 			add('');
 
 			add('## Kernel Modules');
@@ -2404,6 +2487,13 @@ const methods = {
 			let learned = [];
 			let entries = [];
 			const by_host = {};
+			/* ч.66: geo seeds (engine-pinned routing) must never show as the
+			 * "Blocked" fallback when their state record is missing (tmpfs
+			 * state lost on reboot while the list files survived) or bare
+			 * (status wiped). The seed list is small - a map lookup per row. */
+			const seed_map = {};
+			for (let gs in geo_sensitive_seeds())
+				seed_map[gs] = true;
 			const push_entry = (host, src) => {
 				host = trim(host);
 				if (!length(host)) return;
@@ -2414,13 +2504,13 @@ const methods = {
 					e = { host: host, type: typ, src: src };
 					const st = state[host];
 					if (type(st) === 'object') {
-						e.status = st.status || 'blocked';
+						e.status = st.status || (seed_map[host] ? 'geo' : 'blocked');
 						e.added = st.added || st.last_probe || 0;
 						e.last_probe = st.last_probe || 0;
 						e.direct = st.direct || '';
 						e.proxy = st.proxy || '';
 					} else {
-						e.status = (src === 'learned') ? 'blocked' : src;
+						e.status = (src === 'learned') ? (seed_map[host] ? 'geo' : 'blocked') : src;
 						e.added = 0;
 						e.last_probe = 0;
 					}
@@ -2562,46 +2652,9 @@ const methods = {
 	 * the fix is routing (seeds missing) or the exit node itself. */
 	automation_geo_diag: {
 		call: function(req) {
-			/* Shared seed list (resources/geo_sensitive.txt); built-in copy as
-			 * fallback so the diagnostic works even before the resource ships. */
-			let seeds = [
-				/* Web (ч.51) */
-				'gemini.google.com',
-				'aistudio.google.com',
-				'ai.google.dev',
-				'generativelanguage.googleapis.com',
-				'alkalimakersuite-pa.clients6.google.com',
-				'aisandbox-pa.googleapis.com',
-				'push.clients6.google.com',
-				/* Android app / system assistant (ч.54) */
-				'proactivebackend-pa.googleapis.com',
-				'geller-pa.googleapis.com',
-				'assistantfrontend-pa.googleapis.com',
-				'assistant-s3-pa.googleapis.com',
-				'robinfrontend-pa.googleapis.com',
-				'taskassist-pa.googleapis.com',
-				'notifications-pa.googleapis.com',
-				'searchnotifications-pa.googleapis.com',
-				'lamssettings-pa.googleapis.com',
-				'speechs3proto2-pa.googleapis.com',
-				'alkalimining-pa.googleapis.com',
-				'jnn-pa.googleapis.com',
-				'firebaseinstallations.googleapis.com',
-				'webchannel-alkalimakersuite-pa.clients6.google.com',
-				'waa-pa.clients6.google.com'
-			];
-			const gs_raw = readfile(HP_DIR + '/resources/geo_sensitive.txt');
-			if (gs_raw) {
-				const gs_lines = split(gs_raw, /[\r\n]/);
-				let parsed = [];
-				for (let gl in gs_lines) {
-					gl = trim(replace(gl, /#.*$/, ''));
-					if (length(gl))
-						push(parsed, gl);
-				}
-				if (length(parsed))
-					seeds = parsed;
-			}
+			/* Shared seed list (resources/geo_sensitive.txt with a built-in
+			 * fallback — see geo_sensitive_seeds()). */
+			const seeds = geo_sensitive_seeds();
 			const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
 			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
 			let mixed = '5330';
@@ -2771,6 +2824,21 @@ const methods = {
 					}
 				}
 			}
+			/* ч.66: the manual-pin state lives in the persistent pin file
+			 * (resources/geo_exit.json) — the same file generate_client and the
+			 * engine read, so the UI shows the truth even after a daemon
+			 * restart. */
+			let pin_manual = false;
+			{
+				const pfile = HP_DIR + '/resources/geo_exit.json';
+				if (access(pfile)) {
+					try {
+						const pj = json(readfile(pfile) || '');
+						if (pj && type(pj) === 'object')
+							pin_manual = (pj.manual === true);
+					} catch (e) { pin_manual = false; }
+				}
+			}
 			return {
 				enabled: true,
 				scanned: true,
@@ -2779,7 +2847,189 @@ const methods = {
 				selected_label: gs.selected ? node_label(gs.selected).label : null,
 				live: live,
 				live_label: live_label,
+				manual: pin_manual,
 				nodes: nodes
+			};
+		}
+	},
+
+	/* ч.66: manual geo-exit selection (UI: "pin" button per node row in the
+	 * geo-exit table). action "pin" switches geo-out to the given node RIGHT
+	 * NOW (3 curl PUT attempts, same as the engine), probes the REAL geo
+	 * verdicts of the new exit through :5339 (geoip providers + Google AI /
+	 * OpenAI edge checks), and persists the choice in resources/geo_exit.json
+	 * so generate_client (selector default) and the engine (scans keep a
+	 * passing manual exit) both honor it. action "auto" clears the manual
+	 * flag and asks the engine for a fresh rotating scan. node = UCI node
+	 * section id (as shown in the table) or the full Clash tag. */
+	automation_geo_pin: {
+		args: { action: 'action', node: 'node' },
+		call: function(req) {
+			const action = (req && req.args && req.args.action) || 'pin';
+			const state_file = RUN_DIR + '/automation_state.json';
+			const pfile = HP_DIR + '/resources/geo_exit.json';
+			if (!access('/usr/bin/curl'))
+				return { result: false, error: 'curl is not available' };
+			if (action !== 'pin' && action !== 'auto')
+				return { result: false, error: 'invalid action' };
+
+			/* Live geo-out membership via Clash API. */
+			const ctx = cursor();
+			const node_label = (tag) => {
+				const sid = replace(replace(tag, /^cfg-/, ''), /-out$/, '');
+				return { sid: sid, label: ctx.get('homeproxy', sid, 'label') || sid };
+			};
+			let live = null;
+			{
+				const fd = popen('wget -qO- --timeout=3 http://127.0.0.1:9090/proxies/geo-out 2>/dev/null');
+				if (fd) {
+					const raw = trim(fd.read('all') || '');
+					fd.close();
+					if (length(raw)) {
+						try { live = json(raw); } catch (e) { live = null; }
+					}
+				}
+			}
+			if (!live || type(live.all) !== 'array' || !length(live.all))
+				return { result: false, error: 'geo-out group is not in the running config (core down? feature off?)' };
+
+			/* Current pin tag (persistent) — the fallback for "auto". */
+			let cur_tag = '', cur_manual = false;
+			if (access(pfile)) {
+				try {
+					const pj = json(readfile(pfile) || '');
+					if (pj && type(pj) === 'object' && pj.tag) {
+						cur_tag = '' + pj.tag;
+						cur_manual = (pj.manual === true);
+					}
+				} catch (e) { cur_tag = ''; }
+			}
+			const live_now = (type(live.now) === 'string' && length(live.now)) ? live.now : null;
+
+			if (action === 'auto') {
+				/* Clear the manual flag on the CURRENT selection and ask the
+				 * engine to re-pick the best exit (rotating scan). */
+				const tag = live_now || cur_tag || (length(live.all) ? live.all[0] : '');
+				if (!length(tag))
+					return { result: false, error: 'geo-out group is empty' };
+				atomic_write(pfile, sprintf('{"tag":"%s","manual":false}\n', tag));
+				system('touch ' + shellquote(RUN_DIR + '/automation.geo_scan'));
+				return { result: true, action: 'auto', started: true, tag: tag, label: node_label(tag).label };
+			}
+
+			const raw_node = trim((req.args && req.args.node) || '');
+			if (!length(raw_node))
+				return { result: false, error: 'missing node' };
+			const tag = (match(raw_node, /^cfg-.*-out$/)) ? raw_node : ('cfg-' + raw_node + '-out');
+			if (index(live.all, tag) < 0)
+				return { result: false, error: 'node is not a member of the geo-out group' };
+
+			/* Switch the selector (3 attempts, mirrors geo_clash_switch). */
+			const body = sprintf('{"name":"%s"}', replace(tag, '"', ''));
+			const tf = '/tmp/geo_pin.switch';
+			let code = '';
+			for (let attempt = 0; attempt < 3; attempt++) {
+				if (attempt > 0)
+					system('sleep 2');
+				system(`rm -f ${shellquote(tf)}`);
+				system(`curl -s -m 4 -o /dev/null -w '%{http_code}' -X PUT http://127.0.0.1:9090/proxies/geo-out -d ${shellquote(body)} > ${shellquote(tf)} 2>/dev/null`);
+				code = access(tf) ? trim(readfile(tf) || '') : '';
+				system(`rm -f ${shellquote(tf)}`);
+				if (code === '200' || code === '204')
+					break;
+			}
+			if (!(code === '200' || code === '204'))
+				return { result: false, error: 'Clash API refused the switch (HTTP ' + (length(code) ? code : 'no response') + ')' };
+
+			/* Probe the NEW exit through the geo test inbound (:5339). */
+			const probe_url = (url) => {
+				const bf = '/tmp/geo_pin.body';
+				const cf = '/tmp/geo_pin.code';
+				system(`rm -f ${shellquote(bf)} ${shellquote(cf)}`);
+				system(`curl -sL --max-redirs 2 -o ${shellquote(bf)} -w '%{http_code}' -k --connect-timeout 8 --max-time 8 -x socks5h://127.0.0.1:5339 ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`);
+				const r = {
+					code: access(cf) ? trim(readfile(cf) || '') : '000',
+					body: access(bf) ? (readfile(bf) || '') : ''
+				};
+				system(`rm -f ${shellquote(bf)} ${shellquote(cf)}`);
+				return r;
+			};
+			const verdict_google = (r) => {
+				const b = lc(r.body);
+				if (match(b, /location is not supported/)) return 'refused';
+				if (match(b, /api key/) || match(b, /api_key/)) return 'ok';
+				if (r.code === '200') return 'ok';
+				return 'fail';
+			};
+			const verdict_openai = (r) => {
+				const b = lc(r.body);
+				if (match(b, /unsupported_country/)) return 'refused';
+				if (match(b, /invalid_api_key/) || r.code === '401') return 'ok';
+				return 'fail';
+			};
+			/* Exit country/ASN with the same provider chain as the engine.
+			 * (No nested ternaries here — the embedded rpcd-ucode parser
+			 * rejects them even when the CLI compiler accepts.) */
+			let ex = null;
+			for (let pi = 0; pi < 3 && !ex; pi++) {
+				let j = null, uf = '';
+				if (pi === 0) {
+					uf = 'https://api.ip.sb/geoip';
+				} else if (pi === 1) {
+					uf = 'https://ipwho.is/';
+				} else {
+					uf = 'http://ip-api.com/json/?fields=status,countryCode,asnum,query';
+				}
+				const r = probe_url(uf);
+				if (r.code !== '200') continue;
+				try { j = json(r.body); } catch (e) { j = null; }
+				if (!j || type(j) !== 'object') continue;
+				if (pi === 1 && j.success === false) continue;
+				if (pi === 2 && j.status && j.status !== 'success') continue;
+				let cc = null, asn = null, ip = null;
+				if (pi === 0) { ip = j.ip; cc = j.country_code; asn = j.asn; }
+				else if (pi === 1) { ip = j.ip; cc = j.country_code; asn = (type(j.connection) === 'object') ? j.connection.asn : null; }
+				else { ip = j.query; cc = j.countryCode; asn = j.asnum; }
+				cc = cc ? uc(trim('' + cc)) : null;
+				asn = asn ? (int(asn) || null) : null;
+				if (cc || ip)
+					ex = { cc: cc, asn: asn, ip: ip || null };
+			}
+			const gverdict = verdict_google(probe_url('https://generativelanguage.googleapis.com/v1beta/models'));
+			const overdict = verdict_openai(probe_url('https://api.openai.com/v1/models'));
+
+			/* Persist: pin file (selector default + manual flag) + state record
+			 * (scan table) — atomically, preserving the other state keys. */
+			atomic_write(pfile, sprintf('{"tag":"%s","manual":true}\n', tag));
+			let st = {};
+			if (access(state_file)) {
+				try { st = json(readfile(state_file) || '') || {}; } catch (e) { st = {}; }
+			}
+			const prev_scan = (type(st.__geo_scan) === 'object') ? st.__geo_scan : {};
+			const nodes = (type(prev_scan.nodes) === 'object') ? prev_scan.nodes : {};
+			nodes[tag] = {
+				country: ex ? ex.cc : null,
+				asn: (ex && ex.asn) ? ('AS' + ex.asn) : null,
+				google: gverdict,
+				openai: overdict
+			};
+			st.__geo_scan = {
+				ts: time(),
+				selected: tag,
+				manual: true,
+				nodes: nodes
+			};
+			atomic_write(state_file, sprintf('%.J\n', st));
+
+			return {
+				result: true,
+				action: 'pin',
+				tag: tag,
+				label: node_label(tag).label,
+				country: (ex && ex.cc) || null,
+				asn: (ex && ex.asn) ? ('AS' + ex.asn) : null,
+				google: gverdict,
+				openai: overdict
 			};
 		}
 	},

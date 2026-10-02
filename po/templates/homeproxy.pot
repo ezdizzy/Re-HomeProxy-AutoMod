@@ -5618,3 +5618,48 @@ msgstr ""
 
 msgid "Standby ready"
 msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "pinned manually"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Unpin (auto)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Manual pin cleared — the engine is re-picking the best passing exit."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Make this the geo exit (checked and pinned immediately)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo exit pinned: %s (%s). Google AI: %s, OpenAI: %s."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo exit pin failed: "
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Domain-name sources to watch for candidates. Raw-IP destinations are a separate switch below (“Learn IP destinations”)."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "eco: serial probing for weak routers (still uses the native probe_pool batch when the helper is installed, capped at 8 concurrent probes). perf: up to 64 domains / 32 IPs per pass in parallel batches (16 at once) — for multi-core routers (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
+msgstr ""

@@ -87,6 +87,13 @@ const callGeoScan = rpc.declare({
 	expect: { '': {} }
 });
 
+const callGeoPin = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_geo_pin',
+	params: [ 'action', 'node' ],
+	expect: { '': {} }
+});
+
 const callHelpersInstall = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'automation_helpers_install',
@@ -293,7 +300,7 @@ return view.extend({
 
 		/* ч.53: geo-aware exit (geo-out selector + per-node geo scan) */
 		o = s.option(form.Flag, 'geo_scan', _('Geo-aware exit for geo-sensitive services'),
-			_('Scans every proxy node in the background (exit country/ASN and the actual geo verdict of the Google AI and OpenAI edge checks) and keeps the geo-sensitive hosts (Gemini, AI Studio, ChatGPT class) on a node whose exit passes those checks — re-homing automatically when Google/OpenAI start refusing the current exit. Runs every 30 minutes, on demand ("Scan geo exits" on the Overview) and right after a geo-refusal is detected. Adds a geo-out routing group; everything else keeps its route.'));
+			_('Scans every proxy node in the background (exit country/ASN and the actual geo verdict of the Google AI and OpenAI edge checks) and keeps the geo-sensitive hosts (Gemini, AI Studio, ChatGPT class) on a node whose exit passes those checks — re-homing automatically when Google/OpenAI start refusing the current exit. Runs every 30 minutes, on demand ("Scan geo exits" on the Overview) and right after a geo-refusal is detected. Adds a geo-out routing group; everything else keeps its route. A node can also be pinned manually from the table on the Overview (📌) — a pinned exit is kept while it still passes the checks.'));
 		o.default = o.enabled;
 		o.rmempty = false;
 
@@ -794,19 +801,43 @@ return view.extend({
 					_('live geo-out is %s — it differs from the last scanned pin; press "Scan geo exits"').format(liveName)
 				]));
 			}
-			const thead = E('tr', {}, [
-				E('th', {}, [ _('Node') ]),
-				E('th', {}, [ _('Exit country') ]),
-				E('th', {}, [ _('ASN') ]),
-				E('th', {}, [ _('Google AI') ]),
-				E('th', {}, [ _('OpenAI') ])
-			]);
-			const tbody = E('tbody', {});
+			/* ч.66: a manually pinned exit stays on the job (rotating scans keep
+			 * it while it passes); the user can hand control back to the engine. */
+			if (r.manual) {
+				geoExitLine.appendChild(document.createTextNode(' · '));
+				geoExitLine.appendChild(E('span', { style: 'color:#4d8fe0; font-weight:600' },
+					[ _('pinned manually') ]));
+				geoExitLine.appendChild(document.createTextNode(' '));
+				geoExitLine.appendChild(btn(_('Unpin (auto)'), function() {
+					return callGeoScan('status').then(function(cur) {
+						return callGeoPin('auto', '').then(function(res) {
+							if (!res || res.result === false) {
+								ui.addNotification('error', _('Geo exit pin failed: ') + ((res && res.error) || ''));
+								return null;
+							}
+							ui.addNotification('info', _('Manual pin cleared — the engine is re-picking the best passing exit.'));
+							/* Resolve when a NEWER scan timestamp appears. */
+							return pollGeoScan((cur && cur.ts) || 0, 0);
+						});
+					});
+				}));
+			}
 			const vspan = (v) => (v === 'ok')
 				? E('span', { style: 'color:#3fbf5f' }, [ _('passes') ])
 				: (v === 'refused')
 					? E('span', { style: 'color:#e05252' }, [ _('refused') ])
 					: E('span', { style: 'color:#9a9a9a' }, [ _('n/a') ]);
+			const vword = (v) => (v === 'ok') ? _('passes')
+				: (v === 'refused') ? _('refused') : _('n/a');
+			const thead = E('tr', {}, [
+				E('th', {}, [ _('Node') ]),
+				E('th', {}, [ _('Exit country') ]),
+				E('th', {}, [ _('ASN') ]),
+				E('th', {}, [ _('Google AI') ]),
+				E('th', {}, [ _('OpenAI') ]),
+				E('th', {}, [ '' ])
+			]);
+			const tbody = E('tbody', {});
 			const nodes = r.nodes || [];
 			for (let i in nodes) {
 				const n = nodes[i];
@@ -815,13 +846,38 @@ return view.extend({
 				 * when it differs from the last scan's pin. */
 				const liveMark = (r.live && r.live !== r.selected &&
 					('cfg-' + (n.node || '') + '-out') === r.live) ? ' ⚠' : '';
+				/* ч.66: pin button — make this node the geo exit (checked live
+				 * against the geo verdicts, persisted across reboots). */
+				let pinCell = E('span', {}, [ '\u00a0' ]);
+				if (!n.selected) {
+					const pinBtn = E('button', {
+						'class': 'hpchip', type: 'button',
+						title: _('Make this the geo exit (checked and pinned immediately)')
+					}, [ '\ud83d\udccd' ]);
+					pinBtn.addEventListener('click', function() {
+						pinBtn.disabled = true;
+						callGeoPin('pin', n.node).then(function(res) {
+							if (!res || res.result === false) {
+								ui.addNotification('error', _('Geo exit pin failed: ') + ((res && res.error) || ''));
+							} else {
+								ui.addNotification('info', _('Geo exit pinned: %s (%s). Google AI: %s, OpenAI: %s.')
+									.format(res.label || nodeName, res.country || '—', vword(res.google), vword(res.openai)));
+							}
+							return callGeoScan('status').then(renderGeoExit);
+						}).catch(function(e) {
+							ui.addNotification('error', _('Geo exit pin failed: ') + e);
+						}).finally(function() { pinBtn.disabled = false; });
+					});
+					pinCell = pinBtn;
+				}
 				tbody.appendChild(E('tr', {}, [
 					E('td', { title: nodeName !== n.node ? n.node : null },
 						[ (n.selected ? '✔ ' : '') + nodeName + liveMark ]),
 					E('td', {}, [ n.country || '—' ]),
 					E('td', {}, [ n.asn || '—' ]),
 					E('td', {}, [ vspan(n.google) ]),
-					E('td', {}, [ vspan(n.openai) ])
+					E('td', {}, [ vspan(n.openai) ]),
+					E('td', {}, [ pinCell ])
 				]));
 			}
 			geoExitTable.appendChild(E('table', { 'class': 'hpauto-table' }, [ E('thead', {}, [ thead ]), tbody ]));

@@ -48,6 +48,12 @@ This mod adds the following on top of the original Re-HomeProxy app:
   a whole probe wave into one HTTP/2-capable process instead of many shell workers, and **sni_sniffer** captures TLS
   ClientHello names continuously with a kernel packet filter instead of tcpdump. Without them everything falls back to
   the classic methods automatically.
+- **Geo-aware exit for geo-sensitive services (Gemini etc.)** — the engine scans every proxy node in the background
+  (exit country/ASN plus the real geo verdicts of the Google AI and OpenAI edge checks) and keeps the geo hosts on a node
+  whose exit passes those checks, re-homing automatically when a service starts refusing the current exit. Any passing
+  node can be pinned manually with the 📌 button in the Overview table — the pin survives reboots and is kept while the
+  node still passes; "Unpin (auto)" hands control back to the engine. Geo service rows in the engine table self-heal and
+  always display their "Geo (proxied)" status with dates.
 - **DNS Settings page** — every DNS setting in one menu: server pools (plain "Russia" 🔓 + encrypted "Secure" 🔒),
   reserve DNS for setups without MultiDNS, and the **MultiDNS** engine with a live quality monitor.
 - **MultiDNS (mosdns engine)** — a DNS accelerator: every query is raced in parallel across all servers of the pool,

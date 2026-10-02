@@ -534,11 +534,18 @@ function save_state(state) {
 }
 
 function write_auto_list(set) {
+	/* ч.66: a pending Clear marker invalidates the in-memory set - writing it
+	 * back would resurrect entries the RPC just wiped (the marker handler
+	 * rewrites the lists from disk on the next loop turn). */
+	if (access(RELOAD_MARKER + '_clear'))
+		return;
 	let arr = sort(keys(set));
 	atomic_write(AUTO_LIST, join('\n', arr) + (length(arr) ? '\n' : ''));
 }
 
 function write_auto_ip_list(set) {
+	if (access(RELOAD_MARKER + '_clear'))
+		return;
 	let arr = sort(keys(set));
 	atomic_write(AUTO_IP_LIST, join('\n', arr) + (length(arr) ? '\n' : ''));
 }
@@ -2064,22 +2071,31 @@ echo done > "$PRE.done"
 		if (mn === 'direct-out' || mn === 'nil')
 			return;
 		let added = 0;
+		let healed = 0;
 		for (let s in GEO_SENSITIVE_HOSTS) {
 			geo_seed_set[s] = true;
+			if (!state[s]) state[s] = {};
+			const st = state[s];
+			/* ч.66: heal the ROW, not only the routing. Hosts that were already
+			 * in a list when they became seeds (learned as 'blocked' by an older
+			 * build, or a state record rebuilt bare after a reboot — the state
+			 * file lives on tmpfs while the list files live on flash) used to
+			 * display as "Blocked - details not recorded" forever, because
+			 * classify() never re-verdicts a pinned seed. Normalize the status
+			 * here so the table shows the truth right after the daemon starts. */
+			if (st.status !== 'geo') { st.status = 'geo'; healed++; }
+			if (!st.type) { st.type = 'domain'; healed++; }
+			if (!st.added) { st.added = time(); healed++; }
 			if (auto_set[s] || proxy_set[s] || manual_direct_set[s])
 				continue;
 			auto_set[s] = true;
 			added++;
-			if (!state[s]) state[s] = {};
-			state[s].status = 'geo';
-			state[s].type = 'domain';
-			if (!state[s].added) state[s].added = time();
 			log('geo-sensitive service seeded into the proxy path: ' + s);
 		}
-		if (added > 0) {
+		if (added > 0)
 			write_auto_list(auto_set);
+		if (added > 0 || healed > 0)
 			save_state(state);
-		}
 	}
 
 	/* ── Geo-aware exit (ч.53): dedicated geo-out selector ───────────────
@@ -2127,6 +2143,35 @@ echo done > "$PRE.done"
 	const GEO_HEALTH_INTERVAL = 300;
 	let geo_health_fail = 0;
 	let last_geo_health = 0;
+
+	/* ч.66: persistent geo-exit pin (resources/geo_exit.json — FLASH, survives
+	 * reboots unlike the tmpfs state file). Written by the scan on every
+	 * selection change and by the manual "automation_geo_pin" RPC. Shape:
+	 *   { "tag": "cfg-<sid>-out", "manual": true|false }
+	 * generate_client fronts this tag as the geo-out selector default, so a
+	 * reboot no longer drops geo traffic onto the first pool member until the
+	 * first scan; manual=true makes rotating scans keep a passing user-picked
+	 * exit (the flag auto-clears when the picked exit stops passing). */
+	const GEO_EXIT_FILE = RES + '/geo_exit.json';
+
+	function geo_pin_read() {
+		try {
+			const raw = readfile(GEO_EXIT_FILE);
+			if (raw) {
+				const j = json(raw);
+				if (j && type(j) === 'object' && j.tag)
+					return { tag: '' + j.tag, manual: (j.manual === true) };
+			}
+		} catch (e) { /* corrupt pin file = no pin */ }
+		return { tag: '', manual: false };
+	}
+
+	function geo_pin_write(tag, manual) {
+		const cur = geo_pin_read();
+		if (cur.tag === tag && cur.manual === !!manual)
+			return;                       /* no change - no flash write */
+		atomic_write(GEO_EXIT_FILE, sprintf('{"tag":"%s","manual":%s}\n', tag, manual ? 'true' : 'false'));
+	}
 
 	/* Live state of the geo-out selector from the RUNNING core (Clash API).
 	 * Returns { all: [member tags], now: current member } or null. Reading
@@ -2254,7 +2299,11 @@ echo done > "$PRE.done"
 		 * scan had pinned. Re-pin quietly when they diverge; if the pinned
 		 * member no longer exists in the pool (node removed from the
 		 * subscription), a rotating scan re-homes instead. */
-		const pinned = (type(state.__geo_scan) === 'object') ? (state.__geo_scan.selected || '') : '';
+		/* ч.66: the pin lives in the FLASH file (survives reboots); the state
+		 * record is only the fallback for installs without the file yet. */
+		const pin = geo_pin_read();
+		const pinned = pin.tag ||
+			((type(state.__geo_scan) === 'object') ? (state.__geo_scan.selected || '') : '');
 		if (pinned) {
 			const live = geo_clash_members();
 			if (live && live.now && live.now !== pinned) {
@@ -2354,6 +2403,13 @@ echo done > "$PRE.done"
 		}
 		const tags = live.all;
 		log(`geo scan started (${reason}, ${length(tags)} nodes)`);
+		/* ч.66: the manual pin (geo_exit.json) — a node the user picked in the
+		 * UI. Its verdict is tracked during the measurement below: a PASSING
+		 * manual exit wins over both hysteresis and rotation; a FAILING one is
+		 * rotated away from and the manual flag is cleared. A pin that is no
+		 * longer a pool member (node removed) simply stops pinning. */
+		const pin = geo_pin_read();
+		const pin_tag = (pin.tag && index(live.all, pin.tag) >= 0) ? pin.tag : '';
 		const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
 		/* Exit of the USER'S MAIN path (via auto-proxy-in :5337): a geo pick
 		 * sharing the main exit's country/ASN inherits everything that ever
@@ -2372,6 +2428,7 @@ echo done > "$PRE.done"
 			: ((type(state.__geo_scan) === 'object') ? (state.__geo_scan.selected || '') : '');
 		const results = {};
 		let best = null, best_rank = 0, prev_ok = false, found_prev = false, passing = [];
+		let pin_ok = false;
 		for (let idx = 0; idx < length(tags); idx++) {
 			const tag = tags[idx];
 			if (!geo_clash_switch(tag)) {
@@ -2397,6 +2454,8 @@ echo done > "$PRE.done"
 				openai: op
 			};
 			if (tag === prev) { found_prev = true; prev_ok = (gp === 'ok'); }
+			if (pin_tag && tag === pin_tag)
+				pin_ok = (gp === 'ok');
 			/* Rank: both edges served > Google only; a node whose exit
 			 * country could not be measured (all geoip providers failed) is
 			 * capped at 1 - the unsupported-country gate is blind without
@@ -2411,6 +2470,8 @@ echo done > "$PRE.done"
 			if (rank > best_rank) { best_rank = rank; best = tag; }
 		}
 		/* Selection:
+		 * - a PASSING manually pinned exit wins (ч.66): the user chose it, a
+		 *   requested scan only re-verifies it;
 		 * - periodic scans hold the current pick while it still passes
 		 *   (hysteresis, no churn);
 		 * - scans triggered by an actual geo refusal ROTATE: move to another
@@ -2419,9 +2480,35 @@ echo done > "$PRE.done"
 		 *   per-ASN web flagging) and (c) difference from the MAIN exit's
 		 *   country/ASN (shared fate, see the mex probe above). */
 		let sel = null;
-		if (!rotate && prev_ok && found_prev) {
+		/* ч.66: a manual pin may arrive via the RPC WHILE this scan is
+		 * measuring (the scan flips the selector through every node, so a pin
+		 * landing mid-scan would otherwise be silently overwritten by the
+		 * scan's own pick at the end). Re-read the pin file after the loop
+		 * and honor a FRESH manual pin that passes. */
+		const pin_end = geo_pin_read();
+		let pin_manual_eff = pin.manual;
+		let pin_tag_eff = pin_tag;
+		let pin_ok_eff = pin_ok;
+		if (pin_end.manual && pin_end.tag !== pin.tag) {
+			log(`geo scan: a manual pin of ${pin_end.tag} arrived while the scan was measuring - honoring it`);
+			pin_manual_eff = true;
+			pin_tag_eff = (index(tags, pin_end.tag) >= 0) ? pin_end.tag : '';
+			pin_ok_eff = (pin_tag_eff && results[pin_tag_eff]) ? (results[pin_tag_eff].google === 'ok') : false;
+		}
+		const keep_manual = (pin_manual_eff && pin_ok_eff);
+		if (keep_manual) {
+			sel = pin_tag_eff;
+			if (sel !== prev)
+				log(`geo scan: re-pinning the manually chosen geo exit ${sel}`);
+		} else if (!rotate && prev_ok && found_prev) {
 			sel = prev;
 		} else if (length(passing) > 0) {
+			if (pin_manual_eff) {
+				if (pin_tag_eff)
+					log(`geo scan: manually pinned exit ${pin_tag_eff} no longer passes - rotating away, the manual pin is cleared`);
+				else
+					log('geo scan: the manually pinned exit is no longer a geo-out member - rotating away, the manual pin is cleared');
+			}
 			let alt = null, alt_score = -1;
 			for (let p in passing) {
 				if (p.tag === prev) continue;
@@ -2455,7 +2542,11 @@ echo done > "$PRE.done"
 				sel = after.now;
 			log('geo scan: pinning the selected exit failed - the table reflects the live selection');
 		}
-		state.__geo_scan = { ts: time(), selected: sel, nodes: results };
+		/* ч.66: persist the selection so the choice survives reboots (the
+		 * selector default is fronted from this file) and the manual flag
+		 * state stays truthful for the UI. */
+		geo_pin_write(sel, keep_manual && sel === pin_tag_eff);
+		state.__geo_scan = { ts: time(), selected: sel, manual: (keep_manual && sel === pin_tag_eff), nodes: results };
 		save_state(state);
 		let ok_n = 0, ref_n = 0;
 		for (let t in keys(results)) {
@@ -2561,8 +2652,17 @@ echo done > "$PRE.done"
 		 * ANY path, so every probe path here "proves direct works" and would
 		 * flip the host back to the broken direct route. Probe codes above are
 		 * still refreshed for the UI. */
-		if (geo_seed_set[dom] === true)
+		if (geo_seed_set[dom] === true) {
+			/* ч.66: the record itself must carry the geo verdict. This is the
+			 * only writer for a seed whose state record was rebuilt bare (a
+			 * reboot wipes the tmpfs state; the list files survive) — without
+			 * it the row fell back to the rpcd "Blocked" default with no date. */
+			if (st.status !== 'geo')
+				st.status = 'geo';
+			if (!st.added)
+				st.added = time();
 			return;
+		}
 
 		/* Track EWMA RTT for adaptive timeouts (Phase 1).
 		 * RTT in milliseconds; alpha=0.3 for EWMA smoothing. */
@@ -3194,8 +3294,11 @@ echo done > "$PRE.done"
 
 		/* Persist state ONCE per cycle (not per probe): the file write is atomic but
 		 * still costs fsync-ish work ×24 probes otherwise. Learned-list writes keep
-		 * their own immediate atomic flush inside classify(). */
-		save_state(state);
+		 * their own immediate atomic flush inside classify(). ч.66: a pending
+		 * Clear marker invalidates this whole pass - do not write the stale
+		 * in-memory state back over the just-wiped file. */
+		if (!access(RELOAD_MARKER + '_clear'))
+			save_state(state);
 
 		/* Batch-flush window: apply when the time throttle elapsed OR enough new entries
 		 * accumulated (so a burst of learns triggers a single core restart, not many). */
@@ -3306,6 +3409,19 @@ echo done > "$PRE.done"
 			if (access(gtrig)) {
 				system('rm -f ' + shellquote(gtrig) + ' 2>/dev/null');
 				geo_scan_soon = time();
+			}
+			/* ч.66: the pin RPC updates the pin file directly; the daemon's
+			 * in-memory scan record would otherwise clobber the UI's
+			 * "selected" view with a stale pick on its next save_state until
+			 * the next scan. Sync it (ts stays - it is the last SCAN time,
+			 * not the last pin). */
+			const pin_sync = geo_pin_read();
+			if (pin_sync.tag && type(state.__geo_scan) === 'object' &&
+			    (state.__geo_scan.selected !== pin_sync.tag ||
+			     (state.__geo_scan.manual === true) !== pin_sync.manual)) {
+				state.__geo_scan.selected = pin_sync.tag;
+				state.__geo_scan.manual = pin_sync.manual;
+				save_state(state);
 			}
 			if (!(geo_scan_retry_at && now < geo_scan_retry_at)) {
 				if (geo_scan_soon && now >= geo_scan_soon) {

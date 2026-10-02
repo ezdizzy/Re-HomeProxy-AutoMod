@@ -2163,8 +2163,9 @@ if (!isEmpty(main_node)) {
 	 * passes the geo checks of the geo-sensitive services. The last
 	 * known-good pick is fronted via `default` so a core restart does not
 	 * flip geo traffic onto a possibly-refused first member before the next
-	 * scan runs (state file lives on tmpfs - after a reboot the scan re-pins
-	 * within ~60 s). Watchdog dead marks sink to the tail like everywhere. */
+	 * scan runs (ч.66: the persistent pin geo_exit.json keeps that pick
+	 * across reboots too). Watchdog dead marks sink to the tail like
+	 * everywhere. */
 	if (geo_scan_enabled) {
 		let geo_tags = [];
 		foreach_node((cfg) => {
@@ -2186,14 +2187,27 @@ if (!isEmpty(main_node)) {
 			if (gde)
 				geo_tags = gde;
 			let geo_default = null;
+			/* ч.66: the persistent pin (resources/geo_exit.json - written by the
+			 * engine scan and the manual "pin geo exit" RPC) wins: unlike the
+			 * tmpfs state file it survives reboots, so geo traffic no longer
+			 * starts on the FIRST pool member (possibly a refused exit) until
+			 * the first scan re-pins ~60 s after boot. */
 			try {
-				const gs_state = json(readfile(RUN_DIR + '/automation_state.json') || '');
-				if (gs_state && type(gs_state.__geo_scan) === 'object') {
-					const gsel = gs_state.__geo_scan.selected;
-					if (gsel && !isEmpty(gsel) && index(geo_tags, gsel) >= 0)
-						geo_default = gsel;
-				}
+				const gpin = json(readfile(HP_DIR + '/resources/geo_exit.json') || '');
+				if (gpin && type(gpin) === 'object' && gpin.tag &&
+				    !isEmpty(gpin.tag) && index(geo_tags, gpin.tag) >= 0)
+					geo_default = gpin.tag;
 			} catch (e) { geo_default = null; }
+			if (!geo_default) {
+				try {
+					const gs_state = json(readfile(RUN_DIR + '/automation_state.json') || '');
+					if (gs_state && type(gs_state.__geo_scan) === 'object') {
+						const gsel = gs_state.__geo_scan.selected;
+						if (gsel && !isEmpty(gsel) && index(geo_tags, gsel) >= 0)
+							geo_default = gsel;
+					}
+				} catch (e) { geo_default = null; }
+			}
 			if (!geo_default || index(geo_tags, geo_default) < 0)
 				geo_default = geo_tags[0];
 			push(config.outbounds, {

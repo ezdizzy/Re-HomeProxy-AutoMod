@@ -5596,6 +5596,21 @@ msgstr "conntrack (назначения по IP — для игр/приложе
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
+msgid "Domain-name sources to watch for candidates. Raw-IP destinations are a separate switch below (“Learn IP destinations”)."
+msgstr "Доменные источники кандидатов. «Сырые» IP-назначения — отдельный выключатель ниже («Изучать IP-назначения»)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps."
+msgstr "Следить за повторяющимися conntrack-адресами (игры, дата-центры Telegram, приложения без SNI) и выучивать те, что недоступны напрямую, но отвечают через прокси. По умолчанию выключено — включите, если пользуетесь такими приложениями."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "eco: serial probing for weak routers (still uses the native probe_pool batch when the helper is installed, capped at 8 concurrent probes). perf: up to 64 domains / 32 IPs per pass in parallel batches (16 at once) — for multi-core routers (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
+msgstr "eco: серийные пробы для слабых роутеров (нативный батч probe_pool всё равно используется при установленном помощнике, до 8 одновременных проб). perf: до 64 доменов / 32 IP за проход параллельными батчами (по 16) — для многоядерных роутеров (например, GL.iNet Flint 2). auto: определяется по ядрам CPU и памяти."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
 msgid "Probe timeout (seconds)"
 msgstr "Тайм-аут проверки (сек)"
 
@@ -7525,8 +7540,8 @@ msgstr "Гео-выход для гео-чувствительных серви�
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Scans every proxy node in the background (exit country/ASN and the actual geo verdict of the Google AI and OpenAI edge checks) and keeps the geo-sensitive hosts (Gemini, AI Studio, ChatGPT class) on a node whose exit passes those checks — re-homing automatically when Google/OpenAI start refusing the current exit. Runs every 30 minutes, on demand (\"Scan geo exits\" on the Overview) and right after a geo-refusal is detected. Adds a geo-out routing group; everything else keeps its route."
-msgstr "Сканирует каждый прокси-узел в фоне (страна/ASN выхода и реальный гео-вердикт пограничных проверок Google AI и OpenAI) и удерживает гео-чувствительные хосты (Gemini, AI Studio, класс ChatGPT) на узле, чей выход эти проверки проходит — автоматически переезжая, когда Google/OpenAI начинают отклонять текущий выход. Запускается каждые 30 минут, по кнопке («Сканировать гео-выходы» на Обзоре) и сразу после обнаружения гео-отказа. Добавляет группу маршрутизации geo-out; остальная маршрутизация не меняется."
+msgid "Scans every proxy node in the background (exit country/ASN and the actual geo verdict of the Google AI and OpenAI edge checks) and keeps the geo-sensitive hosts (Gemini, AI Studio, ChatGPT class) on a node whose exit passes those checks — re-homing automatically when Google/OpenAI start refusing the current exit. Runs every 30 minutes, on demand (\"Scan geo exits\" on the Overview) and right after a geo-refusal is detected. Adds a geo-out routing group; everything else keeps its route. A node can also be pinned manually from the table on the Overview (📌) — a pinned exit is kept while it still passes the checks."
+msgstr "Сканирует каждый прокси-узел в фоне (страна/ASN выхода и реальный гео-вердикт пограничных проверок Google AI и OpenAI) и удерживает гео-чувствительные хосты (Gemini, AI Studio, класс ChatGPT) на узле, чей выход эти проверки проходит — автоматически переезжая, когда Google/OpenAI начинают отклонять текущий выход. Запускается каждые 30 минут, по кнопке («Сканировать гео-выходы» на Обзоре) и сразу после обнаружения гео-отказа. Добавляет группу маршрутизации geo-out; остальная маршрутизация не меняется. Узел можно также закрепить вручную из таблицы на Обзоре (📌) — закреплённый выход удерживается, пока проходит проверки."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -7602,6 +7617,36 @@ msgstr "отклонён"
 
 msgid "n/a"
 msgstr "н/д"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "pinned manually"
+msgstr "закреплён вручную"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Unpin (auto)"
+msgstr "Открепить (авто)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Manual pin cleared — the engine is re-picking the best passing exit."
+msgstr "Ручное закрепление снято — движок заново выбирает лучший проходящий выход."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Make this the geo exit (checked and pinned immediately)"
+msgstr "Сделать этот узел гео-выходом (проверяется и закрепляется сразу)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo exit pinned: %s (%s). Google AI: %s, OpenAI: %s."
+msgstr "Гео-выход закреплён: %s (%s). Google AI: %s, OpenAI: %s."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Geo exit pin failed: "
+msgstr "Не удалось закрепить гео-выход: "
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
