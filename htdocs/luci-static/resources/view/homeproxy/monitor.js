@@ -456,7 +456,10 @@ return view.extend({
 					hotswapBody.appendChild(E('span', { 'style': 'color:' + C_AMBER }, [ _('Waiting for daemon') ]));
 					return;
 				}
-				const switching = (r.primary && r.active && r.active !== r.primary);
+				/* Antiflap (ч.67): riding the pinned node (≠ the group "primary")
+				 * is the DESIGNED steady pick, not a failover — do not alarm. */
+				const antiflap_steady = (r.antiflap && r.pinned && r.active === r.pinned);
+				const switching = (r.primary && r.active && r.active !== r.primary && !antiflap_steady);
 				hotswapBody.appendChild(E('span', {
 					'style': 'color:' + (switching ? C_AMBER : C_GREEN) + '; font-weight:bold'
 				}, [ switching ? _('Failover active') : _('Standby ready') ]));

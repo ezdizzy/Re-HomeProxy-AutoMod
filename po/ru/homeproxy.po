@@ -7799,6 +7799,26 @@ msgstr "Когда основной узел (или группа URLTest) во�
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
+msgid "Anti-flap"
+msgstr "Анти-флап"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Hold the active node steady in URLTest modes: the daemon pins the current pick, and one bad probe no longer switches the exit. The pinned node is left only when it really dies (failover to the best live reserve) or when another node stays faster by more than the Test tolerance for 3 probe rounds in a row; in \"Preferred node + auto\" mode the preferred node is held while it answers. Hot Swap probes keep working as before."
+msgstr "Держит активный узел стабильным в режимах URLTest: демон закрепляет текущий выбор, и одна неудачная проба больше не переключает выход. Закреплённый узел покидается только при реальной смерти (фейловер на лучший живой резерв) или когда другой узел устойчиво — 3 раунда пробы подряд — быстрее более чем на Допуск теста; в режиме «Приоритетный узел + авто» приоритетный узел удерживается, пока отвечает. Пробы Hot Swap работают как раньше."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "anti-flap on"
+msgstr "анти-флап вкл"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "kernel re-ranks absorbed"
+msgstr "поглощено пере-рейкингов ядра"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
 msgid "Reserve nodes"
 msgstr "Резервные узлы"
 

@@ -36,6 +36,30 @@
  * consecutive probes across >= 30 s, traffic returns to it. Manual dashboard
  * picks are treated the same way — disable failback for full manual control.
  *
+ * ANTI-FLAP (ч.67, UCI hotswap_antiflap, default ON, URLTest mode only):
+ * WHY — the kernel's URLTest re-picks on a SINGLE bad probe: any one timed-out
+ * probe of the current pick deletes its delay history and the group moves
+ * instantly (tolerance is never consulted on that path), and one spiky probe
+ * round (pick worse than another member by > tolerance) moves it too. The
+ * daemon's own group probes multiply the sampling rate, so with close-latency
+ * nodes the visible pick flaps although pings are stable. HOW — the daemon
+ * OWNS the selection through the selector it already controls: on the first
+ * tick it pins the group's current pick (or the selector's existing node)
+ * with PUT /proxies/main-out, so kernel re-ranks stop moving the exit. The
+ * pin moves only on real evidence, never on one probe:
+ *   - the pinned node fails DEAD_AFTER consecutive probes (real death — the
+ *     proven-alive reserve with the lowest fresh delay wins);
+ *   - OR another pool member stays faster by MORE than the URLTest tolerance
+ *     for ANTIFLAP_ROUNDS consecutive daemon rounds AND passes a direct probe
+ *     (sustained superiority, "auto/manual" pools only — "prefer" holds its
+ *     preferred node exactly as the kernel would);
+ *   - failback returns to the previous pinned node after it recovers
+ *     (FAILBACK_OKS / FAILBACK_WINDOW), mirroring the node-mode behavior.
+ * External selector moves are adopted (user agency), a move back to the group
+ * is re-pinned. Absorbed kernel re-ranks are counted in the state file
+ * (`suppressed`) for the UI. With antiflap off the daemon keeps the exact
+ * ч.60 behavior (probe the group, rescue on death, failback to the group).
+ *
  * ucode constraints honored: sleep() is MILLISECONDS, no Array.includes(),
  * no optional chaining in this daemon, POSIX-ERE regex, atomic file writes
  * (tmp + mv -f), function definitions ordered before first use. */
@@ -58,11 +82,17 @@ const HAVE_CURL = access('/usr/bin/curl');
 const IDLE_INTERVAL = 30;        /* s between contract re-checks when off */
 const DEAD_AFTER = 2;            /* failed probes to call the active dead  */
 const RECHECK_MS = 2000;         /* fast double-check after first failure   */
-const PROBE_TIMEOUT = 4000;      /* ms cap of the core-side delay test      */
+/* 6000 ms (ч.67, was 4000): the probe IS a real dial through the tunnel and a
+ * false timeout here is expensive — besides counting toward DEAD_AFTER it
+ * (while unpinned) deletes the node's history in the kernel and triggers an
+ * instant URLTest re-pick. 6 s still keeps the outage window at ~15 s. */
+const PROBE_TIMEOUT = 6000;      /* ms cap of the core-side delay test      */
 const SWITCH_COOLDOWN = 15;      /* s between selector switches             */
 const FAILBACK_OKS = 3;          /* consecutive primary successes           */
 const FAILBACK_WINDOW = 30;      /* s over which they must be collected     */
 const STATE_HEARTBEAT = 60;      /* s between unchanged state refreshes     */
+const ANTIFLAP_ROUNDS = 3;       /* consecutive rounds a challenger must win */
+const HIST_FRESH = 120;          /* s: max age of a history entry used here  */
 const MAX_LOG_BYTES = 65536;
 
 /* Runtime state (module level — shared across the loop, survives iterations). */
@@ -73,6 +103,12 @@ let switches = 0;
 let last_switch_ts = 0;
 let last_reason = '';
 let last_state_write = 0;
+/* ч.67 anti-flap state (meaningful only while hs.antiflap is on). */
+let pinned = null;               /* node the selector is pinned to           */
+let last_pinned = null;          /* previous pin — the failback target       */
+let last_group_pick = null;      /* previous kernel group pick (absorb count)*/
+let suppressed = 0;              /* kernel re-ranks absorbed by the pin      */
+let chase = {};                  /* tag → consecutive faster-than-pin rounds */
 
 function log(msg) {
 	try {
@@ -141,6 +177,69 @@ function probe_node(tag) {
 	}
 }
 
+/* Parse a Go/Clash timestamp ("2026-09-14T09:00:00.123+03:00") into a Unix
+ * epoch (UTC-based, numeric offset applied). Times without an offset are taken
+ * as UTC. Returns null when unparsable. Days-from-civil (Howard Hinnant).
+ * Same routine the urltest watchdog carries (daemons stay self-contained). */
+function iso_epoch(s) {
+	if (type(s) !== 'string')
+		return null;
+	const m = match(s, /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})/);
+	if (!m)
+		return null;
+	let y = int(m[1]);
+	const mo = int(m[2]),
+	      d = int(m[3]),
+	      H = int(m[4]),
+	      Mi = int(m[5]),
+	      S = int(m[6]);
+	let off = 0;
+	const om = match(s, /([+-])(\d{2}):(\d{2})$/);
+	if (om)
+		off = (om[1] === '-') ? -(int(om[2]) * 3600 + int(om[3]) * 60)
+		                      : (int(om[2]) * 3600 + int(om[3]) * 60);
+	if (mo <= 2)
+		y = y - 1;
+	const era = int((y >= 0 ? y : y - 399) / 400);
+	const yoe = y - era * 400;
+	const mp = (mo + ((mo > 2) ? -3 : 9));
+	const doy = int((153 * mp + 2) / 5) + d - 1;
+	const doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy;
+	const days = era * 146097 + doe - 719468;
+	return days * 86400 + H * 3600 + Mi * 60 + S - off;
+}
+
+/* Fresh positive delay of `tag` from the core's history (the /proxies dump).
+ * This is the SAME source the kernel's URLTest picks from, so chase/absorb
+ * decisions see what the kernel sees; stale (older than HIST_FRESH) or failed
+ * entries read as null. */
+function hist_delay(proxies, tag) {
+	const p = proxies[tag];
+	if (type(p) !== 'object')
+		return null;
+	const h = p.history;
+	if (type(h) !== 'array' || !length(h))
+		return null;
+	const last = h[length(h) - 1];
+	const dly = int(last.delay) || 0;
+	if (dly <= 0 || dly >= 65535)
+		return null;
+	const ts = iso_epoch(last.time);
+	if (ts == null)
+		return null;
+	return ((time() - ts) <= HIST_FRESH) ? dly : null;
+}
+
+/* A concrete node tag that may hold the pin: never our own groups, the
+ * selector itself or the built-in service outbounds. */
+function pinnable(tag) {
+	if (!tag || type(tag) !== 'string' || !length(tag))
+		return false;
+	if (tag === 'main-out' || tag === 'main-out-auto' || tag === 'main-out-auto-alt')
+		return false;
+	return (index([ 'direct-out', 'block-out' ], tag) < 0);
+}
+
 function health_of(tag) {
 	if (type(health[tag]) !== 'object')
 		health[tag] = { fails: 0, oks: 0, first_ok: 0, last_delay: 0 };
@@ -180,6 +279,7 @@ function switch_to(group, tag) {
 
 function write_state(active, primary) {
 	const now = time();
+	const af = (hs != null && hs.antiflap === true);
 	let members = {};
 	for (let k, v in health)
 		members[k] = { state: (v.fails ? 'down' : (v.oks ? 'alive' : 'unknown')), fails: v.fails, oks: v.oks, last_delay: v.last_delay };
@@ -193,6 +293,11 @@ function write_state(active, primary) {
 		count: hs ? hs.count : 0,
 		interval: hs ? hs.interval : 0,
 		failback: hs ? hs.failback : false,
+		/* ч.67 anti-flap: regime flag + the node the exit is pinned to + how
+		 * many kernel re-ranks the pin absorbed (UI: «анти-флап» line). */
+		antiflap: af,
+		pinned: (af && pinned != null) ? pinned : null,
+		suppressed: suppressed,
 		switches: switches,
 		last_switch: last_switch_ts,
 		last_reason: last_reason,
@@ -219,11 +324,21 @@ function read_contract() {
 		return null;
 	if (c.mode !== 'urltest' && c.mode !== 'node')
 		c.mode = 'node';
-	const sig = sprintf('%s|%s|%s|%s|%d|%d', c.mode, c.group, c.primary, join(',', c.hot), c.count || 0, c.failback ? 1 : 0);
+	/* ч.67: anti-flap is a URLTest-mode regime. The field is absent in
+	 * contracts written by older generators — default ON there, so every
+	 * URLTest+Hot Swap install gets the fix without waiting for a regen. */
+	c.antiflap = (c.mode === 'urltest') ? (c.antiflap !== false) : false;
+	c.tolerance = int(c.tolerance) || 150;
+	if (c.pool_mode !== 'auto' && c.pool_mode !== 'prefer' && c.pool_mode !== 'manual')
+		c.pool_mode = 'manual';
+	const sig = sprintf('%s|%s|%s|%s|%d|%d|%d|%s|%d', c.mode, c.group, c.primary, join(',', c.hot), c.count || 0, c.failback ? 1 : 0, c.antiflap ? 1 : 0, c.pool_mode, c.tolerance);
 	if (sig !== hs_sig) {
 		hs_sig = sig;
 		health = {};
-		log('contract adopted: mode=' + c.mode + ' group=' + c.group + ' primary=' + c.primary + ' hot=' + length(c.hot) + ' failback=' + (c.failback ? 'on' : 'off'));
+		pinned = null;
+		last_pinned = null;
+		chase = {};
+		log('contract adopted: mode=' + c.mode + ' group=' + c.group + ' primary=' + c.primary + ' hot=' + length(c.hot) + ' failback=' + (c.failback ? 'on' : 'off') + ' antiflap=' + (c.antiflap ? 'on' : 'off') + ' pool=' + c.pool_mode + ' tolerance=' + c.tolerance);
 	}
 	return c;
 }
@@ -268,6 +383,68 @@ while (true) {
 		continue;
 	}
 
+	/* ── 0. ANTI-FLAP (ч.67, URLTest mode): own the selection ────────────────
+	 * The kernel re-picks on a SINGLE bad probe of its pick (history deleted,
+	 * tolerance never consulted) — the visible active node flaps although the
+	 * pings are stable. While antiflap is on, the selector is pinned to one
+	 * node and kernel re-ranks stop moving the exit; the pin itself moves
+	 * only on sustained evidence (steps 3b/3c below). */
+	if (hs.antiflap) {
+		if (pinned == null) {
+			/* Seed: respect a concrete selector pick (sticky default from the
+			 * generator or a manual pick); otherwise pin the group's current
+			 * pick so the exit stops following the kernel's noisy re-ranks. */
+			let seed = pinnable(active) ? active : null;
+			if (seed == null && hs.mode === 'urltest') {
+				const gsel = proxies[hs.primary];
+				const gpick = (gsel && type(gsel) === 'object') ? gsel.now : null;
+				if (pinnable(gpick))
+					seed = gpick;
+			}
+			if (seed != null) {
+				if (active === seed) {
+					/* Adopted an external/sticky pick: the group's own pick is
+					 * unknown right now — let the next tick record it before
+					 * counting any absorbs. */
+					pinned = seed;
+					last_group_pick = null;
+					log('ANTIFLAP: pinned ' + seed + ' (adopted selector pick; kernel re-ranks no longer move the exit)');
+				} else if (switch_to(hs.group, seed)) {
+					pinned = seed;
+					last_group_pick = seed;
+					log('ANTIFLAP: pinned ' + seed + ' (seed = current group pick; kernel re-ranks no longer move the exit)');
+				} else {
+					log('ANTIFLAP: seed pin to ' + seed + ' failed (curl missing / core refused) - will retry');
+				}
+			}
+		} else if (active === hs.primary) {
+			/* The selector was moved back to the group (external API call):
+			 * restore the pin — that is the whole point of the regime. */
+			if (switch_to(hs.group, pinned))
+				log('ANTIFLAP: selector was moved back to the group - re-pinned ' + pinned);
+		} else if (active !== pinned && pinnable(active)) {
+			/* External move to another concrete node: adopt it as the new pin
+			 * instead of fighting the user. */
+			pinned = active;
+			chase = {};
+			last_group_pick = null;
+			log('ANTIFLAP: selector moved externally to ' + active + ' - adopted as pinned');
+		}
+		/* Count absorbed kernel re-ranks for the UI (probe-only observation:
+		 * while pinned, a group re-rank no longer moves the exit). */
+		if (pinned != null && hs.mode === 'urltest') {
+			const gsel = proxies[hs.primary];
+			const gpick = (gsel && type(gsel) === 'object') ? gsel.now : null;
+			if (type(gpick) === 'string' && length(gpick)) {
+				if (last_group_pick != null && gpick !== last_group_pick && gpick !== pinned) {
+					suppressed = suppressed + 1;
+					log('ANTIFLAP: kernel re-ranked ' + last_group_pick + ' -> ' + gpick + ' (absorbed #' + suppressed + ', exit stays on ' + pinned + ')');
+				}
+				last_group_pick = gpick;
+			}
+		}
+	}
+
 	/* ── 1. Probe the ACTIVE node (fresh data, not the core's own history) ── */
 	let active_alive = null;
 	if (index(members, active) >= 0) {
@@ -282,17 +459,29 @@ while (true) {
 	}
 
 	/* ── 2. Probe backups until (count-1) proven-alive ones are known ────────
-	 * Primary is scanned first (failback freshness); dead candidates cost one
+	 * Failback target is scanned first (freshness); dead candidates cost one
 	 * probe each, the scan stops at the alive quota.
 	 * ⚠ ucode `for-in` over an ARRAY yields the ELEMENTS (verified live, ч.59):
 	 * iterate tags directly, never `members[mi]`. */
 	const quota = (hs.count >= 1) ? hs.count - 1 : 1;
+	/* Failback target: the previous pinned node under antiflap, otherwise the
+	 * contract primary (specific node / URLTest group) — ч.59/ч.60 behavior. */
+	let fb_target = null;
+	if (hs.failback) {
+		if (hs.antiflap) {
+			if (pinned == null)
+				fb_target = hs.primary;
+			else if (last_pinned != null && last_pinned !== pinned)
+				fb_target = last_pinned;
+		} else
+			fb_target = hs.primary;
+	}
 	let alive_others = [];
 	for (let tag in members) {
 		if (tag === active || type(tag) !== 'string')
 			continue;
 		const need_more = (length(alive_others) < quota);
-		const want_primary = (hs.failback && tag === hs.primary);
+		const want_primary = (fb_target != null && tag === fb_target);
 		if (!need_more && !want_primary)
 			continue;
 		const h = mark_probe(tag, probe_node(tag));
@@ -309,10 +498,23 @@ while (true) {
 			log('active ' + active + ' down, switch suppressed (cooldown)');
 		} else {
 			let target = null;
-			/* Prefer a non-primary backup; fall back to the primary itself
-			 * when it is the only alive member. */
-			for (let t in alive_others)
-				if (t !== hs.primary) { target = t; break; }
+			if (hs.antiflap) {
+				/* The fastest PROVEN-alive reserve wins (URLTest spirit); the
+				 * scan order is only a tie-breaker. */
+				let best_d = -1;
+				for (let t in alive_others) {
+					const d = health_of(t).last_delay || 0;
+					if (target == null || (d > 0 && (best_d <= 0 || d < best_d))) {
+						target = t;
+						best_d = d;
+					}
+				}
+			} else {
+				/* Prefer a non-primary backup; fall back to the primary itself
+				 * when it is the only alive member. */
+				for (let t in alive_others)
+					if (t !== hs.primary) { target = t; break; }
+			}
 			if (target == null)
 				target = alive_others[0];
 			if (target && target !== active) {
@@ -322,25 +524,80 @@ while (true) {
 					last_reason = 'primary down: ' + active + ' -> ' + target;
 					log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
 					health_of(target).fails = 0;
+					if (hs.antiflap) {
+						last_pinned = pinned;
+						pinned = target;
+						chase = {};
+					}
 				} else {
 					log('switch to ' + target + ' FAILED (core refused) - will retry');
 				}
 			}
 		}
-	} else if (hs.failback && active !== hs.primary && index(members, hs.primary) >= 0) {
-		const ph = health_of(hs.primary);
-		if (ph.oks >= FAILBACK_OKS && ph.first_ok && (now_ts - ph.first_ok) >= FAILBACK_WINDOW) {
-			if ((now_ts - last_switch_ts) < SWITCH_COOLDOWN) {
-				log('primary recovered, failback suppressed (cooldown)');
-			} else if (switch_to(hs.group, hs.primary)) {
-				switches = switches + 1;
-				last_switch_ts = now_ts;
-				last_reason = 'primary recovered: ' + hs.primary;
-				log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
-				health_of(hs.primary).oks = 0;
-				health_of(hs.primary).first_ok = 0;
-			} else {
-				log('failback to ' + hs.primary + ' FAILED (core refused) - will retry');
+	} else {
+		/* ── 3b. Sustained-better migration (antiflap, auto/manual pools) ────
+		 * A challenger must read faster than the pinned node by MORE than the
+		 * URLTest tolerance for ANTIFLAP_ROUNDS consecutive daemon rounds AND
+		 * pass a direct probe — a single lucky probe never moves the exit.
+		 * "prefer" is exempt: its top group holds the preferred node by
+		 * design (PREFER_HOLD_TOLERANCE in the generator). Independent of the
+		 * failback step below: SWITCH_COOLDOWN arbitrates if both fire. */
+		if (hs.antiflap && pinned != null && pinned === active &&
+		    hs.pool_mode !== 'prefer' && active_alive != null && active_alive.fails === 0) {
+			const tol = hs.tolerance || 150;
+			const pd = hist_delay(proxies, pinned);
+			if (pd != null) {
+				let best = null, best_d = 0;
+				for (let tag in members) {
+					if (!pinnable(tag) || tag === pinned)
+						continue;
+					const d = hist_delay(proxies, tag);
+					if (d == null || !(d + tol < pd)) {
+						delete chase[tag];
+						continue;
+					}
+					chase[tag] = (chase[tag] || 0) + 1;
+					if (chase[tag] >= ANTIFLAP_ROUNDS && (best == null || d < best_d)) {
+						best = tag;
+						best_d = d;
+					}
+				}
+				if (best != null && (now_ts - last_switch_ts) >= SWITCH_COOLDOWN && probe_node(best)) {
+					if (switch_to(hs.group, best)) {
+						last_pinned = pinned;
+						pinned = best;
+						chase = {};
+						switches = switches + 1;
+						last_switch_ts = now_ts;
+						last_reason = 'antiflap: sustained better node: ' + last_pinned + ' -> ' + best;
+						log('ANTIFLAP: ' + last_reason + ' (switch #' + switches + ')');
+					}
+				}
+			}
+		}
+		/* ── 3c. Failback: return to the previous pinned node (antiflap) or to
+		 * the contract primary (ч.59/ч.60) once it is stable again. */
+		if (fb_target != null && active !== fb_target && index(members, fb_target) >= 0) {
+			const ph = health_of(fb_target);
+			if (ph.oks >= FAILBACK_OKS && ph.first_ok && (now_ts - ph.first_ok) >= FAILBACK_WINDOW) {
+				if ((now_ts - last_switch_ts) < SWITCH_COOLDOWN) {
+					log('failback target recovered, failback suppressed (cooldown)');
+				} else if (switch_to(hs.group, fb_target)) {
+					switches = switches + 1;
+					last_switch_ts = now_ts;
+					last_reason = (fb_target === hs.primary) ? ('primary recovered: ' + fb_target)
+					                                          : ('failback to the previous node: ' + fb_target);
+					log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
+					health_of(fb_target).oks = 0;
+					health_of(fb_target).first_ok = 0;
+					if (hs.antiflap) {
+						pinned = fb_target;
+						last_pinned = null;
+						chase = {};
+					}
+				} else {
+					log('failback to ' + fb_target + ' FAILED (core refused) - will retry');
+				}
 			}
 		}
 	}

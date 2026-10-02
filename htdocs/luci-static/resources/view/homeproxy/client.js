@@ -488,6 +488,18 @@ return view.extend({
 		o.depends('hotswap', '1');
 		o.rmempty = false;
 
+		/* Anti-flap (ч.67): the kernel URLTest re-picks on a SINGLE bad probe
+		 * (a timed-out probe deletes the pick's delay history and the group
+		 * moves instantly — tolerance is never consulted on that path), so the
+		 * visible active node flaps although pings are stable. The daemon pins
+		 * the selector onto the current pick; kernel re-ranks stop moving the
+		 * exit, and the pin only moves on sustained evidence. */
+		o = s.taboption('routing', form.Flag, 'hotswap_antiflap', _('Anti-flap') + ' 🎯',
+			_('Hold the active node steady in URLTest modes: the daemon pins the current pick, and one bad probe no longer switches the exit. The pinned node is left only when it really dies (failover to the best live reserve) or when another node stays faster by more than the Test tolerance for 3 probe rounds in a row; in "Preferred node + auto" mode the preferred node is held while it answers. Hot Swap probes keep working as before.'));
+		o.default = o.enabled;
+		o.depends('hotswap', '1');
+		o.rmempty = false;
+
 		o = s.taboption('routing', hp.CBIStaticList, 'hotswap_nodes', _('Reserve nodes') + ' 🔌',
 			_('Priority order of the failover reserves: add nodes in order, the topmost is tried first when the active pick dies. Empty = every node may be used as a reserve (previous behavior). In URLTest mode only nodes of the URLTest pool are eligible — picks outside the pool are ignored; with a specific main node the main node itself is always first and cannot be removed.'));
 		for (let i in proxy_nodes)
@@ -522,6 +534,11 @@ return view.extend({
 						headBits.push(document.createTextNode(' · ' + _('Last switch') + ': ' + new Date(ret.last_switch * 1000).toLocaleTimeString()));
 					if (ret.failback)
 						headBits.push(document.createTextNode(' · ' + _('failback on')));
+					if (ret.antiflap) {
+						headBits.push(document.createTextNode(' · ' + _('anti-flap on')));
+						if (ret.suppressed > 0)
+							headBits.push(document.createTextNode(' · ' + _('kernel re-ranks absorbed') + ': ' + ret.suppressed));
+					}
 					box.appendChild(E('div', { 'style': 'margin-bottom:6px' }, headBits));
 
 					const dstate = {};
@@ -534,7 +551,11 @@ return view.extend({
 						const m = mlist[mi], d = dstate[m.tag] || {};
 						let roleEl, roleColor = 'inherit';
 						if (m.now) {
-							roleEl = _('Active');
+							/* Antiflap (ч.67): the pinned node IS the intended
+							 * main pick — present it as the main node, not a
+							 * mere "active" member of the group. */
+							roleEl = (ret.antiflap && ret.pinned && m.tag === ret.pinned)
+								? _('Main node') : _('Active');
 							roleColor = 'green';
 						} else if (m.tag === ret.primary) {
 							roleEl = (ret.mode === 'urltest') ? urltestLabel : _('Main node');
@@ -574,7 +595,11 @@ return view.extend({
 						box.appendChild(E('em', { 'style': 'color:#9a9a9a' }, [ _('The failover group is empty') ]));
 					if (ret.last_reason)
 						box.appendChild(E('div', { 'style': 'color:#d99a1b; font-size:.9em; margin-top:4px' }, [ ret.last_reason ]));
-					if (ret.primary && ret.active && ret.active !== ret.primary)
+					/* Antiflap (ч.67): the selector riding the pinned node (≠ the
+					 * group "primary") is the DESIGNED steady pick, not a
+					 * failover — no scary warning in that state. */
+					const antiflap_steady = (ret.antiflap && ret.pinned && ret.active === ret.pinned);
+					if (ret.primary && ret.active && ret.active !== ret.primary && !antiflap_steady)
 						box.appendChild(E('div', { 'style': 'color:#d99a1b; margin-top:2px' },
 							[ _('Traffic currently rides the failover pick') ]));
 				});

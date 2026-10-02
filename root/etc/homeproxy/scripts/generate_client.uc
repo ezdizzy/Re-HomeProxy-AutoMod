@@ -1926,7 +1926,17 @@ if (!isEmpty(main_node)) {
 					hot: hs_hot,
 					count: length(hs_hot),
 					interval: (hotswap_interval_opt < 5) ? 5 : ((hotswap_interval_opt > 120) ? 120 : hotswap_interval_opt),
-					failback: hotswap_failback_opt
+					failback: hotswap_failback_opt,
+					/* ч.67 anti-flap: the daemon pins the group's current pick
+					 * with PUT /proxies/main-out so kernel re-ranks (a single
+					 * timed-out probe deletes the pick's history and the group
+					 * re-picks, tolerance never consulted) stop moving the
+					 * exit. Pin moves only on real death (2 failed probes) or
+					 * a node staying faster by > tolerance for 3 daemon rounds
+					 * ("prefer" holds its node — pool_mode exempts it). */
+					antiflap: (uci.get(uciconfig, ucimain, 'hotswap_antiflap') !== '0'),
+					pool_mode: main_urltest_mode,
+					tolerance: strToInt(isEmpty(main_urltest_tolerance) ? '150' : main_urltest_tolerance) || 150
 				};
 				warn(sprintf('homeproxy: Hot Swap on - URLTest group %s under main-out selector with %d members (hot %d).\n',
 					hs_group, length(hs_members), length(hs_hot)));
