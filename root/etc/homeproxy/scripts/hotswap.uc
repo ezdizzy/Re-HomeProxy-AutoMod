@@ -24,7 +24,8 @@
  * Contract ($RUN_DIR/hotswap.json, written by generate_client.uc):
  *   { enabled: true, mode: "node"|"urltest", group: "main-out",
  *     primary: "cfg-<sid>-out"|"main-out-auto", hot: [tag…], count: N,
- *     interval: seconds, failback: bool }
+ *     interval: seconds, failback: bool, antiflap: bool, pool_mode: "auto"|
+ *     "prefer"|"manual", tolerance: ms, labels: {tag: human name} }
  * The daemon is mode-agnostic: with mode "urltest" the primary IS the kernel
  * URLTest group (main-out-auto) — probing it tests the group's current pick,
  * and a selector switch to a direct node bypasses a group stuck on a dead
@@ -240,6 +241,15 @@ function pinnable(tag) {
 	return (index([ 'direct-out', 'block-out' ], tag) < 0);
 }
 
+/* Human-readable name for the UI-facing last_reason (ч.67): the generator
+ * ships a tag→label map in the contract (the daemon stays UCI-blind by
+ * design); unknown tags fall back to their raw form. */
+function tag_label(tag) {
+	if (hs && type(hs.labels) === 'object' && type(hs.labels[tag]) === 'string' && length(hs.labels[tag]))
+		return hs.labels[tag];
+	return tag;
+}
+
 function health_of(tag) {
 	if (type(health[tag]) !== 'object')
 		health[tag] = { fails: 0, oks: 0, first_ok: 0, last_delay: 0 };
@@ -331,6 +341,9 @@ function read_contract() {
 	c.tolerance = int(c.tolerance) || 150;
 	if (c.pool_mode !== 'auto' && c.pool_mode !== 'prefer' && c.pool_mode !== 'manual')
 		c.pool_mode = 'manual';
+	/* Tag→label map for human-facing reasons (ч.67); NOT part of the sig —
+	 * renaming a node must not reset the pin. */
+	c.labels = (type(c.labels) === 'object') ? c.labels : {};
 	const sig = sprintf('%s|%s|%s|%s|%d|%d|%d|%s|%d', c.mode, c.group, c.primary, join(',', c.hot), c.count || 0, c.failback ? 1 : 0, c.antiflap ? 1 : 0, c.pool_mode, c.tolerance);
 	if (sig !== hs_sig) {
 		hs_sig = sig;
@@ -521,7 +534,7 @@ while (true) {
 				if (switch_to(hs.group, target)) {
 					switches = switches + 1;
 					last_switch_ts = now_ts;
-					last_reason = 'primary down: ' + active + ' -> ' + target;
+					last_reason = 'primary down: ' + tag_label(active) + ' -> ' + tag_label(target);
 					log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
 					health_of(target).fails = 0;
 					if (hs.antiflap) {
@@ -569,7 +582,7 @@ while (true) {
 						chase = {};
 						switches = switches + 1;
 						last_switch_ts = now_ts;
-						last_reason = 'antiflap: sustained better node: ' + last_pinned + ' -> ' + best;
+						last_reason = 'antiflap: sustained better node: ' + tag_label(last_pinned) + ' -> ' + tag_label(best);
 						log('ANTIFLAP: ' + last_reason + ' (switch #' + switches + ')');
 					}
 				}
@@ -585,8 +598,8 @@ while (true) {
 				} else if (switch_to(hs.group, fb_target)) {
 					switches = switches + 1;
 					last_switch_ts = now_ts;
-					last_reason = (fb_target === hs.primary) ? ('primary recovered: ' + fb_target)
-					                                          : ('failback to the previous node: ' + fb_target);
+					last_reason = (fb_target === hs.primary) ? ('primary recovered: ' + tag_label(fb_target))
+					                                          : ('failback to the previous node: ' + tag_label(fb_target));
 					log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
 					health_of(fb_target).oks = 0;
 					health_of(fb_target).first_ok = 0;

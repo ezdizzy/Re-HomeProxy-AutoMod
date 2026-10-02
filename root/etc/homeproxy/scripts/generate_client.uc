@@ -1918,6 +1918,18 @@ if (!isEmpty(main_node)) {
 					/* Selector switches are pure API ops; never tear sessions. */
 					interrupt_exist_connections: false
 				});
+				/* ч.67: human-readable names for the daemon's last_reason — the
+				 * daemon is UCI-blind by contract design, so the generator
+				 * ships a tag→label map (missing label falls back to the sid). */
+				let hs_labels = {};
+				hs_labels[hs_group] = 'URLTest';
+				for (let hs_tag in hs_members) {
+					const hm = match(hs_tag, /^cfg-([A-Za-z0-9]+)-out$/);
+					if (hm) {
+						const hlbl = uci.get(uciconfig, hm[1], 'label');
+						hs_labels[hs_tag] = (hlbl && length(hlbl)) ? '' + hlbl : hm[1];
+					}
+				}
 				hotswap_state = {
 					enabled: true,
 					mode: 'urltest',
@@ -1936,7 +1948,8 @@ if (!isEmpty(main_node)) {
 					 * ("prefer" holds its node — pool_mode exempts it). */
 					antiflap: (uci.get(uciconfig, ucimain, 'hotswap_antiflap') !== '0'),
 					pool_mode: main_urltest_mode,
-					tolerance: strToInt(isEmpty(main_urltest_tolerance) ? '150' : main_urltest_tolerance) || 150
+					tolerance: strToInt(isEmpty(main_urltest_tolerance) ? '150' : main_urltest_tolerance) || 150,
+					labels: hs_labels
 				};
 				warn(sprintf('homeproxy: Hot Swap on - URLTest group %s under main-out selector with %d members (hot %d).\n',
 					hs_group, length(hs_members), length(hs_hot)));
@@ -2078,6 +2091,16 @@ if (!isEmpty(main_node)) {
 				 * and clients reconnect instantly onto the new pick. */
 				interrupt_exist_connections: false
 			});
+			/* ч.67: tag→label map for the daemon's last_reason (see the
+			 * urltest branch — the daemon itself stays UCI-blind). */
+			let hs_labels = {};
+			for (let hs_tag in hs_members) {
+				const hm = match(hs_tag, /^cfg-([A-Za-z0-9]+)-out$/);
+				if (hm) {
+					const hlbl = uci.get(uciconfig, hm[1], 'label');
+					hs_labels[hs_tag] = (hlbl && length(hlbl)) ? '' + hlbl : hm[1];
+				}
+			}
 			hotswap_state = {
 				enabled: true,
 				mode: 'node',
@@ -2086,7 +2109,8 @@ if (!isEmpty(main_node)) {
 				hot: hotswap_hot,
 				count: length(hotswap_hot),
 				interval: (hotswap_interval_opt < 5) ? 5 : ((hotswap_interval_opt > 120) ? 120 : hotswap_interval_opt),
-				failback: hotswap_failback_opt
+				failback: hotswap_failback_opt,
+				labels: hs_labels
 			};
 			warn(sprintf('homeproxy: Hot Swap on - main-out selector with %d members (hot %d, primary %s).\n',
 				length(hs_members), length(hotswap_hot), primary_tag));
