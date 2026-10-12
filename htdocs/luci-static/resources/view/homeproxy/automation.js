@@ -624,7 +624,11 @@ return view.extend({
 			if (e.status === 'geo_blocked')
 				return E('span', { 'class': 'hpbadge hpb-noproxy' }, [ _('Geo-blocked (node)') ]);
 			if (e.status === 'blocked')
-				return E('span', { 'class': 'hpbadge hpb-blocked' }, [ _('Blocked') ]);
+				return E('span', { 'class': 'hpbadge hpb-blocked' },
+					[ e.kind === 'dns_poison' ? _('Blocked (DNS)') :
+					  e.kind === 'stub' ? _('Blocked (stub)') :
+					  e.kind === 'tls_dpi' ? _('Blocked (DPI)') :
+					  e.kind ? _('Blocked (refusal)') : _('Blocked') ]);
 			if (e.status === 'direct')
 				return E('span', { 'class': 'hpbadge hpb-direct' }, [ _('Direct') ]);
 			if (e.status === 'direct_pending')
@@ -642,10 +646,19 @@ return view.extend({
 			if (e.src !== 'learned')
 				return _('pinned by user');
 			if (e.status === 'blocked') {
+				/* ч.68: censorship-mechanism verdict from the probe signals. */
+				const KINDS = {
+					dns_poison: _('DNS poisoning: the ISP resolver served a fake address (confirmed via secure DNS)'),
+					stub:       _('ISP block page: the connection is redirected to the provider stub'),
+					sigpage:    _('block page served with HTTP 200 (body signature match)'),
+					tls_dpi:    _('TLS DPI: the handshake is reset right after ClientHello (SNI filtering)'),
+					hardcode:   _('censorship refusal code (403/406/451) — direct is refused, proxy works')
+				};
+				let kind = KINDS[e.kind] || null;
 				if (!e.direct && !e.proxy)
-					return _('blocked (details not recorded)');
+					return kind || _('blocked (details not recorded)');
 				let d = e.direct || '✗', p = e.proxy || '✓';
-				return _('direct %s ✗ / proxy %s ✓').format(d, p);
+				return (kind ? (kind + ' · ') : '') + _('direct %s ✗ / proxy %s ✓').format(d, p);
 			}
 			if (e.status === 'blocked_no_proxy') return _('blocked both ways');
 			if (e.status === 'unknown') return _('uncertain');

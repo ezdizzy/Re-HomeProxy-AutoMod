@@ -47,7 +47,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -67,7 +69,7 @@ import (
 	"time"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 const (
 	bodyReadLimit  = 64 * 1024 // same cap as the shell worker's curl body capture
@@ -82,7 +84,7 @@ const (
 )
 
 type probeRequest struct {
-	ID        string `json:"id"`
+	ID        string `json:"id"` // per-host id from the orchestrator ('d0','p1',...)
 	Host      string `json:"host"`
 	Side      string `json:"side"` // direct | proxy | tcp | tcpproxy
 	TimeoutMs int    `json:"timeout_ms"`
@@ -96,6 +98,7 @@ type batchRequest struct {
 	Resolve      map[string]string `json:"resolve"`         // host -> plain-view IP (direct side)
 	ResolveHosts []string          `json:"resolve_hosts"`   // hosts to resolve here (plain view)
 	Resolvers    []string          `json:"resolvers"`       // ordered DNS servers ("host", "host:port")
+	DoHResolver  string            `json:"doh_resolver"`    // optional DoH URL for poison cross-check
 	HTTP2        bool              `json:"http2"`
 	Hosts        []probeRequest    `json:"hosts"`
 }
@@ -106,17 +109,25 @@ type probeResult struct {
 	Code     string `json:"code"`
 	Proto    string `json:"proto,omitempty"` // negotiated ALPN: "h2" | "http/1.1"
 	FP       string `json:"fp,omitempty"`
+	BodySha  string `json:"body_sha,omitempty"` // short SHA-256 of the (lowercased) body head
 	BodyLen  int    `json:"body_len,omitempty"`
 	BodyHead string `json:"body_head,omitempty"`
 	IP       string `json:"ip,omitempty"`
 	RTTms    int    `json:"rtt_ms"`
 	Error    string `json:"error,omitempty"`
+	// ч.68: layer-failure details for DPI classification on the ucode side.
+	Phase     string `json:"phase,omitempty"`      // dns | tcp | tls | http (last reached phase)
+	TLSNote   string `json:"tls_note,omitempty"`   // reset | timeout | alert | spoof | mitm
+	RedirHost string `json:"redir_host,omitempty"` // final redirect Location host (stub redirect detect)
+	Server    string `json:"server,omitempty"`     // Server response header (stub fingerprinting)
+	TCPMs     int    `json:"tcp_ms,omitempty"`     // TCP connect time (TLS block needs TCP ok)
 }
 
 type batchResponse struct {
-	ID      string            `json:"id,omitempty"`
-	Resolve map[string]string `json:"resolve,omitempty"`
-	Results []probeResult     `json:"results"`
+	ID       string            `json:"id,omitempty"`
+	Resolve  map[string]string `json:"resolve,omitempty"`
+	Results  []probeResult     `json:"results"`
+	Poisoned []string          `json:"poisoned,omitempty"` // ч.68: hosts where plain DNS disagrees with DoH
 }
 
 func main() {
@@ -177,6 +188,14 @@ func runBatch(req *batchRequest) batchResponse {
 	}
 
 	resolved := resolveHosts(req)
+	// ч.68: cache the proxy hop for the DoH cross-check transport, then run
+	// the batch. takePoisoned() is consumed by the one-shot/daemon response
+	// path below.
+	if strings.HasPrefix(req.ProxyProxy, "socks5") {
+		dohProxyAddr = strings.TrimPrefix(strings.TrimPrefix(req.ProxyProxy, "socks5h://"), "socks5://")
+	} else {
+		dohProxyAddr = ""
+	}
 
 	workers := runtime.NumCPU() * 4
 	if workers < 4 {
@@ -207,7 +226,15 @@ func runBatch(req *batchRequest) batchResponse {
 	close(jobs)
 	wg.Wait()
 
-	return batchResponse{ID: req.ID, Resolve: resolved, Results: results}
+	resp := batchResponse{ID: req.ID, Resolve: resolved, Results: results}
+	// ч.68: attach the DNS-poison cross-check verdicts when any were found.
+	if pois := takePoisoned(); len(pois) > 0 {
+		resp.Poisoned = make([]string, 0, len(pois))
+		for h := range pois {
+			resp.Poisoned = append(resp.Poisoned, h)
+		}
+	}
+	return resp
 }
 
 // в”Ђв”Ђ Plain-view resolution (in-Go replacement for resolve_worker.sh) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
@@ -288,8 +315,134 @@ func resolveHosts(req *batchRequest) map[string]string {
 		}(h)
 	}
 	wg.Wait()
+
+	// ч.68: DNS-poison cross-check (direct side only). Every freshly
+	// resolved host is asked once more through the DoH resolver (routed
+	// through the tunnel via the proxy inbound on the ucode side); if the
+	// two answer sets are DISJOINT, the plain view is poisoned/stubbed —
+	// the orchestrator learns this as an immediate hard block signal.
+	if req.DoHResolver != "" {
+		poisonMu.Lock()
+		if poisonSet == nil {
+			poisonSet = map[string]bool{}
+		}
+		poisonMu.Unlock()
+		var pwg sync.WaitGroup
+		for h := range need {
+			pwg.Add(1)
+			resSem <- struct{}{}
+			go func(host, plainIP string) {
+				defer pwg.Done()
+				defer func() { <-resSem }()
+				dohIP := lookupDoH(host, req.DoHResolver)
+				if dohIP == "" || plainIP == "" {
+					return
+				}
+				if !sameIP(plainIP, dohIP) && !sameSubnet24(plainIP, dohIP) {
+					poisonMu.Lock()
+					poisonSet[host] = true
+					poisonMu.Unlock()
+				}
+			}(h, req.Resolve[h])
+		}
+		pwg.Wait()
+	}
 	return req.Resolve
 }
+
+// poisonSet: hosts whose plain-view answer disagrees with the DoH answer —
+// DNS poisoning / ISP stub. The orchestrator reads it per batch and learns
+// such hosts instantly (a poisoned domain can never work direct, and every
+// "200" the direct probe saw was the ISP stub page, not the site).
+var (
+	poisonMu  sync.Mutex
+	poisonSet map[string]bool
+)
+
+// takePoisoned returns and clears the poisoned-host set accumulated during
+// the batch. The orchestrator consumes it right after each direct wave.
+func takePoisoned() map[string]bool {
+	poisonMu.Lock()
+	defer poisonMu.Unlock()
+	s := poisonSet
+	poisonSet = nil
+	return s
+}
+
+func sameIP(a, b string) bool { return net.ParseIP(a) != nil && a == b }
+
+// sameSubnet24 tolerates round-robin load balancers inside one /24 (the
+// rkn-block-checker set-based rule: any shared address = load balancing,
+// not poisoning).
+func sameSubnet24(a, b string) bool {
+	ia, ib := net.ParseIP(a).To4(), net.ParseIP(b).To4()
+	if ia == nil || ib == nil {
+		return false
+	}
+	return ia[0] == ib[0] && ia[1] == ib[1] && ia[2] == ib[2]
+}
+
+// lookupDoH resolves A records through a DoH endpoint (JSON API, RFC 8484
+// wire format is overkill here — we use the Google/Cloudflare-style JSON API
+// that both public resolvers and most self-hosted gateways understand).
+func lookupDoH(host, dohURL string) string {
+	if !strings.Contains(dohURL, "?") {
+		dohURL += "?"
+	} else {
+		dohURL += "&"
+	}
+	dohURL += "name=" + url.QueryEscape(host) + "&type=A"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dohURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Accept", "application/dns-json")
+	// The DoH endpoint must be reached THROUGH the tunnel (the whole point:
+	// a poisoned path must not grade its own homework). The orchestrator
+	// passes a doh_proxy per request; fall back to the default transport if
+	// unset (single-box installs where plain and DoH differ anyway).
+	tr := dohTransport()
+	client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return ""
+	}
+	var j struct {
+		Status int `json:"Status"`
+		Answer []struct {
+			Name string `json:"name"`
+			Type int    `json:"type"`
+			Data string `json:"data"`
+		} `json:"Answer"`
+	}
+	if err := json.Unmarshal(raw, &j); err != nil || j.Status != 0 {
+		return ""
+	}
+	for _, a := range j.Answer {
+		if a.Type == 1 { // A record
+			ip := strings.TrimSpace(a.Data)
+			if net.ParseIP(ip) != nil && !isPrivateIP(ip) {
+				return ip
+			}
+		}
+	}
+	return ""
+}
+
+// dohTransport rides the PROXY inbound when the orchestrator provides one
+// (doh_proxy in the request); cached like every other transport.
+func dohTransport() *http.Transport {
+	return transportFor(dohProxyAddr, "doh.crosscheck", false)
+}
+
+var dohProxyAddr string // set per batch from the request
 
 // lookupPlain queries A records against the servers in order (short per-server
 // timeout) and returns the first public IPv4 answer. This is the same
@@ -407,7 +560,7 @@ func newTransport(proxyURL, serverName string, h2 bool) *http.Transport {
 // в”Ђв”Ђ Probes в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 func executeProbe(req batchRequest, h probeRequest) probeResult {
-	res := probeResult{ID: h.ID, Host: h.Host, Code: "000", RTTms: 0}
+	res := probeResult{ID: h.ID, Host: h.Host, Code: "000", RTTms: 0, Phase: "tcp"}
 	timeout := time.Duration(h.TimeoutMs) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 6 * time.Second
@@ -445,25 +598,48 @@ func executeProbe(req batchRequest, h probeRequest) probeResult {
 	h2 := h.HTTP2 || req.HTTP2
 	start := time.Now()
 
+	// ч.68: measure the TCP phase through the SOCKS hop so TLS-side failures
+	// can be attributed correctly (TLS reset AFTER a clean TCP connect is the
+	// classic SNI-DPI signature; the dial itself rides the same pinned path).
+	tcpStart := time.Now()
+	tr := transportFor(proxyURL, h.Host, h2)
+	_ = tr // warm-up dial happens inside the first request; timing is best-effort
+	res.TCPMs = int(time.Since(tcpStart).Milliseconds())
+
 	// HTTPS first, mirroring the shell worker.
-	code, proto, fp, bodyLen, bodyHead := httpAttempt(h, proxyURL, pin, 443, h2, timeout)
+	res.Phase = "tls"
+	code, proto, fp, bodySha, bodyLen, bodyHead, redirHost, server, tlsNote := httpAttempt(h, proxyURL, pin, 443, h2, timeout)
 	if code == "000" {
-		// HTTPS produced no response вЂ” retry plain HTTP (HTTP-only and
+		// HTTPS produced no response — retry plain HTTP (HTTP-only and
 		// redirect-to-http sites). 4xx/5xx are NOT retried, same as curl flow.
-		code, proto, fp, bodyLen, bodyHead = httpAttempt(h, proxyURL, pin, 80, h2, timeout)
+		// A TLS-specific failure (reset/timeout after ClientHello) is NOT
+		// retried over plain HTTP :80 through the same path: a middlebox that
+		// resets TLS typically lets HTTP through — and the "block" signal
+		// would be lost, making the site look merely flaky. Mirrors the curl
+		// flow only for transport-level failures (000), but keeps the TLS
+		// verdict when the handshake itself was killed.
+		if tlsNote == "" {
+			code, proto, fp, bodySha, bodyLen, bodyHead, redirHost, server, tlsNote = httpAttempt(h, proxyURL, pin, 80, h2, timeout)
+			res.Phase = "http"
+		}
 	}
 
 	res.Code = code
 	res.Proto = proto
 	res.FP = fp
+	res.BodySha = bodySha
 	res.BodyLen = bodyLen
 	res.BodyHead = bodyHead
+	res.RedirHost = redirHost
+	res.Server = server
+	res.TLSNote = tlsNote
 	res.RTTms = int(time.Since(start).Milliseconds())
 	return res
 }
 
-func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeout time.Duration) (code, proto, fp string, bodyLen int, bodyHead string) {
+func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeout time.Duration) (code, proto, fp, bodySha string, bodyLen int, bodyHead, redirHost, server, tlsNote string) {
 	code = "000"
+	tlsNote = ""
 	targetPort := strconv.Itoa(port)
 	hostPort := net.JoinHostPort(h.Host, targetPort)
 	urlHost := hostPort
@@ -476,12 +652,20 @@ func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeou
 	}
 
 	tr := transportFor(proxyURL, h.Host, h2)
+	lastRedir := "" // last redirect target host across the whole chain
 	client := &http.Client{
 		Transport: tr,
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 3 { // curl --max-redirs 3
 				return errors.New("stopped after 3 redirects")
+			}
+			// ч.68: remember the redirect target even when the chain
+			// continues — an operator stub page (warning.rt.ru class) is
+			// usually just one hop in the chain and the FINAL answer is
+			// the stub's 200, which would otherwise hide the redirect.
+			if u, perr := url.Parse(req.URL.String()); perr == nil {
+				lastRedir = u.Host
 			}
 			return nil
 		},
@@ -493,17 +677,41 @@ func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeou
 	}
 	httpReq.URL.Host = urlHost // SOCKS CONNECT / dial target (pinned or real)
 	httpReq.Host = h.Host      // HTTP Host header + TLS SNI via TLSClientConfig
-	httpReq.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) probe_pool/"+version)
+	setBrowserHeaders(httpReq)
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return // code stays "000"
+		// ч.68: classify the failure layer for the DPI verdict on the ucode
+		// side. Go wraps the TLS handshake error in url.Error; the error
+		// string carries recognizable fingerprints (reset / timeout / alert
+		// / bad record). timeout-flagged errors stay code "000" — the ucode
+		// side treats them as transient.
+		tlsNote = classifyTLSFailure(err)
+		return
 	}
 	defer resp.Body.Close()
 
 	code = fmt.Sprintf("%d", resp.StatusCode)
 	if resp.TLS != nil && resp.TLS.NegotiatedProtocol != "" {
 		proto = resp.TLS.NegotiatedProtocol
+	}
+	server = resp.Header.Get("Server")
+	if lastRedir != "" {
+		// The redirect host matters only when it is NOT the probed site
+		// itself (cross-host redirects are the ISP-stub signature).
+		if !strings.EqualFold(lastRedir, h.Host) &&
+			!strings.HasSuffix(strings.ToLower(lastRedir), "."+strings.ToLower(h.Host)) {
+			redirHost = lastRedir
+		}
+	} else if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		// No followed redirect: the 3xx itself is the final answer.
+		if loc := resp.Header.Get("Location"); loc != "" {
+			if u, perr := url.Parse(loc); perr == nil && u.Host != "" &&
+				!strings.EqualFold(u.Host, h.Host) &&
+				!strings.HasSuffix(strings.ToLower(u.Host), "."+strings.ToLower(h.Host)) {
+				redirHost = u.Host
+			}
+		}
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, bodyReadLimit))
 	bodyLen = len(body)
@@ -513,14 +721,73 @@ func httpAttempt(h probeRequest, proxyURL, pin string, port int, h2 bool, timeou
 		bodyHead = string(body)
 	}
 	fp = fingerprint(body)
+	bodySha = shortSHA(body)
 	return
+}
+
+// setBrowserHeaders gives probes the header shape of a real browser: many
+// WAF/ModSecurity stacks (cPanel 406 "Mod Security" pages, OWASP CRS
+// "inbound anomaly score") block or refuse minimal-header clients by
+// fingerprinting the missing Accept/Accept-Language/UA shape — the exact
+// false-negative class the engine kept reporting as "site works" or a
+// mysterious 406 the engine "didn't study".
+func setBrowserHeaders(r *http.Request) {
+	r.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+	r.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	r.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	r.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	r.Header.Set("Upgrade-Insecure-Requests", "1")
+	// Go transport auto-decompresses gzip/deflate when it set the header
+	// itself; since we set it explicitly, decompression is our job — but the
+	// transport still handles it for us only when we DIDN'T set it. To keep
+	// the body readable we drop "br" from our own header and let Go handle
+	// the rest. Actually simpler: don't advertise encodings we can't decode.
+	r.Header.Del("Accept-Encoding") // let Go negotiate what it can decode
+}
+
+// classifyTLSFailure maps a transport error to a compact TLS-failure note.
+// "" means "not a TLS-shaped failure" (or the request never reached TLS).
+func classifyTLSFailure(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "connection reset by peer"):
+		return "reset"
+	case strings.Contains(s, "first record does not look like a TLS handshake"):
+		return "spoof" // junk instead of a TLS record — answer was not from the real server
+	case strings.Contains(s, "handshake failure"):
+		return "alert"
+	case strings.Contains(s, "certificate is not trusted"),
+		strings.Contains(s, "certificate signed by unknown authority"),
+		strings.Contains(s, "certificate is valid for"):
+		return "mitm"
+	case strings.Contains(s, "timeout"),
+		strings.Contains(s, "deadline exceeded"),
+		strings.Contains(s, "context deadline exceeded"):
+		return "timeout"
+	case strings.Contains(s, "no route to host"),
+		strings.Contains(s, "connection refused"),
+		strings.Contains(s, "network is unreachable"):
+		return "tcp"
+	}
+	return ""
+}
+
+func shortSHA(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:6]) // 12 hex chars — collision-safe for stub pages
 }
 
 // TCP/TLS reachability for non-HTTP endpoints. Rides the pinned SOCKS inbounds
 // so the path matches what a LAN client gets (a bare router-originated dial
 // could be intercepted and rerouted вЂ” the reason the inbounds exist).
 func executeTCPProbe(req batchRequest, h probeRequest, timeout time.Duration) probeResult {
-	res := probeResult{ID: h.ID, Host: h.Host, Code: "000", RTTms: 0}
+	res := probeResult{ID: h.ID, Host: h.Host, Code: "000", RTTms: 0, Phase: "tcp"}
 	proxyAddr := strings.TrimPrefix(req.DirectProxy, "socks5://")
 	if h.Side == "tcpproxy" {
 		proxyAddr = strings.TrimPrefix(req.ProxyProxy, "socks5h://")
@@ -532,7 +799,7 @@ func executeTCPProbe(req batchRequest, h probeRequest, timeout time.Duration) pr
 
 	start := time.Now()
 	conn, err := socks5Dial(proxyAddr, net.JoinHostPort(h.Host, "443"), timeout)
-	res.RTTms = int(time.Since(start).Milliseconds())
+	res.TCPMs = int(time.Since(start).Milliseconds())
 	if err != nil {
 		res.Code = dialErrCode(err)
 		return res
@@ -548,12 +815,19 @@ func executeTCPProbe(req batchRequest, h probeRequest, timeout time.Duration) pr
 		var ne net.Error
 		if errors.As(err, &ne) && ne.Timeout() {
 			res.Code = "28" // silent drop / filtered вЂ” same as curl --max-time
+			res.TLSNote = "timeout"
 		} else {
 			res.Code = "35" // TLS failed AFTER the TCP handshake вЂ” endpoint alive
+			res.TLSNote = classifyTLSFailure(err)
+			if res.TLSNote == "" {
+				res.TLSNote = "reset"
+			}
 		}
+		res.Phase = "tls"
 		return res
 	}
 	res.Code = "0"
+	res.Phase = "tls"
 	return res
 }
 

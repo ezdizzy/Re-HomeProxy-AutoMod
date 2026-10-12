@@ -187,6 +187,11 @@ let auto_auth_set = {};
  * support closures over siblings' locals ("access to undeclared variable") —
  * same constraint dns_failover_check hit before it moved to module vars. */
 let hot_set = {};
+/* ч.68: DNS-poisoned hosts (plain view vs DoH disjoint) — module scope for the
+ * same closure reason. host → timestamp of the last detection; a fresh entry
+ * (<30 days) makes the next direct probe learn INSTANTLY (the plain answer is
+ * an ISP stub, the "site" the direct probe saw was never real). */
+let poisoned_hosts = {};
 let last_reeval = 0;
 let last_prune = 0;
 /* Tracks whether WE enabled dnsmasq query logging. The enable/disable pair
@@ -568,6 +573,63 @@ function body_blocked(body) {
 	if (!body) return false;
 	body = lc(body);
 	for (let s in BLOCK_SIGNATURES) if (index(body, s) >= 0) return true;
+	return false;
+}
+/* ч.68: WAF/bot-wall markers. A response whose body carries one of these is a
+ * WAF/challenge/antibot page — the request REACHED the real service. Such an
+ * answer (403/406/429/503 with these markers) is NOT a censorship verdict:
+ * routing the site through the proxy changes only the exit IP, and a WAF
+ * that flags datacenter exits will flag the tunnel exit too. Used to SUPPRESS
+ * learning (direct-side WAF answer = the site is reachable, the shape of the
+ * client is the problem) and to tag the verdict in the UI.
+ *
+ * Two confidence tiers:
+ *   strong — challenge/captcha UX markers ("Just a moment…", cf-chl): a WAF
+ *            page by construction, whatever the code;
+ *   weak   — vendor fingerprints (cloudflare, mod_security): a real WAF page
+ *            on their codes (406/429/503 are WAF canon; 403 is also the
+ *            origin's plain "forbidden", so the vendor fingerprint alone
+ *            must not excuse a 403 — that one is a genuine block when the
+ *            proxy answers 200 with different content). */
+const WAF_SIGNATURES_STRONG = [
+	'just a moment', 'attention required', 'checking your browser',
+	'cf-chl', 'challenge-platform', 'cf-mitigated', 'cf-turnstile',
+	'are you a robot', 'bot protection', 'ddos protection', 'captcha'
+];
+const WAF_SIGNATURES_WEAK = [
+	'cloudflare', 'mod_security', 'modsecurity', 'rule id:',
+	'request limit', 'too many requests', 'rate limit'
+];
+function waf_page(body, code) {
+	if (!body || length(body) > 32768) return false;
+	const b = lc(body);
+	for (let s in WAF_SIGNATURES_STRONG)
+		if (index(b, s) >= 0) return true;
+	if (code === '406' || code === '429' || code === '503') {
+		for (let s in WAF_SIGNATURES_WEAK)
+			if (index(b, s) >= 0) return true;
+	}
+	return false;
+}
+/* ч.68: known ISP/RKN stub hosts. A redirect (302/307) to one of these is the
+ * operator's block page — an instant, unambiguous block verdict. Sources:
+ * OONI research + PingZen ISP list (Rostelecom/MTS/Beeline/MegaFon/Tele2/
+ * Dom.ru/TTK/Yota stub pages). Matches the redirect Host exactly or as a
+ * suffix (warning.rt.ru, blocked.mts.ru, ...). */
+const STUB_REDIRECT_HOSTS = [
+	'warning.rt.ru', 'blocked.mts.ru', 'blocked.beeline.ru', 'stop.deti.mail.ru',
+	'warningrt.ru', 'rkn.gov.ru', 'blocklist.rkn.gov.ru', 'eais.rkn.gov.ru',
+	'blocked.tele2.ru', 'blocked.megafon.ru', 'block.domru.ru', 'warning.ttk.ru',
+	'blocked.yota.ru', 'zapret.gosuslugi.ru', 'warnings.mts.ru'
+];
+function is_stub_redirect_host(h) {
+	h = lc(trim(h || ''));
+	if (!length(h)) return false;
+	for (let s in STUB_REDIRECT_HOSTS) {
+		if (h === s) return true;
+		const n = length(h) - length(s) - 1;
+		if (n > 0 && substr(h, n) === '.' + s) return true;
+	}
 	return false;
 }
 /* Geo-refusal signatures (ч.51): services that serve a 200 page which refuses
@@ -1681,6 +1743,12 @@ echo done > "$PRE.done"
 			resolve: resolve,
 			resolve_hosts: resolve_hosts,
 			resolvers: resolver_list(),
+			/* ч.68: DoH cross-check endpoint for the DNS-poison detector. The
+			 * Go side resolves fresh hosts a second time through this DoH URL
+			 * (which it dials through the PROXY hop — a poisoned path must not
+			 * grade its own homework) and reports hosts whose plain and DoH
+			 * answers are disjoint in the batch response. */
+			doh_resolver: 'https://cloudflare-dns.com/dns-query',
 			http2: !!http2_flag && (side !== 'tcp' && side !== 'tcpproxy'),
 			hosts: hosts
 		};
@@ -1723,9 +1791,30 @@ echo done > "$PRE.done"
 			}
 		}
 		if (length(keys(pv_cache)) > 400) pv_cache = {};
+		/* ч.68: harvest the DNS-poison cross-check verdicts (direct side only).
+		 * A host in resp.poisoned resolved to two DISJOINT address sets —
+		 * plain (RU-facing) vs DoH (tunnel): the plain answer is the ISP stub
+		 * or a forged record, the site can never work direct. Recorded in the
+		 * module-scope poisoned_hosts set (consumed by the wave kind-derivation
+		 * and persisted for the UI verdict tag). */
+		if (side === 'direct' && type(resp.poisoned) === 'array' && length(resp.poisoned)) {
+			for (let ph in resp.poisoned) {
+				ph = lc(trim('' + ph));
+				if (length(ph)) {
+					poisoned_hosts[ph] = time();
+					log('DNS poison detected (plain vs DoH disjoint): ' + ph);
+				}
+			}
+		}
 		system(`rm -f ${shellquote(PP_IN)} ${shellquote(PP_OUT)} 2>/dev/null`);
 
 		let out = {};
+		/* id -> host map for the wave-signal derivation below: the results loop
+		 * iterates resp.results (for-in yields elements), where `k` does not
+		 * exist — the ч.68 kind logic needs the host per result. */
+		let id_host = {};
+		for (let k = 0; k < length(items); k++)
+			id_host[items[k].i] = items[k].h;
 		/* ⚠ ч.62 CRITICAL FIX: ucode `for-in` over an ARRAY yields the ELEMENTS
 		 * (verified live ч.59, hit again here). The old `resp.results[r]` indexed
 		 * the array with the element itself → undefined → EVERY probe result was
@@ -1747,19 +1836,46 @@ echo done > "$PRE.done"
 				/* Same block-page rule as the shell path: 2xx/3xx with a small
 				 * body carrying a signature. body_head is the first 8 KB,
 				 * body_len the full size — the <32768 guard stays honest. */
-				if (c === 'ok' && blen < 32768 && body_blocked(body))
+				let sigpage = (c === 'ok' && blen < 32768 && body_blocked(body));
+				if (sigpage)
 					block = true;
 				let geo = (c === 'ok' && blen < 32768 && geo_refused(body));
+				/* ч.68: signal extraction (probe_pool v1.3.0). kind is decided
+				 * HERE per side; classify() reads it after both waves. */
+				let kind = '';
+				let waf = (blen < 32768 && waf_page(body, code));
+				let redir = trim('' + (res.redir_host || ''));
+				let tlsn = trim('' + (res.tls_note || ''));
+				let rhost = lc(id_host[res.id] || '');
+				if (side === 'direct') {
+					if (is_stub_redirect_host(redir))
+						kind = 'stub';
+					else if (poisoned_hosts[rhost])
+						kind = 'dns_poison';
+					else if (sigpage)
+						kind = 'sigpage';
+					else if (tlsn === 'reset' || tlsn === 'timeout' || tlsn === 'spoof')
+						/* reset = RST right after ClientHello; timeout = silent
+						 * ClientHello drop; spoof = junk instead of a TLS record.
+						 * All three are the TSPU SNI-filtering signatures. A dead
+						 * server can produce the same shapes — the p_ok gate in
+						 * classify() absorbs that (a dead site does not answer
+						 * through the tunnel either). */
+						kind = 'tls_dpi';
+					else if (c === 'block' && !waf &&
+					         (code === '403' || code === '406' || code === '451'))
+						kind = 'hardcode';
+				}
 				out[res.id] = { code: code, ok: (c === 'ok') && !block && !geo, block: block, geo: geo,
 					fp: '' + (res.fp || ''), ip: (side === 'direct' && res.ip) ? res.ip : null,
-					rtt_ms: int(res.rtt_ms) || 0 };
+					rtt_ms: int(res.rtt_ms) || 0, kind: kind, waf: waf, tls_note: tlsn };
 			}
 		}
 		/* A missing result for a dispatched host must never be read as success:
 		 * classify treats it as an unproven candidate → fabricate 000. */
 		for (let k = 0; k < length(items); k++)
 			if (!exists(out, items[k].i))
-				out[items[k].i] = { code: '000', ok: false, block: false, geo: false, fp: '', ip: null, rtt_ms: 0 };
+				out[items[k].i] = { code: '000', ok: false, block: false, geo: false, fp: '', ip: null, rtt_ms: 0, kind: '', waf: false };
 		return out;
 	}
 
@@ -1804,15 +1920,33 @@ echo done > "$PRE.done"
 			if (side === 'tcp' || side === 'tcpproxy') {
 				let ok = false;
 				for (let c in TCP_OK_EXIT) if (code === '' + c) ok = true;
-				res = { code: length(code) ? code : '-1', ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: rtt_ms };
+				/* curl exit 35 = TLS failure AFTER TCP ok — on the direct side
+				 * this is usually the SNI-DPI reset (the same signal the native
+				 * pool reports as tls_note=reset). Exit 56 = recv failure. */
+				let tlsn = '';
+				if (!ok && (code === '35' || code === '56')) tlsn = 'reset';
+				res = { code: length(code) ? code : '-1', ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: rtt_ms, kind: (side === 'tcp' && tlsn === 'reset') ? '' : '', waf: false, tls_note: tlsn };
 			} else {
 				let c = classify_code(code);
 				let block = (c === 'block');
 				let geo = (c === 'ok' && length(body) < 32768 && geo_refused(body));
-				if (c === 'ok' && length(body) < 32768 && body_blocked(body))
+				let sigpage = (c === 'ok' && length(body) < 32768 && body_blocked(body));
+				if (sigpage)
 					block = true;
+				let waf = (length(body) < 32768 && waf_page(body, code));
+				let kind = '';
+				if (side === 'direct') {
+					if (poisoned_hosts[items[k].h] || poisoned_hosts[lc(items[k].h)])
+						kind = 'dns_poison';
+					else if (sigpage)
+						kind = 'sigpage';
+					else if (c === 'block' && !waf &&
+					         (code === '403' || code === '406' || code === '451'))
+						kind = 'hardcode';
+				}
 				res = { code: length(code) ? code : '000', ok: (c === 'ok') && !block && !geo, block: block, geo: geo, fp: fingerprint(body),
-				        ip: (side === 'direct' && length(ipraw)) ? ipraw : null, rtt_ms: rtt_ms };
+				        ip: (side === 'direct' && length(ipraw)) ? ipraw : null, rtt_ms: rtt_ms,
+				        kind: kind, waf: waf, tls_note: '' };
 			}
 			out[items[k].i] = res;
 			system(`rm -f ${shellquote(pre)}.code ${shellquote(pre)}.body ${shellquote(pre)}.done ${shellquote(pre)}.ip 2>/dev/null`);
@@ -2647,6 +2781,14 @@ echo done > "$PRE.done"
 		st.proxy = p ? p.code : 'n/a';
 		st.type = is_ip ? 'ip' : 'domain';
 
+		/* ── ч.68: block-kind tag for the UI (d.kind is derived in the wave
+		 * harvest from the probe_pool v1.3.0 signals: tls_note / redir_host /
+		 * poisoned flag; shell-worker path keeps the legacy shapes). ── */
+		if (d.kind)
+			st.block_kind = d.kind;
+		else if (st.status !== 'blocked')
+			delete st.block_kind;
+
 		/* Geo-sensitive seed (Gemini class): the routing decision is PINNED and
 		 * never re-verdicted — a plain GET to the app shell answers 200 through
 		 * ANY path, so every probe path here "proves direct works" and would
@@ -2780,6 +2922,61 @@ echo done > "$PRE.done"
 				st.confirms = 0;
 				return;
 			}
+			/* ч.68 WAF discrimination: a direct 403/406/429/503 whose body carries
+			 * a WAF/challenge marker means the request REACHED the real service —
+			 * that is bot-wall behaviour, not censorship. Probing is a bare-headers
+			 * client (curl/Go default UA), so WAFs flag it; a real browser session
+			 * often passes. Learning such a host would tunnel it forever while the
+			 * actual browser traffic was never blocked. The proxy answering with
+			 * the SAME WAF marker (p.body carries it too) is extra proof. Drop the
+			 * candidate and remember the shape so the UI can say "WAF, not block". */
+			if (!is_ip && d.block && d.waf) {
+				st.status = 'direct';
+				st.confirms = 0;
+				st.waf_seen = time();
+				log(`not learned (WAF/bot-wall on direct, not a block shape): ${dom}`);
+				return;
+			}
+			/* ч.68 INSTANT LEARN — unambiguous block verdicts. Each of these
+			 * signals proves the direct path is censored while the proxy
+			 * reaches the real page; no confirmation ladder can improve on
+			 * them, and every extra pass is user-visible pain:
+			 *   dns_poison — plain-view DNS answered with an IP disjoint from
+			 *                the DoH answer (probe_pool cross-check): every
+			 *                "direct works" reading was the ISP stub, never
+			 *                the site;
+			 *   stub       — direct 302/307 redirects to a known operator
+			 *                block-page host (warning.rt.ru class);
+			 *   sigpage    — direct served a page carrying a block signature
+			 *                while the proxy page is signature-free (the
+			 *                legacy 200-block-page case, now also seen when
+			 *                the code itself looks fine);
+			 *   tls_dpi    — TCP connect succeeds direct but the TLS handshake
+			 *                is RESET right after ClientHello (probe_pool
+			 *                tls_note=reset) — the TSPU SNI signature;
+			 *   hardcode   — direct 403/406/451 (censorship-grade refusals)
+			 *                with a non-WAF body while the proxy serves real
+			 *                content. */
+			const INSTANT = { dns_poison: true, stub: true, sigpage: true, tls_dpi: true, hardcode: true };
+			if (INSTANT[d.kind]) {
+				if (is_ip) {
+					if (ptr_is_ru(dom)) {
+						log('not learning IP (RU-TLD rDNS, always direct): ' + dom);
+						st.status = 'direct';
+						st.confirms = 0;
+						return;
+					}
+					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; }
+				} else if (!auto_set[dom]) {
+					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++;
+					if (is_auth_like(dom))
+						sync_auth_families();
+				}
+				st.status = 'blocked';
+				st.confirms = 0;
+				delete st.dconfirms;
+				return;
+			}
 			/* Unreachable direct (000/timeout/RST) can be a transient blip — require
 			 * ONE extra confirmation before learning. A hard refusal (4xx/5xx) is a
 			 * strong block signal and learns at the normal min_confirm. Learned IPs
@@ -2789,6 +2986,11 @@ echo done > "$PRE.done"
 			if (adaptive_confirm) {
 				let dcode = ('' + (d.code || '000'));
 				let dn = int(dcode);
+				/* ч.68: hard censorship codes (403/406/451) with a non-WAF body
+				 * deserve the FASTEST lane short of instant — these are the exact
+				 * codes users report as "406 on the site and the engine never
+				 * learned it". Everything else keeps its old weight. */
+				const hard_censor = (dn == dn && (dn === 403 || dn === 406 || dn === 451)) && !d.waf;
 				if (dcode === '000') {
 					/* Transient (timeout/RST/DNS-n/a): cautious, +1 confirmation. */
 					need = min_confirm + 1;
@@ -2796,7 +2998,7 @@ echo done > "$PRE.done"
 					/* Hard block (4xx/5xx or a 200 block page): strong signal,
 					 * learn at min_confirm — FASTER than the legacy rule that
 					 * slowed everything but 000 down. */
-					need = min_confirm;
+					need = hard_censor ? 1 : min_confirm;
 				} else if (d.geo) {
 					/* 200 geo-refusal: the host answered, so this is not a hard
 					 * block shape — keep the cautious extra confirmation. */

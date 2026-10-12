@@ -2515,6 +2515,11 @@ const methods = {
 						e.last_probe = st.last_probe || 0;
 						e.direct = st.direct || '';
 						e.proxy = st.proxy || '';
+						/* ч.68: block-kind verdict tag (dns_poison/stub/sigpage/
+						 * tls_dpi/hardcode) + the "WAF answered" flag for the
+						 * reasons column. */
+						if (st.block_kind) e.kind = st.block_kind;
+						if (st.waf_seen) e.waf_seen = st.waf_seen;
 					} else {
 						e.status = (src === 'learned') ? (seed_map[host] ? 'geo' : 'blocked') : src;
 						e.added = 0;

@@ -6978,6 +6978,40 @@ msgid "Resource"
 msgstr "Ресурс"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "DNS poisoning: the ISP resolver served a fake address (confirmed via secure DNS)"
+msgstr "отравление DNS: провайдерский резолвер отдал поддельный адрес (подтверждено через защищённый DNS)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "ISP block page: the connection is redirected to the provider stub"
+msgstr "страница-заглушка провайдера: соединение перенаправлено на заглушку"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "block page served with HTTP 200 (body signature match)"
+msgstr "страница-заглушка отдана с кодом HTTP 200 (совпадение сигнатуры тела)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "TLS DPI: the handshake is reset right after ClientHello (SNI filtering)"
+msgstr "TLS-DPI: рукопожатие сбрасывается сразу после ClientHello (фильтрация по SNI)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "censorship refusal code (403/406/451) — direct is refused, proxy works"
+msgstr "код отказа цензуры (403/406/451) — напрямую отказ, через прокси работает"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Blocked (DNS)"
+msgstr "Заблокирован (DNS)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Blocked (stub)"
+msgstr "Заблокирован (заглушка)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Blocked (DPI)"
+msgstr "Заблокирован (DPI)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "Blocked (refusal)"
+msgstr "Заблокирован (отказ)"
 msgid "blocked (details not recorded)"
 msgstr "заблокирован (детали не записаны)"
 
