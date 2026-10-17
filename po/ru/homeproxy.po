@@ -8191,3 +8191,705 @@ msgstr "напрямую"
 msgid "no rule matched — default"
 msgstr "ни одно правило не совпало — по умолчанию"
 
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Provider diagnostics"
+msgstr "Диагностика провайдера"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Services → exits"
+msgstr "Сервисы → выходы"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "extra hosts: example.com, 1.2.3.4 (optional)"
+msgstr "доп. хосты: example.com, 1.2.3.4 (необязательно)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Start diagnostics"
+msgstr "Запустить диагностику"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Scan failed to start: "
+msgstr "Не удалось запустить диагностику: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Checks a set of test services (YouTube, Discord, Telegram, Google AI, OpenAI…) through your real paths: DIRECT with a plain-resolver DNS view, and through the Main node. Verdicts tell you what needs a proxy rule, what needs a Zapret/ByeDPI strategy, and what is DNS-poisoned. RU services (rutube, gosuslugi) are control hosts — they must always open directly."
+msgstr "Проверяет набор тест-сервисов (YouTube, Discord, Telegram, Google AI, OpenAI…) через ваши реальные пути: НАПРЯМУЮ (с DNS-картинкой обычного резолвера) и через Основной узел. Вердикты подсказывают, что нуждается в правиле прокси, что — в стратегии Zapret/ByeDPI, а что — в защите от DNS-подмены. RU-сервисы (rutube, gosuslugi) — контрольные: они обязаны открываться напрямую."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Pick an exit for each service — the Wizard maintains ONE routing rule per service (the same proxy_ru_rule records as the manual editor on the Client Settings page). \"Direct\" removes the rule: in \"Bypass blocking\" mode everything unmatched goes directly anyway. After applying, the service restarts once and the check runs automatically — the result appears below, in one place."
+msgstr "Выберите выход для каждого сервиса — Мастер держит ОДНО правило маршрутизации на сервис (те же записи proxy_ru_rule, что и в ручном редакторе на странице «Настройки клиента»). «Напрямую» убирает правило: в режиме «Обход блокировок» всё, что не совпало с правилами, и так идёт напрямую. После применения сервис один раз перезапускается и проверка запускается автоматически — результат появится ниже, в одном месте."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Check results"
+msgstr "Результаты проверки"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "no rule"
+msgstr "нет правила"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "+%d more rule(s) of this service — see the manual editor"
+msgstr "+ещё %d правил(о) этого сервиса — см. ручной редактор"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Direct (remove rule)"
+msgstr "Напрямую (убрать правило)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Check now"
+msgstr "Проверить сейчас"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Checking…"
+msgstr "Проверяю…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Rule applied — the service is restarting, the check will run automatically…"
+msgstr "Правило применено — сервис перезапускается, проверка выполнится автоматически…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node."
+msgstr "Основной узел = Напрямую — это правило не даст эффекта. Выберите Zapret/ByeDPI или реальный узел."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "ByeDPI is not enabled — enable it on the Node Settings page first."
+msgstr "ByeDPI не включён — сначала включите его на странице «Настройки узлов»."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Zapret is not enabled — enable it on the Node Settings page first."
+msgstr "Zapret не включён — сначала включите его на странице «Настройки узлов»."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Unknown node — refresh the page."
+msgstr "Неизвестный узел — обновите страницу."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Unknown service."
+msgstr "Неизвестный сервис."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Config generation failed — the previous config stays active."
+msgstr "Сбой генерации конфига — продолжает действовать предыдущий конфиг."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Bulk lists"
+msgstr "Объёмные списки"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Russia Inside: %s · Re-filter: %s"
+msgstr "Russia Inside: %s · Re-filter: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "These lists already cover YouTube/Discord/Telegram and most blocked resources — presets below add per-service overrides."
+msgstr "Эти списки уже покрывают YouTube/Discord/Telegram и большинство заблокированных ресурсов — пресеты ниже добавляют сервисные переопределения."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Routing rules apply ONLY in \"Bypass blocking\" mode — the current mode is \"%s\", so preset rules would have no effect."
+msgstr "Правила маршрутизации действуют ТОЛЬКО в режиме «Обход блокировок» — текущий режим «%s», поэтому правила пресетов не будут иметь эффекта."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Main node is Direct: rules pointing at \"Same as main node\" would egress directly. Choose Zapret/ByeDPI or a real node, or switch the Main node first."
+msgstr "Основной узел = Напрямую: правила с «Как основной узел» будут уходить напрямую. Выберите Zapret/ByeDPI или реальный узел, либо сначала смените Основной узел."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The pinned diagnostic inbounds are not listening (Custom routing / Custom JSON) — path checks are limited."
+msgstr "Закреплённые диагностические инбаунды не слушают (Custom routing / Custom JSON) — проверки путей ограничены."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "OpenAI (ChatGPT)"
+msgstr "OpenAI (ChatGPT)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "No dedicated list — OpenAI domains ride the main path / Re-filter. This button only checks whether the current exit region is accepted."
+msgstr "Отдельного списка нет — домены OpenAI едут через основной путь / Re-filter. Кнопка лишь проверяет, принимает ли текущий регион выхода сервис."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Scanning %d of %d…"
+msgstr "Сканирование %d из %d…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "No scan results yet — press \"Start diagnostics\"."
+msgstr "Результатов диагностики пока нет — нажмите «Запустить диагностику»."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "open directly"
+msgstr "открываются напрямую"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "need a proxy rule"
+msgstr "нужно правило прокси"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "need a strategy"
+msgstr "нужна стратегия"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "DNS-poisoned"
+msgstr "DNS-подмена"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The diagnostic inbounds are unavailable (Custom routing / Custom JSON) — only a partial picture is possible."
+msgstr "Диагностические инбаунды недоступны (Custom routing / Custom JSON) — возможна только частичная картина."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Via main path"
+msgstr "Через основной путь"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Verdict"
+msgstr "Вердикт"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Recommendation"
+msgstr "Рекомендация"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "poisoned"
+msgstr "подмена"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "differs"
+msgstr "различается"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "same"
+msgstr "совпадает"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Opens directly"
+msgstr "Открывается напрямую"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Needs proxy — create a rule"
+msgstr "Нужен прокси — создайте правило"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Needs Zapret/ByeDPI strategy"
+msgstr "Нужна стратегия Zapret/ByeDPI"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "DNS poisoning (fake answers)"
+msgstr "Подмена DNS (фальшивые ответы)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Service refuses the exit node"
+msgstr "Сервис отвергает узел-выход"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Main path fails (check the node)"
+msgstr "Основной путь не работает (проверьте узел)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "RU site unreachable directly — anomaly"
+msgstr "RU-сайт недоступен напрямую — аномалия"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Unreachable both ways"
+msgstr "Недоступен обоими путями"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Only the main path was measured"
+msgstr "Измерен только основной путь"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "TLS DPI (SNI reset)"
+msgstr "TLS DPI (сброс по SNI)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "TCP unreachable"
+msgstr "TCP недоступен"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Timeout (dropped?)"
+msgstr "Таймаут (дроп?)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "DNS resolve failed"
+msgstr "Не удалось разрешить имя"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Block page served as 200"
+msgstr "Заглушка с кодом 200"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Refusal code (403/406/451)"
+msgstr "Код отказа (403/406/451)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "WAF challenge (path is open)"
+msgstr "WAF-проверка (путь открыт)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Transport error"
+msgstr "Транспортная ошибка"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Secure DNS (MultiDNS) usually fixes this; a routing rule also helps"
+msgstr "Обычно лечится защищённым DNS (MultiDNS); также помогает правило маршрутизации"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Create a rule in the \"Services → exits\" tab"
+msgstr "Создайте правило на вкладке «Сервисы → выходы»"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Pick a working Zapret/ByeDPI strategy (Strategy Lab)"
+msgstr "Подберите рабочую стратегию Zapret/ByeDPI (Лаборатория стратегий)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Switch to a different node — the service refuses this exit region"
+msgstr "Смените узел — сервис отвергает регион этого выхода"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The Main node is not serving this site — check the node"
+msgstr "Основной узел не обслуживает этот сайт — проверьте узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Anomaly: RU services must open directly — check RU-protect / the internet"
+msgstr "Аномалия: RU-сервисы обязаны открываться напрямую — проверьте RU-protect / интернет"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "n/a"
+msgstr "—"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "geo-refused"
+msgstr "отказ по региону"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Main-path exit"
+msgstr "Выход основного пути"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "no data"
+msgstr "нет данных"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "direct exit"
+msgstr "прямой выход"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The exit country is on the service blocklist (RU/BY/CN/HK/MO/IR/KP) — switch the node."
+msgstr "Страна выхода в блок-листах сервиса (RU/BY/CN/HK/MO/IR/KP) — смените узел."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Google AI API"
+msgstr "Google AI API"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Gemini web"
+msgstr "Веб-версия Gemini"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "OpenAI API"
+msgstr "OpenAI API"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "region passes"
+msgstr "регион принимается"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "region refused"
+msgstr "регион отвергнут"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "served"
+msgstr "обслуживается"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "refused"
+msgstr "отказано"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "code"
+msgstr "код"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "default route"
+msgstr "маршрут по умолчанию"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Live route for %s:"
+msgstr "Живой маршрут для %s:"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Full reachability probing lives in the \"Provider diagnostics\" tab."
+msgstr "Полная проверка доступности — на вкладке «Диагностика провайдера»."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Check failed: "
+msgstr "Проверка не удалась: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Rule applied. Run \"Provider diagnostics\" to verify reachability."
+msgstr "Правило применено. Запустите «Диагностику провайдера», чтобы проверить доступность."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Google AI (Gemini, AI Studio)"
+msgstr "Google AI (Gemini, AI Studio)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Twitter / X"
+msgstr "Twitter / X"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Geo-blocked services"
+msgstr "Сервисы с гео-блокировкой"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Google Meet"
+msgstr "Google Meet"
+
+#: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
+
+msgid "Routing Wizard"
+msgstr "Мастер маршрутизации"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "DPI bypass"
+msgstr "Обход DPI"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Zapret (nfqws2) and ByeDPI fragment or fake the traffic of the services routed to them — pick a strategy, test it against your ISP in the Strategy Lab, then send a service through the engine and verify live. Everything here runs on the router; results appear below, in one place."
+msgstr "Zapret (nfqws2) и ByeDPI дробят или подменяют трафик сервисов, направленных в них — выберите стратегию, проверьте её у вашего провайдера в Strategy Lab, затем направьте сервис через движок и проверьте живьём. Всё работает на роутере; результаты появляются снизу, в одном месте."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Strategy catalog"
+msgstr "Каталог стратегий"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Results"
+msgstr "Результаты"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "enabled, not running"
+msgstr "включён, не запущен"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "%s is not installed — install it on the \"Core & Tools\" page (Services tab) first."
+msgstr "%s не установлен — сначала установите его на странице «Core & Tools» (вкладка «Службы»)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Zapret strategy"
+msgstr "Стратегия Zapret"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "— pick from the catalog —"
+msgstr "— выбрать из каталога —"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Imported (catalog)"
+msgstr "Импортированные (каталог)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Generated"
+msgstr "Сгенерированные"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Apply strategy"
+msgstr "Применить стратегию"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Test strategy"
+msgstr "Проверить стратегию"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The strategy applies to every flow routed to Zapret (no hostlists — the routing rules select the traffic). Applying also enables Zapret and restarts the service; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest)."
+msgstr "Стратегия применяется ко всему трафику, направленному в Zapret (без хостлистов — трафик отбирают правила маршрутизации). Применение также включает Zapret и перезапускает сервис; проверка гоняет стратегию на изолированной очереди по 4 тест-сайтам (YouTube, Telegram, Discord, Speedtest)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "No strategy set — pick one from the catalog or enter the options first."
+msgstr "Стратегия не задана — выберите из каталога или введите опции вручную."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Applying the strategy — the service restarts…"
+msgstr "Применяю стратегию — сервис перезапускается…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Strategy applied — Zapret is enabled (it was off) and the service restarts."
+msgstr "Стратегия применена — Zapret включён (если был выключен), сервис перезапускается."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Run \"Test strategy\" in ~30 seconds to confirm it works on your ISP, then create a service rule below."
+msgstr "Через ~30 секунд запустите «Проверить стратегию», чтобы убедиться, что она работает у вашего провайдера, затем создайте правило сервиса ниже."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "TLS handshake on the 4 test sites (isolated queue, live traffic untouched):"
+msgstr "TLS-рукопожатия на 4 тест-сайтах (изолированная очередь, живой трафик не тронут):"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes). A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes."
+msgstr "Фаззер проверяет каждую стратегию каталога на изолированной NFQUEUE (TLS-рукопожатия YouTube / Telegram / Discord / Speedtest). Замер без дезинка помечает хосты, которые провайдер не блокирует; хост должен пройти большинство раундов. Живой трафик не затрагивается. Полный прогон занимает до ~15 минут."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "No strategy passes the distinguishing hosts — try the full fuzz, the strategy generator, or check your ISP blocking."
+msgstr "Ни одна стратегия не проходит отличающие хосты — попробуйте полный фаззинг, генератор стратегий или проверьте блокировку провайдера."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Strategy applied — the service restarts; run \"Test strategy\" in ~30 s to confirm."
+msgstr "Стратегия применена — сервис перезапускается; через ~30 с запустите «Проверить стратегию» для подтверждения."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Send a service through the engine"
+msgstr "Направить сервис через движок"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "— no engine enabled —"
+msgstr "— движки не включены —"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Create rule and verify"
+msgstr "Создать правило и проверить"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Enable Zapret or ByeDPI on the Node Settings page first."
+msgstr "Сначала включите Zapret или ByeDPI на странице настроек узлов."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Creating the rule — the service restarts, the route check follows…"
+msgstr "Создаю правило — сервис перезапускается, далее проверка маршрута…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "corpus: %d strategies"
+msgstr "корпус: %d стратегий"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "updated %s"
+msgstr "обновлён %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Update from catalog"
+msgstr "Обновить из каталога"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Generate mutations"
+msgstr "Сгенерировать стратегии"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Update downloads the StressOzz/Zapret-Manager strategy catalog, converts it to nfqws2, tests every converted strategy on the router and shows the diff before applying anything. The generator derives new strategies from the best fuzz results when nothing works."
+msgstr "Обновление скачивает каталог стратегий StressOzz/Zapret-Manager, конвертирует его в nfqws2, проверяет каждую конвертированную стратегию на роутере и показывает отличия до применения чего-либо. Генератор выводит новые стратегии из лучших результатов фаззинга, когда ничего не сработало."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Working…"
+msgstr "Работаю…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Downloading the catalog…"
+msgstr "Скачивание каталога…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Parsing…"
+msgstr "Разбор…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Converting %d of %d…"
+msgstr "Конвертация %d из %d…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Testing strategies %d of %d…"
+msgstr "Проверка стратегий %d из %d…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "failed: %s"
+msgstr "ошибка: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Catalog: %d parsed, %d usable — new: %d, updated: %d, already present: %d, dropped: %d"
+msgstr "Каталог: %d разобрано, %d пригодно — новых: %d, обновлено: %d, уже есть: %d, отброшено: %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Dropped entries (%d)"
+msgstr "Отброшенные записи (%d)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Apply import"
+msgstr "Применить импорт"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Corpus updated: +%d new, %d refreshed, %d skipped — %d strategies total. Run a fuzz to rank the new entries."
+msgstr "Корпус обновлён: +%d новых, %d обновлено, %d пропущено — всего %d стратегий. Запустите фаззинг, чтобы проранжировать новые записи."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Generating mutations from the best strategies, testing them, then a full fuzz starts…"
+msgstr "Генерация вариантов из лучших стратегий, их проверка, затем стартует полный фаззинг…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Generator failed: "
+msgstr "Ошибка генератора: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Apply failed: "
+msgstr "Ошибка применения: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "URLTest pool"
+msgstr "Пул URLTest"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "pool: %d node(s)"
+msgstr "пул: узлов %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Pick at least one node for the URLTest pool."
+msgstr "Выберите хотя бы один узел для пула URLTest."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Scan from %s"
+msgstr "Скан от %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "—"
+msgstr "—"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Block (core RKN-blocked resources)"
+msgstr "Block (ядро блокировок РКН)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Russia Outside (RU-only services — for use abroad)"
+msgstr "Russia Outside (российские сервисы только для РФ — доступ из-за рубежа)"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Ukraine Inside (resources blocked in UA)"
+msgstr "Ukraine Inside (ресурсы, заблокированные в Украине)"
+
+

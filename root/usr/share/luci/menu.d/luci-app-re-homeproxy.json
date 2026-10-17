@@ -28,10 +28,18 @@
 	},
 	"admin/services/homeproxy/node": {
 		"title": "Node Settings",
-		"order": 15,
+		"order": 16,
 		"action": {
 			"type": "view",
 			"path": "homeproxy/node"
+		}
+	},
+	"admin/services/homeproxy/wizard": {
+		"title": "Routing Wizard",
+		"order": 15,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/wizard"
 		}
 	},
 	"admin/services/homeproxy/server": {

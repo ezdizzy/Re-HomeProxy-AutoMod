@@ -614,6 +614,166 @@ function hp_route_trace(host, conf) {
 	};
 }
 
+/* ── Wizard / exit-diagnostics shared probes (Ф2) ────────────────────────
+ * Declared ABOVE the methods object (rpcd ucode rejects function
+ * declarations inside the object literal — monitor_nodes lesson). */
+
+/* Region-refusal phrases (subset of the engine's GEO_REFUSAL_PATTERNS + the
+ * Gemini-web forms from ч.70): a 200 that refuses the region at the
+ * application level is NOT a success. Matched lowercased, small bodies only. */
+const WIZ_REFUSAL_PATTERNS = [
+	"isn't currently supported in your country",
+	'not supported in your country',
+	'not available in your country',
+	'is not supported in your country',
+	'unavailable in your region',
+	'not available in your region',
+	'unsupported_country_region_territory',
+	'not yet available in your country',
+	'страна не поддерживается',
+	'не поддерживается в вашей стране',
+	'недоступен в вашей стране'
+];
+function wiz_body_refuses(body) {
+	if (!body || length(body) > 32768) return false;
+	const b = lc(body);
+	for (let s in WIZ_REFUSAL_PATTERNS)
+		if (index(b, s) >= 0) return true;
+	return false;
+}
+
+/* HTTPS fetch through a pinned loopback inbound, returning {code, body}
+ * (code '000' = no answer). socks5h: the host resolves at the tunnel end, so
+ * a locally poisoned answer cannot corrupt the measurement. Mirrors the
+ * engine's geo_probe_url. */
+function hp_probe_fetch(url, port, hdr, timeout) {
+	const tmo = int(timeout) || 8;
+	const bf = '/tmp/hp_probe.body';
+	const cf = '/tmp/hp_probe.code';
+	const hl = length(hdr) ? `-H ${shellquote(hdr)}` : '';
+	system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
+	system(`curl -sL --max-redirs 2 -o ${shellquote(bf)} -w '%{http_code}' -k --connect-timeout 4 --max-time ${tmo} -x socks5h://127.0.0.1:${port} ${hl} ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`, tmo * 1000 + 3000);
+	const r = { code: trim(readfile(cf) || '000'), body: readfile(bf) || '' };
+	system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
+	return r;
+}
+
+/* Tunnel exit country/ASN through a given inbound, with provider fallback:
+ * api.ip.sb alone proved unreliable from VPN exits (rate limits and outright
+ * blocks) and the diagnostic kept reporting "probe failed" with a healthy
+ * tunnel. Every provider answers anonymously; shapes are normalized to the
+ * same exit object. Shared by automation_geo_diag and wizard_service_check. */
+function hp_exit_lookup(port) {
+	const providers = [
+		'https://api.ip.sb/geoip',
+		'https://ipwho.is/',
+		'http://ip-api.com/json/?fields=status,country,countryCode,as,asnum,query'
+	];
+	const norm = (j, src) => {
+		if (type(j) !== 'object') return null;
+		if (src === 1 && j.success === false) return null;
+		if (src === 2 && j.status && j.status !== 'success') return null;
+		const e = {
+			ip: (src === 2) ? (j.query || null) : (j.ip || null),
+			country: j.country || null,
+			country_code: (src === 2) ? (j.countryCode || null) : (j.country_code || null),
+			asn: null,
+			org: null,
+			provider: (src === 0) ? 'api.ip.sb' : (src === 1) ? 'ipwho.is' : 'ip-api.com'
+		};
+		if (src === 0) {
+			e.asn = (j.asn != null) ? ('AS' + j.asn) : null;
+			e.org = j.organization || j.isp || null;
+		} else if (src === 1) {
+			const cn = (type(j.connection) === 'object') ? j.connection : {};
+			e.asn = (cn.asn != null) ? ('AS' + cn.asn) : null;
+			e.org = cn.org || cn.isp || null;
+		} else {
+			e.asn = (j.asnum != null) ? ('AS' + j.asnum) : (j.as || null);
+			e.org = j.as || null;
+		}
+		if (!e.country_code && e.country)
+			e.country_code = substr(e.country, 0, 2);
+		return (e.country_code || e.ip) ? e : null;
+	};
+	for (let i = 0; i < 3; i++) {
+		const r = hp_probe_fetch(providers[i], port, null, 8);
+		if (r.code !== '200') continue;
+		let j = null;
+		try { j = json(r.body); } catch (e) { j = null; }
+		const e = norm(j, i);
+		if (e) return e;
+	}
+	return null;
+}
+
+/* Inbound listening check against the filtered listen-port list. */
+function hp_inbound_listening(lports, port) {
+	/* for-in over an array yields the ELEMENTS (lesson 20); match() with a
+	 * STRING pattern returns null on this ucode build (only regex literals
+	 * match — verified live, ч.70); index() is a plain substring search and
+	 * is unambiguous here: ":5337 " cannot hit ":15337 ". */
+	for (let line in lports)
+		if (index(line, ':' + port + ' ') >= 0)
+			return true;
+	return false;
+}
+
+/* ── Wizard DPI helpers (Ф3) ─────────────────────────────────────────────
+ * All helpers live ABOVE the methods object (no hoisting in ucode, and no
+ * function declarations inside the object literal). */
+
+function hp_proc_running(name) {
+	const fd = popen('pidof ' + name + ' 2>/dev/null');
+	if (!fd) return false;
+	const out = trim(fd.read('all'));
+	fd.close();
+	return length(out) > 0;
+}
+
+/* Sum the NFQUEUE packet/byte counters of the Zapret queue chain (mark 110
+ * → queue num <zapret_qnum>, both TCP and UDP rules). Zero packets with the
+ * engine running means no Zapret-marked flow reached the queue yet — the
+ * honest "is it actually working" signal (lesson: up-bytes can grow while
+ * NFQUEUE stays empty when the firewall marks are wrong). */
+function hp_zapret_queue_counters() {
+	let pkts = 0, bytes = 0;
+	const fd = popen('nft list chain inet fw4 homeproxy_zapret_queue 2>/dev/null');
+	if (fd) {
+		const out = fd.read('all');
+		fd.close();
+		for (let l in split(out || '', '\n')) {
+			const m = match(l, /counter packets (\d+) bytes (\d+)/);
+			if (m) { pkts += int(m[1]); bytes += int(m[2]); }
+		}
+	}
+	return { packets: pkts, bytes: bytes };
+}
+
+/* The shipped strategy corpus (/etc/homeproxy/zapret_candidates.json —
+ * package file, user-updatable by the Wizard import). Missing/corrupt file
+ * degrades to an empty corpus; the UI keeps its builtin fallback. */
+function hp_corpus_read() {
+	const f = HP_DIR + '/zapret_candidates.json';
+	if (!access(f)) return { candidates: [] };
+	try {
+		const j = json(readfile(f) || '');
+		if (j && type(j.candidates) === 'array') return j;
+	} catch (e) {}
+	return { candidates: [] };
+}
+
+function hp_corpus_write(corpus) {
+	const f = HP_DIR + '/zapret_candidates.json';
+	const dir = HP_DIR + '/backups';
+	system('mkdir -p ' + shellquote(dir));
+	/* Keep ONE previous generation as a rollback point (catalog refresh is
+	 * reversible until the next apply). */
+	system(`cp ${shellquote(f)} ${shellquote(dir + '/zapret_candidates.prev.json')} 2>/dev/null; true`);
+	writefile(f + '.tmp', sprintf("%.J\n", corpus));
+	system(`mv -f ${shellquote(f + '.tmp')} ${shellquote(f)}`);
+}
+
 const methods = {
 	acllist_read: {
 		args: { type: 'type' },
@@ -3018,6 +3178,547 @@ const methods = {
 		}
 	},
 
+	/* ── Routing Wizard (Ф2) ─────────────────────────────────────────────
+	 * MVP «Диагностика провайдера + Сервисы → выходы». The scan runs as a
+	 * background one-shot script (wizard_scan.uc — the same pattern as the
+	 * Strategy Lab fuzzer: a 12-host × multi-probe matrix takes minutes, far
+	 * beyond a synchronous ubus call). Preset management writes ONLY regular
+	 * proxy_ru_rule sections — the same UCI the manual editor uses — so the
+	 * Wizard can never create a config shape the editor does not understand.
+	 * Source whitelist = the rule-set files itdoginfo/allow-domains actually
+	 * publishes (the generator builds the .srs URL from the source string, so
+	 * an arbitrary source would poison that URL). */
+	wizard_provider_scan: {
+		args: { hosts: 'hosts' },
+		call: function(req) {
+			const st = RUN_DIR + '/wizard_scan.json';
+			let prev = null;
+			if (access(st)) {
+				try { prev = json(readfile(st) || ''); } catch (e) { prev = null; }
+			}
+			/* One scan at a time; a scan that died mid-run stops blocking after
+			 * 15 minutes (the script applies the same staleness rule). */
+			if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
+				return { result: false, error: 'a scan is already in progress' };
+
+			/* Optional extra hosts: comma/newline separated, validated hard
+			 * (they end up in shell-built curl/nslookup commands AND in the
+			 * UI table — accept plain domains and IPv4 literals only). */
+			let raw = trim((req && req.args && req.args.hosts) || '');
+			if (length(raw) > 2000)
+				raw = substr(raw, 0, 2000);
+			let extra = '';
+			let n_extra = 0;
+			if (length(raw)) {
+				for (let h in split(raw, /[\n,]/)) {
+					h = lc(trim(h));
+					if (!length(h)) continue;
+					if (!match(h, /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$/) &&
+					    !match(h, /^(\d{1,3}\.){3}\d{1,3}$/))
+						return { result: false, error: 'invalid host: ' + h };
+					extra += h + '\n';
+					n_extra++;
+					if (n_extra >= 20) break;
+				}
+			}
+			if (length(extra))
+				writefile(RUN_DIR + '/wizard_scan_hosts.txt', extra);
+			else
+				system('rm -f ' + shellquote(RUN_DIR + '/wizard_scan_hosts.txt'));
+
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_scan.uc')} >/dev/null 2>&1 &`);
+			return { result: true };
+		}
+	},
+
+	wizard_scan_status: {
+		call: function(req) {
+			const st = RUN_DIR + '/wizard_scan.json';
+			const rs = RUN_DIR + '/wizard_scan_result.json';
+			let status = null, result = null;
+			if (access(st)) {
+				try { status = json(readfile(st) || ''); } catch (e) { status = null; }
+			}
+			if (access(rs)) {
+				try { result = json(readfile(rs) || ''); } catch (e) { result = null; }
+			}
+			return { status: status, result: result };
+		}
+	},
+
+	/* Interactive service check (the AI probes that used to live in the
+	 * automation engine, moved here per решение №2): Google AI API + Gemini
+	 * web + OpenAI API through the user's MAIN path, plus the tunnel-exit
+	 * country and the live route trace for the service's key hosts. */
+	wizard_service_check: {
+		args: { service: 'service' },
+		call: function(req) {
+			const service = (req && req.args && req.args.service) || '';
+			if (service !== 'google_ai' && service !== 'openai')
+				return { result: false, error: 'unknown service' };
+
+			const lports = hp_listen_ports();
+			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
+			let mixed = '5330';
+			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
+			const main_port = hp_inbound_listening(lports, 5337) ? 5337 : int(mixed);
+			const direct_port = hp_inbound_listening(lports, 5336) ? 5336 : null;
+
+			const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
+			const exit = hp_exit_lookup(main_port);
+			const exit_direct = direct_port ? hp_exit_lookup(direct_port) : null;
+
+			const out = {
+				result: true,
+				service: service,
+				main_port: main_port,
+				direct_port: direct_port,
+				exit: exit,
+				exit_direct: exit_direct,
+				exit_verdict: (exit && exit.country_code && UNSUPPORTED[exit.country_code]) ? 'unsupported_country'
+					: exit ? 'supported_country'
+					: 'probe_failed'
+			};
+
+			if (service === 'google_ai') {
+				/* API edge (ч.51/П3, живая форма ответов): WITHOUT a key the
+				 * endpoint answers 403 from BOTH regions — a supported region
+				 * complains about the KEY ("API key not valid"), an unsupported
+				 * one about the LOCATION ("User location is not supported").
+				 * 200/400/401 shapes also mean the region gate did not fire. */
+				const api = hp_probe_fetch('https://generativelanguage.googleapis.com/v1beta/models', main_port, null, 8);
+				const b = lc(api.body);
+				if (index(b, 'location is not supported') >= 0 || index(b, 'unsupported_country') >= 0)
+					out.api = { code: api.code, verdict: 'refused', note: 'region refused (API)' };
+				else if (api.code === '200' || api.code === '400' || api.code === '401' ||
+				         index(b, 'api key') >= 0 || index(b, 'api_key') >= 0)
+					out.api = { code: api.code, verdict: 'ok', note: 'region passes (key complaint)' };
+				else
+					out.api = { code: api.code, verdict: 'unknown', note: 'unexpected answer' };
+
+				/* Web verdict (ч.70): the SPA shell serves 200 from anywhere —
+				 * the refusal text inside the body is the honest signal. */
+				const web = hp_probe_fetch('https://gemini.google.com/', main_port, 'Accept-Language: en-US,en;q=0.9', 10);
+				if (web.code === '200' || web.code === '302' || web.code === '301')
+					out.web = { code: web.code, verdict: wiz_body_refuses(web.body) ? 'refused' : 'served' };
+				else
+					out.web = { code: web.code, verdict: 'unknown' };
+
+				out.route = {};
+				const conf_file = RUN_DIR + '/hiddify-c.json';
+				let conf = null;
+				if (access(conf_file)) {
+					try { conf = json(readfile(conf_file) || ''); } catch (e) { conf = null; }
+				}
+				const gai_hosts = ['gemini.google.com', 'generativelanguage.googleapis.com', 'aistudio.google.com'];
+				/* for-in over an array yields the ELEMENTS (lesson 20/31) —
+				 * hosts[h] would be undefined; h IS the host string. */
+				for (let h in gai_hosts)
+					out.route[h] = (conf && type(conf.route) === 'object')
+						? hp_route_trace(h, conf) : { host: h, error: 'no running config' };
+			} else {
+				/* OpenAI (ч.70 lesson 30): an обслуживаемый region answers
+				 * HTTP 401 "Missing bearer authentication in header" — the
+				 * old body marker is gone, the CODE is the verdict. An
+				 * unsupported region returns the region marker in the body
+				 * (any code). */
+				const api = hp_probe_fetch('https://api.openai.com/v1/models', main_port, null, 8);
+				const b = lc(api.body);
+				if (index(b, 'unsupported_country_region_territory') >= 0)
+					out.api = { code: api.code, verdict: 'refused', note: 'region refused (API)' };
+				else if (api.code === '401')
+					out.api = { code: api.code, verdict: 'ok', note: 'region passes (auth required)' };
+				else
+					out.api = { code: api.code, verdict: 'unknown', note: 'unexpected answer' };
+
+				out.route = {};
+				const conf_file = RUN_DIR + '/hiddify-c.json';
+				let conf = null;
+				if (access(conf_file)) {
+					try { conf = json(readfile(conf_file) || ''); } catch (e) { conf = null; }
+				}
+				const oai_hosts = ['api.openai.com', 'chatgpt.com'];
+				/* for-in over an array yields the ELEMENTS (lesson 20/31). */
+				for (let h in oai_hosts)
+					out.route[h] = (conf && type(conf.route) === 'object')
+						? hp_route_trace(h, conf) : { host: h, error: 'no running config' };
+			}
+
+			return out;
+		}
+	},
+
+	/* Live preset state: environment (mode/main node/engines/ports) + node
+	 * list + the actual proxy_ru_rule sections keyed by source. */
+	wizard_preset_list: {
+		call: function(req) {
+			const c = cursor();
+			const rules = {};
+			const counts = {};
+			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+				const src = '' + (s.source || '');
+				if (!length(src)) return;
+				counts[src] = (counts[src] || 0) + 1;
+				if (!rules[src]) {
+					const r = { section_id: s['.name'], enabled: (s.enabled !== '0'), node: ('' + (s.node || 'main-out')) };
+					if (r.node === 'urltest') {
+						/* List option: cursor().get returns an array (or null). */
+						const pool = c.get('homeproxy', s['.name'], 'urltest_nodes');
+						if (type(pool) === 'array')
+							r.urltest_nodes = pool;
+					}
+					rules[src] = r;
+				}
+			});
+			const nodes = [];
+			c.foreach('homeproxy', 'node', (n) => {
+				const addr = (n.type === 'direct') ? (n.override_address || '') : (n.address || '');
+				const port = (n.type === 'direct') ? (n.override_port || '') : (n.port || '');
+				push(nodes, {
+					id: n['.name'],
+					label: ('' + (n.label || '')) || (addr + ':' + port),
+					type: '' + (n.type || '')
+				});
+			});
+			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
+			let mixed = '5330';
+			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
+			const lports = hp_listen_ports();
+			return {
+				result: true,
+				env: {
+					routing_mode: '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru'),
+					main_node: main_node,
+					main_is_direct: (main_node === 'direct-out' || main_node === '' || main_node === 'nil'),
+					zapret_enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1'),
+					byedpi_enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1'),
+					mixed_port: mixed,
+					direct_in: hp_inbound_listening(lports, 5336),
+					proxy_in: hp_inbound_listening(lports, 5337)
+				},
+				nodes: nodes,
+				rules: rules,
+				rule_counts: counts
+			};
+		}
+	},
+
+	/* Apply a preset: one rule per source (the Wizard's contract — combined
+	 * setups belong to the manual editor). node = 'main-out' | 'byedpi-out'
+	 * | 'zapret-out' | 'urltest' | an existing node section id; '' = remove
+	 * the rule ("direct" in proxy_banned_ru). node='urltest' builds a
+	 * dedicated per-source urltest group (hp-ru-<source>-out) from the
+	 * REQUIRED urltest_nodes list — the same shape the manual editor emits
+	 * (generate_client.uc reads urltest_nodes/urltest_interval/tolerance off
+	 * the rule section). Main node = Direct makes a main-out rule
+	 * pointless (it would egress directly — routing.direct_main_node_rules):
+	 * refuse it with a distinct error the UI can explain. */
+	wizard_preset_apply: {
+		args: { source: 'source', node: 'node', urltest_nodes: [] },
+		call: function(req) {
+			const src = trim((req && req.args && req.args.source) || '');
+			const node = trim((req && req.args && req.args.node) || '');
+			const SOURCES = {
+				'refilter': true, 'russia-inside': true, 'russia-outside': true,
+				'ukraine-inside': true, 'block': true,
+				'youtube': true, 'twitter': true,
+				'tiktok': true, 'telegram': true, 'roblox': true, 'porn': true, 'ovh': true,
+				'news': true, 'meta': true, 'hodca': true, 'hetzner': true, 'hdrezka': true,
+				'google_ai': true, 'google-meet': true, 'google_play': true, 'geoblock': true,
+				'anime': true, 'cloudflare': true, 'cloudfront': true, 'discord': true,
+				'digitalocean': true
+			};
+			if (!SOURCES[src])
+				return { result: false, error: 'unknown source' };
+
+			const c = cursor();
+			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			if (node === 'main-out' && (main_node === 'direct-out' || main_node === '' || main_node === 'nil'))
+				return { result: false, error: 'main_is_direct' };
+
+			if (node !== '' && node !== 'main-out' && node !== 'byedpi-out' && node !== 'zapret-out' && node !== 'urltest') {
+				const nc = c.get_all('homeproxy', node);
+				if (!nc || nc['.type'] !== 'node')
+					return { result: false, error: 'unknown node' };
+			}
+			if (node === 'byedpi-out' && c.get('homeproxy', 'config', 'byedpi_enabled') !== '1')
+				return { result: false, error: 'byedpi_disabled' };
+			if (node === 'zapret-out' && c.get('homeproxy', 'config', 'zapret_enabled') !== '1')
+				return { result: false, error: 'zapret_disabled' };
+			/* URLTest pool: the generator needs ≥1 usable member node on the
+			 * rule section. Validate every id as a real node section. */
+			let pool = [];
+			if (node === 'urltest') {
+				pool = (req && req.args && req.args.urltest_nodes) || [];
+				if (type(pool) !== 'array' || !length(pool))
+					return { result: false, error: 'urltest_pool_empty' };
+				for (let n in pool) {
+					const nc = c.get_all('homeproxy', '' + n);
+					if (!nc || nc['.type'] !== 'node')
+						return { result: false, error: 'unknown node' };
+				}
+			}
+
+			let target = null;
+			let count = 0;
+			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+				if (('' + (s.source || '')) === src) {
+					count++;
+					if (!target) target = s['.name'];
+				}
+			});
+
+			if (node === '') {
+				/* "Direct" preset = no rule at all (default route IS direct). */
+				if (target) {
+					c.delete('homeproxy', target);
+					c.commit('homeproxy');
+					system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
+					if (!access(RUN_DIR + '/hiddify-c.json'))
+						return { result: false, error: 'config generation failed' };
+					system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+				}
+				return { result: true, action: 'removed', section_id: target || null };
+			}
+
+			if (target) {
+				c.set('homeproxy', target, 'enabled', '1');
+				c.set('homeproxy', target, 'source', src);
+				c.set('homeproxy', target, 'node', node);
+			} else {
+				target = c.add('homeproxy', 'proxy_ru_rule');
+				c.set('homeproxy', target, 'enabled', '1');
+				c.set('homeproxy', target, 'source', src);
+				c.set('homeproxy', target, 'node', node);
+			}
+			c.commit('homeproxy');
+
+			/* URLTest pool members: a LIST option — write through the uci CLI
+			 * (delete + add_list), the path the manual editor relies on for
+			 * list values. When the rule stops being urltest-shaped, drop the
+			 * stale member list so the section stays clean. */
+			if (node === 'urltest') {
+				system('uci -q delete homeproxy.' + target + '.urltest_nodes');
+				for (let n in pool)
+					system(`uci add_list homeproxy.${target}.urltest_nodes=${shellquote('' + n)}`);
+				system('uci -q commit homeproxy');
+			} else {
+				system('uci -q delete homeproxy.' + target + '.urltest_nodes');
+				system('uci -q commit homeproxy');
+			}
+
+			/* Apply IMMEDIATELY (same path as the manual editor: regenerate +
+			 * full reload — a rule needs the core restart, unlike learned-list
+			 * hot reloads). Generation failure leaves the previous config in
+			 * place (init.d keeps last-good) and is reported. */
+			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
+			if (!access(RUN_DIR + '/hiddify-c.json'))
+				return { result: false, error: 'config generation failed' };
+			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			return { result: true, action: 'applied', section_id: target, rules_for_source: count };
+		}
+	},
+
+	/* Remove ONE rule section by id (the UI shows which rule it deletes —
+	 * deleting "all rules of a source" would be destructive to manual
+	 * combined setups like YouTube→main + YouTube→Zapret). */
+	wizard_preset_delete: {
+		args: { section_id: 'section_id' },
+		call: function(req) {
+			const sid = trim((req && req.args && req.args.section_id) || '');
+			if (!length(sid))
+				return { result: false, error: 'no section id' };
+			const c = cursor();
+			const sec = c.get_all('homeproxy', sid);
+			if (!sec || sec['.type'] !== 'proxy_ru_rule')
+				return { result: false, error: 'not a routing rule section' };
+			c.delete('homeproxy', sid);
+			c.commit('homeproxy');
+			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
+			if (!access(RUN_DIR + '/hiddify-c.json'))
+				return { result: false, error: 'config generation failed' };
+			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+			return { result: true, action: 'removed', section_id: sid };
+		}
+	},
+
+	/* ── Routing Wizard: DPI section (Ф3) ─────────────────────────────────
+	 * Engine statuses + strategy corpus management. The Strategy Lab RPCs
+	 * themselves (zapret_fuzz_*) are UNCHANGED — this section only adds the
+	 * status view, the corpus viewer, the external-catalog importer and the
+	 * mutation generator around them. */
+
+	/* One-shot engine status for the Wizard's DPI tab. NFQUEUE counters are
+	 * the honest "traffic actually reaches nfqws2" signal. */
+	wizard_dpi_status: {
+		call: function(req) {
+			const c = cursor();
+			const zstrat = trim('' + (c.get('homeproxy', 'config', 'zapret_cmd_opts') || ''));
+			const bopts = trim('' + (c.get('homeproxy', 'config', 'byedpi_cmd_opts') || ''));
+			/* Corpus meta: counts per group + file mtime (import freshness). */
+			const corpus = hp_corpus_read();
+			const groups = {};
+			for (let x in corpus.candidates)
+				if (type(x) === 'object')
+					groups[x.group || 'recommended'] = (groups[x.group || 'recommended'] || 0) + 1;
+			let corpus_updated = null;
+			try {
+				const st = lstat(HP_DIR + '/zapret_candidates.json');
+				/* ucode fs stat struct on this build: keys WITHOUT an st_ prefix
+				 * (dev/perm/inode/mode/nlink/uid/gid/size/atime/mtime/ctime/type). */
+				if (st && st.mtime != null)
+					corpus_updated = st.mtime;
+			} catch (e) {}
+			/* Last Strategy Lab outcome (if any): the wizard suggests it as a
+			 * starting strategy. */
+			let last_fuzz = null;
+			if (access(RUN_DIR + '/zapret_fuzz_history.json')) {
+				try {
+					const h = json(readfile(RUN_DIR + '/zapret_fuzz_history.json') || '');
+					if (h && type(h.runs) === 'array' && length(h.runs))
+						last_fuzz = h.runs[length(h.runs) - 1];
+				} catch (e) {}
+			}
+			return {
+				result: true,
+				zapret: {
+					enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1'),
+					installed: access('/opt/zapret2/nfq2/nfqws2'),
+					running: hp_proc_running('nfqws2'),
+					strategy: zstrat,
+					nfqueue: hp_zapret_queue_counters()
+				},
+				byedpi: {
+					enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1'),
+					installed: access('/usr/bin/ciadpi'),
+					running: hp_proc_running('ciadpi'),
+					opts: bopts
+				},
+				corpus: {
+					count: length(corpus.candidates),
+					groups: groups,
+					updated: corpus_updated
+				},
+				last_fuzz: last_fuzz
+			};
+		}
+	},
+
+	/* The current strategy corpus for the Wizard's preset picker. */
+	wizard_strategy_list: {
+		call: function(req) {
+			const corpus = hp_corpus_read();
+			return { result: true, candidates: corpus.candidates };
+		}
+	},
+
+	/* Download + parse + convert + smoke-test an EXTERNAL strategy catalog in
+	 * the background (wizard_strategies.uc, mode file — ARGV is unreliable on
+	 * this build). The result is only a PREVIEW; wizard_strategy_apply
+	 * commits it into the corpus. One import at a time (15 min staleness
+	 * guard, same as the provider scan). */
+	wizard_strategy_update: {
+		call: function(req) {
+			const st = RUN_DIR + '/wizard_strategies.json';
+			let prev = null;
+			if (access(st)) {
+				try { prev = json(readfile(st) || ''); } catch (e) { prev = null; }
+			}
+			if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
+				return { result: false, error: 'a strategy update is already in progress' };
+			writefile(RUN_DIR + '/wizard_strat_mode', 'import\n');
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_strategies.uc')} >/dev/null 2>&1 &`);
+			return { result: true };
+		}
+	},
+
+	wizard_strategy_status: {
+		call: function(req) {
+			let status = null, preview = null;
+			if (access(RUN_DIR + '/wizard_strategies.json')) {
+				try { status = json(readfile(RUN_DIR + '/wizard_strategies.json') || ''); } catch (e) {}
+			}
+			if (access(RUN_DIR + '/wizard_strategies_preview.json')) {
+				try { preview = json(readfile(RUN_DIR + '/wizard_strategies_preview.json') || ''); } catch (e) {}
+			}
+			return { status: status, preview: preview };
+		}
+	},
+
+	/* Commit the import preview into the corpus: upsert by name (catalog
+	 * wins over a previous import of the same name), skip entries whose
+	 * args already exist under another name (no duplicate strategies —
+	 * D7 "no duplication" also applies to the corpus), backup + atomic
+	 * write. The corpus file is a package file; /etc overlay persists the
+	 * merge until the next package upgrade. */
+	wizard_strategy_apply: {
+		call: function(req) {
+			const pf = RUN_DIR + '/wizard_strategies_preview.json';
+			if (!access(pf))
+				return { result: false, error: 'no import preview — run the update first' };
+			let preview = null;
+			try { preview = json(readfile(pf) || ''); } catch (e) { preview = null; }
+			if (!preview || preview.running || type(preview.candidates) !== 'array')
+				return { result: false, error: 'no import preview — run the update first' };
+			if (preview.applied)
+				return { result: false, error: 'this import preview was already applied' };
+
+			const corpus = hp_corpus_read();
+			const cands = corpus.candidates;
+			let added = 0, updated = 0, skipped = 0;
+			for (let p in preview.candidates) {
+				if (type(p) !== 'object' || !length(p.name) || !length(p.args) || p.state === 'exists')
+					continue;
+				/* Same args under another name → not a new strategy at all. */
+				let dup = false;
+				for (let i, x in cands)
+					if (type(x) === 'object' && x.args === p.args) { dup = (x.name === p.name); break; }
+				if (dup) { skipped++; continue; }
+				/* Upsert by name: replace the previous import of this name. */
+				for (let i, x in cands)
+					if (type(x) === 'object' && x.name === p.name) {
+						splice(cands, i, 1);
+						break;
+					}
+				push(cands, { name: p.name, args: p.args, group: p.group || 'imported' });
+				if (p.state === 'changed') updated++; else added++;
+			}
+			hp_corpus_write(corpus);
+			/* Mark the preview consumed so a double-click cannot double-merge. */
+			preview.applied = true;
+			writefile(pf, sprintf("%.J\n", preview));
+			return { result: true, added: added, updated: updated, skipped: skipped,
+				total: length(cands) };
+		}
+	},
+
+	/* Strategy generator (D7 "if nothing works"): derive mutation candidates
+	 * from the best strategies of the last fuzz (or the recommended corpus
+	 * when nothing was fuzzed yet), smoke-test them, replace the previous
+	 * 'generated' corpus group and start a FULL fuzz over everything. */
+	wizard_fuzz_generate: {
+		call: function(req) {
+			const fz = RUN_DIR + '/zapret_fuzz.json';
+			let prev = null;
+			if (access(fz)) {
+				try { prev = json(readfile(fz) || ''); } catch (e) { prev = null; }
+			}
+			if (prev && prev.running)
+				return { result: false, error: 'a fuzz run is already in progress' };
+			const st = RUN_DIR + '/wizard_strategies.json';
+			let stat = null;
+			if (access(st)) {
+				try { stat = json(readfile(st) || ''); } catch (e) { stat = null; }
+			}
+			if (stat && stat.running && (time() - int(stat.ts || 0) < 900))
+				return { result: false, error: 'a strategy update is already in progress' };
+			writefile(RUN_DIR + '/wizard_strat_mode', 'generate\n');
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_strategies.uc')} >/dev/null 2>&1 &`);
+			return { result: true };
+		}
+	},
+
 	/* Exit diagnostics (ч.69, was the AI-services diagnostic): answers WHY a
 	 * geo-gated service still refuses through a "working" proxy. Measures the
 	 * tunnel exit (country + ASN classification) through the user's MAIN path
@@ -3032,84 +3733,20 @@ const methods = {
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
 
-			const curlj = (url, port) => {
-				const f = '/tmp/geo_diag.json';
-				system(`rm -f ${shellquote(f)}`);
-				system(`curl -s --max-time 8 -o ${shellquote(f)} -x socks5h://127.0.0.1:${port || mixed} ${shellquote(url)} 2>/dev/null`);
-				if (!access(f)) return null;
-				const c = readfile(f);
-				system('rm -f ' + shellquote(f));
-				let j = null;
-				try { j = json(c || ''); } catch (e) { j = null; }
-				return j;
-			};
-			/* Country/ASN with provider fallback: api.ip.sb alone proved
-			 * unreliable from VPN exits (rate limits and outright blocks) and
-			 * the diagnostic kept reporting "probe failed" with a healthy
-			 * tunnel. Every provider answers anonymously; shapes are
-			 * normalized to the same exit object. */
-			const providers = [
-				'https://api.ip.sb/geoip',
-				'https://ipwho.is/',
-				'http://ip-api.com/json/?fields=status,country,countryCode,as,asnum,query'
-			];
-			const norm = (j, src) => {
-				if (type(j) !== 'object') return null;
-				if (src === 1 && j.success === false) return null;
-				if (src === 2 && j.status && j.status !== 'success') return null;
-				const e = {
-					ip: (src === 2) ? (j.query || null) : (j.ip || null),
-					country: j.country || null,
-					country_code: (src === 2) ? (j.countryCode || null) : (j.country_code || null),
-					asn: null,
-					org: null,
-					provider: (src === 0) ? 'api.ip.sb' : (src === 1) ? 'ipwho.is' : 'ip-api.com'
-				};
-				if (src === 0) {
-					e.asn = (j.asn != null) ? ('AS' + j.asn) : null;
-					e.org = j.organization || j.isp || null;
-				} else if (src === 1) {
-					const cn = (type(j.connection) === 'object') ? j.connection : {};
-					e.asn = (cn.asn != null) ? ('AS' + cn.asn) : null;
-					e.org = cn.org || cn.isp || null;
-				} else {
-					e.asn = (j.asnum != null) ? ('AS' + j.asnum) : (j.as || null);
-					e.org = j.as || null;
-				}
-				if (!e.country_code && e.country)
-					e.country_code = substr(e.country, 0, 2);
-				return (e.country_code || e.ip) ? e : null;
-			};
-			const lookup = (port) => {
-				for (let i = 0; i < 3; i++) {
-					const e = norm(curlj(providers[i], port), i);
-					if (e) return e;
-				}
-				return null;
-			};
 			/* ч.70: the MAIN-path exit is measured through auto-proxy-in :5337
 			 * (rides main-out) — the OLD mixed :5330 lookup followed `route.final`,
 			 * which in proxy_banned_ru is direct-out, so the diagnostic reported
 			 * the RU exit as the "tunnel exit". The direct exit is measured
 			 * through auto-direct-in :5336 for comparison. Both inbounds exist
-			 * only when the automation engine is enabled — fall back to mixed
-			 * for the main lookup when :5337 is not there. */
+			 * unconditionally now (Ф2: the Wizard uses them too) — fall back to
+			 * mixed only in Custom routing / Custom JSON, where the generator
+			 * emits neither. */
 			const lports = hp_listen_ports();
-			const inb_listen = (port) => {
-				/* for-in over an array yields the ELEMENTS (lesson 20).
-				 * match() with a STRING pattern returns null on this ucode
-				 * build (only regex literals match — verified live, ч.70);
-				 * index() is a plain substring search and is unambiguous
-				 * here: ":5337 " cannot hit ":15337 ". */
-				for (let line in lports)
-					if (index(line, ':' + port + ' ') >= 0)
-						return true;
-				return false;
-			};
-			const main_port = inb_listen(5337) ? 5337 : mixed;
-			const direct_port = inb_listen(5336) ? 5336 : null;
-			const exit = lookup(main_port);
-			const exit_direct = direct_port ? lookup(direct_port) : null;
+			const main_port = hp_inbound_listening(lports, 5337) ? 5337 : int(mixed);
+			const direct_port = hp_inbound_listening(lports, 5336) ? 5336 : null;
+			/* Provider fallback chain lives in the shared helper (Ф2). */
+			const exit = hp_exit_lookup(main_port);
+			const exit_direct = direct_port ? hp_exit_lookup(direct_port) : null;
 
 			return {
 				mixed_port: mixed,

@@ -1066,6 +1066,9 @@ return view.extend({
 				this.value('refilter', _('Re-filter (Russia blocklist: 60000+ banned domains + 25000+ IPs)'));
 				this.value('russia-inside', _('itdoginfo/allow-domains - Russia Inside (1000+ entries)'));
 			}
+			this.value('block', _('Block (core RKN-blocked resources)'));
+			this.value('russia-outside', _('Russia Outside (RU-only services — for use abroad)'));
+			this.value('ukraine-inside', _('Ukraine Inside (resources blocked in UA)'));
 			this.value('youtube', _('YouTube'));
 			this.value('twitter', _('Twitter/X'));
 			this.value('tiktok', _('TikTok'));
@@ -1079,6 +1082,7 @@ return view.extend({
 			this.value('hetzner', _('Hetzner (Germany cloud hosting)'));
 			this.value('hdrezka', _('HDRezka'));
 			this.value('google_ai', _('Google AI services'));
+			this.value('google-meet', _('Google Meet'));
 			this.value('google_play', _('Google Play'));
 			this.value('geoblock', _('GeoBlock services'));
 			this.value('anime', _('Anime streaming'));
