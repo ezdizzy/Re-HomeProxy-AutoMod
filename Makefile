@@ -9,7 +9,7 @@ LUCI_TITLE:=Re:HomeProxy AutoMod - multi-core proxy platform (fork of ImmortalWr
 LUCI_PKGARCH:=all
 # NOTE: MultiDNS uses mosdns (not smartdns) as its per-query DNS racing engine.
 # mosdns is NOT shipped in the standard OpenWrt feed, so it is fetched at runtime
-# from the mosdns GitHub releases by install.sh (binary → /usr/bin/mosdns) instead
+# from the mosdns GitHub releases by install.sh (binary в†’ /usr/bin/mosdns) instead
 # of being declared as a hard package dependency (which would break install on
 # feeds that lack it). The app degrades gracefully when mosdns is absent.
 LUCI_DEPENDS:= \
@@ -21,7 +21,7 @@ PKG_NAME:=luci-app-re-homeproxy
 # the GitHub release tag is "v${PKG_VERSION}" and the in-app self-update compares the
 # locally installed version against the latest release tag. Bump it ONLY when cutting a
 # release (see LOCAL_DOCS/LOCAL_CHANGELOG.md / README "Releases" section). Do NOT use a date/timestamp.
-PKG_VERSION:=1.10.0
+PKG_VERSION:=1.11.3
 PKG_RELEASE:=1
 PKG_MAINTAINER:=1andrevich <1andrevich.recede274@passmail.net>
 PKG_LICENSE:=GPL-2.0-only
@@ -42,15 +42,15 @@ define Package/luci-app-re-homeproxy/postinst
 # Full restart, NOT kill -HUP: SIGHUP only reloads ACLs/session, so rpcd keeps the
 # OLD ucode method set from /usr/share/rpcd/ucode/ until restarted. On every update
 # that shipped a new/changed method (e.g. zapret_resolve_hosts) the method would be
-# missing/stale until a manual `rpcd restart` — surfacing as "DNS not ready",
+# missing/stale until a manual `rpcd restart` вЂ” surfacing as "DNS not ready",
 # yellow "?" in diagnostics, "Unknown method", etc. A restart reloads methods + ACLs.
 # Detached + redirected and after a short delay so it (a) lets the install finish
 # first, and (b) doesn't block when the upgrade is driven THROUGH rpcd (LuCI Software
 # page): rpcd's popen() would otherwise wait on a child holding stdout open.
 #
-# MUST use setsid, not a bare `( … ) &`: a plain background subshell stays in the
+# MUST use setsid, not a bare `( вЂ¦ ) &`: a plain background subshell stays in the
 # postinst's process group, so when opkg/apk tears the install down it reaps the
-# still-sleeping child and the restart NEVER fires (methods stay stale → "DNS not
+# still-sleeping child and the restart NEVER fires (methods stay stale в†’ "DNS not
 # ready" / "Method not found" until a manual `rpcd restart`). setsid puts the
 # restarter in its own session, reparented to init, so it survives both the install
 # teardown AND rpcd's own stop. Fall back to the plain form only where setsid is

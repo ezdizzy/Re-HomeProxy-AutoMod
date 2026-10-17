@@ -754,6 +754,15 @@ function buildZapretCard(zapret, isMainNode) {
 	const remoteEl = E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, '');
 	const checkBtn = buildCheckUpdateBtn(callZapretCheckUpdate, remoteEl);
 
+	/* ── Strategy Lab link (ч.70) ───────────────────────────────────── */
+	/* The old in-page DPI Strategy Fuzzer moved to Node Settings → Zapret
+	 * ("Strategy Lab"): one place for all strategy work (current-strategy
+	 * test, baseline-aware background fuzzing with rounds and per-host
+	 * details, history, Apply). This card keeps only a shortcut. */
+	const labBtn = E('button', { 'class': 'btn cbi-button', 'style': 'margin-left:4px' },
+		[ _('Strategy Lab (Node Settings)') ]);
+	labBtn.onclick = () => { location.href = L.url('admin/services/homeproxy/node'); };
+
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			E('strong', {}, 'nfqws2 (Zapret 2)'),
@@ -772,7 +781,11 @@ function buildZapretCard(zapret, isMainNode) {
 			  'Packages by <a href="https://github.com/1andrevich/zapret2-openwrt" target="_blank">1andrevich/zapret2-openwrt</a>. ' +
 			  'Configure in the Node Settings → Zapret tab.');
 			return el;
-		})()
+		})(),
+		E('div', { style: 'margin-top:8px; border-top:1px solid rgba(128,128,128,.25); padding-top:6px; font-size:.9em; opacity:.9' }, [
+			E('span', {}, _('Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives in Node Settings → Zapret — "Strategy Lab".')),
+			labBtn
+		])
 	]);
 }
 
@@ -988,21 +1001,120 @@ function callCoreRemove(core) {
 	return fs.exec_direct('/usr/bin/ucode', [CORE_MGMT, 'remove', core], 'json');
 }
 
+/* ч.69: snapshot + recovery RPCs. */
+const callSnapshotCreate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_snapshot_create',
+	expect: { '': {} }
+});
+const callSnapshotList = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_snapshot_list',
+	expect: { '': {} }
+});
+const callSnapshotRestore = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_snapshot_restore',
+	params: [ 'name' ],
+	expect: { '': {} }
+});
+const callRestoreInternet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_restore_internet',
+	expect: { '': {} }
+});
+
+/* The Zapret fuzzer RPCs moved to node.js with the Strategy Lab (ч.70). */
+
+function buildSnapshotsCard() {
+	const listEl = E('div', { style: 'font-size:.9em; margin:4px 0' },
+		[ E('em', { style: 'color:#9a9a9a' }, '—') ]);
+	const msgEl = E('span', { style: 'margin-left:8px; font-size:.9em' }, '');
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
+
+	const refreshList = () => L.resolveDefault(callSnapshotList(), {}).then((r) => {
+		listEl.innerHTML = '';
+		const snaps = (r && r.snapshots) || [];
+		if (!snaps.length) {
+			listEl.appendChild(E('em', { style: 'color:#9a9a9a' }, [ _('No snapshots yet') ]));
+			return;
+		}
+		for (let i in snaps) {
+			const name = snaps[i].name;
+			const rowEl = E('div', { style: 'margin:2px 0' }, [
+				E('span', { style: 'font-family:monospace' }, [ name ]),
+				' ',
+				E('button', { 'class': 'btn cbi-button cbi-button-apply', 'style': 'font-size:.85em; padding:0 8px' },
+					[ _('Restore') ])
+			]);
+			rowEl.lastChild.onclick = () => {
+				if (!window.confirm(_('Restore configuration snapshot %s? The service restarts.').format(name)))
+					return;
+				setMsg(_('Restoring...'), '#9a9a9a');
+				return L.resolveDefault(callSnapshotRestore(name), {}).then((r) => {
+					setMsg(r.result ? _('Restored: %s').format(name) : (r.error || _('Restore failed')),
+						r.result ? '#3fbf5f' : '#e05252');
+				});
+			};
+			listEl.appendChild(rowEl);
+		}
+	});
+
+	const createBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Create snapshot') ]);
+	createBtn.onclick = () => {
+		setMsg(_('Creating...'), '#9a9a9a');
+		return L.resolveDefault(callSnapshotCreate(), {}).then((r) => {
+			setMsg(r.result ? _('Snapshot created: %s').format(r.snapshot) : (r.error || _('Failed')),
+				r.result ? '#3fbf5f' : '#e05252');
+			return refreshList();
+		});
+	};
+
+	const restoreBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', 'style': 'margin-left:4px' },
+		[ _('Restore internet (direct)') ]);
+	restoreBtn.onclick = () => {
+		if (!window.confirm(_('Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with "Service start" or a router reboot.')))
+			return;
+		setMsg(_('Stopping...'), '#9a9a9a');
+		return L.resolveDefault(callRestoreInternet(), {}).then((r) => {
+			setMsg(r.result ? _('Direct internet restored — run "Service start" to bring the proxy back.')
+				: (r.error || _('Failed')), r.result ? '#d99a1b' : '#e05252');
+		});
+	};
+
+	refreshList();
+	return E('div', { 'class': 'hpui-panel' }, [
+		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
+			E('strong', {}, _('Snapshots & recovery')),
+			createBtn,
+			restoreBtn,
+			msgEl
+		]),
+		E('div', { style: 'margin-top:4px; font-size:.9em; opacity:.85' },
+			_('Point-in-time copies of the app configuration and routing lists. Restore returns both and restarts the service; "Restore internet" is the emergency switch that stops the proxy and DNS interception for a plain direct connection.')),
+		listEl
+	]);
+}
+
 function buildCoreCard(core, coreInfo) {
 	const isHiddify = core === 'hiddify';
-	const name = isHiddify ? 'hiddify-core' : 'sing-box-extended';
+	const isTachyon = core === 'tachyon';
+	const name = isHiddify ? 'hiddify-core' : isTachyon ? 'tachyon-core (experimental)' : 'sing-box-extended';
 	const pkgMgr = coreInfo.pkg_manager;
-	const coreData = (isHiddify ? coreInfo.hiddify : coreInfo.singbox) || {};
-	const canInstall = !!pkgMgr;
+	const coreData = (isHiddify ? coreInfo.hiddify : isTachyon ? coreInfo.tachyon : coreInfo.singbox) || {};
+	const canInstall = isTachyon ? true : !!pkgMgr;
 
 	const desc = isHiddify
 		? _('Fork of sing-box 1.13 by the Hiddify team (HiddifyCli). Runs every protocol this app can configure, including NaïveProxy and Hiddify\'s Mieru dialect. Best compatibility with Hiddify App / Hiddify Manager exports.')
+		: isTachyon
+		? _('Independent high-performance core in pure Rust (sing-box 1.14-compatible config, Clash API included): ~4 MB RAM idle, ~10 MB binary, no GC pauses. EXPERIMENTAL: a very young project (0.1.x) whose sing-box config compatibility is declared temporary by its author — if a node type is rejected, the generator skips it automatically (check-heal). On OpenWrt the 0.1.x redirect inbound is broken: this core runs in Tun proxy mode only (enforced in Client Settings).')
 		: _('Extended sing-box 1.14 base by shtorm-7. Runs every protocol this app can configure plus WARP / MASQUE / TrustTunnel / MTProxy extras — but no NaïveProxy: such nodes are skipped automatically when this core runs.');
 
 	/* Verified capability line from the core's own build tags. */
 	const caps = [];
 	if (coreData.naive) caps.push(_('NaïveProxy') + ' ✓');
 	if (coreData.extended) caps.push('WARP / MASQUE / TrustTunnel ✓');
+	if (isTachyon) caps.push(_('low RAM footprint') + ' ✓');
 	const capLine = caps.length
 		? E('div', { style: 'margin-top:2px; font-size:0.9em; color:#3fbf5f' }, caps.join(' · '))
 		: null;
@@ -1071,10 +1183,11 @@ function buildCoreCard(core, coreInfo) {
 		if (!inst.result) return fail(inst.error || _('Installation failed'));
 
 		setMsg(_('Installing kernel modules...'), '#9a9a9a');
-		await L.resolveDefault(callCoreInstallKmods(prep.pkg_manager), {});
+		if (!isTachyon)
+			await L.resolveDefault(callCoreInstallKmods(prep.pkg_manager), {});
 
 		const fresh = await L.resolveDefault(callCoreInfo(), {});
-		const fd = (isHiddify ? fresh.hiddify : fresh.singbox) || {};
+		const fd = (isHiddify ? fresh.hiddify : isTachyon ? fresh.tachyon : fresh.singbox) || {};
 		installed = fd.installed || false;
 		version   = fd.version   || null;
 		statusEl.textContent = installed ? 'v' + version : _('Unknown');
@@ -1163,7 +1276,8 @@ return view.extend({
 
 		o = s.option(form.DummyValue, '_active_core', _('Active core'));
 		const coreName = features.core_type === 'hiddify' ? 'hiddify-core' :
-		                 features.core_type === 'singbox' ? 'sing-box' : null;
+		                 features.core_type === 'singbox' ? 'sing-box' :
+		                 features.core_type === 'tachyon' ? 'tachyon-core' : null;
 		const coreVer = features.version ? ' v' + features.version : '';
 		const coreCustomSuffix = features.core_custom ? ' (custom)' : '';
 
@@ -1195,7 +1309,7 @@ return view.extend({
 					const ret = await L.resolveDefault(callDetectCustomCore(path), {});
 					detectBtn.disabled = false;
 					if (ret.result) {
-						const typeName = ret.type === 'hiddify' ? 'hiddify-core' : 'sing-box';
+						const typeName = ret.type === 'hiddify' ? 'hiddify-core' : ret.type === 'tachyon' ? 'tachyon-core' : 'sing-box';
 						detectMsg.textContent = _('Detected') + ': ' + typeName + (ret.version ? ' v' + ret.version : '') + ' — ' + _('reload page to apply');
 						detectMsg.style.color = '#3fbf5f';
 					} else {
@@ -1288,6 +1402,50 @@ return view.extend({
 
 		o = s.option(form.DummyValue, '_core_singbox');
 		o.default = buildCoreCard('singbox', coreInfo);
+
+		o = s.option(form.DummyValue, '_core_tachyon');
+		o.default = buildCoreCard('tachyon', coreInfo);
+
+		/* ч.69: snapshots + emergency internet recovery. */
+		o = s.option(form.DummyValue, '_snapshots_card');
+		o.default = buildSnapshotsCard();
+
+		/* ч.69: Telegram control bot. */
+		s = m.section(form.NamedSection, 'telegram', 'homeproxy', _('Telegram bot'));
+		s.anonymous = false;
+
+		o = s.option(form.Flag, 'enabled', _('Enable Telegram bot'),
+			_('Remote control from your chat: /status, /ping, /connections, /close, /restart, /help. Long-polls the Bot API; only the bound chat is served. The daemon starts with the service (or press Restart service).'));
+		o.default = o.disabled;
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'token', _('Bot token'));
+		o.password = true;
+		o.placeholder = '123456789:AA…';
+		o.rmempty = false;
+		o.validate = function(section_id, value) {
+			if (!value || !value.length)
+				return _('Create a bot with @BotFather and paste its token here.');
+			if (!/^[0-9]+:[A-Za-z0-9_-]+$/.test(value))
+				return _('That does not look like a BotFather token (id:secret).');
+			return true;
+		};
+
+		o = s.option(form.DummyValue, '_tg_chat', _('Bound chat'));
+		o.cfgvalue = function() {
+			const v = uci.get('homeproxy', 'telegram', 'chat_id');
+			return v ? String(v) : _('not bound yet — send ANY message to your bot; the first chat wins and is pinned automatically');
+		};
+		o.textvalue = function() {
+			const v = uci.get('homeproxy', 'telegram', 'chat_id');
+			const el = E('div', {}, [
+				E('span', { style: 'font-weight:600' }, [ v ? String(v) : _('not bound yet') ]),
+				E('div', { style: 'font-size:.88em; opacity:.8' },
+					[ v ? _('Send /status to the bot to check the connection.')
+					    : _('Send ANY message to your bot — the first chat wins and is pinned automatically.') ])
+			]);
+			return el;
+		};
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('AntiDPI'));
 		s.anonymous = true;

@@ -1253,7 +1253,9 @@ function ensure_sni_sniffer(iface) {
 }
 
 function discover_sni(pkts, secs) {
-	let sni_sniffer_enabled = (uci.get('homeproxy', 'automation', 'sni_sniffer_enabled') || '1') !== '0';
+	/* ч.69: the enable flag is gone — the native sniffer is used whenever its
+	 * binary is installed (the access() check below), tcpdump otherwise. */
+	let sni_sniffer_enabled = true;
 	let iface = uci.get('homeproxy', 'automation', 'sni_sniffer_interface') || 'br-lan';
 
 	/* Native sniffer: read new JSONL events since the last pass. The file is
@@ -1492,7 +1494,10 @@ function main() {
 		return;
 	}
 
-	let timeout = int(uci.get('homeproxy', 'automation', 'timeout') || '6') || 6;
+	/* ч.69: the probe timeout is not user-configurable anymore — adaptive
+	 * per-host EWMA timeouts (always on) drive the real value; this is the
+	 * base for hosts without history. */
+	let timeout = 6;
 	let max_entries = int(uci.get('homeproxy', 'automation', 'max_entries') || '2000') || 2000;
 
 	/* Performance profile: perf = parallel batch probing + bigger caps (multi-core
@@ -1528,7 +1533,9 @@ function main() {
 	 * host_timeout() which reads the EWMA state). state + adaptive_timeout are
 	 * therefore declared here, BEFORE the probe helper definitions below. */
 	let state = load_state();
-	let adaptive_timeout = (uci.get('homeproxy', 'automation', 'adaptive_timeout') || '1') !== '0';
+	/* ч.69: adaptive timeouts are always on (they were the default and the
+	 * opt-out only invited foot-guns). */
+	let adaptive_timeout = true;
 
 	/* Probe worker: one measurement per invocation, safe to run many copies in
 	 * parallel. Mirrors the serial probe() exactly — plain-view DNS resolution
@@ -1603,7 +1610,9 @@ echo done > "$PRE.done"
 	/* Optimistic: the binary's presence is re-checked per batch; the flag only
 	 * latches FAILURES so a broken install cannot slow every wave down. */
 	let probe_pool_available = true;
-	let probe_pool_enabled = (uci.get('homeproxy', 'automation', 'probe_pool_enabled') || '1') !== '0';
+	/* ч.69: probe_pool is used whenever its binary is installed (the flag is
+	 * gone — an unused helper auto-degrades to shell workers below). */
+	let probe_pool_enabled = true;
 	let pp_seq = 0;
 	let pp_last_respawn = 0;
 	if (probe_pool_enabled && access(PROBE_POOL_BIN))
@@ -1982,35 +1991,33 @@ echo done > "$PRE.done"
 	 * deletes its files after harvest — a startup sweep is belt & braces. */
 	system(`rm -f ${RUN_DIR}/pw.*.done ${RUN_DIR}/pw.*.code ${RUN_DIR}/pw.*.body ${RUN_DIR}/pw.*.ip 2>/dev/null`);
 
-	let min_confirm = int(uci.get('homeproxy', 'automation', 'min_confirm') || '1') || 1;
+	/* ч.69: min_confirm is no longer configurable — hard blocks learn instantly
+	 * (INSTANT, ч.68), transient verdicts add one adaptive confirmation. */
+	let min_confirm = 1;
 	let mode = uci.get('homeproxy', 'automation', 'mode') || 'balanced';
 
-	/* Phase 1: adaptive behavior options. adaptive_timeout is declared EARLY
-	 * (before the probe helpers, see the closure note); only the http2 flag is
-	 * latched here. http2_probe needs a curl actually built with HTTP/2:
-	 * `--http2` on a non-h2 curl build errors out EVERY probe, so the feature
-	 * string gates the flag at startup. */
-	let adaptive_confirm = (uci.get('homeproxy', 'automation', 'adaptive_confirm') || '1') !== '0';
-	let resource_aware = (uci.get('homeproxy', 'automation', 'resource_aware') || '1') !== '0';
+	/* ч.69: adaptive confirmations and resource-aware scheduling are always on
+	 * (defaults were 1; the opt-outs only complicated the settings page).
+	 * HTTP/2 probing auto-detects curl h2 support (the UCI flag is gone). */
+	let adaptive_confirm = true;
+	let resource_aware = true;
 	let http2_probe = false;
-	if ((uci.get('homeproxy', 'automation', 'http2_probe') || '1') !== '0') {
-		if (have_curl() && match(capture('curl --version'), /HTTP2/)) {
-			http2_probe = true;
-			log('HTTP/2 probing enabled (curl supports h2)');
-		} else {
-			log('http2_probe requested but curl lacks HTTP2 support - flag disabled');
-		}
+	if (have_curl() && match(capture('curl --version'), /HTTP2/)) {
+		http2_probe = true;
+		log('HTTP/2 probing enabled (curl supports h2)');
 	}
 
 	/* SNI sniffer options are read in discover_sni(); nothing to latch here. */
 
-	/* Discovery source weights (Phase 1: weighted cross-correlation).
+	/* Discovery source weights (weighted cross-correlation). ч.69: fixed
+	 * engine-internal values — live traffic outranks SNI, which outranks a
+	 * passive DNS-log sighting; no user-facing knobs anymore.
 	 * ucode has no float() builtin — weights go through num(). Conntrack IP
 	 * candidates bypass intake (they are counts, not host scores), so there
 	 * is deliberately no conntrack weight. */
-	let w_dns = num(uci.get('homeproxy', 'automation', 'discover_weight_dns') || '1.0') || 1.0;
-	let w_clash = num(uci.get('homeproxy', 'automation', 'discover_weight_clash') || '1.5') || 1.5;
-	let w_sni = num(uci.get('homeproxy', 'automation', 'discover_weight_sni') || '1.2') || 1.2;
+	let w_dns = 1.0;
+	let w_clash = 1.5;
+	let w_sni = 1.2;
 	/* Discovery sources. The new UI stores an ARRAY of domain sources (MultiValue:
 	 * dns / clash / sni). Legacy values were one string: all | both | clash | dns |
 	 * sni | conntrack. Raw-IP learning is governed SOLELY by ip_learn now — legacy
@@ -2043,7 +2050,9 @@ echo done > "$PRE.done"
 	let reload_interval = int(uci.get('homeproxy', 'automation', 'reload_interval') || '10') || 10;
 	let flush_min_entries = int(uci.get('homeproxy', 'automation', 'flush_min_entries') || '1') || 1;
 	let ip_learn = uci.get('homeproxy', 'automation', 'ip_learn') || '0';
-	asn_enabled = (uci.get('homeproxy', 'automation', 'asn_enabled') || '1') !== '0';
+	/* ч.69: CDN/cloud ASN exclusion is always on (it protects against shared-fate
+	 * false learns; there was no sane reason to disable it). */
+	asn_enabled = true;
 	/* Exclude list: newline- or comma-separated; '#' starts a comment (to end of
 	 * line) so users can annotate/organize entries. Blank pieces are dropped.
 	 * Legacy safety: very old builds could store this option as a UCI LIST —
@@ -2232,125 +2241,24 @@ echo done > "$PRE.done"
 			save_state(state);
 	}
 
-	/* ── Geo-aware exit (ч.53): dedicated geo-out selector ───────────────
-	 * generate_client emits a `geo-out` selector (all proxy nodes), a
-	 * geo-test-in (:5339) inbound pinned to it by an inbound rule, and a
-	 * domain_suffix rule routing the geo-sensitive hosts through geo-out.
-	 * This scan measures EVERY node's exit (country/ASN via api.ip.sb) and
-	 * the REAL per-node geo verdict of the Google AI and OpenAI edge checks
-	 * (their unauthenticated endpoints answer differently per region), then
-	 * pins the selector to the best passing node and keeps it there
-	 * (hysteresis). The point: Gemini-class services refuse datacenter
-	 * exits one by one over time - the engine re-homes geo-sensitive
-	 * traffic automatically instead of the user hunting for a node by hand. */
-	const GEO_SCAN_INTERVAL = 1800;
-	const GEO_SCAN_MIN_GAP = 300;
-	/* First scan fires ~60 s after start (the core needs a moment to come up
-	 * after the service restart that usually precedes the daemon). */
-	let last_geo_scan = time() - GEO_SCAN_INTERVAL + 60;
-	let geo_scan_soon = 0;
-	/* Core down / Clash API refused the geo-out switch: block scans until this
-	 * timestamp instead of poking last_geo_scan (the main loop overwrote that
-	 * with `now`, so the intended 5-minute retry silently became 30). */
-	let geo_scan_retry_at = 0;
-	/* Consecutive scan failures (Clash API/core) for the retry backoff. The
-	 * stale-config heal limiter lives in state.__geo_heal (survives the
-	 * daemon respawn the heal itself triggers). */
-	let geo_scan_fail_streak = 0;
-	/* Set after the first fully completed scan: the health probe below needs
-	 * the geo-test-in (:5339) plumbing to exist in the RUNNING config, which
-	 * is only guaranteed once a scan has actually measured nodes. */
-	let geo_scan_ever_ok = false;
+	/* ── Exit health (ч.69, replaces the geo-out scan machinery) ─────────
+	 * The dedicated geo-out selector / per-node scan / rotation / pin
+	 * (ч.53-ч.66) is REMOVED: the engine handles routing autonomously and
+	 * geo-sensitive hosts ride the regular main path. What remains worth
+	 * watching is whether the CURRENT exit still passes the geo checks of
+	 * the AI-class services — that is measured here (no node switching, no
+	 * config changes) and surfaced on the Overview card + log. */
 
-	/* Cheap liveness check of the CURRENT geo exit (no selector switching):
-	 * the periodic scan re-checks every node only every 30 min, and the
-	 * geo_blocked reaction can never fire for the geo-sensitive seeds
-	 * themselves (they are pinned and excluded from probing). So a dead or
-	 * newly-refused geo exit would break Gemini-class traffic for up to half
-	 * an hour with nobody noticing. Every GEO_HEALTH_INTERVAL seconds probe
-	 * the Google AI edge endpoint through :5339 (which rides geo-out as
-	 * pinned by the selector): three consecutive failures (dead node or a
-	 * hard geo refusal) trigger a rotating scan, shortening the worst-case
-	 * recovery from ~30 to ~11-15 minutes. Web-level per-ASN flagging
-	 * (Gemini 1060) stays invisible to anonymous endpoints - for that the
-	 * manual "Scan geo exits" button remains the tool. */
-	const GEO_HEALTH_INTERVAL = 300;
-	let geo_health_fail = 0;
-	let last_geo_health = 0;
-
-	/* ч.66: persistent geo-exit pin (resources/geo_exit.json — FLASH, survives
-	 * reboots unlike the tmpfs state file). Written by the scan on every
-	 * selection change and by the manual "automation_geo_pin" RPC. Shape:
-	 *   { "tag": "cfg-<sid>-out", "manual": true|false }
-	 * generate_client fronts this tag as the geo-out selector default, so a
-	 * reboot no longer drops geo traffic onto the first pool member until the
-	 * first scan; manual=true makes rotating scans keep a passing user-picked
-	 * exit (the flag auto-clears when the picked exit stops passing). */
-	const GEO_EXIT_FILE = RES + '/geo_exit.json';
-
-	function geo_pin_read() {
-		try {
-			const raw = readfile(GEO_EXIT_FILE);
-			if (raw) {
-				const j = json(raw);
-				if (j && type(j) === 'object' && j.tag)
-					return { tag: '' + j.tag, manual: (j.manual === true) };
-			}
-		} catch (e) { /* corrupt pin file = no pin */ }
-		return { tag: '', manual: false };
-	}
-
-	function geo_pin_write(tag, manual) {
-		const cur = geo_pin_read();
-		if (cur.tag === tag && cur.manual === !!manual)
-			return;                       /* no change - no flash write */
-		atomic_write(GEO_EXIT_FILE, sprintf('{"tag":"%s","manual":%s}\n', tag, manual ? 'true' : 'false'));
-	}
-
-	/* Live state of the geo-out selector from the RUNNING core (Clash API).
-	 * Returns { all: [member tags], now: current member } or null. Reading
-	 * the members from the core (instead of listing UCI nodes) is what keeps
-	 * the scan honest: generate_client only emits nodes the active core can
-	 * load, dead nodes sink to the tail, and a config generated without the
-	 * geo plumbing simply yields null here (-> clear log + self-heal below)
-	 * instead of a mid-scan abort on a tag the core does not know. */
-	function geo_clash_members() {
-		const raw = capture('curl -s -m 3 http://127.0.0.1:9090/proxies/geo-out');
-		if (!length(trim(raw))) return null;
-		let j = null;
-		try { j = json(raw); } catch (e) { return null; }
-		if (type(j) !== 'object' || type(j.all) !== 'array' || !length(j.all))
-			return null;
-		return { all: j.all, now: (type(j.now) === 'string') ? j.now : null };
-	}
-
-	function geo_clash_switch(tag) {
-		const body = sprintf('{"name":"%s"}', replace(tag, '"', ''));
-		const f = RUN_DIR + '/geo_switch.out';
-		let code = '';
-		/* Three attempts: right after a service restart the core can be busy
-		 * booting its inbounds and refuse a otherwise-valid PUT for a moment. */
-		for (let attempt = 0; attempt < 3; attempt++) {
-			if (attempt > 0) sleep(2);
-			system(`rm -f ${shellquote(f)} 2>/dev/null`);
-			/* -w writes to STDOUT: capture it into the file (-o would hold the
-			 * (empty) response body instead of the status code). */
-			system(`curl -s -m 4 -o /dev/null -w '%{http_code}' -X PUT http://127.0.0.1:9090/proxies/geo-out -d ${shellquote(body)} > ${shellquote(f)} 2>/dev/null`, 8000);
-			code = trim(readfile(f) || '');
-			system(`rm -f ${shellquote(f)} 2>/dev/null`);
-			if (code === '200' || code === '204')
-				return true;
-		}
-		log(`geo scan: switching geo-out to ${tag} failed (Clash API HTTP ${code ? code : 'no response'})`);
-		return false;
-	}
-
-	function geo_probe_url(url, timeout, port) {
-		const pf = int(port) || 5339;
+	/* Cheap probe helpers (shared with diagnostics): HTTPS fetch through a
+	 * pinned loopback test inbound, returning {code, body}. Default port is
+	 * the MAIN test path (auto-proxy-in :5337 — rides main-out). */
+	function geo_probe_url(url, timeout, port, hdr) {
+		const pf = int(port) || 5337;
 		const bf = RUN_DIR + '/geo_probe.body';
 		const cf = RUN_DIR + '/geo_probe.code';
+		const hl = (length(hdr)) ? `-H ${shellquote(hdr)}` : '';
 		system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
-		system(`curl -sL --max-redirs 2 -o ${shellquote(bf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} -x socks5h://127.0.0.1:${pf} ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`, timeout * 2000 + 5000);
+		system(`curl -sL --max-redirs 2 -o ${shellquote(bf)} -w '%{http_code}' -k --connect-timeout ${timeout} --max-time ${timeout} -x socks5h://127.0.0.1:${pf} ${hl} ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`, timeout * 2000 + 5000);
 		const r = { code: trim(readfile(cf) || '000'), body: readfile(bf) || '' };
 		system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
 		return r;
@@ -2360,43 +2268,6 @@ echo done > "$PRE.done"
 		const r = geo_probe_url(url, timeout, port);
 		if (r.code !== '200') return null;
 		try { return json(r.body) || null; } catch (e) { return null; }
-	}
-
-	/* Exit-country/ASN lookup with provider fallback. api.ip.sb alone proved
-	 * fragile from VPN exits (rate limiting and outright blocks): the scan
-	 * tables filled with "—" country/ASN while the edge verdicts still
-	 * passed, and geo diagnostics reported "probe failed" with a healthy
-	 * tunnel. All three providers answer anonymously; each shape is
-	 * normalized to { ip, cc, asn } (asn numeric or null). */
-	function geoip_lookup(timeout, port) {
-		/* api.ip.sb → ipwho.is (HTTPS) → ip-api.com (HTTP; encrypted by the
-		 * tunnel itself, fine for a country/ASN lookup). */
-		for (let pi = 0; pi < 3; pi++) {
-			let j = null;
-			if (pi === 0)
-				j = geo_probe_json('https://api.ip.sb/geoip', timeout, port);
-			else if (pi === 1)
-				j = geo_probe_json('https://ipwho.is/', timeout, port);
-			else
-				j = geo_probe_json('http://ip-api.com/json/?fields=status,countryCode,asnum,query', timeout, port);
-			if (!j || type(j) !== 'object') continue;
-			let ip = null, cc = null, asn = null;
-			if (pi === 0) {
-				ip = j.ip; cc = j.country_code; asn = j.asn;
-			} else if (pi === 1) {
-				if (j.success === false) continue;
-				ip = j.ip; cc = j.country_code;
-				asn = (type(j.connection) === 'object' && j.connection.asn) ? j.connection.asn : null;
-			} else {
-				if (j.status && j.status !== 'success') continue;
-				ip = j.query; cc = j.countryCode; asn = j.asnum;
-			}
-			cc = cc ? uc(trim('' + cc)) : null;
-			asn = asn ? (int(asn) || null) : null;
-			if (!cc && !ip) continue;
-			return { ip: ip || null, cc: cc, asn: asn };
-		}
-		return null;
 	}
 
 	/* Per-node geo verdicts from the unauthenticated edge endpoints.
@@ -2422,275 +2293,61 @@ echo done > "$PRE.done"
 		return 'fail';
 	}
 
-	function geo_health_check() {
-		/* A scan is already pending - it will judge everything. */
-		if (geo_scan_soon) return;
+	/* Gemini WEB verdict (ч.70): the API edges above are honest for their own
+	 * infrastructure but blind to the Gemini WEB flag (error 1060 class,
+	 * "Gemini пока не поддерживается в вашей стране") — that refusal is rendered
+	 * on gemini.google.com itself. The logged-out landing page from a flagged
+	 * exit carries the same country note, so the body is searched for the
+	 * refusal strings (EN probe language pinned + RU fallback); a served exit
+	 * gets the plain landing/sign-in page (200, no note). Not perfect — the
+	 * web flag can also follow the ACCOUNT country — but it catches the exit
+	 * based case that the API probes miss. */
+	function geo_verdict_gemini_web(r) {
+		if (r.code !== '200') return 'fail';
+		const b = lc(r.body);
+		if (match(b, /not yet available in your country/) ||
+		    match(b, /not available in your country/) ||
+		    match(b, /not supported in your country/) ||
+		    match(b, /в вашей стране/))
+			return 'refused';
+		return 'ok';
+	}
+
+	/* Exit health check (ч.69): probe the AI-class edge endpoints through the
+	 * MAIN test path (:5337 rides main-out) and record the verdicts in
+	 * state.__exit_health for the Overview card. No node switching, no config
+	 * changes — when the exit is refused the card + log tell the user to
+	 * switch the node (Hot Swap/URLTest take care of dead nodes already).
+	 * Skipped while the main path is direct/custom (probes not wired or
+	 * meaningless). */
+	const EXIT_HEALTH_INTERVAL = 300;
+	let exit_health_fail = 0;
+	let last_exit_health = 0;
+
+	function exit_health_check() {
 		if (!have_curl()) return;
-		/* Drift self-heal: the core's LIVE geo-out pick must match the
-		 * engine's pin. After a reboot the state file (tmpfs) is gone, the
-		 * config defaults to the first member, and nothing re-pins until the
-		 * next scan - meanwhile the UI would keep showing whatever the last
-		 * scan had pinned. Re-pin quietly when they diverge; if the pinned
-		 * member no longer exists in the pool (node removed from the
-		 * subscription), a rotating scan re-homes instead. */
-		/* ч.66: the pin lives in the FLASH file (survives reboots); the state
-		 * record is only the fallback for installs without the file yet. */
-		const pin = geo_pin_read();
-		const pinned = pin.tag ||
-			((type(state.__geo_scan) === 'object') ? (state.__geo_scan.selected || '') : '');
-		if (pinned) {
-			const live = geo_clash_members();
-			if (live && live.now && live.now !== pinned) {
-				if (index(live.all, pinned) >= 0) {
-					log(`geo health check: live geo-out (${live.now}) diverged from the pinned exit - re-pinning ${pinned}`);
-					if (!geo_clash_switch(pinned))
-						geo_scan_soon = time() + 5;
-					return;
-				}
-				log(`geo health check: pinned exit ${pinned} is no longer a geo-out member - requesting a rotating scan`);
-				geo_scan_soon = time() + 5;
-				return;
-			}
-		}
-		/* The Gemini probe rides the geo test inbound (:5339), which is only
-		 * guaranteed to exist once a scan has actually measured nodes
-		 * (geo_scan_ever_ok - the ч.55 intent, now actually enforced). */
-		if (!geo_scan_ever_ok) return;
-		const r = geo_probe_url('https://generativelanguage.googleapis.com/v1beta/models', 8);
-		const v = geo_verdict_google(r);
-		if (v === 'ok') {
-			geo_health_fail = 0;
-			return;
-		}
-		geo_health_fail++;
-		log(`geo health check: current geo exit failing (${geo_health_fail}/3, verdict ${v})`);
-		if (geo_health_fail >= 3) {
-			geo_health_fail = 0;
-			log('geo health check: 3 consecutive failures - requesting a rotating geo scan');
-			geo_scan_soon = time() + 5;
-		}
-	}
-
-	/* Evidence-based stale-config heal: the Clash API is reachable and the
-	 * main test path carries traffic (the core is UP) while the running
-	 * config has no geo-out selector — the config was generated before the
-	 * geo plumbing existed (feature enabled afterwards, main node switched
-	 * from Direct, app upgraded). Regenerate + reload once, rate-limited.
-	 * The limiter lives in the STATE file (not a runtime variable): the heal
-	 * reload restarts THIS daemon, and a runtime-only limit would reset on
-	 * respawn - a failing heal would loop the whole service forever. */
-	function geo_config_heal() {
-		const last_heal = (type(state.__geo_heal) === 'object') ? (int(state.__geo_heal.ts) || 0) : 0;
-		if ((time() - last_heal) < 7200)
-			return false;
-		let n_nodes = 0;
-		uci.foreach('homeproxy', 'node', (cfg) => { n_nodes++; });
-		if (n_nodes === 0) {
-			log('geo scan: no proxy nodes configured - geo-out cannot exist');
-			return false;
-		}
-		state.__geo_heal = { ts: time() };
-		save_state(state);
-		log('geo scan: core is up but the running config has no geo-out selector - regenerating the config and reloading the service');
-		system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
-		if (!access(RUN_DIR + '/hiddify-c.json')) {
-			log('geo config heal: regenerate FAILED - see ' + RUN_DIR + '/generate_client.log');
-			return false;
-		}
-		sync_learned_rulesets();
-		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-		log('geo config heal: service reloaded - the next scan should find geo-out');
-		return true;
-	}
-
-	function geo_scan_run(reason, rotate) {
-		if ((uci.get('homeproxy', 'automation', 'geo_scan') || '1') === '0') return false;
 		const rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 		const mn = uci.get('homeproxy', 'config', 'main_node') || 'nil';
 		if (rmode === 'custom' || rmode === 'custom_json' || mn === 'direct-out' || mn === 'nil')
-			return false;
-		if (!have_curl()) return false;
-		/* Members come from the RUNNING core (see geo_clash_members): a UCI
-		 * node the active core cannot load (naive on singbox, TrustTunnel on
-		 * hiddify, ...) is absent from the selector - PUTting its tag used to
-		 * be refused and aborted the whole scan mid-way, over and over. */
-		const live = geo_clash_members();
-		if (!live) {
-			/* Distinguish "core down" from "stale config without the geo
-			 * plumbing": if the main path still carries traffic, the core is
-			 * alive and the config is stale - heal it (rate-limited). */
-			const mx_alive = geoip_lookup(6, 5337);
-			if (mx_alive && geo_config_heal()) {
-				geo_scan_retry_at = 0;
-				geo_scan_soon = time() + 90;
-				return false;
-			}
-			if (mx_alive)
-				log('geo scan: geo-out missing from the running config (heal rate-limited or regenerate failed) - will retry');
-			else
-				log('geo scan: core down? (Clash API and the main test path both unreachable) - will retry');
-			/* Backoff: short at first (core-start races self-heal in a
-			 * minute), capped at 5 minutes after repeated failures. */
-			geo_scan_fail_streak++;
-			geo_scan_retry_at = time() + ((geo_scan_fail_streak >= 3) ? 300 : 60);
-			return false;
+			return;
+		const gg = geo_verdict_google(geo_probe_url('https://generativelanguage.googleapis.com/v1beta/models', 8, 5337));
+		const go = geo_verdict_openai(geo_probe_url('https://api.openai.com/v1/models', 8, 5337));
+		const gw = geo_verdict_gemini_web(geo_probe_url('https://gemini.google.com/', 10, 5337, 'Accept-Language: en-US,en;q=0.9'));
+		const prev = (type(state.__exit_health) === 'object') ? state.__exit_health : {};
+		if (gg !== 'ok' || go !== 'ok' || gw !== 'ok')
+			exit_health_fail++;
+		else
+			exit_health_fail = 0;
+		const refused = (gg === 'refused' || go === 'refused' || gw === 'refused');
+		const changed = (prev.google !== gg || prev.openai !== go || prev.google_web !== gw);
+		if (changed || (time() - (int(prev.ts) || 0)) > EXIT_HEALTH_INTERVAL) {
+			state.__exit_health = { ts: time(), google: gg, google_web: gw, openai: go, fails: exit_health_fail };
+			save_state(state);
+			if (refused && exit_health_fail >= 2)
+				log(`exit health: AI-class services refuse the CURRENT exit (google ${gg}, gemini web ${gw}, openai ${go}) - switch the node`);
+			else if (changed && !refused)
+				log(`exit health: AI-class services are served again (google ${gg}, gemini web ${gw}, openai ${go})`);
 		}
-		const tags = live.all;
-		log(`geo scan started (${reason}, ${length(tags)} nodes)`);
-		/* ч.66: the manual pin (geo_exit.json) — a node the user picked in the
-		 * UI. Its verdict is tracked during the measurement below: a PASSING
-		 * manual exit wins over both hysteresis and rotation; a FAILING one is
-		 * rotated away from and the manual flag is cleared. A pin that is no
-		 * longer a pool member (node removed) simply stops pinning. */
-		const pin = geo_pin_read();
-		const pin_tag = (pin.tag && index(live.all, pin.tag) >= 0) ? pin.tag : '';
-		const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
-		/* Exit of the USER'S MAIN path (via auto-proxy-in :5337): a geo pick
-		 * sharing the main exit's country/ASN inherits everything that ever
-		 * gets that exit flagged (Gemini 1060 class) - and if Google flags the
-		 * shared ASN, BOTH paths die together. Selection below prefers a
-		 * geo exit that differs; the main-exit measurement is best-effort
-		 * (probe failure just disables the preference). */
-		const mex = geoip_lookup(10, 5337);
-		const main_cc = (mex && mex.cc) ? mex.cc : null;
-		const main_asn = (mex && mex.asn) ? ('AS' + mex.asn) : null;
-		/* The LIVE selection, not the remembered one: hysteresis and rotation
-		 * scoring must reflect what the core is actually pinned to right now
-		 * (a lost state file or a manual switch would otherwise lie here). */
-		const prev = (live.now && length(live.now))
-			? live.now
-			: ((type(state.__geo_scan) === 'object') ? (state.__geo_scan.selected || '') : '');
-		const results = {};
-		let best = null, best_rank = 0, prev_ok = false, found_prev = false, passing = [];
-		let pin_ok = false;
-		for (let idx = 0; idx < length(tags); idx++) {
-			const tag = tags[idx];
-			if (!geo_clash_switch(tag)) {
-				/* Core down / Clash API unreachable: retry via the dedicated
-				 * retry gate (the main loop must NOT overwrite it - that was
-				 * the bug that turned the 5-min retry into 30). */
-				geo_scan_fail_streak++;
-				geo_scan_retry_at = time() + ((geo_scan_fail_streak >= 3) ? 300 : 60);
-				return false;
-			}
-			const ex = geoip_lookup(10);
-			const cc = (ex && ex.cc) ? ex.cc : null;
-			let gp = geo_verdict_google(geo_probe_url('https://generativelanguage.googleapis.com/v1beta/models', 8));
-			const op = geo_verdict_openai(geo_probe_url('https://api.openai.com/v1/models', 8));
-			/* Hard country gate: a node egressing in an unsupported country is
-			 * refused regardless of what the edge endpoints answered. */
-			if (cc && UNSUPPORTED[cc])
-				gp = 'refused';
-			results[tag] = {
-				country: cc,
-				asn: (ex && ex.asn) ? ('AS' + ex.asn) : null,
-				google: gp,
-				openai: op
-			};
-			if (tag === prev) { found_prev = true; prev_ok = (gp === 'ok'); }
-			if (pin_tag && tag === pin_tag)
-				pin_ok = (gp === 'ok');
-			/* Rank: both edges served > Google only; a node whose exit
-			 * country could not be measured (all geoip providers failed) is
-			 * capped at 1 - the unsupported-country gate is blind without
-			 * cc, so measured nodes win ties. */
-			let rank = 0;
-			if (gp === 'ok')
-				rank = (op === 'ok') ? 2 : 1;
-			if (rank > 0 && !cc)
-				rank = 1;
-			if (rank > 0)
-				push(passing, { tag: tag, rank: rank, country: cc, asn: (ex && ex.asn) || null });
-			if (rank > best_rank) { best_rank = rank; best = tag; }
-		}
-		/* Selection:
-		 * - a PASSING manually pinned exit wins (ч.66): the user chose it, a
-		 *   requested scan only re-verifies it;
-		 * - periodic scans hold the current pick while it still passes
-		 *   (hysteresis, no churn);
-		 * - scans triggered by an actual geo refusal ROTATE: move to another
-		 *   passing node, scored by (a) better edge verdicts, (b) difference
-		 *   from the previous geo pick (fresh exit = the practical answer to
-		 *   per-ASN web flagging) and (c) difference from the MAIN exit's
-		 *   country/ASN (shared fate, see the mex probe above). */
-		let sel = null;
-		/* ч.66: a manual pin may arrive via the RPC WHILE this scan is
-		 * measuring (the scan flips the selector through every node, so a pin
-		 * landing mid-scan would otherwise be silently overwritten by the
-		 * scan's own pick at the end). Re-read the pin file after the loop
-		 * and honor a FRESH manual pin that passes. */
-		const pin_end = geo_pin_read();
-		let pin_manual_eff = pin.manual;
-		let pin_tag_eff = pin_tag;
-		let pin_ok_eff = pin_ok;
-		if (pin_end.manual && pin_end.tag !== pin.tag) {
-			log(`geo scan: a manual pin of ${pin_end.tag} arrived while the scan was measuring - honoring it`);
-			pin_manual_eff = true;
-			pin_tag_eff = (index(tags, pin_end.tag) >= 0) ? pin_end.tag : '';
-			pin_ok_eff = (pin_tag_eff && results[pin_tag_eff]) ? (results[pin_tag_eff].google === 'ok') : false;
-		}
-		const keep_manual = (pin_manual_eff && pin_ok_eff);
-		if (keep_manual) {
-			sel = pin_tag_eff;
-			if (sel !== prev)
-				log(`geo scan: re-pinning the manually chosen geo exit ${sel}`);
-		} else if (!rotate && prev_ok && found_prev) {
-			sel = prev;
-		} else if (length(passing) > 0) {
-			if (pin_manual_eff) {
-				if (pin_tag_eff)
-					log(`geo scan: manually pinned exit ${pin_tag_eff} no longer passes - rotating away, the manual pin is cleared`);
-				else
-					log('geo scan: the manually pinned exit is no longer a geo-out member - rotating away, the manual pin is cleared');
-			}
-			let alt = null, alt_score = -1;
-			for (let p in passing) {
-				if (p.tag === prev) continue;
-				let sc = p.rank * 10;
-			if (prev && found_prev) {
-				if (((results[prev].country || '') !== '' && p.country !== results[prev].country))
-					sc += 5;
-				if (p.asn && results[prev].asn && ('AS' + p.asn) !== results[prev].asn)
-					sc += 5;
-			}
-				if (main_cc) {
-					if (p.country !== main_cc)
-						sc += 3;
-					if (main_asn && p.asn && ('AS' + p.asn) !== main_asn)
-						sc += 3;
-				}
-				if (sc > alt_score) { alt_score = sc; alt = p; }
-			}
-			sel = (rotate && alt) ? alt.tag : (best || passing[0].tag);
-		} else {
-			sel = found_prev ? prev : tags[0];
-		}
-		geo_scan_fail_streak = 0;
-		geo_scan_retry_at = 0;
-		geo_scan_ever_ok = true;
-		if (!geo_clash_switch(sel)) {
-			/* Keep the record truthful: the core stays on whatever the last
-			 * measured node was - report THAT, not the pin we failed to set. */
-			const after = geo_clash_members();
-			if (after && after.now)
-				sel = after.now;
-			log('geo scan: pinning the selected exit failed - the table reflects the live selection');
-		}
-		/* ч.66: persist the selection so the choice survives reboots (the
-		 * selector default is fronted from this file) and the manual flag
-		 * state stays truthful for the UI. */
-		geo_pin_write(sel, keep_manual && sel === pin_tag_eff);
-		state.__geo_scan = { ts: time(), selected: sel, manual: (keep_manual && sel === pin_tag_eff), nodes: results };
-		save_state(state);
-		let ok_n = 0, ref_n = 0;
-		for (let t in keys(results)) {
-			if (results[t].google === 'ok') ok_n++;
-			else if (results[t].google === 'refused') ref_n++;
-		}
-		log(`geo scan done: geo-sensitive exit -> ${sel} (google ok ${ok_n}, refused ${ref_n} of ${length(tags)} nodes)`);
-		if (best_rank === 0)
-			log('geo scan: NO node passes the geo checks - geo-sensitive services stay refused until the node list changes (all verdicts "n/a" means the geo test inbound :5339 is missing from the running config - reload the service)');
-		return true;
 	}
 
 	if (!geo_loaded)
@@ -2711,7 +2368,7 @@ echo done > "$PRE.done"
 	 * accumulated backlog once at startup. */
 	let unknown_dropped = 0;
 	for (let h in keys(state)) {
-		if (h === '__dns_offset' || h === '__geo_scan' || h === '__geo_heal') continue;
+		if (h === '__dns_offset' || h === '__exit_health') continue;
 		if (type(state[h]) !== 'object') { delete state[h]; continue; }
 		if (state[h].status === 'unknown' && !auto_set[h] && !auto_ip_set[h]) {
 			delete state[h];
@@ -2895,13 +2552,10 @@ echo done > "$PRE.done"
 		if (d.geo && p && p.geo) {
 			st.status = 'geo_blocked';
 			st.confirms = 0;
-			log(`geo-refused on BOTH paths: ${dom} - current exit node is rejected by the service`);
-			/* Reaction trigger (ч.53): the current exit is refused - schedule
-			 * a geo scan so the engine can move the geo-sensitive services to
-			 * a passing node automatically (rate-limited by GEO_SCAN_MIN_GAP). */
-			if ((uci.get('homeproxy', 'automation', 'geo_scan') || '1') !== '0' &&
-			    (time() - last_geo_scan) > GEO_SCAN_MIN_GAP)
-				geo_scan_soon = time() + 10;
+			log(`geo-refused on BOTH paths: ${dom} - current exit node is rejected by the service (switch the node; surfaced on the Overview card)`);
+			/* Request an immediate exit-health probe so the Overview card
+			 * reflects the refusal without waiting for the periodic check. */
+			last_exit_health = 0;
 			return;
 		}
 		if (p_ok) {
@@ -3463,7 +3117,7 @@ echo done > "$PRE.done"
 			/* Geo-sensitive seeds likewise (their routing is engine-pinned). */
 			for (let d in geo_seed_set) keep[d] = true;
 			for (let h in keys(state)) {
-				if (h === '__dns_offset' || h === '__geo_scan' || h === '__geo_heal') continue;
+				if (h === '__dns_offset' || h === '__exit_health') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let st = state[h];
 				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
@@ -3475,7 +3129,7 @@ echo done > "$PRE.done"
 			 * them reset the confirm counter and the host never got learned. */
 			let rest = [];
 			for (let h in keys(state)) {
-				if (h === '__dns_offset' || h === '__geo_scan' || h === '__geo_heal') continue;
+				if (h === '__dns_offset' || h === '__exit_health') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let cst = state[h];
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
@@ -3550,12 +3204,12 @@ echo done > "$PRE.done"
 			 * auto_set resurrected cleared entries on the next learn (the whole
 			 * set is rewritten by write_auto_list), old 'direct' verdicts
 			 * suppressed re-probing for a day, and stale auth families survived.
-			 * Per-host state is wiped; service keys survive: __geo_scan pins the
-			 * geo exit, __dns_offset keeps the discovery cursor. */
+			 * Per-host state is wiped; service keys survive: __exit_health keeps
+			 * the exit verdicts, __dns_offset keeps the discovery cursor. */
 			system('rm -f ' + shellquote(RELOAD_MARKER + '_clear'));
-			const keep_geo_scan = (type(state.__geo_scan) === 'object') ? state.__geo_scan : null;
+			const keep_exit_health = (type(state.__exit_health) === 'object') ? state.__exit_health : null;
 			state = {};
-			if (keep_geo_scan) state.__geo_scan = keep_geo_scan;
+			if (keep_exit_health) state.__exit_health = keep_exit_health;
 			state.__dns_offset = dns_log_offset;
 			reload_lists();
 			ensure_geo_seeds();
@@ -3601,53 +3255,13 @@ echo done > "$PRE.done"
 			}
 		}
 
-		/* Geo-aware exit scan (ч.53): on request (RPC trigger file, geo_blocked
-		 * reaction, health check) and periodically. Each node switch briefly
-		 * reroutes only the geo-sensitive domains through the node being
-		 * measured. The retry gate (geo_scan_retry_at) is respected first so
-		 * a "core down" backoff is not reset by the loop below it. */
-		if ((uci.get('homeproxy', 'automation', 'geo_scan') || '1') !== '0') {
-			const gtrig = RUN_DIR + '/automation.geo_scan';
-			if (access(gtrig)) {
-				system('rm -f ' + shellquote(gtrig) + ' 2>/dev/null');
-				geo_scan_soon = time();
-			}
-			/* ч.66: the pin RPC updates the pin file directly; the daemon's
-			 * in-memory scan record would otherwise clobber the UI's
-			 * "selected" view with a stale pick on its next save_state until
-			 * the next scan. Sync it (ts stays - it is the last SCAN time,
-			 * not the last pin). */
-			const pin_sync = geo_pin_read();
-			if (pin_sync.tag && type(state.__geo_scan) === 'object' &&
-			    (state.__geo_scan.selected !== pin_sync.tag ||
-			     (state.__geo_scan.manual === true) !== pin_sync.manual)) {
-				state.__geo_scan.selected = pin_sync.tag;
-				state.__geo_scan.manual = pin_sync.manual;
-				save_state(state);
-			}
-			if (!(geo_scan_retry_at && now < geo_scan_retry_at)) {
-				if (geo_scan_soon && now >= geo_scan_soon) {
-					geo_scan_soon = 0;
-					/* Requested scans (RPC button, geo refusal or the health
-					 * check) ROTATE among passing exits - see geo_scan_run(). */
-					if (geo_scan_run('requested', true))
-						last_geo_scan = now;
-					else
-						/* Aborted (core down / stale config): re-run right
-						 * after the backoff instead of waiting a full cycle. */
-						geo_scan_soon = geo_scan_retry_at;
-				} else if ((now - last_geo_scan) > GEO_SCAN_INTERVAL) {
-					/* Fresh state (first scan after a boot/restart - the state
-					 * file lives on tmpfs): pick the best passing exit by
-					 * score instead of holding whatever member the config
-					 * defaulted to (the first one). */
-					if (geo_scan_run('periodic', state.__geo_scan ? false : true))
-						last_geo_scan = now;
-				} else if ((now - last_geo_health) > GEO_HEALTH_INTERVAL) {
-					last_geo_health = now;
-					geo_health_check();
-				}
-			}
+		/* Exit health (ч.69): periodically verify that the CURRENT main exit
+		 * still passes the AI-class geo checks; the verdicts feed the Overview
+		 * card via automation_status. A geo-refusal in classify() forces the
+		 * next check by resetting last_exit_health. */
+		if ((now - last_exit_health) > EXIT_HEALTH_INTERVAL) {
+			last_exit_health = now;
+			exit_health_check();
 		}
 
 	/* Persist dns log offset so we don't re-scan from the start after a restart.

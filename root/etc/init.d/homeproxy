@@ -11,6 +11,7 @@ STOP=10
 CONF="homeproxy"
 PROG_HIDDIFY="/usr/bin/hiddify-core"
 PROG_SINGBOX="/usr/bin/sing-box"
+PROG_TACHYON="/usr/bin/tachyon-core"
 
 HP_DIR="/etc/homeproxy"
 RUN_DIR="/var/run/homeproxy"
@@ -95,6 +96,15 @@ start_service() {
 		log "created missing $CONF.multidns section (defaults)."
 	fi
 
+	# Same for the Telegram bot section (ч.69, status.js renders NamedSection
+	# `homeproxy.telegram`). Idempotent.
+	if ! uci -q get "$CONF.telegram" >/dev/null 2>&1; then
+		uci -q set "$CONF.telegram=homeproxy"
+		uci -q set "$CONF.telegram.enabled=0"
+		uci -q commit "$CONF"
+		log "created missing $CONF.telegram section (defaults)."
+	fi
+
 	# Auto-enable the AntiDPI engines when a *-out node/rule reference exists but the
 	# master switch is off. Without this the reference is inert (falls back to direct-out)
 	# and the engine (ciadpi / nfqws2) is never launched — so "add a Zapret/ByeDPI rule"
@@ -129,6 +139,11 @@ start_service() {
 			PROG="$PROG_SINGBOX"; RUN_CMD="run"; CORE_TYPE="singbox"
 		fi
 		;;
+	tachyon)
+		if [ -x "$PROG_TACHYON" ]; then
+			PROG="$PROG_TACHYON"; RUN_CMD="run"; CORE_TYPE="tachyon"
+		fi
+		;;
 	esac
 
 	if [ -z "$PROG" ]; then
@@ -136,8 +151,10 @@ start_service() {
 			PROG="$PROG_HIDDIFY"; RUN_CMD="srun"; CORE_TYPE="hiddify"
 		elif [ -x "$PROG_SINGBOX" ]; then
 			PROG="$PROG_SINGBOX"; RUN_CMD="run"; CORE_TYPE="singbox"
+		elif [ -x "$PROG_TACHYON" ]; then
+			PROG="$PROG_TACHYON"; RUN_CMD="run"; CORE_TYPE="tachyon"
 		else
-			log "Error: No supported core found. Install hiddify-core or sing-box first."
+			log "Error: No supported core found. Install hiddify-core, sing-box or tachyon-core first."
 			return 1
 		fi
 	fi
@@ -146,9 +163,18 @@ start_service() {
 	config_get routing_mode "config" "routing_mode" "proxy_banned_ru"
 	config_get proxy_mode "config" "proxy_mode" "redirect_tproxy"
 
-	# Write core info for LuCI
+	# tachyon-core 0.1.x: the redirect inbound is broken on OpenWrt (original dst
+	# is never extracted) — only pure TUN relays client traffic. The UI pins the
+	# mode to 'tun' for tachyon; warn if the UCI value was set by hand otherwise
+	# (redirect_tun still runs TCP through the broken redirect inbound).
+	if [ "$CORE_TYPE" = "tachyon" ] && [ "$proxy_mode" != "tun" ]; then
+		log "Warning: tachyon-core runs in Tun mode only (redirect inbound broken in 0.1.x) — Proxy mode is '$proxy_mode'; switch it to 'tun' in Client Settings."
+	fi
+
+	# Write core info for LuCI. hiddify/sing-box print "name version X";
+	# tachyon-core prints "tachyon-core 0.1.2" (no "version" word) — $2.
 	local core_version
-	core_version="$("$PROG" version 2>/dev/null | head -1 | awk '{print $3}')"
+	core_version="$("$PROG" version 2>/dev/null | head -1 | awk '{if ($2 == "version") print $3; else print $2; exit}')"
 	printf '{"core_type":"%s","version":"%s"}\n' "$CORE_TYPE" "$core_version" > "$RUN_DIR/core.info"
 
 	# MultiDNS: bootstrap the dedicated mosdns instance NOW (synchronously) so the
@@ -326,34 +352,25 @@ start_service() {
 	  wget -qO- --timeout=8 'http://127.0.0.1:9090/proxies/main-out/delay?timeout=5000&url=http://www.gstatic.com/generate_204' >/dev/null 2>&1
 	) >/dev/null 2>&1 &
 
-	# Setup TUN policy routing (after the core has brought up the tun device).
-	# In `tun`/`redirect_tun` mode the firewall stamps client traffic with tun_mark; that
-	# mark must steer the packet into the tun device so the core reads it and routes it
-	# (direct-out vs main-out). Without this policy route the marked packet falls through
-	# to the main table and egresses DIRECTLY — so every site that should go through the
-	# proxy (rule-list / refilter domains) opens direct and is blocked. The route targets
-	# the tun interface (separate table from the tproxy `local ... dev lo` one).
+	# Setup TUN policy routing — handled by the `tun-route` watcher instance
+	# (ч.72): tachyon-core (ч.69) brings its tun device up LATE (remote rule-sets
+	# initialize before inbounds — well past 40 s on a slow start), and the old
+	# one-shot blocking wait missed it → the policy route was never installed →
+	# every marked packet fell through to the main table and egressed DIRECTLY,
+	# so every site that should go through the proxy was dead. The watcher waits
+	# for the device and (re)installs the rule/route for the whole service
+	# lifetime (it must steer the tun_mark'd traffic into the tun device so the
+	# core reads and routes it — direct-out vs main-out).
 	local tun_name tun_mark tun_table
 	config_get tun_name "infra" "tun_name" "singtun0"
 	config_get tun_mark "infra" "tun_mark" "102"
 	config_get tun_table "infra" "tun_table" "104"
 	if [ -n "$tun_name" ] && echo "$proxy_mode" | grep -q "tun"; then
-		# Wait for the core to create the tun device (procd starts it asynchronously).
-		local i
-		for i in $(seq 1 15); do
-			ip link show "$tun_name" >/dev/null 2>&1 && break
-			sleep 1
-		done
-		if ip link show "$tun_name" >/dev/null 2>&1; then
-			ip rule add fwmark "$tun_mark" table "$tun_table" 2>/dev/null
-			ip route add 0.0.0.0/0 dev "$tun_name" table "$tun_table" 2>/dev/null
-			if [ "$ipv6_support" -eq "1" ]; then
-				ip -6 rule add fwmark "$tun_mark" table "$tun_table" 2>/dev/null
-				ip -6 route add ::/0 dev "$tun_name" table "$tun_table" 2>/dev/null
-			fi
-		else
-			log "Warning: tun device $tun_name not ready, TUN policy route not installed."
-		fi
+		procd_open_instance "tun-route"
+		procd_set_param command /bin/sh "$HP_DIR/scripts/tun_route_watch.sh" \
+			"$tun_name" "$tun_mark" "$tun_table" "$ipv6_support"
+		procd_set_param respawn 3600 5 5
+		procd_close_instance
 	fi
 
 	# ByeDPI
@@ -507,6 +524,21 @@ start_service() {
 		procd_open_instance "hotswap"
 		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/hotswap.uc"
 		procd_set_param respawn
+		procd_close_instance
+	fi
+
+	# Telegram control bot (ч.69): long-poll getUpdates, answer the allowed
+	# chat only. Starts when enabled + a token-shaped value is stored.
+	local tg_en tg_token
+	config_get_bool tg_en "telegram" "enabled" "0"
+	config_get tg_token "telegram" "token" ""
+	if [ "$tg_en" = "1" ] && echo "$tg_token" | grep -qE '^[0-9]+:[A-Za-z0-9_-]+$'; then
+		mkdir -p "$RUN_DIR"
+		procd_open_instance "telegram"
+		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/telegram.uc"
+		procd_set_param respawn
+		procd_set_param respawn_threshold 3600
+		procd_set_param respawn_retry 0
 		procd_close_instance
 	fi
 

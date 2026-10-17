@@ -83,29 +83,47 @@ const ntp_server = uci.get(uciconfig, uciinfra, 'ntp_server') || 'time.apple.com
 
 /* Detect active core. Must match the core init.d actually runs, or the generated dialect
  * won't fit it. Mirror init.d's precedence: honor preferred_core when that core is
- * installed, otherwise auto-pick (hiddify-core first, then sing-box). Falls back to a
- * UCI custom path when neither standard binary is present. */
+ * installed, otherwise auto-pick (hiddify-core first, then sing-box, then tachyon-core).
+ * Falls back to a UCI custom path when neither standard binary is present. */
 const preferred_core = uci.get(uciconfig, ucimain, 'preferred_core') || 'auto';
 const have_hiddify = !!access('/usr/bin/hiddify-core');
 const have_singbox = !!access('/usr/bin/sing-box');
+const have_tachyon = !!access('/usr/bin/tachyon-core');
 
-let is_hiddify = false, is_singbox = false;
+let is_hiddify = false, is_singbox = false, is_tachyon = false;
 if (preferred_core === 'hiddify' && have_hiddify)
 	is_hiddify = true;
 else if (preferred_core === 'singbox' && have_singbox)
 	is_singbox = true;
+else if (preferred_core === 'tachyon' && have_tachyon)
+	is_tachyon = true;
 else if (have_hiddify)
 	is_hiddify = true;
 else if (have_singbox)
 	is_singbox = true;
+else if (have_tachyon)
+	is_tachyon = true;
 else {
 	const custom_path = uci.get(uciconfig, ucimain, 'custom_core_path');
 	const custom_type = uci.get(uciconfig, ucimain, 'custom_core_type');
 	if (custom_path && access(custom_path)) {
 		is_hiddify = custom_type === 'hiddify';
-		is_singbox = !is_hiddify;
+		is_tachyon = custom_type === 'tachyon';
+		is_singbox = !is_hiddify && !is_tachyon;
 	}
 }
+
+/* tachyon-core (Rust, sing-box 1.14-compatible line) speaks the sing-box
+ * config dialect (snake_case fields); all dialect-sensitive emission below
+ * keys off `is_sb_dialect`. ч.69: tachyon-core is EXPERIMENTAL — its own
+ * format roadmap (F11/F12) may break compatibility; the runtime check-heal
+ * below stays the source of truth for what it actually accepts. */
+const is_sb_dialect = is_singbox || is_tachyon;
+
+/* tachyon-core (ч.69): DNS-rule query_type entries must be TYPE STRINGS
+ * ("SVCB"/"HTTPS"), not numeric codes 64/65 — numeric entries abort the whole
+ * DNS section at RUN time (while `check` passes them!). Device-verified 0.1.2. */
+const QT_SVCB_HTTPS = is_tachyon ? ['SVCB', 'HTTPS'] : [64, 65];
 
 const ipv6_support = uci.get(uciconfig, ucimain, 'ipv6_support') || '0';
 
@@ -145,6 +163,8 @@ function hp_core_info() {
 		path = '/usr/bin/hiddify-core';
 	else if (is_singbox)
 		path = '/usr/bin/sing-box';
+	else if (is_tachyon)
+		path = '/usr/bin/tachyon-core';
 	else {
 		path = uci.get(uciconfig, ucimain, 'custom_core_path');
 		if (!(path && access(path)))
@@ -154,12 +174,20 @@ function hp_core_info() {
 	if (!fd)
 		return { path: path, version: null, tags: {} };
 	const out = fd.read('all'); fd.close();
-	const vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
+	let vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
+	if (!vm)
+		vm = match(out, /tachyon-core v?([0-9][0-9a-zA-Z._-]*)/);
 	const tm = match(out, /\nTags: ([^\n]+)/);
 	let tags = {};
 	if (tm)
 		for (let t in split(tm[1], ','))
 			tags[trim(t)] = true;
+	else if (is_tachyon)
+		/* tachyon-core prints no Tags line: synthesize the capability set
+		 * verified against the project docs (see the rpcd summary). The
+		 * runtime check-heal remains the source of truth. */
+		for (let tk in ['with_naive_outbound', 'with_quic', 'with_wireguard', 'with_grpc', 'with_utls', 'with_gvisor'])
+			tags[tk] = true;
 	return { path: path, version: vm ? vm[1] : null, tags: tags };
 }
 
@@ -176,9 +204,19 @@ const HP_TYPE_REQ_TAG = {
 	trusttunnel: 'with_trusttunnel'
 };
 
+/* Static per-core unsupported types (ч.69): types a core will NEVER load.
+ * tachyon-core 0.1.x: Hysteria (v1) is "not implemented yet" (run-time reject —
+ * its `check` passes the schema and would NOT catch it!), TrustTunnel is a
+ * sing-box-extended extension, and SSH is not among its outbounds. Device-
+ * verified on the Flint 2 (aarch64): hysteria2/tuic/naive/vless/wireguard all
+ * load; the list grows via check-heal if a build rejects more. */
+const HP_CORE_TYPES_NEVER = {
+	tachyon: { hysteria: true, trusttunnel: true, ssh: true }
+};
+
 /* Runtime-learned rejections (check-heal), keyed per core version so a core
  * update re-tests types rejected by an older build. */
-const hp_core_id = is_hiddify ? 'hiddify' : is_singbox ? 'singbox' : 'custom';
+const hp_core_id = is_hiddify ? 'hiddify' : is_singbox ? 'singbox' : is_tachyon ? 'tachyon' : 'custom';
 const hp_extra_skip_file = RUN_DIR + '/core_extra_skip_' + hp_core_id + '.json';
 let hp_extra_skip = {};
 let hp_extra_skip_stale = false;
@@ -198,6 +236,8 @@ try {
 function hp_core_supports_type(t) {
 	if (!hp_core)
 		return true;
+	if (hp_core_id && HP_CORE_TYPES_NEVER[hp_core_id] && HP_CORE_TYPES_NEVER[hp_core_id][t])
+		return false;
 	const req = HP_TYPE_REQ_TAG[t];
 	if (req && !(req in hp_core.tags))
 		return false;
@@ -243,9 +283,6 @@ const zapret_voice = uci.get(uciconfig, ucimain, 'zapret_voice') || '0';
 /* Automation (auto blocked-site detection): when enabled we expose two loopback test
  * inbounds (forced direct / forced main) and merge the learned list into proxy_domain_list. */
 const automation_enabled = uci.get(uciconfig, 'automation', 'enabled');
-/* Geo-aware exit (ч.53): opt-out flag; the rest of the gate (real main node,
- * proxy nodes present) is evaluated where the feature is wired. */
-const geo_scan_opt = uci.get(uciconfig, 'automation', 'geo_scan');
 
 /* Hot Swap (ч.59/ч.60): keep N "hot" connections to the node pool and transparently
  * switch the main-out selector to a proven-alive backup when the primary dies — WITHOUT
@@ -483,8 +520,13 @@ function parse_dnsquery(strquery) {
 		return null;
 
 	let querys = [];
+	/* tachyon-core requires query_type entries as STRINGS (numeric abort the
+	 * whole DNS section at run) — keep the string form for tachyon. */
 	for (let i in strquery)
-		isnan(int(i)) ? push(querys, i) : push(querys, int(i));
+		if (is_tachyon)
+			push(querys, i);
+		else
+			isnan(int(i)) ? push(querys, i) : push(querys, int(i));
 
 	return querys;
 
@@ -757,11 +799,11 @@ function generate_outbound(node) {
 			 * snake_case. Emit both spellings; the wrong-core one is null and removeBlankAttrs
 			 * strips it before write. sing-box keeps a forced 100-1000 padding default to
 			 * preserve prior behaviour; hiddify only emits what the node actually carries. */
-			x_padding_bytes: (is_singbox && node.transport === 'xhttp') ? xhttp_padding(node.xhttp_padding_bytes) : null,
+			x_padding_bytes: (is_sb_dialect && node.transport === 'xhttp') ? xhttp_padding(node.xhttp_padding_bytes) : null,
 			xPaddingBytes: (is_hiddify && node.transport === 'xhttp' && !isEmpty(node.xhttp_padding_bytes)) ? xhttp_padding(node.xhttp_padding_bytes) : null,
-			sc_max_each_post_bytes: (is_singbox && node.transport === 'xhttp') ? (node.xhttp_sc_max_each_post_bytes || null) : null,
+			sc_max_each_post_bytes: (is_sb_dialect && node.transport === 'xhttp') ? (node.xhttp_sc_max_each_post_bytes || null) : null,
 			scMaxEachPostBytes: (is_hiddify && node.transport === 'xhttp') ? (node.xhttp_sc_max_each_post_bytes || null) : null,
-			sc_min_posts_interval_ms: (is_singbox && node.transport === 'xhttp') ? (node.xhttp_sc_min_posts_interval_ms || null) : null,
+			sc_min_posts_interval_ms: (is_sb_dialect && node.transport === 'xhttp') ? (node.xhttp_sc_min_posts_interval_ms || null) : null,
 			scMinPostsIntervalMs: (is_hiddify && node.transport === 'xhttp') ? (node.xhttp_sc_min_posts_interval_ms || null) : null,
 			headers: node.xhttp_headers ? json(node.xhttp_headers) : (node.ws_host ? { Host: node.ws_host } : null),
 			method: node.http_method,
@@ -809,7 +851,7 @@ function generate_outbound(node) {
 	if (type(outbound.transport) === 'object') {
 		const dl = xhttp_download(node);
 		if (dl) {
-			if (is_singbox && node.transport === 'xhttp')
+			if (is_sb_dialect && node.transport === 'xhttp')
 				dl.x_padding_bytes = xhttp_padding(node.xhttp_padding_bytes);
 			else if (is_hiddify && node.transport === 'xhttp' && !isEmpty(node.xhttp_padding_bytes))
 				dl.xPaddingBytes = xhttp_padding(node.xhttp_padding_bytes);
@@ -1035,7 +1077,7 @@ if (!isEmpty(main_node)) {
 		if (oauth_stability_opt) {
 			push(config.dns.rules, {
 				rule_set: 'oauth-domain',
-				query_type: [64, 65],
+				query_type: QT_SVCB_HTTPS,
 				action: 'reject'
 			});
 			push(config.dns.rules, {
@@ -1047,7 +1089,7 @@ if (!isEmpty(main_node)) {
 			 * get the same deterministic encrypted resolution. */
 			push(config.dns.rules, {
 				rule_set: 'auto-auth-domain',
-				query_type: [64, 65],
+				query_type: QT_SVCB_HTTPS,
 				action: 'reject'
 			});
 			push(config.dns.rules, {
@@ -1064,7 +1106,7 @@ if (!isEmpty(main_node)) {
 		 * Placed BEFORE the proxy-domain route rule so reject wins. */
 		push(config.dns.rules, {
 			rule_set: 'proxy-domain',
-			query_type: [64, 65],
+			query_type: QT_SVCB_HTTPS,
 			action: 'reject'
 		});
 
@@ -1135,7 +1177,7 @@ if (!isEmpty(main_node)) {
 		/* Filter out SVCB/HTTPS queries for proxied custom domains */
 		push(config.dns.rules, {
 			rule_set: 'proxy-domain',
-			query_type: [64, 65],
+			query_type: QT_SVCB_HTTPS,
 			action: 'reject'
 		});
 
@@ -1184,7 +1226,7 @@ if (!isEmpty(main_node)) {
 		/* Filter out SVCB/HTTPS queries for proxied custom domains */
 		push(config.dns.rules, {
 			rule_set: 'proxy-domain',
-			query_type: [64, 65],
+			query_type: QT_SVCB_HTTPS,
 			action: 'reject'
 		});
 	}
@@ -1359,13 +1401,13 @@ if (automation_enabled === '1' && !isEmpty(main_node))
 		set_system_proxy: is_hiddify ? false : null,
 	});
 
-/* Geo-aware exit (ч.53): a dedicated geo-out selector for the geo-sensitive
- * hosts (Gemini class) whose exit must pass the service's region checks.
- * Gate: same plumbing as the test inbounds (automation on, a real main node),
- * the opt-out flag (automation.geo_scan=0) and at least one proxy node to
- * scan. The shared seed list lives in resources/geo_sensitive.txt (built-in
- * copy as fallback) so the engine, rpcd and this generator agree on it. */
-let geo_scan_enabled = (automation_enabled === '1' && geo_scan_opt !== '0' &&
+/* Geo-sensitive seeds (ч.69): the Gemini-class hosts are pinned to the proxy
+ * path by the automation engine and by one routing rule here. The dedicated
+ * geo-out selector / per-node scan / rotation (ч.53-ч.66) is REMOVED — the
+ * engine handles routing autonomously now, and a refused exit is surfaced on
+ * the Overview card instead of an auto-rotation machinery. Gate: automation
+ * on and a real main node (a direct main makes the rule inert anyway). */
+let geo_scan_enabled = (automation_enabled === '1' &&
                         !isEmpty(main_node) && main_node !== 'direct-out');
 let geo_sensitive = [];
 if (geo_scan_enabled) {
@@ -1386,36 +1428,22 @@ if (geo_scan_enabled) {
 			'aisandbox-pa.googleapis.com',
 			'push.clients6.google.com'
 		];
-		/* Respect manual "Always direct" pins: the geo-out rules sit ABOVE the
-		 * auto-direct rule, so a pinned seed would silently ride geo-out
-		 * despite the user's decision (ensure_geo_seeds and the automation
-		 * engine honor the pin - routing must too). Filter the pinned hosts
-		 * out of the geo rule list; the QUIC-reject follows the same list, so
-		 * the host returns to its normal direct QUIC behavior as well. */
-		let md_hosts = {};
-		const mdraw = readfile(HP_DIR + '/resources/manual_direct.txt') || '';
-		if (length(mdraw))
-			for (let mdl in split(mdraw, /[\r\n]/)) {
-				const md = lc(trim(replace(mdl, /#.*$/, '')));
-				if (length(md)) md_hosts[md] = true;
-			}
-		if (length(keys(md_hosts)))
-			geo_sensitive = filter(geo_sensitive, (g) => !md_hosts[g]);
-	let n_geo_nodes = 0;
-	foreach_node((cfg) => { n_geo_nodes++; });
-	if (n_geo_nodes === 0)
-		geo_scan_enabled = false;
+	/* Respect manual "Always direct" pins: the geo-seed rules sit ABOVE the
+	 * auto-direct rule, so a pinned seed would silently ride the proxy
+	 * despite the user's decision (ensure_geo_seeds and the automation
+	 * engine honor the pin - routing must too). Filter the pinned hosts
+	 * out of the geo rule list; the QUIC-reject follows the same list, so
+	 * the host returns to its normal direct QUIC behavior as well. */
+	let md_hosts = {};
+	const mdraw = readfile(HP_DIR + '/resources/manual_direct.txt') || '';
+	if (length(mdraw))
+		for (let mdl in split(mdraw, /[\r\n]/)) {
+			const md = lc(trim(replace(mdl, /#.*$/, '')));
+			if (length(md)) md_hosts[md] = true;
+		}
+	if (length(keys(md_hosts)))
+		geo_sensitive = filter(geo_sensitive, (g) => !md_hosts[g]);
 }
-if (geo_scan_enabled)
-	push(config.inbounds, {
-		type: 'mixed',
-		tag: 'geo-test-in',
-		listen: '127.0.0.1',
-		listen_port: 5339,
-		sniff: is_hiddify ? true : null,
-		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
-		set_system_proxy: is_hiddify ? false : null,
-	});
 
 /* MultiDNS secure-via-proxy inbound: a loopback-only mixed (SOCKS5/HTTP) inbound the
  * mosdns secure pool's DoH/DoT rides when secure_via_proxy is set. Pinned to main-out by
@@ -1570,7 +1598,7 @@ uci.foreach(uciconfig, uciserver, (cfg) => {
 			host: transport_host(cfg),
 			path: cfg.http_path || cfg.ws_path,
 			mode: (cfg.transport === 'xhttp') ? (cfg.xhttp_mode || 'auto') : null,
-			x_padding_bytes: (is_singbox && cfg.transport === 'xhttp') ? xhttp_padding(cfg.xhttp_padding_bytes) : null,
+			x_padding_bytes: (is_sb_dialect && cfg.transport === 'xhttp') ? xhttp_padding(cfg.xhttp_padding_bytes) : null,
 			headers: cfg.ws_host ? {
 				Host: cfg.ws_host
 			} : null,
@@ -1599,6 +1627,34 @@ config.outbounds = [
 		tag: 'block-out'
 	}
 ];
+
+/* Dedicated AI exit (ч.71): Google's risk engine flags SHARED datacenter IPs at
+ * message-send time while the landing page still loads fine (device-proven
+ * 2026-10-17: the same fresh session got "Something went wrong (1)" =
+ * 400 "Precondition check failed" on every send via the NL main node, while the
+ * identical session sent and received a reply via the DE node). automation.ai_node
+ * pins ALL AI traffic (geo-sensitive seeds + gemini-strict list) to a node Google
+ * does not flag; empty = 'main-out' (the ч.70 behavior). Invalid selections
+ * (dangling reference, unsupported type) fall back to main-out with a warning. */
+let ai_out_tag = 'main-out';
+const ai_node_id = uci.get(uciconfig, 'automation', 'ai_node') || '';
+if (geo_scan_enabled && !isEmpty(ai_node_id) && ai_node_id !== 'main-out') {
+	if (hp_node_usable(ai_node_id)) {
+		const ai_nc = uci.get_all(uciconfig, ai_node_id);
+		if (ai_nc) {
+			if (ai_nc.type in ['wireguard', 'amneziawg']) {
+				push(config.endpoints, generate_endpoint(ai_nc));
+				config.endpoints[length(config.endpoints)-1].tag = 'ai-out';
+			} else {
+				push_outbound(config.outbounds, ai_nc);
+				config.outbounds[length(config.outbounds)-1].tag = 'ai-out';
+			}
+			ai_out_tag = 'ai-out';
+		}
+	} else {
+		warn('homeproxy: ai_node "' + ai_node_id + '" is not usable by the selected core - AI hosts ride main-out.\n');
+	}
+}
 
 /* Build a URLTest outbound from one of three pool modes:
  *   auto   — every imported node participates (no list to maintain);
@@ -2192,73 +2248,9 @@ if (!isEmpty(main_node)) {
 		}
 	}
 
-	/* geo-out selector (ч.53): every proxy node participates; the automation
-	 * geo scan re-pins the selection (Clash API PUT) to a node whose exit
-	 * passes the geo checks of the geo-sensitive services. The last
-	 * known-good pick is fronted via `default` so a core restart does not
-	 * flip geo traffic onto a possibly-refused first member before the next
-	 * scan runs (ч.66: the persistent pin geo_exit.json keeps that pick
-	 * across reboots too). Watchdog dead marks sink to the tail like
-	 * everywhere. */
-	if (geo_scan_enabled) {
-		let geo_tags = [];
-		foreach_node((cfg) => {
-			const gt = 'cfg-' + cfg['.name'] + '-out';
-			push(geo_tags, gt);
-			if (has_outbound(gt))
-				return;
-			const gnc = uci.get_all(uciconfig, cfg['.name']) || {};
-			if (gnc.type in ['wireguard', 'amneziawg']) {
-				push(config.endpoints, generate_endpoint(gnc));
-				config.endpoints[length(config.endpoints)-1].tag = gt;
-			} else {
-				push_outbound(config.outbounds, gnc);
-				config.outbounds[length(config.outbounds)-1].tag = gt;
-			}
-		});
-		if (length(geo_tags)) {
-			const gde = dead_last(geo_tags);
-			if (gde)
-				geo_tags = gde;
-			let geo_default = null;
-			/* ч.66: the persistent pin (resources/geo_exit.json - written by the
-			 * engine scan and the manual "pin geo exit" RPC) wins: unlike the
-			 * tmpfs state file it survives reboots, so geo traffic no longer
-			 * starts on the FIRST pool member (possibly a refused exit) until
-			 * the first scan re-pins ~60 s after boot. */
-			try {
-				const gpin = json(readfile(HP_DIR + '/resources/geo_exit.json') || '');
-				if (gpin && type(gpin) === 'object' && gpin.tag &&
-				    !isEmpty(gpin.tag) && index(geo_tags, gpin.tag) >= 0)
-					geo_default = gpin.tag;
-			} catch (e) { geo_default = null; }
-			if (!geo_default) {
-				try {
-					const gs_state = json(readfile(RUN_DIR + '/automation_state.json') || '');
-					if (gs_state && type(gs_state.__geo_scan) === 'object') {
-						const gsel = gs_state.__geo_scan.selected;
-						if (gsel && !isEmpty(gsel) && index(geo_tags, gsel) >= 0)
-							geo_default = gsel;
-					}
-				} catch (e) { geo_default = null; }
-			}
-			if (!geo_default || index(geo_tags, geo_default) < 0)
-				geo_default = geo_tags[0];
-			push(config.outbounds, {
-				type: 'selector',
-				tag: 'geo-out',
-				outbounds: geo_tags,
-				default: geo_default,
-				/* Do NOT interrupt existing connections on switch: the geo scan
-				 * flips this selector through EVERY node while measuring, and
-				 * interrupt=true killed each active Gemini/AI connection on
-				 * every flip (~N times per scan). New connections pick up the
-				 * current selection immediately; in-flight ones finish. */
-				interrupt_exist_connections: false
-			});
-		} else
-			geo_scan_enabled = false;
-	}
+	/* The dedicated geo-out selector (ч.53-ч.66) is REMOVED (ч.69): geo-sensitive
+	 * hosts ride the regular main-out path and a refused exit is surfaced by the
+	 * engine's exit-health check instead of an auto-rotation machinery. */
 
 	/* Advanced routing_node outbounds for proxy_banned_ru */
 	if (routing_mode === 'proxy_banned_ru' && show_advanced_rules === '1') {
@@ -2450,23 +2442,81 @@ if (automation_enabled === '1' && !isEmpty(main_node)) {
  * to TCP. Rejecting UDP/443 makes every client take the deterministic,
  * working TCP path through geo-out. Only port 443 is rejected - any other
  * UDP to these hosts (if it ever appears) keeps its normal route. */
-if (geo_scan_enabled) {
+/* Geo-sensitive seed rules (ч.69, was geo-out): QUIC-reject + route to the
+ * AI exit (ai-out when automation.ai_node selects a usable node, else the
+ * MAIN path — ч.71: Google flags shared datacenter IPs at send time while
+ * page loads still succeed). Same "above region/learned rules" placement as
+ * the test-inbound rules so the seeds are never re-routed by the normal
+ * rules. The QUIC-reject (ч.54) stays: Google endpoints advertise h3 and
+ * app-class clients (Gemini on Android) hard-rely on QUIC; rejecting UDP/443
+ * makes every client take the deterministic TCP path. */
+if (geo_scan_enabled && length(geo_sensitive)) {
 	push(config.route.rules, {
-		inbound: 'geo-test-in',
-		action: 'route',
-		outbound: 'geo-out'
+		domain_suffix: geo_sensitive,
+		network: 'udp',
+		port: [443],
+		action: 'reject'
 	});
-	if (length(geo_sensitive)) {
-		push(config.route.rules, {
-			domain_suffix: geo_sensitive,
-			network: 'udp',
-			port: [443],
-			action: 'reject'
+	push(config.route.rules, {
+		domain_suffix: geo_sensitive,
+		action: 'route',
+		outbound: ai_out_tag
+	});
+}
+
+/* Gemini strict list (ч.70): the FULL AI-specific domain set (v2fly/MetaCubeX
+ * google-gemini) pinned to the main path. The 22 seed hosts above cover the core
+ * endpoints, but a Gemini session also touches bard/gemini.google,
+ * gemini.gstatic.com, notebooklm, jules, flow, labs, opal, antigravity, deepmind,
+ * cloudcode… — in proxy_banned_ru everything not matched rides `final`
+ * (direct-out), so Google sees a session that logs in from a foreign exit while
+ * most of its Google traffic comes from the RU exit: that mixed-geo picture is
+ * what triggers the "not supported in your country" web flag. Routing the whole
+ * AI domain set through the same exit closes it without pushing ALL of Google
+ * through the proxy. ч.71: the AI set rides the DEDICATED ai-out exit when
+ * automation.ai_node selects a usable node (Google can flag the main exit's IP
+ * for sends while page loads still work); no QUIC-reject here (unlike the
+ * seeds): these are not pinned-exit hosts that cannot relay UDP; clients fall
+ * back to TCP themselves.
+ * Manual "Always direct" pins are respected (same filter as the seeds).
+ * Toggle: automation.gemini_strict (default ON). */
+if (geo_scan_enabled && (uci.get(uciconfig, 'automation', 'gemini_strict') || '1') !== '0') {
+	let gemini_strict_suf = [], gemini_strict_full = [];
+	/* Same "always direct" respect as the seeds: re-read the pin file (the
+	 * seeds block's md_hosts is scoped to that block). */
+	let gs_md = {};
+	const gs_md_raw = readfile(HP_DIR + '/resources/manual_direct.txt') || '';
+	if (length(gs_md_raw))
+		for (let gml in split(gs_md_raw, /[\r\n]/)) {
+			const gm = lc(trim(replace(gml, /#.*$/, '')));
+			if (length(gm)) gs_md[gm] = true;
+		}
+	const gsr_raw = readfile(HP_DIR + '/resources/gemini_strict.txt') || '';
+	for (let gsl in split(gsr_raw, /[\r\n]/)) {
+		let gh = lc(trim(replace(gsl, /#.*$/, '')));
+		if (!length(gh)) continue;
+		const is_full = (substr(gh, 0, 5) == 'full:');
+		if (is_full) gh = trim(substr(gh, 5));
+		if (!length(gh) || !match(gh, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/)) continue;
+		if (gs_md[gh]) continue;
+		if (is_full) push(gemini_strict_full, gh);
+		else push(gemini_strict_suf, gh);
+	}
+	let gs_rules = [];
+	if (length(gemini_strict_suf))
+		push(gs_rules, { domain_suffix: gemini_strict_suf });
+	if (length(gemini_strict_full))
+		push(gs_rules, { domain: gemini_strict_full });
+	if (length(gs_rules)) {
+		push(config.route.rule_set, {
+			type: 'inline',
+			tag: 'gemini-strict',
+			rules: gs_rules
 		});
 		push(config.route.rules, {
-			domain_suffix: geo_sensitive,
+			rule_set: 'gemini-strict',
 			action: 'route',
-			outbound: 'geo-out'
+			outbound: ai_out_tag
 		});
 	}
 }
@@ -2486,10 +2536,13 @@ if (mdns_proxy_in) {
 /* Routing rules */
 if (!isEmpty(main_node)) {
 	/* Avoid DNS loop */
-	/* sing-box-extended supports action object; hiddify-core (standard sing-box 1.12) expects a string tag */
+	/* sing-box-extended supports action object; hiddify-core (standard sing-box 1.12) expects a string tag.
+	 * tachyon-core (ч.69): the OBJECT form of default_domain_resolver fails its `check`
+	 * ("missing route.default_domain_resolver ... deprecated") with >1 DNS server —
+	 * emit the plain server-tag string for tachyon (device-verified 0.1.2). */
 	const default_resolver_server = is_bypass_mode(routing_mode) ? 'region-dns' :
 	                                (routing_mode === 'proxy_banned_ru') ? 'russia-dns' : 'default-dns';
-	config.route.default_domain_resolver = is_singbox ? {
+	config.route.default_domain_resolver = (is_sb_dialect && !is_tachyon) ? {
 		action: 'route',
 		server: default_resolver_server,
 		strategy: (ipv6_support !== '1') ? 'prefer_ipv4' : null
@@ -2993,7 +3046,9 @@ if (!isEmpty(main_node)) {
 	if (isEmpty(config.route.rule_set))
 		config.route.rule_set = null;
 } else if (!isEmpty(default_outbound)) {
-	config.route.default_domain_resolver = is_singbox ? {
+	/* tachyon-core (ч.69): default_domain_resolver must be a plain server-tag
+	 * string (object form fails its check — see the note above). */
+	config.route.default_domain_resolver = (is_sb_dialect && !is_tachyon) ? {
 		action: 'resolve',
 		server: get_resolver(default_outbound_dns)
 	} : get_resolver(default_outbound_dns);
@@ -3175,7 +3230,7 @@ if (hp_core) {
 		skipped: skipped_list
 	}));
 
-	if (is_singbox) {
+	if (is_sb_dialect) {
 		const chk = popen(hp_shellquote(hp_core.path) + ' check -c ' +
 		                  hp_shellquote(RUN_DIR + '/hiddify-c.json') + ' 2>&1');
 		let out = chk ? chk.read('all') : null;
@@ -3184,6 +3239,8 @@ if (hp_core) {
 			let m = match(out, /\[[0-9]+\]: ([a-z0-9_]+) (outbound|endpoint) is not included/);
 			if (!m)
 				m = match(out, /unknown (outbound|endpoint) type: ([a-z0-9_]+)/);
+			if (!m)
+				m = match(out, /outbound type "([a-z0-9_]+)" not implemented/);   /* tachyon-core phrasing */
 			const bad = m ? (m[2] || m[1]) : null;
 			if (bad) {
 				hp_extra_skip[bad] = true;

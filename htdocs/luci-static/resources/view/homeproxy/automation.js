@@ -80,17 +80,10 @@ const callGeoDiag = rpc.declare({
 	expect: { '': {} }
 });
 
-const callGeoScan = rpc.declare({
+/* ч.70: batch route audit of the Gemini-session hosts (which leave direct). */
+const callExitAudit = rpc.declare({
 	object: 'luci.homeproxy',
-	method: 'automation_geo_scan',
-	params: [ 'action' ],
-	expect: { '': {} }
-});
-
-const callGeoPin = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'automation_geo_pin',
-	params: [ 'action', 'node' ],
+	method: 'automation_exit_audit',
 	expect: { '': {} }
 });
 
@@ -203,9 +196,14 @@ function injectStyle() {
 }
 
 /* ── View ─────────────────────────────────────────────────────────────── */
-
 return view.extend({
-	render: function() {
+	load: function() {
+		return Promise.all([
+			uci.load('homeproxy')
+		]);
+	},
+
+	render: function(data) {
 		const m = new form.Map('homeproxy', _('Automation'));
 		const s = m.section(form.NamedSection, 'automation', 'homeproxy', _('Auto blocked-site detection'));
 
@@ -244,17 +242,14 @@ return view.extend({
 			return v.filter(function(x) { return [ 'dns', 'clash', 'sni' ].includes(x); });
 		};
 
-		o = s.option(form.Value, 'timeout', _('Probe timeout (seconds)'));
-		o.datatype = 'uinteger';
-		o.placeholder = '6';
-
 		o = s.option(form.Value, 'max_entries', _('Maximum learned entries'));
 		o.datatype = 'uinteger';
 		o.placeholder = '2000';
 
-		o = s.option(form.Value, 'min_confirm', _('Confirmations required before learning'));
-		o.datatype = 'uinteger';
-		o.placeholder = '1';
+		/* ч.69: engine-internal knobs are gone from the UI (probe timeout,
+		 * confirmations, adaptive flags, discovery weights, helper toggles,
+		 * CDN exclusion, HTTP/2 probing — all are autonomous now). Only the
+		 * genuinely behavioral choices remain. */
 
 		o = s.option(form.Value, 'reeval_interval', _('Re-evaluate learned interval (seconds)'));
 		o.datatype = 'uinteger';
@@ -276,69 +271,23 @@ return view.extend({
 			_('Hard guard: traffic matching the RU-geo databases (networks + domains, see the “RU-geo databases” tab) and .ru/.su/.рф domains is always routed DIRECT, even if it matches a learned or static proxy list entry. RU services (banks, marketplaces, delivery) flag VPN exits — this keeps them off the tunnel.'));
 		o.default = o.enabled;
 		o.rmempty = false;
+		o = s.option(form.Flag, 'gemini_strict', _('Gemini strict routing'),
 
-		/* Phase 1: Adaptive behavior options */
-		o = s.option(form.Flag, 'adaptive_timeout', _('Adaptive probe timeout'),
-			_('Adjust the probe timeout per host from the moving average (EWMA) of observed response times: fast hosts are measured quickly, slow ones get extra headroom instead of failing spuriously. Stored per host in the engine state.'));
+			_('Pins the FULL Google AI domain set (gemini.google.com, AI Studio, NotebookLM, Jules, Flow, Opal, Antigravity, DeepMind, Cloud Code, the -pa API endpoints — v2fly/MetaCubeX google-gemini list) to the AI exit below (by default the MAIN proxy path), not just the core Gemini hosts. Use this when Gemini still shows "not supported in your country" even though the checks pass: without it, generic Google hosts (search, gstatic, googleusercontent) leave DIRECT in the banned-sites mode, and the mixed-geo session is what Gemini flags. Costs extra Google traffic through the proxy.'));
 		o.default = o.enabled;
 		o.rmempty = false;
+		o.depends('enabled', '1');
 
-		o = s.option(form.Flag, 'adaptive_confirm', _('Adaptive confirmation threshold'),
-			_('Hard blocks (4xx/5xx or a recognizable block page) are learned at the confirmation threshold below; transient failures (timeout/no response) require one extra confirmation. Fewer false learns on flaky connections.'));
-		o.default = o.enabled;
-		o.rmempty = false;
-
-		o = s.option(form.Flag, 'resource_aware', _('Resource-aware scheduling'),
-			_('The engine watches CPU load and free memory and adjusts its cycle pause: backs off when the router is busy, speeds up when idle.'));
-		o.default = o.enabled;
-		o.rmempty = false;
-
-		o = s.option(form.Flag, 'http2_probe', _('Enable HTTP/2 probing'),
-			_('Send probes over HTTP/2 when the installed curl supports it (checked at engine start; the flag is ignored otherwise). Modern sites often answer faster and more reliably over h2.'));
-		o.default = o.enabled;
-		o.rmempty = false;
-
-		/* ч.53: geo-aware exit (geo-out selector + per-node geo scan) */
-		o = s.option(form.Flag, 'geo_scan', _('Geo-aware exit for geo-sensitive services'),
-			_('Scans every proxy node in the background (exit country/ASN and the actual geo verdict of the Google AI and OpenAI edge checks) and keeps the geo-sensitive hosts (Gemini, AI Studio, ChatGPT class) on a node whose exit passes those checks — re-homing automatically when Google/OpenAI start refusing the current exit. Runs every 30 minutes, on demand ("Scan geo exits" on the Overview) and right after a geo-refusal is detected. Adds a geo-out routing group; everything else keeps its route. A node can also be pinned manually from the table on the Overview (📌) — a pinned exit is kept while it still passes the checks.'));
-		o.default = o.enabled;
-		o.rmempty = false;
-
-		/* Phase 1: Discovery source weights (weighted cross-correlation).
-		 * Each sighting adds its source weight to a per-host score; the probe
-		 * budget is spent on the highest-scoring candidates first. */
-		o = s.option(form.Value, 'discover_weight_dns', _('Discovery weight: DNS log'),
-			_('Weight of a DNS query-log sighting in the candidate priority score.'));
-		o.datatype = 'ufloat';
-		o.placeholder = '1.0';
-
-		o = s.option(form.Value, 'discover_weight_clash', _('Discovery weight: Clash API'),
-			_('Weight of an active Clash API connection sighting (live traffic = strong signal).'));
-		o.datatype = 'ufloat';
-		o.placeholder = '1.5';
-
-		o = s.option(form.Value, 'discover_weight_sni', _('Discovery weight: TLS SNI'),
-			_('Weight of a TLS ClientHello (SNI) sighting. Catches DoH clients and hardcoded-IP apps.'));
-		o.datatype = 'ufloat';
-		o.placeholder = '1.2';
-
-		/* Phase 2: probe_pool native backend (optional Go helper) */
-		o = s.option(form.Flag, 'probe_pool_enabled', _('Use the native probe_pool helper'),
-			_('When the probe_pool binary is installed (via the console installer), probe waves run inside one resident native process — HTTP/2, TLS connection reuse between cycles, DNS resolution inside the helper, no extra forks. Verdicts are computed by the same engine logic; if the helper is missing or fails, the classic shell workers are used automatically.'));
-		o.default = o.enabled;
-		o.rmempty = false;
-
-		/* Phase 4: CDN-range IP exclusion (cdn_ip4.txt from RU-geo update) */
-		o = s.option(form.Flag, 'asn_enabled', _('Exclude CDN/cloud address ranges from IP learning'),
-			_('Never learn IPs belonging to big CDN/cloud providers (Cloudflare, Google, AWS, Akamai, Hetzner and others): one learned prefix there would reroute unrelated services sharing the same addresses. The range list is refreshed by the RU-geo databases update.'));
-		o.default = o.enabled;
-		o.rmempty = false;
-
-		/* Phase 5: native SNI sniffer (optional Go helper) */
-		o = s.option(form.Flag, 'sni_sniffer_enabled', _('Use the native SNI sniffer helper'),
-			_('When the sni_sniffer binary is installed (via the console installer), TLS ClientHello names are captured continuously by a tiny daemon with a kernel packet filter. Without the helper — or when it cannot run — the engine falls back to the classic tcpdump bursts.'));
-		o.default = o.enabled;
-		o.rmempty = false;
+		o = s.option(form.ListValue, 'ai_node', _('Dedicated AI exit'),
+			_('Node used for ALL AI traffic: the core AI hosts and (with "Gemini strict routing") the full Google AI domain set. Use this when AI pages load fine but every send fails with "Something went wrong" — Google risk-checks the exit IP at send time and flags some shared datacenter IPs, while page loads still pass. Pick a node on a different IP/provider than the main one; empty = the main path. Applied on service restart.'));
+		o.value('', _('Main path (default)'));
+		uci.sections(data[0], 'node', (res) => {
+			if (res.type === 'direct')
+				return;
+			o.value(res['.name'], (res.label || res.address || res['.name']) + ' [' + res.type + ']');
+		});
+		o.default = '';
+		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'sni_sniffer_interface', _('SNI capture interface'),
 			_('Network interface the SNI capture (native sniffer or tcpdump) listens on.'));
@@ -434,50 +383,41 @@ return view.extend({
 		const pauseEl = E('div', { 'class': 'hpauto-banner', style: 'display:none' });
 		const geoLine = E('div', { 'class': 'hpauto-hint' });
 		const helperLine = E('div', { 'class': 'hpauto-hint' });
-		const geoExitLine = E('div', { 'class': 'hpauto-hint' });
-		const geoExitTable = E('div', { 'class': 'hpauto-wrap', style: 'display:none; max-height:40vh' });
+		/* ч.69: exit card — tunnel exit + AI-services verdicts (replaces the
+		 * geo-out scan table). Fed live from automation_status (engine state).
+		 * ч.70: the Gemini path-audit result is cached at pane scope — the
+		 * 5 s poll rebuilds the card and would otherwise wipe the audit. */
+		const exitCard = E('div', { 'class': 'hpgeo-card', style: 'max-width:640px; margin:10px 0' });
+		let exitAudit = null;
 		panes.overview.appendChild(ovCards);
 		panes.overview.appendChild(pauseEl);
 		panes.overview.appendChild(geoLine);
 		panes.overview.appendChild(helperLine);
-		panes.overview.appendChild(geoExitLine);
-		panes.overview.appendChild(geoExitTable);
+		panes.overview.appendChild(exitCard);
 		panes.overview.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Test now'), function() { return callTestNow().then(refresh); }),
-			btn(_('Geo diagnostics'), function() {
+			btn(_('Exit diagnostics'), function() {
 				return callGeoDiag().then(function(r) {
 					if (!r)
-						return ui.addNotification(null, E('p', {}, _('Geo diagnostics failed.')), 'error');
+						return ui.addNotification(null, E('p', {}, _('Exit diagnostics failed.')), 'error');
 					const e = r.exit || {};
+					const ed = r.exit_direct || {};
 					const verdict = (r.exit_verdict === 'unsupported_country')
-						? _('exit country is NOT supported by geo-gated services — switch nodes')
+						? _('main-path exit country is NOT supported by geo-gated services — switch nodes')
 						: (r.exit_verdict === 'supported_country')
-							? _('exit country is supported; if a service still refuses it, the exit IP is flagged — try another node')
-							: _('could not probe the tunnel exit (proxy down?)');
-					const ge = r.geo_exit || {};
-					const gverdict = (r.geo_exit_verdict === 'unsupported_country')
-						? _('geo exit country is NOT supported — run "Scan geo exits"')
-						: (r.geo_exit_verdict === 'supported_country')
-							? _('geo exit country is supported')
-							: _('could not probe the geo exit (geo test inbound missing — reload the service?)');
-					const text = _('Tunnel exit: %s (%s), %s. %s Geo exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d.')
-						.format(e.ip || '—', e.country_code || '—', e.asn || (e.org || '—'), verdict,
-							ge.ip || '—', ge.country_code || '—', ge.asn || (ge.org || '—'), gverdict,
+							? _('main-path exit country is supported; if a service still refuses it, the exit IP is flagged — try another node')
+							: _('could not probe the main-path exit (proxy down?)');
+					const gv = (v) => (v === 'ok') ? _('served') : (v === 'refused') ? _('REFUSED') : _('unknown');
+					const directLine = ed.country_code
+						? (' ' + _('Direct exit: %s (%s).').format(ed.ip || '—', ed.country_code || '—'))
+						: '';
+					const text = _('Main-path exit (the way your traffic is routed): %s (%s), %s. %s Google AI (API): %s · Google AI (web): %s · OpenAI: %s · Geo-hosts via proxy: %d of %d.')
+						.format(e.ip || '—', e.country_code || '—', e.asn || (e.org || '—'),
+							verdict + directLine,
+							gv(r.google), gv(r.google_web), gv(r.openai),
 							r.seeds_covered || 0, (r.seeds || []).length);
 					ui.addNotification(null, E('p', {}, text),
-						(r.exit_verdict === 'unsupported_country' || r.geo_exit_verdict === 'unsupported_country') ? 'warning' : 'info');
-				});
-			}),
-			btn(_('Scan geo exits'), function() {
-				return callGeoScan('status').then(function(cur) {
-					const baseTs = (cur && cur.ts) || 0;
-					return callGeoScan('start').then(function(r) {
-						if (!r || !r.started)
-							return ui.addNotification(null, E('p', {}, _('Geo scan could not be started (feature disabled or automation off).')), 'error');
-						ui.addNotification(null, E('p', {}, _('Geo scan started — every node is measured in turn (exit country/ASN, Google AI and OpenAI geo verdicts); the table updates when it finishes.')), 'info');
-						pollGeoScan(baseTs, 0);
-						return refresh();
-					});
+						(r.exit_verdict === 'unsupported_country' || r.google === 'refused' || r.google_web === 'refused' || r.openai === 'refused') ? 'warning' : 'info');
 				});
 			}),
 			btn(_('Install helpers'), function() {
@@ -787,130 +727,75 @@ return view.extend({
 			wrap.scrollTop = scrollTop;
 		}
 
-		/* ── Geo-aware exit (ч.53): status line + per-node verdict table ── */
+		/* ── Exit card (ч.69): tunnel exit + AI-services verdicts ──────── */
 
-		function renderGeoExit(r) {
-			geoExitLine.innerHTML = '';
-			geoExitTable.innerHTML = '';
-			geoExitTable.style.display = 'none';
-			if (!r || !r.enabled) {
-				geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit: disabled (see Settings).')));
-				return;
-			}
-			if (!r.scanned) {
-				geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit: not scanned yet — press "Scan geo exits".')));
-				return;
-			}
-			const selName = r.selected_label ||
-				String(r.selected || '').replace(/^cfg-/, '').replace(/-out$/, '');
-			geoExitLine.appendChild(document.createTextNode(_('Geo-aware exit for geo-sensitive services (Gemini etc.):') + ' '));
-			geoExitLine.appendChild(E('b', {}, [ selName || '—' ]));
-			geoExitLine.appendChild(document.createTextNode(' · ' + _('last scan: %s').format(fmtAge(r.ts) || '—')));
-			if (r.live && r.selected && r.live !== r.selected) {
-				const liveName = r.live_label ||
-					String(r.live || '').replace(/^cfg-/, '').replace(/-out$/, '');
-				geoExitLine.appendChild(document.createTextNode(' · '));
-				geoExitLine.appendChild(E('b', { style: 'color:#d99a1b' }, [
-					_('live geo-out is %s — it differs from the last scanned pin; press "Scan geo exits"').format(liveName)
-				]));
-			}
-			/* ч.66: a manually pinned exit stays on the job (rotating scans keep
-			 * it while it passes); the user can hand control back to the engine. */
-			if (r.manual) {
-				geoExitLine.appendChild(document.createTextNode(' · '));
-				geoExitLine.appendChild(E('span', { style: 'color:#4d8fe0; font-weight:600' },
-					[ _('pinned manually') ]));
-				geoExitLine.appendChild(document.createTextNode(' '));
-				geoExitLine.appendChild(btn(_('Unpin (auto)'), function() {
-					return callGeoScan('status').then(function(cur) {
-						return callGeoPin('auto', '').then(function(res) {
-							if (!res || res.result === false) {
-								ui.addNotification('error', _('Geo exit pin failed: ') + ((res && res.error) || ''));
-								return null;
-							}
-							ui.addNotification('info', _('Manual pin cleared — the engine is re-picking the best passing exit.'));
-							/* Resolve when a NEWER scan timestamp appears. */
-							return pollGeoScan((cur && cur.ts) || 0, 0);
-						});
-					});
-				}));
-			}
+		function renderExitHealth(h) {
+			exitCard.innerHTML = '';
+			exitCard.appendChild(E('h4', {}, [ _('Tunnel exit & AI services') ]));
 			const vspan = (v) => (v === 'ok')
-				? E('span', { style: 'color:#3fbf5f' }, [ _('passes') ])
+				? E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ '✔ ' + _('served') ])
 				: (v === 'refused')
-					? E('span', { style: 'color:#e05252' }, [ _('refused') ])
-					: E('span', { style: 'color:#9a9a9a' }, [ _('n/a') ]);
-			const vword = (v) => (v === 'ok') ? _('passes')
-				: (v === 'refused') ? _('refused') : _('n/a');
-			const thead = E('tr', {}, [
-				E('th', {}, [ _('Node') ]),
-				E('th', {}, [ _('Exit country') ]),
-				E('th', {}, [ _('ASN') ]),
-				E('th', {}, [ _('Google AI') ]),
-				E('th', {}, [ _('OpenAI') ]),
-				E('th', {}, [ '' ])
-			]);
-			const tbody = E('tbody', {});
-			const nodes = r.nodes || [];
-			for (let i in nodes) {
-				const n = nodes[i];
-				const nodeName = n.label || n.node || '';
-				/* ⚠ marks the node the core is ACTUALLY pinned to right now
-				 * when it differs from the last scan's pin. */
-				const liveMark = (r.live && r.live !== r.selected &&
-					('cfg-' + (n.node || '') + '-out') === r.live) ? ' ⚠' : '';
-				/* ч.66: pin button — make this node the geo exit (checked live
-				 * against the geo verdicts, persisted across reboots). */
-				let pinCell = E('span', {}, [ '\u00a0' ]);
-				if (!n.selected) {
-					const pinBtn = E('button', {
-						'class': 'hpchip', type: 'button',
-						title: _('Make this the geo exit (checked and pinned immediately)')
-					}, [ '\ud83d\udccd' ]);
-					pinBtn.addEventListener('click', function() {
-						pinBtn.disabled = true;
-						callGeoPin('pin', n.node).then(function(res) {
-							if (!res || res.result === false) {
-								ui.addNotification('error', _('Geo exit pin failed: ') + ((res && res.error) || ''));
-							} else {
-								ui.addNotification('info', _('Geo exit pinned: %s (%s). Google AI: %s, OpenAI: %s.')
-									.format(res.label || nodeName, res.country || '—', vword(res.google), vword(res.openai)));
-							}
-							return callGeoScan('status').then(renderGeoExit);
-						}).catch(function(e) {
-							ui.addNotification('error', _('Geo exit pin failed: ') + e);
-						}).finally(function() { pinBtn.disabled = false; });
-					});
-					pinCell = pinBtn;
-				}
-				tbody.appendChild(E('tr', {}, [
-					E('td', { title: nodeName !== n.node ? n.node : null },
-						[ (n.selected ? '✔ ' : '') + nodeName + liveMark ]),
-					E('td', {}, [ n.country || '—' ]),
-					E('td', {}, [ n.asn || '—' ]),
-					E('td', {}, [ vspan(n.google) ]),
-					E('td', {}, [ vspan(n.openai) ]),
-					E('td', {}, [ pinCell ])
+					? E('span', { style: 'color:#e05252; font-weight:600' }, [ '✘ ' + _('REFUSED') ])
+					: E('span', { style: 'color:#9a9a9a' }, [ _('unknown') ]);
+			if (!h || !h.ts) {
+				exitCard.appendChild(E('div', { 'class': 'hpgeo-meta' }, [
+					_('Not measured yet — the engine checks the AI-class services on the current exit every 5 minutes (or press "Exit diagnostics").')
 				]));
+				return;
 			}
-			geoExitTable.appendChild(E('table', { 'class': 'hpauto-table' }, [ E('thead', {}, [ thead ]), tbody ]));
-			geoExitTable.style.display = '';
-		}
-
-		/* Poll the scan result after "Scan geo exits": the daemon scans between
-		 * passes (seconds to a couple of minutes depending on the node count);
-		 * resolve when a NEWER scan timestamp appears (or give up after 10 min). */
-		function pollGeoScan(baseTs, tries) {
-			return callGeoScan('status').then(function(r) {
-				if (r && r.scanned && (r.ts || 0) > (baseTs || 0)) {
-					renderGeoExit(r);
-					return refresh();
-				}
-				if ((tries || 0) >= 120) return null;
-				return new Promise(function(resolve) {
-					window.setTimeout(function() { resolve(pollGeoScan(baseTs, (tries || 0) + 1)); }, 5000);
+			exitCard.appendChild(E('div', { 'class': 'hpgeo-meta' }, [
+				E('span', {}, [ _('Google AI (API edge)') + ': ' ]), vspan(h.google),
+				E('span', {}, [ ' · ' + _('Google AI (web)') + ': ' ]), vspan(h.google_web),
+				E('span', {}, [ ' · ' + _('OpenAI') + ': ' ]), vspan(h.openai)
+			]));
+			exitCard.appendChild(E('div', { 'class': 'hpgeo-meta' }, [
+				_('API edge checks see the region refusal of the API infrastructure; the WEB check renders the gemini.google.com page itself (the "not supported in your country" note). If the web check refuses while the API edge is served — the exit IP is flagged by the Gemini web app: switch the node.')
+			]));
+			exitCard.appendChild(E('div', { 'class': 'hpgeo-meta' }, [
+				_('last check: %s').format(fmtAge(h.ts) || '—')
+			]));
+			if (h.google === 'refused' || h.google_web === 'refused' || h.openai === 'refused') {
+				const b = E('div', { 'class': 'hpauto-banner', style: 'margin:8px 0 0 0' }, [
+					_('The current exit is refused by geo-gated services (Gemini class). The routing itself is correct — switch the Main node (or let URLTest pick another) until the checks pass.')
+				]);
+				exitCard.appendChild(b);
+			}
+			/* ч.70: which Gemini-session hosts leave DIRECT right now.
+			 * Result is cached in exitAudit (pane scope) and re-rendered
+			 * across the 5 s poll rebuilds. */
+			const auditBtn = E('button', { 'class': 'btn cbi-button', 'style': 'margin-top:8px; font-size:.9em' }, [ _('Check Gemini paths') ]);
+			auditBtn.onclick = function() {
+				auditBtn.disabled = true;
+				return L.resolveDefault(callExitAudit(), {}).then(function(r) {
+					exitAudit = (!r || !r.hosts) ? { error: (r && r.error) || _('Exit diagnostics failed.') } : r;
+					renderExitHealth(h);
 				});
-			}).catch(function() {});
+			};
+			exitCard.appendChild(auditBtn);
+			if (exitAudit) {
+				const auditOut = E('div', { style: 'margin-top:6px' });
+				if (exitAudit.error) {
+					auditOut.appendChild(E('div', { 'class': 'hpgeo-meta', style: 'color:#e05252' },
+						[ exitAudit.error ]));
+				} else {
+					const rows = (exitAudit.hosts || []).map(function(e) {
+						const ob = e.outbound || '—';
+						const direct = (ob === 'direct-out');
+						const color = direct ? '#e05252' : '#3fbf5f';
+						return E('div', { 'class': 'hpgeo-meta' }, [
+							E('span', { style: 'color:' + color + '; font-weight:600' },
+								[ direct ? '✘ ' + _('direct') : '✔ ' + ob ]),
+							E('span', { style: 'opacity:.85' }, [ ' ← ' + e.host +
+								(e.match ? (' (' + e.match + ')') : (e.fallback ? ' (' + _('no rule matched — default') + ')' : '')) ])
+						]);
+					});
+					auditOut.appendChild(E('div', { 'class': 'hpgeo-meta' }, [
+						_('Gemini session hosts on the live config. Red = leaves DIRECT: in the banned-sites routing mode generic Google hosts are direct by design (their RU exits carry the session-level geo signal Google uses). AI-class hosts must be green.')
+					]));
+					for (let i in rows) auditOut.appendChild(rows[i]);
+				}
+				exitCard.appendChild(auditOut);
+			}
 		}
 
 		/* ── Geo cards ─────────────────────────────────────────────────── */
@@ -998,9 +883,8 @@ return view.extend({
 				helperLine.appendChild(document.createTextNode('.'));
 				renderTable();
 				renderGeo(g);
+				renderExitHealth(st.exit_health);
 				logEl.textContent = st.log || '';
-				/* Geo-aware exit status (separate RPC; never blocks the poll). */
-				callGeoScan('status').then(renderGeoExit).catch(function() {});
 			}).catch(function(e) {
 				ovCards.textContent = _('Status unavailable: ') + e;
 			});

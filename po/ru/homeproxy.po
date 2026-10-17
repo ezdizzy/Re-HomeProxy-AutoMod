@@ -8010,3 +8010,488 @@ msgstr "Работает резерв"
 
 msgid "Standby ready"
 msgstr "Резерв готов"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Tunnel exit & AI services"
+msgstr "Выход туннеля и AI-сервисы"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Not measured yet — the engine checks the AI-class services on the current exit every 5 minutes (or press \"Exit diagnostics\")."
+msgstr "Ещё не проверялось — движок проверяет AI-сервисы на текущем выходе каждые 5 минут (или нажмите «Диагностика выхода»)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "served"
+msgstr "работает"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "REFUSED"
+msgstr "ОТКАЗ"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "unknown"
+msgstr "неизвестно"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "last check: %s"
+msgstr "проверено: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "The current exit is refused by geo-gated services (Gemini class). The routing itself is correct — switch the Main node (or let URLTest pick another) until the checks pass."
+msgstr "Текущий выход отклоняется гео-зависимыми сервисами (класс Gemini). Маршрутизация сама по себе верна — смените Главный узел (или позвольте URLTest выбрать другой), пока проверки не начнут проходить."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Exit diagnostics"
+msgstr "Диагностика выхода"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Exit diagnostics failed."
+msgstr "Не удалось выполнить диагностику выхода."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Tunnel exit: %s (%s), %s. %s Google AI: %s, OpenAI: %s. %s Geo-sensitive hosts routed via proxy: %d of %d."
+msgstr "Выход туннеля: %s (%s), %s. %s Google AI: %s, OpenAI: %s. %s Гео-чувствительных хостов через прокси: %d из %d."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "tachyon-core (experimental)"
+msgstr "tachyon-core (экспериментально)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Independent high-performance core in pure Rust (sing-box 1.14-compatible config, Clash API included): ~4 MB RAM idle, ~10 MB binary, no GC pauses. EXPERIMENTAL: a very young project (0.1.x) whose sing-box config compatibility is declared temporary by its author — if a node type is rejected, the generator skips it automatically (check-heal). On OpenWrt the 0.1.x redirect inbound is broken: this core runs in Tun proxy mode only (enforced in Client Settings)."
+msgstr "Независимое высокопроизводительное ядро на чистом Rust (конфиг совместим с sing-box 1.14, есть Clash API): ~4 МБ RAM в покое, ~10 МБ бинарник, нет GC-пауз. ЭКСПЕРИМЕНТАЛЬНО: совсем молодой проект (0.1.x), совместимость с sing-box-конфигами объявлена автором как временная — если ядро отвергает тип узла, генератор пропускает его автоматически (check-heal). На OpenWrt redirect-инбаунд 0.1.x сломан: это ядро работает только в режиме Tun (принудительно в Настройках клиента)."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "tachyon-core (0.1.x) runs only in Tun mode on this device — Proxy mode was switched to \"Tun TCP/UDP\"."
+msgstr "tachyon-core (0.1.x) на этом устройстве работает только в режиме Tun — Режим прокси переключён на «Tun TCP/UDP»."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "tachyon-core (0.1.x) works only in Tun mode on this device — its redirect inbound is broken, so the other proxy modes are unavailable."
+msgstr "tachyon-core (0.1.x) на этом устройстве работает только в режиме Tun — его redirect-инбаунд сломан, остальные режимы прокси недоступны."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "low RAM footprint"
+msgstr "низкое потребление RAM"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+
+msgid "Which core to run when several are installed. All run every protocol this app can configure. hiddify-core additionally supports NaïveProxy; sing-box-extended is a newer sing-box base (1.14) with WARP / MASQUE / TrustTunnel, but has no NaïveProxy — such nodes are skipped automatically. tachyon-core is an independent experimental Rust core (very low RAM footprint) — incompatible node types are also skipped automatically."
+msgstr "Какое ядро запускать, когда установлено несколько. Все исполняют каждый протокол, настраиваемый в приложении. hiddify-core дополнительно поддерживает NaïveProxy; sing-box-extended — более новая база sing-box (1.14) с WARP / MASQUE / TrustTunnel, но без NaïveProxy — такие узлы пропускаются автоматически. tachyon-core — независимое экспериментальное ядро на Rust (очень низкое потребление RAM) — несовместимые типы узлов тоже пропускаются автоматически."
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Route explanation"
+msgstr "Объяснение маршрута"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Explain route"
+msgstr "Объяснить маршрут"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "Tracing…"
+msgstr "Трассировка…"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "rule"
+msgstr "правило"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "default route (no rule matched)"
+msgstr "правило по умолчанию (ни одно не совпало)"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+
+msgid "rejects UDP/443 (QUIC escape)"
+msgstr "отклоняет UDP/443 (обход через QUIC)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Snapshots & recovery"
+msgstr "Снапшоты и восстановление"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Create snapshot"
+msgstr "Создать снапшот"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Creating..."
+msgstr "Создаю…"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Snapshot created: %s"
+msgstr "Снапшот создан: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "No snapshots yet"
+msgstr "Снапшотов пока нет"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Restore"
+msgstr "Восстановить"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Restore configuration snapshot %s? The service restarts."
+msgstr "Восстановить снапшот конфигурации %s? Служба перезапустится."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Restoring..."
+msgstr "Восстанавливаю…"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Restored: %s"
+msgstr "Восстановлено: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Restore failed"
+msgstr "Не удалось восстановить"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Restore internet (direct)"
+msgstr "Вернуть интернет (напрямую)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Stopping..."
+msgstr "Останавливаю…"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Direct internet restored — run \"Service start\" to bring the proxy back."
+msgstr "Прямой интернет возвращён — «Запуск службы» вернёт прокси."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with \"Service start\" or a router reboot."
+msgstr "Остановить прокси-стек и вернуть ПРЯМОЙ интернет? Перехват DNS снимается; прокси вернётся через «Запуск службы» или перезагрузку роутера."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Point-in-time copies of the app configuration and routing lists. Restore returns both and restarts the service; \"Restore internet\" is the emergency switch that stops the proxy and DNS interception for a plain direct connection."
+msgstr "Копии конфигурации приложения и списков маршрутизации на момент создания. «Восстановить» возвращает и то и другое и перезапускает службу; «Вернуть интернет» — аварийный выключатель: останавливает прокси и перехват DNS, оставляя прямое соединение."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "DPI Strategy Fuzzer"
+msgstr "DPI-фаззер стратегий"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Fuzz strategies (quick)"
+msgstr "Фаззинг (быстрый)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Full fuzz"
+msgstr "Полный фаззинг"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Starting…"
+msgstr "Запускаю…"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Fuzzing… %d of %d"
+msgstr "Фаззинг… %d из %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Fuzz complete: %d strategies, best passes %d of %d hosts."
+msgstr "Фаззинг завершён: %d стратегий, лучшая проходит %d из %d хостов."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Fuzz failed: %s"
+msgstr "Ошибка фаззинга: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Strategy"
+msgstr "Стратегия"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Avg TLS, ms"
+msgstr "Ср. TLS, мс"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Apply"
+msgstr "Применить"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Apply failed"
+msgstr "Не удалось применить"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Apply this Zapret strategy and restart the service?"
+msgstr "Применить эту стратегию Zapret и перезапустить службу?"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Strategy applied — the service restarts in the background."
+msgstr "Стратегия применена — служба перезапускается в фоне."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Run the FULL strategy sweep? Every candidate is measured in turn (temp NFQUEUE, live traffic untouched) — this takes up to ~15 minutes."
+msgstr "Запустить ПОЛНЫЙ перебор стратегий? Каждая замеряется по очереди (временная NFQUEUE, живой трафик не затрагивается) — это займёт до ~15 минут."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Batch-tests every strategy from the built-in corpus through an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes) and ranks them by passed hosts + handshake speed. The service keeps running; applying a result switches Zapret to it."
+msgstr "Пакетно проверяет каждую стратегию встроенного корпуса через изолированную NFQUEUE (TLS-рукопожатия YouTube / Telegram / Discord / Speedtest) и ранжирует по числу пройденных хостов и скорости рукопожатия. Служба продолжает работать; применение результата переключает Zapret на выбранную стратегию."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Telegram bot"
+msgstr "Telegram-бот"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Enable Telegram bot"
+msgstr "Включить Telegram-бота"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Remote control from your chat: /status, /ping, /connections, /close, /restart, /help. Long-polls the Bot API; only the bound chat is served. The daemon starts with the service (or press Restart service)."
+msgstr "Управление из вашего чата: /status, /ping, /connections, /close, /restart, /help. Длинный опрос Bot API; обслуживается только привязанный чат. Демон стартует вместе со службой (или нажмите «Перезапустить службу»)."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Bot token"
+msgstr "Токен бота"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Create a bot with @BotFather and paste its token here."
+msgstr "Создайте бота у @BotFather и вставьте сюда его токен."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "That does not look like a BotFather token (id:secret)."
+msgstr "Это не похоже на токен BotFather (id:секрет)."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Bound chat"
+msgstr "Привязанный чат"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "not bound yet"
+msgstr "ещё не привязан"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "not bound yet — send ANY message to your bot; the first chat wins and is pinned automatically"
+msgstr "ещё не привязан — отправьте боту ЛЮБОЕ сообщение; первый чат побеждает и привязывается автоматически"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Send /status to the bot to check the connection."
+msgstr "Отправьте боту /status, чтобы проверить связь."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Send ANY message to your bot — the first chat wins and is pinned automatically."
+msgstr "Отправьте боту ЛЮБОЕ сообщение — первый чат побеждает и привязывается автоматически."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Strategy Lab"
+msgstr "Лаборатория стратегий"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Batch-tests every strategy from the built-in corpus through an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes). A no-desync baseline marks hosts your ISP does not block (free pass — they cannot measure a strategy); each host must pass the majority of rounds, so one lucky handshake cannot promote a flaky strategy. Live traffic is untouched; Apply switches Zapret to the strategy and restarts the service."
+msgstr "Пакетно проверяет каждую стратегию из встроенного корпуса через изолированную NFQUEUE (TLS-рукопожатия YouTube / Telegram / Discord / Speedtest). Baseline-прогон без дезинка помечает хосты, которые ваш провайдер не блокирует (free pass — они не могут измерить стратегию); каждый хост должен пройти большинство раундов, чтобы одно счастливое рукопожатие не продвигало нестабильную стратегию. Живой трафик не затрагивается; «Применить» переключает Zapret на стратегию и перезапускает службу."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "%d round(s)"
+msgstr "Раундов: %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Rounds"
+msgstr "Раунды"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Fuzz (quick)"
+msgstr "Фаззинг (быстрый)"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Run the FULL strategy sweep? Every candidate is measured in turn (temp NFQUEUE, live traffic untouched) — this takes up to ~15 minutes."
+msgstr "Запустить ПОЛНЫЙ перебор стратегий? Каждый кандидат замеряется по очереди (временная NFQUEUE, живой трафик не затрагивается) — это займёт до ~15 минут."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Baseline (no desync):"
+msgstr "Baseline (без дезинка):"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "%s pass without a strategy (free pass, not measured)."
+msgstr "%s проходит(ят) и без стратегии (free pass, не учитывается)."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "free pass"
+msgstr "free pass"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Recommended: %s — %d of %d distinguishing hosts pass (avg %d ms)"
+msgstr "Рекомендуется: %s — проходит %d из %d различающих хостов (в среднем %d мс)"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "rounds: %d, majority: %d/%d"
+msgstr "раунды: %d, большинство: %d/%d"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "No strategy passes the distinguishing hosts — try the full fuzz or check your ISP blocking."
+msgstr "Ни одна стратегия не проходит различающие хосты — попробуйте полный фаззинг или проверьте блокировку провайдера."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Strategy applied — the service restarts; run \"Test current strategy\" in ~30 s to confirm."
+msgstr "Стратегия применена — служба перезапускается; через ~30 с нажмите «Проверить текущую стратегию» для подтверждения."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "Last runs"
+msgstr "Прошлые прогоны"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+
+msgid "winner: %s (%d/%d, distinguishing %d/%d)"
+msgstr "победитель: %s (%d/%d, различающих %d/%d)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Strategy Lab (Node Settings)"
+msgstr "Лаборатория стратегий (Настройки узлов)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives in Node Settings → Zapret — \"Strategy Lab\"."
+msgstr "Проверка стратегий (текущая стратегия, пакетный фаззинг с baseline и историей, применение) живёт в Настройках узлов → Zapret — «Лаборатория стратегий»."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Google AI (API edge)"
+msgstr "Google AI (API-edge)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Google AI (web)"
+msgstr "Google AI (веб)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "API edge checks see the region refusal of the API infrastructure; the WEB check renders the gemini.google.com page itself (the \"not supported in your country\" note). If the web check refuses while the API edge is served — the exit IP is flagged by the Gemini web app: switch the node."
+msgstr "Проверки API-edge видят гео-отказ API-инфраструктуры; веб-проверка открывает саму страницу gemini.google.com (примечание «не поддерживается в вашей стране»). Если веб-проверка отказывает, а API-edge обслуживает — выход IP помечен веб-приложением Gemini: смените узел."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Check Gemini paths"
+msgstr "Проверить пути Gemini"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "direct"
+msgstr "напрямую"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "no rule matched — default"
+msgstr "ни одно правило не совпало — по умолчанию"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Gemini session hosts on the live config. Red = leaves DIRECT: in the banned-sites routing mode generic Google hosts are direct by design (their RU exits carry the session-level geo signal Google uses). AI-class hosts must be green."
+msgstr "Хосты сессии Gemini на живом конфиге. Красный = уходит НАПРЯМУЮ: в режиме обхода блокировок обычные хосты Google идут напрямую по дизайну (их RU-выходы несут сессионный гео-сигнал, которым пользуется Google). AI-хосты должны быть зелёными."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Gemini strict routing"
+msgstr "Строгая маршрутизация Gemini"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Pins the FULL Google AI domain set (gemini.google.com, AI Studio, NotebookLM, Jules, Flow, Opal, Antigravity, DeepMind, Cloud Code, the -pa API endpoints — v2fly/MetaCubeX google-gemini list) to the AI exit below (by default the MAIN proxy path), not just the core Gemini hosts. Use this when Gemini still shows \"not supported in your country\" even though the checks pass: without it, generic Google hosts (search, gstatic, googleusercontent) leave DIRECT in the banned-sites mode, and the mixed-geo session is what Gemini flags. Costs extra Google traffic through the proxy."
+msgstr "Прикрепляет ПОЛНЫЙ набор доменов Google AI (gemini.google.com, AI Studio, NotebookLM, Jules, Flow, Opal, Antigravity, DeepMind, Cloud Code, -pa API-эндпоинты — список v2fly/MetaCubeX google-gemini) к выделенному AI-выходу ниже (по умолчанию — ОСНОВНОЙ прокси-путь), а не только ядро хостов Gemini. Включайте, когда Gemini всё ещё пишет «не поддерживается в вашей стране» при проходящих проверках: без этого обычные хосты Google (search, gstatic, googleusercontent) в режиме обхода блокировок уходят напрямую, и именно смешанная гео-сессия флагается Gemini. Даёт дополнительный google-трафик через прокси."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Dedicated AI exit"
+msgstr "Выделенный AI-выход"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Node used for ALL AI traffic: the core AI hosts and (with \"Gemini strict routing\") the full Google AI domain set. Use this when AI pages load fine but every send fails with \"Something went wrong\" — Google risk-checks the exit IP at send time and flags some shared datacenter IPs, while page loads still pass. Pick a node on a different IP/provider than the main one; empty = the main path. Applied on service restart."
+msgstr "Узел для ВСЕГО AI-трафика: базовых AI-хостов и (со «Строгой маршрутизацией Gemini») полного набора доменов Google AI. Используйте, когда страницы AI открываются нормально, но каждая отправка падает с «Что-то пошло не так» — Google проверяет выход-IP при отправке и флаггит часть shared-датацентровых IP, хотя загрузка страниц проходит. Выбирайте узел на другом IP/провайдере, чем основной; пусто = основной путь. Применяется при рестарте службы."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Main path (default)"
+msgstr "Основной путь (по умолчанию)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Main-path exit (the way your traffic is routed): %s (%s), %s. %s Google AI (API): %s · Google AI (web): %s · OpenAI: %s · Geo-hosts via proxy: %d of %d."
+msgstr "Выход основного пути (как маршрутизируется ваш трафик): %s (%s), %s. %s Google AI (API): %s · Google AI (веб): %s · OpenAI: %s · Гео-хостов через прокси: %d из %d."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Direct exit: %s (%s)."
+msgstr "Прямой выход: %s (%s)."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "main-path exit country is NOT supported by geo-gated services — switch nodes"
+msgstr "страна выхода основного пути НЕ поддерживается гео-гейтами — смените узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "main-path exit country is supported; if a service still refuses it, the exit IP is flagged — try another node"
+msgstr "страна выхода основного пути поддерживается; если сервис всё равно отказывает — выход IP помечен, попробуйте другой узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "could not probe the main-path exit (proxy down?)"
+msgstr "не удалось проверить выход основного пути (прокси не работает?)"

@@ -2823,6 +2823,25 @@ return view.extend({
 				expect: { '': {} }
 			});
 
+			/* Strategy Lab (ч.70): server-side fuzzer RPCs. */
+			const callFuzzStart = rpc.declare({
+				object: 'luci.homeproxy',
+				method: 'zapret_fuzz_start',
+				params: ['mode', 'rounds'],
+				expect: { '': {} }
+			});
+			const callFuzzStatus = rpc.declare({
+				object: 'luci.homeproxy',
+				method: 'zapret_fuzz_status',
+				expect: { '': {} }
+			});
+			const callFuzzApply = rpc.declare({
+				object: 'luci.homeproxy',
+				method: 'zapret_fuzz_apply',
+				params: ['strategy'],
+				expect: { '': {} }
+			});
+
 			/* Resolve the 4 test hosts ONCE (bounded + retried server-side), via the
 			 * same secure-DNS/direct path production uses for these blocked domains, so
 			 * the IP is representative for the TLS-handshake probe. Returns
@@ -2971,86 +2990,182 @@ return view.extend({
 			};
 			o.write = function() {};
 
-			/* Full strategy test — client-driven sweep over every candidate. Page-bound:
-			 * runs only while the user is on the page, one candidate at a time through the
-			 * same isolated probe RPC, with live X/N progress, a Stop button, and a per-winner
-			 * Apply (writes that candidate into zapret_cmd_opts, like picking it in the
-			 * dropdown). Leaving the page stops the sweep; applied results persist on Save. */
-			o = ss.option(form.DummyValue, '_zapret_fulltest', _('Full strategy test'),
-				_('Tries every strategy in the list one by one on a temporary NFQUEUE — your live connection is untouched — ' +
-				  'and shows which pass. Stay on this page while it runs; leaving stops it. ' +
-				  'Press <b>Apply</b> on any passing strategy to select it, then Save &amp; Apply.'));
+			/* Strategy Lab (ч.70) — the ONE place for strategy work: the instant
+			 * "Test current strategy" above + a SERVER-SIDE batch fuzzer with
+			 * baseline / rounds / per-host details / history / Apply. Supersedes
+			 * the old client-driven page-bound full-test sweep: the fuzzer keeps
+			 * running in the background (leaving the page does not stop it) and
+			 * ranks honestly (majority-of-rounds, baseline free-passes excluded).
+			 * All results render into ONE panel, replacing the previous ones. */
+			o = ss.option(form.DummyValue, '_zapret_lab', _('Strategy Lab'),
+				_('Batch-tests every strategy from the built-in corpus through an isolated NFQUEUE ' +
+				  '(YouTube / Telegram / Discord / Speedtest TLS handshakes). A no-desync baseline marks hosts ' +
+				  'your ISP does not block (free pass — they cannot measure a strategy); each host must pass ' +
+				  'the majority of rounds, so one lucky handshake cannot promote a flaky strategy. ' +
+				  'Live traffic is untouched; Apply switches Zapret to the strategy and restarts the service.'));
 			o.render = function(option_index, section_id) {
-				let running = false, stop = false;
-				const runBtn  = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Run full test') ]);
-				const stopBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', style: 'margin-left:6px; display:none' }, [ _('Stop') ]);
-				const prog = E('span', { style: 'margin-left:8px; font-size:0.9em; color:#9a9a9a' }, '');
-				const list = E('div', { style: 'margin-top:8px' });
+				const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em; color:#9a9a9a' }, '');
+				const banner = E('div', { style: 'margin-top:6px; font-size:0.92em; display:none' }, '');
+				const tableBox = E('div', { style: 'max-height:40vh; overflow:auto; margin-top:6px; display:none' }, '');
+				const histBox = E('div', { style: 'margin-top:6px; font-size:0.88em; display:none' }, '');
 
-				function addRow(p, idx, data) {
-					const ok = (data && data.ok) ? data.ok : 0;
-					const total = (data && data.total) ? data.total : 0;
-					const err = data && data.error;
-					const pass = ok > 0 && !err;
-					const r = E('div', { style: 'padding:2px 0; font-size:0.9em' });
-					r.appendChild(E('span', { style: 'font-weight:bold; color:' + (pass ? '#3fbf5f' : '#9a9a9a') }, pass ? '✓ ' : '✗ '));
-					r.appendChild(E('span', {}, p.name));
-					r.appendChild(E('span', { style: 'color:#9a9a9a; margin-left:6px' }, err ? err : ('(' + ok + '/' + total + ')')));
-					if (pass) {
-						const ap = E('a', { href: '#', style: 'margin-left:10px' }, _('Apply'));
-						ap.addEventListener('click', function(ev) {
-							ev.preventDefault();
-							applyPreset(idx);
-							prog.style.color = '#3fbf5f';
-							prog.textContent = _('Applied: %s — now Save & Apply').format(p.name);
-						});
-						r.appendChild(ap);
-					}
-					list.appendChild(r);
+				const roundsSel = E('select', { 'class': 'cbi-input-select', 'style': 'width:auto; margin-left:6px' });
+				for (const n of [1, 2, 3]) {
+					const op = E('option', { value: String(n), selected: (n === 2) ? '' : null },
+						_('%d round(s)').format(n));
+					roundsSel.appendChild(op);
 				}
 
-				async function runAll() {
-					running = true; stop = false;
-					runBtn.disabled = true; stopBtn.disabled = false; stopBtn.style.display = '';
-					while (list.firstChild) list.removeChild(list.firstChild);
-					/* Resolve the test hosts ONCE up front and reuse the IPs for every
-					 * candidate. If DNS isn't ready (Apply just restarted it), stop with
-					 * one clear message instead of grinding out 36 failures. */
-					prog.style.color = '#9a9a9a';
-					prog.textContent = _('Resolving test hosts…');
-					const r0 = await resolveHosts();
-					if (!r0.ok) {
-						prog.style.color = '#e05252';
-						prog.textContent = r0.error;
-						runBtn.disabled = false; stopBtn.style.display = 'none'; running = false;
+				function renderHistory(runs) {
+					histBox.innerHTML = '';
+					if (!runs.length) { histBox.style.display = 'none'; return; }
+					const fmt = (ts) => {
+						const d = new Date(Number(ts) * 1000);
+						return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ' ' +
+							d.toLocaleDateString();
+					};
+					const rows = runs.slice(-5).reverse().map((h) =>
+						E('div', { style: 'margin:1px 0' }, [
+							fmt(h.ts) + ' · ' + (h.mode || '?') + ' · ' + _('%d round(s)').format(h.rounds || 2) +
+							(h.best && h.best.name
+								? ' → ' + _('winner: %s (%d/%d, distinguishing %d/%d)')
+									.format(h.best.name, h.best.ok, h.best.total, h.best.dist_ok, h.best.dist_total)
+								: '')
+						]));
+					histBox.appendChild(E('details', {}, [
+						E('summary', { style: 'cursor:pointer; color:#9a9a9a' }, _('Last runs')),
+						E('div', { style: 'margin:4px 0 0 12px' }, rows)
+					]));
+					histBox.style.display = '';
+				}
+
+				function renderResult(res) {
+					banner.style.display = '';
+					tableBox.style.display = '';
+					banner.innerHTML = '';
+					const bl = res.baseline || [];
+					const blParts = bl.map((b) => (b.label || b.tag) + ' ' + (b.ok ? '✓' : '✗'));
+					const blFree = bl.filter((b) => b.ok).map((b) => (b.label || b.tag));
+					banner.appendChild(E('div', { style: 'color:#9a9a9a' }, [
+						_('Baseline (no desync):') + ' ' + blParts.join(' · ') +
+						(blFree.length
+							? ' — ' + _('%s pass without a strategy (free pass, not measured).').format(blFree.join(', '))
+							: '')
+					]));
+					const best = res.strategies[0];
+					if (best && best.ok > 0) {
+						banner.appendChild(E('div', { style: 'margin-top:2px; font-weight:600; color:#3fbf5f' },
+							_('Recommended: %s — %d of %d distinguishing hosts pass (avg %d ms)').format(
+								best.name, best.dist_ok || 0, best.dist_total || 0, best.avg_tls_ms || 0) +
+							' · ' + _('rounds: %d, majority: %d/%d').format(
+								res.rounds || 2, res.majority || 2, res.rounds || 2)));
+					} else {
+						banner.appendChild(E('div', { style: 'margin-top:2px; font-weight:600; color:#e05252' },
+							_('No strategy passes the distinguishing hosts — try the full fuzz or check your ISP blocking.')));
+					}
+					const thead = E('tr', {}, [
+						E('th', {}, [ '#' ]),
+						E('th', {}, [ _('Strategy') ]),
+						E('th', {}, [ _('Passed') ]),
+						E('th', {}, [ _('Avg TLS, ms') ]),
+						E('th', {}, [ '' ])
+					]);
+					const tbody = E('tbody', {});
+					res.strategies.slice(0, 15).forEach((s, i) => {
+						const hostsTip = (s.hosts || []).map((h) =>
+							(h.label || h.tag) + ' ' +
+							(h.ok ? '✓ ' + h.votes + '/' + h.rounds + ' · ' + (h.tls_ms || 0) + ' ms'
+							      : '✗ ' + (h.reason || 'fail')) +
+							(h.dist ? '' : ' (' + _('free pass') + ')')).join(' · ');
+						const applyBtn = E('button', {
+							'class': 'btn cbi-button cbi-button-apply', 'style': 'font-size:.82em; padding:0 8px'
+						}, [ _('Apply') ]);
+						applyBtn.onclick = () => {
+							if (!window.confirm(_('Apply this Zapret strategy and restart the service?')))
+								return;
+							applyBtn.disabled = true;
+							return L.resolveDefault(callFuzzApply(s.args), {}).then((r) => {
+								msgEl.style.color = r.result ? '#3fbf5f' : '#e05252';
+								msgEl.textContent = r.result
+									? _('Strategy applied — the service restarts; run "Test current strategy" in ~30 s to confirm.')
+									: ((r && r.error) || _('Apply failed'));
+								applyBtn.disabled = false;
+							});
+						};
+						tbody.appendChild(E('tr', {}, [
+							E('td', { style: 'color:#9a9a9a' }, [ String(i + 1) ]),
+							E('td', { style: 'font-size:.85em; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap', title: s.args },
+								[ s.name || s.args ]),
+							E('td', { style: 'color:' + ((s.ok > 0) ? '#3fbf5f' : '#9a9a9a') + '; white-space:nowrap', title: hostsTip },
+								[ '%d / %d'.format(s.ok || 0, s.total || 0) ]),
+							E('td', {}, [ String(s.avg_tls_ms || 0) ]),
+							E('td', {}, [ applyBtn ])
+						]));
+					});
+					tableBox.innerHTML = '';
+					tableBox.appendChild(E('table', { 'class': 'table' }, [ thead, tbody ]));
+				}
+
+				let pollId = null;
+				function stopPoll() { if (pollId) { window.clearInterval(pollId); pollId = null; } }
+				function refresh() {
+					if (!tableBox.isConnected) { stopPoll(); return; }
+					return L.resolveDefault(callFuzzStatus(), {}).then((r) => {
+						const st = (r && r.status) || {};
+						const res = (r && r.result) || null;
+						const hist = (r && r.history && r.history.runs) || [];
+						if (st.running) {
+							msgEl.style.color = '#9a9a9a';
+							msgEl.textContent = _('Fuzzing… %d of %d').format(st.done || 0, st.total || 0) +
+								(st.current ? (' · ' + st.current) : '');
+							if (!pollId) pollId = window.setInterval(refresh, 5000);
+							return;
+						}
+						stopPoll();
+						if (st.error) {
+							msgEl.style.color = '#e05252';
+							msgEl.textContent = _('Fuzz failed: %s').format(st.error);
+							return;
+						}
+						msgEl.textContent = '';
+						if (res && res.strategies && res.strategies.length)
+							renderResult(res);
+						renderHistory(hist);
+					});
+				}
+
+				const quickBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Fuzz (quick)') ]);
+				const fullBtn = E('button', { 'class': 'btn cbi-button', 'style': 'margin-left:6px' }, [ _('Full fuzz') ]);
+				const start = (mode, confirmText) => () => {
+					if (confirmText && !window.confirm(confirmText))
 						return;
-					}
-					const N = ZAPRET_PRESETS.length;
-					let passed = 0;
-					for (let i = 0; i < N; i++) {
-						if (stop) break;
-						const p = ZAPRET_PRESETS[i];
-						prog.style.color = '#9a9a9a';
-						prog.textContent = _('Testing %d/%d: %s').format(i + 1, N, p.name);
-						let data = {};
-						try {
-							const ret = await callZapretTest(p.args, r0.ips);
-							data = JSON.parse(ret.output || '{}');
-						} catch (e) { data = { error: _('rpc error') }; }
-						if (data && data.ok > 0 && !data.error) passed++;
-						addRow(p, i, data);
-					}
-					prog.style.color = stop ? '#e05252' : '#3fbf5f';
-					prog.textContent = (stop ? _('Stopped') : _('Done')) + ' — ' + _('%d/%d passed').format(passed, ZAPRET_PRESETS.length);
-					runBtn.disabled = false; stopBtn.style.display = 'none'; running = false;
-				}
+					msgEl.style.color = '#9a9a9a';
+					msgEl.textContent = _('Starting…');
+					return L.resolveDefault(callFuzzStart(mode, roundsSel.value || '2'), {}).then((r) => {
+						if (!r || r.result === false) {
+							msgEl.style.color = '#e05252';
+							msgEl.textContent = (r && r.error) || _('rpc error');
+							return;
+						}
+						return refresh();
+					});
+				};
+				quickBtn.onclick = start('quick', null);
+				fullBtn.onclick = start('full',
+					_('Run the FULL strategy sweep? Every candidate is measured in turn (temp NFQUEUE, live traffic untouched) — this takes up to ~15 minutes.'));
 
-				runBtn.addEventListener('click', function() { if (!running) runAll(); });
-				stopBtn.addEventListener('click', function() { stop = true; stopBtn.disabled = true; });
+				/* Restore the last result / a still-running fuzz on page render. */
+				refresh();
 
 				return E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, _('Full strategy test')),
-					E('div', { 'class': 'cbi-value-field' }, [ runBtn, stopBtn, prog, list ])
+					E('label', { 'class': 'cbi-value-title' }, _('Strategy Lab')),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' },
+							[ quickBtn, fullBtn, E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, _('Rounds')), roundsSel, msgEl ]),
+						banner,
+						tableBox,
+						histBox
+					])
 				]);
 			};
 			o.write = function() {};

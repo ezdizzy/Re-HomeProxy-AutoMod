@@ -102,6 +102,13 @@ const callActiveNode = rpc.declare({
 	expect: { '': {} }
 });
 
+const callRouteExplain = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'route_explain',
+	params: ['host'],
+	expect: { '': {} }
+});
+
 /* Resolve a sing-box outbound tag (cfg-<section>-out) to its UCI label. */
 function resolveTag(tag) {
 	const m = tag && tag.match(/^cfg-(.+)-out$/);
@@ -178,6 +185,48 @@ function buildConnectivitySection(view, coreType) {
 		return E('div', { 'class': 'diag-row' }, [ E('span', { 'class': 'diag-label' }, label), btn, resultEl ]);
 	}
 
+	/* Route explanation (ч.69): why does a host route the way it does. */
+	function routeExplainRow() {
+		const input = E('input', {
+			'type': 'text', 'class': 'cbi-input-text',
+			'placeholder': _('example.com or 1.2.3.4'),
+			'style': 'min-width:220px; flex:0 1 260px'
+		});
+		const resultEl = E('div', { 'class': 'diag-gray', 'style': 'font-size:.88em; margin-top:.3em' }, '');
+		function run() {
+			const h = String(input.value || '').trim().toLowerCase();
+			if (!h) return;
+			dom.content(resultEl, E('em', { 'class': 'diag-gray' }, _('Tracing…')));
+			return L.resolveDefault(callRouteExplain(h), {}).then(function(ret) {
+				if (!ret || ret.error) {
+					dom.content(resultEl, E('span', { 'class': 'diag-fail' }, (ret && ret.error) || _('RPC error')));
+					return;
+				}
+				const parts = [];
+				parts.push(E('div', {}, [
+					E('strong', {}, [ ret.outbound ? resolveTag(ret.outbound) : (ret.action || '?') ]),
+					E('span', { 'class': 'diag-gray' }, ' ← ' + (ret.match || '') +
+						(ret.rule_index ? (' · ' + _('rule') + ' #' + ret.rule_index) : '') +
+						(ret.fallback ? ' · ' + _('default route (no rule matched)') : ''))
+				]));
+				if (ret.chain)
+					parts.push(E('div', { 'class': 'diag-gray' }, ret.chain));
+				for (let t in (ret.trace || []))
+					if (t.action === 'reject')
+						parts.push(E('div', { 'style': 'color:#d99a1b' },
+							_('rejects UDP/443 (QUIC escape)') + ' — ' + (t.match || '')));
+				dom.content(resultEl, parts);
+			});
+		}
+		const btn = E('button', { 'class': 'btn cbi-button cbi-button-action diag-btn',
+			'click': ui.createHandlerFn(view, function() { input.value = input.value; return run(); }) }, [ _('Explain route') ]);
+		input.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') run(); });
+		const wrap = E('div', { 'class': 'diag-row', 'style': 'flex-wrap:wrap' },
+			[ E('span', { 'class': 'diag-label' }, _('Route explanation')), input, btn, resultEl ]);
+		resultEl.style.flexBasis = '100%';
+		return wrap;
+	}
+
 	/* Exit IP / geo — only hiddify-core's Clash API reports it. */
 	function ipRow(label, type) {
 		const resultEl = E('strong', { 'class': 'diag-gray' }, _('unchecked'));
@@ -230,6 +279,7 @@ function buildConnectivitySection(view, coreType) {
 	}
 
 	const rows = [
+		routeExplainRow(),
 		siteRow(_('Baidu'),     'baidu'),
 		siteRow(_('Google'),    'google'),
 		siteRow(_('YouTube'),   'youtube'),

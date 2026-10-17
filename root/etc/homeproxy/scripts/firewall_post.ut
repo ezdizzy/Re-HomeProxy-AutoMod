@@ -565,6 +565,15 @@ chain homeproxy_mangle_tun {
 	iifname {{ tun_name }} counter return
 	{# Loop guard: same as homeproxy_mangle_lanac — never re-mark the core's own egress. #}
 	meta mark {{ self_mark }} counter return
+	{% if (zapret_enabled === '1'): %}
+	{# zapret-out dials (routing_mark) and nfqws2 re-injected fakes must escape the
+	   tun re-mark — same guards as the tproxy branch above: the mark is what the
+	   postrouting NFQUEUE chain matches to feed nfqws2. Without these returns the
+	   zapret dial is re-marked tun_mark and loops back into the tun device
+	   (YouTube and every other zapret-path site dies under tachyon/TUN). #}
+	meta mark {{ zapret_mark }} counter return
+	meta mark and {{ zapret_desync_mark }} != 0 counter return
+	{% endif /* zapret_enabled */ %}
 
 	ip daddr @homeproxy_wan_proxy_addr_v4 counter goto homeproxy_mangle_tun_mark
 	{% if (ipv6_support === '1'): %}

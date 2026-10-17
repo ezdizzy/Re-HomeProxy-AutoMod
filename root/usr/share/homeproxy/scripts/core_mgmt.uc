@@ -85,6 +85,26 @@ const FULL_OVERLAY_COMP_KB = 32768;   /* ~32 MB on a compressing overlay (binary
 const COMPACT_OVERLAY_KB   = 25600;   /* ~25 MB for the compact (UPX) build — fs-independent */
 const COMPACT_RAM_KB       = 98304;   /* ~96 MB free RAM to decompress + run the compact build */
 
+/* tachyon-core (ч.69, experimental): a raw static binary in a tar.gz — NOT a package.
+ * ~7.5-13 MB raw, ~4.5 MB in the archive. Installed straight to /usr/bin/tachyon-core. */
+const TACHYON_TMP_KB      = 20480;    /* /tmp: archive + unpacked binary */
+const TACHYON_OVERLAY_KB  = 15360;   /* overlay: the raw binary (less on a compressing overlay) */
+
+/* OpenWrt arch → tachyon-core release asset arch. */
+function tachyon_asset_arch(arch) {
+	if (match(arch, /^aarch64/)) return 'aarch64';
+	if (match(arch, /^arm_cortex-a7/) || match(arch, /^arm_cortex-a9/) ||
+	    match(arch, /^arm_cortex-a15/) || match(arch, /^arm_cortex-a8/) ||
+	    match(arch, /^arm_mpcore/)) return 'armv7';
+	if (match(arch, /^arm_cortex-a5/) || match(arch, /^arm926ej-s/) ||
+	    match(arch, /^arm_fa526/)) return 'armv6';
+	if (match(arch, /^mipsel/)) return 'mipsel';
+	if (match(arch, /^mips/)) return 'mips';
+	if (match(arch, /^x86_64/)) return 'x86_64';
+	if (match(arch, /^riscv64/)) return 'riscv64';
+	return null;
+}
+
 const action = ARGV[0];
 let result;
 
@@ -100,19 +120,26 @@ let result;
 		/* Parse a core's version output into display + capability info. Tags are
 		 * the only reliable capability source: e.g. sing-box-extended ships
 		 * WITHOUT with_naive_outbound (NaïveProxy dropped), while hiddify-core
-		 * has it; AmneziaWG works on both via nested `amnezia` options. */
+		 * has it. tachyon-core prints "tachyon-core 0.1.2" with no Tags line —
+		 * its capabilities are synthesized (verified against the project docs;
+		 * the generated config check remains the runtime truth). */
 		function core_features(bin) {
 			let info = {};
 			const fd = popen(bin + ' version 2>/dev/null');
 			if (!fd) return info;
 			const out = fd.read('all'); fd.close();
-			const m = match(out, /version v?(\S+)/);
+			let m = match(out, /version v?(\S+)/);
+			if (!m)
+				m = match(out, /tachyon-core v?(\S+)/);
 			if (m) info.version = m[1];
 			const tm = match(out, /\nTags: ([^\n]+)/);
 			let tags = {};
 			if (tm)
 				for (let t in split(tm[1], ','))
 					tags[trim(t)] = true;
+			else if (match(out, /tachyon-core/))
+				for (let tk in ['with_naive_outbound', 'with_quic', 'with_wireguard', 'with_grpc', 'with_utls', 'with_gvisor'])
+					tags[tk] = true;
 			info.naive = ('with_naive_outbound' in tags);
 			info.quic = ('with_quic' in tags);
 			info.wireguard = ('with_wireguard' in tags);
@@ -122,8 +149,10 @@ let result;
 
 		const hiddify_installed = !!access('/usr/bin/hiddify-core');
 		const singbox_installed = !!access('/usr/bin/sing-box');
+		const tachyon_installed = !!access('/usr/bin/tachyon-core');
 		const hid_f = hiddify_installed ? core_features('/usr/bin/hiddify-core') : {};
 		const sb_f  = singbox_installed ? core_features('/usr/bin/sing-box') : {};
+		const tc_f  = tachyon_installed ? core_features('/usr/bin/tachyon-core') : {};
 
 		result = {
 			pkg_manager, arch, tmp_free_kb, overlay_free_kb, ram_free_kb,
@@ -142,17 +171,27 @@ let result;
 				quic: sb_f.quic ?? false,
 				wireguard: sb_f.wireguard ?? false,
 				extended: sb_f.extended ?? false
+			},
+			tachyon: {
+				installed: tachyon_installed,
+				version: tc_f.version ?? null,
+				naive: tc_f.naive ?? false,
+				quic: tc_f.quic ?? false,
+				wireguard: tc_f.wireguard ?? false,
+				extended: false
 			}
 		};
 
 } else if (action === 'check_remote') {
 	const core = ARGV[1];
-	if (!(core in ['hiddify', 'singbox'])) {
+	if (!(core in ['hiddify', 'singbox', 'tachyon'])) {
 		result = { error: 'illegal core' };
 	} else {
 		const api_url = core === 'hiddify'
 			? 'https://api.github.com/repos/1andrevich/hiddify-core/releases/latest'
-			: 'https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest';
+			: core === 'singbox'
+			? 'https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest'
+			: 'https://api.github.com/repos/Dushnilin/tachyon-core/releases/latest';
 
 		const fd = popen('wget -qO- --timeout=10 ' + shellquote(api_url) + ' 2>/dev/null');
 		if (!fd) {
@@ -177,8 +216,51 @@ let result;
 } else if (action === 'prepare_install') {
 	const core = ARGV[1];
 	const variant = ARGV[2] || '';   /* 'upx' = the compressed hiddify-core build (small flash, decompresses into RAM at launch) */
-	if (!(core in ['hiddify', 'singbox'])) {
+	if (!(core in ['hiddify', 'singbox', 'tachyon'])) {
 		result = { error: 'illegal core' };
+	} else if (core === 'tachyon') {
+		/* tachyon-core: raw binary in a tar.gz, no package manager involved.
+		 * /tmp must hold the archive + the unpacked binary; the overlay holds
+		 * the raw binary only. */
+		const arch = detect_arch();
+		if (!arch || !match(arch, /^[a-zA-Z0-9_-]+$/)) {
+			result = { error: 'could not detect device architecture' };
+		} else {
+			const tarch = tachyon_asset_arch(arch);
+			if (!tarch) {
+				result = { error: `no tachyon-core build for arch ${arch}` };
+			} else {
+				const tmp_free_kb = free_kb('/tmp');
+				if (tmp_free_kb < TACHYON_TMP_KB) {
+					result = { error: `not enough /tmp space: ${tmp_free_kb} KB free, need ~${TACHYON_TMP_KB / 1024} MB` };
+				} else {
+					let overlay_free_kb = free_kb('/overlay');
+					if (!overlay_free_kb) overlay_free_kb = free_kb('/');
+					if (overlay_free_kb < TACHYON_OVERLAY_KB) {
+						result = { error: `Not enough overlay space: ${overlay_free_kb} KB free, tachyon-core needs ~${TACHYON_OVERLAY_KB / 1024} MB.` };
+					} else {
+						const fd = popen('wget -qO- --timeout=10 https://api.github.com/repos/Dushnilin/tachyon-core/releases/latest 2>/dev/null');
+						if (!fd) {
+							result = { error: 'failed to contact GitHub API' };
+						} else {
+							const api_raw = trim(fd.read('all')); fd.close();
+							let api_data;
+							try { api_data = json(api_raw); } catch(e) { api_data = null; }
+							if (!api_data?.tag_name) {
+								result = { error: 'could not determine latest version from GitHub' };
+							} else {
+								const ver = replace(api_data.tag_name, /^v/, '');
+								result = {
+									pkg_manager: 'raw', arch, variant: 'standard',
+									dl_url: `https://github.com/Dushnilin/tachyon-core/releases/download/${api_data.tag_name}/tachyon-core-${tarch}-v${ver}.tar.gz`,
+									tmp_path: '/tmp/tachyon-core.tar.gz'
+								};
+							}
+						}
+					}
+				}
+			}
+		}
 	} else {
 		const pkg_manager = detect_pkg_manager();
 		if (!pkg_manager) {
@@ -284,7 +366,7 @@ let result;
 	 * prepare_install/install_pkg core-first signature don't silently fail. */
 	let url      = ARGV[1];
 	let tmp_path = ARGV[2];
-	if (ARGV[3] && (ARGV[1] in ['hiddify', 'singbox'])) {
+	if (ARGV[3] && (ARGV[1] in ['hiddify', 'singbox', 'tachyon'])) {
 		url      = ARGV[2];
 		tmp_path = ARGV[3];
 	}
@@ -299,8 +381,25 @@ let result;
 	const core        = ARGV[1];
 	const tmp_path    = ARGV[2];
 	const pkg_manager = ARGV[3];
-	if (!(core in ['hiddify', 'singbox']) || !tmp_path || !pkg_manager) {
+	if (!(core in ['hiddify', 'singbox', 'tachyon']) || !tmp_path || !pkg_manager) {
 		result = { result: false, error: 'invalid arguments' };
+	} else if (core === 'tachyon') {
+		/* Raw binary in a tar.gz: extract, install to /usr/bin/tachyon-core,
+		 * clean up. No package manager — the file IS the install. */
+		let exit_code = 1;
+		if (system(`mkdir -p /tmp/tachyon-install && tar -xzf ${shellquote(tmp_path)} -C /tmp/tachyon-install`, 60000) === 0) {
+			const fd = popen("find /tmp/tachyon-install -type f -name 'tachyon-core*' | head -n 1");
+			let bin = fd ? trim(fd.read('all')) : '';
+			if (fd) fd.close();
+			if (length(bin)) {
+				exit_code = system(
+					`cp ${shellquote(bin)} /usr/bin/tachyon-core && chmod 0755 /usr/bin/tachyon-core`,
+					30000
+				);
+			}
+		}
+		system('rm -rf /tmp/tachyon-install; rm -f ' + shellquote(tmp_path));
+		result = exit_code === 0 ? { result: true } : { result: false, error: 'tachyon-core binary install failed' };
 	} else {
 		let exit_code;
 		if (core === 'hiddify' && pkg_manager === 'apk') {
@@ -349,8 +448,12 @@ let result;
 
 } else if (action === 'remove') {
 	const core = ARGV[1];
-	if (!(core in ['hiddify', 'singbox'])) {
+	if (!(core in ['hiddify', 'singbox', 'tachyon'])) {
 		result = { result: false, error: 'illegal core' };
+	} else if (core === 'tachyon') {
+		/* Raw binary — just delete it. */
+		const exit_code = system('rm -f /usr/bin/tachyon-core', 10000);
+		result = { result: (exit_code === 0) };
 	} else {
 		const pkg_manager = detect_pkg_manager();
 		if (!pkg_manager) {

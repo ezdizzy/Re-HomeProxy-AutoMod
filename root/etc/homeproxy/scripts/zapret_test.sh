@@ -7,11 +7,22 @@
 # handshake with curl, and tear everything down via a trap — without disturbing
 # the live homeproxy queue (qnum 200) or other traffic.
 #
-# Usage:  zapret_test.sh "<strategy opts>"
+# Usage:  zapret_test.sh [--baseline] "<strategy opts>" [tag=ip tag=ip …]
 # Output: a single JSON line:  {"ok":N,"total":M,"results":[{tag,label,host,ip,tls,ok,reason},...]}
 #
 # Pass signal = curl time_appconnect > 0 (the TLS handshake completed = the desync
 # got the ClientHello past the DPI). HTTP status is irrelevant (a 404 is a pass).
+#
+# --baseline (ч.70): run the SAME probes WITHOUT any desync (no nfqws2 on the
+# temp queue — NFQUEUE bypass passes packets unchanged when nothing listens).
+# Hosts that pass the baseline cannot measure a strategy (they are not DPI-
+# blocked for this ISP) and must not be credited to it.
+
+BASELINE=0
+if [ "$1" = "--baseline" ]; then
+	BASELINE=1
+	shift
+fi
 
 STRAT="$1"
 IPS_ARG="$2"                   # optional pre-resolved "tag=ip tag=ip …" (full-test
@@ -98,11 +109,15 @@ nft add rule  inet "$TABLE" pre "meta mark and $DMARK == 0 ip daddr { $IPSET } t
 nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
 nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 
-# 4. Start the candidate nfqws2 on the temp queue.
-$NFQWS --qnum=$QNUM --user=daemon --fwmark=$DMARK $LUA $STRAT >/dev/null 2>&1 &
-NFQ_PID=$!
-sleep 1
-pgrep -f "qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 did not start - check strategy"
+# 4. Start the candidate nfqws2 on the temp queue (skipped in --baseline mode:
+#    with no queue listener the NFQUEUE bypass flag lets packets through
+#    untouched, giving the no-desync reference run).
+if [ "$BASELINE" != "1" ]; then
+	$NFQWS --qnum=$QNUM --user=daemon --fwmark=$DMARK $LUA $STRAT >/dev/null 2>&1 &
+	NFQ_PID=$!
+	sleep 1
+	pgrep -f "qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 did not start - check strategy"
+fi
 
 # 5. Probe every host in parallel: curl forced to the resolved IP (keeps SNI),
 #    write "time_appconnect curl_exit". Wait ONLY on the curl jobs — a bare `wait`
