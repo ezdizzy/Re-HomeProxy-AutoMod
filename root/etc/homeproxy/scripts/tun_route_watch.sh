@@ -3,7 +3,7 @@
 # policy route as soon as the core brings up the tun device, and re-installs
 # it whenever the rule/route disappears (core respawn re-creates the device).
 #
-# Why: tachyon-core (ч.69) initializes remote rule-sets BEFORE inbounds/TUN —
+# Why: a tun-mode core may initialize remote rule-sets BEFORE inbounds/TUN —
 # on a slow start the device appears well past 40 s, which the old one-shot
 # blocking wait in init.d missed ("tun device not ready") — the policy route
 # was then never installed, every marked packet fell through to the main table

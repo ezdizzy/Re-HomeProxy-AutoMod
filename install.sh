@@ -192,7 +192,6 @@ wait_core() {
 	while [ $i -lt 40 ]; do
 		pidof hiddify-core >/dev/null 2>&1 && return 0
 		pidof sing-box >/dev/null 2>&1 && return 0
-		pidof tachyon-core >/dev/null 2>&1 && return 0
 		sleep 2; i=$((i+2))
 	done
 	warn "  ядро не запустилось за 40с — проверьте Диагностику в LuCI."
@@ -246,7 +245,7 @@ apply_and_check() {
 }
 
 	status_line() {
-	CORE="нет"; [ -x /usr/bin/hiddify-core ] && CORE=hiddify-core; [ -x /usr/bin/sing-box ] && CORE="$CORE + sing-box"; [ -x /usr/bin/tachyon-core ] && CORE="$CORE + tachyon-core"
+	CORE="нет"; [ -x /usr/bin/hiddify-core ] && CORE=hiddify-core; [ -x /usr/bin/sing-box ] && CORE="$CORE + sing-box"
 	MOS="нет"; [ -x /usr/bin/mosdns ] && MOS="да"
 	ZAP="нет"; [ -x /opt/zapret2/nfq2/nfqws2 ] && ZAP="да"
 	BYE="нет"; [ -x /usr/bin/ciadpi ] && BYE="да"
@@ -541,11 +540,9 @@ install_core() {
 	warn "     Интернет при этом останется полностью рабочим (напрямую)."
 	echo "    1) hiddify-core       (по умолчанию; все протоколы приложения + NaïveProxy; на малой флеш-памяти выберет компактную сборку)"
 	echo "    2) sing-box-extended  (более новая база sing-box 1.14: WARP/MASQUE/TrustTunnel в ядре; без NaïveProxy — такие узлы будут пропускаться)"
-	echo "    3) tachyon-core       (ЭКСПЕРИМЕНТАЛЬНО; независимое ядро на Rust — ~4 МБ RAM, ~10 МБ бинарник; несовместимые узлы пропускаются автоматически)"
-	ask "  Выбор [1/2/3] (по умолчанию 1):"
+	ask "  Выбор [1/2] (по умолчанию 1):"
 	case "$REPLY" in
 		2) CORE=singbox ;;
-		3) CORE=tachyon ;;
 		*) CORE=hiddify ;;
 	esac
 
@@ -556,9 +553,7 @@ install_core() {
 	info "  скачиваю $CORE..."
 	jtrue "$(ucode "$CM" download_pkg "$DLURL" "$TMP" 2>/dev/null)" || die "  не удалось скачать ядро (попробуйте GH_MIRROR=...)."
 	jtrue "$(ucode "$CM" install_pkg "$CORE" "$TMP" "$PMG" 2>/dev/null)" || die "  установка ядра не удалась."
-	if [ "$CORE" != "tachyon" ]; then
-		jtrue "$(ucode "$CM" install_kmods "$PMG" 2>/dev/null)" || warn "  не удалось поставить kmod — без kmod-nft-tproxy/kmod-tun прокси не будет маршрутизировать."
-	fi
+	jtrue "$(ucode "$CM" install_kmods "$PMG" 2>/dev/null)" || warn "  не удалось поставить kmod — без kmod-nft-tproxy/kmod-tun прокси не будет маршрутизировать."
 	ok "  $CORE установлен."
 }
 
@@ -840,7 +835,6 @@ zapret_pick_strategy() {
 	HP_WAS_RUNNING=0
 	pidof hiddify-core >/dev/null 2>&1 && HP_WAS_RUNNING=1
 	pidof sing-box >/dev/null 2>&1 && HP_WAS_RUNNING=1
-	pidof tachyon-core >/dev/null 2>&1 && HP_WAS_RUNNING=1
 	[ "$HP_WAS_RUNNING" = 1 ] && /etc/init.d/homeproxy stop >/dev/null 2>&1
 
 	RC=1

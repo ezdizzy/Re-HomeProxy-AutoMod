@@ -7079,11 +7079,6 @@ msgstr "Гео-диагностика"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Geo diagnostics failed."
-msgstr "Не удалось выполнить гео-диагностику."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
 msgid "geo-sensitive service — always routed via proxy"
 msgstr "гео-чувствительный сервис — всегда маршрутизируется через прокси"
 
@@ -7091,41 +7086,6 @@ msgstr "гео-чувствительный сервис — всегда мар
 
 msgid "the service refuses the current exit node — switch node and re-test"
 msgstr "сервис отклоняет текущий узел выхода — смените узел и повторите проверку"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Tunnel exit: %s (%s), %s. %s Geo exit: %s (%s), %s. %s Geo-sensitive hosts routed via proxy: %d of %d."
-msgstr "Выход туннеля: %s (%s), %s. %s Гео-выход: %s (%s), %s. %s Гео-чувствительных хостов через прокси: %d из %d."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "exit country is NOT supported by geo-gated services — switch nodes"
-msgstr "страна выхода НЕ поддерживается сервисами с гео-гейтом — смените узлы"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "exit country is supported; if a service still refuses it, the exit IP is flagged — try another node"
-msgstr "страна выхода поддерживается; если сервис всё равно отказывает, IP выхода помечен как прокси — попробуйте другой узел"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "could not probe the tunnel exit (proxy down?)"
-msgstr "не удалось проверить выход туннеля (прокси не работает?)"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "geo exit country is NOT supported — run \"Scan geo exits\""
-msgstr "страна гео-выхода НЕ поддерживается — запустите «Сканировать гео-выходы»"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "geo exit country is supported"
-msgstr "страна гео-выхода поддерживается"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "could not probe the geo exit (geo test inbound missing — reload the service?)"
-msgstr "не удалось проверить гео-выход (гео-тестовый инбаунд отсутствует — перезапустите службу?)"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -7567,125 +7527,10 @@ msgstr "Интерфейс захвата SNI"
 msgid "Network interface the SNI capture (native sniffer or tcpdump) listens on."
 msgstr "Сетевой интерфейс, на котором захватывается SNI (нативный сниффер или tcpdump)."
 
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Geo-aware exit for geo-sensitive services"
-msgstr "Гео-выход для гео-чувствительных сервисов"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Scans every proxy node in the background (exit country/ASN and the actual geo verdict of the Google AI and OpenAI edge checks) and keeps the geo-sensitive hosts (Gemini, AI Studio, ChatGPT class) on a node whose exit passes those checks — re-homing automatically when Google/OpenAI start refusing the current exit. Runs every 30 minutes, on demand (\"Scan geo exits\" on the Overview) and right after a geo-refusal is detected. Adds a geo-out routing group; everything else keeps its route. A node can also be pinned manually from the table on the Overview (📌) — a pinned exit is kept while it still passes the checks."
-msgstr "Сканирует каждый прокси-узел в фоне (страна/ASN выхода и реальный гео-вердикт пограничных проверок Google AI и OpenAI) и удерживает гео-чувствительные хосты (Gemini, AI Studio, класс ChatGPT) на узле, чей выход эти проверки проходит — автоматически переезжая, когда Google/OpenAI начинают отклонять текущий выход. Запускается каждые 30 минут, по кнопке («Сканировать гео-выходы» на Обзоре) и сразу после обнаружения гео-отказа. Добавляет группу маршрутизации geo-out; остальная маршрутизация не меняется. Узел можно также закрепить вручную из таблицы на Обзоре (📌) — закреплённый выход удерживается, пока проходит проверки."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Scan geo exits"
-msgstr "Сканировать гео-выходы"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Geo scan could not be started (feature disabled or automation off)."
-msgstr "Гео-сканирование не удалось запустить (функция выключена или автоматизация отключена)."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Geo scan started — every node is measured in turn (exit country/ASN, Google AI and OpenAI geo verdicts); the table updates when it finishes."
-msgstr "Гео-сканирование запущено — каждый узел измеряется по очереди (страна/ASN выхода, гео-вердикты Google AI и OpenAI); таблица обновится по завершении."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Geo-aware exit: disabled (see Settings)."
-msgstr "Гео-выход: отключён (см. Настройки)."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Geo-aware exit: not scanned yet — press \"Scan geo exits\"."
-msgstr "Гео-выход: сканирования ещё не было — нажмите «Сканировать гео-выходы»."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Geo-aware exit for geo-sensitive services (Gemini etc.):"
-msgstr "Гео-выход для гео-чувствительных сервисов (Gemini и др.):"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "live geo-out is %s — it differs from the last scanned pin; press \"Scan geo exits\""
-msgstr "фактический гео-выход сейчас %s — он отличается от закреплённого сканированием; запустите «Сканировать гео-выходы»"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "last scan: %s"
-msgstr "последнее сканирование: %s"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Exit country"
-msgstr "Страна выхода"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "ASN"
-msgstr "ASN"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Google AI"
-msgstr "Google AI"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "OpenAI"
-msgstr "OpenAI"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "passes"
-msgstr "проходит"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "refused"
-msgstr "отклонён"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "n/a"
-msgstr "н/д"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "pinned manually"
-msgstr "закреплён вручную"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Unpin (auto)"
-msgstr "Открепить (авто)"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Manual pin cleared — the engine is re-picking the best passing exit."
-msgstr "Ручное закрепление снято — движок заново выбирает лучший проходящий выход."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Make this the geo exit (checked and pinned immediately)"
-msgstr "Сделать этот узел гео-выходом (проверяется и закрепляется сразу)"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Geo exit pinned: %s (%s). Google AI: %s, OpenAI: %s."
-msgstr "Гео-выход закреплён: %s (%s). Google AI: %s, OpenAI: %s."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Geo exit pin failed: "
-msgstr "Не удалось закрепить гео-выход: "
-
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Which core to run when both are installed. Both run every protocol this app can configure. hiddify-core additionally supports NaïveProxy; sing-box-extended is a newer sing-box base (1.14) with WARP / MASQUE / TrustTunnel, but has no NaïveProxy — such nodes are skipped automatically."
-msgstr "Какое ядро запускать, когда установлены оба. Оба работают со всеми протоколами, которые умеет настраивать приложение. hiddify-core дополнительно поддерживает NaïveProxy; sing-box-extended — более новая база sing-box (1.14) с WARP / MASQUE / TrustTunnel, но без NaïveProxy — такие узлы пропускаются автоматически."
+msgid "Which core to run when several are installed. All run every protocol this app can configure. hiddify-core additionally supports NaïveProxy; sing-box-extended is a newer sing-box base (1.14) with WARP / MASQUE / TrustTunnel, but has no NaïveProxy — such nodes are skipped automatically."
+msgstr "Какое ядро запускать, когда установлено несколько. Все исполняют каждый протокол, настраиваемый в приложении. hiddify-core дополнительно поддерживает NaïveProxy; sing-box-extended — более новая база sing-box (1.14) с WARP / MASQUE / TrustTunnel, но без NaïveProxy — такие узлы пропускаются автоматически."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -8013,83 +7858,8 @@ msgstr "Резерв готов"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Tunnel exit & AI services"
-msgstr "Выход туннеля и AI-сервисы"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Not measured yet — the engine checks the AI-class services on the current exit every 5 minutes (or press \"Exit diagnostics\")."
-msgstr "Ещё не проверялось — движок проверяет AI-сервисы на текущем выходе каждые 5 минут (или нажмите «Диагностика выхода»)."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "served"
-msgstr "работает"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "REFUSED"
-msgstr "ОТКАЗ"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
 msgid "unknown"
 msgstr "неизвестно"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "last check: %s"
-msgstr "проверено: %s"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "The current exit is refused by geo-gated services (Gemini class). The routing itself is correct — switch the Main node (or let URLTest pick another) until the checks pass."
-msgstr "Текущий выход отклоняется гео-зависимыми сервисами (класс Gemini). Маршрутизация сама по себе верна — смените Главный узел (или позвольте URLTest выбрать другой), пока проверки не начнут проходить."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Exit diagnostics"
-msgstr "Диагностика выхода"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Exit diagnostics failed."
-msgstr "Не удалось выполнить диагностику выхода."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Tunnel exit: %s (%s), %s. %s Google AI: %s, OpenAI: %s. %s Geo-sensitive hosts routed via proxy: %d of %d."
-msgstr "Выход туннеля: %s (%s), %s. %s Google AI: %s, OpenAI: %s. %s Гео-чувствительных хостов через прокси: %d из %d."
-
-#: htdocs/luci-static/resources/view/homeproxy/status.js
-
-msgid "tachyon-core (experimental)"
-msgstr "tachyon-core (экспериментально)"
-
-#: htdocs/luci-static/resources/view/homeproxy/status.js
-
-msgid "Independent high-performance core in pure Rust (sing-box 1.14-compatible config, Clash API included): ~4 MB RAM idle, ~10 MB binary, no GC pauses. EXPERIMENTAL: a very young project (0.1.x) whose sing-box config compatibility is declared temporary by its author — if a node type is rejected, the generator skips it automatically (check-heal). On OpenWrt the 0.1.x redirect inbound is broken: this core runs in Tun proxy mode only (enforced in Client Settings)."
-msgstr "Независимое высокопроизводительное ядро на чистом Rust (конфиг совместим с sing-box 1.14, есть Clash API): ~4 МБ RAM в покое, ~10 МБ бинарник, нет GC-пауз. ЭКСПЕРИМЕНТАЛЬНО: совсем молодой проект (0.1.x), совместимость с sing-box-конфигами объявлена автором как временная — если ядро отвергает тип узла, генератор пропускает его автоматически (check-heal). На OpenWrt redirect-инбаунд 0.1.x сломан: это ядро работает только в режиме Tun (принудительно в Настройках клиента)."
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "tachyon-core (0.1.x) runs only in Tun mode on this device — Proxy mode was switched to \"Tun TCP/UDP\"."
-msgstr "tachyon-core (0.1.x) на этом устройстве работает только в режиме Tun — Режим прокси переключён на «Tun TCP/UDP»."
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "tachyon-core (0.1.x) works only in Tun mode on this device — its redirect inbound is broken, so the other proxy modes are unavailable."
-msgstr "tachyon-core (0.1.x) на этом устройстве работает только в режиме Tun — его redirect-инбаунд сломан, остальные режимы прокси недоступны."
-
-#: htdocs/luci-static/resources/view/homeproxy/status.js
-
-msgid "low RAM footprint"
-msgstr "низкое потребление RAM"
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "Which core to run when several are installed. All run every protocol this app can configure. hiddify-core additionally supports NaïveProxy; sing-box-extended is a newer sing-box base (1.14) with WARP / MASQUE / TrustTunnel, but has no NaïveProxy — such nodes are skipped automatically. tachyon-core is an independent experimental Rust core (very low RAM footprint) — incompatible node types are also skipped automatically."
-msgstr "Какое ядро запускать, когда установлено несколько. Все исполняют каждый протокол, настраиваемый в приложении. hiddify-core дополнительно поддерживает NaïveProxy; sing-box-extended — более новая база sing-box (1.14) с WARP / MASQUE / TrustTunnel, но без NaïveProxy — такие узлы пропускаются автоматически. tachyon-core — независимое экспериментальное ядро на Rust (очень низкое потребление RAM) — несовместимые типы узлов тоже пропускаются автоматически."
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
@@ -8413,85 +8183,11 @@ msgstr "Проверка стратегий (текущая стратегия, 
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Google AI (API edge)"
-msgstr "Google AI (API-edge)"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Google AI (web)"
-msgstr "Google AI (веб)"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "API edge checks see the region refusal of the API infrastructure; the WEB check renders the gemini.google.com page itself (the \"not supported in your country\" note). If the web check refuses while the API edge is served — the exit IP is flagged by the Gemini web app: switch the node."
-msgstr "Проверки API-edge видят гео-отказ API-инфраструктуры; веб-проверка открывает саму страницу gemini.google.com (примечание «не поддерживается в вашей стране»). Если веб-проверка отказывает, а API-edge обслуживает — выход IP помечен веб-приложением Gemini: смените узел."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Check Gemini paths"
-msgstr "Проверить пути Gemini"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
 msgid "direct"
 msgstr "напрямую"
 
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
 msgid "no rule matched — default"
 msgstr "ни одно правило не совпало — по умолчанию"
 
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Gemini session hosts on the live config. Red = leaves DIRECT: in the banned-sites routing mode generic Google hosts are direct by design (their RU exits carry the session-level geo signal Google uses). AI-class hosts must be green."
-msgstr "Хосты сессии Gemini на живом конфиге. Красный = уходит НАПРЯМУЮ: в режиме обхода блокировок обычные хосты Google идут напрямую по дизайну (их RU-выходы несут сессионный гео-сигнал, которым пользуется Google). AI-хосты должны быть зелёными."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Gemini strict routing"
-msgstr "Строгая маршрутизация Gemini"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Pins the FULL Google AI domain set (gemini.google.com, AI Studio, NotebookLM, Jules, Flow, Opal, Antigravity, DeepMind, Cloud Code, the -pa API endpoints — v2fly/MetaCubeX google-gemini list) to the AI exit below (by default the MAIN proxy path), not just the core Gemini hosts. Use this when Gemini still shows \"not supported in your country\" even though the checks pass: without it, generic Google hosts (search, gstatic, googleusercontent) leave DIRECT in the banned-sites mode, and the mixed-geo session is what Gemini flags. Costs extra Google traffic through the proxy."
-msgstr "Прикрепляет ПОЛНЫЙ набор доменов Google AI (gemini.google.com, AI Studio, NotebookLM, Jules, Flow, Opal, Antigravity, DeepMind, Cloud Code, -pa API-эндпоинты — список v2fly/MetaCubeX google-gemini) к выделенному AI-выходу ниже (по умолчанию — ОСНОВНОЙ прокси-путь), а не только ядро хостов Gemini. Включайте, когда Gemini всё ещё пишет «не поддерживается в вашей стране» при проходящих проверках: без этого обычные хосты Google (search, gstatic, googleusercontent) в режиме обхода блокировок уходят напрямую, и именно смешанная гео-сессия флагается Gemini. Даёт дополнительный google-трафик через прокси."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Dedicated AI exit"
-msgstr "Выделенный AI-выход"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Node used for ALL AI traffic: the core AI hosts and (with \"Gemini strict routing\") the full Google AI domain set. Use this when AI pages load fine but every send fails with \"Something went wrong\" — Google risk-checks the exit IP at send time and flags some shared datacenter IPs, while page loads still pass. Pick a node on a different IP/provider than the main one; empty = the main path. Applied on service restart."
-msgstr "Узел для ВСЕГО AI-трафика: базовых AI-хостов и (со «Строгой маршрутизацией Gemini») полного набора доменов Google AI. Используйте, когда страницы AI открываются нормально, но каждая отправка падает с «Что-то пошло не так» — Google проверяет выход-IP при отправке и флаггит часть shared-датацентровых IP, хотя загрузка страниц проходит. Выбирайте узел на другом IP/провайдере, чем основной; пусто = основной путь. Применяется при рестарте службы."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Main path (default)"
-msgstr "Основной путь (по умолчанию)"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Main-path exit (the way your traffic is routed): %s (%s), %s. %s Google AI (API): %s · Google AI (web): %s · OpenAI: %s · Geo-hosts via proxy: %d of %d."
-msgstr "Выход основного пути (как маршрутизируется ваш трафик): %s (%s), %s. %s Google AI (API): %s · Google AI (веб): %s · OpenAI: %s · Гео-хостов через прокси: %d из %d."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Direct exit: %s (%s)."
-msgstr "Прямой выход: %s (%s)."
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "main-path exit country is NOT supported by geo-gated services — switch nodes"
-msgstr "страна выхода основного пути НЕ поддерживается гео-гейтами — смените узел"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "main-path exit country is supported; if a service still refuses it, the exit IP is flagged — try another node"
-msgstr "страна выхода основного пути поддерживается; если сервис всё равно отказывает — выход IP помечен, попробуйте другой узел"
-
-#: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "could not probe the main-path exit (proxy down?)"
-msgstr "не удалось проверить выход основного пути (прокси не работает?)"

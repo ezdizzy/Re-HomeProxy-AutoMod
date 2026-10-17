@@ -109,8 +109,7 @@ function getServiceStatus() {
 
 function renderStatus(isRunning, features) {
 	let coreName = features.core_type === 'singbox' ? 'sing-box' :
-	               features.core_type === 'hiddify' ? 'hiddify-core' :
-	               features.core_type === 'tachyon' ? 'tachyon-core' : null;
+	               features.core_type === 'hiddify' ? 'hiddify-core' : null;
 	let verStr = features.version ? 'v' + features.version : _('unknown');
 	let coreStr = coreName ? ('%s %s').format(coreName, verStr) : _('no core installed');
 	let spanTemp = '<em><span style="color:%s"><strong>%s (%s) %s</strong></span></em>';
@@ -155,24 +154,6 @@ return view.extend({
 		let features = data[2],
 		    hosts = data[3]?.hosts;
 
-		/* Effective core, mirroring the init.d selection (explicit preference
-		 * counts only when installed; otherwise the hiddify → singbox →
-		 * tachyon fallback applies). Function-scope helper: it is referenced
-		 * both by the preferred_core onchange below and by the proxy_mode
-		 * section further down (outside the available_cores block). */
-		const effCoreOf = (pref) => {
-			const cores = (features && features.cores) || {};
-			const inst = (c) => !!(cores[c] && cores[c].installed);
-			let eff = pref || 'auto';
-			if (eff !== 'auto' && inst(eff))
-				return eff;
-			if (inst('hiddify')) return 'hiddify';
-			if (inst('singbox')) return 'singbox';
-			if (inst('tachyon')) return 'tachyon';
-			return eff;
-		};
-		let proxyModeOpt = null;
-
 		/* Cache all configured proxy nodes, they will be called multiple times */
 		let proxy_nodes = {};
 		uci.sections(data[0], 'node', (res) => {
@@ -207,34 +188,16 @@ return view.extend({
 
 		if (features.available_cores && features.available_cores.length > 1) {
 			o = s.taboption('routing', form.ListValue, 'preferred_core', _('Preferred core'),
-				_('Which core to run when several are installed. All run every protocol this app can configure. hiddify-core additionally supports NaïveProxy; sing-box-extended is a newer sing-box base (1.14) with WARP / MASQUE / TrustTunnel, but has no NaïveProxy — such nodes are skipped automatically. tachyon-core is an independent experimental Rust core (very low RAM footprint) — incompatible node types are also skipped automatically.'));
+				_('Which core to run when several are installed. All run every protocol this app can configure. hiddify-core additionally supports NaïveProxy; sing-box-extended is a newer sing-box base (1.14) with WARP / MASQUE / TrustTunnel, but has no NaïveProxy — such nodes are skipped automatically.'));
 			o.value('auto', _('Auto'));
 			if (features.available_cores.indexOf('hiddify') >= 0)
 				o.value('hiddify', 'hiddify-core');
 			if (features.available_cores.indexOf('singbox') >= 0)
 				o.value('singbox', 'sing-box-extended');
-			if (features.available_cores.indexOf('tachyon') >= 0)
-				o.value('tachyon', 'tachyon-core (experimental)');
 			o.default = 'auto';
 			o.rmempty = false;
 
-			/* tachyon-core coupling (ч.70): 0.1.x has a BROKEN redirect inbound on
-			 * OpenWrt (the original destination is never extracted) — only pure TUN
-			 * relays client traffic. When tachyon becomes the effective core,
-			 * normalize Proxy mode to 'tun' on the spot so the saved configuration
-			 * is always runnable (the proxy_mode widget below hides the dead modes
-			 * as well). effCoreOf is the function-scope helper defined above. */
 			o.onchange = function(ev, section_id, value) {
-				if (effCoreOf(value) !== 'tachyon')
-					return Promise.resolve(this.map.save(null, true)).catch(function() {});
-				const cur = uci.get('homeproxy', 'config', 'proxy_mode');
-				if (cur !== 'tun') {
-					uci.set('homeproxy', 'config', 'proxy_mode', 'tun');
-					const w = proxyModeOpt ? proxyModeOpt.getUIElement('config') : null;
-					if (w) w.setValue('tun');
-					ui.addNotification(null, E('p', {},
-						_('tachyon-core (0.1.x) runs only in Tun mode on this device — Proxy mode was switched to "Tun TCP/UDP".')), 'info');
-				}
 				return Promise.resolve(this.map.save(null, true)).catch(function() {});
 			};
 
@@ -248,26 +211,21 @@ return view.extend({
 				let sel = this.map.data.get('homeproxy', 'config', 'preferred_core') || 'auto';
 				if (sel === 'auto')
 					sel = (cores.hiddify?.installed) ? 'hiddify' :
-					      (cores.singbox?.installed) ? 'singbox' :
-					      (cores.tachyon?.installed) ? 'tachyon' : null;
+					      (cores.singbox?.installed) ? 'singbox' : null;
 				if (!sel || !cores[sel]?.installed)
 					return '';
 				const tags = cores[sel].tags || {};
-				/* Types the core never loads even without a Tags gate (e.g.
-				 * tachyon-core: Hysteria v1 / TrustTunnel / SSH). */
-				const never = {};
-				for (const t of (cores[sel].types_never || [])) never[t] = true;
 				const REQ = { naive: 'with_naive_outbound', hysteria: 'with_quic', hysteria2: 'with_quic',
 				              tuic: 'with_quic', wireguard: 'with_wireguard', amneziawg: 'with_wireguard',
 				              trusttunnel: 'with_trusttunnel' };
 				const NAME = { naive: 'NaïveProxy', hysteria: 'Hysteria', hysteria2: 'Hysteria2',
 				               tuic: 'TUIC', wireguard: 'WireGuard', amneziawg: 'AmneziaWG',
 				               trusttunnel: 'TrustTunnel' };
-				const selName = sel === 'hiddify' ? 'hiddify-core' : sel === 'tachyon' ? 'tachyon-core' : 'sing-box-extended';
+				const selName = sel === 'hiddify' ? 'hiddify-core' : 'sing-box-extended';
 				let skipped = {};
 				uci.sections(data[0], 'node', (res) => {
 					const req = REQ[res.type];
-					if (never[res.type] || (req && !tags[req]))
+					if (req && !tags[req])
 						skipped[res.type] = (skipped[res.type] || 0) + 1;
 				});
 				const parts = Object.keys(skipped).sort().map((t) =>
@@ -741,29 +699,15 @@ return view.extend({
 		}
 		o.depends({'routing_mode': 'custom_json', '!reverse': true});
 
-		/* Effective core (see effCoreOf above): tachyon-core 0.1.x has a broken
-		 * redirect inbound on OpenWrt — only pure TUN relays client traffic.
-		 * When tachyon is the effective core the dead proxy modes are hidden
-		 * and the mode is pinned to 'tun' (the preferred_core onchange keeps
-		 * the stored value in sync on live switches). */
-		const hpTachyonOnly = (effCoreOf(uci.get('homeproxy', 'config', 'preferred_core')) === 'tachyon');
-
 		o = s.taboption('routing', form.ListValue, 'proxy_mode', _('Proxy mode'));
-		proxyModeOpt = o;
-		if (hpTachyonOnly) {
+		o.value('redirect', _('Redirect TCP'));
+		if (features.hp_has_tproxy)
+			o.value('redirect_tproxy', _('Redirect TCP + TProxy UDP'));
+		if (features.hp_has_tun) {
+			o.value('redirect_tun', _('Redirect TCP + Tun UDP'));
 			o.value('tun', _('Tun TCP/UDP'));
-			o.description = _('tachyon-core (0.1.x) works only in Tun mode on this device — its redirect inbound is broken, so the other proxy modes are unavailable.');
-			o.cfgvalue = function(section_id) { return 'tun'; };
 		} else {
-			o.value('redirect', _('Redirect TCP'));
-			if (features.hp_has_tproxy)
-				o.value('redirect_tproxy', _('Redirect TCP + TProxy UDP'));
-			if (features.hp_has_tun) {
-				o.value('redirect_tun', _('Redirect TCP + Tun UDP'));
-				o.value('tun', _('Tun TCP/UDP'));
-			} else {
-				o.description = _('To enable Tun support, you need to install <code>kmod-tun</code>');
-			}
+			o.description = _('To enable Tun support, you need to install <code>kmod-tun</code>');
 		}
 		o.default = 'redirect_tproxy';
 		o.rmempty = false;

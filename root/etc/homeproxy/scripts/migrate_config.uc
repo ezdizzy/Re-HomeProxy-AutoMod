@@ -269,5 +269,17 @@ if (type(exv) === 'array') {
 	uci.set(uciconfig, 'automation', 'exclude', join(',', exv));
 }
 
+/* tachyon-core support was removed (v2 refactor): the preferred_core value
+ * 'tachyon' would show a missing choice in the UI and make init.d fall through
+ * to the auto-pick anyway — normalize it to 'auto' once. Also drop the
+ * removed automation options (gemini_strict / ai_node) and the tachyon
+ * custom-core type so no dead keys linger in UCI. */
+if (uci.get(uciconfig, ucimain, 'preferred_core') === 'tachyon')
+	uci.set(uciconfig, ucimain, 'preferred_core', 'auto');
+if (uci.get(uciconfig, ucimain, 'custom_core_type') === 'tachyon')
+	uci.delete(uciconfig, ucimain, 'custom_core_type');
+uci.delete(uciconfig, 'automation', 'gemini_strict');
+uci.delete(uciconfig, 'automation', 'ai_node');
+
 if (!isEmpty(uci.changes(uciconfig)))
 	uci.commit(uciconfig);

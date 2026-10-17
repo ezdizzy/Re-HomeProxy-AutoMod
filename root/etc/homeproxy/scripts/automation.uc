@@ -215,50 +215,6 @@ let manual_direct_set = {};
  * and a learned entry here would only fight that rule and split OAuth flows. */
 let oauth_provider_set = {};
 
-/* Geo-sensitive services (ч.51/ч.53): sites whose HTML shell answers 200 from
- * anywhere while the actual API calls inside reject "unsupported country"
- * (Google Gemini error 1060 class). A plain GET can NOT tell a working site
- * from a geo-refused one for these, so the engine can never learn them from
- * traffic — and worse, once learned by accident they get self-healed OUT of
- * the proxy lists by the 200-direct answer, which sends user traffic DIRECT
- * to the RU-visible endpoint (mixed direct/proxy geometry is exactly what
- * triggers Gemini's region checks). These hosts are therefore seeded into
- * the proxy path unconditionally (when a proxy path exists), pinned against
- * self-healing and re-evaluation, and (ч.53) routed via the dedicated geo-out
- * exit picked by the geo scan. The list lives in resources/geo_sensitive.txt
- * so the daemon, the rpcd diagnostics and generate_client (routing rule) all
- * share ONE source; the built-in array below is the fallback when the file is
- * missing. Do not grow this list casually: every entry is a guaranteed proxy
- * route. */
-const GEO_SENSITIVE_FILE = RES + '/geo_sensitive.txt';
-let GEO_SENSITIVE_HOSTS = [
-	/* Web (ч.51) */
-	'gemini.google.com',
-	'aistudio.google.com',
-	'ai.google.dev',
-	'generativelanguage.googleapis.com',
-	'alkalimakersuite-pa.clients6.google.com',
-	'aisandbox-pa.googleapis.com',
-	'push.clients6.google.com',
-	/* Android app / system assistant (ч.54) */
-	'proactivebackend-pa.googleapis.com',
-	'geller-pa.googleapis.com',
-	'assistantfrontend-pa.googleapis.com',
-	'assistant-s3-pa.googleapis.com',
-	'robinfrontend-pa.googleapis.com',
-	'taskassist-pa.googleapis.com',
-	'notifications-pa.googleapis.com',
-	'searchnotifications-pa.googleapis.com',
-	'lamssettings-pa.googleapis.com',
-	'speechs3proto2-pa.googleapis.com',
-	'alkalimining-pa.googleapis.com',
-	'jnn-pa.googleapis.com',
-	'firebaseinstallations.googleapis.com',
-	'webchannel-alkalimakersuite-pa.clients6.google.com',
-	'waa-pa.clients6.google.com'
-];
-let geo_seed_set = {};
-
 /* RU-geo working sets. DECLARATIONS here, functions below (after read_lines):
  * this ucode build has no function hoisting, so helpers must be declared
  * above their callers. */
@@ -337,47 +293,6 @@ function read_lines(path) {
 	c = trim(c);
 	if (!length(c)) return [];
 	return filter(split(c, /[\r\n]/), (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
-}
-
-/* Load the shared geo-sensitive seed list (plain lines, '#' comments; the
- * built-in array above is the fallback when the file is missing/empty).
- * DECLARED AFTER read_lines on purpose: this ucode build binds free
- * identifiers lexically - a function cannot see module bindings defined
- * below it (the ч.49 closure rule, hit at module scope this time). */
-function load_geo_sensitive() {
-	const lines = read_lines(GEO_SENSITIVE_FILE);
-	let out = [];
-	for (let l in lines) {
-		l = trim(replace(l, /#.*$/, ''));
-		if (!length(l) || !match(l, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/))
-			continue;
-		push(out, l);
-	}
-	if (length(out))
-		GEO_SENSITIVE_HOSTS = out;
-	/* geo_seed_set is used by reload_lists() to protect the seeds from the
-	 * RU-geo drop BEFORE ensure_geo_seeds() runs (fixes the drop/re-seed log
-	 * loop on hosts that the RU-geosite database also contains: Google is
-	 * reachable from RU, so its domains sit in the "always direct" whitelist
-	 * while these specific hosts MUST ride the proxy path). */
-	for (let s in GEO_SENSITIVE_HOSTS)
-		geo_seed_set[s] = true;
-}
-
-/* True when `host` is a geo-sensitive seed or a subdomain of one (the seeds
- * are routed as domain_suffix rules, so the exemption must match the same
- * shape). Used by reload_lists() — call AFTER load_geo_sensitive(). */
-function is_geo_sensitive(host) {
-	host = lc(trim(host));
-	if (!length(host)) return false;
-	for (let s in GEO_SENSITIVE_HOSTS) {
-		if (host === s)
-			return true;
-		const n = length(host) - length(s) - 1;
-		if (n > 0 && substr(host, n) === '.' + s)
-			return true;
-	}
-	return false;
 }
 
 /* ── RU-geo database (loaded from resources/ru_geoip.txt + ru_geosite.txt,
@@ -2105,22 +2020,10 @@ echo done > "$PRE.done"
 		for (let d in read_lines(AUTO_LIST)) {
 			d = trim(d);
 			if (!length(d)) continue;
-			/* User's "always direct" pin wins over everything (including the
-			 * geo seeds — ensure_geo_seeds honors it too). */
+			/* User's "always direct" pin wins over everything. */
 			if (manual_direct_set[d]) {
 				log('dropping learned entry (user pinned always-direct): ' + d);
 				dropped++;
-				continue;
-			}
-			/* Geo-sensitive seeds survive every drop check: the RU-geosite
-			 * database contains the Google domains (Google is reachable from
-			 * RU), and without this exemption the seed was dropped here and
-			 * re-added by ensure_geo_seeds() on every reload — an endless
-			 * drop/re-seed log loop for hosts like firebaseinstallations.
-			 * The seed pin IS the routing decision (geo-out rule sits above
-			 * the RU-protect rule in the generated config). */
-			if (geo_seed_set[d] || is_geo_sensitive(d)) {
-				auto_set[d] = true;
 				continue;
 			}
 			/* OAuth providers never live in the learned list (ч.59): the
@@ -2203,55 +2106,11 @@ echo done > "$PRE.done"
 		return (dropped + ip_dropped);
 	}
 
-	/* Geo-sensitive seeds (ч.51): make sure the Gemini-class hosts ride the
-	 * proxy path. Runs after every reload_lists(): idempotent, and the seeds
-	 * are pinned (geo_seed_set) so self-healing and re-evaluation below never
-	 * kick them back out on a 200 geo-refusal answer. Only fills the lists
-	 * when a real proxy path exists — a direct main node would make the seed
-	 * entries pointless (and the proxy-domain rule inert anyway). */
-	function ensure_geo_seeds() {
-		const mn = uci.get('homeproxy', 'config', 'main_node') || 'nil';
-		if (mn === 'direct-out' || mn === 'nil')
-			return;
-		let added = 0;
-		let healed = 0;
-		for (let s in GEO_SENSITIVE_HOSTS) {
-			geo_seed_set[s] = true;
-			if (!state[s]) state[s] = {};
-			const st = state[s];
-			/* ч.66: heal the ROW, not only the routing. Hosts that were already
-			 * in a list when they became seeds (learned as 'blocked' by an older
-			 * build, or a state record rebuilt bare after a reboot — the state
-			 * file lives on tmpfs while the list files live on flash) used to
-			 * display as "Blocked - details not recorded" forever, because
-			 * classify() never re-verdicts a pinned seed. Normalize the status
-			 * here so the table shows the truth right after the daemon starts. */
-			if (st.status !== 'geo') { st.status = 'geo'; healed++; }
-			if (!st.type) { st.type = 'domain'; healed++; }
-			if (!st.added) { st.added = time(); healed++; }
-			if (auto_set[s] || proxy_set[s] || manual_direct_set[s])
-				continue;
-			auto_set[s] = true;
-			added++;
-			log('geo-sensitive service seeded into the proxy path: ' + s);
-		}
-		if (added > 0)
-			write_auto_list(auto_set);
-		if (added > 0 || healed > 0)
-			save_state(state);
-	}
+	/* ── Probe helpers (shared with diagnostics) ────────────────────────
+	 * HTTPS fetch through a pinned loopback test inbound, returning
+	 * {code, body}. Default port is the MAIN test path (auto-proxy-in
+	 * :5337 — rides main-out). */
 
-	/* ── Exit health (ч.69, replaces the geo-out scan machinery) ─────────
-	 * The dedicated geo-out selector / per-node scan / rotation / pin
-	 * (ч.53-ч.66) is REMOVED: the engine handles routing autonomously and
-	 * geo-sensitive hosts ride the regular main path. What remains worth
-	 * watching is whether the CURRENT exit still passes the geo checks of
-	 * the AI-class services — that is measured here (no node switching, no
-	 * config changes) and surfaced on the Overview card + log. */
-
-	/* Cheap probe helpers (shared with diagnostics): HTTPS fetch through a
-	 * pinned loopback test inbound, returning {code, body}. Default port is
-	 * the MAIN test path (auto-proxy-in :5337 — rides main-out). */
 	function geo_probe_url(url, timeout, port, hdr) {
 		const pf = int(port) || 5337;
 		const bf = RUN_DIR + '/geo_probe.body';
@@ -2270,92 +2129,9 @@ echo done > "$PRE.done"
 		try { return json(r.body) || null; } catch (e) { return null; }
 	}
 
-	/* Per-node geo verdicts from the unauthenticated edge endpoints.
-	 * generativelanguage.googleapis.com (Google AI): a refused region gets
-	 * HTTP 403 "User location is not supported for the API use." BEFORE any
-	 * key validation; a served region answers with an API-key complaint
-	 * instead. api.openai.com: refused region -> "unsupported_country_
-	 * region_territory"; served region -> 401 invalid_api_key. Both run on
-	 * the same geo infrastructure as the web services (Gemini 1060 / "this
-	 * country is not supported"). */
-	function geo_verdict_google(r) {
-		const b = lc(r.body);
-		if (match(b, /location is not supported/)) return 'refused';
-		if (match(b, /api key/) || match(b, /api_key/)) return 'ok';
-		if (r.code === '200') return 'ok';
-		return 'fail';
-	}
-
-	function geo_verdict_openai(r) {
-		const b = lc(r.body);
-		if (match(b, /unsupported_country/)) return 'refused';
-		if (match(b, /invalid_api_key/) || r.code === '401') return 'ok';
-		return 'fail';
-	}
-
-	/* Gemini WEB verdict (ч.70): the API edges above are honest for their own
-	 * infrastructure but blind to the Gemini WEB flag (error 1060 class,
-	 * "Gemini пока не поддерживается в вашей стране") — that refusal is rendered
-	 * on gemini.google.com itself. The logged-out landing page from a flagged
-	 * exit carries the same country note, so the body is searched for the
-	 * refusal strings (EN probe language pinned + RU fallback); a served exit
-	 * gets the plain landing/sign-in page (200, no note). Not perfect — the
-	 * web flag can also follow the ACCOUNT country — but it catches the exit
-	 * based case that the API probes miss. */
-	function geo_verdict_gemini_web(r) {
-		if (r.code !== '200') return 'fail';
-		const b = lc(r.body);
-		if (match(b, /not yet available in your country/) ||
-		    match(b, /not available in your country/) ||
-		    match(b, /not supported in your country/) ||
-		    match(b, /в вашей стране/))
-			return 'refused';
-		return 'ok';
-	}
-
-	/* Exit health check (ч.69): probe the AI-class edge endpoints through the
-	 * MAIN test path (:5337 rides main-out) and record the verdicts in
-	 * state.__exit_health for the Overview card. No node switching, no config
-	 * changes — when the exit is refused the card + log tell the user to
-	 * switch the node (Hot Swap/URLTest take care of dead nodes already).
-	 * Skipped while the main path is direct/custom (probes not wired or
-	 * meaningless). */
-	const EXIT_HEALTH_INTERVAL = 300;
-	let exit_health_fail = 0;
-	let last_exit_health = 0;
-
-	function exit_health_check() {
-		if (!have_curl()) return;
-		const rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
-		const mn = uci.get('homeproxy', 'config', 'main_node') || 'nil';
-		if (rmode === 'custom' || rmode === 'custom_json' || mn === 'direct-out' || mn === 'nil')
-			return;
-		const gg = geo_verdict_google(geo_probe_url('https://generativelanguage.googleapis.com/v1beta/models', 8, 5337));
-		const go = geo_verdict_openai(geo_probe_url('https://api.openai.com/v1/models', 8, 5337));
-		const gw = geo_verdict_gemini_web(geo_probe_url('https://gemini.google.com/', 10, 5337, 'Accept-Language: en-US,en;q=0.9'));
-		const prev = (type(state.__exit_health) === 'object') ? state.__exit_health : {};
-		if (gg !== 'ok' || go !== 'ok' || gw !== 'ok')
-			exit_health_fail++;
-		else
-			exit_health_fail = 0;
-		const refused = (gg === 'refused' || go === 'refused' || gw === 'refused');
-		const changed = (prev.google !== gg || prev.openai !== go || prev.google_web !== gw);
-		if (changed || (time() - (int(prev.ts) || 0)) > EXIT_HEALTH_INTERVAL) {
-			state.__exit_health = { ts: time(), google: gg, google_web: gw, openai: go, fails: exit_health_fail };
-			save_state(state);
-			if (refused && exit_health_fail >= 2)
-				log(`exit health: AI-class services refuse the CURRENT exit (google ${gg}, gemini web ${gw}, openai ${go}) - switch the node`);
-			else if (changed && !refused)
-				log(`exit health: AI-class services are served again (google ${gg}, gemini web ${gw}, openai ${go})`);
-		}
-	}
-
 	if (!geo_loaded)
 		load_ru_geo();
-	/* Shared geo-sensitive seed list (resources file; built-in fallback). */
-	load_geo_sensitive();
 	reload_lists();
-	ensure_geo_seeds();
 
 	/* state was loaded early (ucode closure constraint — see the note above
 	 * the probe helper definitions). */
@@ -2368,7 +2144,7 @@ echo done > "$PRE.done"
 	 * accumulated backlog once at startup. */
 	let unknown_dropped = 0;
 	for (let h in keys(state)) {
-		if (h === '__dns_offset' || h === '__exit_health') continue;
+		if (h === '__dns_offset') continue;
 		if (type(state[h]) !== 'object') { delete state[h]; continue; }
 		if (state[h].status === 'unknown' && !auto_set[h] && !auto_ip_set[h]) {
 			delete state[h];
@@ -2446,23 +2222,6 @@ echo done > "$PRE.done"
 		else if (st.status !== 'blocked')
 			delete st.block_kind;
 
-		/* Geo-sensitive seed (Gemini class): the routing decision is PINNED and
-		 * never re-verdicted — a plain GET to the app shell answers 200 through
-		 * ANY path, so every probe path here "proves direct works" and would
-		 * flip the host back to the broken direct route. Probe codes above are
-		 * still refreshed for the UI. */
-		if (geo_seed_set[dom] === true) {
-			/* ч.66: the record itself must carry the geo verdict. This is the
-			 * only writer for a seed whose state record was rebuilt bare (a
-			 * reboot wipes the tmpfs state; the list files survive) — without
-			 * it the row fell back to the rpcd "Blocked" default with no date. */
-			if (st.status !== 'geo')
-				st.status = 'geo';
-			if (!st.added)
-				st.added = time();
-			return;
-		}
-
 		/* Track EWMA RTT for adaptive timeouts (Phase 1).
 		 * RTT in milliseconds; alpha=0.3 for EWMA smoothing. */
 		if (adaptive_timeout) {
@@ -2508,7 +2267,7 @@ echo done > "$PRE.done"
 		 * MITM block-pages served with 200, and the 403-direct / 200-proxy case.
 		 * d.geo (200 + "unsupported country" page): the shell answers, but the
 		 * service refuses to serve this region — for THIS host that is not a
-		 * direct success, otherwise Gemini-class services would keep flipping
+		 * direct success, otherwise geo-gated services would keep flipping
 		 * direct (self-heal "heals" them straight back to the broken path).
 		 * tcp_direct: the TCP/TLS fallback proved the endpoint reachable DIRECTLY
 		 * even though HTTP probes failed (proprietary protocol) -> never learn it. */
@@ -2552,10 +2311,7 @@ echo done > "$PRE.done"
 		if (d.geo && p && p.geo) {
 			st.status = 'geo_blocked';
 			st.confirms = 0;
-			log(`geo-refused on BOTH paths: ${dom} - current exit node is rejected by the service (switch the node; surfaced on the Overview card)`);
-			/* Request an immediate exit-health probe so the Overview card
-			 * reflects the refusal without waiting for the periodic check. */
-			last_exit_health = 0;
+			log(`geo-refused on BOTH paths: ${dom} - current exit node is rejected by the service (switch the node)`);
 			return;
 		}
 		if (p_ok) {
@@ -3069,10 +2825,6 @@ echo done > "$PRE.done"
 				/* keys() snapshot: entries are deleted from lst during iteration. */
 				for (let h in keys(lst)) {
 					if (manual_proxy_set[h] || manual_direct_set[h]) continue;
-					/* Geo-sensitive seeds are pinned: a 200 geo-refusal shell
-					 * would read as "answers direct again" and heal the host
-					 * back onto the broken direct route. */
-					if (geo_seed_set[h]) continue;
 					if (rechecked >= REEVAL_BATCH) break;
 					let st = state[h];
 					if (st && st.last_probe && (now - st.last_probe) < REEVAL_AGE) continue;
@@ -3114,10 +2866,8 @@ echo done > "$PRE.done"
 			/* Manual pins are user decisions — their state records survive pruning. */
 			for (let d in manual_proxy_set) keep[d] = true;
 			for (let d in manual_direct_set) keep[d] = true;
-			/* Geo-sensitive seeds likewise (their routing is engine-pinned). */
-			for (let d in geo_seed_set) keep[d] = true;
 			for (let h in keys(state)) {
-				if (h === '__dns_offset' || h === '__exit_health') continue;
+				if (h === '__dns_offset') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let st = state[h];
 				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
@@ -3129,7 +2879,7 @@ echo done > "$PRE.done"
 			 * them reset the confirm counter and the host never got learned. */
 			let rest = [];
 			for (let h in keys(state)) {
-				if (h === '__dns_offset' || h === '__exit_health') continue;
+				if (h === '__dns_offset') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let cst = state[h];
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
@@ -3204,27 +2954,21 @@ echo done > "$PRE.done"
 			 * auto_set resurrected cleared entries on the next learn (the whole
 			 * set is rewritten by write_auto_list), old 'direct' verdicts
 			 * suppressed re-probing for a day, and stale auth families survived.
-			 * Per-host state is wiped; service keys survive: __exit_health keeps
-			 * the exit verdicts, __dns_offset keeps the discovery cursor. */
+			 * __dns_offset keeps the discovery cursor. */
 			system('rm -f ' + shellquote(RELOAD_MARKER + '_clear'));
-			const keep_exit_health = (type(state.__exit_health) === 'object') ? state.__exit_health : null;
 			state = {};
-			if (keep_exit_health) state.__exit_health = keep_exit_health;
 			state.__dns_offset = dns_log_offset;
 			reload_lists();
-			ensure_geo_seeds();
 			save_state(state);
 			log('clear marker: in-memory state wiped, working sets reloaded (fresh start).');
 		} else if (access(RELOAD_MARKER + '_geo')) {
 			system('rm -f ' + shellquote(RELOAD_MARKER + '_geo'));
 			load_ru_geo();
 			reload_lists();
-			ensure_geo_seeds();
 			log('reload marker (geo): RU-geo database + working sets reloaded.');
 		} else if (access(RELOAD_MARKER)) {
 			system('rm -f ' + shellquote(RELOAD_MARKER));
 			reload_lists();
-			ensure_geo_seeds();
 			log('reload marker: working sets reloaded.');
 		}
 
@@ -3255,16 +2999,7 @@ echo done > "$PRE.done"
 			}
 		}
 
-		/* Exit health (ч.69): periodically verify that the CURRENT main exit
-		 * still passes the AI-class geo checks; the verdicts feed the Overview
-		 * card via automation_status. A geo-refusal in classify() forces the
-		 * next check by resetting last_exit_health. */
-		if ((now - last_exit_health) > EXIT_HEALTH_INTERVAL) {
-			last_exit_health = now;
-			exit_health_check();
-		}
-
-	/* Persist dns log offset so we don't re-scan from the start after a restart.
+		/* Persist dns log offset so we don't re-scan from the start after a restart.
 	 * Skipped while the pass was paused/inert: nothing consumed the log, so the
 	 * offset must NOT advance — and the flash/tmpfs write is pure churn. */
 		if (ran) {

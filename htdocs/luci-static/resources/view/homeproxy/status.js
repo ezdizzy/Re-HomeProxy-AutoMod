@@ -1098,23 +1098,19 @@ function buildSnapshotsCard() {
 
 function buildCoreCard(core, coreInfo) {
 	const isHiddify = core === 'hiddify';
-	const isTachyon = core === 'tachyon';
-	const name = isHiddify ? 'hiddify-core' : isTachyon ? 'tachyon-core (experimental)' : 'sing-box-extended';
+	const name = isHiddify ? 'hiddify-core' : 'sing-box-extended';
 	const pkgMgr = coreInfo.pkg_manager;
-	const coreData = (isHiddify ? coreInfo.hiddify : isTachyon ? coreInfo.tachyon : coreInfo.singbox) || {};
-	const canInstall = isTachyon ? true : !!pkgMgr;
+	const coreData = (isHiddify ? coreInfo.hiddify : coreInfo.singbox) || {};
+	const canInstall = !!pkgMgr;
 
 	const desc = isHiddify
 		? _('Fork of sing-box 1.13 by the Hiddify team (HiddifyCli). Runs every protocol this app can configure, including NaïveProxy and Hiddify\'s Mieru dialect. Best compatibility with Hiddify App / Hiddify Manager exports.')
-		: isTachyon
-		? _('Independent high-performance core in pure Rust (sing-box 1.14-compatible config, Clash API included): ~4 MB RAM idle, ~10 MB binary, no GC pauses. EXPERIMENTAL: a very young project (0.1.x) whose sing-box config compatibility is declared temporary by its author — if a node type is rejected, the generator skips it automatically (check-heal). On OpenWrt the 0.1.x redirect inbound is broken: this core runs in Tun proxy mode only (enforced in Client Settings).')
 		: _('Extended sing-box 1.14 base by shtorm-7. Runs every protocol this app can configure plus WARP / MASQUE / TrustTunnel / MTProxy extras — but no NaïveProxy: such nodes are skipped automatically when this core runs.');
 
 	/* Verified capability line from the core's own build tags. */
 	const caps = [];
 	if (coreData.naive) caps.push(_('NaïveProxy') + ' ✓');
 	if (coreData.extended) caps.push('WARP / MASQUE / TrustTunnel ✓');
-	if (isTachyon) caps.push(_('low RAM footprint') + ' ✓');
 	const capLine = caps.length
 		? E('div', { style: 'margin-top:2px; font-size:0.9em; color:#3fbf5f' }, caps.join(' · '))
 		: null;
@@ -1183,11 +1179,10 @@ function buildCoreCard(core, coreInfo) {
 		if (!inst.result) return fail(inst.error || _('Installation failed'));
 
 		setMsg(_('Installing kernel modules...'), '#9a9a9a');
-		if (!isTachyon)
-			await L.resolveDefault(callCoreInstallKmods(prep.pkg_manager), {});
+		await L.resolveDefault(callCoreInstallKmods(prep.pkg_manager), {});
 
 		const fresh = await L.resolveDefault(callCoreInfo(), {});
-		const fd = (isHiddify ? fresh.hiddify : isTachyon ? fresh.tachyon : fresh.singbox) || {};
+		const fd = (isHiddify ? fresh.hiddify : fresh.singbox) || {};
 		installed = fd.installed || false;
 		version   = fd.version   || null;
 		statusEl.textContent = installed ? 'v' + version : _('Unknown');
@@ -1276,8 +1271,7 @@ return view.extend({
 
 		o = s.option(form.DummyValue, '_active_core', _('Active core'));
 		const coreName = features.core_type === 'hiddify' ? 'hiddify-core' :
-		                 features.core_type === 'singbox' ? 'sing-box' :
-		                 features.core_type === 'tachyon' ? 'tachyon-core' : null;
+		                 features.core_type === 'singbox' ? 'sing-box' : null;
 		const coreVer = features.version ? ' v' + features.version : '';
 		const coreCustomSuffix = features.core_custom ? ' (custom)' : '';
 
@@ -1309,7 +1303,7 @@ return view.extend({
 					const ret = await L.resolveDefault(callDetectCustomCore(path), {});
 					detectBtn.disabled = false;
 					if (ret.result) {
-						const typeName = ret.type === 'hiddify' ? 'hiddify-core' : ret.type === 'tachyon' ? 'tachyon-core' : 'sing-box';
+						const typeName = ret.type === 'hiddify' ? 'hiddify-core' : 'sing-box';
 						detectMsg.textContent = _('Detected') + ': ' + typeName + (ret.version ? ' v' + ret.version : '') + ' — ' + _('reload page to apply');
 						detectMsg.style.color = '#3fbf5f';
 					} else {
@@ -1402,9 +1396,6 @@ return view.extend({
 
 		o = s.option(form.DummyValue, '_core_singbox');
 		o.default = buildCoreCard('singbox', coreInfo);
-
-		o = s.option(form.DummyValue, '_core_tachyon');
-		o.default = buildCoreCard('tachyon', coreInfo);
 
 		/* ч.69: snapshots + emergency internet recovery. */
 		o = s.option(form.DummyValue, '_snapshots_card');

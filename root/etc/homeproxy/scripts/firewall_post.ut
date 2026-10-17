@@ -570,7 +570,7 @@ chain homeproxy_mangle_tun {
 	   tun re-mark — same guards as the tproxy branch above: the mark is what the
 	   postrouting NFQUEUE chain matches to feed nfqws2. Without these returns the
 	   zapret dial is re-marked tun_mark and loops back into the tun device
-	   (YouTube and every other zapret-path site dies under tachyon/TUN). #}
+	   (YouTube and every other zapret-path site dies under TUN). #}
 	meta mark {{ zapret_mark }} counter return
 	meta mark and {{ zapret_desync_mark }} != 0 counter return
 	{% endif /* zapret_enabled */ %}

@@ -230,52 +230,6 @@ function auto_entry_type(e) {
 	return (match(e, /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/) || (index(e, ':') >= 0 && match(e, /^[0-9a-f:]+(\/\d{1,3})?$/))) ? 'ip' : 'domain';
 }
 
-/* Geo-sensitive seed list: resources/geo_sensitive.txt first (comments and
- * blank lines skipped), built-in fallback when the file is missing/empty.
- * Shared by the geo diagnostics (seed coverage) and the automation table
- * (a learned row whose state record is missing must not fall back to the
- * "Blocked" default when the host is an engine-pinned geo seed). */
-function geo_sensitive_seeds() {
-	let seeds = [
-		/* Web (ч.51) */
-		'gemini.google.com',
-		'aistudio.google.com',
-		'ai.google.dev',
-		'generativelanguage.googleapis.com',
-		'alkalimakersuite-pa.clients6.google.com',
-		'aisandbox-pa.googleapis.com',
-		'push.clients6.google.com',
-		/* Android app / system assistant (ч.54) */
-		'proactivebackend-pa.googleapis.com',
-		'geller-pa.googleapis.com',
-		'assistantfrontend-pa.googleapis.com',
-		'assistant-s3-pa.googleapis.com',
-		'robinfrontend-pa.googleapis.com',
-		'taskassist-pa.googleapis.com',
-		'notifications-pa.googleapis.com',
-		'searchnotifications-pa.googleapis.com',
-		'lamssettings-pa.googleapis.com',
-		'speechs3proto2-pa.googleapis.com',
-		'alkalimining-pa.googleapis.com',
-		'jnn-pa.googleapis.com',
-		'firebaseinstallations.googleapis.com',
-		'webchannel-alkalimakersuite-pa.clients6.google.com',
-		'waa-pa.clients6.google.com'
-	];
-	const raw = readfile(HP_DIR + '/resources/geo_sensitive.txt');
-	if (raw) {
-		const parsed = [];
-		for (let gl in split(raw, /[\r\n]/)) {
-			gl = trim(replace(gl, /#.*$/, ''));
-			if (length(gl))
-				push(parsed, gl);
-		}
-		if (length(parsed))
-			seeds = parsed;
-	}
-	return seeds;
-}
-
 /* "Listening ports" (Core & Tools + diagnostics report): busybox
  * `netstat -tlnup` prints EVERY udp socket - UDP has no LISTEN state. That
  * dragged ephemeral outbound sockets (sing-box QUIC/relay, ports from the
@@ -353,7 +307,7 @@ function ru_geo_read_meta() {
 
 function get_active_core() {
 	/* Mirror init.d / generate_client.uc precedence: honor preferred_core when that core
-	 * is installed, else auto (hiddify-core first, then sing-box, then tachyon-core).
+	 * is installed, else auto (hiddify-core first, then sing-box).
 	 * Otherwise file presence alone would report the wrong core when several are installed. */
 	let preferred = null;
 	let pfd = popen('uci get homeproxy.config.preferred_core 2>/dev/null');
@@ -361,17 +315,13 @@ function get_active_core() {
 
 	const have_hiddify = access('/usr/bin/hiddify-core');
 	const have_singbox = access('/usr/bin/sing-box');
-	const have_tachyon = access('/usr/bin/tachyon-core');
 	const HID = { path: '/usr/bin/hiddify-core', type: 'hiddify', proc_name: 'hiddify-core' };
 	const SB  = { path: '/usr/bin/sing-box',     type: 'singbox', proc_name: 'sing-box' };
-	const TC  = { path: '/usr/bin/tachyon-core', type: 'tachyon', proc_name: 'tachyon-core' };
 
 	if (preferred === 'hiddify' && have_hiddify) return HID;
 	if (preferred === 'singbox' && have_singbox) return SB;
-	if (preferred === 'tachyon' && have_tachyon) return TC;
 	if (have_hiddify) return HID;
 	if (have_singbox) return SB;
-	if (have_tachyon) return TC;
 
 	let custom_path = null;
 	let custom_type = null;
@@ -383,7 +333,7 @@ function get_active_core() {
 		return {
 			path:      custom_path,
 			type:      length(custom_type) > 0 ? custom_type : 'singbox',
-			proc_name: custom_type === 'hiddify' ? 'hiddify-core' : custom_type === 'tachyon' ? 'tachyon-core' : 'sing-box',
+			proc_name: custom_type === 'hiddify' ? 'hiddify-core' : 'sing-box',
 			custom:    true
 		};
 	return null;
@@ -434,7 +384,7 @@ function proc_running(name) {
  * cannot be matched from here — they report as 'unknown_remote'. Port-scoped
  * and inbound-scoped rules are skipped (not host facts).
  * Top-level helper (rpcd ucode rejects function declarations inside the
- * methods object) so route_explain and the automation_exit_audit share it. */
+ * methods object) so route_explain and the Wizard checks share it. */
 function hp_route_trace(host, conf) {
 	const is_ip4 = !!match(host, /^(\d{1,3}\.){3}\d{1,3}$/);
 	const is_ip6 = (!is_ip4 && index(host, ':') >= 0);
@@ -501,9 +451,9 @@ function hp_route_trace(host, conf) {
 	};
 
 	/* Match the host against ONE rule-set by tag. Local rule-sets are read
-	 * from their file; INLINE rule-sets (ч.70: e.g. gemini-strict) carry
-	 * their rules in the config itself — match them exactly instead of
-	 * guessing "remote". Remote (core-downloaded SRS) stay unmatchable. */
+	 * from their file; INLINE rule-sets carry their rules in the config
+	 * itself — match them exactly instead of guessing "remote". Remote
+	 * (core-downloaded SRS) stay unmatchable. */
 	const rs_match = (tag) => {
 		const meta = rsets[tag];
 		if (!meta) return null;
@@ -885,11 +835,7 @@ const methods = {
 						const out = fd.read('all');
 						fd.close();
 
-						/* tachyon-core prints a short "tachyon-core 0.1.2" line
-						 * without the " version " word — match that shape too. */
-						let verMatch = match(out, / version v?(\S+)/);
-						if (!verMatch)
-							verMatch = match(out, /tachyon-core v?(\S+)/);
+						const verMatch = match(out, / version v?(\S+)/);
 						if (verMatch)
 							features.version = verMatch[1];
 
@@ -897,73 +843,35 @@ const methods = {
 						if (tagsMatch) {
 							for (let tag in split(tagsMatch[1], ','))
 								features[trim(tag)] = true;
-						} else if (core.type === 'tachyon') {
-							/* No Tags line: synthesize the capability set verified
-							 * against the project docs (TrustTunnel excluded). */
-							features.with_naive_outbound = true;
-							features.with_quic = true;
-							features.with_wireguard = true;
-							features.with_grpc = true;
-							features.with_utls = true;
-							features.with_gvisor = true;
 						}
 					}
 				}
-				/* Types the active core NEVER loads (its own `check` may not catch
-				 * them — e.g. tachyon-core "not implemented yet" rejects at run
-				 * time). The generator skips them; the UI warns on the hint. */
-				if (core.type === 'tachyon')
-					features.core_types_never = [ 'hysteria', 'trusttunnel', 'ssh' ];
-
 				/* Per-core capability summary for ALL installed cores (UI uses it to
 				 * describe the Preferred core choice and to warn about nodes the
 				 * selected core would skip). Tags matter: e.g. sing-box-extended
 				 * ships without with_naive_outbound — its NaïveProxy outbound was
-				 * dropped upstream; hiddify-core has it. tachyon-core (Rust) prints
-				 * NO Tags line: its capability set is synthesized here from the
-				 * protocol support verified against the project docs (VLESS/VMess/
-				 * Trojan/SS/Hysteria2/TUIC/AnyTLS/Naive/Mieru/WireGuard/AmneziaWG/
-				 * XHTTP/REALITY/uTLS yes; TrustTunnel — no). The runtime check-heal
+				 * dropped upstream; hiddify-core has it. The runtime check-heal
 				 * (core `check` on the generated config) remains the source of
 				 * truth and skips what the build actually refuses. */
 				features.cores = {};
 				const core_defs = [
 					['hiddify', '/usr/bin/hiddify-core'],
-					['singbox', '/usr/bin/sing-box'],
-					['tachyon', '/usr/bin/tachyon-core']
+					['singbox', '/usr/bin/sing-box']
 				];
-				/* Per-core types never supported (mirrors generate_client's
-				 * HP_CORE_TYPES_NEVER: tachyon-core 0.1.x has no Hysteria v1 /
-				 * TrustTunnel / SSH; its `check` misses the "not implemented"
-				 * rejects, so this static map is the reliable source). */
-				const CORE_TYPES_NEVER = {
-					tachyon: [ 'hysteria', 'trusttunnel', 'ssh' ]
-				};
-				const TACHYON_TAGS = {
-					with_naive_outbound: true, with_quic: true, with_wireguard: true,
-					with_grpc: true, with_utls: true, with_gvisor: true
-				};
 				for (let def in core_defs) {
 					const cid = def[0], cpath = def[1];
 					let info = { installed: !!access(cpath) };
-					if (CORE_TYPES_NEVER[cid])
-						info.types_never = CORE_TYPES_NEVER[cid];
 					if (info.installed) {
 						const fd = popen(cpath + ' version 2>/dev/null');
 						if (fd) {
 							const out = fd.read('all'); fd.close();
-							let vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
-							if (!vm)
-								vm = match(out, /tachyon-core v?([0-9][0-9a-zA-Z._-]*)/);
+							const vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
 							if (vm) info.version = vm[1];
 							const tm = match(out, /\nTags: ([^\n]+)/);
 							let tags = {};
 							if (tm)
 								for (let t in split(tm[1], ','))
 									tags[trim(t)] = true;
-							else if (cid === 'tachyon')
-								for (let tk in keys(TACHYON_TAGS))
-									tags[tk] = true;
 							info.tags = tags;
 							info.naive = ('with_naive_outbound' in tags);
 							info.extended = !!match(out, /-extended-/);
@@ -980,7 +888,6 @@ const methods = {
 				features.available_cores = [];
 				if (access('/usr/bin/hiddify-core')) push(features.available_cores, 'hiddify');
 				if (access('/usr/bin/sing-box'))     push(features.available_cores, 'singbox');
-				if (access('/usr/bin/tachyon-core')) push(features.available_cores, 'tachyon');
 
 				return features;
 		}
@@ -1025,17 +932,13 @@ const methods = {
 			if (length(out) === 0)
 				return { result: false, error: 'Binary produced no output' };
 			let core_type = null;
-			if (match(out, /tachyon/))
-				core_type = 'tachyon';
-			else if (match(out, /hiddify/))
+			if (match(out, /hiddify/))
 				core_type = 'hiddify';
 			else if (match(out, /sing.box|singbox/))
 				core_type = 'singbox';
 			if (!core_type)
 				return { result: false, error: 'Unknown binary type. Output: ' + substr(out, 0, 120) };
-			let verMatch = match(out, / version v?(\S+)/);
-			if (!verMatch)
-				verMatch = match(out, /tachyon-core v?(\S+)/);
+			const verMatch = match(out, / version v?(\S+)/);
 			const version = verMatch ? verMatch[1] : null;
 			system('uci set homeproxy.config.custom_core_path=' + shellquote(path));
 			system('uci set homeproxy.config.custom_core_type=' + shellquote(core_type));
@@ -1523,12 +1426,9 @@ const methods = {
 				const fd = popen(`${shellquote(core.path)} version 2>/dev/null`);
 				if (fd) {
 					/* POSIX-ERE quirk: \s is NOT whitespace-class in ucode regex —
-					 * spell the character class out. tachyon-core prints a short
-					 * "tachyon-core 0.1.2" line (no " version " word). */
+					 * spell the character class out. */
 					const raw = fd.read('all');
-					let m = match(raw, /version v?([0-9][0-9A-Za-z.]*)/);
-					if (!m)
-						m = match(raw, /tachyon-core v?([0-9][0-9A-Za-z.]*)/);
+					const m = match(raw, /version v?([0-9][0-9A-Za-z.]*)/);
 					core_version = m ? m[1] : null;
 					fd.close();
 				}
@@ -2943,13 +2843,6 @@ const methods = {
 			let learned = [];
 			let entries = [];
 			const by_host = {};
-			/* ч.66: geo seeds (engine-pinned routing) must never show as the
-			 * "Blocked" fallback when their state record is missing (tmpfs
-			 * state lost on reboot while the list files survived) or bare
-			 * (status wiped). The seed list is small - a map lookup per row. */
-			const seed_map = {};
-			for (let gs in geo_sensitive_seeds())
-				seed_map[gs] = true;
 			const push_entry = (host, src) => {
 				host = trim(host);
 				if (!length(host)) return;
@@ -2960,7 +2853,7 @@ const methods = {
 					e = { host: host, type: typ, src: src };
 					const st = state[host];
 					if (type(st) === 'object') {
-						e.status = st.status || (seed_map[host] ? 'geo' : 'blocked');
+						e.status = st.status || 'blocked';
 						e.added = st.added || st.last_probe || 0;
 						e.last_probe = st.last_probe || 0;
 						e.direct = st.direct || '';
@@ -2970,11 +2863,11 @@ const methods = {
 						 * reasons column. */
 						if (st.block_kind) e.kind = st.block_kind;
 						if (st.waf_seen) e.waf_seen = st.waf_seen;
-					} else {
-						e.status = (src === 'learned') ? (seed_map[host] ? 'geo' : 'blocked') : src;
-						e.added = 0;
-						e.last_probe = 0;
-					}
+				} else {
+					e.status = (src === 'learned') ? 'blocked' : src;
+					e.added = 0;
+					e.last_probe = 0;
+				}
 					by_host[host] = e;
 					push(entries, e);
 					if (src === 'learned')
@@ -3099,8 +2992,6 @@ const methods = {
 					total: length(entries)
 				},
 				geo: ru_geo_read_meta(),
-				/* ч.69: exit-health verdicts from the daemon (Overview card). */
-				exit_health: (type(state.__exit_health) === 'object') ? state.__exit_health : null,
 				helpers: helpers,
 				profile: profile,
 				log: log_tail
@@ -3109,8 +3000,7 @@ const methods = {
 	},
 
 	/* route_explain (ч.69): trace WHY a host routes the way it does — core
-	 * moved to the hp_route_trace() helper (ч.70, shared with
-	 * automation_exit_audit). */
+	 * moved to the hp_route_trace() helper (ч.70). */
 	route_explain: {
 		args: { host: 'host' },
 		call: function(req) {
@@ -3128,64 +3018,15 @@ const methods = {
 		}
 	},
 
-	/* automation_exit_audit (ч.70): batch route_explain over the hosts that
-	 * decide the Google AI session picture — the geo seeds (must ride the
-	 * proxy) plus the generic Google web hosts that carry the session-level
-	 * geo signal (www.google.com / gstatic / googleusercontent / accounts).
-	 * The card uses it to answer "which connections leave DIRECT" — in
-	 * proxy_banned_ru the generic Google hosts are expected to be direct
-	 * (that is the mixed-geo session Gemini flags on). */
-	automation_exit_audit: {
-		call: function(req) {
-			const conf_file = RUN_DIR + '/hiddify-c.json';
-			if (!access(conf_file))
-				return { error: 'no running config (service not started?)' };
-			let conf = null;
-			try { conf = json(readfile(conf_file) || ''); } catch (e) { conf = null; }
-			if (!conf || type(conf.route) !== 'object')
-				return { error: 'config unreadable' };
-			const HOSTS = [
-				'gemini.google.com',
-				'aistudio.google.com',
-				'generativelanguage.googleapis.com',
-				'webchannel-alkalimakersuite-pa.clients6.google.com',
-				'waa-pa.clients6.google.com',
-				'push.clients6.google.com',
-				'gemini.gstatic.com',
-				'accounts.google.com',
-				'www.google.com',
-				'ssl.gstatic.com',
-				'lh3.googleusercontent.com'
-			];
-			const rows = [];
-			for (let h in HOSTS) {
-				const r = hp_route_trace(h, conf);
-				push(rows, {
-					host: h,
-					outbound: (r && r.outbound) || null,
-					action: (r && r.action) || null,
-					match: (r && r.match) || null,
-					fallback: !!(r && r.fallback),
-					error: (r && r.error) || null
-				});
-			}
-			return { hosts: rows };
-		}
-	},
-
-	/* Geo-sensitive services diagnostic (ч.69, was ч.51/ч.53): answers WHY a
-	 * geo-gated service (Google Gemini / ChatGPT / ...) still refuses through a
-	 * "working" proxy. Measures the tunnel exit (country + ASN classification)
-	 * through the user's mixed port, the geo seed coverage, and the LIVE geo
-	 * verdicts of the Google AI / OpenAI edge checks through the MAIN path
-	 * (auto-proxy-in :5337 rides main-out). The old per-node scan/pin RPCs
-	 * (automation_geo_scan / automation_geo_pin) are removed with the geo-out
-	 * selector — the engine routes autonomously, the card + this RPC report. */
+	/* Exit diagnostics (ч.69, was the AI-services diagnostic): answers WHY a
+	 * geo-gated service still refuses through a "working" proxy. Measures the
+	 * tunnel exit (country + ASN classification) through the user's MAIN path
+	 * (auto-proxy-in :5337 rides main-out) and the DIRECT exit for comparison.
+	 * The AI-edge verdicts (Google AI / OpenAI) move to the routing Wizard (Ф2);
+	 * the old per-node scan/pin RPCs are long gone — the engine routes
+	 * autonomously, this RPC only reports. */
 	automation_geo_diag: {
 		call: function(req) {
-			/* Shared seed list (resources/geo_sensitive.txt with a built-in
-			 * fallback — see geo_sensitive_seeds()). */
-			const seeds = geo_sensitive_seeds();
 			const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
 			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
 			let mixed = '5330';
@@ -3269,52 +3110,6 @@ const methods = {
 			const direct_port = inb_listen(5336) ? 5336 : null;
 			const exit = lookup(main_port);
 			const exit_direct = direct_port ? lookup(direct_port) : null;
-			/* Live AI-edge geo verdicts through the MAIN path (ч.69): the
-			 * same unauthenticated endpoints the engine's exit-health check
-			 * uses, probed on demand for the Overview card. Best-effort. */
-			const verdict_google = (r) => {
-				if (!r) return 'fail';
-				const b = lc(r.body || '');
-				if (match(b, /location is not supported/)) return 'refused';
-				if (match(b, /api key/) || match(b, /api_key/) || r.code === '200') return 'ok';
-				return 'fail';
-			};
-			const verdict_openai = (r) => {
-				if (!r) return 'fail';
-				const b = lc(r.body || '');
-				if (match(b, /unsupported_country/)) return 'refused';
-				/* live 2026-10: the served region answers 401 "Missing bearer
-				 * authentication in header" — the old "invalid_api_key" body
-				 * is gone; judge the 401 itself (same clause as automation.uc). */
-				if (match(b, /invalid_api_key/) || r.code === '401') return 'ok';
-				return 'fail';
-			};
-			const curlrc = (url, port) => {
-				const f = '/tmp/geo_diag.body';
-				const cf = '/tmp/geo_diag.code';
-				system(`rm -f ${shellquote(f)} ${shellquote(cf)}`);
-				system(`curl -s --max-time 8 -o ${shellquote(f)} -w '%{http_code}' -x socks5h://127.0.0.1:${port} ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`);
-				const r = {
-					code: access(cf) ? trim(readfile(cf) || '000') : '000',
-					body: access(f) ? (readfile(f) || '') : ''
-				};
-				system(`rm -f ${shellquote(f)} ${shellquote(cf)}`);
-				return r;
-			};
-			const google = verdict_google(curlrc('https://generativelanguage.googleapis.com/v1beta/models', 5337));
-			const openai = verdict_openai(curlrc('https://api.openai.com/v1/models', 5337));
-
-			/* Seed coverage: which of the geo hosts are actually routed via the
-			 * proxy lists right now (list files are the routing truth). ucode
-			 * has no RegExp constructor — match by exact line equality. */
-			const auto_list = HP_DIR + '/resources/auto_proxy_list.txt';
-			const in_auto = {};
-			if (access(auto_list)) {
-				const lines = split(readfile(auto_list) || '', '\n');
-				for (let s in seeds)
-					for (let l in lines)
-						if (trim(l) === s) { in_auto[s] = true; break; }
-			}
 
 			return {
 				mixed_port: mixed,
@@ -3323,11 +3118,7 @@ const methods = {
 				exit_direct: exit_direct,
 				exit_verdict: (exit && exit.country_code && UNSUPPORTED[exit.country_code]) ? 'unsupported_country'
 					: exit ? 'supported_country'
-					: 'probe_failed',
-				google: google,
-				openai: openai,
-				seeds: seeds,
-				seeds_covered: length(keys(in_auto))
+					: 'probe_failed'
 			};
 		}
 	},
@@ -3804,21 +3595,9 @@ const methods = {
 			call: function(req) {
 			system('rm -f ' + HP_DIR + '/resources/auto_proxy_list.txt');
 			system('rm -f ' + HP_DIR + '/resources/auto_proxy_ip.txt');
-			/* Wipe the per-host state but PRESERVE __exit_health (ч.69): it
-			 * keeps the exit-health verdicts for the Overview card. */
+			/* Wipe the per-host state completely. */
 			const state_file = RUN_DIR + '/automation_state.json';
-			let keep = {};
-			if (access(state_file)) {
-				try {
-					const st = json(readfile(state_file) || '');
-					if (st && type(st.__exit_health) === 'object')
-						keep.__exit_health = st.__exit_health;
-				} catch (e) { keep = {}; }
-			}
-			if (length(keys(keep)))
-				atomic_write(state_file, sprintf('%.J\n', keep));
-			else
-				system('rm -f ' + shellquote(state_file));
+			system('rm -f ' + shellquote(state_file));
 			/* ч.62: tell the RUNNING daemon to drop its in-memory state and
 			 * re-read the emptied lists — otherwise its old auto_set resurrected
 			 * cleared entries on the next learn and stale verdicts suppressed

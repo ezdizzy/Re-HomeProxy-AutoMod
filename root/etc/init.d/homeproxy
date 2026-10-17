@@ -11,7 +11,6 @@ STOP=10
 CONF="homeproxy"
 PROG_HIDDIFY="/usr/bin/hiddify-core"
 PROG_SINGBOX="/usr/bin/sing-box"
-PROG_TACHYON="/usr/bin/tachyon-core"
 
 HP_DIR="/etc/homeproxy"
 RUN_DIR="/var/run/homeproxy"
@@ -139,11 +138,6 @@ start_service() {
 			PROG="$PROG_SINGBOX"; RUN_CMD="run"; CORE_TYPE="singbox"
 		fi
 		;;
-	tachyon)
-		if [ -x "$PROG_TACHYON" ]; then
-			PROG="$PROG_TACHYON"; RUN_CMD="run"; CORE_TYPE="tachyon"
-		fi
-		;;
 	esac
 
 	if [ -z "$PROG" ]; then
@@ -151,10 +145,8 @@ start_service() {
 			PROG="$PROG_HIDDIFY"; RUN_CMD="srun"; CORE_TYPE="hiddify"
 		elif [ -x "$PROG_SINGBOX" ]; then
 			PROG="$PROG_SINGBOX"; RUN_CMD="run"; CORE_TYPE="singbox"
-		elif [ -x "$PROG_TACHYON" ]; then
-			PROG="$PROG_TACHYON"; RUN_CMD="run"; CORE_TYPE="tachyon"
 		else
-			log "Error: No supported core found. Install hiddify-core, sing-box or tachyon-core first."
+			log "Error: No supported core found. Install hiddify-core or sing-box first."
 			return 1
 		fi
 	fi
@@ -163,18 +155,9 @@ start_service() {
 	config_get routing_mode "config" "routing_mode" "proxy_banned_ru"
 	config_get proxy_mode "config" "proxy_mode" "redirect_tproxy"
 
-	# tachyon-core 0.1.x: the redirect inbound is broken on OpenWrt (original dst
-	# is never extracted) — only pure TUN relays client traffic. The UI pins the
-	# mode to 'tun' for tachyon; warn if the UCI value was set by hand otherwise
-	# (redirect_tun still runs TCP through the broken redirect inbound).
-	if [ "$CORE_TYPE" = "tachyon" ] && [ "$proxy_mode" != "tun" ]; then
-		log "Warning: tachyon-core runs in Tun mode only (redirect inbound broken in 0.1.x) — Proxy mode is '$proxy_mode'; switch it to 'tun' in Client Settings."
-	fi
-
-	# Write core info for LuCI. hiddify/sing-box print "name version X";
-	# tachyon-core prints "tachyon-core 0.1.2" (no "version" word) — $2.
+	# Write core info for LuCI. hiddify/sing-box print "name version X".
 	local core_version
-	core_version="$("$PROG" version 2>/dev/null | head -1 | awk '{if ($2 == "version") print $3; else print $2; exit}')"
+	core_version="$("$PROG" version 2>/dev/null | head -1 | awk '{print $3; exit}')"
 	printf '{"core_type":"%s","version":"%s"}\n' "$CORE_TYPE" "$core_version" > "$RUN_DIR/core.info"
 
 	# MultiDNS: bootstrap the dedicated mosdns instance NOW (synchronously) so the
@@ -353,8 +336,8 @@ start_service() {
 	) >/dev/null 2>&1 &
 
 	# Setup TUN policy routing — handled by the `tun-route` watcher instance
-	# (ч.72): tachyon-core (ч.69) brings its tun device up LATE (remote rule-sets
-	# initialize before inbounds — well past 40 s on a slow start), and the old
+	# (ч.72): a tun-mode core brings its tun device up LATE (remote rule-sets
+	# may initialize before inbounds — well past 40 s on a slow start), and the old
 	# one-shot blocking wait missed it → the policy route was never installed →
 	# every marked packet fell through to the main table and egressed DIRECTLY,
 	# so every site that should go through the proxy was dead. The watcher waits
