@@ -8892,4 +8892,195 @@ msgstr "Russia Outside (российские сервисы только для 
 msgid "Ukraine Inside (resources blocked in UA)"
 msgstr "Ukraine Inside (ресурсы, заблокированные в Украине)"
 
+#: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Overview"
+msgstr "Обзор"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Performance"
+msgstr "Производительность"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Quick actions"
+msgstr "Быстрые действия"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Uptime"
+msgstr "Аптайм"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "System parameters"
+msgstr "Системные параметры"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Load (1/5/15 min)"
+msgstr "Нагрузка (1/5/15 мин)"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Flash (/)"
+msgstr "Флеш (/)"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Memory (/tmp)"
+msgstr "Память (/tmp)"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "%s used of %s"
+msgstr "%s занято из %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "App"
+msgstr "Приложение"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Update availability is checked on demand — the Overview page never queries external resources on its own."
+msgstr "Наличие обновления проверяется по требованию — страница «Обзор» сама никогда не обращается к внешним ресурсам."
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Checking the latest release…"
+msgstr "Проверяю последний релиз…"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Update check failed: %s"
+msgstr "Проверка обновления не удалась: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Update available: %s → %s (install it on the \"Core & Tools\" page)."
+msgstr "Доступно обновление: %s → %s (установите на странице «Core & Tools»)."
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "The installed version %s is the latest."
+msgstr "Установленная версия %s — последняя."
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Restarting the service…"
+msgstr "Рестартую службу…"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Service restarted."
+msgstr "Служба рестартована."
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Snapshot"
+msgstr "Снапшот"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Creating a snapshot…"
+msgstr "Создаю снапшот…"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Stopping the proxy stack…"
+msgstr "Останавливаю прокси-стек…"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "CPU"
+msgstr "Процессор"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "RAM"
+msgstr "Память"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Temperature"
+msgstr "Температура"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Node delay"
+msgstr "Задержка узла"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Learned records"
+msgstr "Выученные записи"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Learned records: %d"
+msgstr "Выученных записей: %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "RU servers: %d"
+msgstr "RU-серверов: %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "long-poll getUpdates"
+msgstr "long-poll getUpdates"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "daemon not alive"
+msgstr "демон не жив"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "not responding"
+msgstr "не отвечает"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "no node"
+msgstr "узла нет"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Custom routing — no main node"
+msgstr "Custom-маршрутизация — основного узла нет"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "%d day(s), %d h %d m"
+msgstr "%d дн., %d ч %d мин"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "%d h %d m"
+msgstr "%d ч %d мин"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "%d m"
+msgstr "%d мин"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "%d points · ~%d min"
+msgstr "%d точек · ~%d мин"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "collecting…"
+msgstr "накапливаем…"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "The service restart re-routes every connection (\"Core & Tools\" carries start/stop); a snapshot copies the app configuration and the routing lists; \"Restore internet\" is the emergency switch for a plain direct connection."
+msgstr "Рестарт службы перерасовывает все соединения (start/stop на странице «Core & Tools»); снапшот копирует конфигурацию приложения и списки маршрутизации; «Restore internet» — аварийный выключатель для чистого прямого соединения."
+
 

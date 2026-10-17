@@ -1335,6 +1335,6 @@ return view.extend({
 		poll.add(refresh, 4);
 		refresh();
 
-		return E('div', {}, [ tabBar, panes.diag, panes.services ]);
+		return E('div', {}, [ tabBar, panes.diag, panes.services, panes.dpi ]);
 	}
 });

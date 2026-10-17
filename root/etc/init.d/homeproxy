@@ -293,6 +293,18 @@ start_service() {
 	procd_set_param respawn
 	procd_close_instance
 
+	# Overview metrics sampler (Ф4, ч.76): tiny always-on ring buffer of
+	# CPU/RAM/temperature/connections/node delay/learned-records into
+	# $RUN_DIR/overview_metrics.json, feeding the "Overview" tab charts
+	# (inline SVG on the client — D5: everything local). Nothing here is
+	# config-gated: it is UI-support data, not engine logic, and it is
+	# tolerant of the core being down (nulls, not failures).
+	mkdir -p "$RUN_DIR"
+	procd_open_instance "metrics"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/metrics.uc"
+	procd_set_param respawn
+	procd_close_instance
+
 	echo > "$RUN_DIR/hiddify-c.log"
 
 	# Setup firewall

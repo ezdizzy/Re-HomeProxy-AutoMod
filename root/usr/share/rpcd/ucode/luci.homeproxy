@@ -3719,6 +3719,131 @@ const methods = {
 		}
 	},
 
+	/* ─── Overview (Главная, Ф4 ч.76) — metrics ring + system snapshot ─── */
+
+	/* The metrics ring is collected by the always-on `metrics` procd
+	 * instance (scripts/metrics.uc, ~5 s cadence, ≤120 points ≈ 10 min of
+	 * history). This RPC is a READ: no Clash API here, no sampling — the
+	 * UI polls it every 4 s and renders inline SVG on the client (D5). */
+	overview_metrics: {
+		call: function() {
+			const file = RUN_DIR + '/overview_metrics.json';
+			if (!access(file))
+				return { interval: 5, updated: 0, points: [] };
+			let doc = null;
+			try { doc = json(readfile(file) || ''); } catch (e) { doc = null; }
+			if (doc == null || type(doc) !== 'object')
+				return { interval: 5, updated: 0, points: [] };
+			return {
+				interval: int(doc.interval) || 5,
+				updated: int(doc.updated) || 0,
+				points: (type(doc.points) === 'array') ? doc.points : []
+			};
+		}
+	},
+
+	/* System snapshot for the Overview cards: uptime/load, flash (/) and
+	 * /tmp usage, app version, telegram daemon liveness, plus a single
+	 * cheap Clash /version verdict for the core card ("running"). No
+	 * update checks here — update availability stays on demand (D5/D6). */
+	overview_sys: {
+		call: function() {
+			const reply = {
+				uptime: null, load1: null, load5: null, load15: null,
+				root: { total: null, used: null, avail: null },
+				tmp: { total: null, used: null, avail: null },
+				app_version: null,
+				telegram: { enabled: null, running: false },
+				automation_running: false,
+				clash_ok: false
+			};
+
+			let fd = popen('cat /proc/uptime 2>/dev/null');
+			if (fd) {
+				const raw = trim(fd.read('all'));
+				fd.close();
+				const m = match(raw, /^([0-9]+)\./);
+				if (m)
+					reply.uptime = int(m[1]);
+			}
+
+			fd = popen('cat /proc/loadavg 2>/dev/null');
+			if (fd) {
+				const raw = trim(fd.read('all'));
+				fd.close();
+				const m = match(raw, /^([0-9.]+) +([0-9.]+) +([0-9.]+)/);
+				if (m) {
+					reply.load1 = m[1];
+					reply.load5 = m[2];
+					reply.load15 = m[3];
+				}
+			}
+
+			/* df -k: the last line for the mount (skips the header). POSIX
+			 * ERE — explicit space classes, never \s (ч.32). */
+			fd = popen('df -k / 2>/dev/null | tail -n 1');
+			if (fd) {
+				const raw = trim(fd.read('all'));
+				fd.close();
+				const m = match(raw, / +([0-9]+) +([0-9]+) +([0-9]+) +[0-9]+%/);
+				if (m) {
+					reply.root.total = int(m[1]);
+					reply.root.used = int(m[2]);
+					reply.root.avail = int(m[3]);
+				}
+			}
+			fd = popen('df -k /tmp 2>/dev/null | tail -n 1');
+			if (fd) {
+				const raw = trim(fd.read('all'));
+				fd.close();
+				const m = match(raw, / +([0-9]+) +([0-9]+) +([0-9]+) +[0-9]+%/);
+				if (m) {
+					reply.tmp.total = int(m[1]);
+					reply.tmp.used = int(m[2]);
+					reply.tmp.avail = int(m[3]);
+				}
+			}
+
+			/* App version — the same lookup app_status uses. */
+			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) {
+				fd = popen('apk info luci-app-re-homeproxy 2>/dev/null | head -1');
+				if (fd) {
+					const out = trim(fd.read('all'));
+					fd.close();
+					const m = match(out, /luci-app-re-homeproxy-([0-9][0-9.]*)/);
+					if (m)
+						reply.app_version = m[1];
+				}
+			}
+
+			/* Script daemons (automation engine, telegram bot): busybox
+			 * pidof does NOT match ucode script names (the process name is
+			 * "ucode" — lesson 23), so scan the ps table once and match
+			 * the script paths (the same `ps w | grep '[name].uc'`
+			 * pattern the lesson carries). */
+			let efd = popen('uci -q get homeproxy.telegram.enabled 2>/dev/null');
+			if (efd) {
+				const v = trim(efd.read('all'));
+				efd.close();
+				reply.telegram.enabled = (v === '1');
+			}
+			reply.automation_running = false;
+			reply.telegram.running = false;
+			let psfd = popen('ps w 2>/dev/null');
+			if (psfd) {
+				const tbl = psfd.read('all') || '';
+				psfd.close();
+				reply.automation_running = (match(tbl, /automation\.uc/) != null);
+				reply.telegram.running = (match(tbl, /telegram\.uc/) != null);
+			}
+
+			/* Core liveness: the /version endpoint is the cheapest fetch. */
+			const clash = clash_api('/version');
+			reply.clash_ok = (clash != null);
+			return reply;
+		}
+	},
+
 	/* Exit diagnostics (ч.69, was the AI-services diagnostic): answers WHY a
 	 * geo-gated service still refuses through a "working" proxy. Measures the
 	 * tunnel exit (country + ASN classification) through the user's MAIN path

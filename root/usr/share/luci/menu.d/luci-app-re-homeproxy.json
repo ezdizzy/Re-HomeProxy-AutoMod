@@ -10,6 +10,14 @@
 			"uci": { "homeproxy": true }
 		}
 	},
+	"admin/services/homeproxy/overview": {
+		"title": "Overview",
+		"order": 5,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/overview"
+		}
+	},
 	"admin/services/homeproxy/client": {
 		"title": "Client Settings",
 		"order": 10,
