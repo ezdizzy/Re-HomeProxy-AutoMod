@@ -180,6 +180,16 @@
       "name": "Syndata (TLS marker)",
       "args": "--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=syndata:blob=0x1603",
       "group": "auto"
+    },
+    {
+      "name": "Multi: YouTube only + general",
+      "args": "--blob=tls_google:@/opt/zapret2/files/fake/tls_clienthello_www_google_com.bin --blob=quic_google:@/opt/zapret2/files/fake/quic_initial_www_google_com.bin --filter-tcp=443 --filter-l7=tls --hostlist=/etc/homeproxy/resources/zapret-hosts/youtube.txt --payload=tls_client_hello --lua-desync=multisplit:pos=2,sniext+1:seqovl=679:seqovl_pattern=tls_google --new --filter-udp=443 --filter-l7=quic --hostlist=/etc/homeproxy/resources/zapret-hosts/youtube.txt --payload=quic_initial --lua-desync=fake:blob=quic_google:repeats=6 --new --filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tls_mod=rnd,rndsni,dupsid --lua-desync=multidisorder:pos=1,sniext+1",
+      "group": "recommended"
+    },
+    {
+      "name": "Multi: Discord only + general",
+      "args": "--blob=tls_google:@/opt/zapret2/files/fake/tls_clienthello_www_google_com.bin --blob=stun_fake:@/opt/zapret2/files/fake/stun.bin --filter-tcp=443 --filter-l7=tls --hostlist=/etc/homeproxy/resources/zapret-hosts/discord.txt --payload=tls_client_hello --lua-desync=multidisorder:pos=1,sniext+1:seqovl=336:seqovl_pattern=tls_google --new --filter-udp=443 --filter-l7=stun,discord --hostlist=/etc/homeproxy/resources/zapret-hosts/discord.txt --lua-desync=fake:blob=stun_fake:repeats=6 --new --filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tls_mod=rnd,rndsni,dupsid --lua-desync=multidisorder:pos=1,sniext+1",
+      "group": "recommended"
     }
   ]
 }

@@ -1,0 +1,9 @@
+# Re:HomeProxy AutoMod — nfqws2 hostlist: YouTube (suffix match covers subdomains)
+youtube.com
+www.youtube.com
+youtu.be
+googlevideo.com
+ytimg.com
+i.ytimg.com
+ggpht.com
+gvt1.com

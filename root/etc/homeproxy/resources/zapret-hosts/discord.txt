@@ -1,0 +1,8 @@
+# Re:HomeProxy AutoMod — nfqws2 hostlist: Discord (suffix match covers subdomains)
+discord.com
+discord.gg
+discordapp.com
+discordapp.net
+discord.media
+discordstatus.com
+gateway.discord.gg

@@ -16,7 +16,6 @@
 'require view';
 
 'require homeproxy as hp';
-'require tools.firewall as fwtool';
 'require tools.widgets as widgets';
 
 const callServiceList = rpc.declare({
@@ -36,20 +35,6 @@ const callActiveNode = rpc.declare({
 const callHotswapStatus = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'hotswap_status',
-	expect: { '': {} }
-});
-
-const callReadDomainList = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'acllist_read',
-	params: ['type'],
-	expect: { '': {} }
-});
-
-const callWriteDomainList = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'acllist_write',
-	params: ['type', 'content'],
 	expect: { '': {} }
 });
 
@@ -153,6 +138,14 @@ return view.extend({
 
 		let features = data[2],
 		    hosts = data[3]?.hosts;
+
+		/* Tab creation gates (Ф7/D6): LuCI does NOT hide a tab whose options
+		 * are all depends-hidden — the tab bar showed empty Custom Rules /
+		 * Routing Nodes / DNS tabs in every mode. Create these tabs only in
+		 * the modes that can actually render them; the silent-save onchange
+		 * on routing_mode / show_advanced_rules re-renders on toggle. */
+		const modeNow = uci.get(data[0], 'config', 'routing_mode') || 'proxy_banned_ru';
+		const advOn = (uci.get(data[0], 'config', 'show_advanced_rules') === '1');
 
 		/* Cache all configured proxy nodes, they will be called multiple times */
 		let proxy_nodes = {};
@@ -390,6 +383,13 @@ return view.extend({
 		o.default = 'nil';
 		o.depends({'routing_mode': /^((?!custom|proxy_banned_ru).)+$/, 'proxy_mode': /^((?!redirect$).)+$/});
 		o.rmempty = false;
+		/* Retain (Ф7 fix): the option only RENDERS in Global mode, but a save
+		 * from any other mode used to issue uci/delete for it anyway. When the
+		 * option is ABSENT from UCI (the "no separate UDP node" state), that
+		 * delete answers ubus code 4 "Not found" and ABORTS the whole form
+		 * save — every setting on this page silently failed to persist. Retain
+		 * keeps unrendered options untouched (lesson 11 pattern). */
+		o.retain = true;
 
 		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_mode', _('URLTest mode'));
 		o.value('auto', _('Auto — all nodes (recommended)'));
@@ -446,6 +446,10 @@ return view.extend({
 		o.placeholder = '30';
 		o.default = '30';
 		o.depends('main_udp_node', 'urltest');
+		/* Hidden whenever main_udp_node ≠ urltest — a save from that state
+		 * used to uci/delete an absent option and abort the whole save
+		 * (same trap as main_udp_node above). */
+		o.retain = true;
 
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_tolerance', _('Test tolerance'),
 			_('Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values. In "Preferred node + auto" mode it applies to the fallback pool only (the preferred node is never replaced by a faster one).'));
@@ -453,6 +457,7 @@ return view.extend({
 		o.placeholder = '150';
 		o.default = '150';
 		o.depends('main_udp_node', 'urltest');
+		o.retain = true;
 
 		/* ── Hot Swap (ч.59/ч.60): hot standby connections + transparent failover ──
 		 * Works for BOTH main shapes: a specific node (main-out becomes a
@@ -638,13 +643,19 @@ return view.extend({
 
 		o = s.taboption('routing', form.Flag, 'show_advanced_rules',
 			_('Advanced custom rules') + ' 👨‍💻',
-			_('Show the Custom Rules and Routing Nodes tabs for additional custom rules.'));
+			_('Show the advanced editing tabs: Custom Rules (raw sing-box rules), Routing Nodes and Routing Rules (multi-exit per service). The Routing Wizard covers the everyday service→exit editing; these tabs are for shapes the Wizard does not build.'));
 		o.depends({'routing_mode': 'proxy_banned_ru'});
 		o.default = o.disabled;
 		o.rmempty = false;
 		/* Retain: a save made in another routing mode used to delete the flag,
 		 * silently hiding the advanced tabs again after returning. */
 		o.retain = true;
+		/* Silent-save on toggle (same pattern as routing_mode): the advanced
+		 * tabs gate on the PERSISTED flag — persist + re-render immediately. */
+		o.onchange = function(ev, section_id, value) {
+			if (!section_id) return;
+			Promise.resolve(this.map.save(null, true)).catch(function() {});
+		}
 
 		/* WAN-up reload (ч.59): legacy behavior reloaded the whole service on
 		 * every WAN up event, tearing down ALL connections on every redial.
@@ -1002,10 +1013,16 @@ return view.extend({
 			};
 		})(o);
 
-		/* Routing Rules start (per-service overrides) */
+		/* Routing Rules (per-service overrides) — Ф7/D6: the Routing Wizard is
+		 * the everyday editor for these rules (one rule per service, with a
+		 * live check). This grid stays available as an ADVANCED editor (the
+		 * "Advanced custom rules" flag) for shapes the Wizard does not build,
+		 * e.g. the same source through two different exits. */
+		if (modeNow === 'proxy_banned_ru' && advOn) {
 		s.tab('ru_rules', _('Routing Rules'));
 		o = s.taboption('ru_rules', form.SectionValue, '_ru_rules', form.TypedSection, 'proxy_ru_rule');
 		o.depends({'routing_mode': 'proxy_banned_ru'});
+		o.depends({'routing_mode': 'proxy_banned_ru', 'show_advanced_rules': '1'});
 
 		ss = o.subsection;
 		ss.addremove = true;
@@ -1175,8 +1192,10 @@ return view.extend({
 		so.depends('node', 'urltest');
 		so.modalonly = true;
 		/* RU Proxy Rules end */
+		}
 
 		/* Routing nodes start */
+		if (modeNow === 'custom' || (modeNow === 'proxy_banned_ru' && advOn)) {
 		s.tab('routing_node', _('Routing Nodes'));
 		o = s.taboption('routing_node', form.SectionValue, '_routing_node', form.GridSection, 'routing_node');
 		o.depends('routing_mode', 'custom');
@@ -1369,8 +1388,10 @@ return view.extend({
 		so.depends('node', 'urltest');
 		so.modalonly = true;
 		/* Routing nodes end */
+		}
 
 		/* Routing rules start */
+		if (modeNow === 'custom' || (modeNow === 'proxy_banned_ru' && advOn)) {
 		s.tab('routing_rule', _('Custom Rules'));
 		o = s.taboption('routing_rule', form.SectionValue, '_routing_rule', form.GridSection, 'routing_rule');
 		o.depends('routing_mode', 'custom');
@@ -1709,8 +1730,10 @@ return view.extend({
 			_('Match process path using regular expression.'));
 		so.modalonly = true;
 		/* Routing rules end */
+		}
 
 		/* DNS settings start */
+		if (modeNow === 'custom') {
 		s.tab('dns', _('DNS Settings'));
 		o = s.taboption('dns', form.SectionValue, '_dns', form.NamedSection, 'dns', 'homeproxy');
 		o.depends('routing_mode', 'custom');
@@ -1767,8 +1790,10 @@ return view.extend({
 		so.datatype = 'uinteger';
 		so.depends('cache_file_store_rdrc', '1');
 		/* DNS settings end */
+		}
 
 		/* DNS servers start */
+		if (modeNow === 'custom') {
 		s.tab('dns_server', _('DNS Servers'));
 		o = s.taboption('dns_server', form.SectionValue, '_dns_server', form.GridSection, 'dns_server');
 		o.depends('routing_mode', 'custom');
@@ -1890,8 +1915,10 @@ return view.extend({
 		so.rmempty = false;
 		so.editable = true;
 		/* DNS servers end */
+		}
 
 		/* DNS rules start */
+		if (modeNow === 'custom') {
 		s.tab('dns_rule', _('DNS Rules'));
 		o = s.taboption('dns_rule', form.SectionValue, '_dns_rule', form.GridSection, 'dns_rule');
 		o.depends('routing_mode', 'custom');
@@ -2159,9 +2186,11 @@ return view.extend({
 			_('Match process path using regular expression.'));
 		so.modalonly = true;
 		/* DNS rules end */
+		}
 		/* Custom routing settings end */
 
 		/* Rule set settings start */
+		if (modeNow === 'custom') {
 		s.tab('ruleset', _('Rule set'));
 		o = s.taboption('ruleset', form.SectionValue, '_ruleset', form.GridSection, 'ruleset');
 		o.depends('routing_mode', 'custom');
@@ -2248,155 +2277,13 @@ return view.extend({
 		so.placeholder = '1d';
 		so.depends('type', 'remote');
 		/* Rule set settings end */
-
-		/* ACL settings start */
-		s.tab('control', _('Access Control'));
-
-		o = s.taboption('control', form.SectionValue, '_control', form.NamedSection, 'control', 'homeproxy');
-		ss = o.subsection;
-
-		/* LAN IP policy start */
-		ss.tab('lan_ip_policy', _('LAN IP Policy'));
-
-		so = ss.taboption('lan_ip_policy', form.ListValue, 'lan_proxy_mode', _('Proxy mode for devices'));
-		so.value('disabled', _('Disable'));
-		so.value('listed_only', _('Proxy listed only'));
-		so.value('except_listed', _('Proxy all except listed'));
-		so.default = 'disabled';
-		so.rmempty = false;
-
-		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_direct_ipv4_ips', _('Direct IPv4 IP-s'), null, 'ipv4', hosts, true);
-		so.depends('lan_proxy_mode', 'except_listed');
-
-		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_direct_ipv6_ips', _('Direct IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends({'lan_proxy_mode': 'except_listed', 'homeproxy.config.ipv6_support': '1'});
-
-		so = fwtool.addMACOption(ss, 'lan_ip_policy', 'lan_direct_mac_addrs', _('Direct MAC-s'), null, hosts);
-		so.depends('lan_proxy_mode', 'except_listed');
-
-		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_proxy_ipv4_ips', _('Proxy IPv4 IP-s'), null, 'ipv4', hosts, true);
-		so.depends('lan_proxy_mode', 'listed_only');
-
-		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_proxy_ipv6_ips', _('Proxy IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends({'lan_proxy_mode': 'listed_only', 'homeproxy.config.ipv6_support': '1'});
-
-		so = fwtool.addMACOption(ss, 'lan_ip_policy', 'lan_proxy_mac_addrs', _('Proxy MAC-s'), null, hosts);
-		so.depends('lan_proxy_mode', 'listed_only');
-
-		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_gaming_mode_ipv4_ips', _('Gaming mode IPv4 IP-s'), _('In gaming mode, only TCP traffic from the selected device is proxied.'), 'ipv4', hosts, true);
-
-		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_gaming_mode_ipv6_ips', _('Gaming mode IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends('homeproxy.config.ipv6_support', '1');
-
-		so = fwtool.addMACOption(ss, 'lan_ip_policy', 'lan_gaming_mode_mac_addrs', _('Gaming mode MAC-s'), null, hosts);
-
-		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_global_proxy_ipv4_ips', _('Global proxy IPv4 IP-s'), _('In global proxy mode, all traffic from the selected device goes through the proxy.'), 'ipv4', hosts, true);
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
-
-		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_global_proxy_ipv6_ips', _('Global proxy IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends({'homeproxy.config.routing_mode': /^((?!custom).)+$/, 'homeproxy.config.ipv6_support': '1'});
-
-		so = fwtool.addMACOption(ss, 'lan_ip_policy', 'lan_global_proxy_mac_addrs', _('Global proxy MAC-s'), null, hosts);
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
-		/* LAN IP policy end */
-
-		/* WAN IP policy start */
-		ss.tab('wan_ip_policy', _('WAN IP Policy'));
-
-		so = ss.taboption('wan_ip_policy', form.DynamicList, 'wan_proxy_ipv4_ips', _('Proxy IPv4 IP-s'));
-		so.datatype = 'or(ip4addr, cidr4)';
-
-		so = ss.taboption('wan_ip_policy', form.DynamicList, 'wan_proxy_ipv6_ips', _('Proxy IPv6 IP-s'));
-		so.datatype = 'or(ip6addr, cidr6)';
-		so.depends('homeproxy.config.ipv6_support', '1');
-
-		so = ss.taboption('wan_ip_policy', form.DynamicList, 'wan_direct_ipv4_ips', _('Direct IPv4 IP-s'));
-		so.datatype = 'or(ip4addr, cidr4)';
-
-		so = ss.taboption('wan_ip_policy', form.DynamicList, 'wan_direct_ipv6_ips', _('Direct IPv6 IP-s'));
-		so.datatype = 'or(ip6addr, cidr6)';
-		so.depends('homeproxy.config.ipv6_support', '1');
-		/* WAN IP policy end */
-
-		/* Proxy domain list start */
-		ss.tab('proxy_domain_list', _('Proxy Domain List'));
-
-		so = ss.taboption('proxy_domain_list', form.TextValue, '_proxy_domain_list');
-		so.rows = 10;
-		so.monospace = true;
-		so.datatype = 'hostname';
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
-		so.load = function(/* ... */) {
-			return L.resolveDefault(callReadDomainList('proxy_list'), {}).then((res) => {
-				return res.content ?? null;
-			});
 		}
-		so.write = function(_section_id, value) {
-			return callWriteDomainList('proxy_list', value);
-		}
-		so.remove = function(/* ... */) {
-			/* Outside custom mode the widget is not rendered, so save() calls
-			 * remove() — it must NOT wipe the list file: combined with the
-			 * silent-save on mode change, one accidental click destroyed a
-			 * hand-curated proxy_list/direct_list with no confirmation. */
-			return true;
-		}
-		so.validate = function(section_id, value) {
-			if (section_id && value)
-				for (let i of value.split('\n'))
-					if (i && !stubValidator.apply('hostname', i))
-						return _('Expecting: %s').format(_('valid hostname'));
 
-			return true;
-		}
-		/* Proxy domain list end */
+		/* ACL settings (Ф7/D6): the device/IP/interface policy moved to its
+		 * own "Devices & interfaces" page (access.js), the proxy/direct
+		 * DOMAIN lists moved to the Routing Wizard (Services → exits) —
+		 * both are routing inputs, and the Wizard is their single editor. */
 
-		/* Direct domain list start */
-		ss.tab('direct_domain_list', _('Direct Domain List'));
-
-		so = ss.taboption('direct_domain_list', form.TextValue, '_direct_domain_list');
-		so.rows = 10;
-		so.monospace = true;
-		so.datatype = 'hostname';
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
-		so.load = function(/* ... */) {
-			return L.resolveDefault(callReadDomainList('direct_list'), {}).then((res) => {
-				return res.content ?? null;
-			});
-		}
-		so.write = function(_section_id, value) {
-			return callWriteDomainList('direct_list', value);
-		}
-		so.remove = function(/* ... */) {
-			/* See the proxy list twin above: never wipe the file from remove(). */
-			return true;
-		}
-		so.validate = function(section_id, value) {
-			if (section_id && value)
-				for (let i of value.split('\n'))
-					if (i && !stubValidator.apply('hostname', i))
-						return _('Expecting: %s').format(_('valid hostname'));
-
-			return true;
-		}
-		/* Direct domain list end */
-
-		/* Interface control start (placed last so it's the last Access Control tab) */
-		ss.tab('interface', _('Interface Control'));
-
-		so = ss.taboption('interface', widgets.DeviceSelect, 'listen_interfaces', _('Listen interfaces'),
-			_('Only process traffic from specific interfaces. Leave empty for all.'));
-		so.multiple = true;
-		so.noaliases = true;
-
-		so = ss.taboption('interface', widgets.DeviceSelect, 'bind_interface', _('Bind interface'),
-			_('Bind outbound traffic to specific interface. Leave empty to auto detect.'));
-		so.multiple = false;
-		so.noaliases = true;
-		/* Interface control end */
-		/* ACL settings end */
-
-		
 		return m.render().then(function(node) {
 			return node;
 		});

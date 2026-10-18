@@ -20,6 +20,73 @@ adds a built-in DPI-bypass based on [Zapret2](https://github.com/bol-van/zapret2
 for un-throttling sites without a VPN, ready-made Russia routing rules, and a one-click core installer — all from the LuCI
 web interface.
 
+## What's new in 2.0
+
+Version 2.0 is a major UX rework of the whole interface (still everything local on the router — no external resources):
+
+- **New Overview (home) page** — status cards for every subsystem (core, active node, routing mode, Zapret/ByeDPI with the
+  live strategy name and NFQUEUE counters, MultiDNS pools, Automation, Telegram), inline-SVG performance charts
+  (CPU / RAM / temperature / connections / node delay / learned-records growth) with auto-scaled axes, system parameters
+  and quick actions (restart service, snapshot, emergency "restore internet (direct)"). Everything is served locally —
+  the page never queries external resources on its own; update availability is checked on demand.
+- **Routing Wizard (center of the app)** — an interactive hub in four tabs:
+  - *Provider diagnostics* — probes YouTube, Discord, Telegram, Google AI, OpenAI, X, Instagram and more through your
+    **real paths**: directly, via the main node, and via your **configured routing** (rules, learned lists, Zapret/ByeDPI
+    desync) — the way LAN clients are actually served. A redirect chain reset mid-way is not a success; verdicts are
+    rc-aware and geo-aware (Gemini "something went wrong" is caught). Per-resource verdicts, DNS comparison and a
+    "Configured" column resolve which rule already covers each resource.
+  - *Services → exits* — pick an exit for each service (Main node / a specific node / URLTest / Zapret / ByeDPI /
+    Direct); the Wizard maintains one routing rule per service (the same records as the manual editor), applies and
+    verifies live in one place. Your own domain lists live here too (advanced).
+  - *DPI bypass* — engine status, strategy picker with the catalog, **Strategy Lab** (quick/full fuzzing of the whole
+    strategy corpus on an isolated NFQUEUE with baseline and majority-of-rounds ranking), catalog import
+    (StressOzz/Zapret-Manager) and a **strategy generator** that derives new mutations from the best fuzz results.
+  - *Advanced* — the Telegram bot panel (see below) and the **Telegram without a proxy** card (TG WS Proxy, below).
+- **Automation engine overview** — the Automation tab shows how the learning engine actually works: cycle/probe counters,
+  engine RAM, learned-records sparkline, verdict breakdown (DPI / DNS-poisoned / stub / refusal / block-page), sources
+  of the last cycle and a live event feed.
+- **Telegram bot v2** — HTML messages with inline keyboards: /status, /nodes, /switch N (switches the exit without a
+  restart), /service, /snapshot, /status_engine, /mute, plus push notifications about Hot Swap node changes, dead URLTest
+  nodes, automation learning and service faults (dedup + rate-limit, every toggle configurable in the UI). The bot
+  daemon runs always-on and hot-reloads its settings — saving never restarts the service.
+- **Telegram without a proxy (TG WS Proxy)** — optional third-party bridge ([tg-ws-proxy-rs](https://github.com/valnesfjord/tg-ws-proxy-rs))
+  that carries Telegram traffic over a WebSocket path DPI does not block. The Wizard detects an existing install, can
+  run the component's `--check` self-diagnostics, shows the `tg://` connect link and can install/update it with the
+  component's official installer — detection is read-only, the app never packs or edits the third-party component.
+- **Devices & interfaces page** — per-device proxy policy for the LAN, upstream IP policy for the WAN and interface
+  binding, separated from the client settings; domain lists moved into the Wizard, empty tabs are gated by mode.
+- **nfqws2 multi-strategies** — a single nfqws2 process can run several profiles, each with its own `--hostlist`
+  (e.g. a dedicated YouTube profile plus a general fallback); two such composite strategies ship in the corpus.
+- **Snapshots & recovery, Hot Swap, MultiDNS** — carried over and verified (a snapshot copies the app configuration and
+  the routing lists; Hot Swap keeps hot standbys verified with real probes and switches without a core restart; MultiDNS
+  races every query across the pool and prunes dead servers).
+
+## Screenshots
+
+![Overview](docs/img/overview.png)
+*Overview: subsystem cards, local SVG charts, system parameters, quick actions.*
+
+![Wizard — DPI bypass & Strategy Lab](docs/img/wizard_dpi.png)
+*Routing Wizard — DPI bypass: engine status, strategy catalog, fuzzing on an isolated queue.*
+
+![Wizard — Telegram bot & TG WS Proxy](docs/img/wizard_advanced.png)
+*Routing Wizard — Advanced: Telegram bot v2 panel and the Telegram-without-a-proxy card.*
+
+![Automation — engine overview](docs/img/automation_engine.png)
+*Automation: learning-engine overview with sparklines and a live event feed.*
+
+## Safety & privacy
+
+- **LAN-only by design** — the app does not open any port to the WAN. The optional tg-ws-proxy-rs component does not
+  open WAN ports either (per its own README); nothing in this app exposes your router to the internet.
+- **Only upstream-signed binaries** — cores and DPI engines are fetched from their own official releases (signed apk
+  keys for hiddify-core/ByeDPI and zapret2). The app itself is built by GitHub CI from this repository.
+- **Third-party components stay third-party** — tg-ws-proxy-rs (if you install it) keeps its own LuCI page and its own
+  configuration; the Wizard only detects it, shows its status and builds the `tg://` link. Nothing is repacked into this
+  app's packages.
+- Port ranges used by the app (diagnostic inbounds 5336/5337, MultiDNS listeners, metrics) are checked for collisions
+  with third-party components before any integration card reports a working state.
+
 ## AutoMod modifications
 
 This mod adds the following on top of the original Re-HomeProxy app:
@@ -48,12 +115,11 @@ This mod adds the following on top of the original Re-HomeProxy app:
   a whole probe wave into one HTTP/2-capable process instead of many shell workers, and **sni_sniffer** captures TLS
   ClientHello names continuously with a kernel packet filter instead of tcpdump. Without them everything falls back to
   the classic methods automatically.
-- **Geo-aware exit for geo-sensitive services (Gemini etc.)** — the engine scans every proxy node in the background
-  (exit country/ASN plus the real geo verdicts of the Google AI and OpenAI edge checks) and keeps the geo hosts on a node
-  whose exit passes those checks, re-homing automatically when a service starts refusing the current exit. Any passing
-  node can be pinned manually with the 📌 button in the Overview table — the pin survives reboots and is kept while the
-  node still passes; "Unpin (auto)" hands control back to the engine. Geo service rows in the engine table self-heal and
-  always display their "Geo (proxied)" status with dates.
+- **Per-service exits (Services → exits in the Wizard)** — Google AI / Gemini, YouTube, Discord, Telegram and other
+  services are routed by explicit routing rules you configure in the Wizard: pick an exit per service (a specific node,
+  URLTest, Zapret/ByeDPI or direct), apply and verify live with the AI-exit region check (the Wizard warns when an
+  exit's country/IP will be refused by Google AI). No hidden hardcoded lists — the same `proxy_ru_rule` records as the
+  manual editor, so both views always agree.
 - **DNS Settings page** — every DNS setting in one menu: server pools (plain "Russia" 🔓 + encrypted "Secure" 🔒),
   reserve DNS for setups without MultiDNS, and the **MultiDNS** engine with a live quality monitor.
 - **MultiDNS (mosdns engine)** — a DNS accelerator: every query is raced in parallel across all servers of the pool,
@@ -178,6 +244,13 @@ that fits your storage:
   optional Discord-voice desync.
 - **Re:HomeProxy AutoMod** *(the app itself)* — see *Updating the app*; update in place from this tab.
 
+#### 3. Install the Russian language pack (optional)
+
+```sh
+wget -O /tmp/luci-i18n-homeproxy-ru.apk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/re-homeproxy/releases' | grep -o 'https://github\.com/[^"]*luci-i18n-homeproxy-ru[^"]*\.apk' | head -1)"
+apk add /tmp/luci-i18n-homeproxy-ru.apk
+```
+
 ### OpenWRT 24.10 (opkg)
 
 #### 1. Install *luci-app-re-homeproxy* package
@@ -263,7 +336,11 @@ You do **not** need the SSH console to update Re:HomeProxy AutoMod:
 
 ## Versioning & Releases
 
-- **Version scheme:** semantic `X.Y.Z` (e.g. `1.0.0`).
+- **Version scheme:** semantic `X.Y.Z` (e.g. `2.0.0`). The GitHub release tag is `vX.Y.Z` and matches the app's
+  `PKG_VERSION`; the in-app self-update compares your installed version against the latest release tag.
+- **Current release: [2.0.0](../../releases/tag/v2.0.0)** — the v2 interface rework (Overview, Routing Wizard,
+  Automation engine overview, Telegram bot v2, TG WS Proxy card, Devices & interfaces, nfqws2 multi-strategies,
+  provider-scan v2 with the LIVE configured-path probe). Requires OpenWrt / ImmortalWrt 25.12+ (apk).
 
 ## Documentation
 
@@ -298,6 +375,10 @@ fetched at install time from their own releases and remain under their own licen
 **DPI-bypass engines**
 - [hufrea/byedpi](https://github.com/hufrea/byedpi) — the ByeDPI (`ciadpi`) desync engine; OpenWrt packages by [1andrevich/ByeDPI-OpenWrt](https://github.com/1andrevich/ByeDPI-OpenWrt)
 - [bol-van/zapret2](https://github.com/bol-van/zapret2) — the Zapret / nfqws2 / blockcheck2 packet desync engine; OpenWrt packages by [1andrevich/zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt); some strategy presets adapted from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT)
+- [StressOzz/Zapret-Manager](https://github.com/StressOzz/Zapret-Manager) — the strategy catalog imported by the Wizard's DPI section (converted to nfqws2 args and re-tested on the router)
+
+**Optional third-party component**
+- [valnesfjord/tg-ws-proxy-rs](https://github.com/valnesfjord/tg-ws-proxy-rs) (MIT) — the "Telegram without a proxy" MTProto-over-WebSocket bridge; installed only by the user's explicit action with the component's own official installer, detected read-only by the Wizard, never packed into this app
 
 **Protocols** — implemented by the cores above (see [Supported Protocols](../../wiki/Supported-Protocols-en)):
 

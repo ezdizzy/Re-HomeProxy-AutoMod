@@ -774,6 +774,153 @@ function hp_corpus_write(corpus) {
 	system(`mv -f ${shellquote(f + '.tmp')} ${shellquote(f)}`);
 }
 
+/* ── TG WS Proxy (D8, Ф7) ────────────────────────────────────────────────
+ * Third-party Telegram bridges (valnesfjord/tg-ws-proxy-rs as the primary
+ * variant, the d0mhate Go manager as an alternative) — detected READ-ONLY.
+ * The Wizard never edits a foreign package's UCI, never packs the binary
+ * and never opens a WAN port; the component's own LuCI page stays the
+ * single configuration point. Our own listening ports are listed so the UI
+ * can warn about a port collision. */
+
+const HP_OUR_PORTS = [ 5330, 5333, 5336, 5337, 5338, 5453, 5454, 9090 ];
+
+function hp_tgwsp_ps_text() {
+	const fd = popen('ps w 2>/dev/null');
+	if (!fd) return '';
+	const out = fd.read('all') || '';
+	fd.close();
+	return out;
+}
+
+/* True when a ps line matches `needle` but not `exclude` (lesson 58: ps w +
+ * match, pidof does not match script interpreters; the --check probe run of
+ * the same binary must not read as the running service). */
+function hp_tgwsp_running(ps, needle, exclude) {
+	for (let l in split(ps, '\n')) {
+		if (index(l, needle) < 0)
+			continue;
+		if (exclude && index(l, exclude) >= 0)
+			continue;
+		return true;
+	}
+	return false;
+}
+
+/* TCP LISTEN ports from netstat (the first port on each line is the local
+ * one; UDP listeners are meaningless per lesson 25). */
+function hp_tgwsp_listening_ports() {
+	const ports = [];
+	const fd = popen('netstat -tln 2>/dev/null');
+	if (!fd) return ports;
+	const out = fd.read('all') || '';
+	fd.close();
+	for (let l in split(out, '\n')) {
+		const m = match(l, /:([0-9]{1,5})[[:space:]]/);
+		if (!m) continue;
+		const p = int(m[1]);
+		if (index(ports, p) < 0)
+			push(ports, p);
+	}
+	return ports;
+}
+
+/* Version of the rs binary, cached by file mtime+size — the status RPC is
+ * polled every few seconds, a process spawn per poll is too heavy. */
+function hp_tgwsp_rs_version(bin) {
+	let mtime = null, size = null;
+	try {
+		const st = lstat(bin);
+		if (st) { mtime = st.mtime; size = st.size; }
+	} catch (e) {}
+	if (mtime == null) return null;
+	let cache = null;
+	if (access(RUN_DIR + '/tgwsp_ver.json')) {
+		try { cache = json(readfile(RUN_DIR + '/tgwsp_ver.json') || ''); } catch (e) { cache = null; }
+	}
+	if (cache && cache.mtime === mtime && cache.size === size && cache.ver)
+		return '' + cache.ver;
+	const fd = popen(shellquote(bin) + ' --version 2>/dev/null');
+	if (!fd) return null;
+	const ver = trim(fd.read('all') || '');
+	fd.close();
+	if (length(ver)) {
+		writefile(RUN_DIR + '/tgwsp_ver.json', sprintf('%.J', {
+			mtime: mtime, size: size, ver: ver
+		}) + '\n');
+		return ver;
+	}
+	return null;
+}
+
+function hp_tgwsp_status_file(path) {
+	if (!access(path)) return null;
+	try { return json(readfile(path) || ''); } catch (e) { return null; }
+}
+
+function hp_tgwsp_detect() {
+	const out = {
+		rs: { present: false, integration: false, running: false, enabled: false,
+			port: null, listening: false, faketls: '', version: null },
+		go: { present: false, manager: false, running: false, port: null, listening: false },
+		conflict: false,
+		our_ports: HP_OUR_PORTS,
+		lan: ''
+	};
+	const c = cursor();
+	/* LAN address for the advertised tg:// link (strip a /24 suffix). The
+	 * network.lan.ipaddr option is a LIST on OpenWrt 25.12 — take item 0. */
+	let lanv = c.get('network', 'lan', 'ipaddr');
+	if (type(lanv) === 'array' && length(lanv))
+		lanv = lanv[0];
+	let lan = trim('' + (lanv || ''));
+	const sl = match(lan, /^([0-9.]+)\//);
+	if (sl) lan = sl[1];
+	out.lan = (length(lan) && match(lan, /^[0-9.]+$/)) ? lan : '';
+
+	const ps = hp_tgwsp_ps_text();
+	const ports = hp_tgwsp_listening_ports();
+
+	/* rs variant — every installed path carries the -rs suffix (an upstream
+	 * unsuffixed tg-ws-proxy package is NOT ours to claim). */
+	if (access('/usr/bin/tg-ws-proxy-rs')) {
+		out.rs.present = true;
+		out.rs.version = hp_tgwsp_rs_version('/usr/bin/tg-ws-proxy-rs');
+		out.rs.running = hp_tgwsp_running(ps, 'tg-ws-proxy-rs', '--check');
+		out.rs.integration = access('/etc/init.d/tg-ws-proxy-rs') ? true : false;
+		/* Foreign UCI — READ-ONLY peek for port/state/link facts. */
+		const o = c.get_all('tg-ws-proxy-rs', 'main');
+		if (o && type(o) === 'object') {
+			out.rs.enabled = (trim('' + (o.enabled || '')) === '1');
+			const port = int('' + (o.port || '1443'));
+			if (port > 0) out.rs.port = port;
+			const ft = trim('' + (o.listen_faketls_domain || o.faketls_domain || ''));
+			if (length(ft)) out.rs.faketls = ft;
+		}
+	}
+	if (out.rs.port) {
+		out.rs.listening = index(ports, out.rs.port) >= 0;
+		if (index(HP_OUR_PORTS, out.rs.port) >= 0)
+			out.conflict = true;
+	}
+
+	/* Go manager variant (d0mhate): its own tgm manager, SOCKS5/MTProto. */
+	if (access('/usr/bin/tg-ws-proxy-go') || access('/usr/bin/tgm') ||
+	    index(ps, 'tg-ws-proxy-go') >= 0) {
+		out.go.present = true;
+		out.go.manager = access('/usr/bin/tgm') ? true : false;
+		out.go.running = hp_tgwsp_running(ps, 'tg-ws-proxy-go', null);
+		for (let gp in [ 2080, 1080, 1443 ])
+			if (index(ports, gp) >= 0) { out.go.port = gp; break; }
+	}
+	if (out.go.port) {
+		out.go.listening = true;
+		if (index(HP_OUR_PORTS, out.go.port) >= 0)
+			out.conflict = true;
+	}
+	return out;
+}
+
+
 const methods = {
 	acllist_read: {
 		args: { type: 'type' },
@@ -3273,7 +3420,19 @@ const methods = {
 			if (access(rs)) {
 				try { result = json(readfile(rs) || ''); } catch (e) { result = null; }
 			}
-			return { status: status, result: result };
+			/* Per-service configured rule (proxy_ru_rule keyed by source) —
+			 * the same records the manual editor and the Wizard presets
+			 * write; the diagnostics table shows what already covers each
+			 * resource (D6: no guessing in the UI). */
+			const rules = {};
+			const c = cursor();
+			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+				const src = '' + (s.source || '');
+				if (!length(src) || rules[src]) return;
+				rules[src] = { enabled: (s.enabled !== '0'), node: ('' + (s.node || 'main-out')) };
+			});
+			return { status: status, result: result, rules: rules,
+				routing_mode: ('' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru')) };
 		}
 	},
 
@@ -3589,6 +3748,14 @@ const methods = {
 			const bopts = trim('' + (c.get('homeproxy', 'config', 'byedpi_cmd_opts') || ''));
 			/* Corpus meta: counts per group + file mtime (import freshness). */
 			const corpus = hp_corpus_read();
+			/* Human strategy name: the corpus entry whose args match the
+			 * running zapret_cmd_opts (the tile shows the name, the raw args
+			 * stay in the tooltip). */
+			let zname = null;
+			if (length(zstrat)) {
+				for (let x in corpus.candidates)
+					if (type(x) === 'object' && x.args === zstrat) { zname = '' + x.name; break; }
+			}
 			const groups = {};
 			for (let x in corpus.candidates)
 				if (type(x) === 'object')
@@ -3618,6 +3785,7 @@ const methods = {
 					installed: access('/opt/zapret2/nfq2/nfqws2'),
 					running: hp_proc_running('nfqws2'),
 					strategy: zstrat,
+					strategy_name: zname,
 					nfqueue: hp_zapret_queue_counters()
 				},
 				byedpi: {
@@ -3674,6 +3842,107 @@ const methods = {
 				try { preview = json(readfile(RUN_DIR + '/wizard_strategies_preview.json') || ''); } catch (e) {}
 			}
 			return { status: status, preview: preview };
+		}
+	},
+
+	/* ── D8: TG WS Proxy («Telegram без прокси») ────────────────────────────
+	 * Detection is cheap and READ-ONLY; the check and the installation spawn
+	 * the background runner wizard_tgwsp.uc (mode file, statuses in
+	 * /var/run/homeproxy/tgwsp_*.json). One operation at a time, staleness
+	 * guards like the provider scan. */
+	wizard_tgwsp_status: {
+		call: function(req) {
+			const det = hp_tgwsp_detect();
+			return {
+				result: true,
+				rs: det.rs,
+				go: det.go,
+				conflict: det.conflict,
+				our_ports: det.our_ports,
+				lan: det.lan,
+				check: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_check.json'),
+				install: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_install.json'),
+				logs: {
+					check: length(readfile(RUN_DIR + '/tgwsp_check.log') || ''),
+					install: length(readfile(RUN_DIR + '/tgwsp_install.log') || '')
+				}
+			};
+		}
+	},
+
+	wizard_tgwsp_check: {
+		call: function(req) {
+			if (!access('/usr/bin/tg-ws-proxy-rs'))
+				return { result: false, error: 'tg-ws-proxy-rs is not installed' };
+			const st = RUN_DIR + '/tgwsp_check.json';
+			let prev = hp_tgwsp_status_file(st);
+			if (prev && prev.running && (time() - int(prev.ts || 0) < 600))
+				return { result: false, error: 'a check is already in progress' };
+			writefile(RUN_DIR + '/tgwsp_mode.txt', 'check\n');
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_tgwsp.uc')} >/dev/null 2>&1 &`);
+			return { result: true };
+		}
+	},
+
+	/* Runs the OFFICIAL installer of valnesfjord/tg-ws-proxy-rs (it verifies
+	 * the release artifacts against the SHA-256 digests of the GitHub release
+	 * API). Re-running it upgrades. Deliberate action with a UI confirm —
+	 * third-party component. */
+	wizard_tgwsp_install: {
+		call: function(req) {
+			const st = RUN_DIR + '/tgwsp_install.json';
+			let prev = hp_tgwsp_status_file(st);
+			if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
+				return { result: false, error: 'an installation is already in progress' };
+			writefile(RUN_DIR + '/tgwsp_mode.txt', 'install\n');
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_tgwsp.uc')} >/dev/null 2>&1 &`);
+			return { result: true };
+		}
+	},
+
+	/* The tg:// link is built ON DEMAND (D6): the MTProto secret lives in the
+	 * foreign package's UCI and must not ride the 4-second status poll. The
+	 * classic dd-link works even when the component advertises a FakeTLS
+	 * (ee) link — that link is printed by the component itself. */
+	wizard_tgwsp_link: {
+		call: function(req) {
+			if (!access('/usr/bin/tg-ws-proxy-rs'))
+				return { result: false, error: 'tg-ws-proxy-rs is not installed' };
+			const c = cursor();
+			const o = c.get_all('tg-ws-proxy-rs', 'main');
+			if (!o || type(o) !== 'object')
+				return { result: false, error: 'the component configuration was not found' };
+			const port = trim('' + (o.port || '1443'));
+			const secrets = [];
+			const sv = o.secret;
+			if (type(sv) === 'array') {
+				for (let s in sv)
+					if (length(trim('' + sv[s])))
+						push(secrets, trim('' + sv[s]));
+			} else if (sv && length(trim('' + sv))) {
+				push(secrets, trim('' + sv));
+			}
+			if (!length(secrets))
+				return { result: false, error: 'no secret in the component configuration' };
+			/* Advertised address: the component's link_ip (if set) or the LAN ip. */
+			let server = trim('' + (o.link_ip || ''));
+			const sl = match(server, /^([0-9.]+)\//);
+			if (sl) server = sl[1];
+			if (!length(server) || !match(server, /^[0-9.]+$/)) {
+				let lanv = c.get('network', 'lan', 'ipaddr');
+				if (type(lanv) === 'array' && length(lanv))
+					lanv = lanv[0];
+				server = trim('' + (lanv || ''));
+			}
+			const sl2 = match(server, /^([0-9.]+)\//);
+			if (sl2) server = sl2[1];
+			if (!length(server))
+				return { result: false, error: 'no LAN address found' };
+			const links = [];
+			for (let s in secrets)
+				push(links, 'tg://proxy?server=' + server + '&port=' + port +
+					'&secret=dd' + s);
+			return { result: true, links: links, server: server, port: port };
 		}
 	},
 

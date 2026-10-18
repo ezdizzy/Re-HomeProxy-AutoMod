@@ -134,18 +134,16 @@ function fmtK(k) {
 	return k + ' KB';
 }
 
-function shortStrategy(s, n) {
-	s = String(s || '');
-	return (s.length > (n || 60)) ? s.slice(0, n || 60) + '…' : s;
-}
-
 /* ── Inline SVG line chart (client-side, no libraries) ───────────────────── */
 
 /* Draws an area+line chart of points[key] into a 300×84-unit viewBox SVG
  * (scales with the container width). Null values break the line (data
  * missing because the core was down / the source absent at that moment).
- * Fixed `max` when given (CPU/RAM: 0-100), auto-scale otherwise (peak
- * × 1.15). Grid lines at quarters; a static marker on the last point.
+ * Fixed `max` when given (CPU/RAM: 0-100), auto-scale otherwise with a
+ * 35% headroom so the line never rides the top edge (Ф7: the 1.15 factor
+ * put busy charts against the border and read as "maxed out"). Grid lines
+ * at quarters; a static marker on the last point; the effective scale is
+ * reported back via opts.onScale (shown as "max N" under the chart).
  * No animations: the SVG is a static picture re-rendered only when the
  * ring data changes (signature-guarded). */
 function chartSvg(points, key, opts) {
@@ -166,12 +164,14 @@ function chartSvg(points, key, opts) {
 	let max = fixedMax;
 	if (max == null) {
 		let hi = 0;
-		for (let v in vals) {
+		for (let i = 0; i < vals.length; i++) {
+			const v = vals[i];
 			if (v != null && v > hi) hi = v;
 		}
-		max = hi > 0 ? hi * 1.15 : 1;
+		max = hi > 0 ? hi * 1.35 : 1;
 	}
 	if (max <= 0) max = 1;
+	if (opts && opts.onScale) opts.onScale(max);
 
 	const y = (v) => (TOP + (H - TOP - BOT) * (1 - (v / max)));
 	const x = (i, n) => (n > 1 ? (i * W / (n - 1)) : 0);
@@ -260,7 +260,9 @@ return view.extend({
 .ov-chart-num { font-weight: 700; }
 .ov-chart-svg { width: 100%; height: 84px; display: block; margin-top: 2px; border-bottom: 1px solid rgba(128,128,128,.3); }
 .ov-chart-cap { display: flex; justify-content: space-between; font-size: .78em; opacity: .65; margin: 2px 0 0 0; }
+.ov-chart-max { font-size: .74em; opacity: .6; text-align: right; margin: 0; }
 .ov-note { font-size: .88em; opacity: .8; margin: 2px 0 0 0; }
+.ov-num { font-size: 1.22em; line-height: 1.3; word-break: break-word; }
 .ov-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ov-result { margin-top: 8px; }
 .ov-strat { font-family: monospace; font-size: .8em; opacity: .85; word-break: break-all; }
@@ -323,7 +325,8 @@ return view.extend({
 					E('span', { 'class': 'ov-chart-title' }, [ CHART_DEFS[c][1] ]),
 					E('span', { 'class': 'ov-chart-num' }, [ '—' ])
 				]),
-				chartSvg([], CHART_DEFS[c][0], CHART_DEFS[c][2])
+				chartSvg([], CHART_DEFS[c][0], CHART_DEFS[c][2]),
+				E('div', { 'class': 'ov-chart-max' }, [ '' ])
 			]));
 		}
 		const chartsCap = E('div', { 'class': 'ov-chart-cap' }, [
@@ -475,28 +478,39 @@ return view.extend({
 				redirect_tun: _('Redirect TCP + Tun UDP'), tun: _('Tun TCP/UDP') };
 			cards.mode.note.textContent = pmLabels[proxyMode] || proxyMode;
 
-			/* Zapret / ByeDPI (engines, strategy, NFQUEUE counters) */
+			/* Zapret / ByeDPI (engines, strategy, NFQUEUE counters). The raw
+			 * strategy args are a dump nobody should read in a tile (Ф7):
+			 * show the corpus NAME when known ("StressOzz Yv09"), a short
+			 * "custom options" marker otherwise, and keep the full args in
+			 * the tooltip. */
 			const zState = (!z.installed) ? _('not installed') : (!z.enabled) ? _('disabled')
 				: (z.running ? _('running') : _('enabled, not running'));
 			cardNum(cards.zapret, zState, (z.installed && z.enabled) ? (z.running ? 'hpui-c-green' : 'hpui-c-red') : '');
 			const zq = z.nfqueue || {};
-			cards.zapret.note.textContent = (z.enabled && z.strategy)
-				? shortStrategy(z.strategy, 70) +
-				  (z.running ? ' · NFQUEUE: ' + (zq.packets || 0) + ' pkts' : '')
-				: '—';
+			const zName = z.strategy_name ? String(z.strategy_name) :
+				z.strategy ? _('custom options') : null;
+			cards.zapret.note.textContent = (z.enabled && z.running)
+				? ((zName ? zName + ' · ' : '') + 'NFQUEUE: ' + (zq.packets || 0) + ' pkts')
+				: (z.enabled && zName ? zName : '—');
+			cards.zapret.note.setAttribute('title',
+				(z.strategy ? String(z.strategy) + (zq.bytes ? (' · ' + (zq.bytes / 1024).toFixed(0) + ' KB') : '') : ''));
 
 			const bState = (!b.installed) ? _('not installed') : (!b.enabled) ? _('disabled')
 				: (b.running ? _('running') : _('enabled, not running'));
 			cardNum(cards.byedpi, bState, (b.installed && b.enabled) ? (b.running ? 'hpui-c-green' : 'hpui-c-red') : '');
-			cards.byedpi.note.textContent = (b.enabled && b.opts) ? shortStrategy(b.opts, 70) : '—';
+			cards.byedpi.note.textContent = (b.enabled && b.opts) ? _('custom options') : '—';
+			cards.byedpi.note.setAttribute('title', (b.enabled && b.opts) ? String(b.opts) : '');
 
 			/* MultiDNS */
 			const mdEnabled = (mdns && mdns.enabled === '1') || (uci.get('homeproxy', 'multidns', 'enabled') === '1');
 			const mdRunning = !!(mdEnabled && mdns && mdns.mosdns);
 			cardNum(cards.multidns, mdEnabled ? (mdRunning ? _('running') : _('enabled, not running')) : _('disabled'),
 				mdEnabled ? (mdRunning ? 'hpui-c-green' : 'hpui-c-red') : '');
-			const mdServers = (mdEnabled && mdns && mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
-			cards.multidns.note.textContent = mdEnabled ? _('RU servers: %d').format(mdServers) : '—';
+			const mdRu = (mdEnabled && mdns && mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
+			const mdSec = (mdEnabled && mdns && mdns.active && mdns.active.secure) ? mdns.active.secure.length : 0;
+			cards.multidns.note.textContent = mdEnabled
+				? _('RU: %d · Secure: %d').format(mdRu, mdSec)
+				: '—';
 
 			/* Automation */
 			const auEnabled = (uci.get('homeproxy', 'automation', 'enabled') === '1');
@@ -535,7 +549,19 @@ return view.extend({
 			state.chartSig = sig;
 			for (let i = 0; i < CHART_DEFS.length; i++) {
 				const block = chartsEl.children[i];
-				block.replaceChild(chartSvg(points, CHART_DEFS[i][0], CHART_DEFS[i][2]), block.children[1]);
+				const def = CHART_DEFS[i];
+				const maxEl = block.children[2];
+				/* Auto-scaled charts get an honest "max N" caption (the scale
+				 * is peak×1.35); fixed-scale charts (CPU/RAM: 0–100) need no
+				 * label — the % is self-evident. */
+				const opts = Object.assign({}, def[2], {
+					onScale: (mx) => {
+						maxEl.textContent = (def[2].max == null)
+							? _('scale up to %s').format(def[2].fmt(Math.round(mx)))
+							: '';
+					}
+				});
+				block.replaceChild(chartSvg(points, def[0], opts), block.children[1]);
 			}
 			const span = points.length ? points.length * (metrics.interval || 5) : 0;
 			const upd = metrics.updated ? new Date(metrics.updated * 1000) : null;

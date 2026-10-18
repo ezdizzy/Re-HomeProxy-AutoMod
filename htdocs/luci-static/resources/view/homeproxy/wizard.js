@@ -25,8 +25,11 @@
  *   «apply strategy → service rule → live check» chain.
  *   «Дополнительно» (Ф6) — the Telegram bot v2 (settings/status/test via
  *   telegram_status/set/test RPCs; the always-on telegram.uc daemon
- *   hot-reloads UCI, so saving never restarts the service) and, later (Ф7,
- *   D8), the TG WS Proxy card.
+ *   hot-reloads UCI, so saving never restarts the service) and (Ф7, D8)
+ *   the TG WS Proxy card: READ-ONLY detection of the third-party
+ *   tg-ws-proxy-rs bridge (and the d0mhate Go variant), its --check
+ *   self-diagnostics, the official installer (digests verified by the
+ *   installer from the GitHub release API) and the tg:// link.
  *
  * Checks are on-demand (D6 pattern): nothing monitors permanently here —
  * the user runs the diagnostics when they need an answer.
@@ -184,6 +187,50 @@ const callTelegramTest = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Custom domain lists (Ф7/D6): the manual proxy/direct domain lists —
+ * routing inputs the generator merges with the learned lists. Formerly
+ * buried in Client Settings → Access Control; the Wizard is their single
+ * editor now. */
+const callAclListRead = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'acllist_read',
+	params: [ 'type' ],
+	expect: { '': {} }
+});
+
+const callAclListWrite = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'acllist_write',
+	params: [ 'type', 'content' ],
+	expect: { '': {} }
+});
+
+/* ── TG WS Proxy (D8): third-party Telegram bridge — detect/check/install ── */
+
+const callTgwspStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_tgwsp_status',
+	expect: { '': {} }
+});
+
+const callTgwspCheck = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_tgwsp_check',
+	expect: { '': {} }
+});
+
+const callTgwspInstall = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_tgwsp_install',
+	expect: { '': {} }
+});
+
+const callTgwspLink = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_tgwsp_link',
+	expect: { '': {} }
+});
+
 /* Resolve a sing-box outbound tag (cfg-<section>-out) to its UCI label
  * (same logic as diagnostics.js). */
 function resolveTag(tag) {
@@ -202,6 +249,11 @@ function resolveTag(tag) {
 			if (label) return label;
 		}
 	}
+	/* Bare node section id (rules written by the advanced editor store the
+	 * plain section name) — resolve its label, never show a raw cfg-id
+	 * (hotswap.messages_node_names_not_cfg_ids). */
+	const label = tag ? uci.get('homeproxy', String(tag), 'label') : null;
+	if (label) return label;
 	return tag;
 }
 
@@ -306,7 +358,7 @@ return view.extend({
 		});
 
 		panes.diag.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Checks a set of test services (YouTube, Discord, Telegram, Google AI, OpenAI…) through your real paths: DIRECT with a plain-resolver DNS view, and through the Main node. Verdicts tell you what needs a proxy rule, what needs a Zapret/ByeDPI strategy, and what is DNS-poisoned. RU services (rutube, gosuslugi) are control hosts — they must always open directly.') ]));
+			[ _('Checks a set of test services (YouTube, Discord, Telegram, Google AI, OpenAI…) through your real paths: DIRECT with a plain-resolver DNS view, through the Main node, and through your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini "something went wrong") is not either. The "Configured" column shows which rule already covers each resource; RU services (rutube, gosuslugi) are control hosts — they must always open directly.') ]));
 		panes.diag.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ customHosts, startBtn ]));
 		panes.diag.appendChild(scanBanner);
 		panes.diag.appendChild(scanResult);
@@ -320,6 +372,53 @@ return view.extend({
 			[ _('Pick an exit for each service — the Wizard maintains ONE routing rule per service (the same proxy_ru_rule records as the manual editor on the Client Settings page). "Direct" removes the rule: in "Bypass blocking" mode everything unmatched goes directly anyway. After applying, the service restarts once and the check runs automatically — the result appears below, in one place.') ]));
 		panes.services.appendChild(envBanners);
 		panes.services.appendChild(presetRows);
+
+		/* Custom domain lists (Ф7/D6) — collapsed so they do not clutter the
+		 * everyday flow; a save reports into the ONE result area below. */
+		const dListProxy = E('textarea', {
+			'rows': '6', 'spellcheck': 'false',
+			'style': 'width:100%; font-family:monospace; font-size:.85em'
+		});
+		const dListDirect = E('textarea', {
+			'rows': '6', 'spellcheck': 'false',
+			'style': 'width:100%; font-family:monospace; font-size:.85em'
+		});
+		const dListSave = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			[ _('Save domain lists') ]);
+		dListSave.addEventListener('click', function() {
+			dListSave.disabled = true;
+			dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Saving…') ]));
+			Promise.all([
+				L.resolveDefault(callAclListWrite('proxy_list', dListProxy.value || ''), {}),
+				L.resolveDefault(callAclListWrite('direct_list', dListDirect.value || ''), {})
+			]).then(function(res) {
+				const bad = (!res[0] || res[0].result === false || !res[1] || res[1].result === false);
+				dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ bad
+					? _('Saving the domain lists failed.')
+					: _('Domain lists saved — the proxy list merges with the learned records on the next config reload (the service reloads it automatically).') ]));
+			}).finally(function() { dListSave.disabled = false; });
+		});
+		L.resolveDefault(callAclListRead('proxy_list'), {}).then(function(r) {
+			dListProxy.value = (r && r.content) ? String(r.content) : '';
+		});
+		L.resolveDefault(callAclListRead('direct_list'), {}).then(function(r) {
+			dListDirect.value = (r && r.content) ? String(r.content) : '';
+		});
+		panes.services.appendChild(E('details', { style: 'margin:10px 0' }, [
+			E('summary', { style: 'cursor:pointer; font-weight:600' },
+				[ _('Custom domain lists (advanced)') ]),
+			E('p', { 'class': 'hpui-hint' },
+				[ _('One host per line. The proxy list is merged with the engine-learned records (one watched rule-set); the direct list wins over the proxy list for matching domains. These are the manual routing inputs — presets above cover the known services.') ]),
+			E('div', { 'class': 'wiz-row' }, [
+				E('span', { 'class': 'wiz-title' }, [ _('Proxy domains') ]),
+				dListProxy
+			]),
+			E('div', { 'class': 'wiz-row' }, [
+				E('span', { 'class': 'wiz-title' }, [ _('Direct domains') ]),
+				dListDirect
+			]),
+			E('div', { 'class': 'wiz-toolbar' }, [ dListSave ])
+		]));
 		panes.services.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Check results') ]));
 		panes.services.appendChild(checkResult);
 
@@ -499,16 +598,18 @@ return view.extend({
 		panes.extra.appendChild(tgResult);
 		checkTelegram();
 
-		/* ── Badge / text helpers ──────────────────────────────────────── */
+		/* Badge / text helpers ─────────────────────────────────────────── */
 		const badge = (cls, text) => E('span', { 'class': 'hpui-badge ' + cls }, [ text ]);
 
 		const VERDICTS = {
 			opens_direct:   [ 'hpui-b-green', _('Opens directly') ],
+			works_live:     [ 'hpui-b-green', _('Works via the configured path') ],
 			needs_proxy:    [ 'hpui-b-red', _('Needs proxy — create a rule') ],
 			needs_strategy: [ 'hpui-b-amber', _('Needs Zapret/ByeDPI strategy') ],
 			dns_poison:     [ 'hpui-b-amber', _('DNS poisoning (fake answers)') ],
 			geo_blocked:    [ 'hpui-b-red', _('Service refuses the exit node') ],
 			main_path_fail: [ 'hpui-b-red', _('Main path fails (check the node)') ],
+			config_broken:  [ 'hpui-b-amber', _('Configured path fails — check the rule/strategy') ],
 			control_fail:   [ 'hpui-b-red', _('RU site unreachable directly — anomaly') ],
 			down:           [ 'hpui-b-grey', _('Unreachable both ways') ],
 			partial:        [ 'hpui-b-grey', _('Only the main path was measured') ],
@@ -533,14 +634,202 @@ return view.extend({
 			node:      _('Switch to a different node — the service refuses this exit region'),
 			main_path: _('The Main node is not serving this site — check the node'),
 			anomaly:   _('Anomaly: RU services must open directly — check RU-protect / the internet'),
+			config_broken: _('Bare paths work but the configured path does not — check the rule target or run the Strategy Lab'),
+			ai_full:   _('Pages open, but the model request can still be refused by the exit region/IP — run the full check with the "Google AI" button below (Services → exits).'),
 			none:      _('—')
 		};
+
+		/* ── TG WS Proxy card (D8, Ф7): «Telegram без прокси» ─────────────
+		 * Third-party component (valnesfjord/tg-ws-proxy-rs). Detection is
+		 * read-only; the component's own LuCI page stays the configuration
+		 * point. Results of all buttons land in twResult (ONE place). */
+		const twRow = E('div', { 'class': 'wiz-row' });
+		const twResult = E('div', {});
+		let twRsPresent = false;
+		/* Poll-friendly result area: check/install outcomes are shown ONCE
+		 * (per signature) and never clobber a button answer the user is
+		 * reading (ui.action_buttons_result_placement). */
+		const twState = { insSig: null, ckSig: null, manual: false, seeded: false };
+		const twCheckBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Check now') ]);
+		const twLinkBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Show tg:// link') ]);
+		const twInstallBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			[ _('Install / update') ]);
+
+		function renderTgwsp(st) {
+			st = st || {};
+			const rs = st.rs || {}, go = st.go || {}, ck = st.check || {}, ins = st.install || {};
+			twRsPresent = !!rs.present;
+			const parts = [];
+			if (rs.present) {
+				const ver = rs.version ? String(rs.version).trim().split(' ').pop() : '';
+				parts.push(badge('hpui-b-green', 'tg-ws-proxy-rs' + (ver ? ' ' + ver : '')));
+				parts.push(rs.running
+					? badge('hpui-b-blue', _('running'))
+					: badge('hpui-b-grey', _('stopped')));
+				if (rs.port)
+					parts.push(E('span', { 'style': 'opacity:.8' },
+						[ _('Port') + ' ' + String(rs.port) + (rs.listening ? ' ✓' : ' · ' + _('not listening')) ]));
+				if (rs.faketls)
+					parts.push(E('span', { 'style': 'opacity:.8' }, [ 'FakeTLS: ' + String(rs.faketls) ]));
+			} else {
+				parts.push(E('span', { 'style': 'opacity:.7' }, [ _('tg-ws-proxy-rs is not installed') ]));
+			}
+			if (go.present)
+				parts.push(badge('hpui-b-amber',
+					_('variant 2 (Go manager) detected — managed by its own tgm tool')));
+			if (st.conflict)
+				parts.push(badge('hpui-b-red',
+					_('the port collides with the app ports (%s)').format((st.our_ports || []).join(', '))));
+			if (ins.running)
+				parts.push(badge('hpui-b-amber', _('installer running (%s)…').format(ins.stage || '')));
+			else if (ck.running)
+				parts.push(badge('hpui-b-amber', _('Checking...')));
+			dom.content(twRow, E('span', {}, parts));
+			/* First render seeds the signatures: operations already finished
+			 * before this page opened are old news, the status line already
+			 * shows their outcome, never surface them as fresh results. */
+			if (!twState.seeded) {
+				twState.seeded = true;
+				if (!ins.running && ins.stage && ins.stage !== 'fetch')
+					twState.insSig = 'i' + ins.stage + ':' + (ins.rc == null ? '' : ins.rc) + ':' + (ins.error || '');
+				if (!ck.running && ck.stage === 'done')
+					twState.ckSig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
+				else if (!ck.running && ck.stage === 'error')
+					twState.ckSig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc);
+			}
+			/* Finished operations — report ONCE per signature, and never
+			 * overwrite a button answer the user is currently reading. */
+			if (ins.running || ck.running)
+				twState.manual = false;
+			if (!ins.running && ins.stage && ins.stage !== 'fetch') {
+				const sig = 'i' + ins.stage + ':' + (ins.rc == null ? '' : ins.rc) + ':' + (ins.error || '');
+				if (sig !== twState.insSig) {
+					twState.insSig = sig;
+					if (!twState.manual) {
+						twState.manual = true;
+						if (ins.stage === 'done')
+							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Installation finished — the status line above reflects the new state.') ]));
+						else
+							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Installation failed (see /var/run/homeproxy/tgwsp_install.log on the router).') ]));
+					}
+				}
+			}
+			if (!ck.running && ck.stage === 'done') {
+				const sig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
+				if (sig !== twState.ckSig) {
+					twState.ckSig = sig;
+					if (!twState.manual) {
+						twState.manual = true;
+						if ((ck.ok || 0) === 0 && (ck.fail || 0) === 0)
+							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Nothing to check yet — add CF domains or an upstream on the component\'s own page, then run the check again.') ]));
+						else
+							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Check finished: %d OK, %d FAIL (exit code %d).').format(ck.ok || 0, ck.fail || 0, ck.rc || 0) ]));
+					}
+				}
+			} else if (!ck.running && ck.stage === 'error') {
+				const sig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc);
+				if (sig !== twState.ckSig) {
+					twState.ckSig = sig;
+					if (!twState.manual)
+						dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Check failed (exit code %s — see /var/run/homeproxy/tgwsp_check.log on the router).').format(String(ck.rc || '?')) ]));
+				}
+			}
+		}
+
+		twCheckBtn.addEventListener('click', function() {
+			twCheckBtn.disabled = true;
+			twState.ckSig = null;
+			twState.manual = false;
+			L.resolveDefault(callTgwspCheck(), {}).then(function(r) {
+				if (!r || r.result === false)
+					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Check failed to start: ') + ((r && r.error) || _('rpc error')) ]));
+				else
+					dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Checking...') ]));
+				return refresh();
+			}).finally(function() { twCheckBtn.disabled = false; });
+		});
+
+		twLinkBtn.addEventListener('click', function() {
+			twLinkBtn.disabled = true;
+			L.resolveDefault(callTgwspLink(), {}).then(function(r) {
+				if (!r || r.result === false) {
+					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+						[ _('No link: ') + ((r && r.error) || _('rpc error')) ]));
+					return;
+				}
+				const box = E('div', {});
+				box.appendChild(E('div', { 'class': 'wiz-note' },
+					[ _('Add an MTProto proxy in Telegram with this link (one per user secret):') ]));
+				const links = (r.links || []);
+				for (let i = 0; i < links.length; i++) {
+					const inp = E('input', {
+						'type': 'text', readonly: 'readonly',
+						'style': 'width:100%; margin:4px 0; font-size:.85em',
+						onclick: function() { this.select(); }
+					});
+					inp.value = links[i];
+					box.appendChild(inp);
+				}
+				if ((r.links || []).length === 1 && navigator.clipboard) {
+					const cp = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' },
+						[ _('Copy link') ]);
+					cp.addEventListener('click', function() {
+						navigator.clipboard.writeText(links[0]);
+					});
+					box.appendChild(cp);
+				}
+				if (r.server)
+					box.appendChild(E('div', { 'class': 'wiz-note' },
+						[ _('Server %s, port %s — LAN clients only, nothing is exposed to the WAN.').format(String(r.server), String(r.port || '')) ]));
+				dom.content(twResult, box);
+				twState.manual = true;
+			}).finally(function() { twLinkBtn.disabled = false; });
+		});
+
+		twInstallBtn.addEventListener('click', function() {
+			const warn = twRsPresent
+				? _('Run the OFFICIAL tg-ws-proxy-rs installer again? It upgrades the third-party component (SHA-256 digests are verified from the GitHub release API).')
+				: _('Install the THIRD-PARTY component tg-ws-proxy-rs (valnesfjord, MIT)? The official installer downloads the release binary and its LuCI page and verifies digests from the GitHub release API. Nothing is packed into this app; the configuration stays on the component\'s own page. LAN-only — no WAN port is opened.');
+			if (!window.confirm(warn))
+				return;
+			twInstallBtn.disabled = true;
+			twState.insSig = null;
+			twState.manual = false;
+			dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Downloading and running the official installer…') ]));
+			L.resolveDefault(callTgwspInstall(), {}).then(function(r) {
+				if (!r || r.result === false)
+					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Installation failed to start: ') + ((r && r.error) || _('rpc error')) ]));
+				return refresh();
+			}).finally(function() { twInstallBtn.disabled = false; });
+		});
+
+		const twBtnRow = E('div', { 'class': 'wiz-toolbar' }, [ twCheckBtn, twLinkBtn, twInstallBtn ]);
+
+		/* DOM order: the card lands right after the Telegram bot block. */
+		panes.extra.appendChild(E('h4', { style: 'margin-top:16px' },
+			[ _('Telegram without a proxy (TG WS Proxy)') ]));
+		panes.extra.appendChild(E('p', { 'class': 'hpui-hint' },
+			[ _('A THIRD-PARTY local bridge (tg-ws-proxy-rs) that carries Telegram traffic over a WebSocket path DPI does not block — MTProto in, WSS out, with multi-tier fallback. Telegram clients connect by a tg:// link; no VPN and no routing rule is involved. Detection is read-only: the component keeps its own LuCI page and configuration, nothing is packed into this app, and nothing is exposed to the WAN. The Go variant (tgm manager) is recognized as an alternative.') ]));
+		panes.extra.appendChild(twRow);
+		panes.extra.appendChild(twBtnRow);
+		panes.extra.appendChild(twResult);
+
 
 		function probeCell(p) {
 			if (p == null)
 				return E('span', { 'class': 'hpui-b-grey hpui-badge' }, [ _('n/a') ]);
+			const title = ((p.tsec != null) ? (String(p.tsec) + ' s') : '') +
+				(p.kind ? (' · ' + p.kind) : '');
+			const slowHint = p.slow ? (' ' + _('slow %s s').format(String(p.tsec || '?'))) : '';
 			if (p.ok)
-				return badge('hpui-b-green', '✓ ' + (p.code || ''));
+				return E('span', { title: title }, [ badge('hpui-b-green', '✓ ' + (p.code || '')), slowHint ]);
 			const why = p.geo_refused ? _('geo-refused') : (KINDS[p.kind] || (p.kind || 'fail'));
 			return badge('hpui-b-red', '✗ ' + why + ' (' + (p.code || '000') + ')');
 		}
@@ -551,7 +840,8 @@ return view.extend({
 		}
 
 		/* ── Scan rendering ────────────────────────────────────────────── */
-		function renderScan(status, result) {
+		function renderScan(status, result, rules) {
+			rules = rules || {};
 			scanBanner.style.display = (status && status.running) ? 'block' : 'none';
 			if (status && status.running) {
 				scanBanner.textContent = _('Scanning %d of %d…').format(status.done || 0, status.total || 0) +
@@ -577,6 +867,7 @@ return view.extend({
 				E('div', { 'class': 'hpui-cap' }, [ cap ])
 			]);
 			cards.appendChild(mk(s.opens_direct || 0, _('open directly'), 'hpui-c-green'));
+			cards.appendChild(mk(s.works_live || 0, _('work via the configured path'), 'hpui-c-green'));
 			cards.appendChild(mk(s.needs_proxy || 0, _('need a proxy rule'), 'hpui-c-red'));
 			cards.appendChild(mk(s.needs_strategy || 0, _('need a strategy'), 'hpui-c-amber'));
 			cards.appendChild(mk(s.dns_poison || 0, _('DNS-poisoned'), 'hpui-c-amber'));
@@ -590,8 +881,10 @@ return view.extend({
 				E('th', {}, [ _('Resource') ]),
 				E('th', {}, [ _('Direct') ]),
 				E('th', {}, [ _('Via main path') ]),
+				E('th', {}, [ _('Configured path') ]),
 				E('th', {}, [ _('DNS') ]),
 				E('th', {}, [ _('Verdict') ]),
+				E('th', {}, [ _('Configured') ]),
 				E('th', {}, [ _('Recommendation') ])
 			]));
 			const tbody = E('tbody', {});
@@ -602,13 +895,29 @@ return view.extend({
 					: (r.dns_differs
 						? badge('hpui-b-amber', _('differs'))
 						: E('span', { style: 'opacity:.6' }, [ _('same') ]));
-				const rec = (r.recommend && RECOMMEND[r.recommend]) ? RECOMMEND[r.recommend] : '—';
+				/* What already covers this resource (proxy_ru_rule by source).
+				 * The scan's live column shows whether that configured path
+				 * actually delivers it. */
+				const rule = rules[r.svc] || null;
+				const ruleCell = rule
+					? (rule.enabled
+						? badge('hpui-b-blue', '→ ' + nodeText(rule.node))
+						: badge('hpui-b-grey', _('disabled') + ' (→ ' + nodeText(rule.node) + ')'))
+					: E('span', { style: 'opacity:.55' }, [ _('no rule') ]);
+				let rec = (r.recommend && RECOMMEND[r.recommend]) ? RECOMMEND[r.recommend] : '—';
+				/* A rule already covers a "needs proxy" resource — say so. */
+				if (r.verdict === 'needs_proxy' && rule)
+					rec = _('Rule configured (→ %s) — the resource is covered by it.').format(nodeText(rule.node));
+				if (r.verdict === 'needs_strategy' && rule && (rule.node === 'zapret-out' || rule.node === 'byedpi-out'))
+					rec = _('The rule already leads to %s — run the Strategy Lab: the current strategy may not handle this resource.').format(nodeText(rule.node));
 				const tr = E('tr', {}, [
 					E('td', {}, [ E('span', { style: 'font-weight:600' }, [ String(r.host) ]) ]),
 					E('td', {}, [ probeCell(r.direct) ]),
 					E('td', {}, [ probeCell(r.proxy) ]),
+					E('td', {}, [ probeCell(r.live) ]),
 					E('td', {}, [ dnsCell ]),
 					E('td', {}, [ verdictCell(r.verdict) ]),
+					E('td', {}, [ ruleCell ]),
 					E('td', { 'class': 'wiz-note', style: 'margin:0' }, [ rec ])
 				]);
 				tbody.appendChild(tr);
@@ -1463,10 +1772,11 @@ return view.extend({
 				L.resolveDefault(callDpiStatus(), {}),
 				L.resolveDefault(callStrategyList(), {}),
 				L.resolveDefault(callStrategyStatus(), {}),
-				L.resolveDefault(callFuzzStatus(), {})
+				L.resolveDefault(callFuzzStatus(), {}),
+				L.resolveDefault(callTgwspStatus(), {})
 			]).then(function(data) {
 				const scan = data[0] || {};
-				renderScan(scan.status, scan.result);
+				renderScan(scan.status, scan.result, scan.rules);
 				if (data[1] && data[1].rules) {
 					renderPresets(data[1]);
 					renderChain();
@@ -1475,6 +1785,7 @@ return view.extend({
 				renderStrategySel((data[3] && data[3].candidates) || []);
 				renderCorpus(data[2] ? (data[2].corpus || {}) : {}, data[4] || {});
 				renderLab(data[5] || {});
+				renderTgwsp(data[6] || {});
 
 				/* Deferred live check: fire once the core is running again
 				 * after the apply-triggered reload (min 8 s after apply). */
