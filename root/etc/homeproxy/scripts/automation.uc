@@ -239,6 +239,30 @@ let asn_enabled = true;
 let sys_cores = 1;
 let last_cycle_sleep = 10;
 
+/* ── Ф5 (ч.77): engine stats for the Automation tab "Engine overview" ──
+ * panel. The daemon writes a SMALL counters file (RUN_DIR +
+ * automation_stats.json, atomic tmp+mv) once per loop iteration - RPC
+ * readers must never parse the heavy automation_state.json just for
+ * counters. Module scope: nested functions inside main() (probe_all,
+ * classify, pass) cannot close over siblings' locals on this ucode
+ * build, same constraint as hot_set/poisoned_hosts above. */
+let eng_stats = null;   /* accumulated stats + history ring + events    */
+let eng_pass = null;    /* per-pass counters (discovery/probe waves)    */
+
+function eng_event(kind, msg) {
+	if (eng_stats == null) return;
+	push(eng_stats.events, { t: time(), k: kind, m: '' + msg });
+	while (length(eng_stats.events) > 24)
+		shift(eng_stats.events);
+}
+
+/* Daemon RAM (VmRSS of THIS process, kB). POSIX ERE: /proc files separate
+ * fields with TABS - a literal-space class misses the value (verified live). */
+function eng_ram_kb() {
+	const m = match(readfile('/proc/self/status') || '', /VmRSS:[[:space:]]*([0-9]+)/);
+	return m ? int(m[1]) : 0;
+}
+
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
 }
@@ -1452,6 +1476,22 @@ function main() {
 	 * opt-out only invited foot-guns). */
 	let adaptive_timeout = true;
 
+	/* Ф5: seed the stats history ring from the previous daemon run so the
+	 * growth sparkline survives restarts; verdict counters are recomputed
+	 * from the LIVE state at every flush, so they never drift. */
+	eng_stats = { ts: 0, events: [], hist: [], started: time() };
+	try {
+		const sfn = RUN_DIR + '/automation_stats.json';
+		if (access(sfn)) {
+			let prev = json(readfile(sfn) || '');
+			if (type(prev) === 'object' && type(prev.hist) === 'array') {
+				eng_stats.hist = prev.hist;
+				if (type(prev.events) === 'array')
+					eng_stats.events = prev.events;
+			}
+		}
+	} catch (e) { eng_stats.hist = []; }
+
 	/* Probe worker: one measurement per invocation, safe to run many copies in
 	 * parallel. Mirrors the serial probe() exactly — plain-view DNS resolution
 	 * with --resolve pinning for direct, socks5 vs socks5h through the pinned
@@ -1701,11 +1741,12 @@ echo done > "$PRE.done"
 			}
 			system(`rm -f ${shellquote(PP1_IN)} ${shellquote(PP1_OUT)} 2>/dev/null`);
 		}
-		if (resp === null) {
-			log('probe_pool batch failed - falling back to shell workers');
-			probe_pool_available = false;
-			return null;
-		}
+ 		if (resp === null) {
+ 			log('probe_pool batch failed - falling back to shell workers');
+ 			eng_event('warn', 'probe_pool unavailable - shell workers fallback');
+ 			probe_pool_available = false;
+ 			return null;
+ 		}
 		/* Warm the local cache from the echoed plain-view answers. */
 		const rmap = (type(resp.resolve) === 'object') ? resp.resolve : {};
 		for (let h in keys(rmap)) {
@@ -1724,10 +1765,11 @@ echo done > "$PRE.done"
 		if (side === 'direct' && type(resp.poisoned) === 'array' && length(resp.poisoned)) {
 			for (let ph in resp.poisoned) {
 				ph = lc(trim('' + ph));
-				if (length(ph)) {
-					poisoned_hosts[ph] = time();
-					log('DNS poison detected (plain vs DoH disjoint): ' + ph);
-				}
+ 				if (length(ph)) {
+ 					poisoned_hosts[ph] = time();
+ 					log('DNS poison detected (plain vs DoH disjoint): ' + ph);
+ 					eng_event('poison', ph);
+ 				}
 			}
 		}
 		system(`rm -f ${shellquote(PP_IN)} ${shellquote(PP_OUT)} 2>/dev/null`);
@@ -1879,6 +1921,12 @@ echo done > "$PRE.done"
 	}
 
 	function probe_all(items, side, timeout, http2_flag) {
+		/* Ф5: per-pass probe counters (by side/pool) for the engine panel. */
+		if (eng_pass) {
+			if (side === 'direct') eng_pass.direct += length(items);
+			else if (side === 'proxy' || side === 'tcpproxy') eng_pass.proxy += length(items);
+			else eng_pass.tcp += length(items);
+		}
 		let merged = {};
 		/* Chunk size: with the native pool installed and healthy, feed it
 		 * bigger batches even in eco (capped at 8 concurrent probes so weak
@@ -2183,8 +2231,9 @@ echo done > "$PRE.done"
 			 * answers until their old TTL expires - this is the dominant part
 			 * of the "site works only minutes later" delay. */
 			system('killall -HUP dnsmasq >/dev/null 2>&1');
-			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips.');
-			last_reload = time();
+ 			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips.');
+ 			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && r.ips) || 0) + ' ip (hot)');
+ 			last_reload = time();
 			pending_reload = false;
 			pending_new = 0;
 			return;
@@ -2199,8 +2248,9 @@ echo done > "$PRE.done"
 			return; /* do NOT reload onto a broken/absent config */
 		}
 		sync_learned_rulesets();
-		log('applying learned list - restarting service to load new config.');
-		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+ 		log('applying learned list - restarting service to load new config.');
+ 		eng_event('reload', 'service reload');
+ 		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 		last_reload = time();
 		pending_reload = false;
 		pending_new = 0;
@@ -2376,9 +2426,9 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
-					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; }
-				} else if (!auto_set[dom]) {
-					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++;
+ 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); }
+ 				} else if (!auto_set[dom]) {
+ 					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')');
 					if (is_auth_like(dom))
 						sync_auth_families();
 				}
@@ -2461,9 +2511,9 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
-					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; }
-				} else if (!auto_set[dom]) {
-					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++;
+ 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); }
+ 				} else if (!auto_set[dom]) {
+ 					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom);
 					/* ч.61: a fresh auth-like learn extends its domain family. */
 					if (is_auth_like(dom))
 						sync_auth_families();
@@ -2505,6 +2555,8 @@ echo done > "$PRE.done"
 				log('learning paused (' + (rmode === 'global' ? 'Global mode' :
 				    (main_is_direct ? 'main node is Direct' : rmode)) +
 				    ') - dnsmasq query logging disabled.');
+				eng_event('pause', (rmode === 'global' ? 'Global mode' :
+				         (main_is_direct ? 'main node is Direct' : rmode)));
 			}
 			return false;
 		}
@@ -2512,7 +2564,11 @@ echo done > "$PRE.done"
 			enable_dns_log();
 			dns_log_on = true;
 			log('learning resumed - dnsmasq query logging enabled.');
+			eng_event('resume', discover_str);
 		}
+		/* Ф5: fresh per-pass counters (paused passes leave it null - the
+		 * stats flush reports zeros for that cycle). */
+		eng_pass = { dns: 0, clash: 0, sni: 0, direct: 0, proxy: 0, tcp: 0 };
 
 		load_engine_protect();
 
@@ -2546,9 +2602,9 @@ echo done > "$PRE.done"
 	 * combines per-source counts so the probe budget goes to what the user actually
 	 * hammers most across all sources, not just DNS hash order. */
 	if (has('dns'))
-		for (let i, h in discover_dns()) intake(h, w_dns);
-	if (has('clash'))     for (let i, h in discover_clash(timeout)) intake(h, w_clash);
-	if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) intake(h, w_sni);
+		for (let i, h in discover_dns()) { eng_pass.dns++; intake(h, w_dns); }
+	if (has('clash'))     for (let i, h in discover_clash(timeout)) { eng_pass.clash++; intake(h, w_clash); }
+	if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) { eng_pass.sni++; intake(h, w_sni); }
 	/* Raw-IP candidates are collected ONLY when IP learning is enabled — the old
 	 * separate 'conntrack' discovery source is merged into the ip_learn switch. */
 	if (ip_learn === '1')
@@ -2733,10 +2789,11 @@ echo done > "$PRE.done"
 						fst.sight = 0;
 						delete fst.pain_burst;
 						delete fst.dconfirms;
-						write_auto_list(auto_set);
-						log('learned (persistent user pain overrides passing probes): ' + dom);
-						pending_reload = true;
-						pending_new++;
+ 						write_auto_list(auto_set);
+ 						log('learned (persistent user pain overrides passing probes): ' + dom);
+ 						eng_event('learn', dom + ' (pain override)');
+ 						pending_reload = true;
+ 						pending_new++;
 					} else {
 						log('pain override skipped - proxy cannot reach ' + dom);
 						fst.pain_passes = 0;
@@ -2828,8 +2885,9 @@ echo done > "$PRE.done"
 					if (rechecked >= REEVAL_BATCH) break;
 					let st = state[h];
 					if (st && st.last_probe && (now - st.last_probe) < REEVAL_AGE) continue;
-					rechecked++;
-					let d_res = probe(h, false, timeout);
+ 					rechecked++;
+ 					if (eng_pass) eng_pass.direct++;
+ 					let d_res = probe(h, false, timeout);
 					if (!st) { state[h] = {}; st = state[h]; }
 					st.last_probe = now;
 					if (d_res.ok) {
@@ -2843,12 +2901,13 @@ echo done > "$PRE.done"
 					}
 				}
 			}
-			if (length(healed)) {
-				write_auto_list(auto_set);
-				write_auto_ip_list(auto_ip_set);
-				log('self-healed (answers direct again): ' + join(', ', healed));
-				pending_reload = true;
-			}
+ 			if (length(healed)) {
+ 				write_auto_list(auto_set);
+ 				write_auto_ip_list(auto_ip_set);
+ 				log('self-healed (answers direct again): ' + join(', ', healed));
+ 				eng_event('heal', join(', ', healed));
+ 				pending_reload = true;
+ 			}
 		}
 
 		/* State hygiene (hourly): records for hosts NOT in any active list expire
@@ -2935,6 +2994,76 @@ echo done > "$PRE.done"
 
 	log('automation daemon started (mode=' + mode + ', sources=' + (length(keys(disc)) ? discover_str : 'none') + ', ip_learn=' + ip_learn + ').');
 
+	/* ── Ф5: engine stats flush (once per loop iteration, paused passes
+	 * included - the panel must show WHY nothing is happening). Writes the
+	 * SMALL counters file atomically; the automation_stats RPC reads ONLY
+	 * this file, never the heavy automation_state.json. ─────────────── */
+	function flush_stats(cycle_ms, interval_s) {
+		if (eng_stats == null) return;
+		const now = time();
+		/* Verdict distribution over the live state (in-memory walk, cheap). */
+		let v = { blocked: 0, direct: 0, direct_pending: 0, blocked_no_proxy: 0, geo_blocked: 0, geo: 0,
+			kinds: { tls_dpi: 0, dns_poison: 0, stub: 0, sigpage: 0, hardcode: 0 } };
+		for (let h in keys(state)) {
+			if (h === '__dns_offset') continue;
+			const st = state[h];
+			if (type(st) !== 'object') continue;
+			const s = st.status || '';
+			if (s === 'blocked') {
+				v.blocked++;
+				const k = st.block_kind || '';
+				if (length(k) && exists(v.kinds, k)) v.kinds[k]++;
+			} else if (length(s) && exists(v, s)) {
+				v[s]++;
+			}
+		}
+		const nd = length(keys(auto_set));
+		const ni = length(keys(auto_ip_set));
+		const p = eng_pass || { dns: 0, clash: 0, sni: 0, direct: 0, proxy: 0, tcp: 0 };
+		const probes_total = p.direct + p.proxy + p.tcp;
+		const per_sec = (cycle_ms > 500) ? ((probes_total * 1000.0) / cycle_ms) : 0;
+		/* EWMA of the cycle duration / probe rate (alpha 0.3). */
+		eng_stats.cycle_count = (eng_stats.cycle_count || 0) + 1;
+		eng_stats.dur_ewma = eng_stats.dur_ewma ? int(eng_stats.dur_ewma * 0.7 + cycle_ms * 0.3) : int(cycle_ms);
+		eng_stats.pps_ewma = eng_stats.pps_ewma ? (eng_stats.pps_ewma * 0.7 + per_sec * 0.3) : per_sec;
+		const ram_kb = eng_ram_kb();
+		/* History ring: one point per minute (120 points = ~2 h window). */
+		if (!eng_stats.last_hist || (now - eng_stats.last_hist) >= 60) {
+			eng_stats.last_hist = now;
+			push(eng_stats.hist, { t: now, learned: nd + ni, probes: probes_total,
+				dur: int(cycle_ms), ram: ram_kb });
+			while (length(eng_stats.hist) > 120)
+				shift(eng_stats.hist);
+		}
+		/* Pause reason mirrors the pass() gate so the panel stays honest
+		 * while cycles run inert. */
+		let paused = '';
+		const rm = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
+		const mn = uci.get('homeproxy', 'config', 'main_node') || 'nil';
+		if (rm === 'custom' || rm === 'custom_json') paused = 'custom';
+		else if (rm === 'global') paused = 'global';
+		else if (mn === 'direct-out' || mn === 'nil') paused = 'direct';
+		const doc = {
+			ts: now,
+			started: eng_stats.started,
+			interval: interval_s,
+			profile: perf_mode,
+			cycle: { count: eng_stats.cycle_count, avg_ms: eng_stats.dur_ewma, last_ms: int(cycle_ms) },
+			probes: { last_total: probes_total, per_sec: per_sec, avg_per_sec: eng_stats.pps_ewma },
+			sources: { dns: p.dns, clash: p.clash, sni: p.sni },
+			learned: { domains: nd, ips: ni },
+			verdicts: v,
+			ram_kb: ram_kb,
+			paused: paused,
+			events: eng_stats.events,
+			hist: eng_stats.hist
+		};
+		eng_stats.ts = now;
+		try {
+			atomic_write(RUN_DIR + '/automation_stats.json', sprintf('%.J', doc) + '\n');
+		} catch (e) { /* a failed stats write retries next cycle; never die */ }
+	}
+
 	let last_failover = 0;
 	let last_geo_check = 0;
 	while (true) {
@@ -2960,7 +3089,8 @@ echo done > "$PRE.done"
 			state.__dns_offset = dns_log_offset;
 			reload_lists();
 			save_state(state);
-			log('clear marker: in-memory state wiped, working sets reloaded (fresh start).');
+ 			log('clear marker: in-memory state wiped, working sets reloaded (fresh start).');
+ 			eng_event('clear', 'learned list cleared');
 		} else if (access(RELOAD_MARKER + '_geo')) {
 			system('rm -f ' + shellquote(RELOAD_MARKER + '_geo'));
 			load_ru_geo();
@@ -2975,7 +3105,21 @@ echo done > "$PRE.done"
 		let run_now = false;
 		if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); run_now = true; }
 
+		/* Ф5: per-pass counters reset + pass duration via clock(). ⚠ On this
+		 * build clock() returns [SECONDS, NANOSECONDS-WITHIN-SECOND]
+		 * (clock_gettime shape, verified live: a 3 s sleep reports a ~3e6 ns
+		 * remainder) - the sub-second field must be converted with /1e6 and
+		 * needs borrow handling; dividing by 1e3 produced negative deltas
+		 * (clamped to 0) and ms-inflated spikes. */
+		eng_pass = null;
+		const clk0 = clock();
 		let ran = pass(run_now);
+		const clk1 = clock();
+		let clk_s = clk1[0] - clk0[0];
+		let clk_ns = clk1[1] - clk0[1];
+		if (clk_ns < 0) { clk_s--; clk_ns += 1000000000; }
+		let cycle_ms = clk_s * 1000 + int(clk_ns / 1000000.0);
+		if (cycle_ms < 0) cycle_ms = 0;
 
 		/* DNS failover (C) at most once per minute. */
 		let now = time();
@@ -3033,6 +3177,10 @@ echo done > "$PRE.done"
 				last_cycle_sleep = cycle_sleep;
 			}
 		}
+
+		/* Ф5: flush the engine stats ONCE per loop iteration (after the
+		 * resource-aware interval is known, before the sleep). */
+		flush_stats(cycle_ms, cycle_sleep);
 
 		for (let i = 0; i < cycle_sleep; i++) {
 			sleep(1);

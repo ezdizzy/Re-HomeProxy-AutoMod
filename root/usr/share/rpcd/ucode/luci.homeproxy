@@ -3159,6 +3159,37 @@ const methods = {
 		}
 	},
 
+	/* Ф5 (ч.77): engine stats for the Automation tab "Engine overview" panel.
+	 * The daemon writes a SMALL counters file every cycle (atomic tmp+mv:
+	 * cycles, probes per pool, verdict distribution, source activity, daemon
+	 * RAM, event feed, ~2 h history ring). This RPC reads ONLY that file -
+	 * it must never parse the heavy automation_state.json for counters -
+	 * and adds daemon liveness: busybox pidof does not match ucode script
+	 * names (lesson 58), so one `ps w` + match like overview_sys. */
+	automation_stats: {
+		call: function(req) {
+			const f = RUN_DIR + '/automation_stats.json';
+			let st = {};
+			if (access(f)) {
+				try { st = json(readfile(f) || '') || {}; } catch (e) { st = {}; }
+			}
+			let running = false;
+			let pfd = popen('ps w 2>/dev/null');
+			if (pfd) {
+				const ps = pfd.read('all') || '';
+				pfd.close();
+				running = (match(ps, /automation\.uc/) != null);
+			}
+			const age = st.ts ? (time() - int(st.ts)) : -1;
+			return {
+				running: running,
+				age: age,
+				fresh: (running && age >= 0 && age < 120),
+				stats: st
+			};
+		}
+	},
+
 	/* route_explain (ч.69): trace WHY a host routes the way it does — core
 	 * moved to the hp_route_trace() helper (ч.70). */
 	route_explain: {

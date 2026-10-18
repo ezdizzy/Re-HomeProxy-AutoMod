@@ -5,7 +5,10 @@
  *
  * Re:HomeProxy AutoMod — Automation tab.
  *
- * Internal tabs: Overview (status cards + quick actions), Sites (table with
+ * Internal tabs: Overview (status cards + the Ф5 "Engine overview" panel:
+ * cycle/probe/RAM/entries cards, inline-SVG sparklines, verdict
+ * distribution, source activity and a recent-events feed, all fed by the
+ * light automation_stats RPC), Sites (table with
  * sticky header, search, filters, add/delete, manual "always proxy"/"always
  * direct" pins), RU-geo databases (freshness + update), Settings (UCI form),
  * Engine log. The detection only ADDS sites proven unreachable directly yet
@@ -26,6 +29,15 @@
 const callStatus = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'automation_status',
+	expect: { '': {} }
+});
+
+/* Ф5 (ч.77): engine counters for the "Engine overview" panel. LIGHT RPC —
+ * the daemon writes a small stats file each cycle; this never parses the
+ * heavy automation_state.json. */
+const callStats = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_stats',
 	expect: { '': {} }
 });
 
@@ -121,6 +133,103 @@ function btn(label, handler) {
 	}, [ label ]);
 }
 
+/* ── Inline SVG sparkline (Ф5, same visual language as overview.js) ───────
+ * Area+line chart of points[key], 300×84 viewBox, no external libraries
+ * (D5: everything local). Null values break the line. Fixed `max` when
+ * given, auto-scale (peak ×1.15) otherwise. Grid at quarters, static
+ * marker on the last point, NO animations: the SVG is rebuilt only when
+ * the history ring changed (signature-guarded by the caller).
+ *
+ * ⚠ Browser JS `for…in` over an array yields STRING INDICES (the reverse
+ * of the ucode lesson 20): `p[key]` on the index string is undefined and
+ * every chart value silently becomes null (the Ф4 overview charts drew
+ * only the grid, ч.77). Always iterate arrays by index here. */
+function chartSvgEng(points, key, opts) {
+	const W = 300, H = 84, TOP = 6, BOT = 4;
+	const fixedMax = (opts && opts.max != null) ? opts.max : null;
+	const NS = 'http://www.w3.org/2000/svg';
+
+	let vals = [];
+	for (let i = 0; i < points.length; i++) {
+		const p = points[i];
+		vals.push((p != null && p[key] != null) ? Number(p[key]) : null);
+	}
+
+	let max = fixedMax;
+	if (max == null) {
+		let hi = 0;
+		for (let v in vals)
+			if (vals[v] != null && vals[v] > hi) hi = vals[v];
+		max = hi > 0 ? hi * 1.15 : 1;
+	}
+	if (max <= 0) max = 1;
+
+	const y = function(v) { return TOP + (H - TOP - BOT) * (1 - (v / max)); };
+	const x = function(i, n) { return (n > 1) ? (i * W / (n - 1)) : 0; };
+
+	let area = '', line = '', pen = false;
+	for (let i = 0; i < vals.length; i++) {
+		const v = vals[i];
+		if (v == null) {
+			if (pen) { line += ' Z'; pen = false; }
+			continue;
+		}
+		const px = x(i, vals.length).toFixed(1), py = y(v).toFixed(1);
+		if (!pen) {
+			if (line) { area += ' L' + px + ',' + H + ' L' + px + ',' + py; }
+			else { area += 'M' + px + ',' + H + ' L' + px + ',' + py; }
+			line += (line ? ' ' : '') + 'M' + px + ',' + py;
+			pen = true;
+		} else {
+			area += ' L' + px + ',' + py;
+			line += ' L' + px + ',' + py;
+		}
+	}
+	if (pen) area += ' L' + x(vals.length - 1, vals.length).toFixed(1) + ',' + H + ' Z';
+
+	const svg = document.createElementNS(NS, 'svg');
+	svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+	svg.setAttribute('preserveAspectRatio', 'none');
+	svg.setAttribute('class', 'hpauto-eng-svg');
+	svg.setAttribute('role', 'img');
+
+	if (area) {
+		const a = document.createElementNS(NS, 'path');
+		a.setAttribute('d', area);
+		a.setAttribute('fill', 'rgba(224,82,82,.12)');
+		svg.appendChild(a);
+	}
+	for (let q = 1; q <= 3; q++) {
+		const g = document.createElementNS(NS, 'path');
+		g.setAttribute('d', 'M0,' + (TOP + (H - TOP - BOT) * q / 4).toFixed(1) + ' H' + W);
+		g.setAttribute('stroke', 'rgba(128,128,128,.22)');
+		g.setAttribute('stroke-width', '.5');
+		g.setAttribute('fill', 'none');
+		svg.appendChild(g);
+	}
+	if (line) {
+		const l = document.createElementNS(NS, 'path');
+		l.setAttribute('d', line);
+		l.setAttribute('stroke', '#e05252');
+		l.setAttribute('stroke-width', '1.4');
+		l.setAttribute('fill', 'none');
+		l.setAttribute('stroke-linejoin', 'round');
+		svg.appendChild(l);
+		for (let i = vals.length - 1; i >= 0; i--) {
+			if (vals[i] != null) {
+				const d = document.createElementNS(NS, 'path');
+				d.setAttribute('d', 'M' + x(i, vals.length).toFixed(1) + ',' + y(vals[i]).toFixed(1) + ' h.01');
+				d.setAttribute('stroke', '#e05252');
+				d.setAttribute('stroke-width', '3.2');
+				d.setAttribute('stroke-linecap', 'round');
+				svg.appendChild(d);
+				break;
+			}
+		}
+	}
+	return svg;
+}
+
 /* ── Styling (scoped, theme-agnostic translucent colors) ─────────────── */
 
 const CSS = `
@@ -172,6 +281,19 @@ tr.hpsrc-manual.hpsrc-manual-direct td:first-child { box-shadow: inset 3px 0 0 #
 .hpgeo-age-stale { color: #e07b00; font-weight: 600; }
 .hpauto-log { max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; padding: 8px; background: #1e1e1e; color: #ddd; border: 1px solid #333; border-radius: 6px; font-size: 0.85em; }
 .hpauto-hint { font-size: .88em; opacity: .8; margin: 8px 0; }
+.hpauto-panel { border: 1px solid rgba(128,128,128,.3); border-radius: 8px; padding: 12px 14px; background: rgba(128,128,128,.07); margin: 10px 0; }
+.hpauto-panel h4 { margin: 0 0 8px 0; }
+.hpauto-eng-charts { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
+.hpauto-eng-chart { flex: 1 1 220px; min-width: 190px; max-width: 330px; }
+.hpauto-eng-chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.hpauto-eng-chart-title { font-size: .85em; opacity: .8; }
+.hpauto-eng-chart-num { font-weight: 700; }
+.hpauto-eng-svg { width: 100%; height: 84px; display: block; margin-top: 2px; border-bottom: 1px solid rgba(128,128,128,.3); }
+.hpauto-eng-note { font-size: .8em; opacity: .7; margin: 4px 0 0 0; }
+.hpauto-eng-kinds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 2px 0; }
+.hpauto-eng-ev { display: flex; gap: 8px; font-size: .85em; margin: 2px 0; align-items: baseline; }
+.hpauto-eng-ev .t { opacity: .6; white-space: nowrap; font-size: .92em; }
+.hpauto-eng-ev .m { word-break: break-word; }
 `;
 
 function injectStyle() {
@@ -312,7 +434,8 @@ return view.extend({
 		}
 		panes.overview.classList.add('active');
 
-		const state = { data: null, search: '', filter: 'all', sortKey: 'added', sortDir: -1, sig: null };
+		const state = { data: null, search: '', filter: 'all', sortKey: 'added', sortDir: -1, sig: null,
+			stats: null, statsRun: false, statsFresh: false, engSig: null, evSig: null, kdSig: null };
 
 		const pauseReasons = {
 			disabled: _('Automation is disabled — enable it in Settings to start learning.'),
@@ -357,6 +480,64 @@ return view.extend({
 		panes.overview.appendChild(pauseEl);
 		panes.overview.appendChild(geoLine);
 		panes.overview.appendChild(helperLine);
+
+		/* ── Engine overview panel (Ф5, ч.77) — the graphical engine view
+		 * that replaced the removed exit-health card (decision D2). Cards +
+		 * inline-SVG sparklines (no external libraries, D5), verdict
+		 * distribution, discovery-source activity and a recent-events
+		 * feed. Data: the small automation_stats file the daemon writes
+		 * every cycle (read via the light automation_stats RPC). ──────── */
+		const engHint = E('div', { 'class': 'hpauto-hint', style: 'margin:0 0 6px 0' });
+		const engCards = E('div', { 'class': 'hpauto-cards' });
+		const ENG_CARD_DEFS = [
+			[ 'cycles',  _('Cycles') ],
+			[ 'probes',  _('Probes') ],
+			[ 'ram',     _('Daemon RAM') ],
+			[ 'entries', _('Entries') ]
+		];
+		const engCard = {};
+		for (let c in ENG_CARD_DEFS) {
+			const el = E('div', { 'class': 'hpauto-card' }, [
+				E('div', { 'class': 'hpauto-cap' }, [ ENG_CARD_DEFS[c][1] ]),
+				E('div', { 'class': 'hpauto-num' }, [ '—' ]),
+				E('div', { 'class': 'hpauto-eng-note' }, [ '' ])
+			]);
+			engCard[ENG_CARD_DEFS[c][0]] = { num: el.children[1], note: el.children[2] };
+			engCards.appendChild(el);
+		}
+		const ENG_CHART_DEFS = [
+			[ 'learned', _('Learned growth'),   { fmt: function(v) { return String(Math.floor(v) || 0); } } ],
+			[ 'probes',  _('Probes per cycle'), { fmt: function(v) { return String(Math.floor(v) || 0); } } ],
+			[ 'dur',     _('Cycle duration'),   { fmt: fmtDur } ],
+			[ 'ram',     _('Daemon RAM'),       { fmt: function(v) { return (v / 1024).toFixed(1) + ' MB'; } } ]
+		];
+		const engCharts = E('div', { 'class': 'hpauto-eng-charts' });
+		for (let c in ENG_CHART_DEFS) {
+			engCharts.appendChild(E('div', { 'class': 'hpauto-eng-chart' }, [
+				E('div', { 'class': 'hpauto-eng-chart-head' }, [
+					E('span', { 'class': 'hpauto-eng-chart-title' }, [ ENG_CHART_DEFS[c][1] ]),
+					E('span', { 'class': 'hpauto-eng-chart-num' }, [ '—' ])
+				]),
+				chartSvgEng([], ENG_CHART_DEFS[c][0], ENG_CHART_DEFS[c][2])
+			]));
+		}
+		const engCap = E('div', { 'class': 'hpauto-eng-note' }, [ '—' ]);
+		const engKinds = E('div', { 'class': 'hpauto-eng-kinds' });
+		const engSrc = E('div', { 'class': 'hpauto-eng-note' });
+		const engEvents = E('div', { style: 'margin-top:4px' });
+		const engPanel = E('div', { 'class': 'hpauto-panel' }, [
+			E('h4', {}, [ _('Engine overview') ]),
+			engHint,
+			engCards,
+			engCharts,
+			engCap,
+			engKinds,
+			engSrc,
+			E('div', { 'class': 'hpauto-eng-note', style: 'font-weight:600; margin-top:10px' }, [ _('Recent events') ]),
+			engEvents
+		]);
+		panes.overview.appendChild(engPanel);
+
 		panes.overview.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Test now'), function() { return callTestNow().then(refresh); }),
 			btn(_('Install helpers'), function() {
@@ -702,9 +883,180 @@ return view.extend({
 			]));
 		}
 
+		/* ── Engine overview panel rendering (Ф5) ──────────────────────── */
+
+		const KIND_BADGES = [
+			[ 'tls_dpi',    _('Blocked (DPI)') ],
+			[ 'dns_poison', _('Blocked (DNS)') ],
+			[ 'stub',       _('Blocked (stub)') ],
+			[ 'sigpage',    _('Block page') ],
+			[ 'hardcode',   _('Blocked (refusal)') ]
+		];
+		const STATUS_BADGES = [
+			[ 'blocked',          _('Blocked') ],
+			[ 'direct',           _('Direct') ],
+			[ 'direct_pending',   _('Direct (pending)') ],
+			[ 'blocked_no_proxy', _('Unreachable') ],
+			[ 'geo_blocked',      _('Geo-blocked (node)') ],
+			[ 'geo',              _('Geo (proxied)') ]
+		];
+		const EV_LABELS = {
+			learn:  _('Learned'),
+			heal:   _('Self-healed'),
+			reload: _('Applied to core'),
+			poison: _('DNS poison detected'),
+			pause:  _('Learning paused'),
+			resume: _('Learning resumed'),
+			clear:  _('Learned list cleared'),
+			warn:   _('Warning')
+		};
+
+		function fmtClock(ts) {
+			try { return new Date(Number(ts) * 1000).toLocaleTimeString(); }
+			catch (e) { return ''; }
+		}
+
+		/* Cycle durations range from ~0 ms (paused pass) to minutes — a raw
+		 * millisecond number is unreadable ("216540 ms"). */
+		function fmtDur(ms) {
+			ms = Number(ms) || 0;
+			if (ms >= 60000) return (ms / 60000).toFixed(1) + ' min';
+			if (ms >= 10000) return (ms / 1000).toFixed(1) + ' s';
+			return Math.round(ms) + ' ms';
+		}
+
+		function renderStats() {
+			const st = state.stats || {};
+			const hist = (st.hist && st.hist.length) ? st.hist : [];
+
+			/* Honest state line: daemon dead vs. counters still warming up. */
+			if (!state.statsRun)
+				engHint.textContent = '⚠ ' + _('Engine daemon is not running.');
+			else if (!state.statsFresh)
+				engHint.textContent = '… ' + _('collecting…');
+			else
+				engHint.textContent = '';
+
+			/* Cards (text-only every tick — anti-flicker). */
+			const c = st.cycle || {};
+			const pr = st.probes || {};
+			const lr = st.learned || {};
+			engCard.cycles.num.textContent = (c.count != null) ? String(c.count) : '—';
+			engCard.cycles.note.textContent =
+				(st.interval ? _('every %ss').format(st.interval) + ' · ' : '') +
+				(c.last_ms != null ? _('last: %s').format(fmtDur(c.last_ms)) : '');
+			engCard.probes.num.textContent = (pr.last_total != null) ? String(pr.last_total) : '—';
+			engCard.probes.note.textContent = (pr.per_sec != null && pr.last_total)
+				? _('~%s probes/s').format(Math.round(pr.per_sec * 10) / 10) : '';
+			engCard.ram.num.textContent = st.ram_kb ? (st.ram_kb / 1024).toFixed(1) + ' MB' : '—';
+			engCard.ram.note.textContent = st.profile ? _('Profile: %s').format(st.profile) : '';
+			engCard.entries.num.textContent = (lr.domains != null)
+				? String((lr.domains || 0) + (lr.ips || 0)) : '—';
+			engCard.entries.note.textContent = (lr.domains != null)
+				? _('domains %s · IPs %s').format(lr.domains || 0, lr.ips || 0) : '';
+
+			/* Sparklines: current value text-only, SVG rebuilt on ring change. */
+			for (let i = 0; i < ENG_CHART_DEFS.length; i++) {
+				const key = ENG_CHART_DEFS[i][0];
+				const block = engCharts.children[i];
+				const cur = (hist.length && hist[hist.length - 1][key] != null)
+					? hist[hist.length - 1][key] : null;
+				block.children[0].children[1].textContent =
+					(cur != null) ? ENG_CHART_DEFS[i][2].fmt(cur) : '—';
+			}
+			const sig = hist.length ? ('' + hist[hist.length - 1].t + ':' + hist.length) : 'none';
+			if (sig !== state.engSig) {
+				state.engSig = sig;
+				for (let i = 0; i < ENG_CHART_DEFS.length; i++) {
+					const block = engCharts.children[i];
+					block.replaceChild(chartSvgEng(hist, ENG_CHART_DEFS[i][0], ENG_CHART_DEFS[i][2]),
+						block.children[1]);
+				}
+				engCap.textContent = (hist.length)
+					? _('%d points · ~%d min').format(hist.length, Math.ceil(hist.length / 2))
+					: _('collecting…');
+			}
+
+			/* Verdict distribution: statuses + block-kind counts. */
+			const v = st.verdicts || {};
+			const kinds = v.kinds || {};
+			const parts = [];
+			for (let s in STATUS_BADGES) {
+				const n = v[STATUS_BADGES[s][0]] || 0;
+				if (n > 0) parts.push(STATUS_BADGES[s][0] + ':' + n);
+			}
+			for (let k in KIND_BADGES) {
+				const n = kinds[KIND_BADGES[k][0]] || 0;
+				if (n > 0) parts.push(KIND_BADGES[k][0] + ':' + n);
+			}
+			const kdSig = parts.join('|');
+			if (kdSig !== state.kdSig) {
+				state.kdSig = kdSig;
+				engKinds.innerHTML = '';
+				engKinds.appendChild(E('span', { 'class': 'hpauto-cap' }, [ _('Verdicts') + ':' ]));
+				for (let s in STATUS_BADGES) {
+					const n = v[STATUS_BADGES[s][0]] || 0;
+					if (n > 0)
+						engKinds.appendChild(E('span', { 'class': 'hpbadge ' + (
+							STATUS_BADGES[s][0] === 'blocked' ? 'hpb-blocked' :
+							STATUS_BADGES[s][0] === 'direct' ? 'hpb-direct' :
+							STATUS_BADGES[s][0] === 'direct_pending' ? 'hpb-pending' :
+							STATUS_BADGES[s][0] === 'geo' ? 'hpb-mproxy' : 'hpb-noproxy') },
+							[ STATUS_BADGES[s][1] + ' ' + n ]));
+				}
+				for (let k in KIND_BADGES) {
+					const n = kinds[KIND_BADGES[k][0]] || 0;
+					if (n > 0)
+						engKinds.appendChild(E('span', { 'class': 'hpbadge hpb-type' },
+							[ KIND_BADGES[k][1] + ' ' + n ]));
+				}
+				if (!parts.length)
+					engKinds.appendChild(E('span', { 'class': 'hpauto-cap' }, [ _('no data yet') ]));
+			}
+
+			/* Discovery-source activity of the last pass. */
+			const src = st.sources || {};
+			engSrc.textContent = (st.sources)
+				? _('Sources (last cycle)') + ': DNS ' + (src.dns || 0) + ' · Clash ' + (src.clash || 0) +
+				  ' · SNI ' + (src.sni || 0)
+				: '';
+
+			/* Recent events feed (newest first, ≤12 shown). */
+			const evs = (st.events && st.events.length) ? st.events : [];
+			const evSig = evs.length ? ('' + evs.length + ':' + evs[evs.length - 1].t) : 'none';
+			if (evSig !== state.evSig) {
+				state.evSig = evSig;
+				engEvents.innerHTML = '';
+				const show = evs.slice(-12).reverse();
+				for (let i = 0; i < show.length; i++) {
+					const ev = show[i];
+					engEvents.appendChild(E('div', { 'class': 'hpauto-eng-ev' }, [
+						E('span', { 'class': 't' }, [ fmtClock(ev.t) ]),
+						E('span', { 'class': 'm' }, [
+							E('b', {}, [ (EV_LABELS[ev.k] || ev.k || '?') + ':' ]),
+							document.createTextNode(' ' + (ev.m || ''))
+						])
+					]));
+				}
+				if (!evs.length)
+					engEvents.appendChild(E('span', { 'class': 'hpauto-cap' }, [ _('no events yet') ]));
+			}
+		}
+
+		function refreshStats() {
+			return L.resolveDefault(callStats(), {}).then(function(r) {
+				state.stats = (r && r.stats) || {};
+				state.statsRun = !!(r && r.running);
+				state.statsFresh = !!(r && r.fresh);
+				renderStats();
+			});
+		}
+
 		/* ── Poll ──────────────────────────────────────────────────────── */
 
 		function refresh() {
+			/* Engine counters ride the same 5 s poll (light RPC, ≤5 s — D5). */
+			refreshStats();
 			return callStatus().then(function(st) {
 				state.data = st;
 				const c = st.counts || {};

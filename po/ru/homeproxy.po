@@ -9083,4 +9083,140 @@ msgstr "накапливаем…"
 msgid "The service restart re-routes every connection (\"Core & Tools\" carries start/stop); a snapshot copies the app configuration and the routing lists; \"Restore internet\" is the emergency switch for a plain direct connection."
 msgstr "Рестарт службы перерасовывает все соединения (start/stop на странице «Core & Tools»); снапшот копирует конфигурацию приложения и списки маршрутизации; «Restore internet» — аварийный выключатель для чистого прямого соединения."
 
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Engine overview"
+msgstr "Обзор движка"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Engine daemon is not running."
+msgstr "Демон движка не запущен."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Cycles"
+msgstr "Циклы"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Probes"
+msgstr "Пробы"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Daemon RAM"
+msgstr "RAM демона"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "every %ss"
+msgstr "каждые %s с"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "last %s"
+msgstr "последний: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "~%s probes/s"
+msgstr "~%s проб/с"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Profile: %s"
+msgstr "Профиль: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "domains %s · IPs %s"
+msgstr "домены %s · IP %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Learned growth"
+msgstr "Рост списка записей"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Probes per cycle"
+msgstr "Проб за цикл"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Cycle duration"
+msgstr "Длительность цикла"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Verdicts"
+msgstr "Вердикты"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Block page"
+msgstr "Страница блокировки"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "no data yet"
+msgstr "данных пока нет"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Sources (last cycle)"
+msgstr "Источники (последний цикл)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Recent events"
+msgstr "Последние события"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Learned"
+msgstr "Выучено"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Self-healed"
+msgstr "Самоисцеление"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Applied to core"
+msgstr "Применено в ядре"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "DNS poison detected"
+msgstr "Обнаружена подмена DNS"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Learning paused"
+msgstr "Обучение на паузе"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Learning resumed"
+msgstr "Обучение возобновлено"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Learned list cleared"
+msgstr "Список выученных очищен"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Warning"
+msgstr "Предупреждение"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "no events yet"
+msgstr "событий пока нет"
+
+
 

@@ -154,8 +154,14 @@ function chartSvg(points, key, opts) {
 	const NS = 'http://www.w3.org/2000/svg';
 
 	let vals = [];
-	for (let p in points)
+	/* ⚠ Browser JS `for…in` over an array yields STRING INDICES (the exact
+	 * reverse of the ucode lesson 20): `p[key]` on the index string is
+	 * undefined, every value silently became null and the charts drew only
+	 * the grid (found live in the Ф5 warm-up, ч.77). Iterate by index. */
+	for (let i = 0; i < points.length; i++) {
+		const p = points[i];
 		vals.push((p != null && p[key] != null) ? Number(p[key]) : null);
+	}
 
 	let max = fixedMax;
 	if (max == null) {
