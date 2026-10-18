@@ -23,6 +23,10 @@
  *   (wizard_strategy_update/status/apply via wizard_strategies.uc) and the
  *   mutation generator (wizard_fuzz_generate), plus the
  *   «apply strategy → service rule → live check» chain.
+ *   «Дополнительно» (Ф6) — the Telegram bot v2 (settings/status/test via
+ *   telegram_status/set/test RPCs; the always-on telegram.uc daemon
+ *   hot-reloads UCI, so saving never restarts the service) and, later (Ф7,
+ *   D8), the TG WS Proxy card.
  *
  * Checks are on-demand (D6 pattern): nothing monitors permanently here —
  * the user runs the diagnostics when they need an answer.
@@ -158,6 +162,28 @@ const callFuzzApply = rpc.declare({
 	expect: { '': {} }
 });
 
+/* ── Telegram bot v2 (Ф6): settings/status/test — on demand (D6) ────────── */
+
+const callTelegramStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'telegram_status',
+	expect: { '': {} }
+});
+
+const callTelegramSet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'telegram_set',
+	params: [ 'enabled', 'token', 'chat_id', 'mute', 'push_hotswap', 'push_watchdog',
+		'push_learn', 'push_service', 'poll_timeout', 'push_interval' ],
+	expect: { '': {} }
+});
+
+const callTelegramTest = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'telegram_test',
+	expect: { '': {} }
+});
+
 /* Resolve a sing-box outbound tag (cfg-<section>-out) to its UCI label
  * (same logic as diagnostics.js). */
 function resolveTag(tag) {
@@ -236,7 +262,8 @@ return view.extend({
 		const TABS = [
 			[ 'diag', _('Provider diagnostics') ],
 			[ 'services', _('Services → exits') ],
-			[ 'dpi', _('DPI bypass') ]
+			[ 'dpi', _('DPI bypass') ],
+			[ 'extra', _('Advanced') ]
 		];
 		const panes = {};
 		for (let t in TABS)
@@ -316,6 +343,161 @@ return view.extend({
 		panes.dpi.appendChild(dpiCorpus);
 		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Results') ]));
 		panes.dpi.appendChild(dpiResult);
+
+		/* ── Advanced pane (Ф6): Telegram bot v2 — on-demand checks ────── */
+		const tgStatus = E('div', { 'class': 'wiz-row' });
+		const tgResult = E('div', {});
+
+		const tgEnabled = E('input', { type: 'checkbox' });
+		const tgMute = E('input', { type: 'checkbox' });
+		const tgToken = E('input', {
+			type: 'password', 'class': 'cbi-input-text', style: 'flex:1 1 260px',
+			placeholder: _('BotFather token (kept if left empty)')
+		});
+		const tgClearToken = E('input', { type: 'checkbox' });
+		const tgChat = E('input', {
+			type: 'text', 'class': 'cbi-input-text', style: 'flex:1 1 260px',
+			placeholder: _('chat_id (leave empty — the first message to the bot pins the chat)')
+		});
+		const tgPushHs = E('input', { type: 'checkbox' });
+		const tgPushWd = E('input', { type: 'checkbox' });
+		const tgPushLr = E('input', { type: 'checkbox' });
+		const tgPushSv = E('input', { type: 'checkbox' });
+		const tgPoll = E('input', { type: 'number', min: '5', max: '60', style: 'width:90px', 'class': 'cbi-input-text' });
+		const tgPival = E('input', { type: 'number', min: '1', max: '30', style: 'width:90px', 'class': 'cbi-input-text' });
+
+		const tgU = (opt, def) => {
+			const v = uci.get('homeproxy', 'telegram', opt);
+			return (v != null && String(v).length && String(v) !== '0') ? String(v) : def;
+		};
+		tgEnabled.checked = (tgU('enabled', '0') === '1');
+		tgMute.checked = (tgU('mute', '0') === '1');
+		tgPushHs.checked = (tgU('push_hotswap', '1') === '1');
+		tgPushWd.checked = (tgU('push_watchdog', '1') === '1');
+		tgPushLr.checked = (tgU('push_learn', '1') === '1');
+		tgPushSv.checked = (tgU('push_service', '1') === '1');
+		tgPoll.value = tgU('poll_timeout', '25');
+		tgPival.value = tgU('push_interval', '2');
+		tgChat.value = tgU('chat_id', '');
+
+		const tgLabel = (input, text) => E('label', {
+			style: 'display:inline-flex;align-items:center;gap:5px;white-space:nowrap'
+		}, [ input, E('span', {}, [ text ]) ]);
+
+		function renderTelegramStatus(st) {
+			st = st || {};
+			let state;
+			if (st.running && st.enabled)
+				state = badge('hpui-b-green', _('Bot is running'));
+			else if (st.running && !st.enabled)
+				state = badge('hpui-b-grey', _('Daemon idle — bot disabled'));
+			else
+				state = badge('hpui-b-red', _('Daemon is not running'));
+			const bits = [
+				state,
+				' ',
+				st.chat_id ? E('span', {}, [ _('Chat: ') + String(st.chat_id) ])
+					: E('span', { style: 'opacity:.8' }, [ _('Chat: not bound yet') ]),
+				st.muted ? E('span', {}, [ ' · ', _('pushes muted') ]) : E('span', {}, [ ' · ', _('pushes on') ]),
+				E('span', {}, [ ' · ' + _('long-poll') + ' ' + (st.poll_timeout || 25) + ' s · ' +
+					_('push gap') + ' ' + (st.push_interval || 2) + ' s' ])
+			];
+			dom.content(tgStatus, E('span', {}, bits));
+		}
+
+		function checkTelegram() {
+			return L.resolveDefault(callTelegramStatus(), {}).then(function(st) {
+				renderTelegramStatus(st);
+			});
+		}
+
+		const tgSaveBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Save bot settings') ]);
+		const tgTestBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Send test message') ]);
+		const tgCheckBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Check status') ]);
+
+		tgSaveBtn.addEventListener('click', function() {
+			tgSaveBtn.disabled = true;
+			callTelegramSet(
+				tgEnabled.checked ? '1' : '0',
+				tgClearToken.checked ? '!' : String(tgToken.value || '').trim(),
+				String(tgChat.value || '').trim(),
+				tgMute.checked ? '1' : '0',
+				tgPushHs.checked ? '1' : '0',
+				tgPushWd.checked ? '1' : '0',
+				tgPushLr.checked ? '1' : '0',
+				tgPushSv.checked ? '1' : '0',
+				String(tgPoll.value || '25'),
+				String(tgPival.value || '2')
+			).then(function(r) {
+				dom.content(tgResult, E('p', { 'class': 'hpui-hint' },
+					(!r || r.result === false)
+						? [ _('Save failed: ') + ((r && r.error) || _('rpc error')) ]
+						: [ _('Saved. The bot re-reads its settings within ~15 s — no service restart needed.') ]));
+				return checkTelegram();
+			}).finally(function() { tgSaveBtn.disabled = false; });
+		});
+
+		tgTestBtn.addEventListener('click', function() {
+			tgTestBtn.disabled = true;
+			dom.content(tgResult, E('p', { 'class': 'hpui-hint' }, [ _('Checking...') ]));
+			L.resolveDefault(callTelegramTest(), {}).then(function(r) {
+				let txt;
+				if (r && r.bot_username)
+					txt = _('Bot: @') + r.bot_username;
+				else
+					txt = _('Bot check failed');
+				if (r && r.result !== false) {
+					if (r.sent === true)
+						txt += ' · ' + _('test message sent — check your chat');
+					else if (r.error === 'no chat yet')
+						txt += ' · ' + _('no chat bound yet — send any message to the bot first');
+					else if (r.sent === false)
+						txt += ' · ' + _('test message NOT sent');
+				} else {
+					txt += ((r && r.error) ? (' · ' + r.error) : '');
+				}
+				dom.content(tgResult, E('p', { 'class': 'hpui-hint' }, [ txt ]));
+				return checkTelegram();
+			}).finally(function() { tgTestBtn.disabled = false; });
+		});
+
+		tgCheckBtn.addEventListener('click', function() {
+			tgCheckBtn.disabled = true;
+			checkTelegram().finally(function() { tgCheckBtn.disabled = false; });
+		});
+
+		const tgRow1 = E('div', { 'class': 'wiz-row' }, [
+			tgLabel(tgEnabled, _('Enable Telegram bot')),
+			tgLabel(tgMute, _('Mute push notifications'))
+		]);
+		const tgRow2 = E('div', { 'class': 'wiz-row' }, [
+			tgToken,
+			tgLabel(tgClearToken, _('remove stored token'))
+		]);
+		const tgRow3 = E('div', { 'class': 'wiz-row' }, [ tgChat ]);
+		const tgRow4 = E('div', { 'class': 'wiz-row' }, [
+			tgLabel(tgPushHs, _('Hot Swap node changes / failback')),
+			tgLabel(tgPushWd, _('URLTest dead nodes')),
+			tgLabel(tgPushLr, _('Automation learned blocks')),
+			tgLabel(tgPushSv, _('Service faults'))
+		]);
+		const tgRow5 = E('div', { 'class': 'wiz-row' }, [
+			E('span', {}, [ _('Long-poll timeout, s') + ' ' ]), tgPoll,
+			E('span', {}, [ _('Min gap between pushes, s') + ' ' ]), tgPival
+		]);
+		const tgRow6 = E('div', { 'class': 'wiz-toolbar' }, [ tgSaveBtn, tgTestBtn, tgCheckBtn ]);
+
+		panes.extra.appendChild(E('p', { 'class': 'hpui-hint' },
+			[ _('Remote control from your Telegram chat: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /mute. Push notifications watch the router state files — Hot Swap node changes, dead URLTest nodes, automation learning and service faults. The daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat.') ]));
+		panes.extra.appendChild(tgStatus);
+		panes.extra.appendChild(tgRow1);
+		panes.extra.appendChild(tgRow2);
+		panes.extra.appendChild(tgRow3);
+		panes.extra.appendChild(tgRow4);
+		panes.extra.appendChild(tgRow5);
+		panes.extra.appendChild(tgRow6);
+		panes.extra.appendChild(tgResult);
+		checkTelegram();
 
 		/* ── Badge / text helpers ──────────────────────────────────────── */
 		const badge = (cls, text) => E('span', { 'class': 'hpui-badge ' + cls }, [ text ]);
@@ -1335,6 +1517,6 @@ return view.extend({
 		poll.add(refresh, 4);
 		refresh();
 
-		return E('div', {}, [ tabBar, panes.diag, panes.services, panes.dpi ]);
+		return E('div', {}, [ tabBar, panes.diag, panes.services, panes.dpi, panes.extra ]);
 	}
 });

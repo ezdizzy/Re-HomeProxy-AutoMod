@@ -522,20 +522,19 @@ start_service() {
 		procd_close_instance
 	fi
 
-	# Telegram control bot (ч.69): long-poll getUpdates, answer the allowed
-	# chat only. Starts when enabled + a token-shaped value is stored.
-	local tg_en tg_token
-	config_get_bool tg_en "telegram" "enabled" "0"
-	config_get tg_token "telegram" "token" ""
-	if [ "$tg_en" = "1" ] && echo "$tg_token" | grep -qE '^[0-9]+:[A-Za-z0-9_-]+$'; then
-		mkdir -p "$RUN_DIR"
-		procd_open_instance "telegram"
-		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/telegram.uc"
-		procd_set_param respawn
-		procd_set_param respawn_threshold 3600
-		procd_set_param respawn_retry 0
-		procd_close_instance
-	fi
+	# Telegram control bot (ч.69, v2 ч.78): ALWAYS-ON instance (like the
+	# metrics sampler — UI-support, not the engine). The daemon gates itself
+	# on UCI every loop: enabled=0 or a missing/bad token means an idle
+	# 15 s loop, so every bot setting is hot-reloadable and saving the
+	# settings never restarts the service (the full reload would kill the
+	# core; procd would also respawn-spam a self-exiting daemon).
+	mkdir -p "$RUN_DIR"
+	procd_open_instance "telegram"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/telegram.uc"
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
 
 	# Subscription auto-update cron. This install half was dropped in the init rewrite
 	# (commit 4f3511f) while the stop_service cleanup below was kept, leaving the UI

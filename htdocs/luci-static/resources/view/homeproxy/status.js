@@ -1401,42 +1401,9 @@ return view.extend({
 		o = s.option(form.DummyValue, '_snapshots_card');
 		o.default = buildSnapshotsCard();
 
-		/* ч.69: Telegram control bot. */
-		s = m.section(form.NamedSection, 'telegram', 'homeproxy', _('Telegram bot'));
-		s.anonymous = false;
-
-		o = s.option(form.Flag, 'enabled', _('Enable Telegram bot'),
-			_('Remote control from your chat: /status, /ping, /connections, /close, /restart, /help. Long-polls the Bot API; only the bound chat is served. The daemon starts with the service (or press Restart service).'));
-		o.default = o.disabled;
-		o.rmempty = false;
-
-		o = s.option(form.Value, 'token', _('Bot token'));
-		o.password = true;
-		o.placeholder = '123456789:AA…';
-		o.rmempty = false;
-		o.validate = function(section_id, value) {
-			if (!value || !value.length)
-				return _('Create a bot with @BotFather and paste its token here.');
-			if (!/^[0-9]+:[A-Za-z0-9_-]+$/.test(value))
-				return _('That does not look like a BotFather token (id:secret).');
-			return true;
-		};
-
-		o = s.option(form.DummyValue, '_tg_chat', _('Bound chat'));
-		o.cfgvalue = function() {
-			const v = uci.get('homeproxy', 'telegram', 'chat_id');
-			return v ? String(v) : _('not bound yet — send ANY message to your bot; the first chat wins and is pinned automatically');
-		};
-		o.textvalue = function() {
-			const v = uci.get('homeproxy', 'telegram', 'chat_id');
-			const el = E('div', {}, [
-				E('span', { style: 'font-weight:600' }, [ v ? String(v) : _('not bound yet') ]),
-				E('div', { style: 'font-size:.88em; opacity:.8' },
-					[ v ? _('Send /status to the bot to check the connection.')
-					    : _('Send ANY message to your bot — the first chat wins and is pinned automatically.') ])
-			]);
-			return el;
-		};
+		/* ч.78 (Ф6/D6): the Telegram bot settings moved to the Wizard's
+		 * "Advanced" tab (wizard.js) — the Master now covers it; no duplicate
+		 * editor here. The status card on the Overview page stays. */
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('AntiDPI'));
 		s.anonymous = true;

@@ -3875,6 +3875,166 @@ const methods = {
 		}
 	},
 
+	/* Telegram bot v2 (Ф6, ч.78): settings/status/test for the always-on
+	 * telegram.uc daemon. The daemon hot-reloads UCI every loop, so set()
+	 * NEVER touches the service (the procd instance keeps running — the
+	 * full reload would kill the core, and a disabled bot must not spam
+	 * respawns either). getMe/test-send run only on demand (D6). */
+	telegram_status: {
+		call: function() {
+			const reply = {
+				enabled: false, running: false, chat_id: null, muted: false,
+				token_set: false, poll_timeout: 25, push_interval: 2,
+				pushes: { hotswap: true, watchdog: true, learn: true, service: true }
+			};
+			const c = cursor();
+			const g = (opt, def) => {
+				const v = c.get('homeproxy', 'telegram', opt);
+				return (v != null && length('' + v)) ? '' + v : def;
+			};
+			reply.enabled = (g('enabled', '0') === '1');
+			reply.chat_id = g('chat_id', '') || null;
+			reply.muted = (g('mute', '0') === '1');
+			reply.token_set = (length(g('token', '')) > 0);
+			let v = int(g('poll_timeout', '25'));
+			reply.poll_timeout = (v >= 5 && v <= 60) ? v : 25;
+			v = int(g('push_interval', '2'));
+			reply.push_interval = (v >= 1 && v <= 30) ? v : 2;
+			reply.pushes.hotswap = (g('push_hotswap', '1') === '1');
+			reply.pushes.watchdog = (g('push_watchdog', '1') === '1');
+			reply.pushes.learn = (g('push_learn', '1') === '1');
+			reply.pushes.service = (g('push_service', '1') === '1');
+			/* Daemon liveness: busybox pidof does NOT match ucode script
+			 * names (lesson 23/58) — one ps w scan + match. */
+			const fd = popen('ps w 2>/dev/null');
+			if (fd) {
+				const tbl = fd.read('all') || '';
+				fd.close();
+				reply.running = (match(tbl, /telegram\.uc/) != null);
+			}
+			return reply;
+		}
+	},
+
+	telegram_set: {
+		args: {
+			enabled: 'enabled', token: 'token', chat_id: 'chat_id', mute: 'mute',
+			push_hotswap: 'push_hotswap', push_watchdog: 'push_watchdog',
+			push_learn: 'push_learn', push_service: 'push_service',
+			poll_timeout: 'poll_timeout', push_interval: 'push_interval'
+		},
+		call: function(req) {
+			const a = (req && req.args) || {};
+			/* Full guards — the plugin dies at registration on sloppy
+			 * expressions (lesson 33) and rpcd validates arg types. */
+			const flag = (v) => {
+				if (v == null) return null;
+				const s = trim('' + v);
+				if (s === '1' || s === 'true') return '1';
+				if (s === '0' || s === 'false' || s === '') return '0';
+				return null;
+			};
+			const enabled = flag(a.enabled);
+			if (enabled == null)
+				return { result: false, error: 'bad enabled' };
+			let token = trim((a.token == null) ? '' : '' + a.token);
+			if (length(token) && token !== '!' &&
+			    match(token, /^[0-9]+:[A-Za-z0-9_-]+$/) == null)
+				return { result: false, error: 'bad token' };
+			const chat_id = trim((a.chat_id == null) ? '' : '' + a.chat_id);
+			if (length(chat_id) && match(chat_id, /^-?[0-9]+$/) == null)
+				return { result: false, error: 'bad chat_id' };
+			const mute = flag(a.mute);
+			if (mute == null)
+				return { result: false, error: 'bad mute' };
+			const pushes = {};
+			for (let k in [ 'push_hotswap', 'push_watchdog', 'push_learn', 'push_service' ]) {
+				const v = flag(a[k]);
+				if (v == null)
+					return { result: false, error: 'bad ' + k };
+				pushes[k] = v;
+			}
+			let poll = int((a.poll_timeout == null || !length(trim('' + a.poll_timeout))) ? '25' : trim('' + a.poll_timeout));
+			if (poll < 5 || poll > 60)
+				return { result: false, error: 'bad poll_timeout' };
+			let pival = int((a.push_interval == null || !length(trim('' + a.push_interval))) ? '2' : trim('' + a.push_interval));
+			if (pival < 1 || pival > 30)
+				return { result: false, error: 'bad push_interval' };
+
+			const c = cursor();
+			/* Empty token field = keep the stored one (masked input); the
+			 * '!' sentinel explicitly clears it. */
+			let cur_token = '' + (c.get('homeproxy', 'telegram', 'token') || '');
+			if (token === '!') {
+				cur_token = '';
+				token = '';
+			} else if (!length(token) && length(cur_token)) {
+				token = cur_token;
+			}
+			c.set('homeproxy', 'telegram', 'enabled', enabled);
+			if (length(token))
+				c.set('homeproxy', 'telegram', 'token', token);
+			else
+				c.delete('homeproxy', 'telegram', 'token');
+			if (length(chat_id))
+				c.set('homeproxy', 'telegram', 'chat_id', chat_id);
+			c.set('homeproxy', 'telegram', 'mute', mute);
+			c.set('homeproxy', 'telegram', 'push_hotswap', pushes.push_hotswap);
+			c.set('homeproxy', 'telegram', 'push_watchdog', pushes.push_watchdog);
+			c.set('homeproxy', 'telegram', 'push_learn', pushes.push_learn);
+			c.set('homeproxy', 'telegram', 'push_service', pushes.push_service);
+			c.set('homeproxy', 'telegram', 'poll_timeout', sprintf('%d', poll));
+			c.set('homeproxy', 'telegram', 'push_interval', sprintf('%d', pival));
+			c.commit('homeproxy');
+			/* No service restart: the daemon re-reads UCI every loop (≤15 s). */
+			return { result: true };
+		}
+	},
+
+	/* On-demand connectivity check (D6): getMe resolves the bot identity,
+	 * then a test message goes straight to the bound chat — works even
+	 * while the daemon itself is idle/disabled. */
+	telegram_test: {
+		call: function() {
+			const c = cursor();
+			const token = trim('' + (c.get('homeproxy', 'telegram', 'token') || ''));
+			const chat_raw = trim('' + (c.get('homeproxy', 'telegram', 'chat_id') || ''));
+			if (!length(token) || match(token, /^[0-9]+:[A-Za-z0-9_-]+$/) == null)
+				return { result: false, error: 'no token' };
+			const f = RUN_DIR + '/tg_test.json';
+			system('rm -f ' + shellquote(f));
+			system('curl -s --max-time 10 -o ' + shellquote(f) + ' ' +
+				shellquote('https://api.telegram.org/bot' + token + '/getMe') + ' 2>/dev/null');
+			let me = null;
+			if (access(f)) {
+				try { me = json(readfile(f) || ''); } catch (e) { me = null; }
+				system('rm -f ' + shellquote(f));
+			}
+			const bot_username = (me && me.ok === true && me.result && me.result.username)
+				? '' + me.result.username : null;
+			if (!me || me.ok !== true)
+				return { result: false, bot_username: bot_username, error: 'getMe failed' };
+			if (!length(chat_raw))
+				return { result: true, bot_username: bot_username, sent: false, error: 'no chat yet' };
+			if (match(chat_raw, /^-?[0-9]+$/) == null)
+				return { result: false, bot_username: bot_username, error: 'bad chat_id' };
+			const body = sprintf('{"chat_id":%s,"text":"%s","parse_mode":"HTML"}',
+				chat_raw, 'Тестовое сообщение Re:HomeProxy — связь с ботом работает.');
+			system('rm -f ' + shellquote(f));
+			system('curl -s --max-time 10 -o ' + shellquote(f) + ' -X POST -H \'Content-Type: application/json\' -d ' +
+				shellquote(body) + ' ' +
+				shellquote('https://api.telegram.org/bot' + token + '/sendMessage') + ' 2>/dev/null');
+			let sent = false;
+			if (access(f)) {
+				let r = null;
+				try { r = json(readfile(f) || ''); } catch (e) { r = null; }
+				sent = !!(r && r.ok === true);
+				system('rm -f ' + shellquote(f));
+			}
+			return { result: true, bot_username: bot_username, sent: sent };
+		}
+	},
+
 	/* Exit diagnostics (ч.69, was the AI-services diagnostic): answers WHY a
 	 * geo-gated service still refuses through a "working" proxy. Measures the
 	 * tunnel exit (country + ASN classification) through the user's MAIN path

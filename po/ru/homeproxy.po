@@ -9220,3 +9220,158 @@ msgstr "событий пока нет"
 
 
 
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Advanced"
+msgstr "Дополнительно"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "BotFather token (kept if left empty)"
+msgstr "Токен от @BotFather (пусто = оставить сохранённый)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "remove stored token"
+msgstr "убрать сохранённый токен"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "chat_id (leave empty — the first message to the bot pins the chat)"
+msgstr "chat_id (оставьте пустым — первое сообщение боту привяжет чат)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Mute push notifications"
+msgstr "Выключить пуш-уведомления"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Bot is running"
+msgstr "Бот работает"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Daemon idle — bot disabled"
+msgstr "Демон ждёт — бот отключён"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Daemon is not running"
+msgstr "Демон не запущен"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Chat: "
+msgstr "Чат: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Chat: not bound yet"
+msgstr "Чат: не привязан"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "pushes muted"
+msgstr "пуши выключены"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "pushes on"
+msgstr "пуши включены"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "long-poll"
+msgstr "long-poll"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "push gap"
+msgstr "пауза пушей"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Save bot settings"
+msgstr "Сохранить настройки бота"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Send test message"
+msgstr "Отправить тестовое сообщение"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Check status"
+msgstr "Проверить статус"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Save failed: "
+msgstr "Не удалось сохранить: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Saved. The bot re-reads its settings within ~15 s — no service restart needed."
+msgstr "Сохранено. Бот перечитает настройки в течение ~15 с — рестарт службы не нужен."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Bot: @"
+msgstr "Бот: @"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Bot check failed"
+msgstr "Бот не отвечает"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "test message sent — check your chat"
+msgstr "тестовое сообщение отправлено — проверьте чат"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "no chat bound yet — send any message to the bot first"
+msgstr "чат ещё не привязан — сначала отправьте боту любое сообщение"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "test message NOT sent"
+msgstr "тестовое сообщение НЕ отправлено"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Hot Swap node changes / failback"
+msgstr "Hot Swap: смена узла / failback"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "URLTest dead nodes"
+msgstr "URLTest: мёртвые узлы"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Automation learned blocks"
+msgstr "Автоматизация: выученные блокировки"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Service faults"
+msgstr "Сбои службы"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Long-poll timeout, s"
+msgstr "Таймаут long-poll, с"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Min gap between pushes, s"
+msgstr "Мин. пауза между пушами, с"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Remote control from your Telegram chat: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /mute. Push notifications watch the router state files — Hot Swap node changes, dead URLTest nodes, automation learning and service faults. The daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat."
+msgstr "Удалённое управление из вашего чата Telegram: /status, /nodes, /switch N (переключает выход без рестарта), /service, /snapshot, /status_engine, /mute. Пуш-уведомления следят за состоянием роутера — смены узла Hot Swap, мёртвые URLTest-узлы, обучение автоматизации и сбои службы. Демон работает всегда и перечитывает настройки сам, поэтому сохранение никогда не рестартует службу. Токен берите у @BotFather; первое сообщение боту привязывает ваш чат."
