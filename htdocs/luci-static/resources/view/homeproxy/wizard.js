@@ -179,6 +179,21 @@ const callFuzzApply = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф8-F7 T3: one-click strategy auto-pick — fuzz → pick per resource →
+ * rule (optional) → apply (server snapshot) → live verify. */
+const callAutoPickStart = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_auto_pick_start',
+	params: [ 'resource', 'mode', 'set_rule' ],
+	expect: { '': {} }
+});
+
+const callAutoPickStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_auto_pick_status',
+	expect: { '': {} }
+});
+
 /* Ф8-F4: Composition Builder v2 — server-side build/test/apply. Apply
  * snapshots the previous strategies on the SERVER, so the rollback button
  * reads the snapshot back on every page load (no JS-memory rollback). */
@@ -1062,7 +1077,7 @@ return view.extend({
 		panes.extra.appendChild(E('h4', { style: 'margin-top:16px' },
 			[ _('Telegram without a proxy (TG WS Proxy)') ]));
 		panes.extra.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Two third-party bridges (both MIT) carry Telegram over a WebSocket path DPI does not block. The rs variant is MTProto-only: clients connect by a tg:// link (one per user). The Go bridge (installed by the "Install tg-ws bridge" button) adds a SOCKS5 front on 127.0.0.1 and is what the "tg-ws (transparent)" Telegram-preset exit rides — Telegram apps on your LAN need NO proxy settings; messaging TCP is carried over the bridge with an automatic fallback to the node, voice calls (UDP) are not carried and keep riding the VPN. The bridge egresses via a WS relay abroad (measured live: Amsterdam, NL), so Telegram shows that relay country for device sessions — the Russian home IP is only the direct path, which the provider cuts; this is expected. Detection of foreign installs is read-only; nothing is exposed to LAN or WAN by the transparent bridge, and neither component is packed into this app.') ]));
+			[ _('Third-party bridges (MIT) carry Telegram over a WebSocket path DPI does not block — a way to use Telegram WITHOUT a VPN, not a separate service. The rs variant is MTProto-only (clients connect by a tg:// link); the Go bridge (installed by the button) adds the transparent "tg-ws" exit: LAN apps need NO proxy settings, and if the bridge dies, messaging falls back to the node — calls (UDP) keep riding the VPN. The bridge exits through a relay abroad, so Telegram shows that relay country instead of your home IP — expected for such a path. Detection of foreign installs is read-only; nothing is exposed to LAN/WAN, and neither bridge ships with this app.') ]));
 		panes.extra.appendChild(twRow);
 		panes.extra.appendChild(twBtnRow);
 		panes.extra.appendChild(twResult);
@@ -1424,11 +1439,11 @@ return view.extend({
 					}
 				}
 
-				/* R3-FIX-2: honest Telegram hint (2026-10-20 probes) + the
-				 * transparent tg-ws exit and its UDP/voice scope. */
-				if (preset.source === 'telegram')
-					wrap.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
-						[ _('Telegram: live probes (2026-10-20) — direct 443 is cut on EVERY MTProto DC range now and port 80 no longer completes directly; the node still carries some DCs, so the VPN path remains the fallback. The tg-ws (transparent) exit carries messaging TCP through the local WS bridge with NO client setup (messaging falls back to the node automatically if the bridge dies; after the bridge recovers, re-apply or reload the service to return to it); voice calls (UDP) are not carried by the bridge — they keep riding the VPN. MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs. The bridge egresses via the Cloudflare WS route abroad (measured live: Amsterdam, NL) — Telegram will show that relay country for your devices, not the Russian home IP; the home IP only appears on the direct path, which the provider cuts. This is expected.') ]));
+			/* T1 (G1): a SHORT, provider-independent hint — the exit country of
+			 * the bridge differs per user, so no measured locations here. */
+			if (preset.source === 'telegram')
+				wrap.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
+					[ _('tg-ws (transparent) lets Telegram work WITHOUT a VPN — it is not a direct connection: messaging rides a local WS bridge (no proxy setup on devices) and falls back to the node automatically if the bridge dies; calls (UDP) stay on the VPN. Telegram will show the bridge relay\'s country instead of your home IP — expected for such a path. The rule routes both Telegram domains and MTProto DC IPs.') ]));
 
 				return wrap;
 			}
@@ -2328,6 +2343,142 @@ return view.extend({
 			labStart('full');
 		});
 
+		/* Auto-tune (Ф8-F7 T3): ONE click — fuzz (reused when fresh) → best
+		 * strategy for the resource → optional rule → apply with the server
+		 * snapshot → live check of the configured path. Progress and the
+		 * result render into dpiResult (ONE place). */
+		const autSel = E('select', { 'class': 'cbi-input-select', 'style': 'width:auto' });
+		[ ['youtube', _('YouTube')], ['discord', _('Discord')],
+		  ['telegram', _('Telegram')], ['general', _('General (best overall)')] ]
+			.forEach(function(o) { autSel.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
+		const autFull = E('input', { type: 'checkbox' });
+		const autSetRule = E('input', { type: 'checkbox', checked: '' });
+		const autSetRuleWrap = E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+			[ autSetRule, ' ' + _('Also set the rule to Zapret (the strategy serves the resource through its rule)') ]);
+		const autFullWrap = E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+			[ autFull, ' ' + _('Thorough (full corpus, up to ~15 min)') ]);
+		const autStatus = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
+		const autBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			[ _('Auto-pick strategy') ]);
+		const autRow = E('div', { 'class': 'wiz-row' },
+			[ autBtn, autSel, autFullWrap, autSetRuleWrap, autStatus ]);
+		dpiLab.appendChild(autRow);
+		dpiLab.appendChild(E('p', { 'class': 'wiz-note' },
+			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied with a server snapshot, and the resource is then checked through the configured path (code + seconds). Zapret only — ByeDPI strategies are configured in Node Settings.') ]));
+		autSel.addEventListener('change', function() {
+			autSetRuleWrap.style.display = (autSel.value === 'general') ? 'none' : '';
+		});
+		autBtn.addEventListener('click', function() {
+			const resource = autSel.value;
+			const mode = autFull.checked ? 'full' : 'quick';
+			const what = (mode === 'full')
+				? _('Auto-pick the best strategy for %s? This may first run the FULL fuzz (up to ~15 min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live.')
+				: _('Auto-pick the best strategy for %s? It uses the recent fuzz ranking (or runs a quick fuzz first), applies the winner with a server snapshot (Restore stays available) and checks the resource live.');
+			if (!window.confirm(what.format(autSel.options[autSel.selectedIndex].text)))
+				return;
+			autBtn.disabled = true;
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+				[ _('Starting the auto-pick…') ]));
+			L.resolveDefault(callAutoPickStart(resource, mode, autSetRule.checked), {}).then(function(r) {
+				autBtn.disabled = false;
+				if (!r || r.result !== true) {
+					const emsg = (r && r.error === 'rules_mode')
+						? _('Routing rules apply ONLY in "Bypass blocking" mode — the rule cannot be set here.')
+						: ((r && r.error) || _('rpc error'));
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Auto-pick failed to start: %s').format(emsg) ]));
+					return;
+				}
+				autStatus.textContent = _('Auto-pick started — the progress shows up in one place below.');
+				refresh();
+			});
+		});
+
+		function renderAutoPick(st) {
+			st = (st && st.status) || null;
+			if (st && st.running) {
+				const txt = (st.stage === 'fuzz') ? _('Auto-pick: preparing the fuzz ranking…')
+					: (st.stage === 'pick') ? _('Auto-pick: choosing the best strategy…')
+					: (st.stage === 'apply') ? _('Auto-pick: applying — the service restarts…')
+					: (st.stage === 'verify') ? _('Auto-pick: verifying the live path…')
+					: _('Auto-pick is running…');
+				autStatus.textContent = txt;
+				state.autopickSig = 'run';
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ txt ]));
+				return;
+			}
+			autStatus.textContent = '';
+			if (!st || st.stage === 'started')
+				return;
+			/* Seed rule: a finished run from BEFORE this page load is not
+			 * re-shown (same contract as the compose test). */
+			if (!state.autopickSeeded) {
+				state.autopickSeeded = true;
+				return;
+			}
+			const sig = 'done:' + (st.ts || 0) + ':' + (st.stage || '');
+			if (sig === state.autopickSig)
+				return;
+			state.autopickSig = sig;
+			if (st.stage === 'error') {
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Auto-pick failed: %s').format(st.error || _('rpc error')) ]));
+				return;
+			}
+			if (st.stage !== 'done')
+				return;
+			const box = E('div', {});
+			const ch = st.chosen || {};
+			const resName = autSel.options[autSel.selectedIndex]
+				? autSel.options[autSel.selectedIndex].text : (st.resource || '');
+			box.appendChild(E('div', { 'class': 'wiz-note', style: 'font-weight:600' },
+				[ _('Auto-pick results — %s').format(resName) ]));
+			box.appendChild(E('div', { 'class': 'wiz-note' },
+				[ _('Best strategy: %s (%s).').format(ch.name || _('custom args'),
+					(ch.avg_tls_ms > 0) ? _('avg TLS %d ms').format(ch.avg_tls_ms) : _('custom args')) ]));
+			if (ch.args)
+				box.appendChild(E('details', {}, [
+					E('summary', { style: 'cursor:pointer' }, [ _('Strategy args') ]),
+					E('div', { 'class': 'ov-strat', style: 'margin:4px 0 0 12px' }, [ String(ch.args) ])
+				]));
+			if (ch.runners && ch.runners.length)
+				box.appendChild(E('div', { 'class': 'wiz-note' },
+					[ _('Runner-ups: %s.').format(ch.runners.join(' · ')) ]));
+			const v = st.verify || {};
+			box.appendChild(E('div', { 'class': 'wiz-note' }, [
+				_('Live check (%s): ').format(v.host || '—'),
+				v.ok
+					? badge('hpui-b-green', '✓ ' + (v.code || '') + ((v.tsec != null) ? (' · ' + v.tsec + ' s') : ''))
+					: badge('hpui-b-red', '✗ ' + (v.code || '000') + ((v.tsec != null) ? (' · ' + v.tsec + ' s') : ''))
+			]));
+			/* Honest rule state: the strategy serves the resource only
+			 * through its rule. */
+			const rule = st.rule || {};
+			box.appendChild(E('div', { 'class': 'wiz-note' },
+				[ (rule.node === 'zapret-out')
+					? _('The %s rule leads to Zapret — the strategy serves the resource.').format(st.resource)
+					: (rule.node
+						? _('The %s rule leads to %s — a Zapret strategy does NOT affect this resource (set the rule to Zapret to use it here).').format(st.resource, nodeText(rule.node))
+						: _('No %s rule — the resource may ride the mass lists/VPN; the Zapret strategy is applied but not serving it yet.').format(st.resource)) ]));
+			for (let n in (st.notes || []))
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' }, [ String(st.notes[n]) ]));
+			const rb = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Restore previous') ]);
+			rb.addEventListener('click', function() {
+				rb.disabled = true;
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Restoring the previous strategies — the service restarts…') ]));
+				L.resolveDefault(callComposeRollback(), {}).then(function(r2) {
+					rb.disabled = false;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ (r2 && r2.result)
+							? _('Previous strategies restored — the service restarts.')
+							: _('Restore failed: ') + ((r2 && r2.error) || _('rpc error')) ]));
+				});
+			});
+			box.appendChild(rb);
+			dom.content(dpiResult, box);
+		}
+
 		/* Service rule through the engine: the «apply → rule → verify» chain.
 		 * The engine select rebuilds with the environment; results land in
 		 * dpiResult (ONE place). */
@@ -2536,7 +2687,8 @@ return view.extend({
 				L.resolveDefault(callStrategyStatus(), {}),
 				L.resolveDefault(callFuzzStatus(), {}),
 				L.resolveDefault(callTgwspStatus(), {}),
-				L.resolveDefault(callComposeStatus(), {})
+				L.resolveDefault(callComposeStatus(), {}),
+				L.resolveDefault(callAutoPickStatus(), {})
 			]).then(function(data) {
 				const scan = data[0] || {};
 				updateDpiStatus(scan);
@@ -2553,6 +2705,8 @@ return view.extend({
 				/* Ф8-F4: compose test progress/result + the server-snapshot
 				 * Restore row (covers composition AND plain strategy applies). */
 				renderCompose(data[7] || {});
+				/* Ф8-F7 T3: auto-pick progress/result (same ONE place). */
+				renderAutoPick(data[8] || {});
 				renderRollback((data[2] && data[2].rollback) || null);
 
 				/* Deferred live check: fire once the core is running again

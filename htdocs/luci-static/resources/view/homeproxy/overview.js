@@ -134,6 +134,23 @@ function fmtK(k) {
 	return k + ' KB';
 }
 
+/* Traffic speed (bytes/s → human) and volume (bytes → human) — the
+ * per-exit sensors (Ф8-F7 T2). */
+function fmtBps(v) {
+	v = Math.round(v || 0);
+	if (v >= 1048576) return (v / 1048576).toFixed(1) + ' MB/s';
+	if (v >= 1024) return (v / 1024).toFixed(1) + ' KB/s';
+	return v + ' B/s';
+}
+
+function fmtBytes(v) {
+	v = Math.round(v || 0);
+	if (v >= 1073741824) return (v / 1073741824).toFixed(2) + ' GB';
+	if (v >= 1048576) return (v / 1048576).toFixed(1) + ' MB';
+	if (v >= 1024) return (v / 1024).toFixed(1) + ' KB';
+	return v + ' B';
+}
+
 /* ── Charts: the shared hp.chartSvg helper (homeproxy.js, Ф8-F5) ──────────
  * The local duplicate (blue variant, ×1.35 headroom, onScale) moved into
  * homeproxy.js — Automation used a red ×1.15 copy of the same code (B2).
@@ -217,7 +234,13 @@ return view.extend({
 			[ 'temp',    _('Temperature'),     { fmt: (v) => v + ' °C' } ],
 			[ 'conns',   _('Connections'),     { fmt: (v) => String(Math.floor(v) || 0) } ],
 			[ 'delay',   _('Node delay'),      { fmt: (v) => v + ' ms' } ],
-			[ 'learned', _('Learned records'), { fmt: (v) => String(Math.floor(v) || 0) } ]
+			[ 'learned', _('Learned records'), { fmt: (v) => String(Math.floor(v) || 0) } ],
+			/* Per-exit traffic speed (Ф8-F7 T2): B/s deltas from the
+			 * /connections sampler. byp = Zapret + ByeDPI + tg-ws.
+			 * Keys match the sampler point fields (vpn_b/dir_b/byp_b). */
+			[ 'vpn_b',   _('VPN speed'),       { fmt: (v) => fmtBps(v) } ],
+			[ 'dir_b',   _('Direct speed'),    { fmt: (v) => fmtBps(v) } ],
+			[ 'byp_b',   _('Bypass speed'),    { fmt: (v) => fmtBps(v) } ]
 		];
 		const chartsEl = E('div', { 'class': 'ov-charts' });
 		for (let c in CHART_DEFS) {
@@ -235,6 +258,49 @@ return view.extend({
 			E('span', {}, [ '—' ]),
 			E('span', {}, [ '—' ])
 		]);
+
+		/* ── Traffic by exit panel (Ф8-F7 T2): cumulative per-exit volume ── */
+
+		const TRAFFIC_DEFS = [
+			[ 'vpn',    _('VPN (main node)') ],
+			[ 'node',   _('Node (rule)') ],
+			[ 'direct', _('Direct') ],
+			[ 'zapret', 'Zapret (nfqws2)' ],
+			[ 'byedpi', 'ByeDPI (ciadpi)' ],
+			[ 'tgws',   _('tg-ws bridge') ],
+			[ 'block',  _('Blocked') ],
+			[ 'other',  _('Other') ]
+		];
+		const trPairs = E('div', { 'class': 'ov-pairs' });
+		const trV = {};
+		for (let p in TRAFFIC_DEFS) {
+			const pair = E('div', {}, [
+				E('span', { 'class': 'k' }, [ TRAFFIC_DEFS[p][1] + ':' ]),
+				E('span', { 'class': 'v' }, [ '—' ])
+			]);
+			trV[TRAFFIC_DEFS[p][0]] = pair.children[1];
+			trPairs.appendChild(pair);
+		}
+		const trSince = E('span', { 'class': 'k', 'style': 'opacity:.75' }, [ '' ]);
+		const trafficEl = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', {}, [ _('Traffic by exit') ]),
+			trPairs,
+			E('div', { 'class': 'ov-actions', 'style': 'margin-top:6px' }, [ trSince ]),
+			E('p', { 'class': 'hpui-hint' },
+				[ _('Volumes count LAN-client traffic through the core, split by the exit it used; the router\'s own traffic (DNS, system, probes) is not counted. Counters live from the metrics daemon start — they survive service restarts and reset on reboot.') ])
+		]);
+
+		function renderTraffic(totals) {
+			totals = totals || {};
+			for (let p in TRAFFIC_DEFS) {
+				const k = TRAFFIC_DEFS[p][0];
+				const v = (typeof totals[k] === 'number') ? totals[k] : null;
+				trV[k].textContent = (v != null) ? fmtBytes(v) : '—';
+			}
+			trSince.textContent = (totals.since > 0)
+				? _('Since: %s').format(new Date(totals.since * 1000).toLocaleTimeString())
+				: '';
+		}
 
 		/* ── System frame (static pairs, values replaced on poll) ──────── */
 
@@ -502,9 +568,10 @@ return view.extend({
 				const node = (data[2] && data[2].node) ? data[2] : null;
 				const dpi = data[3] || {};
 				const mdns = data[4] || {};
-				renderSys(sys);
-				renderCards(sys, node, dpi, mdns);
-				renderCharts();
+			renderSys(sys);
+			renderCards(sys, node, dpi, mdns);
+			renderCharts();
+			renderTraffic(metrics.totals);
 			});
 		}
 
@@ -519,6 +586,7 @@ return view.extend({
 				chartsEl,
 				chartsCap
 			]),
+			trafficEl,
 			sysEl,
 			actionsEl,
 			resultEl

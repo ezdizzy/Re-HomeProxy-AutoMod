@@ -3547,6 +3547,73 @@ const methods = {
 		}
 	},
 
+	/* ── Ф8-F7 T3: one-click strategy auto-pick ("Автоподбор") ─────────────
+	 * The RPC owns the lock and the validation; the runner
+	 * (scripts/wizard_autopick.uc) drives fuzz→pick→rule→apply→verify and
+	 * rewrites the status file atomically at every stage. set_rule hands the
+	 * resource rule to the EXISTING wizard_preset_apply (its guards stay the
+	 * single implementation) — done by the runner through ubus AFTER the
+	 * pick, so a failed pick never touches routing. */
+
+	wizard_auto_pick_start: {
+		/* set_rule is a BOOLEAN typehint (rpcd maps it to BLOBMSG_TYPE_INT8):
+		 * a string typehint made ubus reject the JS boolean with
+		 * "Invalid argument" (the diag_config_heal lesson). */
+		args: { resource: 'resource', mode: 'mode', set_rule: true },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const resource = trim('' + (a.resource || ''));
+			if (!(resource in ['youtube', 'discord', 'telegram', 'general']))
+				return { result: false, error: 'invalid resource' };
+			const mode = (a.mode === 'full') ? 'full' : 'quick';
+			const set_rule = (a.set_rule === true);
+			if (set_rule && resource === 'general')
+				return { result: false, error: 'set_rule makes no sense for "general"' };
+			if (set_rule) {
+				/* The same guard the presets carry: rules exist only in
+				 * "Bypass blocking" (proxy_banned_ru). */
+				const rm = cursor().get('homeproxy', 'config', 'routing_mode') || '';
+				if (rm !== 'proxy_banned_ru')
+					return { result: false, error: 'rules_mode' };
+			}
+			if (!access('/opt/zapret2/nfq2/nfqws2'))
+				return { result: false, error: 'zapret2 is not installed' };
+			const st = RUN_DIR + '/wizard_autopick.json';
+			/* One auto-pick at a time; a stale running status older than the
+			 * runner's own hard cap (wait 45 min + core 90 s + verify) is
+			 * treated as dead. */
+			if (access(st)) {
+				let prev = null;
+				try { prev = json(readfile(st) || ''); } catch (e) { prev = null; }
+				if (prev && prev.running && (time() - int(prev.ts || 0) < 3600))
+					return { result: false, error: 'an auto-pick is already running' };
+			}
+			/* Initial status so the first poll sees the run immediately. */
+			writefile(st + '.tmp', sprintf("%.J\n", {
+				running: true, stage: 'started', resource: resource, mode: mode,
+				set_rule: set_rule, ts: time()
+			}));
+			system(`mv -f ${shellquote(st + '.tmp')} ${shellquote(st)}`);
+			writefile(RUN_DIR + '/wizard_autopick_req.json.tmp', sprintf("%.J\n", {
+				resource: resource, mode: mode, set_rule: set_rule, ts: time()
+			}));
+			system(`mv -f ${shellquote(RUN_DIR + '/wizard_autopick_req.json.tmp')} ${shellquote(RUN_DIR + '/wizard_autopick_req.json')}`);
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_autopick.uc')} >/dev/null 2>&1 &`);
+			return { result: true, resource: resource, mode: mode, set_rule: set_rule };
+		}
+	},
+
+	wizard_auto_pick_status: {
+		call: function(req) {
+			const st = RUN_DIR + '/wizard_autopick.json';
+			let status = null;
+			if (access(st)) {
+				try { status = json(readfile(st) || ''); } catch (e) { status = null; }
+			}
+			return { status: status };
+		}
+	},
+
 	automation_status: {
 		call: function(req) {
 			const state_file = RUN_DIR + '/automation_state.json';
@@ -4752,7 +4819,10 @@ const methods = {
 			return {
 				interval: int(doc.interval) || 5,
 				updated: int(doc.updated) || 0,
-				points: (type(doc.points) === 'array') ? doc.points : []
+				points: (type(doc.points) === 'array') ? doc.points : [],
+				/* Ф8-F7 T2: cumulative per-exit traffic totals (see
+				 * metrics.uc) — passed through untouched. */
+				totals: (type(doc.totals) === 'object') ? doc.totals : null
 			};
 		}
 	},

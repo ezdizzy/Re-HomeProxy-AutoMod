@@ -18,10 +18,22 @@
  *   ram     % used (100 × (MemTotal − MemAvailable) / MemTotal)
  *   temp    °C (first thermal zone, when present; null otherwise)
  *   conns   active connections (Clash API /connections; null when core down)
+ *   vpn_b / dir_b / byp_b   per-exit traffic SPEED, bytes/s since the
+ *           previous sample (Clash API /connections per-connection deltas,
+ *           aggregated by the chain of outbounds: vpn = main-out/node leaf,
+ *           dir = direct-out, byp = zapret + byedpi + tg-ws bridges;
+ *           null when the core is down or on the baseline sample)
  *   delay   active node last TLS delay, ms (Clash API /proxies, leaf history;
  *           null when core down / direct main / no fresh history)
  *   learned records in the automation learned lists (domains + raw IPs,
  *           recounted only when either file changes size/mtime)
+ *   totals  CUMULATIVE per-exit VOLUME (bytes) carried in the output doc
+ *           (vpn/node/direct/zapret/byedpi/tgws/block/other + since).
+ *           Only LAN-client connections count — the router's own 127.0.0.1
+ *           probes (scanner, diagnostics, bridges) are excluded. The
+ *           counters are restored from the output file at startup, so they
+ *           survive a service restart; a REBOOT clears /var/run (tmpfs) and
+ *           honestly resets them.
  * Points missing a source carry null — the UI breaks the line there.
  *
  * Live-verified on this build (05-doc, ч.76): ucode standalone HAS the
@@ -61,6 +73,14 @@ let learned = 0;
 let last_probe = 0;           /* rate-limited active-node delay probe       */
 const PROBE_EVERY = 60;       /* s between API delay probes (1 req/min)     */
 const PROBE_URL = 'http://www.gstatic.com/generate_204';
+
+/* Per-exit traffic (Ф8-F7 T2). totals = cumulative bytes per bucket;
+ * prev_conn = last cumulative upload/download per connection id (the delta
+ * source). null prev_conn → the next sample is a BASELINE (long-lived
+ * connections must not dump their whole history into a fresh counter). */
+let totals = { vpn: 0, node: 0, direct: 0, zapret: 0, byedpi: 0, tgws: 0, block: 0, other: 0 };
+let totals_since = time();
+let prev_conn = null;
 
 function read_all(path) {
 	if (!access(path))
@@ -136,14 +156,69 @@ function clash_get(path) {
 	return data;
 }
 
-function sample_conns() {
-	const data = clash_get('/connections');
-	if (data == null || type(data) !== 'object')
+/* ── Per-exit traffic aggregation (Ф8-F7 T2) ─────────────────────────────
+ * The Clash API /connections reply carries ACTIVE connections with their
+ * CUMULATIVE upload/download. Deltas between samples give the per-exit
+ * speed; the deltas also accumulate into the totals. Exit = the connection
+ * chain ([leaf, …, root]): tg-ws bridge beats the groups (a per-source
+ * urltest group can carry both tgws-out and main-out — what "now" points
+ * at decides), then main-out, then the engines, then direct/block; a bare
+ * cfg-*-out leaf is a specific node (custom routing / node rules). */
+function classify_chains(chains) {
+	if (chains == null || type(chains) !== 'array')
+		return 'other';
+	const has = (t) => (index(chains, t) >= 0);
+	if (has('tgws-out')) return 'tgws';
+	if (has('main-out')) return 'vpn';
+	if (has('zapret-out')) return 'zapret';
+	if (has('byedpi-out')) return 'byedpi';
+	if (has('direct-out')) return 'direct';
+	if (has('block-out')) return 'block';
+	const leaf = '' + chains[0];
+	if (match(leaf, /^cfg-.+-out$/))
+		return 'node';
+	return 'other';
+}
+
+/* One /connections sample → per-exit rate deltas {vpn, dir, byp} in bytes
+ * (per SAMPLE_INTERVAL), or null when the core is down (totals untouched;
+ * prev_conn reset so the next sample re-baselines). Router-originated
+ * probes (sourceIP 127.0.0.1) never count — only LAN-client traffic. */
+function sample_traffic(list) {
+	if (list == null || type(list) !== 'array') {
+		prev_conn = null;
 		return null;
-	const list = data.connections;
-	/* No-connection cores marshal a nil slice as JSON null — the core is
-	 * UP here (we parsed its reply), so null means zero connections. */
-	return (list != null && type(list) === 'array') ? length(list) : 0;
+	}
+	const cur = {};
+	const d = { vpn: 0, dir: 0, byp: 0 };
+	for (let c in list) {
+		if (type(c) !== 'object' || !c.id)
+			continue;
+		const md = c.metadata;
+		if (md && md.sourceIP === '127.0.0.1')
+			continue;
+		const u = int(c.upload) || 0;
+		const dn = int(c.download) || 0;
+		cur[c.id] = { u: u, d: dn };
+		if (prev_conn == null)
+			continue;   /* baseline sample: counters start from here */
+		const p = prev_conn[c.id];
+		if (p == null)
+			continue;   /* first sight of a NEW connection: it started
+			           * within this interval with ≈zero counters —
+			           * its deltas count from the next sample on */
+		const du = (u >= p.u) ? (u - p.u) : u;
+		const dd = (dn >= p.d) ? (dn - p.d) : dn;
+		if (!du && !dd)
+			continue;
+		const b = classify_chains(c.chains);
+		totals[b] = int(totals[b] || 0) + du + dd;
+		if (b === 'vpn' || b === 'node') d.vpn += du + dd;
+		else if (b === 'direct') d.dir += du + dd;
+		else if (b === 'zapret' || b === 'byedpi' || b === 'tgws') d.byp += du + dd;
+	}
+	prev_conn = cur;
+	return d;
 }
 
 /* Self-probe of the active leaf: the core refreshes a node's delay history
@@ -249,12 +324,35 @@ function atomic_write(path, content) {
 	system('mv -f ' + shellquote(tmp) + ' ' + shellquote(path));
 }
 
+/* Restore the carried per-exit totals from the output file left by the
+ * previous metrics run (same tmpfs file): the counters then survive a
+ * service restart. A reboot wipes /var/run — the counters honestly reset. */
+function restore_totals() {
+	const raw = read_all(OUT);
+	if (raw == null)
+		return;
+	let doc = null;
+	try { doc = json(raw); } catch (e) { return; }
+	if (doc == null || type(doc.totals) !== 'object')
+		return;
+	for (let k in totals) {
+		if (type(doc.totals[k]) === 'number' && doc.totals[k] >= 0)
+			totals[k] = int(doc.totals[k]);
+	}
+	if (type(doc.totals.since) === 'number' && doc.totals.since > 0)
+		totals_since = int(doc.totals.since);
+}
+
 function flush() {
+	const tdoc = { since: totals_since };
+	for (let k in totals)
+		tdoc[k] = totals[k];
 	const doc = {
 		interval: SAMPLE_INTERVAL,
 		max_points: MAX_POINTS,
 		updated: time(),
-		points: points
+		points: points,
+		totals: tdoc
 	};
 	try {
 		atomic_write(OUT, sprintf('%.J', doc) + '\n');
@@ -262,6 +360,7 @@ function flush() {
 }
 
 system('mkdir -p ' + shellquote(RUN_DIR) + ' 2>/dev/null; true');
+restore_totals();
 
 /* Main loop. Sleep FIRST so every emitted point sits on the interval grid;
  * the very first point has no CPU delta yet (null) by design. */
@@ -271,12 +370,27 @@ while (true) {
 	const t = time();
 	let pt = null;
 	try {
+		/* One /connections fetch feeds BOTH the connection count and the
+		 * per-exit traffic deltas (the aggregate is the same reply). */
+		const cj = clash_get('/connections');
+		let conns_n = null;
+		let rates = null;
+		if (cj != null && type(cj) === 'object') {
+			const list = cj.connections;
+			conns_n = (list != null && type(list) === 'array') ? length(list) : 0;
+			rates = sample_traffic(list);
+		} else {
+			prev_conn = null;
+		}
 		pt = {
 			t: t,
 			cpu: sample_cpu(),
 			ram: sample_ram(),
 			temp: sample_temp(),
-			conns: sample_conns(),
+			conns: conns_n,
+			vpn_b: (rates != null) ? int(rates.vpn / SAMPLE_INTERVAL) : null,
+			dir_b: (rates != null) ? int(rates.dir / SAMPLE_INTERVAL) : null,
+			byp_b: (rates != null) ? int(rates.byp / SAMPLE_INTERVAL) : null,
 			delay: sample_delay(),
 			learned: sample_learned()
 		};

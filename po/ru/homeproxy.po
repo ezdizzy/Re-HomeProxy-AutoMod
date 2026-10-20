@@ -8257,8 +8257,8 @@ msgstr "Покрыт массовым списком (%s) → %s — отдел�
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Telegram: live probes (2026-10-20) — direct 443 is cut on EVERY MTProto DC range now and port 80 no longer completes directly; the node still carries some DCs, so the VPN path remains the fallback. The tg-ws (transparent) exit carries messaging TCP through the local WS bridge with NO client setup (messaging falls back to the node automatically if the bridge dies; after the bridge recovers, re-apply or reload the service to return to it); voice calls (UDP) are not carried by the bridge — they keep riding the VPN. MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs. The bridge egresses via the Cloudflare WS route abroad (measured live: Amsterdam, NL) — Telegram will show that relay country for your devices, not the Russian home IP; the home IP only appears on the direct path, which the provider cuts. This is expected."
-msgstr "Telegram: живые пробы (2026-10-20) — 443 напрямую теперь режется на ВСЕХ диапазонах MTProto DC, и порт 80 напрямую больше не проходит до конца; узел по-прежнему берёт часть DC, поэтому VPN-путь остаётся фолбэком. Выход «tg-ws (прозрачно)» несёт TCP-сообщения через локальный WS-мост БЕЗ настройки клиентов (если мост умрёт, сообщения автоматически уходят на узел; когда мост оживёт — пере-applied пресета или перезагрузка службы вернут трафик на мост); звонки (UDP) мост не несёт — они остаются на VPN. Диапазоны MTProto DC матчатся и IP-правилом — правило здесь маршрутизирует и домены, и IP DC-ов. Мост выходит наружу через WS-маршрут Cloudflare за границей (замер живьём: Амстердам, NL) — Telegram будет показывать устройствам страну этого релея, а не российский домашний IP; домашний IP виден только на прямом пути, который режет провайдер. Это ожидаемое поведение."
+msgid "tg-ws (transparent) lets Telegram work WITHOUT a VPN — it is not a direct connection: messaging rides a local WS bridge (no proxy setup on devices) and falls back to the node automatically if the bridge dies; calls (UDP) stay on the VPN. Telegram will show the bridge relay's country instead of your home IP — expected for such a path. The rule routes both Telegram domains and MTProto DC IPs."
+msgstr "«tg-ws (прозрачно)» позволяет пользоваться Telegram БЕЗ VPN — это не прямое подключение: сообщения идут через локальный WS-мост (на устройствах ничего настраивать не нужно), а если мост умрёт, они автоматически уходят на узел; звонки (UDP) остаются на VPN. Telegram будет показывать страну релея моста вместо домашнего IP — для такого пути это ожидаемо. Правило маршрутизирует и домены Telegram, и IP-адреса MTProto DC."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -9469,8 +9469,8 @@ msgstr "Telegram без прокси (TG WS Proxy)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Two third-party bridges (both MIT) carry Telegram over a WebSocket path DPI does not block. The rs variant is MTProto-only: clients connect by a tg:// link (one per user). The Go bridge (installed by the \"Install tg-ws bridge\" button) adds a SOCKS5 front on 127.0.0.1 and is what the \"tg-ws (transparent)\" Telegram-preset exit rides — Telegram apps on your LAN need NO proxy settings; messaging TCP is carried over the bridge with an automatic fallback to the node, voice calls (UDP) are not carried and keep riding the VPN. The bridge egresses via a WS relay abroad (measured live: Amsterdam, NL), so Telegram shows that relay country for device sessions — the Russian home IP is only the direct path, which the provider cuts; this is expected. Detection of foreign installs is read-only; nothing is exposed to LAN or WAN by the transparent bridge, and neither component is packed into this app."
-msgstr "Два сторонних моста (оба MIT) проводят Telegram по WebSocket-пути, который DPI не блокирует. rs-вариант — только MTProto: клиенты подключаются по tg:// ссылке (одна на пользователя). Go-мост (кнопка «Установить tg-ws мост») добавляет SOCKS5-вход на 127.0.0.1 — именно его использует выход «tg-ws (прозрачно)» в пресете Telegram: приложениям Telegram в LAN НЕ нужна настройка прокси; TCP-сообщения идут через мост с автоматическим фолбэком на узел, звонки (UDP) мост не несёт и остаются на VPN. Мост выходит наружу через WS-релей за границей (замер живьём: Амстердам, NL), поэтому Telegram показывает устройствам страну этого релея — российский домашний IP виден только на прямом пути, который режет провайдер; это ожидаемо. Обнаружение чужих установок — только чтение; прозрачный мост слушает только loopback, в LAN/WAN ничего не открывается, в наш пакет ничего не пакуется."
+msgid "Third-party bridges (MIT) carry Telegram over a WebSocket path DPI does not block — a way to use Telegram WITHOUT a VPN, not a separate service. The rs variant is MTProto-only (clients connect by a tg:// link); the Go bridge (installed by the button) adds the transparent \"tg-ws\" exit: LAN apps need NO proxy settings, and if the bridge dies, messaging falls back to the node — calls (UDP) keep riding the VPN. The bridge exits through a relay abroad, so Telegram shows that relay country instead of your home IP — expected for such a path. Detection of foreign installs is read-only; nothing is exposed to LAN/WAN, and neither bridge ships with this app."
+msgstr "Сторонние мосты (MIT) проводят Telegram по WebSocket-пути, который DPI не блокирует, — это способ пользоваться Telegram без VPN, а не отдельный сервис. rs-вариант — только MTProto: клиенты подключаются по tg:// ссылке. Go-мост (кнопка установки) даёт прозрачный выход «tg-ws»: приложениям в LAN не нужна настройка прокси, а если мост умрёт, сообщения автоматически уходят на узел; звонки (UDP) остаются на VPN. Мост выходит наружу через зарубежный релей, поэтому Telegram показывает страну релея вместо домашнего IP — это ожидаемо. Обнаружение чужих установок — только чтение; в LAN/WAN ничего не открывается, в пакет приложения мосты не входят."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -10017,3 +10017,183 @@ msgstr "(отключено)"
 
 msgid "Profiles are matched in order (first match wins): scoped profiles run first, the general profile last. The server builds the final args, tests them on the isolated queue (Zapret) and through the local tester (ByeDPI); applying snapshots the previous strategies on the server, so Restore survives page reloads. ByeDPI scoped profiles are exact-domain and TCP-only (SNI in TLS-CHello/HTTP); QUIC/UDP is not domain-scoped and falls to the fallback group."
 msgstr "Профили сопоставляются по порядку (первый совпавший побеждает): профили ресурсов идут первыми, общий — последним. Сервер собирает итоговые аргументы и проверяет их на изолированной очереди (Zapret) и локальным тестером (ByeDPI); при применении предыдущие стратегии сохраняются в серверный снапшот, поэтому кнопка возврата переживает перезагрузку страницы. Профили ByeDPI скоупятся точными доменами и только TCP (SNI в TLS-CHello/HTTP); QUIC/UDP не скоупится доменами и уходит в фолбэк-группу."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick strategy"
+msgstr "Автоподбор стратегии"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Also set the rule to Zapret (the strategy serves the resource through its rule)"
+msgstr "Также поставить правило на Zapret (стратегия обслуживает ресурс через его правило)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Thorough (full corpus, up to ~15 min)"
+msgstr "Тщательно (весь корпус, до ~15 мин)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "General (best overall)"
+msgstr "Общий (лучшая в целом)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied with a server snapshot, and the resource is then checked through the configured path (code + seconds). Zapret only — ByeDPI strategies are configured in Node Settings."
+msgstr "Один клик: фаззинг ранжирует корпус (свежий результат переиспользуется), лучшая для ресурса стратегия применяется с серверным снапшотом, затем ресурс проверяется по настроенному пути (код + секунды). Только Zapret — стратегии ByeDPI настраиваются в Настройках узлов."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick the best strategy for %s? This may first run the FULL fuzz (up to ~15 min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live."
+msgstr "Подобрать лучшую стратегию для «%s»? Сначала может быть запущен ПОЛНЫЙ фаззинг (до ~15 мин), затем победитель применяется с серверным снапшотом (кнопка возврата остаётся доступной), после чего ресурс проверяется живьём."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick the best strategy for %s? It uses the recent fuzz ranking (or runs a quick fuzz first), applies the winner with a server snapshot (Restore stays available) and checks the resource live."
+msgstr "Подобрать лучшую стратегию для «%s»? Используется свежий рейтинг фаззинга (или сначала быстрый фаззинг), победитель применяется с серверным снапшотом (кнопка возврата остаётся доступной), затем ресурс проверяется живьём."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Starting the auto-pick…"
+msgstr "Запуск автоподбора…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Routing rules apply ONLY in \"Bypass blocking\" mode — the rule cannot be set here."
+msgstr "Правила маршрутизации работают ТОЛЬКО в режиме «Обход блокировок» — правило здесь поставить нельзя."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick failed to start: %s"
+msgstr "Не удалось запустить автоподбор: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick started — the progress shows up in one place below."
+msgstr "Автоподбор запущен — прогресс появится ниже, в одном месте."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick: preparing the fuzz ranking…"
+msgstr "Автоподбор: подготовка рейтинга фаззинга…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick: choosing the best strategy…"
+msgstr "Автоподбор: выбор лучшей стратегии…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick: applying — the service restarts…"
+msgstr "Автоподбор: применение — служба перезапускается…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick: verifying the live path…"
+msgstr "Автоподбор: проверка живого пути…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick is running…"
+msgstr "Автоподбор выполняется…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick failed: %s"
+msgstr "Ошибка автоподбора: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pick results — %s"
+msgstr "Результаты автоподбора — %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Best strategy: %s (%s)."
+msgstr "Лучшая стратегия: %s (%s)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "avg TLS %d ms"
+msgstr "TLS в среднем %d мс"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "custom args"
+msgstr "свои аргументы"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Strategy args"
+msgstr "Аргументы стратегии"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Runner-ups: %s."
+msgstr "Следующие за победителем: %s."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Live check (%s): "
+msgstr "Живая проверка (%s): "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The %s rule leads to Zapret — the strategy serves the resource."
+msgstr "Правило %s ведёт на Zapret — стратегия обслуживает ресурс."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The %s rule leads to %s — a Zapret strategy does NOT affect this resource (set the rule to Zapret to use it here)."
+msgstr "Правило %s ведёт на %s — стратегия Zapret на этот ресурс НЕ влияет (поставьте правило на Zapret, чтобы использовать её здесь)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "No %s rule — the resource may ride the mass lists/VPN; the Zapret strategy is applied but not serving it yet."
+msgstr "Правила для %s нет — ресурс может идти через масс-списки/VPN; стратегия Zapret применена, но пока его не обслуживает."
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "VPN speed"
+msgstr "Скорость VPN"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Direct speed"
+msgstr "Скорость напрямую"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Bypass speed"
+msgstr "Скорость обхода"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Traffic by exit"
+msgstr "Трафик по выходам"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "VPN (main node)"
+msgstr "VPN (основной узел)"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Node (rule)"
+msgstr "Узел (правило)"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "tg-ws bridge"
+msgstr "мост tg-ws"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Since: %s"
+msgstr "Счётчики с: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+
+msgid "Volumes count LAN-client traffic through the core, split by the exit it used; the router's own traffic (DNS, system, probes) is not counted. Counters live from the metrics daemon start — they survive service restarts and reset on reboot."
+msgstr "Объёмы учитывают трафик устройств LAN через ядро с разбивкой по использованному выходу; служебный трафик роутера (DNS, система, пробы) не считается. Счётчики живут с момента старта демона метрик — переживают перезапуск службы и сбрасываются при перезагрузке роутера."
