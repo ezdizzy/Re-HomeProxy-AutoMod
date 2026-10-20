@@ -819,6 +819,26 @@ function hp_apply_backup_write() {
 	system(`mv -f ${shellquote(COMP_BAK + '.tmp')} ${shellquote(COMP_BAK)}`);
 }
 
+/* ч.97: the auto-pilot UCI section with the same defaults the daemon and
+ * init.d assume — the single echo used by set/status. */
+function hp_autopilot_cfg() {
+	const c = cursor();
+	const get = (o, d) => {
+		const v = c.get('homeproxy', 'autopilot', o);
+		return (v == null) ? d : '' + v;
+	};
+	return {
+		enabled: (get('enabled', '0') === '1'),
+		resources: '' + get('resources', 'youtube discord telegram'),
+		set_rules: (get('set_rules', '1') === '1'),
+		interval_h: int(get('interval_h', '6')),
+		check_min: int(get('check_min', '15')),
+		fail_strikes: int(get('fail_strikes', '2')),
+		fuzz_mode: (get('fuzz_mode', 'quick') === 'full') ? 'full' : 'quick',
+		window: '' + get('window', '')
+	};
+}
+
 function hp_comp_domain_ok(d) {
 	return (length(d) >= 3 && length(d) <= 253 && !!match(d, /^[A-Za-z0-9._-]+$/));
 }
@@ -3544,6 +3564,113 @@ const methods = {
 			c.commit('homeproxy');
 			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
 			return { result: true, restored: { zapret: bak.zapret, byedpi: bak.byedpi } };
+		}
+	},
+
+	/* ── ч.97: Zapret strategy auto-pilot — config/status RPCs + a build-only
+	 * compose endpoint. The daemon (scripts/zapret_autopilot.uc) reads the
+	 * UCI section every tick (no restart on save) and drives the scheduled
+	 * re-ranks + health re-picks; every apply goes through compose_apply
+	 * (server snapshot, Restore intact). Build-only exists so the daemon
+	 * can rebuild the per-resource composition through ubus without running
+	 * the isolated composition test. */
+
+	wizard_compose_build: {
+		args: { profiles: [] },
+		call: function(req) {
+			const profiles = (req && req.args && req.args.profiles) || [];
+			if (type(profiles) !== 'array' || !length(profiles))
+				return { result: false, error: 'no profiles' };
+			if (length(profiles) > 8)
+				return { result: false, error: 'too many profiles (max 8)' };
+			const built = hp_compose_build(profiles);
+			if (built.error)
+				return { result: false, error: built.error };
+			return { result: true, zapret: built.zapret, byedpi: built.byedpi, notes: built.notes };
+		}
+	},
+
+	wizard_autopilot_set: {
+		args: {
+			enabled: 'enabled', resources: 'resources', set_rules: 'set_rules',
+			interval_h: 'interval_h', check_min: 'check_min', window: 'window',
+			fuzz_mode: 'fuzz_mode', fail_strikes: 'fail_strikes'
+		},
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const flag = (v) => {
+				const s = trim((v == null) ? '' : '' + v);
+				if (s === '1' || s === 'true') return '1';
+				if (s === '0' || s === 'false' || s === '') return '0';
+				return null;
+			};
+			const enabled = flag(a.enabled);
+			if (enabled == null)
+				return { result: false, error: 'bad enabled' };
+			const set_rules = flag(a.set_rules);
+			if (set_rules == null)
+				return { result: false, error: 'bad set_rules' };
+			const RES = { youtube: 1, discord: 1, telegram: 1, general: 1 };
+			const resources = [];
+			const seen = {};
+			for (let x in split(trim('' + (a.resources || '')), /[[:space:],]+/)) {
+				x = trim(x);
+				if (!length(x) || !RES[x] || seen[x])
+					continue;
+				seen[x] = true;
+				push(resources, x);
+			}
+			if (enabled === '1' && !length(resources))
+				return { result: false, error: 'no resources selected' };
+			const interval_h = int(trim('' + (a.interval_h || '6')));
+			if (!interval_h || interval_h < 1 || interval_h > 24)
+				return { result: false, error: 'bad interval_h' };
+			const check_min = int(trim('' + (a.check_min || '15')));
+			if (!check_min || check_min < 5 || check_min > 180)
+				return { result: false, error: 'bad check_min' };
+			const fail_strikes = int(trim('' + (a.fail_strikes || '2')));
+			if (!fail_strikes || fail_strikes < 1 || fail_strikes > 5)
+				return { result: false, error: 'bad fail_strikes' };
+			const fuzz_mode = (trim('' + (a.fuzz_mode || 'quick')) === 'full') ? 'full' : 'quick';
+			const win = trim('' + (a.window || ''));
+			const wm = (length(win)) ? match(win, /^([0-9]{1,2}):([0-9]{2})-([0-9]{1,2}):([0-9]{2})$/) : null;
+			if (length(win) &&
+			    !(wm && int(wm[1]) < 24 && int(wm[3]) < 24 && int(wm[2]) < 60 && int(wm[4]) < 60 &&
+			      (int(wm[1]) * 60 + int(wm[2])) != (int(wm[3]) * 60 + int(wm[4]))))
+				return { result: false, error: 'bad window (use HH:MM-HH:MM or empty)' };
+			const c = cursor();
+			if (!c.get_all('homeproxy', 'autopilot'))
+				c.set('homeproxy', 'autopilot', 'homeproxy');
+			c.set('homeproxy', 'autopilot', 'enabled', enabled);
+			c.set('homeproxy', 'autopilot', 'resources', join(' ', resources));
+			c.set('homeproxy', 'autopilot', 'set_rules', set_rules);
+			c.set('homeproxy', 'autopilot', 'interval_h', '' + interval_h);
+			c.set('homeproxy', 'autopilot', 'check_min', '' + check_min);
+			c.set('homeproxy', 'autopilot', 'fail_strikes', '' + fail_strikes);
+			c.set('homeproxy', 'autopilot', 'fuzz_mode', fuzz_mode);
+			if (length(win))
+				c.set('homeproxy', 'autopilot', 'window', win);
+			else
+				c.delete('homeproxy', 'autopilot', 'window');
+			c.commit('homeproxy');
+			/* The daemon hot-reads the section each tick — no restart needed. */
+			return { result: true, config: hp_autopilot_cfg() };
+		}
+	},
+
+	wizard_autopilot_status: {
+		call: function(req) {
+			const stf = RUN_DIR + '/zapret_autopilot.json';
+			let status = null;
+			if (access(stf)) {
+				try { status = json(readfile(stf) || ''); } catch (e) { status = null; }
+			}
+			const fresh = (o, win) => (o && int(o.ts || 0) > time() - (win || 600));
+			return {
+				config: hp_autopilot_cfg(),
+				status: status,
+				daemon_ok: !!(fresh(status, 600) || (status && fresh({ ts: status.stage_ts }, 900)))
+			};
 		}
 	},
 

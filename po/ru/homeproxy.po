@@ -10197,3 +10197,168 @@ msgstr "Счётчики с: %s"
 
 msgid "Volumes count LAN-client traffic through the core, split by the exit it used; the router's own traffic (DNS, system, probes) is not counted. Counters live from the metrics daemon start — they survive service restarts and reset on reboot."
 msgstr "Объёмы учитывают трафик устройств LAN через ядро с разбивкой по использованному выходу; служебный трафик роутера (DNS, система, пробы) не считается. Счётчики живут с момента старта демона метрик — переживают перезапуск службы и сбрасываются при перезагрузке роутера."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Quick fuzz"
+msgstr "Быстрый фаззинг"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pilot (scheduled)"
+msgstr "Автопилот (по расписанию)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Enable the auto-pilot"
+msgstr "Включить автопилот"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Save auto-pilot"
+msgstr "Сохранить автопилот"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Keep the rules on Zapret"
+msgstr "Держать правила на Zapret"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Re-rank every"
+msgstr "Переразметка каждые"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "h"
+msgstr "ч"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "check every"
+msgstr "проверка каждые"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "min"
+msgstr "мин"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "apply in window"
+msgstr "применять в окне"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "empty — any time"
+msgstr "пусто — в любое время"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. With \"Keep the rules on Zapret\" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed."
+msgstr "Автопилот держит стратегии рабочими без внимания: по расписанию он переразмечает корпус и применяет лучшую стратегию для каждого ресурса (замена текущей — только при выигрыше больше 10%); если ресурс несколько раз подряд не проходит проверку — следующая альтернатива применяется сразу. С опцией «Держать правила на Zapret» правила управляемых ресурсов направляются на Zapret — стратегия обслуживает ресурс только через своё правило, а правило Telegram не трогается, пока его обслуживает мост tg-ws. Каждое применение делает серверный снапшот — Restore всегда откатывает. Стратегии ByeDPI не управляются."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Select at least one resource for the auto-pilot."
+msgstr "Выберите хотя бы один ресурс для автопилота."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Enable the strategy auto-pilot? It will manage the Zapret strategies of the selected resources automatically (scheduled re-ranks, immediate re-picks on failures) and — with the rules option — keep their rules on Zapret."
+msgstr "Включить автопилот стратегий? Он будет сам управлять стратегиями Zapret выбранных ресурсов (переразметка по расписанию, немедленный перподбор при сбоях) и — с опцией правил — держать их правила на Zapret."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pilot save failed: %s"
+msgstr "Не удалось сохранить автопилот: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pilot enabled — the daemon picks it up within a minute (first re-rank right away)."
+msgstr "Автопилот включён — демон подхватит его в течение минуты (первая переразметка сразу)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Auto-pilot settings saved — the daemon reads them on its next tick."
+msgstr "Настройки автопилота сохранены — демон прочитает их на следующем такте."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "daemon is not responding"
+msgstr "демон не отвечает"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "no data (the daemon is not responding)"
+msgstr "нет данных (демон не отвечает)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "idle"
+msgstr "ожидание"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "watching"
+msgstr "наблюдение"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "re-ranking the corpus…"
+msgstr "переразметка корпуса…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "setting the rules…"
+msgstr "установка правил…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "applying…"
+msgstr "применение…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "verifying…"
+msgstr "проверка…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "resuming after a restart…"
+msgstr "возобновление после перезапуска…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "not managed (the rule does not lead to Zapret)"
+msgstr "не управляется (правило не ведёт на Zapret)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "~%d ms TLS"
+msgstr "~%d мс TLS"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "%d failed check(s)"
+msgstr "неудачных проверок: %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "rule: %s"
+msgstr "правило: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "next re-rank: %s"
+msgstr "следующая переразметка: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "next check: %s"
+msgstr "следующая проверка: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Last events"
+msgstr "Последние события"

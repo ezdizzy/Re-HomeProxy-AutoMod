@@ -918,6 +918,36 @@ install_zapret() {
 	return 0
 }
 
+# ------------------------------------------------------- 7б. Автопилот стратегий
+# Автопилот сам поддерживает обход в рабочем состоянии: по расписанию переразмечает
+# корпус стратегий и применяет лучшую для YouTube/Discord/Telegram, ставит правила
+# → Zapret, а при поломке стратегии подбирает новую не дожидаясь цикла.
+ask_autopilot() {
+	echo; ok "[7б/8] Автопилот стратегий — обход поддерживается сам"
+	info "  По расписанию (по умолчанию каждые 6 ч) гоняет фаззинг корпуса Zapret,"
+	info "  применяет лучшую стратегию для каждого ресурса и держит правила"
+	info "  YouTube/Discord/Telegram на Zapret; если стратегия перестала работать —"
+	info "  новая подбирается сразу (проверки каждые 15 мин), не дожидаясь цикла."
+	info "  Каждое применение делает снапшот — Restore в интерфейсе всё откатывает."
+	ask "  Включить автоподбор стратегий? [Д/н]:"
+	if is_no "$REPLY"; then
+		info "  Включить позже: Мастер → Обход DPI → Автопилот (по расписанию)."
+		return 0
+	fi
+	uci -q set homeproxy.autopilot=homeproxy
+	uci -q set homeproxy.autopilot.enabled=1
+	uci -q set "homeproxy.autopilot.resources=youtube discord telegram"
+	uci -q set homeproxy.autopilot.set_rules=1
+	uci -q set homeproxy.autopilot.interval_h=6
+	uci -q set homeproxy.autopilot.check_min=15
+	uci -q set homeproxy.autopilot.fail_strikes=2
+	uci -q set homeproxy.autopilot.fuzz_mode=quick
+	uci -q commit homeproxy
+	ok "  Автопилот включён (цикл 6 ч, проверки каждые 15 мин)."
+	info "  Настроить тонко: Мастер → Обход DPI → Автопилот (ресурсы, интервалы, окно)."
+	return 0
+}
+
 # ------------------------------------------------------- 8. ByeDPI
 install_byedpi() {
 	echo; ok "[8/8] ByeDPI — обход DPI через локальный SOCKS (на ваше усмотрение)"
@@ -1011,6 +1041,19 @@ menu() {
 						info "  стратегия уже задана — проверяю правило YouTube → Zapret..."
 						add_rule youtube zapret-out
 					fi
+					ask "  Включить автоподбор стратегий (автопилот)? [Д/н]:"
+					if ! is_no "$REPLY"; then
+						uci -q set homeproxy.autopilot=homeproxy
+						uci -q set homeproxy.autopilot.enabled=1
+						uci -q set "homeproxy.autopilot.resources=youtube discord telegram"
+						uci -q set homeproxy.autopilot.set_rules=1
+						uci -q set homeproxy.autopilot.interval_h=6
+						uci -q set homeproxy.autopilot.check_min=15
+						uci -q set homeproxy.autopilot.fail_strikes=2
+						uci -q set homeproxy.autopilot.fuzz_mode=quick
+						uci -q commit homeproxy
+						ok "  Автопилот включён (цикл 6 ч, проверки каждые 15 мин)."
+					fi
 				fi
 				apply_and_check ;;
 			7) install_byedpi; apply_and_check ;;
@@ -1089,6 +1132,7 @@ ask_hotswap
 ask_multidns
 ask_automation
 install_zapret
+ask_autopilot
 install_byedpi
 
 ensure_baseline

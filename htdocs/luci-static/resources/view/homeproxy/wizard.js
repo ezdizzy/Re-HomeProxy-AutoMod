@@ -194,6 +194,21 @@ const callAutoPickStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* ч.97: the scheduled strategy auto-pilot — config (hot-read by the daemon
+ * every tick) + the live status/journal from its state file. */
+const callAutoPilotStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_autopilot_status',
+	expect: { '': {} }
+});
+
+const callAutoPilotSet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_autopilot_set',
+	params: [ 'enabled', 'resources', 'set_rules', 'interval_h', 'check_min', 'window', 'fuzz_mode', 'fail_strikes' ],
+	expect: { '': {} }
+});
+
 /* Ф8-F4: Composition Builder v2 — server-side build/test/apply. Apply
  * snapshots the previous strategies on the SERVER, so the rollback button
  * reads the snapshot back on every page load (no JS-memory rollback). */
@@ -2394,6 +2409,184 @@ return view.extend({
 			});
 		});
 
+		/* ── ч.97: strategy auto-pilot (scheduled) — the keeper mode ─────
+		 * Configures itself from the corpus: a scheduled re-rank rebuilds the
+		 * per-resource composition; failed health probes re-pick immediately.
+		 * Settings save through wizard_autopilot_set; the daemon hot-reads
+		 * them every tick (no service restart). */
+		const apRes = { youtube: E('input', { type: 'checkbox' }),
+			discord: E('input', { type: 'checkbox' }),
+			telegram: E('input', { type: 'checkbox' }),
+			general: E('input', { type: 'checkbox' }) };
+		const apEnabled = E('input', { type: 'checkbox' });
+		const apRules = E('input', { type: 'checkbox', checked: '' });
+		const apMode = E('select', { 'class': 'cbi-input-select', style: 'width:auto' });
+		[ ['quick', _('Quick fuzz')], ['full', _('Full fuzz')] ]
+			.forEach(function(o) { apMode.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
+		const apInterval = E('input', { type: 'number', min: '1', max: '24', 'class': 'cbi-input-text', style: 'width:70px', value: '6' });
+		const apCheck = E('input', { type: 'number', min: '5', max: '180', 'class': 'cbi-input-text', style: 'width:70px', value: '15' });
+		const apWin = E('input', { type: 'text', 'class': 'cbi-input-text', style: 'width:150px',
+			placeholder: _('empty — any time') });
+		const apSave = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' }, [ _('Save auto-pilot') ]);
+		const apAlive = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
+		const apNames = { youtube: _('YouTube'), discord: _('Discord'),
+			telegram: _('Telegram'), general: _('General (best overall)') };
+		const apStatus = E('div', {});
+		const apHead = E('div', { 'class': 'wiz-row', style: 'margin-top:8px' },
+			[ E('strong', {}, [ _('Auto-pilot (scheduled)') ]), apAlive ]);
+		const apRow1 = E('div', { 'class': 'wiz-row' },
+			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer; font-weight:600' },
+				[ apEnabled, ' ' + _('Enable the auto-pilot') ]), apSave ]);
+		const apResWrap = E('div', { 'class': 'wiz-row' });
+		[ ['youtube', _('YouTube')], ['discord', _('Discord')],
+		  ['telegram', _('Telegram')], ['general', _('General (best overall)')] ]
+			.forEach(function(o) {
+				apResWrap.appendChild(E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+					[ apRes[o[0]], ' ' + o[1] ]));
+			});
+		const apRow3 = E('div', { 'class': 'wiz-row' },
+			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+				[ apRules, ' ' + _('Keep the rules on Zapret') ]),
+			  apMode,
+			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('Re-rank every') ]),
+			  apInterval, E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ 'h' ]),
+			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('check every') ]),
+			  apCheck, E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ 'min' ]),
+			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('apply in window') ]),
+			  apWin ]);
+		dpiLab.appendChild(E('div', { style: 'margin-top:14px; border-top:1px solid rgba(127,127,127,.25); padding-top:8px' },
+			[ apHead, apRow1, apResWrap, apRow3, E('p', { 'class': 'wiz-note' },
+				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
+		let apDirty = false;
+		let apSig = null;
+		for (let k in apRes)
+			apRes[k].addEventListener('change', function() { apDirty = true; });
+		apEnabled.addEventListener('change', function() { apDirty = true; });
+		apRules.addEventListener('change', function() { apDirty = true; });
+		apMode.addEventListener('change', function() { apDirty = true; });
+		apInterval.addEventListener('input', function() { apDirty = true; });
+		apCheck.addEventListener('input', function() { apDirty = true; });
+		apWin.addEventListener('input', function() { apDirty = true; });
+		apSave.addEventListener('click', function() {
+			const res = [];
+			for (let k in apRes)
+				if (apRes[k].checked)
+					res.push(k);
+			if (apEnabled.checked && !res.length) {
+				ui.addNotification(null, E('p', {}, _('Select at least one resource for the auto-pilot.')), 'error');
+				return;
+			}
+			const turningOn = apEnabled.checked;
+			if (turningOn && !window.confirm(_('Enable the strategy auto-pilot? It will manage the Zapret strategies of the selected resources automatically (scheduled re-ranks, immediate re-picks on failures) and — with the rules option — keep their rules on Zapret.')))
+				return;
+			apSave.disabled = true;
+			L.resolveDefault(callAutoPilotSet(
+				apEnabled.checked ? '1' : '0', res.join(' '),
+				apRules.checked ? '1' : '0',
+				String(parseInt(apInterval.value, 10) || 6),
+				String(parseInt(apCheck.value, 10) || 15),
+				apWin.value || '', apMode.value || 'quick',
+				'2'), {}).then(function(r) {
+				apSave.disabled = false;
+				if (!r || r.result !== true) {
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Auto-pilot save failed: %s').format((r && r.error) || _('rpc error')) ]));
+					return;
+				}
+				apDirty = false;
+				apSig = null;   /* refill from the saved config */
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ (turningOn)
+						? _('Auto-pilot enabled — the daemon picks it up within a minute (first re-rank right away).')
+						: _('Auto-pilot settings saved — the daemon reads them on its next tick.') ]));
+				refresh();
+			});
+		});
+
+		function renderAutoPilot(data) {
+			const cfg = (data && data.config) || null;
+			const st = (data && data.status) || null;
+			const ok = !!(data && data.daemon_ok);
+			apAlive.textContent = ok ? '' : '— ' + _('daemon is not responding');
+			if (cfg && (apSig == null || (!apDirty && apSig !== JSON.stringify(cfg)))) {
+				apSig = JSON.stringify(cfg);
+				apEnabled.checked = !!cfg.enabled;
+				apRules.checked = (cfg.set_rules !== false);
+				apMode.value = (cfg.fuzz_mode === 'full') ? 'full' : 'quick';
+				for (let k in apRes)
+					apRes[k].checked = ((cfg.resources || '').split(/\s+/).indexOf(k) >= 0);
+				apInterval.value = cfg.interval_h || 6;
+				apCheck.value = cfg.check_min || 15;
+				apWin.value = cfg.window || '';
+			}
+			apStatus.innerHTML = '';
+			if (!ok) {
+				apStatus.appendChild(E('div', { 'class': 'wiz-note' },
+					[ '— ' + _('no data (the daemon is not responding)') ]));
+				return;
+			}
+			const head = E('div', { 'class': 'wiz-row', style: 'margin-top:4px' });
+			const stMap = { idle: _('idle'), watch: _('watching'), fuzz: _('re-ranking the corpus…'),
+				rule: _('setting the rules…'), apply: _('applying…'), verify: _('verifying…'),
+				resume: _('resuming after a restart…'), error: _('error') };
+			head.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; font-weight:600' },
+				[ (st && st.enabled) ? _('active') : _('disabled'), ' · ',
+				  (stMap[st && st.stage] || (st && st.stage) || '—') ]));
+			if (st && st.stage_note)
+				head.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; opacity:.8' },
+					[ ' · ' + st.stage_note ]));
+			apStatus.appendChild(head);
+			if (st && st.resources) {
+				const grid = E('div', { style: 'margin:4px 0 0 12px' });
+				for (let rk in apRes) {
+					const r = st.resources[rk];
+					if (!r)
+						continue;
+					const line = E('div', { 'class': 'wiz-note' });
+					const w = r.winner || {};
+					line.appendChild(document.createTextNode(
+						apNames[rk] + ': ' + ((st.enabled && r.mgmt === false && rk !== 'general')
+							? _('not managed (the rule does not lead to Zapret)')
+							: (w.name || '—'))));
+					if (w.name)
+						line.appendChild(document.createTextNode(
+							(w.tls_ms > 0 ? ' · ' + _('~%d ms TLS').format(w.tls_ms) : '')));
+					const p = r.probe || {};
+					if (p && p.ts)
+						line.appendChild(document.createTextNode(' '));
+					if (p && p.ts)
+						line.appendChild(p.ok
+							? badge('hpui-b-green', '✓ ' + (p.code || '') + ((p.tsec != null) ? (' · ' + p.tsec + ' s') : ''))
+							: badge('hpui-b-red', '✗ ' + (p.code || '000')));
+					if (r.strikes > 0)
+						line.appendChild(badge('hpui-b-red', '⚠ ' + _('%d failed check(s)').format(r.strikes)));
+					if (r.rule_node != null && rk !== 'general')
+						line.appendChild(document.createTextNode(
+							' · ' + _('rule: %s').format(r.rule_node || _('none'))));
+					grid.appendChild(line);
+				}
+				apStatus.appendChild(grid);
+			}
+			const times = [];
+			if (st && st.next_cycle_ts > 0)
+				times.push(_('next re-rank: %s').format(new Date(st.next_cycle_ts * 1000).toLocaleString()));
+			if (st && st.next_check_ts > 0)
+				times.push(_('next check: %s').format(new Date(st.next_check_ts * 1000).toLocaleTimeString()));
+			if (times.length)
+				apStatus.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' }, [ times.join(' · ') ]));
+			if (st && st.log && st.log.length) {
+				const rows = st.log.slice(-6).reverse().map(function(l) {
+					const d = new Date(Number(l.ts) * 1000);
+					const fmt = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+					return E('div', { style: 'margin:1px 0' }, [ fmt + ' · ' + l.m ]);
+				});
+				apStatus.appendChild(E('details', { style: 'margin:4px 0 0 12px' }, [
+					E('summary', { style: 'cursor:pointer' }, [ _('Last events') ]),
+					E('div', { style: 'margin:4px 0 0 12px' }, rows)
+				]));
+			}
+		}
+
 		function renderAutoPick(st) {
 			st = (st && st.status) || null;
 			if (st && st.running) {
@@ -2688,7 +2881,8 @@ return view.extend({
 				L.resolveDefault(callFuzzStatus(), {}),
 				L.resolveDefault(callTgwspStatus(), {}),
 				L.resolveDefault(callComposeStatus(), {}),
-				L.resolveDefault(callAutoPickStatus(), {})
+				L.resolveDefault(callAutoPickStatus(), {}),
+				L.resolveDefault(callAutoPilotStatus(), {})
 			]).then(function(data) {
 				const scan = data[0] || {};
 				updateDpiStatus(scan);
@@ -2707,6 +2901,8 @@ return view.extend({
 				renderCompose(data[7] || {});
 				/* Ф8-F7 T3: auto-pick progress/result (same ONE place). */
 				renderAutoPick(data[8] || {});
+				/* ч.97: the scheduled auto-pilot card (settings + live state). */
+				renderAutoPilot(data[9] || {});
 				renderRollback((data[2] && data[2].rollback) || null);
 
 				/* Deferred live check: fire once the core is running again
