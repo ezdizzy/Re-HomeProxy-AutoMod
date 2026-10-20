@@ -79,7 +79,7 @@ msgstr "Узлы не настроены"
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
 
 msgid "Node Monitoring"
-msgstr "Мониторинг узлов"
+msgstr "Мониторинг"
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
@@ -628,7 +628,7 @@ msgstr "Клиент"
 #: root/usr/share/luci/menu.d/luci-app-homeproxy-hiddify.json:14
 
 msgid "Client Settings"
-msgstr "Настройки клиента"
+msgstr "Клиент"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:664
 
@@ -696,7 +696,7 @@ msgstr "DNS-серверы"
 #: htdocs/luci-static/resources/view/homeproxy/client.js:872
 
 msgid "DNS Settings"
-msgstr "Настройки DNS"
+msgstr "DNS"
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js:639
 
@@ -2216,7 +2216,7 @@ msgstr "Узел"
 #: root/usr/share/luci/menu.d/luci-app-homeproxy-hiddify.json:22
 
 msgid "Node Settings"
-msgstr "Настройки узлов"
+msgstr "Узлы"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1217
 
@@ -3054,7 +3054,7 @@ msgstr "Сервер"
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json:38
 
 msgid "Server Settings"
-msgstr "Режим сервера"
+msgstr "Сервер"
 
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json:62
 
@@ -4769,7 +4769,7 @@ msgstr "Цепочки Re:HomeProxy AutoMod"
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
 
 msgid "Core & Tools"
-msgstr "Ядро и службы"
+msgstr "Ядро"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
@@ -5145,16 +5145,6 @@ msgstr "Проверить все стратегии"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Runs all 43 presets one by one and shows which ones work. Requires curl (install on Status page). ~5-7 min total."
-msgstr "Проверяет все 43 предустановки по очереди и показывает, какие работают. Требует curl (установить на странице Статус). Суммарно ~5-7 минут."
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "Test all 43 strategies sequentially?\n\nEach test takes ~5-10 seconds (~5-7 min total).\nLAN clients are not affected during testing.\n\nRequires curl. Install it on the Status page first."
-msgstr "Проверить все 43 стратегии по очереди?\n\nКаждая проверка занимает ~5-10 секунд (~5-7 мин суммарно).\nПользователи локальной сети не затронуты.\n\nТребует curl. Установите его на странице Статус."
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-
 msgid "Preparing..."
 msgstr "Подготовка..."
 
@@ -5195,13 +5185,13 @@ msgstr "Включает полноценное HTTP-тестирование с
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Configure on the Client Settings page."
-msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Настройки: на странице «Настройки клиента»."
+msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Enable on the Client Settings page; strategies are configured in Node Settings → ByeDPI."
+msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Включение: на странице «Клиент»; стратегии настраиваются в «Узлах» → ByeDPI."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "No package manager found. Install ciadpi manually from the Status page."
-msgstr "Менеджер пакетов не найден. Установите ciadpi вручную на странице Статус."
+msgid "No package manager found. Install ciadpi manually on the \"Core & Tools\" page."
+msgstr "Менеджер пакетов не найден. Установите ciadpi вручную на странице «Ядро»."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5388,8 +5378,8 @@ msgid "An alternative to ByeDPI: another free way to unblock throttled or blocke
 msgstr "Альтернатива ByeDPI: ещё один бесплатный способ разблокировать замедлённые или заблокированные сайты (YouTube, Discord…) без VPN-подписки. Практическое отличие от ByeDPI: Zapret умеет работать с протоколом QUIC. Подбор рабочей стратегии индивидуален и зависит от ограничений провайдера. Устанавливается автоматически при первом включении."
 
 
-msgid "No package manager found. Install zapret2 manually from the Status page."
-msgstr "Менеджер пакетов не найден. Установите zapret2 вручную со страницы «Статус»."
+msgid "No package manager found. Install zapret2 manually on the \"Core & Tools\" page."
+msgstr "Менеджер пакетов не найден. Установите zapret2 вручную на странице «Ядро»."
 
 
 msgid "Install Zapret"
@@ -5457,7 +5447,7 @@ msgstr "Zapret 2 работает"
 
 
 msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Packages by <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Configure in the Node Settings → Zapret tab."
-msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Пакеты: <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Настройки: вкладка Настройки узлов → Zapret."
+msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Пакеты: <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Настройки: «Узлы» → вкладка Zapret."
 
 
 msgid "Installed, but kmod-nft-queue is missing — Zapret cannot intercept traffic without it."
@@ -6648,8 +6638,8 @@ msgstr "перезагрузите страницу для применения"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
-msgid "Requires curl. Install it on the Status page first."
-msgstr "Требуется curl. Сначала установите его на странице «Ядро и службы»."
+msgid "Requires curl. Install it on the \"Core & Tools\" page first."
+msgstr "Требуется curl. Сначала установите его на странице «Ядро»."
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
@@ -7529,7 +7519,7 @@ msgstr "Расширенная база sing-box 1.14 от shtorm-7. Работ�
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
 msgid "Nodes the active core cannot load are skipped automatically (they would crash the core). Switch Preferred core in Client Settings to run them."
-msgstr "Узлы, которые не может загрузить активное ядро, пропускаются автоматически (они уронили бы ядро). Чтобы они работали, смените «Предпочтительное ядро» в настройках клиента."
+msgstr "Узлы, которые не может загрузить активное ядро, пропускаются автоматически (они уронили бы ядро). Чтобы они работали, смените «Предпочтительное ядро» на странице «Клиент»."
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
@@ -8082,13 +8072,13 @@ msgstr "победитель: %s (%d/%d, различающих %d/%d)"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Strategy Lab (Node Settings)"
-msgstr "Лаборатория стратегий (Настройки узлов)"
+msgid "Strategy Lab (Wizard)"
+msgstr "Лаборатория стратегий (Мастер)"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives in Node Settings → Zapret — \"Strategy Lab\"."
-msgstr "Проверка стратегий (текущая стратегия, пакетный фаззинг с baseline и историей, применение) живёт в Настройках узлов → Zapret — «Лаборатория стратегий»."
+msgid "Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives in the Wizard → DPI — \"Strategy Lab\"."
+msgstr "Проверка стратегий (текущая стратегия, пакетный фаззинг с baseline и историей, применение) живёт в Мастере → DPI — «Лаборатория стратегий»."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -8158,7 +8148,7 @@ msgstr "гео-блок"
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
 msgid "Pick an exit for each service — the Wizard maintains ONE routing rule per service (the same proxy_ru_rule records as the manual editor on the Client Settings page). \"Direct\" removes the rule: in \"Bypass blocking\" mode everything unmatched goes directly anyway. After applying, the service restarts once and the check runs automatically — the result appears below, in one place."
-msgstr "Выберите выход для каждого сервиса — Мастер держит ОДНО правило маршрутизации на сервис (те же записи proxy_ru_rule, что и в ручном редакторе на странице «Настройки клиента»). «Напрямую» убирает правило: в режиме «Обход блокировок» всё, что не совпало с правилами, и так идёт напрямую. После применения сервис один раз перезапускается и проверка запускается автоматически — результат появится ниже, в одном месте."
+msgstr "Выберите выход для каждого сервиса — Мастер держит ОДНО правило маршрутизации на сервис (те же записи proxy_ru_rule, что и в ручном редакторе на странице «Клиент»). «Напрямую» убирает правило: в режиме «Обход блокировок» всё, что не совпало с правилами, и так идёт напрямую. После применения сервис один раз перезапускается и проверка запускается автоматически — результат появится ниже, в одном месте."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8203,12 +8193,12 @@ msgstr "Основной узел = Напрямую — это правило �
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
 msgid "ByeDPI is not enabled — enable it on the Node Settings page first."
-msgstr "ByeDPI не включён — сначала включите его на странице «Настройки узлов»."
+msgstr "ByeDPI не включён — сначала включите его на странице «Узлы»."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
 msgid "Zapret is not enabled — enable it on the Node Settings page first."
-msgstr "Zapret не включён — сначала включите его на странице «Настройки узлов»."
+msgstr "Zapret не включён — сначала включите его на странице «Узлы»."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8689,7 +8679,7 @@ msgstr "Google Meet"
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
 
 msgid "Routing Wizard"
-msgstr "Мастер маршрутизации"
+msgstr "Мастер"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8718,8 +8708,8 @@ msgstr "включён, не запущен"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "%s is not installed — install it on the \"Core & Tools\" page (Services tab) first."
-msgstr "%s не установлен — сначала установите его на странице «Core & Tools» (вкладка «Службы»)."
+msgid "%s is not installed — install it on the \"Core & Tools\" page first."
+msgstr "%s не установлен — сначала установите его на странице «Ядро»."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8814,7 +8804,7 @@ msgstr "Создать правило и проверить"
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
 msgid "Enable Zapret or ByeDPI on the Node Settings page first."
-msgstr "Сначала включите Zapret или ByeDPI на странице настроек узлов."
+msgstr "Сначала включите Zapret или ByeDPI на странице «Узлы»."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -9057,7 +9047,7 @@ msgstr "Проверка обновления не удалась: %s"
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 
 msgid "Update available: %s → %s (install it on the \"Core & Tools\" page)."
-msgstr "Доступно обновление: %s → %s (установите на странице «Core & Tools»)."
+msgstr "Доступно обновление: %s → %s (установите на странице «Ядро»)."
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 
@@ -9177,7 +9167,7 @@ msgstr "накапливаем…"
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 
 msgid "The service restart re-routes every connection (\"Core & Tools\" carries start/stop); a snapshot copies the app configuration and the routing lists; \"Restore internet\" is the emergency switch for a plain direct connection."
-msgstr "Рестарт службы перерасовывает все соединения (start/stop на странице «Core & Tools»); снапшот копирует конфигурацию приложения и списки маршрутизации; «Restore internet» — аварийный выключатель для чистого прямого соединения."
+msgstr "Рестарт службы перерасовывает все соединения (start/stop на странице «Ядро»); снапшот копирует конфигурацию приложения и списки маршрутизации; «Restore internet» — аварийный выключатель для чистого прямого соединения."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -9735,7 +9725,7 @@ msgstr "Проверяет набор тест-сервисов (YouTube, Discor
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
 msgid "Show the advanced editing tabs: Custom Rules (raw sing-box rules), Routing Nodes and Routing Rules (multi-exit per service). The Routing Wizard covers the everyday service→exit editing; these tabs are for shapes the Wizard does not build."
-msgstr "Показывает продвинутые вкладки: Custom Rules (сырые правила sing-box), Routing Nodes и Routing Rules (несколько выходов на один сервис). Мастер маршрутизации покрывает повседневное редактирование «сервис → выход»; эти вкладки — для конфигураций, которые Мастер не строит."
+msgstr "Показывает продвинутые вкладки: Custom Rules (сырые правила sing-box), Routing Nodes и Routing Rules (несколько выходов на один сервис). Мастер покрывает повседневное редактирование «сервис → выход»; эти вкладки — для конфигураций, которые Мастер не строит."
 
 #: htdocs/luci-static/resources/view/homeproxy/access.js
 
@@ -9745,7 +9735,7 @@ msgstr "Какие устройства, адреса и интерфейсы о
 #: htdocs/../root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
 
 msgid "Devices & interfaces"
-msgstr "Устройства и интерфейсы"
+msgstr "Устройства"
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 

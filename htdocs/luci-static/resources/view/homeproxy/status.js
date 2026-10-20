@@ -645,8 +645,8 @@ function buildByeDPICard(byedpi, isMainNode) {
 			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' });
 			/* innerHTML: the description contains HTML links E() would escape */
 			el.innerHTML = _('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea</a>. ' +
-			  'Packages by <a href="https://github.com/1andrevich/ByeDPI-OpenWrt" target="_blank">1andrevich/ByeDPI-OpenWrt</a>. ' +
-			  'Configure on the Client Settings page.');
+			'Packages by <a href="https://github.com/1andrevich/ByeDPI-OpenWrt" target="_blank">1andrevich/ByeDPI-OpenWrt</a>. ' +
+			'Enable on the Client Settings page; strategies are configured in Node Settings → ByeDPI.');
 			return el;
 		})()
 	]);
@@ -754,14 +754,16 @@ function buildZapretCard(zapret, isMainNode) {
 	const remoteEl = E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, '');
 	const checkBtn = buildCheckUpdateBtn(callZapretCheckUpdate, remoteEl);
 
-	/* ── Strategy Lab link (ч.70) ───────────────────────────────────── */
-	/* The old in-page DPI Strategy Fuzzer moved to Node Settings → Zapret
-	 * ("Strategy Lab"): one place for all strategy work (current-strategy
-	 * test, baseline-aware background fuzzing with rounds and per-host
-	 * details, history, Apply). This card keeps only a shortcut. */
+	/* ── Strategy Lab link (C4, Ф8-F5) ────────────────────────────────── */
+	/* The DPI Strategy Fuzzer first moved to the Node Settings → Zapret
+	 * tab (ч.70) and then — with the whole strategy workflow (current-
+	 * strategy test, baseline-aware background fuzzing, history,
+	 * compositions) — into the Routing Wizard DPI pane (Ф3). The wizard
+	 * page is the single place for all strategy work now; this card keeps
+	 * only a shortcut there. */
 	const labBtn = E('button', { 'class': 'btn cbi-button', 'style': 'margin-left:4px' },
-		[ _('Strategy Lab (Node Settings)') ]);
-	labBtn.onclick = () => { location.href = L.url('admin/services/homeproxy/node'); };
+		[ _('Strategy Lab (Wizard)') ]);
+	labBtn.onclick = () => { location.href = L.url('admin/services/homeproxy/wizard'); };
 
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
@@ -783,7 +785,7 @@ function buildZapretCard(zapret, isMainNode) {
 			return el;
 		})(),
 		E('div', { style: 'margin-top:8px; border-top:1px solid rgba(128,128,128,.25); padding-top:6px; font-size:.9em; opacity:.9' }, [
-			E('span', {}, _('Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives in Node Settings → Zapret — "Strategy Lab".')),
+			E('span', {}, _('Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives in the Wizard → DPI — "Strategy Lab".')),
 			labBtn
 		])
 	]);
@@ -1024,7 +1026,8 @@ const callRestoreInternet = rpc.declare({
 	expect: { '': {} }
 });
 
-/* The Zapret fuzzer RPCs moved to node.js with the Strategy Lab (ч.70). */
+/* The Zapret fuzzer RPCs moved to the Routing Wizard with the Strategy
+ * Lab (first to node.js in ч.70, then to the wizard DPI pane in Ф3). */
 
 function buildSnapshotsCard() {
 	const listEl = E('div', { style: 'font-size:.9em; margin:4px 0' },

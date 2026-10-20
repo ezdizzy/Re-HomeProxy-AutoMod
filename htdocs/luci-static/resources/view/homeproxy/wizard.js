@@ -391,6 +391,27 @@ return view.extend({
 .wiz-title { flex: 1 1 220px; font-weight: 600; }
 .wiz-state { flex: 1 1 240px; font-size: .88em; }
 .wiz-select { min-width: 190px; max-width: 320px; }
+/* Ф8-F5 (D.2): service rows use a FIXED grid — name | state | select |
+ * buttons on one line, hints/pool on sub-rows below the card — so the
+ * control columns line up across all 26 rows regardless of hint length
+ * (the old flex rows had drifting columns and uneven heights). The button
+ * column is a FIXED width sized for Apply+Check together: every row is its
+ * own grid, so an auto-sized last column would shift the select column on
+ * rows that carry the extra Check button. */
+.wiz-svc { border: 1px solid rgba(128,128,128,.3); border-radius: 8px; background: rgba(128,128,128,.07); margin: 6px 0; padding: 8px 10px; }
+.wiz-svc-grid { display: grid; grid-template-columns: minmax(140px, 230px) minmax(180px, 1fr) minmax(190px, 300px) 210px; align-items: center; gap: 6px 10px; }
+.wiz-svc-btns { display: flex; align-items: center; gap: 8px; }
+.wiz-svc-grid > .wiz-title, .wiz-svc-grid > .wiz-state { flex: none; }
+.wiz-svc-grid > .wiz-select { width: 100%; }
+.wiz-svc .wiz-pool { margin: 6px 0 0 0; }
+.wiz-svc .wiz-note { margin: 6px 0 0 0; }
+@media (max-width: 900px) {
+	/* Narrow screens fall back to the old wrapping flex row. */
+	.wiz-svc-grid { display: flex; flex-wrap: wrap; }
+	.wiz-svc-grid > .wiz-title { flex: 1 1 220px; }
+	.wiz-svc-grid > .wiz-state { flex: 1 1 240px; }
+	.wiz-svc-grid > .wiz-select { width: auto; }
+}
 .wiz-note { font-size: .88em; opacity: .8; margin: 8px 0; }
 .wiz-hosts { color: #999; font-size: .82em; }
 .wiz-strat { flex: 1 1 380px; min-width: 260px; font-family: monospace; font-size: .82em; }
@@ -1258,7 +1279,12 @@ return view.extend({
 				const rule = (list.rules || {})[preset.source];
 				const count = (list.rule_counts || {})[preset.source] || 0;
 
-				const row = E('div', { 'class': 'wiz-row' });
+				/* Ф8-F5 (D.2): a card with the fixed control grid on top
+				 * (name | state | select | buttons) and the hints/pool as
+				 * sub-rows below — columns line up across every row. */
+				const wrap = E('div', { 'class': 'wiz-svc' });
+				const row = E('div', { 'class': 'wiz-svc-grid' });
+
 				const titleWrap = E('span', { 'class': 'wiz-title' }, [ preset.title ]);
 				if (preset.hosts && preset.hosts.length)
 					titleWrap.appendChild(E('span', { 'class': 'wiz-hosts' }, [ ' · ' + preset.hosts.join(', ') ]));
@@ -1357,8 +1383,12 @@ return view.extend({
 				});
 
 				row.appendChild(sel);
-				row.appendChild(poolBox);
-				row.appendChild(applyBtn);
+
+				/* Apply (+ optional Check) share ONE grid column, so the
+				 * select column stays aligned across rows with and without
+				 * the Check button (Ф8-F5 D.2). */
+				const btns = E('span', { 'class': 'wiz-svc-btns' });
+				btns.appendChild(applyBtn);
 
 				if (preset.check) {
 					const checkBtn = E('button', {
@@ -1369,8 +1399,13 @@ return view.extend({
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Checking…') ]));
 						runServiceCheck(preset.check).finally(function() { checkBtn.disabled = false; });
 					});
-					row.appendChild(checkBtn);
+					btns.appendChild(checkBtn);
 				}
+				row.appendChild(btns);
+				wrap.appendChild(row);
+
+				/* Pool picker + hints live BELOW the grid line (D.2). */
+				wrap.appendChild(poolBox);
 
 				/* A2: a row without its own rule is still covered by the mass
 				 * lists — name what covers it and that a rule here overrides. */
@@ -1384,7 +1419,7 @@ return view.extend({
 						const names = [];
 						for (let c in cov)
 							names.push(cov[c].name);
-						row.appendChild(E('span', { 'class': 'wiz-note wiz-full', style: 'margin:0' },
+						wrap.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
 							[ _('Covered by the mass list (%s) → %s — a rule here overrides the list.').format(names.join(', '), nodeText(cov[0].node)) ]));
 					}
 				}
@@ -1392,10 +1427,10 @@ return view.extend({
 				/* R3-FIX-2: honest Telegram hint (2026-10-20 probes) + the
 				 * transparent tg-ws exit and its UDP/voice scope. */
 				if (preset.source === 'telegram')
-					row.appendChild(E('span', { 'class': 'wiz-note wiz-full', style: 'margin:0' },
+					wrap.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
 						[ _('Telegram: live probes (2026-10-20) — direct 443 is cut on EVERY MTProto DC range now and port 80 no longer completes directly; the node still carries some DCs, so the VPN path remains the fallback. The tg-ws (transparent) exit carries messaging TCP through the local WS bridge with NO client setup (messaging falls back to the node automatically if the bridge dies; after the bridge recovers, re-apply or reload the service to return to it); voice calls (UDP) are not carried by the bridge — they keep riding the VPN. MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs. The bridge egresses via the Cloudflare WS route abroad (measured live: Amsterdam, NL) — Telegram will show that relay country for your devices, not the Russian home IP; the home IP only appears on the direct path, which the provider cuts. This is expected.') ]));
 
-				return row;
+				return wrap;
 			}
 
 			const GROUPS = [
@@ -1643,7 +1678,7 @@ return view.extend({
 					if (!z.installed) miss.push('Zapret (zapret2)');
 					if (!b.installed) miss.push('ByeDPI (ciadpi)');
 					dpiBanner.appendChild(E('div', { 'class': 'hpui-banner' },
-						[ _('%s is not installed — install it on the "Core & Tools" page (Services tab) first.').format(miss.join(', ')) ]));
+						[ _('%s is not installed — install it on the "Core & Tools" page first.').format(miss.join(', ')) ]));
 				}
 				/* Seed the strategy input once. */
 				if (!state.stratInit) {

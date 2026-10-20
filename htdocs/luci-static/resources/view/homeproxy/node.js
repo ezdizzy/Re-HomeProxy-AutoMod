@@ -2747,7 +2747,7 @@ return view.extend({
 					if (status.installed) {
 						btn.disabled = false;
 					} else {
-						hintEl.textContent = _('Requires curl. Install it on the Status page first.');
+						hintEl.textContent = _('Requires curl. Install it on the "Core & Tools" page first.');
 						hintEl.style.color = '#e05252';
 					}
 				});

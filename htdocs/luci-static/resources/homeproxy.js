@@ -271,6 +271,117 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 		document.head.appendChild(E('style', { id: 'hp-ui-style' }, [ css ]));
 	},
 
+	/* Inline SVG line chart shared by the Overview and Automation tabs
+	 * (Ф8-F5: one helper instead of the chartSvg/chartSvgEng duplicates).
+	 * Area+line of points[key] into a 300×84-unit viewBox (scales with the
+	 * container width); no external libraries (D5: everything local). Null
+	 * values break the line (data missing because the core was down / the
+	 * source absent at that moment). Fixed `max` when given (CPU/RAM: 0-100),
+	 * auto-scale otherwise with a 35% headroom so the line never rides the
+	 * top edge (×1.15 read as "maxed out" — Ф7, reused for Automation here).
+	 * Grid lines at quarters; a static marker on the last point; the
+	 * effective scale is reported back via opts.onScale (shown as
+	 * "scale up to N" under the chart). opts.color / opts.fill style the
+	 * line/marker/area (default: the Automation red); opts.className sets
+	 * the CSS class so each page keeps its sizing rules. No animations:
+	 * the SVG is a static picture re-rendered only when the ring data
+	 * changes (signature-guarded by the caller).
+	 * ⚠ Browser JS `for…in` over an array yields STRING INDICES (the exact
+	 * reverse of the ucode lesson 20): `p[key]` on the index string is
+	 * undefined, every value silently became null and the charts drew only
+	 * the grid (found live in the Ф5 warm-up, ч.77). Iterate by index. */
+	chartSvg(points, key, opts) {
+		const W = 300, H = 84, TOP = 6, BOT = 4;
+		const color = (opts && opts.color) || '#e05252';
+		const fill = (opts && opts.fill) || 'rgba(224,82,82,.12)';
+		const NS = 'http://www.w3.org/2000/svg';
+
+		let vals = [];
+		for (let i = 0; i < points.length; i++) {
+			const p = points[i];
+			vals.push((p != null && p[key] != null) ? Number(p[key]) : null);
+		}
+
+		let max = (opts && opts.max != null) ? opts.max : null;
+		if (max == null) {
+			let hi = 0;
+			for (let i = 0; i < vals.length; i++) {
+				const v = vals[i];
+				if (v != null && v > hi) hi = v;
+			}
+			max = hi > 0 ? hi * 1.35 : 1;
+		}
+		if (max <= 0) max = 1;
+		if (opts && opts.onScale) opts.onScale(max);
+
+		const y = (v) => (TOP + (H - TOP - BOT) * (1 - (v / max)));
+		const x = (i, n) => (n > 1 ? (i * W / (n - 1)) : 0);
+
+		let area = '', line = '', pen = false;
+		for (let i = 0; i < vals.length; i++) {
+			const v = vals[i];
+			if (v == null) {
+				if (pen) { line += ' Z'; pen = false; }
+				continue;
+			}
+			const px = x(i, vals.length).toFixed(1), py = y(v).toFixed(1);
+			if (!pen) {
+				if (line) { area += ' L' + px + ',' + H + ' L' + px + ',' + py; }
+				else { area += 'M' + px + ',' + H + ' L' + px + ',' + py; }
+				line += (line ? ' ' : '') + 'M' + px + ',' + py;
+				pen = true;
+			} else {
+				area += ' L' + px + ',' + py;
+				line += ' L' + px + ',' + py;
+			}
+		}
+		if (pen) area += ' L' + x(vals.length - 1, vals.length).toFixed(1) + ',' + H + ' Z';
+
+		const svg = document.createElementNS(NS, 'svg');
+		svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+		svg.setAttribute('preserveAspectRatio', 'none');
+		if (opts && opts.className)
+			svg.setAttribute('class', opts.className);
+		svg.setAttribute('role', 'img');
+
+		if (area) {
+			const a = document.createElementNS(NS, 'path');
+			a.setAttribute('d', area);
+			a.setAttribute('fill', fill);
+			svg.appendChild(a);
+		}
+		for (let q = 1; q <= 3; q++) {
+			const g = document.createElementNS(NS, 'path');
+			g.setAttribute('d', 'M0,' + (TOP + (H - TOP - BOT) * q / 4).toFixed(1) + ' H' + W);
+			g.setAttribute('stroke', 'rgba(128,128,128,.22)');
+			g.setAttribute('stroke-width', '.5');
+			g.setAttribute('fill', 'none');
+			svg.appendChild(g);
+		}
+		if (line) {
+			const l = document.createElementNS(NS, 'path');
+			l.setAttribute('d', line);
+			l.setAttribute('stroke', color);
+			l.setAttribute('stroke-width', '1.4');
+			l.setAttribute('fill', 'none');
+			l.setAttribute('stroke-linejoin', 'round');
+			svg.appendChild(l);
+			/* Static marker on the last non-null point. */
+			for (let i = vals.length - 1; i >= 0; i--) {
+				if (vals[i] != null) {
+					const d = document.createElementNS(NS, 'path');
+					d.setAttribute('d', 'M' + x(i, vals.length).toFixed(1) + ',' + y(vals[i]).toFixed(1) + ' h.01');
+					d.setAttribute('stroke', color);
+					d.setAttribute('stroke-width', '3.2');
+					d.setAttribute('stroke-linecap', 'round');
+					svg.appendChild(d);
+					break;
+				}
+			}
+		}
+		return svg;
+	},
+
 	getBuiltinFeatures() {
 		const callGetSingBoxFeatures = rpc.declare({
 			object: 'luci.homeproxy',

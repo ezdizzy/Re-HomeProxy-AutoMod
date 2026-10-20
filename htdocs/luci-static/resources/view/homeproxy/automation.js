@@ -25,6 +25,7 @@
 'require uci';
 'require ui';
 'require view';
+'require homeproxy as hp';
 
 const callStatus = rpc.declare({
 	object: 'luci.homeproxy',
@@ -133,102 +134,13 @@ function btn(label, handler) {
 	}, [ label ]);
 }
 
-/* ── Inline SVG sparkline (Ф5, same visual language as overview.js) ───────
- * Area+line chart of points[key], 300×84 viewBox, no external libraries
- * (D5: everything local). Null values break the line. Fixed `max` when
- * given, auto-scale (peak ×1.15) otherwise. Grid at quarters, static
- * marker on the last point, NO animations: the SVG is rebuilt only when
- * the history ring changed (signature-guarded by the caller).
- *
+/* ── Inline SVG sparkline (Ф5): the shared hp.chartSvg helper ─────────────
+ * The local red copy (chartSvgEng, ×1.15 auto-scale, no scale caption)
+ * moved into homeproxy.js (Ф8-F5 dedup, B2): Overview and Automation now
+ * render the same implementation — red, ×1.35 headroom, optional
+ * "scale up to N" caption via opts.onScale (renderStats adds it below).
  * ⚠ Browser JS `for…in` over an array yields STRING INDICES (the reverse
- * of the ucode lesson 20): `p[key]` on the index string is undefined and
- * every chart value silently becomes null (the Ф4 overview charts drew
- * only the grid, ч.77). Always iterate arrays by index here. */
-function chartSvgEng(points, key, opts) {
-	const W = 300, H = 84, TOP = 6, BOT = 4;
-	const fixedMax = (opts && opts.max != null) ? opts.max : null;
-	const NS = 'http://www.w3.org/2000/svg';
-
-	let vals = [];
-	for (let i = 0; i < points.length; i++) {
-		const p = points[i];
-		vals.push((p != null && p[key] != null) ? Number(p[key]) : null);
-	}
-
-	let max = fixedMax;
-	if (max == null) {
-		let hi = 0;
-		for (let v in vals)
-			if (vals[v] != null && vals[v] > hi) hi = vals[v];
-		max = hi > 0 ? hi * 1.15 : 1;
-	}
-	if (max <= 0) max = 1;
-
-	const y = function(v) { return TOP + (H - TOP - BOT) * (1 - (v / max)); };
-	const x = function(i, n) { return (n > 1) ? (i * W / (n - 1)) : 0; };
-
-	let area = '', line = '', pen = false;
-	for (let i = 0; i < vals.length; i++) {
-		const v = vals[i];
-		if (v == null) {
-			if (pen) { line += ' Z'; pen = false; }
-			continue;
-		}
-		const px = x(i, vals.length).toFixed(1), py = y(v).toFixed(1);
-		if (!pen) {
-			if (line) { area += ' L' + px + ',' + H + ' L' + px + ',' + py; }
-			else { area += 'M' + px + ',' + H + ' L' + px + ',' + py; }
-			line += (line ? ' ' : '') + 'M' + px + ',' + py;
-			pen = true;
-		} else {
-			area += ' L' + px + ',' + py;
-			line += ' L' + px + ',' + py;
-		}
-	}
-	if (pen) area += ' L' + x(vals.length - 1, vals.length).toFixed(1) + ',' + H + ' Z';
-
-	const svg = document.createElementNS(NS, 'svg');
-	svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
-	svg.setAttribute('preserveAspectRatio', 'none');
-	svg.setAttribute('class', 'hpauto-eng-svg');
-	svg.setAttribute('role', 'img');
-
-	if (area) {
-		const a = document.createElementNS(NS, 'path');
-		a.setAttribute('d', area);
-		a.setAttribute('fill', 'rgba(224,82,82,.12)');
-		svg.appendChild(a);
-	}
-	for (let q = 1; q <= 3; q++) {
-		const g = document.createElementNS(NS, 'path');
-		g.setAttribute('d', 'M0,' + (TOP + (H - TOP - BOT) * q / 4).toFixed(1) + ' H' + W);
-		g.setAttribute('stroke', 'rgba(128,128,128,.22)');
-		g.setAttribute('stroke-width', '.5');
-		g.setAttribute('fill', 'none');
-		svg.appendChild(g);
-	}
-	if (line) {
-		const l = document.createElementNS(NS, 'path');
-		l.setAttribute('d', line);
-		l.setAttribute('stroke', '#e05252');
-		l.setAttribute('stroke-width', '1.4');
-		l.setAttribute('fill', 'none');
-		l.setAttribute('stroke-linejoin', 'round');
-		svg.appendChild(l);
-		for (let i = vals.length - 1; i >= 0; i--) {
-			if (vals[i] != null) {
-				const d = document.createElementNS(NS, 'path');
-				d.setAttribute('d', 'M' + x(i, vals.length).toFixed(1) + ',' + y(vals[i]).toFixed(1) + ' h.01');
-				d.setAttribute('stroke', '#e05252');
-				d.setAttribute('stroke-width', '3.2');
-				d.setAttribute('stroke-linecap', 'round');
-				svg.appendChild(d);
-				break;
-			}
-		}
-	}
-	return svg;
-}
+ * of the ucode lesson 20) — the helper iterates by index (lesson 59). */
 
 /* ── Styling (scoped, theme-agnostic translucent colors) ─────────────── */
 
@@ -289,6 +201,7 @@ tr.hpsrc-manual.hpsrc-manual-direct td:first-child { box-shadow: inset 3px 0 0 #
 .hpauto-eng-chart-title { font-size: .85em; opacity: .8; }
 .hpauto-eng-chart-num { font-weight: 700; }
 .hpauto-eng-svg { width: 100%; height: 84px; display: block; margin-top: 2px; border-bottom: 1px solid rgba(128,128,128,.3); }
+.hpauto-eng-chart-max { font-size: .74em; opacity: .6; text-align: right; margin: 0; }
 .hpauto-eng-note { font-size: .8em; opacity: .7; margin: 4px 0 0 0; }
 .hpauto-eng-kinds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 2px 0; }
 .hpauto-eng-ev { display: flex; gap: 8px; font-size: .85em; margin: 2px 0; align-items: baseline; }
@@ -521,7 +434,11 @@ return view.extend({
 					E('span', { 'class': 'hpauto-eng-chart-title' }, [ ENG_CHART_DEFS[c][1] ]),
 					E('span', { 'class': 'hpauto-eng-chart-num' }, [ '—' ])
 				]),
-				chartSvgEng([], ENG_CHART_DEFS[c][0], ENG_CHART_DEFS[c][2])
+				/* Ф8-F5 (B2): third child = the "scale up to N" caption,
+				 * filled by the onScale callback in renderStats. */
+				hp.chartSvg([], ENG_CHART_DEFS[c][0],
+					Object.assign({ className: 'hpauto-eng-svg' }, ENG_CHART_DEFS[c][2])),
+				E('div', { 'class': 'hpauto-eng-chart-max' }, [ '' ])
 			]));
 		}
 		const engCap = E('div', { 'class': 'hpauto-eng-note' }, [ '—' ]);
@@ -984,7 +901,19 @@ return view.extend({
 				state.engSig = sig;
 				for (let i = 0; i < ENG_CHART_DEFS.length; i++) {
 					const block = engCharts.children[i];
-					block.replaceChild(chartSvgEng(hist, ENG_CHART_DEFS[i][0], ENG_CHART_DEFS[i][2]),
+					const def = ENG_CHART_DEFS[i];
+					const maxEl = block.children[2];
+					/* Ф8-F5 (B2): honest "scale up to N" caption on the
+					 * auto-scaled engine sparklines (the ×1.35 headroom of
+					 * the shared helper replaced the ×1.15 overshoot). */
+					const opts = Object.assign({ className: 'hpauto-eng-svg' }, def[2], {
+						onScale: function(mx) {
+							maxEl.textContent = (def[2].max == null)
+								? _('scale up to %s').format(def[2].fmt(Math.round(mx)))
+								: '';
+						}
+					});
+					block.replaceChild(hp.chartSvg(hist, def[0], opts),
 						block.children[1]);
 				}
 				engCap.textContent = (hist.length)

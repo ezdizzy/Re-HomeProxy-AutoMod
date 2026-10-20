@@ -855,7 +855,7 @@ return view.extend({
 						if (status.installed) return;
 
 						if (!status.pkg_manager) {
-							ui.addNotification(null, E('p', _('No package manager found. Install ciadpi manually from the Status page.')), 'error');
+							ui.addNotification(null, E('p', _('No package manager found. Install ciadpi manually on the "Core & Tools" page.')), 'error');
 							ev.target.checked = false;
 							return;
 						}
@@ -947,7 +947,7 @@ return view.extend({
 						}
 
 						if (!status.pkg_manager) {
-							ui.addNotification(null, E('p', _('No package manager found. Install zapret2 manually from the Status page.')), 'error');
+							ui.addNotification(null, E('p', _('No package manager found. Install zapret2 manually on the "Core & Tools" page.')), 'error');
 							ev.target.checked = false;
 							return;
 						}

@@ -134,111 +134,12 @@ function fmtK(k) {
 	return k + ' KB';
 }
 
-/* ── Inline SVG line chart (client-side, no libraries) ───────────────────── */
-
-/* Draws an area+line chart of points[key] into a 300×84-unit viewBox SVG
- * (scales with the container width). Null values break the line (data
- * missing because the core was down / the source absent at that moment).
- * Fixed `max` when given (CPU/RAM: 0-100), auto-scale otherwise with a
- * 35% headroom so the line never rides the top edge (Ф7: the 1.15 factor
- * put busy charts against the border and read as "maxed out"). Grid lines
- * at quarters; a static marker on the last point; the effective scale is
- * reported back via opts.onScale (shown as "max N" under the chart).
- * No animations: the SVG is a static picture re-rendered only when the
- * ring data changes (signature-guarded). */
-function chartSvg(points, key, opts) {
-	const W = 300, H = 84, TOP = 6, BOT = 4;
-	const fixedMax = (opts && opts.max != null) ? opts.max : null;
-	const NS = 'http://www.w3.org/2000/svg';
-
-	let vals = [];
-	/* ⚠ Browser JS `for…in` over an array yields STRING INDICES (the exact
-	 * reverse of the ucode lesson 20): `p[key]` on the index string is
-	 * undefined, every value silently became null and the charts drew only
-	 * the grid (found live in the Ф5 warm-up, ч.77). Iterate by index. */
-	for (let i = 0; i < points.length; i++) {
-		const p = points[i];
-		vals.push((p != null && p[key] != null) ? Number(p[key]) : null);
-	}
-
-	let max = fixedMax;
-	if (max == null) {
-		let hi = 0;
-		for (let i = 0; i < vals.length; i++) {
-			const v = vals[i];
-			if (v != null && v > hi) hi = v;
-		}
-		max = hi > 0 ? hi * 1.35 : 1;
-	}
-	if (max <= 0) max = 1;
-	if (opts && opts.onScale) opts.onScale(max);
-
-	const y = (v) => (TOP + (H - TOP - BOT) * (1 - (v / max)));
-	const x = (i, n) => (n > 1 ? (i * W / (n - 1)) : 0);
-
-	let area = '', line = '', pen = false;
-	for (let i = 0; i < vals.length; i++) {
-		const v = vals[i];
-		if (v == null) {
-			if (pen) { line += ' Z'; pen = false; }
-			continue;
-		}
-		const px = x(i, vals.length).toFixed(1), py = y(v).toFixed(1);
-		if (!pen) {
-			if (line) { area += ' L' + px + ',' + H + ' L' + px + ',' + py; }
-			else { area += 'M' + px + ',' + H + ' L' + px + ',' + py; }
-			line += (line ? ' ' : '') + 'M' + px + ',' + py;
-			pen = true;
-		} else {
-			area += ' L' + px + ',' + py;
-			line += ' L' + px + ',' + py;
-		}
-	}
-	if (pen) area += ' L' + x(vals.length - 1, vals.length).toFixed(1) + ',' + H + ' Z';
-
-	const svg = document.createElementNS(NS, 'svg');
-	svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
-	svg.setAttribute('preserveAspectRatio', 'none');
-	svg.setAttribute('class', 'ov-chart-svg');
-	svg.setAttribute('role', 'img');
-
-	if (area) {
-		const a = document.createElementNS(NS, 'path');
-		a.setAttribute('d', area);
-		a.setAttribute('fill', 'rgba(77,143,224,.14)');
-		svg.appendChild(a);
-	}
-	for (let q = 1; q <= 3; q++) {
-		const g = document.createElementNS(NS, 'path');
-		g.setAttribute('d', 'M0,' + (TOP + (H - TOP - BOT) * q / 4).toFixed(1) + ' H' + W);
-		g.setAttribute('stroke', 'rgba(128,128,128,.22)');
-		g.setAttribute('stroke-width', '.5');
-		g.setAttribute('fill', 'none');
-		svg.appendChild(g);
-	}
-	if (line) {
-		const l = document.createElementNS(NS, 'path');
-		l.setAttribute('d', line);
-		l.setAttribute('stroke', '#4d8fe0');
-		l.setAttribute('stroke-width', '1.4');
-		l.setAttribute('fill', 'none');
-		l.setAttribute('stroke-linejoin', 'round');
-		svg.appendChild(l);
-		/* Static marker on the last non-null point. */
-		for (let i = vals.length - 1; i >= 0; i--) {
-			if (vals[i] != null) {
-				const d = document.createElementNS(NS, 'path');
-				d.setAttribute('d', 'M' + x(i, vals.length).toFixed(1) + ',' + y(vals[i]).toFixed(1) + ' h.01');
-				d.setAttribute('stroke', '#4d8fe0');
-				d.setAttribute('stroke-width', '3.2');
-				d.setAttribute('stroke-linecap', 'round');
-				svg.appendChild(d);
-				break;
-			}
-		}
-	}
-	return svg;
-}
+/* ── Charts: the shared hp.chartSvg helper (homeproxy.js, Ф8-F5) ──────────
+ * The local duplicate (blue variant, ×1.35 headroom, onScale) moved into
+ * homeproxy.js — Automation used a red ×1.15 copy of the same code (B2).
+ * Overview now calls hp.chartSvg too: one implementation, one visual
+ * language (the Automation red), the "scale up to N" caption logic stays
+ * in renderCharts() below. */
 
 return view.extend({
 	load: function() {
@@ -325,7 +226,8 @@ return view.extend({
 					E('span', { 'class': 'ov-chart-title' }, [ CHART_DEFS[c][1] ]),
 					E('span', { 'class': 'ov-chart-num' }, [ '—' ])
 				]),
-				chartSvg([], CHART_DEFS[c][0], CHART_DEFS[c][2]),
+				hp.chartSvg([], CHART_DEFS[c][0],
+					Object.assign({ className: 'ov-chart-svg' }, CHART_DEFS[c][2])),
 				E('div', { 'class': 'ov-chart-max' }, [ '' ])
 			]));
 		}
@@ -554,14 +456,14 @@ return view.extend({
 				/* Auto-scaled charts get an honest "max N" caption (the scale
 				 * is peak×1.35); fixed-scale charts (CPU/RAM: 0–100) need no
 				 * label — the % is self-evident. */
-				const opts = Object.assign({}, def[2], {
+				const opts = Object.assign({ className: 'ov-chart-svg' }, def[2], {
 					onScale: (mx) => {
 						maxEl.textContent = (def[2].max == null)
 							? _('scale up to %s').format(def[2].fmt(Math.round(mx)))
 							: '';
 					}
 				});
-				block.replaceChild(chartSvg(points, def[0], opts), block.children[1]);
+				block.replaceChild(hp.chartSvg(points, def[0], opts), block.children[1]);
 			}
 			const span = points.length ? points.length * (metrics.interval || 5) : 0;
 			const upd = metrics.updated ? new Date(metrics.updated * 1000) : null;
