@@ -264,7 +264,7 @@ return view.extend({
 						const m = ret.node.match(/^cfg-(.+)-out$/);
 						const name = (m && proxy_nodes[m[1]]) ? proxy_nodes[m[1]] : ret.node;
 						const type = ret.type ? ' (' + ret.type + ')' : '';
-						/* Same 4-colour scheme as the status page: 65535 ms is the
+						/* Same 4-colour scheme as the Core & Tools page: 65535 ms is the
 						   URLTest timeout sentinel (confirmed dead → red); >=3000 ms is
 						   working-but-slow (orange); a real low latency is green; no
 						   delay at all is unmeasured (gray, no number). */
@@ -841,7 +841,7 @@ return view.extend({
 		o = s.taboption('routing', form.Flag, 'byedpi_enabled', _('Enable ByeDPI'),
 			_('A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. ' +
 			  'Works by confusing your ISP\'s traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. ' +
-			  'Results depend on your ISP and may require trying different strategies in the ByeDPI tab. ' +
+			  'Results depend on your ISP and may require trying different strategies in the Routing Wizard (DPI bypass). ' +
 			  'ByeDPI will be installed automatically on first enable.'));
 		o.default = o.disabled;
 		o.rmempty = false;

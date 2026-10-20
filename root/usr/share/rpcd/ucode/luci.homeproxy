@@ -3674,6 +3674,57 @@ const methods = {
 		}
 	},
 
+	/* ── сеанс 24 (user wish): the node.js ByeDPI/Zapret tabs moved into the
+	 * Wizard DPI pane — this RPC saves the whole ByeDPI card: the strategy
+	 * args (empty = back to the packaged ciadpi default) plus the three
+	 * option flags that used to live on those tabs (byedpi_udp_over_tcp —
+	 * generate_client.uc byedpi-out; byedpi_block_quic — the init.d nft QUIC
+	 * drop; zapret_voice — generate_client route rule + firewall_post.ut
+	 * ports). Engine enablement is NOT touched here: the flag lives on the
+	 * Client Settings page with its own honest description; the engine card
+	 * and the compose/chain flows report the live state. Every save restarts
+	 * the service (args go to ciadpi, flags to the generator/init.d), and the
+	 * server snapshot is written first so the existing Restore covers the
+	 * previous ByeDPI strategy. */
+	wizard_byedpi_set: {
+		args: { cmd_opts: 'cmd_opts', udp_over_tcp: 'udp_over_tcp',
+			block_quic: 'block_quic', zapret_voice: 'zapret_voice' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const flag = (v) => {
+				const s = trim((v == null) ? '' : '' + v);
+				if (s === '1' || s === 'true') return '1';
+				if (s === '0' || s === 'false' || s === '') return '0';
+				return null;
+			};
+			const uot = flag(a.udp_over_tcp);
+			const bquic = flag(a.block_quic);
+			const zvoice = flag(a.zapret_voice);
+			if (uot == null || bquic == null || zvoice == null)
+				return { result: false, error: 'bad flag value' };
+			const opts = trim('' + (a.cmd_opts || ''));
+			if (length(opts) > 8000)
+				return { result: false, error: 'options are too long' };
+			/* ciadpi args are eval-split in init.d (admin-owned value), but the
+			 * cheap validation keeps the string argument-shaped and shell-safe. */
+			if (length(opts) && (!match(opts, /^-/) || match(opts, /[`$;&|<>\n\r]/)))
+				return { result: false, error: 'options contain forbidden characters' };
+			hp_apply_backup_write();
+			const c = cursor();
+			if (length(opts))
+				c.set('homeproxy', 'config', 'byedpi_cmd_opts', opts);
+			else
+				c.delete('homeproxy', 'config', 'byedpi_cmd_opts');
+			c.set('homeproxy', 'config', 'byedpi_udp_over_tcp', uot);
+			c.set('homeproxy', 'config', 'byedpi_block_quic', bquic);
+			c.set('homeproxy', 'config', 'zapret_voice', zvoice);
+			c.commit('homeproxy');
+			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+			return { result: true, applied: { cmd_opts: opts, udp_over_tcp: uot,
+				block_quic: bquic, zapret_voice: zvoice } };
+		}
+	},
+
 	/* ── Ф8-F7 T3: one-click strategy auto-pick ("Автоподбор") ─────────────
 	 * The RPC owns the lock and the validation; the runner
 	 * (scripts/wizard_autopick.uc) drives fuzz→pick→rule→apply→verify and

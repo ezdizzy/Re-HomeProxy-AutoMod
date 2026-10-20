@@ -30,7 +30,7 @@ This split matters: resolving a blocked domain over plain ISP DNS would either f
 
 ### Advanced: DNS Servers & DNS Rules
 
-The **DNS Settings**, **DNS Servers**, and **DNS Rules** tabs (under Node Settings) let you define custom resolvers and per-domain DNS routing, including the **domain strategy** (IPv4-only, prefer IPv6, etc.). Most users never need these.
+The **DNS servers**, **Reserve DNS**, and **MultiDNS** tabs (on the dedicated **DNS Settings** page) let you define custom resolvers and per-domain DNS routing, including the **domain strategy** (IPv4-only, prefer IPv6, etc.). Most users never need these.
 
 ### IPv6 and leaks
 

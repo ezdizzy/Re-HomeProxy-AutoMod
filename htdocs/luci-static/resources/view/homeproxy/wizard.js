@@ -179,6 +179,24 @@ const callFuzzApply = rpc.declare({
 	expect: { '': {} }
 });
 
+/* сеанс 24 (user wish): the node.js ByeDPI/Zapret tabs moved into the
+ * Wizard DPI pane — Save writes the whole ByeDPI card (strategy args +
+ * the option flags that used to live on those tabs); Test / Test-all
+ * reuse the existing byedpi_strategy_test tester. */
+const callByedpiSet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_byedpi_set',
+	params: [ 'cmd_opts', 'udp_over_tcp', 'block_quic', 'zapret_voice' ],
+	expect: { '': {} }
+});
+
+const callByedpiTest = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'byedpi_strategy_test',
+	params: [ 'cmd_opts', 'port' ],
+	expect: { '': {} }
+});
+
 /* Ф8-F7 T3: one-click strategy auto-pick — fuzz → pick per resource →
  * rule (optional) → apply (server snapshot) → live verify. */
 const callAutoPickStart = rpc.declare({
@@ -1390,8 +1408,8 @@ return view.extend({
 						if (!r || r.result === false) {
 						const ERRS = {
 							main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
-							byedpi_disabled: _('ByeDPI is not enabled — enable it on the Node Settings page first.'),
-							zapret_disabled: _('Zapret is not enabled — enable it on the Node Settings page first.'),
+							byedpi_disabled: _('ByeDPI is not enabled — enable it on the Client Settings page first.'),
+							zapret_disabled: _('Zapret is not enabled — enable it on the Client Settings page first.'),
 							tgws_not_running: _('The tg-ws bridge is not running — install/start it in the Advanced tab first.'),
 							tgws_telegram_only: _('The tg-ws bridge carries Telegram traffic only.'),
 							urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
@@ -1837,6 +1855,269 @@ return view.extend({
 					box.appendChild(row);
 					dom.content(dpiResult, box);
 				});
+			});
+		});
+
+		/* ── ByeDPI strategy card — the node.js ByeDPI/Zapret tabs moved here
+		 * (user wish, сеанс 24): strategy presets + custom args + the engine
+		 * option flags + the preset sweep. Save writes the whole card through
+		 * wizard_byedpi_set (the server snapshot is written first, so Restore
+		 * covers the previous strategy; the service restarts). Test / Test-all
+		 * probe through byedpi_strategy_test on a temporary port. Results land
+		 * in dpiResult (ONE place). ───────────────────────────────────────── */
+		const BYEDPI_PRESETS = [
+			/* A — Community-contributed strategies (from issues / community testing) */
+			{ name: 'A1 — YouTube 1',                  args: '-o1 -r-5+se -a1 -At,r,s -d1 -n google.com -Qr -f-1' },
+			{ name: 'A2 — YouTube 2',                  args: '-d1 -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -r1+s -S -a1 -As -d1 -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -S -a1' },
+			{ name: 'A3 — General 1',                  args: '-d1+s -O1 -s29+s -t 5 -An -Ku -a5 -s443+s -d80+s -d443+s -s80+s -s443+s -d53+s -s53+s -d443+s -An' },
+			{ name: 'A4 — YouTube 3',                  args: '-H:"youtube.com googlevideo.com ggpht.com ytimg.com googleapis.com googleusercontent.com youtube-ui.l.google.com yt4.ggpht.com" -o1 -a1 -r-5+se -t6 -n rutube.com -An -f-1 -t8 -n www.google.com -d1 -s1+s -d1+s -s3+s -d6+s -s12+s -d14+s -s20+s -d24+s -s30+s -a1' },
+			{ name: 'A5 — General 2',                  args: '-H:"youtube.com googlevideo.com ytimg.com ggpht.com youtu.be youtubei.googleapis.com" -Kt,h -d1 -s1+s -s3+s -s6+s -s9+s -s12+s -s15+s -s20+s -s30+s -a1 -An -H:"soundcloud.com api.soundcloud.com api-v2.soundcloud.com m.soundcloud.com eventgateway.soundcloud.com api-partners.soundcloud.com api-mobile.soundcloud.com wis.sndcdn.com va.sndcdn.com invite.soundcloud.com events.soundcloud.com" -Kth -Qorig -n "www.google.com" -f-1 -t5 -d1 -s1+s -s3+s -s6+s -s9+s -s12+s -s15+s -s20+s -s30+s -Mh,d,r -An -H:"sndcdn.com a-v2.sndcdn.com cf-hls-media.sndcdn.com cf-media.sndcdn.com cf-preview-media.sndcdn.com cf-hls-opus-media.sndcdn.com i1.sndcdn.com i2.sndcdn.com i3.sndcdn.com i4.sndcdn.com assets.soundcloud.com playback.media-streaming.soundcloud.cloud" -Kth -Qorig -n "www.google.com" -f-1 -t5 -s1 -d2 -Mh,d,r -An -H:"discord.com discord.gg discord.media discordapp.com cdn.discordapp.com media.discordapp.net images-ext-1.discordapp.net images-ext-2.discordapp.net images.discordapp.net gateway.discord.gg status.discord.com api.discord.com discord-attachments-uploads-prd.storage.googleapis.com hcaptcha.com recaptcha.net accounts.google.com appleid.apple.com" -Kth -Qorig -n "www.google.com" -f-1 -t5 -o1 -s1+s -s2+s -s5+s -d3+s -s7+s -s10+s -s15+s -An -Ku' },
+			{ name: 'A6 — General 3',                  args: '-H:"youtube.com googlevideo.com ggpht.com ytimg.com googleapis.com googleusercontent.com youtube-ui.l.google.com yt4.ggpht.com" -o1 -a1 -r-5+se -t6 -n rutube.com -An -H:"cdn.discordapp.com canary.discord.com vdis.gd ptb.discord.com discord-attachments-uploads-prd.storage.googleapis.com discord-activities.com discord.co discord.com discord.design discord.dev discord.gg discord.gift discord.gifts discord.media discord.new discord.store discord.tools discordactivities.com discordapp.com discordapp.net media.discordapp.net images-ext-1.discordapp.net images-ext-2.discordapp.net stable.dl2.discordapp.net discordcdn.com discordmerch.com discordpartygames.com discordsays.com discordsez.com discordstatus.com" -f-1 -t8 -n www.google.com -s1+s -a5 -An -H:"soundcloud.com sndcdn.com soundcloud.app.goo.gl" -f-1 -T0.5 -Ars -d0+sm -At -r1+s -An -f-200 -s2 -s5+hm -t6 -Qr -n wb.ru' },
+			/* B — Disorder — most effective on Linux */
+			{ name: 'B1 — Disorder Basic',             args: '--disorder 1' },
+			{ name: 'B2 — Disorder at SNI',            args: '--disorder 1+s' },
+			{ name: 'B3 — Disorder TLS+HTTP',          args: '--proto tls,http --disorder 1' },
+			{ name: 'B4 — Split + Disorder',           args: '--split 1 --disorder 3' },
+			{ name: 'B5 — Disorder + Auto TLS Record', args: '--disorder 1 --auto=torst --tlsrec 1+s' },
+			/* C — Fake TTL */
+			{ name: 'C1 — Fake TTL=6',                 args: '--fake -1 --ttl 6' },
+			{ name: 'C2 — Fake TTL=8',                 args: '--fake -1 --ttl 8' },
+			{ name: 'C3 — Fake TTL=10',                args: '--fake -1 --ttl 10' },
+			{ name: 'C4 — Fake TTL=12',                args: '--fake -1 --ttl 12' },
+			{ name: 'C5 — Fake TTL=15',                args: '--fake -1 --ttl 15' },
+			/* D — Fake MD5 — Linux-only TCP option */
+			{ name: 'D1 — Fake MD5',                   args: '--fake -1 --md5sig' },
+			{ name: 'D2 — Disorder + Fake MD5',        args: '--disorder 1 --fake -1 --md5sig' },
+			{ name: 'D3 — Fake MD5 TLS+HTTP',          args: '--proto tls,http --fake -1 --md5sig' },
+			/* E — TLS Record split */
+			{ name: 'E1 — TLS Record Split',           args: '--tlsrec 1+s' },
+			{ name: 'E2 — TLS Record + Auto',          args: '--auto=torst --tlsrec 1+s' },
+			{ name: 'E3 — TLS Record + Timeout',       args: '--auto=torst --timeout 3 --tlsrec 1+s' },
+			{ name: 'E4 — Disorder + TLS Record',      args: '--disorder 1 --tlsrec 1+s' },
+			/* F — OOB */
+			{ name: 'F1 — OOB at SNI',                 args: '--oob 1+s' },
+			{ name: 'F2 — OOB at SNI+3',               args: '--oob 3+s' },
+			{ name: 'F3 — DisoOB at SNI',              args: '--disoob 1+s' },
+			{ name: 'F4 — DisoOB + Fake MD5',          args: '--disoob 1+s --fake -1 --md5sig' },
+			/* G — Split */
+			{ name: 'G1 — Split at SNI',               args: '--split 1+s' },
+			{ name: 'G2 — Split at SNI Middle',        args: '--split 0+sm' },
+			{ name: 'G3 — Split at 2',                 args: '--split 2' },
+			{ name: 'G4 — Split + OOB',                args: '--split 1+s --oob 2+s' },
+			/* H — HTTP modification */
+			{ name: 'H1 — HTTP Host Case Mix',         args: '--proto http --mod-http hcsmix' },
+			{ name: 'H2 — HTTP Host Double Mix',       args: '--proto http --mod-http hcsmix,dcsmix' },
+			{ name: 'H3 — HTTP Full Mix',              args: '--proto http --mod-http hcsmix,dcsmix,rmspace' },
+			{ name: 'H4 — HTTP Mix + Disorder',        args: '--proto tls,http --mod-http hcsmix --disorder 1' },
+			/* I — Auto-mode */
+			{ name: 'I1 — Auto SSL Error Fallback',    args: '--fake -1 --ttl 8 --auto=ssl_err --fake -1 --ttl 5' },
+			{ name: 'I2 — Auto Reset Fallback',        args: '--fake -1 --md5sig --auto=torst --disorder 1' },
+			/* J — Fake TLS modification */
+			{ name: 'J1 — Random TLS Fake',            args: '--fake -1 --fake-tls-mod rand' },
+			{ name: 'J2 — Original TLS Fake',          args: '--fake -1 --fake-tls-mod orig' },
+			/* K — Aggressive combos */
+			{ name: 'K1 — Aggressive Split',           args: '--split 1+s --disorder 3+s' },
+			{ name: 'K2 — Aggressive OOB + MD5',       args: '--oob 1+s --disorder 1 --fake -1 --md5sig' },
+			{ name: 'K3 — Aggressive DisoOB',          args: '--disoob 1+s --disorder 3+s' },
+			{ name: 'K4 — Aggressive Combo',           args: '--split 1+s --oob 2+s --disorder 3+s' },
+			{ name: 'K5 — TLS+HTTP Disorder + Record', args: '--proto tls,http --disorder 1 --tlsrec 1+s' },
+			/* L — UDP */
+			{ name: 'L1 — UDP Fake',                   args: '--proto udp --udp-fake 5' },
+			{ name: 'L2 — TLS+UDP Fake MD5',           args: '--proto tls,udp --fake -1 --md5sig --udp-fake 5' },
+			/* M — Full combo */
+			{ name: 'M1 — Full TLS Bypass',            args: '--proto tls --fake -1 --md5sig --tlsrec 1+s' }
+		];
+
+		/* Groups are matched to presets by the letter prefix of the preset name
+		 * (A1 → group A, B3 → group B, …). */
+		const BYEDPI_GROUPS = [
+			{ key: 'A', label: _('Community') },
+			{ key: 'B', label: _('Disorder — reorders TCP segments') },
+			{ key: 'C', label: _('Fake TTL') },
+			{ key: 'D', label: _('Fake MD5') },
+			{ key: 'E', label: _('TLS Record Split') },
+			{ key: 'F', label: _('OOB') },
+			{ key: 'G', label: _('Split') },
+			{ key: 'H', label: _('HTTP Modification') },
+			{ key: 'I', label: _('Auto-mode') },
+			{ key: 'J', label: _('TLS Modification') },
+			{ key: 'K', label: _('Aggressive') },
+			{ key: 'L', label: _('UDP') },
+			{ key: 'M', label: _('Full Combo') },
+		];
+
+		const bStratInput = E('input', { type: 'text', 'class': 'cbi-input-text wiz-strat',
+			placeholder: 'ciadpi args, e.g. --disorder 1' });
+		bStratInput.value = uci.get('homeproxy', 'config', 'byedpi_cmd_opts') || '--disorder 1';
+		const bPresetSel = E('select', { 'class': 'cbi-input-select wiz-select' });
+		bPresetSel.appendChild(E('option', { value: '' }, [ _('— select a preset —') ]));
+		for (let g of BYEDPI_GROUPS) {
+			const og = E('optgroup', { label: g.label });
+			for (let i = 0; i < BYEDPI_PRESETS.length; i++)
+				if (BYEDPI_PRESETS[i].name.charAt(0) === g.key)
+					og.appendChild(E('option', { value: String(i) }, [ BYEDPI_PRESETS[i].name ]));
+			if (og.children.length)
+				bPresetSel.appendChild(og);
+		}
+		bPresetSel.addEventListener('change', function() {
+			const p = BYEDPI_PRESETS[parseInt(bPresetSel.value, 10)];
+			if (p) bStratInput.value = p.args;
+		});
+		const bSave = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Save ByeDPI') ]);
+		const bTest = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Test') ]);
+		const bTestAll = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Test all presets') ]);
+		const bRow = E('div', { 'class': 'wiz-row' });
+		bRow.appendChild(E('span', { 'class': 'wiz-title' }, [ _('ByeDPI strategy') ]));
+		bRow.appendChild(bPresetSel);
+		bRow.appendChild(bStratInput);
+		bRow.appendChild(bSave);
+		bRow.appendChild(bTest);
+		bRow.appendChild(bTestAll);
+		dpiStrategy.appendChild(E('div', { style: 'margin-top:10px' }, [ bRow ]));
+
+		const bUot = E('input', { type: 'checkbox' });
+		bUot.checked = (uci.get('homeproxy', 'config', 'byedpi_udp_over_tcp') !== '0');
+		const bQuic = E('input', { type: 'checkbox' });
+		bQuic.checked = (uci.get('homeproxy', 'config', 'byedpi_block_quic') === '1');
+		const bVoice = E('input', { type: 'checkbox' });
+		bVoice.checked = (uci.get('homeproxy', 'config', 'zapret_voice') === '1');
+		const bFlag = (input, text) => E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+			[ input, ' ' + text ]);
+		dpiStrategy.appendChild(E('div', { 'class': 'wiz-row' },
+			[ bFlag(bUot, _('UDP over TCP')),
+			  bFlag(bQuic, _('Block QUIC (UDP port 443)') + ' ⚠️'),
+			  bFlag(bVoice, _('Discord calls via Zapret')) ]));
+		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
+			[ _('The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Client Settings page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled).') ]));
+		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
+			[ _('Grouped by technique. Based on <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> and community testing. See also <a href="https://github.com/fatyzzz/Byedpi-Setup" target="_blank">fatyzzz/Byedpi-Setup</a>.') ]));
+
+		bSave.addEventListener('click', function() {
+			bSave.disabled = true;
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+				[ _('Saving the ByeDPI options — the service restarts…') ]));
+			L.resolveDefault(callByedpiSet(String(bStratInput.value || '').trim(),
+				bUot.checked ? '1' : '0', bQuic.checked ? '1' : '0',
+				bVoice.checked ? '1' : '0'), {}).then(function(r) {
+				bSave.disabled = false;
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ (r && r.result)
+						? _('ByeDPI options saved — the service restarts; the engine card above reflects the new state.')
+						: _('Save failed: ') + ((r && r.error) || _('rpc error')) ]));
+			});
+		});
+
+		bTest.addEventListener('click', function() {
+			const s = String(bStratInput.value || '').trim();
+			if (!s) {
+				ui.addNotification(null, E('p', {}, _('No strategy set — pick a preset or enter the options first.')), 'error');
+				return;
+			}
+			bTest.disabled = true;
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+				[ _('Testing the ByeDPI strategy on a temporary port (LAN traffic untouched)…') ]));
+			L.resolveDefault(callByedpiTest(s, '15335'), {}).then(function(r) {
+				bTest.disabled = false;
+				if (!r || (!r.results && !r.result)) {
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ (r && r.error) || _('Test failed') ]));
+					return;
+				}
+				const box = E('div', {});
+				const row = E('div', { 'class': 'wiz-row' });
+				(r.results || []).forEach(function(t, i) {
+					if (i) row.appendChild(document.createTextNode(' · '));
+					row.appendChild(E('span', {
+						style: 'font-weight:600;color:' + (t.ok ? '#3fbf5f' : '#e05252'),
+						title: t.host + ' → ' + (t.ok ? t.code : (t.reason || 'fail'))
+					}, [ (t.label || t.tag) + (t.ok ? ' ✓' : ' ✗') ]));
+				});
+				if (r.results)
+					row.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
+						[ '(' + (r.passed || 0) + '/' + (r.total || 0) + ')' ]));
+				box.appendChild(row);
+				if (!r.results && r.result)
+					box.appendChild(E('div', { 'class': 'wiz-note' },
+						[ _('✓ ByeDPI started (install curl for full test)') ]));
+				box.appendChild(E('p', { 'class': 'hpui-hint' },
+					[ _('The strategy was NOT saved — press "Save ByeDPI" to apply it.') ]));
+				dom.content(dpiResult, box);
+			});
+		});
+
+		/* Preset sweep — the node.js "Test all strategies" moved here: each
+		 * preset is probed on a temporary port, the table renders in dpiResult
+		 * (ONE place); a row's button fills the strategy input (Save applies). */
+		bTestAll.addEventListener('click', function() {
+			if (!window.confirm(_('Test all ByeDPI presets? Each is probed against 4 sites (~12 min total). LAN clients are not affected. You can stop it at any point.')))
+				return;
+			bTestAll.disabled = true;
+			const stop = { on: false };
+			const stopBtn = E('button', { 'class': 'btn cbi-button', type: 'button', style: 'margin-left:6px' }, [ _('Stop') ]);
+			stopBtn.addEventListener('click', function() { stop.on = true; stopBtn.disabled = true; });
+			const box = E('div', {});
+			const prog = E('p', { 'class': 'hpui-hint' }, [ _('Preparing…') ]);
+			const wrap = E('div', { 'class': 'hpui-wrap' });
+			const tbody = E('tbody', {});
+			const thead = E('thead', {}, E('tr', {}, [
+				E('th', {}, [ '#' ]), E('th', {}, [ _('Preset') ]),
+				E('th', {}, [ _('Passed') ]), E('th', {}, [ '' ])
+			]));
+			wrap.appendChild(E('table', { 'class': 'hpui-table' }, [ thead, tbody ]));
+			box.appendChild(prog);
+			box.appendChild(wrap);
+			box.appendChild(stopBtn);
+			dom.content(dpiResult, box);
+
+			let fullPass = 0, partial = 0;
+			let chain = Promise.resolve();
+			for (let i = 0; i < BYEDPI_PRESETS.length; i++) {
+				const idx = i;
+				const dots = E('td', { style: 'white-space:nowrap; opacity:.75' }, [ '–' ]);
+				const pick = E('button', { 'class': 'btn cbi-button cbi-button-apply', style: 'font-size:.82em; padding:0 8px; visibility:hidden' },
+					[ _('Fill input') ]);
+				pick.addEventListener('click', function() {
+					bStratInput.value = BYEDPI_PRESETS[idx].args;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Preset filled into the strategy input — press "Save ByeDPI" to apply it.') ]));
+				});
+				tbody.appendChild(E('tr', {}, [
+					E('td', { style: 'opacity:.7' }, [ String(idx + 1) ]),
+					E('td', { style: 'font-size:.85em; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap', title: BYEDPI_PRESETS[idx].args },
+						[ BYEDPI_PRESETS[idx].name ]),
+					dots,
+					E('td', {}, [ pick ])
+				]));
+				chain = chain.then(function() {
+					if (stop.on) return;
+					prog.textContent = (idx + 1) + ' / ' + BYEDPI_PRESETS.length + ': ' + BYEDPI_PRESETS[idx].name;
+					dots.textContent = '⏳';
+					return L.resolveDefault(callByedpiTest(BYEDPI_PRESETS[idx].args, '15335'), {}).then(function(r) {
+						dots.innerHTML = '';
+						if (r && r.results && r.results.length) {
+							r.results.forEach(function(t) {
+								dots.appendChild(E('span', {
+									style: 'font-weight:600; margin-right:3px; color:' + (t.ok ? '#3fbf5f' : '#e05252'),
+									title: (t.label || t.tag) + ' (' + t.host + ') → ' + (t.ok ? t.code : (t.reason || 'fail'))
+								}, [ t.ok ? '●' : '○' ]));
+							});
+							dots.appendChild(E('span', { style: 'opacity:.7' },
+								[ ' ' + (r.passed || 0) + '/' + (r.total || 0) ]));
+							if (r.passed === r.total) { fullPass++; pick.style.visibility = ''; }
+							else if (r.passed > 0) { partial++; pick.style.visibility = ''; }
+						} else {
+							dots.textContent = (r && r.result) ? '✓' : '✗';
+						}
+					});
+				});
+			}
+			chain.then(function() {
+				bTestAll.disabled = false;
+				stopBtn.parentNode.removeChild(stopBtn);
+				prog.textContent = stop.on
+					? _('Stopped') + ' — ' + fullPass + ' ' + _('work on all sites') + ((partial > 0) ? (', ' + partial + ' ' + _('partial')) : '')
+					: _('Done') + ': ' + fullPass + ' / ' + BYEDPI_PRESETS.length + ' ' + _('work on all sites') +
+						(((fullPass + partial) > 0) ? (' — ' + _('fill a preset into the input and press "Save ByeDPI"')) : '');
 			});
 		});
 
@@ -2379,7 +2660,7 @@ return view.extend({
 			[ autBtn, autSel, autFullWrap, autSetRuleWrap, autStatus ]);
 		dpiLab.appendChild(autRow);
 		dpiLab.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied with a server snapshot, and the resource is then checked through the configured path (code + seconds). Zapret only — ByeDPI strategies are configured in Node Settings.') ]));
+			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied with a server snapshot, and the resource is then checked through the configured path (code + seconds). Zapret only — ByeDPI strategies are configured in the ByeDPI card above.') ]));
 		autSel.addEventListener('change', function() {
 			autSetRuleWrap.style.display = (autSel.value === 'general') ? 'none' : '';
 		});
@@ -2708,7 +2989,7 @@ return view.extend({
 			const src = chainSel.value;
 			const eng = chainEngine.value;
 			if (!src || !eng) {
-				ui.addNotification(null, E('p', {}, _('Enable Zapret or ByeDPI on the Node Settings page first.')), 'error');
+				ui.addNotification(null, E('p', {}, _('Enable Zapret or ByeDPI on the Client Settings page first.')), 'error');
 				return;
 			}
 			chainBtn.disabled = true;

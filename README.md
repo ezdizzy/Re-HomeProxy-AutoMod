@@ -26,9 +26,11 @@ Version 2.0 is a major UX rework of the whole interface (still everything local 
 
 - **New Overview (home) page** — status cards for every subsystem (core, active node, routing mode, Zapret/ByeDPI with the
   live strategy name and NFQUEUE counters, MultiDNS pools, Automation, Telegram), inline-SVG performance charts
-  (CPU / RAM / temperature / connections / node delay / learned-records growth) with auto-scaled axes, system parameters
-  and quick actions (restart service, snapshot, emergency "restore internet (direct)"). Everything is served locally —
-  the page never queries external resources on its own; update availability is checked on demand.
+  (CPU / RAM / temperature / connections / node delay / learned-records growth) with auto-scaled axes, a **traffic by
+  exit** panel (cumulative bytes and live speeds for VPN / Direct / Zapret / ByeDPI / tg-ws — LAN-client traffic through
+  the core only), system parameters and quick actions (restart service, snapshot, emergency "restore internet (direct)").
+  Everything is served locally — the page never queries external resources on its own; update availability is checked
+  on demand.
 - **Routing Wizard (center of the app)** — an interactive hub in four tabs:
   - *Provider diagnostics* — probes YouTube, Discord, Telegram, Google AI, OpenAI, X, Instagram and more through your
     **real paths**: directly, via the main node, and via your **configured routing** (rules, learned lists, Zapret/ByeDPI
@@ -39,9 +41,15 @@ Version 2.0 is a major UX rework of the whole interface (still everything local 
     Direct); the Wizard maintains one routing rule per service (the same records as the manual editor), applies and
     verifies live in one place. Your own domain lists live here too (advanced).
   - *DPI bypass* — engine status, strategy picker with the catalog, **Strategy Lab** (quick/full fuzzing of the whole
-    strategy corpus on an isolated NFQUEUE with baseline and majority-of-rounds ranking), catalog import
-    (StressOzz/Zapret-Manager) and a **strategy generator** that derives new mutations from the best fuzz results.
-  - *Advanced* — the Telegram bot panel (see below) and the **Telegram without a proxy** card (TG WS Proxy, below).
+    strategy corpus on an isolated NFQUEUE with baseline and majority-of-rounds ranking), **Composition Builder**
+    (per-resource profiles of Zapret AND ByeDPI strategies, built/tested server-side, apply with a server snapshot and
+    a Restore button that survives page reloads), one-click **Auto-pick** (fuzz → best strategy for the resource →
+    apply → live check), the scheduled **Auto-pilot** (periodic re-ranks + health checks that immediately re-pick a
+    broken strategy and keep the managed rules on Zapret), catalog import (StressOzz/Zapret-Manager), a **strategy
+    generator** that derives new mutations from the best fuzz results, and the editable **TSPU watchlist** (dpi-detect).
+    ByeDPI strategy presets, the tester and the engine option flags live here too — the strategy tabs were moved out of
+    Node Settings into this card.
+  - *Advanced* — the Telegram bot panel (see below) and the **Telegram without a proxy** cards (TG WS Proxy, below).
 - **Automation engine overview** — the Automation tab shows how the learning engine actually works: cycle/probe counters,
   engine RAM, learned-records sparkline, verdict breakdown (DPI / DNS-poisoned / stub / refusal / block-page), sources
   of the last cycle and a live event feed.
@@ -49,10 +57,16 @@ Version 2.0 is a major UX rework of the whole interface (still everything local 
   restart), /service, /snapshot, /status_engine, /mute, plus push notifications about Hot Swap node changes, dead URLTest
   nodes, automation learning and service faults (dedup + rate-limit, every toggle configurable in the UI). The bot
   daemon runs always-on and hot-reloads its settings — saving never restarts the service.
-- **Telegram without a proxy (TG WS Proxy)** — optional third-party bridge ([tg-ws-proxy-rs](https://github.com/valnesfjord/tg-ws-proxy-rs))
-  that carries Telegram traffic over a WebSocket path DPI does not block. The Wizard detects an existing install, can
-  run the component's `--check` self-diagnostics, shows the `tg://` connect link and can install/update it with the
-  component's official installer — detection is read-only, the app never packs or edits the third-party component.
+- **Telegram without a proxy (TG WS Proxy)** — Telegram messaging that works **transparently for the whole LAN, without
+  a VPN and without per-app proxy settings**. Two complementary cards in the Wizard:
+  - **Transparent bridge** — the Wizard can install the third-party bridge ([tg-ws-proxy-go](https://github.com/d0mhate/tg-ws-proxy-go), MIT)
+    with one button: it runs locally (loopback SOCKS5, auto-restarted by procd) and carries Telegram messaging over a
+    WebSocket path DPI does not block; a dedicated routing rule sends Telegram domains and DC IPs through it with an
+    automatic fallback to the main node if the bridge dies (voice calls stay UDP and ride the VPN as before). Telegram
+    will show the relay's exit country instead of your home IP — that is expected.
+  - **TG WS Proxy (rs) detection** — if you already run [tg-ws-proxy-rs](https://github.com/valnesfjord/tg-ws-proxy-rs)
+    yourself, the Wizard detects it read-only, shows its status and builds the `tg://` per-client connect link; nothing
+    is repacked into this app's packages.
 - **Devices & interfaces page** — per-device proxy policy for the LAN, upstream IP policy for the WAN and interface
   binding, separated from the client settings; domain lists moved into the Wizard, empty tabs are gated by mode.
 - **nfqws2 multi-strategies** — a single nfqws2 process can run several profiles, each with its own `--hostlist`
@@ -141,8 +155,9 @@ This mod adds the following on top of the original Re-HomeProxy app:
 - **Fork default** — `install.sh` installs the LuCI app and Russian locale from `ezdizzy/re-homeproxy` by default
   (cores / ByeDPI / Zapret still come from upstream `1andrevich/*`).
 - **Interactive installer** — `install.sh` walks you through everything (subscription, Hot Swap, MultiDNS, Automation, Zapret with
-  automatic strategy testing) and **never leaves you without internet**: with no subscription it switches to direct mode
-  and adds a "YouTube → Zapret" rule. Re-running the script opens a configuration menu.
+  automatic strategy testing, the strategy **auto-pilot** opt-in and ByeDPI) and **never leaves you without internet**:
+  with no subscription it switches to direct mode and adds a "YouTube → Zapret" rule. Re-running the script opens a
+  configuration menu.
 - Complete Russian (ru) translation of every tab, including Automation and DNS-failover strings.
 
 > ⚠️ This is an experimental mod. By installing it you acknowledge that some features may not work as expected —
@@ -196,7 +211,7 @@ Interactive installer: it installs the LuCI app (+ Russian language), then walks
 proxy core (with a warning that Telegram/WhatsApp/Instagram and other blocked services won't work without a subscription),
 adding a subscription or a share-link, enabling **Hot Swap** (hot-standby failover, on by default), **MultiDNS** and
 **Automation**, installing **Zapret 2** with automatic
-strategy testing (starts with Hostfakesplit and checks YouTube) and **ByeDPI** (up to you).
+strategy testing (starts with Hostfakesplit and checks YouTube), the strategy **auto-pilot** opt-in and **ByeDPI** (up to you).
 
 Key point: **you are never left without internet** — with no subscription the script switches to direct mode and
 immediately creates a "Source YouTube → Node Zapret" rule. Re-running the script opens a **configuration menu**: add a
@@ -377,8 +392,9 @@ fetched at install time from their own releases and remain under their own licen
 - [bol-van/zapret2](https://github.com/bol-van/zapret2) — the Zapret / nfqws2 / blockcheck2 packet desync engine; OpenWrt packages by [1andrevich/zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt); some strategy presets adapted from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT)
 - [StressOzz/Zapret-Manager](https://github.com/StressOzz/Zapret-Manager) — the strategy catalog imported by the Wizard's DPI section (converted to nfqws2 args and re-tested on the router)
 
-**Optional third-party component**
-- [valnesfjord/tg-ws-proxy-rs](https://github.com/valnesfjord/tg-ws-proxy-rs) (MIT) — the "Telegram without a proxy" MTProto-over-WebSocket bridge; installed only by the user's explicit action with the component's own official installer, detected read-only by the Wizard, never packed into this app
+**Optional third-party components (Telegram without a proxy)**
+- [d0mhate/tg-ws-proxy-go](https://github.com/d0mhate/tg-ws-proxy-go) (MIT) — the transparent Telegram bridge the Wizard installs by button (loopback SOCKS5, procd-managed)
+- [valnesfjord/tg-ws-proxy-rs](https://github.com/valnesfjord/tg-ws-proxy-rs) (MIT) — the MTProto-over-WebSocket component detected read-only if you run it yourself; installed only by the user's explicit action with the component's own official installer, never packed into this app
 
 **Protocols** — implemented by the cores above (see [Supported Protocols](../../wiki/Supported-Protocols-en)):
 

@@ -2215,9 +2215,6 @@ msgstr "Узел"
 
 #: root/usr/share/luci/menu.d/luci-app-homeproxy-hiddify.json:22
 
-msgid "Node Settings"
-msgstr "Узлы"
-
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1217
 
 msgid "Nodes"
@@ -4828,28 +4825,13 @@ msgstr "частично"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
-msgid "click Apply next to a strategy (prefer all-green)"
-msgstr "нажмите «Применить» рядом со стратегией (лучше all-green)"
+#: htdocs/luci-static/resources/view/homeproxy/node.js
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
-msgid "Test all strategies?"
-msgstr "Проверить все стратегии?"
-
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
-msgid "Each is probed against 4 sites (~12 min total). You can Stop it at any point."
-msgstr "Каждая проверяется на 4 сайтах (всего ~12 мин). Можно остановить в любой момент."
-
 #: htdocs/luci-static/resources/view/homeproxy/node.js
-
-msgid "LAN clients are not affected during testing."
-msgstr "На клиентов локальной сети проверка не влияет."
-
-#: htdocs/luci-static/resources/view/homeproxy/node.js
-
-msgid "Probes each preset against 4 sites (YouTube video CDN, Telegram, Discord, Speedtest). ● = TLS handshake got through, ○ = blocked; hover a dot for the site and result. Tests a fixed preset list. You can Stop it anytime. ~12 min total."
-msgstr "Проверяет каждую стратегию на 4 сайтах (видео-CDN YouTube, Telegram, Discord, Speedtest). ● = TLS-рукопожатие успешно, ○ = заблокировано; наведите на точку, чтобы увидеть сайт и результат. Тест проверяет предустановленный набор стратегий. Можно остановить в любой момент. Всего ~12 мин."
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
@@ -5015,8 +4997,8 @@ msgstr "Включить ByeDPI"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. Works by confusing your ISP's traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. Results depend on your ISP and may require trying different strategies in the ByeDPI tab. ByeDPI will be installed automatically on first enable."
-msgstr "Бесплатный способ разблокировать замедлённые сайты (например, YouTube) без VPN-подписки. Работает, сбивая систему анализа трафика провайдера — трафик НЕ шифруется и НЕ скрывается, провайдер по-прежнему видит, какие сайты вы посещаете. Результат зависит от провайдера и может потребовать подбора стратегии во вкладке ByeDPI. При первом включении ByeDPI установится автоматически."
+msgid "A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. Works by confusing your ISP's traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. Results depend on your ISP and may require trying different strategies in the Routing Wizard (DPI bypass). ByeDPI will be installed automatically on first enable."
+msgstr "Бесплатный способ разблокировать замедлённые сайты (например, YouTube) без VPN-подписки. Работает, сбивая систему анализа трафика провайдера — трафик НЕ шифруется и НЕ скрывается, провайдер по-прежнему видит, какие сайты вы посещаете. Результат зависит от провайдера и может потребовать подбора стратегии в Мастере (обход DPI). При первом включении ByeDPI установится автоматически."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5025,13 +5007,7 @@ msgstr "ByeDPI (локальный обход DPI)"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Wrap UDP traffic in TCP when routing to ciadpi."
-msgstr "Оборачивать UDP-трафик в TCP при отправке в ciadpi."
-
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "Strategy preset"
-msgstr "Предустановленная стратегия"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5100,38 +5076,17 @@ msgstr "Полная комбинация"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Command options"
-msgstr "Параметры командной строки"
+#: htdocs/luci-static/resources/view/homeproxy/client.js
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Arguments passed to ciadpi after <code>-i 127.0.0.1 -p &lt;port&gt;</code>. Select a preset above or enter custom options. See ciadpi <code>--help</code> for full flag reference."
-msgstr "Аргументы для ciadpi после <code>-i 127.0.0.1 -p &lt;порт&gt;</code>. Выберите предустановку выше или введите свои параметры. Справка: ciadpi <code>--help</code>."
+#: htdocs/luci-static/resources/view/homeproxy/client.js
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Test current strategy"
-msgstr "Проверить текущую стратегию"
-
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "Starts ciadpi with the current options on a temporary port and tests it. With curl installed: makes a real HTTP request through ciadpi to verify DPI bypass. Without curl: only confirms arguments are valid and ciadpi starts."
-msgstr "Запускает ciadpi с текущими параметрами на временном порту. При наличии curl: выполняет реальный HTTP-запрос через ciadpi для проверки обхода DPI. Без curl: только проверяет корректность аргументов и факт запуска."
-
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "Testing..."
-msgstr "Проверка..."
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "✓ HTTP request succeeded through ciadpi"
-msgstr "✓ HTTP-запрос через ciadpi прошёл успешно"
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "✓ ciadpi started (install curl for full test)"
-msgstr "✓ ciadpi запущен (установите curl для полной проверки)"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5139,9 +5094,6 @@ msgid "Test failed"
 msgstr "Проверка не пройдена"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "Test all strategies"
-msgstr "Проверить все стратегии"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5155,18 +5107,12 @@ msgstr "Готово"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "click Apply next to any working strategy"
-msgstr "нажмите «Применить» рядом с рабочей стратегией"
-
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
 msgid "Block QUIC (UDP port 443)"
 msgstr "Блокировать QUIC (UDP порт 443)"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "This nftables rule drops all outgoing UDP port 443 packets to external addresses, forcing browsers and apps to fall back to TCP/TLS where ByeDPI can apply DPI bypass. Side effects: may break services that require QUIC, and affects all LAN clients. Enable if your strategy works but some sites still do not load."
-msgstr "Правило nftables блокирует все исходящие UDP-пакеты на порт 443 для внешних адресов, вынуждая браузеры и приложения переходить на TCP/TLS, где ByeDPI применяет обход DPI. Побочные эффекты: могут не работать сервисы, требующие QUIC; затрагивает всех клиентов локальной сети. Включите, если стратегия настроена, но часть сайтов всё равно не работает."
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
@@ -5180,13 +5126,13 @@ msgstr "Тестирование стратегий ByeDPI"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test all strategies\" feature in the ByeDPI node settings."
-msgstr "Включает полноценное HTTP-тестирование стратегий ByeDPI. Необходим для функции «Проверить все стратегии» в настройках узла ByeDPI."
+msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test\" and \"Test all presets\" buttons in the Wizard → DPI bypass."
+msgstr "Включает полноценное HTTP-тестирование стратегий ByeDPI. Необходим для кнопок «Проверить» и «Проверить все предустановки» в Мастере → Обход DPI."
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Enable on the Client Settings page; strategies are configured in Node Settings → ByeDPI."
-msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Включение: на странице «Клиент»; стратегии настраиваются в «Узлах» → ByeDPI."
+msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Enable on the Client Settings page; strategies are configured in the Routing Wizard (DPI bypass)."
+msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Включение: на странице «Клиент»; стратегии настраиваются в Мастере (обход DPI)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5326,14 +5272,6 @@ msgid "Fills the strategy below. Use the tester to find one that works on your I
 msgstr "Заполняет поле стратегии ниже. Используйте тест, чтобы найти рабочую для вашего провайдера. На основе <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2/blockcheck2) и <a href=\"https://github.com/flowseal/zapret-discord-youtube\" target=\"_blank\">flowseal/zapret-discord-youtube</a> (MIT). Пакеты: <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>."
 
 
-msgid "Desync strategy"
-msgstr "Стратегия рассинхронизации (desync)"
-
-
-msgid "nfqws2 options applied to every flow routed to Zapret. No hostlists — the routing rules already select what is sent here. Pick a preset above or edit freely. The <code>--qnum</code>/<code>--user</code>/<code>--fwmark</code>/<code>--lua-init</code> arguments are added automatically."
-msgstr "Опции nfqws2, применяемые к каждому потоку, направленному в Zapret. Без хост-листов — что сюда попадает, уже выбирают правила маршрутизации. Выберите предустановку выше или измените вручную. Аргументы <code>--qnum</code>/<code>--user</code>/<code>--fwmark</code>/<code>--lua-init</code> добавляются автоматически."
-
-
 msgid "Runs the current strategy on a temporary NFQUEUE scoped to 4 test sites — <b>YouTube</b>, <b>Telegram</b>, <b>Discord</b>, <b>Speedtest.net</b> — and checks whether each TLS handshake completes. Does not touch your live connection. A site that fails here means the strategy breaks it."
 msgstr "Запускает текущую стратегию на временной очереди NFQUEUE для 4 тестовых сайтов — <b>YouTube</b>, <b>Telegram</b>, <b>Discord</b>, <b>Speedtest.net</b> — и проверяет, проходит ли TLS-рукопожатие. Ваше соединение не затрагивается. Если сайт здесь не проходит, стратегия его ломает."
 
@@ -5366,9 +5304,6 @@ msgid "Discord calls via Zapret"
 msgstr "Звонки Discord через Zapret"
 
 
-msgid "Route Discord's voice UDP ports (19294–19344, 50000–50100) through Zapret. Discord voice has no domain to match, so it can only be selected by port. Leave off if your VPN already handles calls."
-msgstr "Направлять голосовые UDP-порты Discord (19294–19344, 50000–50100) через Zapret. У голоса Discord нет домена для сопоставления, поэтому его можно выбрать только по порту. Оставьте выключенным, если звонки и так работают через VPN."
-
 
 msgid "Enable Zapret"
 msgstr "Включить Zapret"
@@ -5392,9 +5327,6 @@ msgstr "Zapret (zapret2/nfqws2) не установлен. Установить 
 # --- Zapret strategy UI (added manually; re-verify on next xgettext rescan) ---
 
 
-msgid "— custom / select a preset —"
-msgstr "— произвольная / выберите предустановку —"
-
 # --- ByeDPI strings (filling pre-existing gaps; survive xgettext rescan) ---
 
 
@@ -5406,16 +5338,7 @@ msgid "ByeDPI running"
 msgstr "ByeDPI работает"
 
 
-msgid "Wrap UDP traffic in TCP when routing to ByeDPI."
-msgstr "Оборачивать UDP-трафик в TCP при маршрутизации через ByeDPI."
 
-
-msgid "Arguments passed to ByeDPI. Select a preset above or enter custom options. See <code>ciadpi --help</code> for full flag reference."
-msgstr "Аргументы, передаваемые ByeDPI. Выберите предустановку выше или введите свои опции. См. <code>ciadpi --help</code> для полного списка флагов."
-
-
-msgid "Starts ByeDPI with the current options on a temporary port and probes 4 sites — <b>YouTube</b> and <b>Telegram</b> (far servers), <b>Discord</b> and <b>Speedtest.net</b> (near Cloudflare/Ookla edges). A strategy that passes the far ones but fails the near ones is destination-sensitive (typical of fixed <code>--fake --ttl</code>). Requires curl; without it, only confirms ByeDPI starts."
-msgstr "Запускает ByeDPI с текущими опциями на временном порту и проверяет 4 сайта — <b>YouTube</b> и <b>Telegram</b> (дальние серверы), <b>Discord</b> и <b>Speedtest.net</b> (ближние узлы Cloudflare/Ookla). Стратегия, которая проходит дальние, но не проходит ближние, чувствительна к назначению (типично для фиксированных <code>--fake --ttl</code>). Требуется curl; без него подтверждается только запуск ByeDPI."
 
 
 msgid "✓ ByeDPI started (install curl for full test)"
@@ -5440,14 +5363,14 @@ msgstr "Счётчики NFQUEUE Zapret (метка 110 → очередь)"
 msgid "Zapret is installed, but the NFQUEUE kernel module (kmod-nft-queue) is missing. Enabling it now could break the firewall. Reinstall Zapret or install kmod-nft-queue first."
 msgstr "Zapret установлен, но отсутствует модуль ядра NFQUEUE (kmod-nft-queue). Включение сейчас может сломать firewall. Сначала переустановите Zapret или установите kmod-nft-queue."
 
-# --- Zapret 2 management card (Status page) + diagnostics ---
+# --- Zapret 2 management card (Core & Tools page) + diagnostics ---
 
 msgid "Zapret 2 running"
 msgstr "Zapret 2 работает"
 
 
-msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Packages by <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Configure in the Node Settings → Zapret tab."
-msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Пакеты: <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Настройки: «Узлы» → вкладка Zapret."
+msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Packages by <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Configure in the Routing Wizard (DPI bypass)."
+msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Пакеты: <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Настраивается в Мастере (обход DPI)."
 
 
 msgid "Installed, but kmod-nft-queue is missing — Zapret cannot intercept traffic without it."
@@ -8192,13 +8115,7 @@ msgstr "Основной узел = Напрямую — это правило �
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "ByeDPI is not enabled — enable it on the Node Settings page first."
-msgstr "ByeDPI не включён — сначала включите его на странице «Узлы»."
-
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
-
-msgid "Zapret is not enabled — enable it on the Node Settings page first."
-msgstr "Zapret не включён — сначала включите его на странице «Узлы»."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8802,9 +8719,6 @@ msgid "Create rule and verify"
 msgstr "Создать правило и проверить"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
-
-msgid "Enable Zapret or ByeDPI on the Node Settings page first."
-msgstr "Сначала включите Zapret или ByeDPI на странице «Узлы»."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -10040,9 +9954,6 @@ msgstr "Общий (лучшая в целом)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied with a server snapshot, and the resource is then checked through the configured path (code + seconds). Zapret only — ByeDPI strategies are configured in Node Settings."
-msgstr "Один клик: фаззинг ранжирует корпус (свежий результат переиспользуется), лучшая для ресурса стратегия применяется с серверным снапшотом, затем ресурс проверяется по настроенному пути (код + секунды). Только Zapret — стратегии ByeDPI настраиваются в Настройках узлов."
-
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
 msgid "Auto-pick the best strategy for %s? This may first run the FULL fuzz (up to ~15 min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live."
@@ -10362,3 +10273,63 @@ msgstr "следующая проверка: %s"
 
 msgid "Last events"
 msgstr "Последние события"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "ByeDPI strategy"
+msgstr "Стратегия ByeDPI"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Save ByeDPI"
+msgstr "Сохранить ByeDPI"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Test all presets"
+msgstr "Проверить все предустановки"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Fill input"
+msgstr "Подставить в поле"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Preset"
+msgstr "Предустановка"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Passed"
+msgstr "Пройдено"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "No strategy set — pick a preset or enter the options first."
+msgstr "Стратегия не задана — выберите предустановку или введите параметры."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Testing the ByeDPI strategy on a temporary port (LAN traffic untouched)…"
+msgstr "Проверка стратегии ByeDPI на временном порту (трафик LAN не затрагивается)…"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "The strategy was NOT saved — press \"Save ByeDPI\" to apply it."
+msgstr "Стратегия НЕ сохранена — нажмите «Сохранить ByeDPI», чтобы применить её."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Saving the ByeDPI options — the service restarts…"
+msgstr "Сохранение настроек ByeDPI — сервис перезапускается…"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "ByeDPI options saved — the service restarts; the engine card above reflects the new state."
+msgstr "Настройки ByeDPI сохранены — сервис перезапускается; карточка движка выше отразит новое состояние."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Test all ByeDPI presets? Each is probed against 4 sites (~12 min total). LAN clients are not affected. You can stop it at any point."
+msgstr "Проверить все предустановки ByeDPI? Каждая проверяется на 4 сайтах (всего ~12 мин). Клиенты локальной сети не затрагиваются. Остановить можно в любой момент."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Preparing…"
+msgstr "Подготовка…"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "fill a preset into the input and press \"Save ByeDPI\""
+msgstr "подставьте предустановку в поле и нажмите «Сохранить ByeDPI»"
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Preset filled into the strategy input — press \"Save ByeDPI\" to apply it."
+msgstr "Предустановка подставлена в поле стратегии — нажмите «Сохранить ByeDPI», чтобы применить."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Client Settings page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled)."
+msgstr "Стратегия обслуживает трафик, направленный в ByeDPI (главный узел = ByeDPI, правила сервисов или профили Композиции ниже). «Сохранить» записывает стратегию и флаги и перезапускает сервис; сам ByeDPI включается на странице «Клиент». «UDP поверх TCP» оборачивает UDP-трафик в TCP-поток ByeDPI; «Блокировать QUIC» режет исходящий UDP 443, заставляя браузеры возвращаться на TCP, где стратегия работает; «Звонки Discord через Zapret» направляет голосовые UDP-порты Discord в Zapret (требуется включённый Zapret)."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "ByeDPI is not enabled — enable it on the Client Settings page first."
+msgstr "ByeDPI не включён — сначала включите его на странице «Клиент»."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Zapret is not enabled — enable it on the Client Settings page first."
+msgstr "Zapret не включён — сначала включите его на странице «Клиент»."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied with a server snapshot, and the resource is then checked through the configured path (code + seconds). Zapret only — ByeDPI strategies are configured in the ByeDPI card above."
+msgstr "Один клик: фаззер ранжирует корпус (переиспользуется, если свежий), лучшая стратегия для ресурса применяется с серверным снапшотом, затем ресурс проверяется через настроенный путь (код + секунды). Только Zapret — стратегии ByeDPI настраиваются в карточке ByeDPI выше."
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Enable Zapret or ByeDPI on the Client Settings page first."
+msgstr "Сначала включите Zapret или ByeDPI на странице «Клиент»."

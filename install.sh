@@ -868,7 +868,7 @@ zapret_pick_strategy() {
 			RC=0
 		else
 			warn "  ни одна стратегия не прошла YouTube-тест — оставлена Hostfakesplit."
-			warn "  Подберите позже: Node Settings → Zapret → Full strategy test."
+			warn "  Подберите позже: Мастер → Обход DPI (Strategy Lab)."
 		fi
 	fi
 
@@ -897,7 +897,7 @@ install_zapret() {
 				ZST=$(ubus call luci.homeproxy zapret_status 2>/dev/null)
 				if jfalse "$ZST" kmod_ok; then
 					warn "  модуль NFQUEUE не загружен — Zapret не включаю (иначе сломается firewall)."
-					warn "  Включите вручную после kmod-nft-queue (Node Settings → Zapret)."
+					warn "  Включите вручную после kmod-nft-queue (Client Settings → Routing → Enable Zapret)."
 				else
 					uci -q set homeproxy.config.zapret_enabled=1
 					uci -q commit homeproxy
@@ -951,7 +951,7 @@ ask_autopilot() {
 # ------------------------------------------------------- 8. ByeDPI
 install_byedpi() {
 	echo; ok "[8/8] ByeDPI — обход DPI через локальный SOCKS (на ваше усмотрение)"
-	info "  Альтернатива Zapret; стратегии подбираются в UI (тестер встроен)."
+	info "  Альтернатива Zapret; стратегии подбираются в Мастере → Обход DPI (тестер встроен)."
 	ask "  Установить ByeDPI? [y/N]:"
 	if ! is_yes "$REPLY"; then info "  пропускаю."; return 0; fi
 	info "  ставлю curl (его использует тестер стратегий ByeDPI)..."
@@ -1093,7 +1093,7 @@ summary() {
 	info "Откройте Re:HomeProxy AutoMod в браузере:"
 	URL="http://$LANIP/cgi-bin/luci/admin/services/homeproxy"
 	printf '\033[0;36m  \033]8;;%s\033\\%s\033]8;;\033\\\033[0m\n' "$URL" "$URL"
-	info "Проверка прокси и выбор стратегий: Диагностика / Node Settings → Zapret."
+	info "Проверка прокси и выбор стратегий: Диагностика / Мастер → Обход DPI (Strategy Lab)."
 }
 
 # ======================================================== ГЛАВНЫЙ ПОТОК

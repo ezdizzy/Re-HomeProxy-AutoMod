@@ -24,11 +24,13 @@ Think of ByeDPI as a complement to a VPN node (offload throttled sites like YouT
 
 ## Enabling ByeDPI
 
-1. Go to **Services → Re:HomeProxy AutoMod → Node Settings** and open the **ByeDPI** section.
-2. If `ciadpi` is not installed yet, use the **Install** button — Re:HomeProxy AutoMod fetches the right `byedpi` package for your architecture.
-3. Tick **Enable**, pick a strategy (see below), and **Save & Apply**.
+1. Go to **Services → Re:HomeProxy AutoMod → Client Settings → Routing** and tick **Enable ByeDPI** (if `ciadpi` is not
+   installed yet, the app offers to install the right `byedpi` package for your architecture right there; you can also
+   install it from the **Core & Tools** page).
+2. Open **Services → Re:HomeProxy AutoMod → Routing Wizard → DPI bypass** — the **ByeDPI strategy** card: pick a preset
+   (see below) or type your own options, then press **Save ByeDPI** (the service restarts).
 
-That's all that's needed for the engine. Re:HomeProxy AutoMod starts `ciadpi` for you and prevents it from looping back through the proxy automatically — you do not need to touch the firewall or process settings.
+That's all that's needed for the engine. Re:HomeProxy AutoMod starts `ciadpi` for you and prevents it from looping back through the proxy automatically — you do not need to touch the firewall or process settings. The same card carries the engine option flags (UDP over TCP, Block QUIC) and the preset sweep button.
 
 ---
 
@@ -61,15 +63,15 @@ Why adaptive matters: a **fixed** fake-TTL strategy (the Fake-TTL group, presets
 
 ## The strategy tester
 
-Because the right strategy is ISP-specific, the ByeDPI section includes a **tester**:
+Because the right strategy is ISP-specific, the **ByeDPI strategy** card in the Wizard (DPI bypass) includes a **tester**:
 
-- **Test all strategies** — probes four reference sites in parallel and shows a result per site as dots:
+- **Test** — tests the strategy currently in the input against four reference sites and shows a result per site:
   - **YouTube** and **Telegram** — *far* servers
   - **Discord** and **Speedtest.net** — *near* servers
-  - `●●●●` = all four reachable with that strategy; `●●○○` = far sites work but near sites fail (a sign the strategy is destination-sensitive, like a fixed fake-TTL).
-- **Test current** — tests only the strategy currently in the command field and shows full site names with ✓ / ✗.
+  - `✓✓✓✓` = all four reachable with that strategy; far sites pass but near sites fail (a sign the strategy is destination-sensitive, like a fixed fake-TTL).
+- **Test all presets** — sweeps the whole preset list sequentially (~12 min) and reports which candidates pass; a row button fills the winning preset into the input (then press **Save ByeDPI**).
 
-Pick a strategy that scores **all-green (`●●●●`)** for your network. If several do, prefer an adaptive one (I1/I2).
+Pick a strategy that scores **all-green** for your network. If several do, prefer an adaptive one (I1/I2).
 
 > The tester runs ByeDPI on a separate temporary port, so it does not disturb live traffic.
 
@@ -79,8 +81,8 @@ Pick a strategy that scores **all-green (`●●●●`)** for your network. If 
 
 ByeDPI appears as a selectable node (**ByeDPI**) once enabled. Two common setups:
 
-- **Alongside a VPN node (recommended):** in `proxy_banned_ru` mode, open **RU Proxy Rules** and set a *specific list's* node to **ByeDPI** — e.g. route YouTube through ByeDPI (saving VPN bandwidth) while everything else uses your VPN.
-- **Standalone (no VPN):** set ByeDPI as the **main node**. All proxied traffic then goes through the local desync.
+- **Alongside a VPN node (recommended):** in `proxy_banned_ru` mode, set a *specific service's* exit to **ByeDPI** in the Wizard (**Services → exits**) — e.g. route YouTube through ByeDPI (saving VPN bandwidth) while everything else uses your VPN.
+- **Standalone (no VPN):** set ByeDPI as the **main node** on Client Settings → Routing. All proxied traffic then goes through the local desync.
 
 ---
 

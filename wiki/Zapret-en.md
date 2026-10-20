@@ -38,9 +38,12 @@ Because it is a marked *direct* outbound (not a tunnel), `zapret-out` falls back
 
 ## Enabling Zapret
 
-1. Go to **Services → Re:HomeProxy AutoMod → Node Settings** and open the **Zapret** tab.
-2. If `nfqws2` is not installed yet, use the **Install** button — Re:HomeProxy AutoMod fetches the right [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt) package for your architecture.
-3. Tick **Enable**, pick a strategy preset (see below), and **Save & Apply**.
+1. Install the engine: on **Services → Re:HomeProxy AutoMod → Core & Tools** (Zapret card), or tick **Enable Zapret** on
+   **Client Settings → Routing** — the app offers to install the right [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt)
+   package for your architecture right there.
+2. Open **Services → Re:HomeProxy AutoMod → Routing Wizard → DPI bypass**: pick a strategy from the catalog (see below),
+   press **Test strategy** to verify it against your ISP, then **Apply strategy** — this enables Zapret and restarts the
+   service.
 
 That's all for the engine. The `--qnum` / `--user` / `--fwmark` / `--lua-init` arguments are added automatically — you only edit the desync strategy itself.
 
@@ -50,23 +53,26 @@ That's all for the engine. The `--qnum` / `--user` / `--fwmark` / `--lua-init` a
 
 A "strategy" is the set of `nfqws2` options applied to every flow routed to Zapret. There are **no hostlists** — the routing rules already decide *what* is sent here, so the strategy only decides *how* to desync it. As with ByeDPI, **there is no universal best strategy** — what works depends on your ISP's DPI.
 
-The **Strategy preset** picker fills the strategy field for you and is grouped into two sets:
+The **strategy picker** in the Wizard (DPI bypass) fills the strategy field for you; the catalog is grouped into:
 
 | Group | What it is |
 |-------|------------|
 | **Recommended** | A small curated set, purpose-named (e.g. *Default (fake + multidisorder)*, *Multisplit*, *Fake only*). Start here. |
-| **Full-test pool** | The larger technique-named pool used by the full tester. |
+| **Imported (catalog)** / **Generated** / **Full-test pool** | The larger technique-named pools used by the Strategy Lab and the full tester. |
 
-Presets are shipped read-only in `/etc/homeproxy/zapret_candidates.json` and are based on [bol-van/zapret2](https://github.com/bol-van/zapret2) (nfqws2/blockcheck2) with some adapted from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT). You can also leave the preset on *custom* and type your own option string in the **Desync strategy** field.
+Strategies are shipped read-only in `/etc/homeproxy/zapret_candidates.json` and are based on [bol-van/zapret2](https://github.com/bol-van/zapret2) (nfqws2/blockcheck2) with some adapted from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT). You can also leave the picker empty and type your own option string in the strategy field.
 
 ---
 
 ## The strategy tester
 
-Because the right strategy is ISP-specific, the Zapret tab includes a **tester** that never touches your live traffic — it spins up a **temporary NFQUEUE scoped to four test sites** and checks whether each TLS handshake completes:
+Because the right strategy is ISP-specific, the Wizard's **DPI bypass** tab includes a **tester** that never touches your live traffic — it spins up a **temporary NFQUEUE scoped to four test sites** and checks whether each TLS handshake completes:
 
-- **Test current strategy** — runs whatever is in the strategy field against **YouTube**, **Telegram**, **Discord** and **Speedtest.net**, showing each site as ✓ / ✗ with the handshake time, plus an `ok/total` count.
-- **Full strategy test** — sweeps the whole preset pool and reports which candidates pass, so you can apply the best one.
+- **Test strategy** — runs whatever is in the strategy field against **YouTube**, **Telegram**, **Discord** and **Speedtest.net**, showing each site as ✓ / ✗ with the handshake time, plus an `ok/total` count.
+- **Strategy Lab** — quick/full **fuzzing** of the whole strategy corpus with a no-desync baseline, majority-of-rounds ranking and a history of the last runs.
+- **Auto-pick strategy** — one click: reuses (or builds) the fuzz ranking, applies the best strategy *for the chosen resource* with a server snapshot, and checks the resource live through its configured path.
+- **Composition** — per-resource profiles (e.g. a dedicated YouTube strategy + a Discord strategy + a general one) built, tested and applied server-side, with a **Restore** button that survives page reloads.
+- **Auto-pilot (scheduled)** — the keeper mode: periodic re-ranks apply the best strategy per resource and health checks immediately re-pick a strategy that stopped working.
 
 Pick a strategy that passes all four sites. If several do, prefer one from the **Recommended** group.
 
@@ -74,7 +80,7 @@ Pick a strategy that passes all four sites. If several do, prefer one from the *
 
 ## Discord voice (opt-in)
 
-Enabling **Zapret voice** routes Discord's voice-server UDP ranges (and call/voice UDP ports) to `zapret-out` **before** the normal proxy/call rules, so Discord voice is desynced via Zapret instead of being proxied. The UDP port ranges come from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube). This option is honoured only when Zapret is enabled.
+Enabling **Discord calls via Zapret** (the flag in the Wizard's ByeDPI card, DPI bypass tab) routes Discord's voice-server UDP ranges (and call/voice UDP ports) to `zapret-out` **before** the normal proxy/call rules, so Discord voice is desynced via Zapret instead of being proxied. The UDP port ranges come from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube). This option is honoured only when Zapret is enabled.
 
 ---
 

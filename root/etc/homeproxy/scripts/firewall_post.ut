@@ -14,6 +14,21 @@ function array_to_nftarr(array) {
 	return `{ ${join(', ', uniq(array))} }`;
 }
 
+function port_set_elements(str) {
+	/* nftables inet_service set elements: a range is 'a-b'. A 'a:b' element
+	 * (iptables habits / old configs) is not a range but an unresolved
+	 * service name for nft — the whole fw4 ruleset load dies with
+	 * "Could not resolve service: Unrecognized service" (issue #2), so
+	 * normalize before rendering. */
+	const els = [];
+	for (let p in split(str, ',')) {
+		const m = match(p, /^(\d+):(\d+)$/);
+		push(els, m ? `${m[1]}-${m[2]}` : p);
+	}
+
+	return join(', ', els);
+}
+
 function resolve_ipv6(str) {
 	if (isEmpty(str))
 		return null;
@@ -80,7 +95,7 @@ else if (routing_port === 'all')
 const proxy_calls_fw = uci.get(cfgname, 'config', 'proxy_calls');
 const zapret_voice_fw = (uci.get(cfgname, 'config', 'zapret_enabled') === '1' && uci.get(cfgname, 'config', 'zapret_voice') === '1');
 if ((proxy_calls_fw === '1' || zapret_voice_fw === '1') && !isEmpty(routing_port))
-	routing_port = routing_port + ',1400,8443,4244,7985,5222,5223,5242,5243,596:599,3478:3497,16384:16402,19294:19344,50000:65530';
+	routing_port = routing_port + ',1400,8443,4244,7985,5222,5223,5242,5243,596-599,3478-3497,16384-16402,19294-19344,50000-65530';
 
 const proxy_mode = uci.get(cfgname, 'config', 'proxy_mode') || 'redirect_tproxy',
       ipv6_support = uci.get(cfgname, 'config', 'ipv6_support') || '0';
@@ -236,7 +251,7 @@ set homeproxy_routing_port {
 	type inet_service
 	flags interval
 	auto-merge
-	elements = { {{ join(', ', split(routing_port, ',')) }} }
+	elements = { {{ port_set_elements(routing_port) }} }
 }
 {% endif %}
 
