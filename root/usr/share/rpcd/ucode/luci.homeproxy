@@ -3431,8 +3431,64 @@ const methods = {
 				if (!length(src) || rules[src]) return;
 				rules[src] = { enabled: (s.enabled !== '0'), node: ('' + (s.node || 'main-out')) };
 			});
+			/* Ф8-F1: dpi-detect seeds — count of the scanner seed file plus the
+			 * updater status (the diag UI shows both; freshness is computed
+			 * client-side from status.ts). */
+			const dpi_file = HP_DIR + '/resources/dpi_detect.txt';
+			let dpi_count = 0;
+			if (access(dpi_file)) {
+				for (let dl in split(readfile(dpi_file) || '', '\n')) {
+					const dt = trim(dl);
+					if (length(dt) && !match(dt, /^#/))
+						dpi_count++;
+				}
+			}
+			const dpi_status_file = RUN_DIR + '/dpi_detect.json';
+			let dpi_status = null;
+			if (access(dpi_status_file)) {
+				try { dpi_status = json(readfile(dpi_status_file) || ''); } catch (e) { dpi_status = null; }
+			}
 			return { status: status, result: result, rules: rules,
-				routing_mode: ('' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru')) };
+				routing_mode: ('' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru')),
+				dpi_detect: { count: dpi_count, status: dpi_status } };
+		}
+	},
+
+	/* Ф8-F1: dpi-detect seeds (splify2-lists dpi-detect.lst). The background
+	 * runner downloads + RU-filters the catalog list into
+	 * resources/dpi_detect.txt; wizard_scan.uc merges up to 12 of them into
+	 * the diagnostic corpus (svc dpi_detect, ru_tld_exclusion honored). */
+	wizard_dpidetect_update: {
+		call: function(req) {
+			const st = RUN_DIR + '/dpi_detect.json';
+			let prev = null;
+			if (access(st)) {
+				try { prev = json(readfile(st) || ''); } catch (e) { prev = null; }
+			}
+			if (prev && prev.stage === 'run' && (time() - int(prev.ts || 0) < 180))
+				return { result: false, error: 'update already running' };
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_dpidetect.uc')} >/dev/null 2>&1 &`);
+			return { result: true, started: true };
+		}
+	},
+
+	wizard_dpidetect_status: {
+		call: function(req) {
+			const st = RUN_DIR + '/dpi_detect.json';
+			let s = null;
+			if (access(st)) {
+				try { s = json(readfile(st) || ''); } catch (e) { s = null; }
+			}
+			const f = HP_DIR + '/resources/dpi_detect.txt';
+			let count = 0;
+			if (access(f)) {
+				for (let l in split(readfile(f) || '', '\n')) {
+					const t = trim(l);
+					if (length(t) && !match(t, /^#/))
+						count++;
+				}
+			}
+			return { result: true, count: count, status: s };
 		}
 	},
 

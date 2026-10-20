@@ -455,6 +455,39 @@ const mixed_in = port_listening(int(mixed_port));
 const hosts = [];
 for (let c in CORPUS)
 	push(hosts, { host: c.host, svc: c.svc });
+/* Ф8-F1: dpi-detect seeds (splify2-lists, updated by wizard_dpidetect.uc).
+ * Domains where the provider's TSPU is confirmed cutting connections — the
+ * honest "does my provider still cut this" checks. Rules: plain domains
+ * only, .ru/.su/.рф NEVER (ru_tld_exclusion), no duplicates of the fixed
+ * corpus or their subdomains, hard cap 12 so the scan time stays bounded. */
+const DPI_FILE = '/etc/homeproxy/resources/dpi_detect.txt';
+const DPI_CAP = 12;
+if (access(DPI_FILE)) {
+	let dpi_n = 0;
+	for (let l in split(readfile(DPI_FILE) || '', '\n')) {
+		if (dpi_n >= DPI_CAP)
+			break;
+		const h = lc(trim(l));
+		if (!length(h) || match(h, /^#/))
+			continue;
+		if (match(h, /\.(ru|su|xn--p1ai)$/) || index(h, '.рф') >= 0 || match(h, /^ru\./))
+			continue;
+		if (!match(h, /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$/))
+			continue;
+		let dup = false;
+		for (let x in hosts)
+			if (h === x.host ||
+			    (length(h) > length(x.host) + 1 &&
+			     substr(h, length(h) - length(x.host) - 1) === '.' + x.host)) {
+				dup = true;
+				break;
+			}
+		if (!dup) {
+			push(hosts, { host: h, svc: 'dpi_detect' });
+			dpi_n++;
+		}
+	}
+}
 if (access(EXTRA)) {
 	const raw = readfile(EXTRA) || '';
 	for (let l in split(raw, '\n')) {

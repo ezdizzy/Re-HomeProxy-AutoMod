@@ -58,6 +58,14 @@ const callScanStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф8-F1: dpi-detect seeds (splify2-lists) — update runs as a background
+ * runner; the poll shows its progress in the diag pane row. */
+const callDpiUpdate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_dpidetect_update',
+	expect: { '': {} }
+});
+
 const callServiceCheck = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'wizard_service_check',
@@ -410,6 +418,49 @@ return view.extend({
 		panes.diag.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('Checks a set of test services (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) through your real paths. The VERDICT speaks about your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served; the Direct column is reference: it shows whether the resource could open with no VPN at all. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini "something went wrong") is not either. When a refusal is about the remote region rather than the local provider, the verdict says so (geo-block) — a routing strategy cannot fix a region refusal, a node with a supported region can. RU services (rutube, gosuslugi) are control hosts — they must always open directly.') ]));
 		panes.diag.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ customHosts, startBtn ]));
+		/* dpi-detect seeds (Ф8-F1): the splify2-lists watchlist of domains the
+		 * provider's TSPU is confirmed cutting (upstream rechecks every 6 h).
+		 * "Update" downloads + RU-filters the list (.ru/.su/.рф never probed);
+		 * up to 12 of the hosts join the NEXT scan as diagnostic probes. The
+		 * row shows the seed count / progress; scan outcomes stay in the ONE
+		 * result area below. */
+		const dpiStatus = E('span', { style: 'opacity:.75' }, [ _('not loaded') ]);
+		const dpiBtn = E('button', {
+			'class': 'btn cbi-button cbi-button-action', type: 'button'
+		}, [ _('Update TSPU list') ]);
+		dpiBtn.addEventListener('click', function() {
+			dpiBtn.disabled = true;
+			callDpiUpdate().then(function(r) {
+				if (!r || r.result === false)
+					ui.addNotification(null, E('p', {}, _('List update failed: ') + ((r && r.error) || '')), 'error');
+				return refresh();
+			}).finally(function() { dpiBtn.disabled = false; });
+		});
+		function updateDpiStatus(scan) {
+			const dd = (scan && scan.dpi_detect) || {};
+			const st = dd.status || null;
+			const running = st && st.stage === 'run' &&
+				(Date.now() / 1000 - Number(st.ts || 0)) < 180;
+			if (running) {
+				dpiStatus.textContent = _('updating…');
+				return;
+			}
+			if (st && st.stage === 'error') {
+				dpiStatus.textContent = _('error: %s').format(st.error || _('unknown'));
+				return;
+			}
+			const n = Number(dd.count || 0);
+			if (!n)
+				dpiStatus.textContent = _('not loaded');
+			else
+				dpiStatus.textContent = _('%s domains').format(String(n)) +
+					(st && st.ts ? ' · ' + new Date(Number(st.ts) * 1000).toLocaleString() : '');
+		}
+		panes.diag.appendChild(E('div', { 'class': 'wiz-toolbar' }, [
+			E('span', { 'class': 'wiz-note', style: 'margin:0' },
+				[ _('TSPU watchlist (dpi-detect):'), ' ', dpiStatus ]),
+			dpiBtn
+		]));
 		panes.diag.appendChild(scanBanner);
 		panes.diag.appendChild(scanResult);
 
@@ -724,7 +775,8 @@ return view.extend({
 		const SVC_NOTES = {
 			telegram: _('Voice calls (UDP) are not measured by an HTTP probe.'),
 			whatsapp: _('Voice calls (UDP) are not measured by an HTTP probe.'),
-			twitch:   _('Page probe only — streaming quality is not measured.')
+			twitch:   _('Page probe only — streaming quality is not measured.'),
+			dpi_detect: _('TSPU watchlist (dpi-detect): the provider is confirmed cutting this resource — a Zapret/ByeDPI strategy is the candidate fix.')
 		};
 
 		/* ── TG WS Proxy card (D8, Ф7): «Telegram без прокси» ─────────────
@@ -996,11 +1048,13 @@ return view.extend({
 				 * The scan's live column shows whether that configured path
 				 * actually delivers it. */
 				const rule = rules[r.svc] || null;
-				const ruleCell = rule
-					? (rule.enabled
-						? badge('hpui-b-blue', '→ ' + nodeText(rule.node))
-						: badge('hpui-b-grey', _('disabled') + ' (→ ' + nodeText(rule.node) + ')'))
-					: E('span', { style: 'opacity:.55' }, [ _('no rule') ]);
+				const ruleCell = r.svc === 'dpi_detect'
+					? E('span', { style: 'opacity:.55' }, [ _('diagnostic seed') ])
+					: (rule
+						? (rule.enabled
+							? badge('hpui-b-blue', '→ ' + nodeText(rule.node))
+							: badge('hpui-b-grey', _('disabled') + ' (→ ' + nodeText(rule.node) + ')'))
+						: E('span', { style: 'opacity:.55' }, [ _('no rule') ]));
 				const ev = effVerdict(r, rule);
 				let rec = (r.recommend && RECOMMEND[r.recommend]) ? RECOMMEND[r.recommend] : '—';
 				/* A rule already covers a "needs proxy" resource — say so. */
@@ -1017,7 +1071,7 @@ return view.extend({
 						: _('The page opens; the model goes through the configured routing. If the model refuses — check other nodes or run the full check below (Services → exits).');
 				/* opens_direct without a rule: mention the mass-list coverage
 				 * when one is enabled (same honesty as the Services rows). */
-				if (ev === 'opens_direct' && r.svc !== 'ru_control') {
+				if (ev === 'opens_direct' && r.svc !== 'ru_control' && r.svc !== 'dpi_detect') {
 					const mass = (rules['russia-inside'] && rules['russia-inside'].enabled) ? _('Russia Inside')
 						: ((rules['refilter'] && rules['refilter'].enabled) ? _('Re-filter') : null);
 					if (mass)
@@ -2134,6 +2188,7 @@ return view.extend({
 				L.resolveDefault(callTgwspStatus(), {})
 			]).then(function(data) {
 				const scan = data[0] || {};
+				updateDpiStatus(scan);
 				renderScan(scan.status, scan.result, scan.rules);
 				if (data[1] && data[1].rules) {
 					renderPresets(data[1]);

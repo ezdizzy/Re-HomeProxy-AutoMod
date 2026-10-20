@@ -1,8 +1,11 @@
 # Re:HomeProxy AutoMod — nfqws2 hostlist: Discord (suffix match covers subdomains)
+# Sources: Ф3 baseline + IndeecFOX/zapret4rocket lists/russia-discord.txt (pin ce62f12, 2026-10-20)
 discord.com
 discord.gg
 discordapp.com
+discordapp.io
 discordapp.net
 discord.media
+discordcdn.com
 discordstatus.com
 gateway.discord.gg

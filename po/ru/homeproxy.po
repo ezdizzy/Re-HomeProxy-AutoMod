@@ -8927,6 +8927,42 @@ msgid "Pick at least one node for the URLTest pool."
 msgstr "Выберите хотя бы один узел для пула URLTest."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "TSPU watchlist (dpi-detect):"
+msgstr "Список ТСПУ (dpi-detect):"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "TSPU watchlist (dpi-detect): the provider is confirmed cutting this resource — a Zapret/ByeDPI strategy is the candidate fix."
+msgstr "Список ТСПУ (dpi-detect): провайдер подтверждённо режет этот ресурс — кандидат на исправление: стратегия Zapret/ByeDPI."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Update TSPU list"
+msgstr "Обновить список ТСПУ"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "List update failed: "
+msgstr "Не удалось обновить список: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "not loaded"
+msgstr "не загружен"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "updating…"
+msgstr "обновление…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "error: %s"
+msgstr "ошибка: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "%s domains"
+msgstr "%s доменов"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "diagnostic seed"
+msgstr "диагностический сид"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
 msgid "Scan from %s"
 msgstr "Скан от %s"
