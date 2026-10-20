@@ -3359,7 +3359,7 @@ const methods = {
 	/* ── Routing Wizard (Ф2) ─────────────────────────────────────────────
 	 * MVP «Диагностика провайдера + Сервисы → выходы». The scan runs as a
 	 * background one-shot script (wizard_scan.uc — the same pattern as the
-	 * Strategy Lab fuzzer: a 12-host × multi-probe matrix takes minutes, far
+	 * Strategy Lab fuzzer: a 16-host × multi-probe matrix takes minutes, far
 	 * beyond a synchronous ubus call). Preset management writes ONLY regular
 	 * proxy_ru_rule sections — the same UCI the manual editor uses — so the
 	 * Wizard can never create a config shape the editor does not understand.
@@ -3538,6 +3538,158 @@ const methods = {
 		}
 	},
 
+	/* Ф8-W2 (approved by the user): cycle CANDIDATE NODES for Google AI when
+	 * the current exit refuses the region. The running core has no per-node
+	 * inbounds, so the helper builds a THROWAWAY config (a copy of the real
+	 * node outbounds + one loopback socks inbound per node on free 539x
+	 * ports), runs a second short-lived hiddify-core instance, fires ONE API
+	 * probe per node (all in parallel), kills the instance and classifies
+	 * each answer with the same rules as wizard_service_check google_ai api:
+	 * a supported region complains about the KEY, an unsupported one about
+	 * the LOCATION. Nothing is written to the app config; the instance binds
+	 * loopback only. */
+	wizard_ai_nodes_check: {
+		call: function(req) {
+			const CFG_FILE = RUN_DIR + '/ai_probe_nodes.json';
+			const PID_FILE = RUN_DIR + '/ai_probe.pid';
+			const LOG_FILE = RUN_DIR + '/ai_probe.log';
+
+			const kill_probe_core = () => {
+				let pid = null;
+				if (access(PID_FILE)) {
+					try { pid = int(trim(readfile(PID_FILE) || '')); } catch (e) { pid = null; }
+				}
+				if (pid && pid > 0) {
+					system('kill ' + pid + ' 2>/dev/null');
+					system('sleep 1; kill -9 ' + pid + ' 2>/dev/null');
+				}
+				system('rm -f ' + shellquote(PID_FILE) + ' ' + shellquote(CFG_FILE) + ' 2>/dev/null');
+			};
+
+			/* Belt: a stale instance from a killed RPC must not linger. */
+			kill_probe_core();
+
+			const conf_file = RUN_DIR + '/hiddify-c.json';
+			let conf = null;
+			if (access(conf_file)) {
+				try { conf = json(readfile(conf_file) || ''); } catch (e) { conf = null; }
+			}
+			const obs = (conf && conf.outbounds) || [];
+			const keep = [], tags = [];
+			for (let o in obs) {
+				const t = '' + (o.tag || '');
+				if (match(t, /^cfg-[0-9a-f]+-out$/)) {
+					push(keep, o);
+					push(tags, t);
+				} else if (t === 'direct-out') {
+					push(keep, o);
+				}
+			}
+			if (length(tags) < 1)
+				return { result: false, error: 'no proxy nodes found in the running config' };
+
+			/* Free loopback ports 5390+ (never the app's own pores). */
+			const lports = hp_listen_ports();
+			const MAX_NODES = 12;
+			const ports = [], picked = [];
+			let next_port = 5390;
+			for (let i = 0; i < length(tags) && length(picked) < MAX_NODES; i++) {
+				while (next_port <= 5401 && hp_inbound_listening(lports, next_port))
+					next_port++;
+				if (next_port > 5401)
+					break;
+				push(ports, next_port);
+				push(picked, tags[i]);
+				next_port++;
+			}
+
+			const inb = [], rules = [];
+			for (let i = 0; i < length(picked); i++) {
+				push(inb, { type: 'socks', tag: 'ai-probe-' + i,
+					listen: '127.0.0.1', listen_port: ports[i] });
+				push(rules, { inbound: [ 'ai-probe-' + i ], outbound: picked[i] });
+			}
+			const probe_conf = {
+				log: { level: 'warn' },
+				dns: { servers: [ { type: 'udp', tag: 'local', server: '127.0.0.1', server_port: 53 } ], final: 'local' },
+				inbounds: inb,
+				outbounds: keep,
+				route: { rules: rules, final: 'direct-out' }
+			};
+			writefile(CFG_FILE, sprintf('%.J', probe_conf) + '\n');
+
+			/* Spawn: the pid file must carry the CORE pid, so exec replaces sh. */
+			const inner = 'echo $$ > ' + PID_FILE + '; exec env ' +
+				'ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /usr/bin/hiddify-core srun --config ' +
+				CFG_FILE + ' >' + LOG_FILE + ' 2>&1';
+			system(`sh -c ${shellquote(inner)} &`);
+
+			/* Wait for the inbounds to come up (≤6s). */
+			let up = false;
+			for (let t = 0; t < 6 && !up; t++) {
+				system('sleep 1');
+				const lp = hp_listen_ports();
+				up = true;
+				for (let i = 0; i < length(ports); i++)
+					if (!hp_inbound_listening(lp, ports[i]))
+						up = false;
+			}
+			if (!up) {
+				kill_probe_core();
+				return { result: false, error: 'probe core failed to start (see ' + LOG_FILE + ')' };
+			}
+
+			/* One API probe per node, all in parallel; each curl is capped so
+			 * the files are complete when the sleep ends. */
+			const url = 'https://generativelanguage.googleapis.com/v1beta/models';
+			for (let i = 0; i < length(picked); i++) {
+				const bf = '/tmp/ai_probe_' + i + '.body';
+				const cf = '/tmp/ai_probe_' + i + '.code';
+				system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
+				system(`curl -s --connect-timeout 4 --max-time 8 -o ${shellquote(bf)} -w '%{http_code}' -x socks5h://127.0.0.1:${ports[i]} ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null &`);
+			}
+			system('sleep 10');
+
+			const nodes = [];
+			for (let i = 0; i < length(picked); i++) {
+				const bf = '/tmp/ai_probe_' + i + '.body';
+				const cf = '/tmp/ai_probe_' + i + '.code';
+				const code = trim(readfile(cf) || '000');
+				const body = lc(readfile(bf) || '');
+				let verdict, note;
+				if (code === '' || code === '000') {
+					verdict = 'unreachable';
+					note = 'no answer through this node';
+				} else if (index(body, 'location is not supported') >= 0 || index(body, 'unsupported_country') >= 0) {
+					verdict = 'refused';
+					note = 'region refused (API)';
+				} else if (code === '200' || code === '400' || code === '401' ||
+					index(body, 'api key') >= 0 || index(body, 'api_key') >= 0) {
+					verdict = 'passes';
+					note = 'region passes (key complaint)';
+				} else {
+					verdict = 'unknown';
+					note = 'unexpected answer';
+				}
+				system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
+				push(nodes, { node: substr(picked[i], 4, length(picked[i]) - 8),
+					code: code, verdict: verdict, note: note });
+			}
+
+			/* The node the google_ai rule currently points at (for the UI mark). */
+			let current = null;
+			const c = cursor();
+			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+				if (('' + (s.source || '')) === 'google_ai')
+					current = '' + (s.node || 'main-out');
+			});
+
+			kill_probe_core();
+			return { result: true, service: 'google_ai', nodes: nodes,
+				current: current, truncated: (length(tags) > length(picked)) };
+		}
+	},
+
 	/* Live preset state: environment (mode/main node/engines/ports) + node
 	 * list + the actual proxy_ru_rule sections keyed by source. */
 	wizard_preset_list: {
@@ -3617,7 +3769,11 @@ const methods = {
 				'news': true, 'meta': true, 'hodca': true, 'hetzner': true, 'hdrezka': true,
 				'google_ai': true, 'google-meet': true, 'google_play': true, 'geoblock': true,
 				'anime': true, 'cloudflare': true, 'cloudfront': true, 'discord': true,
-				'digitalocean': true
+				'digitalocean': true,
+				'openai': true, 'anthropic': true, 'whatsapp': true, 'twitch': true,
+				'valve': true, 'epicgames': true, 'riot': true, 'sony': true,
+				'electronicarts': true, 'ubisoft': true, 'blizzard': true, 'nintendo': true,
+				'wargaming': true, 'xbox': true
 			};
 			if (!SOURCES[src])
 				return { result: false, error: 'unknown source' };

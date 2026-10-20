@@ -2641,10 +2641,26 @@ if (!isEmpty(main_node)) {
 				}
 			}
 
+			/* W4 IP companions: itdoginfo publishes IP data only as mihomo
+			 * .mrs (unusable by sing-box) — Telegram MTProto DCs, Roblox and
+			 * Twitch stream edges are IP-based, so a domain-only rule lets
+			 * that traffic fall to the mass refilter_ip list. Sources listed
+			 * here pair their domain ruleset with an IP twin (tag '<tag>-ip',
+			 * URL below) inside the SAME routing rule. */
+			const SOURCE_IP_MAP = {
+				'telegram': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs',
+				'roblox': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/roblox.srs',
+				'twitch': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/twitch.srs'
+			};
+
 			/* Routing rules */
-			const rule_sets = (cfg.source === 'refilter')
-				? ['hp-ru-refilter-domain', 'hp-ru-refilter-ip']
-				: ['hp-ru-' + cfg.source];
+			let rule_sets;
+			if (cfg.source === 'refilter')
+				rule_sets = ['hp-ru-refilter-domain', 'hp-ru-refilter-ip'];
+			else if (SOURCE_IP_MAP[cfg.source])
+				rule_sets = ['hp-ru-' + cfg.source, 'hp-ru-' + cfg.source + '-ip'];
+			else
+				rule_sets = ['hp-ru-' + cfg.source];
 			push(config.route.rules, {
 				rule_set: rule_sets,
 				action: 'route',
@@ -2683,13 +2699,46 @@ if (!isEmpty(main_node)) {
 					});
 				}
 			} else {
+				/* W4 source map: URL overrides. Default stays itdoginfo
+				 * (domain .srs only — itdoginfo publishes IP data as mihomo
+				 * .mrs, unusable by sing-box). AI/social domains come from
+				 * MetaCubeX/meta-rules-dat (sing branch); gaming IP sets from
+				 * Greeg0ry/b4geoip-forkop. All URLs HEAD-verified 2026-10-18. */
+				const SOURCE_URL_MAP = {
+					'openai': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/openai.srs',
+					'anthropic': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/anthropic.srs',
+					'whatsapp': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/whatsapp.srs',
+					'twitch': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/twitch.srs',
+					'valve': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/valve.srs',
+					'epicgames': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/epicgames.srs',
+					'riot': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/riot.srs',
+					'sony': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/sony.srs',
+					'electronicarts': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/electronicarts.srs',
+					'ubisoft': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/ubisoft.srs',
+					'blizzard': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/blizzard.srs',
+					'nintendo': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/nintendo.srs',
+					'wargaming': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/wargaming.srs',
+					'xbox': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/xbox.srs'
+				};
 				if (!has_ruleset('hp-ru-' + cfg.source)) {
 					remember_ruleset('hp-ru-' + cfg.source);
 					push(config.route.rule_set, {
 						type: 'remote',
 						tag: 'hp-ru-' + cfg.source,
 						format: 'binary',
-						url: 'https://github.com/itdoginfo/allow-domains/releases/latest/download/' + replace(cfg.source, '-', '_') + '.srs',
+						url: SOURCE_URL_MAP[cfg.source] ||
+						     ('https://github.com/itdoginfo/allow-domains/releases/latest/download/' + replace(cfg.source, '-', '_') + '.srs'),
+						download_detour: ruleset_detour,
+						update_interval: '1d'
+					});
+				}
+				if (SOURCE_IP_MAP[cfg.source] && !has_ruleset('hp-ru-' + cfg.source + '-ip')) {
+					remember_ruleset('hp-ru-' + cfg.source + '-ip');
+					push(config.route.rule_set, {
+						type: 'remote',
+						tag: 'hp-ru-' + cfg.source + '-ip',
+						format: 'binary',
+						url: SOURCE_IP_MAP[cfg.source],
 						download_detour: ruleset_detour,
 						update_interval: '1d'
 					});

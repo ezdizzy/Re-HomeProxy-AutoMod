@@ -65,6 +65,12 @@ const callServiceCheck = rpc.declare({
 	expect: { '': {} }
 });
 
+const callAiNodesCheck = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_ai_nodes_check',
+	expect: { '': {} }
+});
+
 const callPresetList = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'wizard_preset_list',
@@ -268,27 +274,68 @@ return view.extend({
 		hp.uiStyle();
 
 		/* Service presets — service presets over the itdoginfo/allow-domains
-		 * sources the generator already consumes (no new hardcode). The two
-		 * bulk lists (refilter / russia-inside) are NOT presets: they are
-		 * shown as info rows instead. `check` selects the RPC-backed live
-		 * check; `hosts` are the route_explain targets for the rest. */
+		 * sources the generator already consumes (no new hardcode).
+		 * `check` selects the RPC-backed live check; `hosts` are the
+		 * route_explain targets for the rest. */
 		const PRESETS = [
 			{ source: 'google_ai', title: _('Google AI (Gemini, AI Studio)'), check: 'google_ai',
 				hosts: [ 'gemini.google.com', 'generativelanguage.googleapis.com' ] },
 			{ source: 'youtube', title: _('YouTube'), hosts: [ 'www.youtube.com' ] },
 			{ source: 'discord', title: _('Discord'), hosts: [ 'discord.com' ] },
 			{ source: 'telegram', title: _('Telegram'), hosts: [ 'web.telegram.org' ] },
+			{ source: 'openai', title: _('OpenAI (ChatGPT)'), check: 'openai',
+				hosts: [ 'chatgpt.com', 'api.openai.com' ] },
+			{ source: 'anthropic', title: _('Claude / Anthropic'),
+				hosts: [ 'claude.ai', 'api.anthropic.com' ] },
+			{ source: 'whatsapp', title: _('WhatsApp'),
+				hosts: [ 'web.whatsapp.com' ] },
+			{ source: 'twitch', title: _('Twitch'),
+				hosts: [ 'www.twitch.tv' ] },
 			{ source: 'meta', title: _('Meta (Facebook, Instagram)'), hosts: [ 'instagram.com' ] },
 			{ source: 'twitter', title: _('Twitter / X'), hosts: [ 'x.com' ] },
 			{ source: 'tiktok', title: _('TikTok'), hosts: [] },
 			{ source: 'roblox', title: _('Roblox'), hosts: [ 'roblox.com' ] },
-			{ source: 'hdrezka', title: _('HDRezka'), hosts: [] },
-			{ source: 'anime', title: _('Anime streaming'), hosts: [] },
-			{ source: 'news', title: _('International news sites'), hosts: [] },
 			{ source: 'google_play', title: _('Google Play'), hosts: [] },
-			{ source: 'google-meet', title: _('Google Meet'), hosts: [] },
-			{ source: 'geoblock', title: _('Geo-blocked services'), hosts: [] },
-			{ source: 'porn', title: _('Adult content'), hosts: [] }
+			{ source: 'google-meet', title: _('Google Meet'), hosts: [] }
+		];
+
+		/* A1: every rpcd SOURCE becomes an editable row, grouped. The mass
+		 * lists use the same select/Apply path as presets — the RPC accepts
+		 * any source. Titles reuse the manual editor wording (client.js). */
+		const BULK_PRESETS = [
+			{ source: 'russia-inside', title: _('itdoginfo/allow-domains - Russia Inside (1000+ entries)') },
+			{ source: 'refilter', title: _('Re-filter (Russia blocklist: 60000+ banned domains + 25000+ IPs)') },
+			{ source: 'block', title: _('Block (core RKN-blocked resources)') },
+			{ source: 'russia-outside', title: _('Russia Outside (RU-only services — for use abroad)') },
+			{ source: 'ukraine-inside', title: _('Ukraine Inside (resources blocked in UA)') }
+		];
+		const CDN_PRESETS = [
+			{ source: 'cloudflare', title: _('Cloudflare CDN') },
+			{ source: 'cloudfront', title: _('CloudFront CDN') },
+			{ source: 'digitalocean', title: _('DigitalOcean cloud hosting') },
+			{ source: 'hetzner', title: _('Hetzner (Germany cloud hosting)') },
+			{ source: 'ovh', title: _('OVH (France cloud hosting)') },
+			{ source: 'hodca', title: _('HODCA') }
+		];
+		const MISC_PRESETS = [
+			{ source: 'news', title: _('International news sites') },
+			{ source: 'porn', title: _('Adult content') },
+			{ source: 'anime', title: _('Anime streaming') },
+			{ source: 'geoblock', title: _('Geo-blocked services') },
+			{ source: 'hdrezka', title: _('HDRezka') }
+		];
+		/* W4: b4geoip gaming IP sets — IP-only, no domains. */
+		const GAMING_PRESETS = [
+			{ source: 'valve', title: _('Valve / Steam') },
+			{ source: 'epicgames', title: _('Epic Games') },
+			{ source: 'riot', title: _('Riot Games') },
+			{ source: 'sony', title: _('Sony / PlayStation') },
+			{ source: 'electronicarts', title: _('EA / Electronic Arts') },
+			{ source: 'ubisoft', title: _('Ubisoft') },
+			{ source: 'blizzard', title: _('Blizzard') },
+			{ source: 'nintendo', title: _('Nintendo') },
+			{ source: 'wargaming', title: _('Wargaming') },
+			{ source: 'xbox', title: _('Xbox') }
 		];
 
 		const WIZ_CSS = `
@@ -304,6 +351,9 @@ return view.extend({
 .wiz-strat { flex: 1 1 380px; min-width: 260px; font-family: monospace; font-size: .82em; }
 .wiz-pool { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; margin: 4px 0 0 0; font-size: .88em; border: 1px dashed rgba(128,128,128,.4); border-radius: 8px; }
 .wiz-pool label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.wiz-group { flex-basis: 100%; font-weight: 600; font-size: .95em; margin: 14px 0 2px 0; padding-top: 10px; border-top: 1px solid rgba(128,128,128,.25); }
+.wiz-group:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.wiz-full { flex-basis: 100%; }
 `;
 
 		const st = document.getElementById('hp-wiz-style');
@@ -358,7 +408,7 @@ return view.extend({
 		});
 
 		panes.diag.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Checks a set of test services (YouTube, Discord, Telegram, Google AI, OpenAI…) through your real paths: DIRECT with a plain-resolver DNS view, through the Main node, and through your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini "something went wrong") is not either. The "Configured" column shows which rule already covers each resource; RU services (rutube, gosuslugi) are control hosts — they must always open directly.') ]));
+			[ _('Checks a set of test services (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) through your real paths. The VERDICT speaks about your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served; the Direct column is reference: it shows whether the resource could open with no VPN at all. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini "something went wrong") is not either. When a refusal is about the remote region rather than the local provider, the verdict says so (geo-block) — a routing strategy cannot fix a region refusal, a node with a supported region can. RU services (rutube, gosuslugi) are control hosts — they must always open directly.') ]));
 		panes.diag.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ customHosts, startBtn ]));
 		panes.diag.appendChild(scanBanner);
 		panes.diag.appendChild(scanResult);
@@ -605,9 +655,9 @@ return view.extend({
 			opens_direct:   [ 'hpui-b-green', _('Opens directly') ],
 			works_live:     [ 'hpui-b-green', _('Works via the configured path') ],
 			needs_proxy:    [ 'hpui-b-red', _('Needs proxy — create a rule') ],
-			needs_strategy: [ 'hpui-b-amber', _('Needs Zapret/ByeDPI strategy') ],
+			needs_strategy: [ 'hpui-b-amber', _('Provider cuts the path (DPI)') ],
 			dns_poison:     [ 'hpui-b-amber', _('DNS poisoning (fake answers)') ],
-			geo_blocked:    [ 'hpui-b-red', _('Service refuses the exit node') ],
+			geo_blocked:    [ 'hpui-b-red', _('Blocked on the remote side (geo)') ],
 			main_path_fail: [ 'hpui-b-red', _('Main path fails (check the node)') ],
 			config_broken:  [ 'hpui-b-amber', _('Configured path fails — check the rule/strategy') ],
 			control_fail:   [ 'hpui-b-red', _('RU site unreachable directly — anomaly') ],
@@ -615,6 +665,34 @@ return view.extend({
 			partial:        [ 'hpui-b-grey', _('Only the main path was measured') ],
 			unknown:        [ 'hpui-b-grey', _('No data') ]
 		};
+
+		/* The scanner sees no rules; the client remaps the verdict to what the
+		 * user configured (Ф8-W2): with an enabled rule for the service the
+		 * configured path IS the rule, so "opens directly + live works" reads
+		 * as "works via the configured path (→ node)", not as "no VPN needed". */
+		function effVerdict(r, rule) {
+			if (r.verdict === 'opens_direct' && rule && rule.enabled && r.svc !== 'ru_control')
+				return 'works_live';
+			return r.verdict;
+		}
+
+		function verdictCell(r, rule) {
+			const v = effVerdict(r, rule);
+			const spec = VERDICTS[v] || VERDICTS.unknown;
+			let label = spec[1];
+			if (v === 'works_live' && rule && rule.enabled)
+				label = _('Works via the configured path') + ' (→ ' + nodeText(rule.node) + ')';
+			if (v === 'geo_blocked') {
+				const side = r.geo_side || 'remote';
+				if (side === 'both')
+					label = _('Cut on both sides (provider + remote)');
+				else if (side === 'exit')
+					label = _('The service refuses the exit node region');
+				else
+					label = _('Blocked on the remote side (geo)');
+			}
+			return badge(spec[0], label);
+		}
 
 		const KINDS = {
 			tls_dpi:   _('TLS DPI (SNI reset)'),
@@ -628,15 +706,25 @@ return view.extend({
 		};
 
 		const RECOMMEND = {
-			dns:       _('Secure DNS (MultiDNS) usually fixes this; a routing rule also helps'),
+			dns:       _('The provider tampers with DNS — Secure DNS (MultiDNS/DoH) usually fixes it'),
 			rule:      _('Create a rule in the "Services → exits" tab'),
-			strategy:  _('Pick a working Zapret/ByeDPI strategy (Strategy Lab)'),
-			node:      _('Switch to a different node — the service refuses this exit region'),
+			strategy:  _('The provider cuts the path (DPI) — pick a working Zapret/ByeDPI strategy (Strategy Lab)'),
+			node:      _('Blocked on the remote side (geo) — a node in a supported region fixes it'),
+			node_both: _('Cut on both sides — a node in a supported region; the path to it may also need a working strategy'),
+			node_exit: _('The service refuses this exit region — switch to another node (full check: the "Google AI" button below)'),
 			main_path: _('The Main node is not serving this site — check the node'),
 			anomaly:   _('Anomaly: RU services must open directly — check RU-protect / the internet'),
 			config_broken: _('Bare paths work but the configured path does not — check the rule target or run the Strategy Lab'),
 			ai_full:   _('Pages open, but the model request can still be refused by the exit region/IP — run the full check with the "Google AI" button below (Services → exits).'),
 			none:      _('—')
+		};
+
+		/* Honest scope notes (R4): an HTTP probe cannot see UDP voice calls
+		 * or streaming quality — say so instead of implying a verdict. */
+		const SVC_NOTES = {
+			telegram: _('Voice calls (UDP) are not measured by an HTTP probe.'),
+			whatsapp: _('Voice calls (UDP) are not measured by an HTTP probe.'),
+			twitch:   _('Page probe only — streaming quality is not measured.')
 		};
 
 		/* ── TG WS Proxy card (D8, Ф7): «Telegram без прокси» ─────────────
@@ -834,11 +922,6 @@ return view.extend({
 			return badge('hpui-b-red', '✗ ' + why + ' (' + (p.code || '000') + ')');
 		}
 
-		function verdictCell(v) {
-			const spec = VERDICTS[v] || VERDICTS.unknown;
-			return badge(spec[0], spec[1]);
-		}
-
 		/* ── Scan rendering ────────────────────────────────────────────── */
 		function renderScan(status, result, rules) {
 			rules = rules || {};
@@ -861,30 +944,44 @@ return view.extend({
 				return;
 			}
 			const cards = E('div', { 'class': 'hpui-cards' });
-			const s = result.summary || {};
+			/* Recount client-side with the rule-aware mapping so the cards
+			 * always agree with the table below (the scanner itself does not
+			 * know the rules). */
+			const counts = { opens_direct: 0, works_live: 0, needs_proxy: 0,
+				needs_strategy: 0, dns_poison: 0, geo_blocked: 0 };
+			for (let h in result.hosts) {
+				const r0 = result.hosts[h];
+				const v0 = effVerdict(r0, rules[r0.svc] || null);
+				if (counts[v0] != null)
+					counts[v0]++;
+			}
 			const mk = (num, cap, cls) => E('div', { 'class': 'hpui-card' }, [
 				E('div', { 'class': 'hpui-num ' + (cls || '') }, [ String(num) ]),
 				E('div', { 'class': 'hpui-cap' }, [ cap ])
 			]);
-			cards.appendChild(mk(s.opens_direct || 0, _('open directly'), 'hpui-c-green'));
-			cards.appendChild(mk(s.works_live || 0, _('work via the configured path'), 'hpui-c-green'));
-			cards.appendChild(mk(s.needs_proxy || 0, _('need a proxy rule'), 'hpui-c-red'));
-			cards.appendChild(mk(s.needs_strategy || 0, _('need a strategy'), 'hpui-c-amber'));
-			cards.appendChild(mk(s.dns_poison || 0, _('DNS-poisoned'), 'hpui-c-amber'));
+			cards.appendChild(mk(counts.works_live, _('work via the configured path'), 'hpui-c-green'));
+			cards.appendChild(mk(counts.opens_direct, _('open directly'), 'hpui-c-green'));
+			cards.appendChild(mk(counts.needs_proxy, _('need a proxy rule'), 'hpui-c-red'));
+			cards.appendChild(mk(counts.needs_strategy, _('need a strategy'), 'hpui-c-amber'));
+			cards.appendChild(mk(counts.geo_blocked, _('geo-blocked'), 'hpui-c-red'));
+			cards.appendChild(mk(counts.dns_poison, _('DNS-poisoned'), 'hpui-c-amber'));
 			scanResult.appendChild(cards);
 
 			if (!result.proxy_in && !result.mixed_in)
 				scanResult.appendChild(E('div', { 'class': 'hpui-banner' },
 					[ _('The diagnostic inbounds are unavailable (Custom routing / Custom JSON) — only a partial picture is possible.') ]));
 
+			/* Column order follows the verdict (Ф8-W2): the CONFIGURED path
+			 * and its verdict first; the direct/main-path probes are the
+			 * reference diagnostics. */
 			const thead = E('thead', {}, E('tr', {}, [
 				E('th', {}, [ _('Resource') ]),
-				E('th', {}, [ _('Direct') ]),
-				E('th', {}, [ _('Via main path') ]),
 				E('th', {}, [ _('Configured path') ]),
-				E('th', {}, [ _('DNS') ]),
 				E('th', {}, [ _('Verdict') ]),
 				E('th', {}, [ _('Configured') ]),
+				E('th', {}, [ _('Direct') ]),
+				E('th', {}, [ _('Via main path') ]),
+				E('th', {}, [ _('DNS') ]),
 				E('th', {}, [ _('Recommendation') ])
 			]));
 			const tbody = E('tbody', {});
@@ -904,20 +1001,41 @@ return view.extend({
 						? badge('hpui-b-blue', '→ ' + nodeText(rule.node))
 						: badge('hpui-b-grey', _('disabled') + ' (→ ' + nodeText(rule.node) + ')'))
 					: E('span', { style: 'opacity:.55' }, [ _('no rule') ]);
+				const ev = effVerdict(r, rule);
 				let rec = (r.recommend && RECOMMEND[r.recommend]) ? RECOMMEND[r.recommend] : '—';
 				/* A rule already covers a "needs proxy" resource — say so. */
 				if (r.verdict === 'needs_proxy' && rule)
 					rec = _('Rule configured (→ %s) — the resource is covered by it.').format(nodeText(rule.node));
 				if (r.verdict === 'needs_strategy' && rule && (rule.node === 'zapret-out' || rule.node === 'byedpi-out'))
 					rec = _('The rule already leads to %s — run the Strategy Lab: the current strategy may not handle this resource.').format(nodeText(rule.node));
+				/* google_ai (C2): the page shell opens everywhere; say plainly
+				 * that the model goes through the configured node and what to
+				 * do when the model itself refuses. */
+				if (r.svc === 'google_ai' && (ev === 'works_live' || (r.verdict === 'opens_direct' && !rule)))
+					rec = (rule && rule.enabled)
+						? _('The page opens; the model goes through the configured node (→ %s). If the model refuses — check other nodes (the button in the Google AI check result below).').format(nodeText(rule.node))
+						: _('The page opens; the model goes through the configured routing. If the model refuses — check other nodes or run the full check below (Services → exits).');
+				/* opens_direct without a rule: mention the mass-list coverage
+				 * when one is enabled (same honesty as the Services rows). */
+				if (ev === 'opens_direct' && r.svc !== 'ru_control') {
+					const mass = (rules['russia-inside'] && rules['russia-inside'].enabled) ? _('Russia Inside')
+						: ((rules['refilter'] && rules['refilter'].enabled) ? _('Re-filter') : null);
+					if (mass)
+						rec = _('Covered by the mass list (%s) — it opens via the main node; a rule here overrides the list.').format(mass);
+				}
+				const hostCell = E('div', {}, [ E('span', { style: 'font-weight:600' }, [ String(r.host) ]) ]);
+				if (SVC_NOTES[r.svc]) {
+					const note = E('div', { 'class': 'wiz-note', style: 'margin:0' }, [ SVC_NOTES[r.svc] ]);
+					hostCell.appendChild(note);
+				}
 				const tr = E('tr', {}, [
-					E('td', {}, [ E('span', { style: 'font-weight:600' }, [ String(r.host) ]) ]),
+					E('td', {}, [ hostCell ]),
+					E('td', {}, [ probeCell(r.live) ]),
+					E('td', {}, [ verdictCell(r, rule) ]),
+					E('td', {}, [ ruleCell ]),
 					E('td', {}, [ probeCell(r.direct) ]),
 					E('td', {}, [ probeCell(r.proxy) ]),
-					E('td', {}, [ probeCell(r.live) ]),
 					E('td', {}, [ dnsCell ]),
-					E('td', {}, [ verdictCell(r.verdict) ]),
-					E('td', {}, [ ruleCell ]),
 					E('td', { 'class': 'wiz-note', style: 'margin:0' }, [ rec ])
 				]);
 				tbody.appendChild(tr);
@@ -983,20 +1101,15 @@ return view.extend({
 				envBanners.appendChild(E('div', { 'class': 'hpui-banner' },
 					[ _('The pinned diagnostic inbounds are not listening (Custom routing / Custom JSON) — path checks are limited.') ]));
 
-			/* Bulk lists are not presets — just show their state. */
-			const bulk = E('div', { 'class': 'wiz-row' });
-			bulk.appendChild(E('span', { 'class': 'wiz-title' }, [ _('Bulk lists') ]));
-			bulk.appendChild(E('span', { 'class': 'wiz-state' },
-				[ _('Russia Inside: %s · Re-filter: %s').format(
-					list.rules['russia-inside'] ? nodeText(list.rules['russia-inside'].node) : _('no rule'),
-					list.rules['refilter'] ? nodeText(list.rules['refilter'].node) : _('no rule')) ]));
-			bulk.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
-				[ _('These lists already cover YouTube/Discord/Telegram and most blocked resources — presets below add per-service overrides.') ]));
+			/* A1: grouped rows — mass lists / services / CDN / other. Every
+			 * rpcd SOURCE gets the SAME editable row (select + pool + Apply,
+			 * one source = one rule, the RPC keeps that invariant); the mass
+			 * lists are no longer view-only. */
 			presetRows.innerHTML = '';
-			presetRows.appendChild(bulk);
+			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
+				[ _('The mass lists below already cover YouTube/Discord/Telegram and most blocked resources — a per-service rule overrides the mass list.') ]));
 
-			for (let p in PRESETS) {
-				const preset = PRESETS[p];
+			function buildServiceRow(preset) {
 				const rule = (list.rules || {})[preset.source];
 				const count = (list.rule_counts || {})[preset.source] || 0;
 
@@ -1006,75 +1119,78 @@ return view.extend({
 					titleWrap.appendChild(E('span', { 'class': 'wiz-hosts' }, [ ' · ' + preset.hosts.join(', ') ]));
 				row.appendChild(titleWrap);
 
-				const stateEl = E('span', { 'class': 'wiz-state' }, [ ruleStateText(rule, count) ]);
-				row.appendChild(stateEl);
+				row.appendChild(E('span', { 'class': 'wiz-state' }, [ ruleStateText(rule, count) ]));
 
-			const sel = E('select', { 'class': 'cbi-input-select wiz-select' });
-			sel.appendChild(E('option', { value: '' }, [ _('Direct (remove rule)') ]));
-			if (!env.main_is_direct)
-				sel.appendChild(E('option', { value: 'main-out' }, [ _('Same as main node') ]));
-			if (env.byedpi_enabled)
-				sel.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
-			if (env.zapret_enabled)
-				sel.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
-			sel.appendChild(E('option', { value: 'urltest' }, [ _('URLTest pool') ]));
-			for (let n in (list.nodes || []))
-				sel.appendChild(E('option', { value: list.nodes[n].id },
-					[ list.nodes[n].label ]));
-			sel.value = (rule && rule.node) ? rule.node : '';
-			if (sel.selectedIndex < 0)
-				sel.value = '';
+				const sel = E('select', { 'class': 'cbi-input-select wiz-select' });
+				sel.appendChild(E('option', { value: '' }, [ _('Direct (remove rule)') ]));
+				if (!env.main_is_direct)
+					sel.appendChild(E('option', { value: 'main-out' }, [ _('Same as main node') ]));
+				if (env.byedpi_enabled)
+					sel.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
+				if (env.zapret_enabled)
+					sel.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
+				sel.appendChild(E('option', { value: 'urltest' }, [ _('URLTest pool') ]));
+				for (let n in (list.nodes || []))
+					sel.appendChild(E('option', { value: list.nodes[n].id },
+						[ list.nodes[n].label ]));
+				sel.value = (rule && rule.node) ? rule.node : '';
+				if (sel.selectedIndex < 0)
+					sel.value = '';
 
-			/* URLTest pool picker — revealed when the exit is "URLTest pool":
-			 * the generator builds a dedicated hp-ru-<source>-out urltest group
-			 * from the ticked nodes (the manual editor exposes the same list). */
-			const poolBox = E('div', { 'class': 'wiz-pool', style: 'display:none' });
-			const poolChecks = [];
-			let poolTouched = false;
-			const proxyNodes = (list.nodes || []).filter(function(n) { return n.type !== 'direct'; });
-			for (let n in proxyNodes) {
-				const cb = E('input', { type: 'checkbox', value: proxyNodes[n].id });
-				const lb = E('label', {}, [ cb, ' ' + proxyNodes[n].label ]);
-				poolChecks.push({ id: proxyNodes[n].id, cb: cb });
-				poolBox.appendChild(lb);
-			}
-			const syncPool = function() {
-				const show = (sel.value === 'urltest');
-				poolBox.style.display = show ? 'flex' : 'none';
-				if (show && !poolTouched) {
-					const cur = (rule && rule.urltest_nodes) || [];
+				/* URLTest pool picker — revealed when the exit is "URLTest pool":
+				 * the generator builds a dedicated hp-ru-<source>-out urltest group
+				 * from the ticked nodes (the manual editor exposes the same list). */
+				const poolBox = E('div', { 'class': 'wiz-pool', style: 'display:none' });
+				const poolChecks = [];
+				let poolTouched = false;
+				const proxyNodes = (list.nodes || []).filter(function(n) { return n.type !== 'direct'; });
+				for (let n in proxyNodes) {
+					const cb = E('input', { type: 'checkbox', value: proxyNodes[n].id });
+					const lb = E('label', {}, [ cb, ' ' + proxyNodes[n].label ]);
+					poolChecks.push({ id: proxyNodes[n].id, cb: cb });
+					poolBox.appendChild(lb);
+				}
+				/* A1: the pool is the resilient exit for a secondary route —
+				 * a single node defeats the purpose. */
+				poolBox.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; flex-basis:100%' },
+					[ _('For a resilient secondary route pick a pool of at least 2 nodes.') ]));
+				const syncPool = function() {
+					const show = (sel.value === 'urltest');
+					poolBox.style.display = show ? 'flex' : 'none';
+					if (show && !poolTouched) {
+						const cur = (rule && rule.urltest_nodes) || [];
+						for (let c in poolChecks)
+							poolChecks[c].cb.checked = (cur.indexOf(poolChecks[c].id) >= 0);
+					}
+				};
+				sel.addEventListener('change', function() { poolTouched = false; syncPool(); });
+				poolBox.addEventListener('change', function() { poolTouched = true; });
+				syncPool();
+
+				const applyBtn = E('button', {
+					'class': 'btn cbi-button cbi-button-action', type: 'button'
+				}, [ _('Apply') ]);
+				applyBtn.addEventListener('click', function() {
+					const ids = [];
 					for (let c in poolChecks)
-						poolChecks[c].cb.checked = (cur.indexOf(poolChecks[c].id) >= 0);
-				}
-			};
-			sel.addEventListener('change', function() { poolTouched = false; syncPool(); });
-			poolBox.addEventListener('change', function() { poolTouched = true; });
-			syncPool();
-
-			const applyBtn = E('button', {
-				'class': 'btn cbi-button cbi-button-action', type: 'button'
-			}, [ _('Apply') ]);
-			applyBtn.addEventListener('click', function() {
-				const ids = [];
-				for (let c in poolChecks)
-					if (poolChecks[c].cb.checked)
-						ids.push(poolChecks[c].id);
-				if (sel.value === 'urltest' && !ids.length) {
-					ui.addNotification(null, E('p', {}, _('Pick at least one node for the URLTest pool.')), 'error');
-					return;
-				}
-				applyBtn.disabled = true;
-				callPresetApply(preset.source, String(sel.value || ''), sel.value === 'urltest' ? ids : []).then(function(r) {
-					if (!r || r.result === false) {
-						const ERRS = {
-							main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
-							byedpi_disabled: _('ByeDPI is not enabled — enable it on the Node Settings page first.'),
-							zapret_disabled: _('Zapret is not enabled — enable it on the Node Settings page first.'),
-							urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
-							unknown_node: _('Unknown node — refresh the page.'),
-							unknown_source: _('Unknown service.'),
-							'config generation failed': _('Config generation failed — the previous config stays active.')
-						};
+						if (poolChecks[c].cb.checked)
+							ids.push(poolChecks[c].id);
+					if (sel.value === 'urltest' && !ids.length) {
+						ui.addNotification(null, E('p', {}, _('Pick at least one node for the URLTest pool.')), 'error');
+						return;
+					}
+					applyBtn.disabled = true;
+					callPresetApply(preset.source, String(sel.value || ''), sel.value === 'urltest' ? ids : []).then(function(r) {
+						if (!r || r.result === false) {
+							const ERRS = {
+								main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
+								byedpi_disabled: _('ByeDPI is not enabled — enable it on the Node Settings page first.'),
+								zapret_disabled: _('Zapret is not enabled — enable it on the Node Settings page first.'),
+								urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
+								unknown_node: _('Unknown node — refresh the page.'),
+								unknown_source: _('Unknown service.'),
+								'config generation failed': _('Config generation failed — the previous config stays active.')
+							};
 							const msg = ERRS[(r && r.error)] || ((r && r.error) || _('RPC error'));
 							ui.addNotification(null, E('p', {}, msg), 'error');
 							return;
@@ -1088,9 +1204,9 @@ return view.extend({
 					}).finally(function() { applyBtn.disabled = false; });
 				});
 
-			row.appendChild(sel);
-			row.appendChild(poolBox);
-			row.appendChild(applyBtn);
+				row.appendChild(sel);
+				row.appendChild(poolBox);
+				row.appendChild(applyBtn);
 
 				if (preset.check) {
 					const checkBtn = E('button', {
@@ -1103,22 +1219,48 @@ return view.extend({
 					});
 					row.appendChild(checkBtn);
 				}
-				presetRows.appendChild(row);
+
+				/* A2: a row without its own rule is still covered by the mass
+				 * lists — name what covers it and that a rule here overrides. */
+				if (!rule) {
+					const cov = [];
+					if (list.rules['russia-inside'] && list.rules['russia-inside'].enabled)
+						cov.push({ name: _('Russia Inside'), node: list.rules['russia-inside'].node });
+					if (list.rules['refilter'] && list.rules['refilter'].enabled)
+						cov.push({ name: _('Re-filter'), node: list.rules['refilter'].node });
+					if (cov.length) {
+						const names = [];
+						for (let c in cov)
+							names.push(cov[c].name);
+						row.appendChild(E('span', { 'class': 'wiz-note wiz-full', style: 'margin:0' },
+							[ _('Covered by the mass list (%s) → %s — a rule here overrides the list.').format(names.join(', '), nodeText(cov[0].node)) ]));
+					}
+				}
+
+				/* R3: honest Telegram hint (the live-probe fact + W4 IP rule). */
+				if (preset.source === 'telegram')
+					row.appendChild(E('span', { 'class': 'wiz-note wiz-full', style: 'margin:0' },
+						[ _('Telegram: MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs. Live probes (2026-10-18): 443 to some DCs is cut by the provider even through a node — the apps fall back to working ranges/ports on their own; port 80 stays open.') ]));
+
+				return row;
 			}
 
-			/* OpenAI has no dedicated itdoginfo list — a check-only row. */
-			const oai = E('div', { 'class': 'wiz-row' });
-			oai.appendChild(E('span', { 'class': 'wiz-title' }, [ _('OpenAI (ChatGPT)') ]));
-			oai.appendChild(E('span', { 'class': 'wiz-state wiz-note', style: 'margin:0' },
-				[ _('No dedicated list — OpenAI domains ride the main path / Re-filter. This button only checks whether the current exit region is accepted.') ]));
-			const oaiBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Check now') ]);
-			oaiBtn.addEventListener('click', function() {
-				oaiBtn.disabled = true;
-				dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Checking…') ]));
-				runServiceCheck('openai').finally(function() { oaiBtn.disabled = false; });
-			});
-			oai.appendChild(oaiBtn);
-			presetRows.appendChild(oai);
+			const GROUPS = [
+				[ _('Mass lists'), BULK_PRESETS ],
+				[ _('Services'), PRESETS ],
+				[ _('Games (IP-only)'), GAMING_PRESETS,
+					_('Matched by destination IP (no domains) — a rule routes the game networks (launchers, match servers, voice) to the chosen exit.') ],
+				[ _('CDN and hosting'), CDN_PRESETS ],
+				[ _('Other'), MISC_PRESETS ]
+			];
+			for (let g in GROUPS) {
+				presetRows.appendChild(E('div', { 'class': 'wiz-group' }, [ GROUPS[g][0] ]));
+				if (GROUPS[g][2])
+					presetRows.appendChild(E('div', { 'class': 'wiz-note' }, [ GROUPS[g][2] ]));
+				const items = GROUPS[g][1];
+				for (let p in items)
+					presetRows.appendChild(buildServiceRow(items[p]));
+			}
 		}
 
 		/* ── Live checks (results in ONE place below the presets) ──────── */
@@ -1172,6 +1314,24 @@ return view.extend({
 			}
 			checkResult.appendChild(row);
 
+			/* Ф8-W2 (approved): when the current exit refuses the Google AI
+			 * region gate, cycle the OTHER nodes — one API probe per node
+			 * through a throwaway probe core; the result lands here, in the
+			 * ONE result area (ui.action_buttons_result_placement). */
+			if (r.service === 'google_ai') {
+				const aiBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+					[ _('Check other nodes') ]);
+				aiBtn.addEventListener('click', function() {
+					aiBtn.disabled = true;
+					dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Checking every node against the Google AI region gate (about 20 s)…') ]));
+					L.resolveDefault(callAiNodesCheck(), {}).then(function(nr) {
+						renderAiNodes(nr);
+					}).finally(function() { aiBtn.disabled = false; });
+				});
+				checkResult.appendChild(aiBtn);
+			}
+
 			const routes = r.route || {};
 			for (let h in routes) {
 				const line = E('div', { 'class': 'wiz-note' });
@@ -1179,6 +1339,41 @@ return view.extend({
 				line.appendChild(shortTrace(routes[h]));
 				checkResult.appendChild(line);
 			}
+		}
+
+		function renderAiNodes(r) {
+			checkResult.innerHTML = '';
+			if (!r || r.result === false) {
+				dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Node check failed: ') + ((r && r.error) || _('RPC error')) ]));
+				return;
+			}
+			checkResult.appendChild(E('div', { 'class': 'wiz-note' },
+				[ _('Google AI — candidate nodes (one API probe per node):') ]));
+			const nodes = r.nodes || [];
+			for (let i = 0; i < nodes.length; i++) {
+				const n = nodes[i];
+				const line = E('div', { 'class': 'wiz-note' });
+				line.appendChild(document.createTextNode(resolveTag(n.node) +
+					((n.node === r.current) ? (' · ' + _('current node')) : '') + ': '));
+				if (n.verdict === 'passes')
+					line.appendChild(badge('hpui-b-green', '✓ ' + _('region passes')));
+				else if (n.verdict === 'refused')
+					line.appendChild(badge('hpui-b-red', '✗ ' + _('region refused')));
+				else if (n.verdict === 'unreachable')
+					line.appendChild(badge('hpui-b-grey', '✗ ' + _('unreachable')));
+				else
+					line.appendChild(badge('hpui-b-amber', '? ' + _('uncertain')));
+				checkResult.appendChild(line);
+			}
+			if (!nodes.length)
+				checkResult.appendChild(E('div', { 'class': 'wiz-note' },
+					[ _('No nodes found in the running config.') ]));
+			if (r.truncated)
+				checkResult.appendChild(E('div', { 'class': 'wiz-note' },
+					[ _('Some nodes were not checked (limit 12).') ]));
+			checkResult.appendChild(E('p', { 'class': 'hpui-hint' },
+				[ _('To switch the exit: Services → exits → Google AI → pick this node.') ]));
 		}
 
 		function renderPathCheck(preset, results) {
@@ -1416,6 +1611,169 @@ return view.extend({
 					row.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
 						[ '(' + (data.ok || 0) + '/' + (data.total || 0) + ')' ]));
 					box.appendChild(row);
+					dom.content(dpiResult, box);
+				});
+			});
+		});
+
+		/* ── W3: Composition Builder — stack multiple nfqws2 profiles ──── */
+		/* nfqws2 supports multi-profile strategies: blocks separated by
+		 * `--new` run as independent profiles (first-match wins). The builder
+		 * joins catalog entries or raw args into one `cmd_opts` string, tests
+		 * the whole composition on the isolated queue, and applies it. */
+		const compList = E('div', { 'class': 'wiz-note', style: 'margin:0' }, [ _('(empty — add strategies below)') ]);
+		const compAddBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Add to composition') ]);
+		const compTestBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Test composition') ]);
+		const compApplyBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', type: 'button' }, [ _('Apply composition') ]);
+		const compClearBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Clear') ]);
+		const compRow = E('div', { 'class': 'wiz-row' },
+			[ E('span', { 'class': 'wiz-title' }, [ _('Composition') ]), compList ]);
+		const compBtnRow = E('div', { 'class': 'wiz-toolbar' },
+			[ compAddBtn, compTestBtn, compApplyBtn, compClearBtn ]);
+		dpiStrategy.appendChild(compRow);
+		dpiStrategy.appendChild(compBtnRow);
+		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
+			[ _('Stack multiple strategies: pick one from the catalog (or type args), press "Add to composition", repeat, then "Test composition". Blocks are joined with --new (first match wins); nfqws2 runs them as independent profiles.') ]));
+
+		function renderCompList() {
+			compList.innerHTML = '';
+			if (!state.comp || !state.comp.length) {
+				compList.appendChild(E('span', { style: 'opacity:.6' },
+					[ _('(empty — add strategies below)') ]));
+				return;
+			}
+			state.comp.forEach(function(s, i) {
+				const item = E('span', {
+					style: 'display:inline-flex;align-items:center;gap:4px;margin-right:10px;white-space:nowrap'
+				}, [
+					E('b', {}, [ '#' + (i + 1) + ' ' ]),
+					E('span', { title: s }, [ shortStrategy(s, 60) ]),
+					E('button', {
+						'class': 'btn cbi-button', type: 'button', style: 'padding:0 4px',
+						title: _('Remove')
+					}, [ '×' ])
+				]);
+				item.querySelector('button').addEventListener('click', function() {
+					state.comp.splice(i, 1);
+					renderCompList();
+				});
+				compList.appendChild(item);
+			});
+		}
+		renderCompList();
+
+		compAddBtn.addEventListener('click', function() {
+			const s = String(stratInput.value || '').trim();
+			if (!s) {
+				ui.addNotification(null, E('p', {}, _('No strategy set — pick one from the catalog or enter the options first.')), 'error');
+				return;
+			}
+			state.comp = state.comp || [];
+			if (state.comp.indexOf(s) === -1) {
+				state.comp.push(s);
+				renderCompList();
+			}
+		});
+
+		compClearBtn.addEventListener('click', function() {
+			state.comp = [];
+			renderCompList();
+		});
+
+		compTestBtn.addEventListener('click', function() {
+			if (!state.comp || !state.comp.length) {
+				ui.addNotification(null, E('p', {}, _('Composition is empty — add at least one strategy.')), 'error');
+				return;
+			}
+			const s = state.comp.join(' --new ');
+			compTestBtn.disabled = true;
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ _('Testing composition…') ]));
+			L.resolveDefault(callZapretResolve(), {}).then(function(ret) {
+				let d = {};
+				try { d = JSON.parse(ret.output || '{}'); } catch (e) {}
+				if (!d.ok || !d.ips) {
+					compTestBtn.disabled = false;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ d.error || _('DNS not ready — wait a few seconds after Apply and retry') ]));
+					return;
+				}
+				const ips = Object.keys(d.ips).map(function(k) { return k + '=' + d.ips[k]; }).join(' ');
+				return L.resolveDefault(callZapretTest(s, ips), {}).then(function(ret2) {
+					compTestBtn.disabled = false;
+					let data = {};
+					try { data = JSON.parse(ret2.output || '{}'); } catch (e) {}
+					if (data.error) {
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ data.error ]));
+						return;
+					}
+					const box = E('div', {});
+					box.appendChild(E('div', { 'class': 'wiz-note' },
+						[ _('Composition test (joined with --new, isolated queue):') ]));
+					const row = E('div', { 'class': 'wiz-row' });
+					(data.results || []).forEach(function(r2, i) {
+						if (i) row.appendChild(document.createTextNode(' · '));
+						row.appendChild(E('span', {
+							style: 'font-weight:600;color:' + (r2.ok ? '#3fbf5f' : '#e05252')
+						}, [ (r2.label || r2.tag) + (r2.ok ? ' ✓ ' + r2.tls + 's' : ' ✗ ' + (r2.reason || 'fail')) ]));
+					});
+					row.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
+						[ '(' + (data.ok || 0) + '/' + (data.total || 0) + ')' ]));
+					box.appendChild(row);
+					dom.content(dpiResult, box);
+				});
+			});
+		});
+
+		compApplyBtn.addEventListener('click', function() {
+			if (!state.comp || !state.comp.length) {
+				ui.addNotification(null, E('p', {}, _('Composition is empty — add at least one strategy.')), 'error');
+				return;
+			}
+			const s = state.comp.join(' --new ');
+			compApplyBtn.disabled = true;
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+				[ _('Applying composition — the service restarts…') ]));
+			/* Capture the LIVE strategy BEFORE applying — the rollback source.
+			 * wizard_dpi_status answers with the running cmd_opts; if it fails
+			 * we fall back to the seeded strategy input (session start value). */
+			L.resolveDefault(callDpiStatus(), {}).then(function(st) {
+				const zst = (st && st.zapret) || {};
+				const prev = zst.strategy || (state.stratInit ? stratInput.value : '');
+				return L.resolveDefault(callFuzzApply(s), {}).then(function(r) {
+					compApplyBtn.disabled = false;
+					if (!r || r.result === false) {
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
+						return;
+					}
+					state.prevStrategy = prev;
+					const box = E('div', {});
+					box.appendChild(E('p', { 'class': 'hpui-hint' },
+						[ _('Composition applied — Zapret enabled, service restarted.') ]));
+					if (prev) {
+						box.appendChild(E('p', { 'class': 'hpui-hint' },
+							[ _('Previous strategy: ') + shortStrategy(prev, 110) ]));
+						const rbBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+							[ _('Restore previous strategy') ]);
+						rbBtn.addEventListener('click', function() {
+							rbBtn.disabled = true;
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Restoring previous strategy — the service restarts…') ]));
+							L.resolveDefault(callFuzzApply(state.prevStrategy), {}).then(function(r2) {
+								if (!r2 || r2.result === false) {
+									rbBtn.disabled = false;
+									dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+										[ _('Restore failed: ') + ((r2 && r2.error) || _('rpc error')) ]));
+									return;
+								}
+								dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+									[ _('Previous strategy restored — Zapret enabled, service restarted.') ]));
+							});
+						});
+						box.appendChild(rbBtn);
+					}
+					box.appendChild(E('p', { 'class': 'hpui-hint' },
+						[ _('Run "Test composition" in ~30 seconds to confirm it works on your ISP.') ]));
 					dom.content(dpiResult, box);
 				});
 			});

@@ -1107,6 +1107,22 @@ return view.extend({
 			this.value('cloudfront', _('CloudFront CDN'));
 			this.value('discord', _('Discord'));
 			this.value('digitalocean', _('DigitalOcean cloud hosting'));
+			/* W4: MetaCubeX geosite sources + b4geoip gaming IP sets (the
+			 * generator's SOURCE_URL_MAP / SOURCE_IP_MAP consume these). */
+			this.value('openai', _('OpenAI (ChatGPT)'));
+			this.value('anthropic', _('Claude / Anthropic'));
+			this.value('whatsapp', _('WhatsApp'));
+			this.value('twitch', _('Twitch'));
+			this.value('valve', _('Valve / Steam'));
+			this.value('epicgames', _('Epic Games'));
+			this.value('riot', _('Riot Games'));
+			this.value('sony', _('Sony / PlayStation'));
+			this.value('electronicarts', _('EA / Electronic Arts'));
+			this.value('ubisoft', _('Ubisoft'));
+			this.value('blizzard', _('Blizzard'));
+			this.value('nintendo', _('Nintendo'));
+			this.value('wargaming', _('Wargaming'));
+			this.value('xbox', _('Xbox'));
 			return this.super('load', section_id);
 		};
 		so.rmempty = false;

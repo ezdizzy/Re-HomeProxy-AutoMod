@@ -8127,8 +8127,33 @@ msgstr "Не удалось запустить диагностику: "
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Checks a set of test services (YouTube, Discord, Telegram, Google AI, OpenAI…) through your real paths: DIRECT with a plain-resolver DNS view, and through the Main node. Verdicts tell you what needs a proxy rule, what needs a Zapret/ByeDPI strategy, and what is DNS-poisoned. RU services (rutube, gosuslugi) are control hosts — they must always open directly."
-msgstr "Проверяет набор тест-сервисов (YouTube, Discord, Telegram, Google AI, OpenAI…) через ваши реальные пути: НАПРЯМУЮ (с DNS-картинкой обычного резолвера) и через Основной узел. Вердикты подсказывают, что нуждается в правиле прокси, что — в стратегии Zapret/ByeDPI, а что — в защите от DNS-подмены. RU-сервисы (rutube, gosuslugi) — контрольные: они обязаны открываться напрямую."
+msgid "The page opens; the model goes through the configured node (→ %s). If the model refuses — check other nodes (the button in the Google AI check result below)."
+msgstr "Страница открывается; модель идёт через настроенный узел (→ %s). При отказе модели — проверьте другие узлы (кнопка в результате проверки Google AI ниже)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The page opens; the model goes through the configured routing. If the model refuses — check other nodes or run the full check below (Services → exits)."
+msgstr "Страница открывается; модель идёт через настроенную маршрутизацию. При отказе модели — проверьте другие узлы или запустите полную проверку ниже (Сервисы → выходы)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Covered by the mass list (%s) — it opens via the main node; a rule here overrides the list."
+msgstr "Покрыт массовым списком (%s) — открывается через основной узел; отдельное правило здесь перекрывает список."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Voice calls (UDP) are not measured by an HTTP probe."
+msgstr "Голосовые звонки (UDP) HTTP-пробой не измеряются."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Page probe only — streaming quality is not measured."
+msgstr "Проба только страницы — качество стриминга не измеряется."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "geo-blocked"
+msgstr "гео-блок"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8202,18 +8227,53 @@ msgstr "Сбой генерации конфига — продолжает де
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Bulk lists"
-msgstr "Объёмные списки"
+msgid "The mass lists below already cover YouTube/Discord/Telegram and most blocked resources — a per-service rule overrides the mass list."
+msgstr "Массовые списки ниже уже покрывают YouTube/Discord/Telegram и большинство заблокированных ресурсов — сервисное правило перекрывает массовый список."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Russia Inside: %s · Re-filter: %s"
-msgstr "Russia Inside: %s · Re-filter: %s"
+msgid "Mass lists"
+msgstr "Массовые списки"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "These lists already cover YouTube/Discord/Telegram and most blocked resources — presets below add per-service overrides."
-msgstr "Эти списки уже покрывают YouTube/Discord/Telegram и большинство заблокированных ресурсов — пресеты ниже добавляют сервисные переопределения."
+msgid "Services"
+msgstr "Сервисы"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "CDN and hosting"
+msgstr "CDN и хостинги"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Other"
+msgstr "Прочее"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Russia Inside"
+msgstr "Russia Inside"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Re-filter"
+msgstr "Re-filter"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Covered by the mass list (%s) → %s — a rule here overrides the list."
+msgstr "Покрыт массовым списком (%s) → %s — отдельное правило здесь перекрывает список."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Telegram: MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs. Live probes (2026-10-18): 443 to some DCs is cut by the provider even through a node — the apps fall back to working ranges/ports on their own; port 80 stays open."
+msgstr "Telegram: диапазоны MTProto DC матчатся и IP-правилом — правило здесь маршрутизирует и домены, и IP DC-ов. Живые пробы (2026-10-18): 443 к части DC режется провайдером даже через узел — приложения сами переключаются на рабочие диапазоны/порты; порт 80 открыт."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "For a resilient secondary route pick a pool of at least 2 nodes."
+msgstr "Для страхуемости дополнительного маршрута выбирайте пул минимум из 2 узлов."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8237,8 +8297,78 @@ msgstr "OpenAI (ChatGPT)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "No dedicated list — OpenAI domains ride the main path / Re-filter. This button only checks whether the current exit region is accepted."
-msgstr "Отдельного списка нет — домены OpenAI едут через основной путь / Re-filter. Кнопка лишь проверяет, принимает ли текущий регион выхода сервис."
+msgid "Claude / Anthropic"
+msgstr "Claude / Anthropic"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "WhatsApp"
+msgstr "WhatsApp"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Twitch"
+msgstr "Twitch"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Games (IP-only)"
+msgstr "Игры (только IP)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Matched by destination IP (no domains) — a rule routes the game networks (launchers, match servers, voice) to the chosen exit."
+msgstr "Матчинг по IP назначения (без доменов) — правило направляет игровые сети (лаунчеры, игровые серверы, голос) на выбранный выход."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Valve / Steam"
+msgstr "Valve / Steam"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Epic Games"
+msgstr "Epic Games"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Riot Games"
+msgstr "Riot Games"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Sony / PlayStation"
+msgstr "Sony / PlayStation"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "EA / Electronic Arts"
+msgstr "EA / Electronic Arts"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Ubisoft"
+msgstr "Ubisoft"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Blizzard"
+msgstr "Blizzard"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Nintendo"
+msgstr "Nintendo"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Wargaming"
+msgstr "Wargaming"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Xbox"
+msgstr "Xbox"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8317,8 +8447,8 @@ msgstr "Нужен прокси — создайте правило"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Needs Zapret/ByeDPI strategy"
-msgstr "Нужна стратегия Zapret/ByeDPI"
+msgid "Provider cuts the path (DPI)"
+msgstr "Провайдер режет путь (DPI)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8327,8 +8457,18 @@ msgstr "Подмена DNS (фальшивые ответы)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Service refuses the exit node"
-msgstr "Сервис отвергает узел-выход"
+msgid "Blocked on the remote side (geo)"
+msgstr "Недоступен на удалённой стороне (гео-блок)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Cut on both sides (provider + remote)"
+msgstr "Режет с обеих сторон (провайдер + удалённая)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The service refuses the exit node region"
+msgstr "Сервис отвергает регион узла-выхода"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8392,8 +8532,8 @@ msgstr "Транспортная ошибка"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Secure DNS (MultiDNS) usually fixes this; a routing rule also helps"
-msgstr "Обычно лечится защищённым DNS (MultiDNS); также помогает правило маршрутизации"
+msgid "The provider tampers with DNS — Secure DNS (MultiDNS/DoH) usually fixes it"
+msgstr "Провайдер подменяет DNS — обычно лечится защищённым DNS (MultiDNS/DoH)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -8402,13 +8542,23 @@ msgstr "Создайте правило на вкладке «Сервисы →
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Pick a working Zapret/ByeDPI strategy (Strategy Lab)"
-msgstr "Подберите рабочую стратегию Zapret/ByeDPI (Лаборатория стратегий)"
+msgid "The provider cuts the path (DPI) — pick a working Zapret/ByeDPI strategy (Strategy Lab)"
+msgstr "Провайдер режет путь (DPI) — подберите рабочую стратегию Zapret/ByeDPI (Лаборатория стратегий)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Switch to a different node — the service refuses this exit region"
-msgstr "Смените узел — сервис отвергает регион этого выхода"
+msgid "Blocked on the remote side (geo) — a node in a supported region fixes it"
+msgstr "Недоступен на удалённой стороне (гео-блок) — поможет узел в поддерживаемом регионе"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Cut on both sides — a node in a supported region; the path to it may also need a working strategy"
+msgstr "Режет с обеих сторон — нужен узел в поддерживаемом регионе; путь к нему может потребовать рабочей стратегии"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The service refuses this exit region — switch to another node (full check: the \"Google AI\" button below)"
+msgstr "Сервис отвергает регион этого выхода — смените узел (полная проверка: кнопка «Google AI» ниже)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -9488,8 +9638,8 @@ msgstr "Страницы открываются, но запрос к модел
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Checks a set of test services (YouTube, Discord, Telegram, Google AI, OpenAI…) through your real paths: DIRECT with a plain-resolver DNS view, through the Main node, and through your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini \"something went wrong\") is not either. The \"Configured\" column shows which rule already covers each resource; RU services (rutube, gosuslugi) are control hosts — they must always open directly."
-msgstr "Проверяет набор тест-сервисов (YouTube, Discord, Telegram, Google AI, OpenAI…) по вашим реальным путям: НАПРЯМУЮ с DNS-вью плоского резолвера, через Главный узел и через НАСТРОЕННУЮ маршрутизацию (правила, выученные списки и десинк Zapret/ByeDPI) — так, как реально обслуживаются клиенты LAN. Ответ, у которого цепочка редиректов оборвана посреди пути, — не успех, как и 200 с отказом на уровне приложения (гео, «что-то пошло не так» у Gemini). Колонка «Настроено» показывает, какое правило уже покрывает ресурс; RU-сервисы (rutube, gosuslugi) — контрольные хосты, они обязаны открываться напрямую."
+msgid "Checks a set of test services (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) through your real paths. The VERDICT speaks about your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served; the Direct column is reference: it shows whether the resource could open with no VPN at all. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini \"something went wrong\") is not either. When a refusal is about the remote region rather than the local provider, the verdict says so (geo-block) — a routing strategy cannot fix a region refusal, a node with a supported region can. RU services (rutube, gosuslugi) are control hosts — they must always open directly."
+msgstr "Проверяет набор тест-сервисов (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) по вашим реальным путям. ВЕРДИКТ говорит о НАСТРОЕННОЙ маршрутизации (правила, выученные списки и десинк Zapret/ByeDPI) — так, как реально обслуживаются клиенты LAN; колонка Direct — справочная: она показывает, открылся бы ресурс вовсе без VPN. Ответ, у которого цепочка редиректов оборвана посреди пути, — не успех, как и 200 с отказом на уровне приложения (гео, «что-то пошло не так» у Gemini). Если отказ связан с удалённым регионом, а не с локальным провайдером, вердикт так и говорит (гео-блок) — стратегия маршрутизации регион не починит, починит узел в поддерживаемом регионе. RU-сервисы (rutube, gosuslugi) — контрольные хосты, они обязаны открываться напрямую."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -9520,3 +9670,48 @@ msgstr "свои опции"
 
 msgid "RU: %d · Secure: %d"
 msgstr "RU: %d · Secure: %d"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Check other nodes"
+msgstr "Проверить другие узлы"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Checking every node against the Google AI region gate (about 20 s)…"
+msgstr "Проверяю каждый узел регион-гейтом Google AI (около 20 с)…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Google AI — candidate nodes (one API probe per node):"
+msgstr "Google AI — узлы-кандидаты (одна API-проба на узел):"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "current node"
+msgstr "текущий узел"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "unreachable"
+msgstr "недостижим"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "No nodes found in the running config."
+msgstr "В работающем конфиге не найдено узлов."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Some nodes were not checked (limit 12)."
+msgstr "Некоторые узлы не проверены (лимит 12)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "To switch the exit: Services → exits → Google AI → pick this node."
+msgstr "Чтобы сменить выход: Сервисы → выходы → Google AI → выберите этот узел."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Node check failed: "
+msgstr "Проверка узлов не удалась: "

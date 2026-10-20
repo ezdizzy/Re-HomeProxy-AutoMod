@@ -1,22 +1,28 @@
 #!/bin/sh
 # Isolated nfqws2 strategy tester.
 #
-# nfqws2 is a packet mangler (NFQUEUE), not a proxy, so it can't be probed
-# "through" like ByeDPI's SOCKS port. Instead we queue ONLY the resolved
-# test-site IPs to a TEMP NFQUEUE running the candidate strategy, probe the TLS
-# handshake with curl, and tear everything down via a trap — without disturbing
-# the live homeproxy queue (qnum 200) or other traffic.
+# nfqws2 is a packet mangler (NFQUEUE), not a SOCKS proxy: queue ONLY the
+# resolved test-site IPs to a TEMP NFQUEUE running the candidate strategy,
+# probe the TLS handshake with curl, and tear everything down via a trap —
+# without disturbing the live homeproxy queue (qnum 200) or other traffic.
 #
 # Usage:  zapret_test.sh [--baseline] "<strategy opts>" [tag=ip tag=ip …]
-# Output: a single JSON line:  {"ok":N,"total":M,"results":[{tag,label,host,ip,tls,ok,reason},...]}
+# Output: a single JSON line:  {"ok":N,"total":M,"results":[{tag,label,host,ip,tls,ok,reason},…]}
 #
 # Pass signal = curl time_appconnect > 0 (the TLS handshake completed = the desync
-# got the ClientHello past the DPI). HTTP status is irrelevant (a 404 is a pass).
+# got the ClientHello past the DPI). HTTP status is irrelevant.
 #
 # --baseline (ч.70): run the SAME probes WITHOUT any desync (no nfqws2 on the
 # temp queue — NFQUEUE bypass passes packets unchanged when nothing listens).
-# Hosts that pass the baseline cannot measure a strategy (they are not DPI-
-# blocked for this ISP) and must not be credited to it.
+# Hosts that pass without a strategy are not DPI-blocked and cannot credit one.
+#
+# ч.86: probe results are collected by POLLING the r_<tag> files instead of
+# `wait` — the wait-builtin wakeup is unreliable in some spawn contexts (ucode
+# system(cmd, timeout) leaves the child's background-job SIGCHLD handling
+# broken, so wait blocks until the watchdog fires, the trap then deleted the
+# temp dir and the caller got garbage JSON: ip:""/reason:"fail"). Polling is
+# signal-immune. The trap also no longer deletes $TMP — probe results must
+# survive a watchdog teardown so the caller still gets REAL data.
 
 BASELINE=0
 if [ "$1" = "--baseline" ]; then
@@ -25,8 +31,7 @@ if [ "$1" = "--baseline" ]; then
 fi
 
 STRAT="$1"
-IPS_ARG="$2"                   # optional pre-resolved "tag=ip tag=ip …" (full-test
-                               # passes these so 36 candidates don't each re-hit DNS)
+IPS_ARG="$2"                   # optional pre-resolved "tag=ip tag=ip …"
 QNUM=209                       # temp queue, distinct from the live 200
 DMARK=0x40000000               # nfqws2 DESYNC_MARK (its reinjected fakes)
 NFQWS=/opt/zapret2/nfq2/nfqws2
@@ -40,10 +45,11 @@ HOSTS="yt|YouTube|redirector.googlevideo.com tg|Telegram|telegram.org dc|Discord
 
 NFQ_PID=""
 WATCH_PID=""
+
 cleanup() {
 	# nfqws2 daemonizes (so $! is stale) and busybox has no pkill. Match nfqws2 by
 	# process NAME (never the shell/grep itself), then kill only the one on our temp
-	# qnum (sparing the live qnum 200 instance).
+	# qnum (sparing the live qnum=200 instance).
 	for p in $(pgrep nfqws2 2>/dev/null); do
 		tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "qnum=$QNUM" && kill "$p" 2>/dev/null
 	done
@@ -54,28 +60,26 @@ cleanup() {
 		nft delete rule inet fw4 homeproxy_output_redir handle "$hnd" 2>/dev/null
 	done
 	[ -n "$WATCH_PID" ] && kill "$WATCH_PID" 2>/dev/null
-	rm -rf "$TMP" 2>/dev/null
 }
 trap cleanup EXIT INT TERM
 
 fail() { echo "{\"ok\":0,\"total\":0,\"error\":\"$1\"}"; exit 0; }
 
 [ -x "$NFQWS" ] || fail "zapret2 not installed"
-command -v curl >/dev/null 2>&1 || fail "curl not installed"
+command -v curl >/dev/null 2>&1 || fail "curl missing"
 mkdir -p "$TMP" 2>/dev/null
 
-# Watchdog: guarantee teardown within 30s even if curl/nslookup wedges, so the
+# Watchdog: guarantee teardown within 35s even if curl/nslookup wedges, so the
 # live firewall is never left modified (busybox has no `timeout` applet).
 # Redirect its fds to /dev/null: otherwise the backgrounded `sleep` keeps the
-# caller's stdout pipe open and rpcd/popen blocks on read() for the full 30s
-# (the result is ready in ~2s — the watchdog just held the pipe).
-( sleep 30; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
+# caller's stdout pipe open and rpcd/popen blocks on read() for the full span.
+( sleep 35; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
 WATCH_PID=$!
 
 # 1. Test-host IPs — BEFORE touching the firewall, so a slow resolver never runs
-#    while the redirect is modified. Prefer IPs passed in via "$2" (the full-test
-#    sweep resolves ONCE up front via zapret_resolve.sh and reuses them for every
-#    candidate); fall back to resolving here for a standalone call.
+#    while the redirect is modified. Prefer IPs passed in via "$2" (the fuzzer's
+#    full sweep resolves ONCE up front via zapret_resolve.sh); fall back to
+#    resolving here for a standalone call.
 IPSET=""
 if [ -n "$IPS_ARG" ]; then
 	for kv in $IPS_ARG; do
@@ -85,7 +89,7 @@ if [ -n "$IPS_ARG" ]; then
 	done
 else
 	for h in $HOSTS; do
-		tag=${h%%|*}; host=${h##*|}
+		tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
 		ip=$(nslookup "$host" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^127\.' | tail -1)
 		echo "$ip" > "$TMP/ip_$tag"
 		[ -n "$ip" ] && IPSET="$IPSET$ip,"
@@ -96,7 +100,7 @@ IPSET=$(echo "$IPSET" | sed 's/[[:space:]]//g; s/,$//')
 
 # 2. Surgically send ONLY the test IPs' TCP/443 direct (return from output_redir,
 #    so router-origin curl egresses direct where our temp queue can catch it).
-#    Everything else stays redirected. Tagged with a comment for clean teardown.
+#    Tagged with a comment for clean teardown.
 if nft list chain inet fw4 homeproxy_output_redir >/dev/null 2>&1; then
 	nft insert rule inet fw4 homeproxy_output_redir ip daddr "{ $IPSET }" tcp dport 443 counter return comment "\"$CMT\"" 2>/dev/null
 fi
@@ -110,8 +114,7 @@ nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy
 nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 
 # 4. Start the candidate nfqws2 on the temp queue (skipped in --baseline mode:
-#    with no queue listener the NFQUEUE bypass flag lets packets through
-#    untouched, giving the no-desync reference run).
+#    no queue listener = packets pass unchanged = pure baseline).
 if [ "$BASELINE" != "1" ]; then
 	$NFQWS --qnum=$QNUM --user=daemon --fwmark=$DMARK $LUA $STRAT >/dev/null 2>&1 &
 	NFQ_PID=$!
@@ -119,23 +122,31 @@ if [ "$BASELINE" != "1" ]; then
 	pgrep -f "qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 did not start - check strategy"
 fi
 
-# 5. Probe every host in parallel: curl forced to the resolved IP (keeps SNI),
-#    write "time_appconnect curl_exit". Wait ONLY on the curl jobs — a bare `wait`
-#    would also block on the 30s watchdog child.
-CPIDS=""
+# 5. Probe every host in parallel: curl forced to the resolved IP, write
+#    "time_appconnect curl_exit". Collect by POLLING the r_<tag> files
+#    (signal-immune; each curl is capped by --max-time 10, so 25s is a ceiling).
 for h in $HOSTS; do
-	tag=${h%%|*}; host=${h##*|}
+	tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
 	ip=$(cat "$TMP/ip_$tag" 2>/dev/null)
 	if [ -z "$ip" ]; then echo "0 6" > "$TMP/r_$tag"; continue; fi
 	( out=$(curl -s --resolve "${host}:443:${ip}" -o /dev/null -w '%{time_appconnect}' --connect-timeout 4 --max-time 10 "https://${host}" 2>/dev/null); echo "$out $?" > "$TMP/r_$tag" ) >/dev/null 2>&1 &
-	CPIDS="$CPIDS $!"
 done
-[ -n "$CPIDS" ] && wait $CPIDS
+n=0
+while [ "$n" -lt 25 ]; do
+	all=1
+	for h in $HOSTS; do
+		tag=${h%%|*}
+		[ -s "$TMP/r_$tag" ] || all=0
+	done
+	[ "$all" = 1 ] && break
+	sleep 1
+	n=$((n + 1))
+done
 
-# 6. Build JSON.
+# 6. Build JSON (the temp dir survives watchdog teardowns now).
 JSON=""; OKC=0; TOT=0
 for h in $HOSTS; do
-	tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest##*|}
+	tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
 	ip=$(cat "$TMP/ip_$tag" 2>/dev/null)
 	raw=$(cat "$TMP/r_$tag" 2>/dev/null); tls=${raw%% *}; rc=${raw##* }
 	TOT=$((TOT+1))
@@ -150,3 +161,4 @@ for h in $HOSTS; do
 done
 
 echo "{\"ok\":$OKC,\"total\":$TOT,\"results\":[$JSON]}"
+rm -rf "$TMP" 2>/dev/null

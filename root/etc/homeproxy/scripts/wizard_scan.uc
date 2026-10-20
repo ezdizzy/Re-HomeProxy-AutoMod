@@ -41,12 +41,18 @@
  *     supported regions) turn an HTTP success into a refusal.
  *   - transport failures classify by curl rc (tls_dpi/tcp/timeout/resolve).
  *
- * Verdicts (per host): opens_direct / works_live / needs_proxy /
+ * Verdicts (per host, Ф8-W2): opens_direct / works_live / needs_proxy /
  * needs_strategy / dns_poison / geo_blocked / main_path_fail /
  * config_broken / control_fail / down / partial / unknown.
- *   works_live — the LIVE configured path opens the resource (the main
- *   user-facing "it works" state; the Direct column explains why it must
- *   go through the rules).
+ *   The verdict is about the CONFIGURED path (live probe first); the direct
+ *   probe is the reference column. works_live — the LIVE configured path
+ *   opens the resource (the main user-facing "it works" state); when the
+ *   client knows the rule for the service it reads "works via the configured
+ *   path (→ node)".
+ *   geo_blocked carries geo_side: 'remote' (the service refuses the RU
+ *   region — node with a supported region fixes it), 'both' (refused from
+ *   both sides), 'exit' (the configured exit node's region is refused —
+ *   switch the node).
  *   config_broken — both bare paths work but the LIVE configured path
  *   fails: the rule/strategy points the wrong way.
  *
@@ -86,20 +92,26 @@ const PROBE_TMO   = 7;      /* curl --max-time seconds */
 const LIVE_TMO    = 9;      /* live-path probe (router output rules) */
 const SLOW_SEC    = 2.0;    /* a working path slower than this hints throttling */
 
-/* Test corpus. svc feeds the recommendation text; ru_control hosts must NEVER
- * be recommended for proxying (RU services flag VPN exits, RU-protect keeps
- * them direct) — a failed control host is an internet/RU-protect anomaly. */
+/* Test corpus (Ф8-W2, R4). svc feeds the recommendation text; ru_control hosts
+ * must NEVER be recommended for proxying (RU services flag VPN exits, RU-protect
+ * keeps them direct) — a failed control host is an internet/RU-protect anomaly.
+ * New svc groups: whatsapp (WhatsApp web), anthropic (Claude web + API),
+ * twitch (streaming — the HTTP probe sees the page, not the video stream). */
 const CORPUS = [
 	{ host: 'www.youtube.com',      svc: 'youtube' },
 	{ host: 'i.ytimg.com',          svc: 'youtube' },
 	{ host: 'discord.com',          svc: 'discord' },
 	{ host: 'gateway.discord.gg',   svc: 'discord' },
 	{ host: 'web.telegram.org',     svc: 'telegram' },
+	{ host: 'web.whatsapp.com',     svc: 'whatsapp' },
 	{ host: 'gemini.google.com',    svc: 'google_ai' },
 	{ host: 'chatgpt.com',          svc: 'openai' },
 	{ host: 'api.openai.com',       svc: 'openai' },
+	{ host: 'claude.ai',            svc: 'anthropic' },
+	{ host: 'api.anthropic.com',    svc: 'anthropic' },
 	{ host: 'x.com',                svc: 'twitter' },
 	{ host: 'instagram.com',        svc: 'meta' },
+	{ host: 'www.twitch.tv',        svc: 'twitch' },
 	{ host: 'rutube.ru',            svc: 'ru_control' },
 	{ host: 'gosuslugi.ru',         svc: 'ru_control' }
 ];
@@ -533,7 +545,12 @@ for (let item in hosts) {
 		res.dns_poison = !via_router.ok;
 	}
 
-	/* ── Verdict ── */
+	/* ── Verdict (Ф8-W2 taxonomy, 13-RESEARCH §12) ──
+	 * The verdict is about the CONFIGURED path; the direct probe is the
+	 * reference. Geo verdicts carry geo_side: 'remote' (the service refuses
+	 * the RU region — a node with a supported region fixes it), 'both'
+	 * (provider + remote), 'exit' (the configured exit node's region is
+	 * refused — switch the node). Recommendation order: direct > DPI > node. */
 	const d_ok = !!(res.direct && res.direct.ok);
 	const p_ok = !!(res.proxy && res.proxy.ok);
 	const l_ok = !!(res.live && res.live.ok);
@@ -552,16 +569,36 @@ for (let item in hosts) {
 		/* The configured exit is on the Google AI blocklist — no routing
 		 * rule inside the app can fix a region refusal. */
 		res.verdict = 'geo_blocked';
+		res.geo_side = 'exit';
 	} else if (res.api_geo && res.api_geo.geo_refused) {
 		/* The configured exit is refused by the Google AI API — a node
 		 * problem no routing rule inside the app can fix. */
 		res.verdict = 'geo_blocked';
+		res.geo_side = 'exit';
 	} else if (l_ok) {
-		/* The configured routing delivers the resource — the honest "works". */
+		/* The configured routing delivers the resource — the honest "works".
+		 * When a rule points at a node the UI shows it as "works via the
+		 * configured path (→ node)"; the bare opens_direct stays for the
+		 * no-rule case (the client remaps with the rule info). */
 		res.verdict = d_ok ? 'opens_direct' : 'works_live';
 	} else if (!direct_in && !proxy_in && !mixed_in) {
 		/* Custom mode: only the live path was measurable. */
 		res.verdict = 'down';
+	} else if (d_geo && p_geo) {
+		/* Refused by region from BOTH sides — the provider is not the main
+		 * problem (the path is open both ways); the exit region decides. */
+		res.verdict = 'geo_blocked';
+		res.geo_side = 'both';
+	} else if (p_geo) {
+		/* Direct is fine, the probed exit (main node) region is refused —
+		 * switch the node. */
+		res.verdict = 'geo_blocked';
+		res.geo_side = 'exit';
+	} else if (d_geo) {
+		/* The path is open but the service refuses the RU region — a node
+		 * with a supported region fixes it. */
+		res.verdict = 'geo_blocked';
+		res.geo_side = 'remote';
 	} else if (d_ok && p_ok) {
 		/* Bare paths work but the configured path does not: the rule or the
 		 * strategy points the wrong way. */
@@ -577,9 +614,7 @@ for (let item in hosts) {
 		else
 			res.verdict = 'needs_proxy';
 	} else if (!d_ok && !p_ok) {
-		if (d_geo && p_geo)
-			res.verdict = 'geo_blocked';
-		else if ((res.direct.kind === 'tls_dpi') || (res.proxy && res.proxy.kind === 'tls_dpi'))
+		if ((res.direct.kind === 'tls_dpi') || (res.proxy && res.proxy.kind === 'tls_dpi'))
 			res.verdict = 'needs_strategy';
 		else
 			res.verdict = 'down';
@@ -596,7 +631,10 @@ for (let item in hosts) {
 	case 'dns_poison':     res.recommend = 'dns'; break;
 	case 'needs_proxy':    res.recommend = 'rule'; break;
 	case 'needs_strategy': res.recommend = 'strategy'; break;
-	case 'geo_blocked':    res.recommend = 'node'; break;
+	case 'geo_blocked':
+		res.recommend = (res.geo_side === 'exit') ? 'node_exit'
+			: (res.geo_side === 'both') ? 'node_both' : 'node';
+		break;
 	case 'main_path_fail': res.recommend = 'main_path'; break;
 	case 'config_broken':  res.recommend = 'config_broken'; break;
 	case 'control_fail':   res.recommend = 'anomaly'; break;
