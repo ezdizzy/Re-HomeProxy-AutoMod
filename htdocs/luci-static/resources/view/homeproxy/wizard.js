@@ -179,6 +179,35 @@ const callFuzzApply = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф8-F4: Composition Builder v2 — server-side build/test/apply. Apply
+ * snapshots the previous strategies on the SERVER, so the rollback button
+ * reads the snapshot back on every page load (no JS-memory rollback). */
+const callComposeRun = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_compose_run',
+	params: [ 'profiles' ],
+	expect: { '': {} }
+});
+
+const callComposeStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_compose_status',
+	expect: { '': {} }
+});
+
+const callComposeApply = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_compose_apply',
+	params: [ 'zapret', 'byedpi' ],
+	expect: { '': {} }
+});
+
+const callComposeRollback = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_compose_rollback',
+	expect: { '': {} }
+});
+
 /* ── Telegram bot v2 (Ф6): settings/status/test — on demand (D6) ────────── */
 
 const callTelegramStatus = rpc.declare({
@@ -1160,7 +1189,12 @@ return view.extend({
 		/* ── Presets rendering ─────────────────────────────────────────── */
 		const state = { data: null, pendingCheck: null, presetsSig: null, scanSig: null,
 			dpiSig: null, stratSig: null, fuzzSig: null, corpusSig: null, prevSig: null,
-			dpiPendingCheck: null };
+			dpiPendingCheck: null,
+			/* Ф8-F4 composition builder: session-local profile draft (the
+			 * APPLIED state lives on the server), the built args of the last
+			 * server test, poll signatures. */
+			compProfiles: [ { engine: 'zapret', resource: 'youtube', domains: '', strategy: '' } ],
+			compBuilt: null, composeSig: null, composeSeeded: false, rbSig: null };
 
 		function nodeText(node) {
 			if (node === 'main-out') return _('Same as main node');
@@ -1642,7 +1676,13 @@ return view.extend({
 			[ _('The strategy applies to every flow routed to Zapret (no hostlists — the routing rules select the traffic). Applying also enables Zapret and restarts the service; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest).') ]));
 
 		function renderStrategySel(cands) {
+			state.cands = cands || [];
 			const sig = JSON.stringify((cands || []).map(function(c) { return c.name; }));
+			if (sig !== state.stratSig) {
+				/* Corpus changed (first poll included): rebuild the composition
+				 * rows so their catalog selects pick up the candidates. */
+				renderCompProfiles();
+			}
 			if (sig === state.stratSig)
 				return;
 			state.stratSig = sig;
@@ -1735,168 +1775,378 @@ return view.extend({
 			});
 		});
 
-		/* ── W3: Composition Builder — stack multiple nfqws2 profiles ──── */
-		/* nfqws2 supports multi-profile strategies: blocks separated by
-		 * `--new` run as independent profiles (first-match wins). The builder
-		 * joins catalog entries or raw args into one `cmd_opts` string, tests
-		 * the whole composition on the isolated queue, and applies it. */
-		const compList = E('div', { 'class': 'wiz-note', style: 'margin:0' }, [ _('(empty — add strategies below)') ]);
-		const compAddBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Add to composition') ]);
+		/* ── W3 v2 (Ф8-F4): Composition Builder — per-resource profiles of
+		 * BOTH engines, built and tested on the SERVER. The old client-side
+		 * string-join (and its JS-memory-only rollback) is gone: the server
+		 * builds the final args, tests them (Zapret on the isolated queue,
+		 * ByeDPI through the local tester), and apply snapshots the previous
+		 * strategies server-side — Restore survives page reloads. ──── */
+		const COMP_RESOURCES = [
+			[ 'youtube', 'YouTube' ],
+			[ 'discord', 'Discord' ],
+			[ 'telegram', _('Telegram (TLS)') ],
+			[ 'general', _('General (catch-all)') ],
+			[ 'custom', _('Custom list') ]
+		];
+		const FUZZ_TAGS = [ [ 'yt', 'YouTube' ], [ 'tg', 'Telegram' ],
+			[ 'dc', 'Discord' ], [ 'st', 'Speedtest' ] ];
+
+		const compRowsBox = E('div', { id: 'wiz-comp-rows', style: 'margin:2px 0 6px 0' });
+		const compAddBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Add profile') ]);
 		const compTestBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Test composition') ]);
 		const compApplyBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', type: 'button' }, [ _('Apply composition') ]);
 		const compClearBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Clear') ]);
-		const compRow = E('div', { 'class': 'wiz-row' },
-			[ E('span', { 'class': 'wiz-title' }, [ _('Composition') ]), compList ]);
-		const compBtnRow = E('div', { 'class': 'wiz-toolbar' },
-			[ compAddBtn, compTestBtn, compApplyBtn, compClearBtn ]);
-		dpiStrategy.appendChild(compRow);
-		dpiStrategy.appendChild(compBtnRow);
+		const restoreRow = E('div', { 'class': 'wiz-note', style: 'margin:4px 0' }, [ '' ]);
+		dpiStrategy.appendChild(E('div', { 'class': 'wiz-row' },
+			[ E('span', { 'class': 'wiz-title' }, [ _('Composition') ]) ]));
+		dpiStrategy.appendChild(compRowsBox);
+		dpiStrategy.appendChild(E('div', { 'class': 'wiz-toolbar' },
+			[ compAddBtn, compTestBtn, compApplyBtn, compClearBtn ]));
+		dpiStrategy.appendChild(restoreRow);
 		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('Stack multiple strategies: pick one from the catalog (or type args), press "Add to composition", repeat, then "Test composition". Blocks are joined with --new (first match wins); nfqws2 runs them as independent profiles.') ]));
+			[ _('Profiles are matched in order (first match wins): scoped profiles run first, the general profile last. The server builds the final args, tests them on the isolated queue (Zapret) and through the local tester (ByeDPI); applying snapshots the previous strategies on the server, so Restore survives page reloads. ByeDPI scoped profiles are exact-domain and TCP-only (SNI in TLS-CHello/HTTP); QUIC/UDP is not domain-scoped and falls to the fallback group.') ]));
 
-		function renderCompList() {
-			compList.innerHTML = '';
-			if (!state.comp || !state.comp.length) {
-				compList.appendChild(E('span', { style: 'opacity:.6' },
-					[ _('(empty — add strategies below)') ]));
+		function compCandidateByArgs(args) {
+			const cands = state.cands || [];
+			for (let i = 0; i < cands.length; i++)
+				if (cands[i].args === args)
+					return cands[i];
+			return null;
+		}
+
+		function fuzzHintText(c) {
+			if (!c || !c.fuzz)
+				return _('No fuzz data for this strategy yet.');
+			const parts = [];
+			for (let t in FUZZ_TAGS)
+				if (c.fuzz[FUZZ_TAGS[t][0]] != null)
+					parts.push(FUZZ_TAGS[t][1] + (c.fuzz[FUZZ_TAGS[t][0]] ? ' ✓' : ' ✗'));
+			return parts.length ? (_('Last fuzz:') + ' ' + parts.join(' · '))
+				: _('No fuzz data for this strategy yet.');
+		}
+
+		function buildCompRow(p, idx) {
+			const engSel = E('select', { 'class': 'cbi-input-select', 'style': 'min-width:118px' });
+			engSel.appendChild(E('option', { value: 'zapret' }, [ 'Zapret (nfqws2)' ]));
+			engSel.appendChild(E('option', { value: 'byedpi' }, [ 'ByeDPI (ciadpi)' ]));
+			engSel.value = p.engine || 'zapret';
+			engSel.addEventListener('change', function() {
+				p.engine = engSel.value;
+				renderCompProfiles();
+			});
+
+			const resSel = E('select', { 'class': 'cbi-input-select', 'style': 'min-width:132px' });
+			for (let r in COMP_RESOURCES)
+				resSel.appendChild(E('option', { value: COMP_RESOURCES[r][0] }, [ COMP_RESOURCES[r][1] ]));
+			resSel.value = p.resource || 'general';
+			resSel.addEventListener('change', function() {
+				p.resource = resSel.value;
+				renderCompProfiles();
+			});
+
+			const domTitle = _('Domains: a.com, b.com (comma or space separated)');
+			const domInput = E('input', {
+				type: 'text', 'class': 'cbi-input-text', 'style': 'max-width:250px',
+				placeholder: domTitle, title: domTitle
+			});
+			domInput.value = p.domains || '';
+			domInput.addEventListener('change', function() {
+				p.domains = String(domInput.value || '');
+			});
+
+			const stratSel = E('select', { 'class': 'cbi-input-select wiz-select', 'style': 'min-width:190px' });
+			stratSel.appendChild(E('option', { value: '' }, [ _('— pick from the catalog —') ]));
+			const cands = state.cands || [];
+			for (let g in DPI_GROUPS) {
+				const og = E('optgroup', { label: DPI_GROUPS[g][1] });
+				for (let c in cands)
+					if ((cands[c].group || 'recommended') === DPI_GROUPS[g][0])
+						og.appendChild(E('option', { value: String(cands[c].args) }, [ cands[c].name ]));
+				if (og.children.length)
+					stratSel.appendChild(og);
+			}
+			stratSel.value = (p.strategy && p.strategy.indexOf('--') === 0) ? '' : (p.strategy || '');
+			stratSel.addEventListener('change', function() {
+				if (stratSel.value)
+					p.strategy = stratSel.value;
+				renderCompProfiles();
+			});
+
+			const stratInput = E('input', {
+				type: 'text', 'class': 'cbi-input-text wiz-strat',
+				placeholder: (p.engine === 'byedpi') ? 'ciadpi args, e.g. --disorder 1'
+					: 'nfqws2 --lua-desync=… args (or pick from the catalog)'
+			});
+			stratInput.value = p.strategy || '';
+			stratInput.addEventListener('change', function() {
+				p.strategy = String(stratInput.value || '').trim();
+				renderCompProfiles();
+			});
+
+			const hint = E('div', { 'class': 'wiz-note', 'style': 'margin:0' }, [ '' ]);
+			const eng = p.engine || 'zapret';
+			const res = p.resource || 'general';
+			let hintText;
+			if (res === 'general')
+				hintText = _('Catch-all — keep it last; unmatched traffic lands here.');
+			else if (res === 'custom')
+				hintText = _('Exact domains from your list; a general profile must follow.');
+			else if (eng === 'byedpi')
+				hintText = _('Exact domains, TCP only (SNI in TLS-CHello/HTTP); QUIC/UDP is not scoped.');
+			else
+				hintText = _('Limited to the resource domains (--hostlist-domains).');
+			hint.appendChild(E('span', { 'style': 'opacity:.7' }, [ hintText ]));
+			if (eng === 'zapret' && p.strategy && p.strategy.indexOf('--') === 0) {
+				hint.appendChild(document.createTextNode(' · '));
+				hint.appendChild(E('span', { 'style': 'opacity:.7' },
+					[ fuzzHintText(compCandidateByArgs(p.strategy)) ]));
+			}
+
+			const rm = E('button', { 'class': 'btn cbi-button', type: 'button',
+				'style': 'padding:0 6px', title: _('Remove') }, [ '×' ]);
+			rm.addEventListener('click', function() {
+				state.compProfiles.splice(idx, 1);
+				renderCompProfiles();
+			});
+
+			const row = E('div', { 'class': 'wiz-row', 'style': 'align-items:flex-start;margin:3px 0' });
+			row.appendChild(E('b', { style: 'min-width:20px;opacity:.6' }, [ '#' + (idx + 1) ]));
+			row.appendChild(engSel);
+			row.appendChild(resSel);
+			if (res === 'custom')
+				row.appendChild(domInput);
+			if (eng === 'zapret')
+				row.appendChild(stratSel);
+			row.appendChild(stratInput);
+			row.appendChild(rm);
+			return E('div', { style: 'margin:2px 0' }, [
+				row,
+				E('div', { style: 'margin-left:22px' }, [ hint ])
+			]);
+		}
+
+		function renderCompProfiles() {
+			compRowsBox.innerHTML = '';
+			if (!state.compProfiles.length) {
+				compRowsBox.appendChild(E('span', { 'style': 'opacity:.6' },
+					[ _('(empty — add a profile)') ]));
 				return;
 			}
-			state.comp.forEach(function(s, i) {
-				const item = E('span', {
-					style: 'display:inline-flex;align-items:center;gap:4px;margin-right:10px;white-space:nowrap'
-				}, [
-					E('b', {}, [ '#' + (i + 1) + ' ' ]),
-					E('span', { title: s }, [ shortStrategy(s, 60) ]),
-					E('button', {
-						'class': 'btn cbi-button', type: 'button', style: 'padding:0 4px',
-						title: _('Remove')
-					}, [ '×' ])
-				]);
-				item.querySelector('button').addEventListener('click', function() {
-					state.comp.splice(i, 1);
-					renderCompList();
-				});
-				compList.appendChild(item);
-			});
+			for (let i = 0; i < state.compProfiles.length; i++)
+				compRowsBox.appendChild(buildCompRow(state.compProfiles[i], i));
 		}
-		renderCompList();
+		renderCompProfiles();
 
 		compAddBtn.addEventListener('click', function() {
-			const s = String(stratInput.value || '').trim();
-			if (!s) {
-				ui.addNotification(null, E('p', {}, _('No strategy set — pick one from the catalog or enter the options first.')), 'error');
+			if (state.compProfiles.length >= 8) {
+				ui.addNotification(null, E('p', {}, _('Too many profiles (max 8).')), 'error');
 				return;
 			}
-			state.comp = state.comp || [];
-			if (state.comp.indexOf(s) === -1) {
-				state.comp.push(s);
-				renderCompList();
-			}
+			state.compProfiles.push({ engine: 'zapret', resource: 'youtube', domains: '', strategy: '' });
+			renderCompProfiles();
 		});
 
 		compClearBtn.addEventListener('click', function() {
-			state.comp = [];
-			renderCompList();
+			state.compProfiles = [];
+			renderCompProfiles();
 		});
 
 		compTestBtn.addEventListener('click', function() {
-			if (!state.comp || !state.comp.length) {
-				ui.addNotification(null, E('p', {}, _('Composition is empty — add at least one strategy.')), 'error');
+			if (!state.compProfiles.length) {
+				ui.addNotification(null, E('p', {}, _('Composition is empty — add at least one profile.')), 'error');
 				return;
 			}
-			const s = state.comp.join(' --new ');
 			compTestBtn.disabled = true;
-			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ _('Testing composition…') ]));
-			L.resolveDefault(callZapretResolve(), {}).then(function(ret) {
-				let d = {};
-				try { d = JSON.parse(ret.output || '{}'); } catch (e) {}
-				if (!d.ok || !d.ips) {
-					compTestBtn.disabled = false;
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+				[ _('Building and testing the composition on the router…') ]));
+			L.resolveDefault(callComposeRun(state.compProfiles), {}).then(function(r) {
+				compTestBtn.disabled = false;
+				if (!r || r.result === false) {
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ d.error || _('DNS not ready — wait a few seconds after Apply and retry') ]));
+						[ _('Compose failed: ') + ((r && r.error) || _('rpc error')) ]));
 					return;
 				}
-				const ips = Object.keys(d.ips).map(function(k) { return k + '=' + d.ips[k]; }).join(' ');
-				return L.resolveDefault(callZapretTest(s, ips), {}).then(function(ret2) {
-					compTestBtn.disabled = false;
-					let data = {};
-					try { data = JSON.parse(ret2.output || '{}'); } catch (e) {}
-					if (data.error) {
-						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ data.error ]));
-						return;
-					}
-					const box = E('div', {});
+				state.compBuilt = { zapret: r.zapret || '', byedpi: r.byedpi || '' };
+				/* The compose status poll (renderCompose) takes over the
+				 * result area: stage progress first, then the final table. */
+			});
+		});
+
+		compApplyBtn.addEventListener('click', function() {
+			const cb = state.compBuilt || {};
+			if (!cb.zapret && !cb.byedpi) {
+				ui.addNotification(null, E('p', {},
+					_('Run "Test composition" first — Apply uses the server-built args.')), 'error');
+				return;
+			}
+			compApplyBtn.disabled = true;
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+				[ _('Applying composition — the service restarts…') ]));
+			L.resolveDefault(callComposeApply(cb.zapret || '', cb.byedpi || ''), {}).then(function(r) {
+				compApplyBtn.disabled = false;
+				if (!r || r.result === false) {
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
+					return;
+				}
+				const box = E('div', {});
+				box.appendChild(E('p', { 'class': 'hpui-hint' },
+					[ _('Composition applied — the engine(s) are enabled and the service restarts.') ]));
+				const rbBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+					[ _('Restore previous') ]);
+				rbBtn.addEventListener('click', function() {
+					rbBtn.disabled = true;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Restoring the previous strategies — the service restarts…') ]));
+					L.resolveDefault(callComposeRollback(), {}).then(function(r2) {
+						rbBtn.disabled = false;
+						if (!r2 || r2.result === false) {
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Restore failed: ') + ((r2 && r2.error) || _('rpc error')) ]));
+							return;
+						}
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Previous strategies restored — the service restarts.') ]));
+					});
+				});
+				box.appendChild(rbBtn);
+				box.appendChild(E('p', { 'class': 'hpui-hint' },
+					[ _('The same Restore stays available below and after a page reload (server snapshot).') ]));
+				dom.content(dpiResult, box);
+			});
+		});
+
+		/* Compose status poll: progress while running, the final result table
+		 * once — sig-guarded, and the FIRST seen "done" is seeded (lesson 71:
+		 * a stale result from before the page load must not render as fresh). */
+		function renderCompose(data) {
+			const st = (data && data.status) || null;
+			if (!st) return;
+			if (st.running) {
+				state.composeSig = 'run';
+				const txt = (st.stage === 'zapret') ? _('Testing the Zapret part (isolated queue)…')
+					: (st.stage === 'byedpi') ? _('Testing the ByeDPI part (local tester)…')
+					: _('Building and testing the composition on the router…');
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ txt ]));
+				return;
+			}
+			const sig = 'done:' + (st.ts || 0);
+			if (!state.composeSeeded) {
+				state.composeSeeded = true;
+				state.composeSig = sig;
+				return;
+			}
+			if (sig === state.composeSig)
+				return;
+			if (st.stage !== 'done' && st.stage !== 'error')
+				return;
+			state.composeSig = sig;
+			const box = E('div', {});
+			if (st.stage === 'error') {
+				box.appendChild(E('p', { 'class': 'hpui-hint' }, [ (st.error || _('rpc error')) ]));
+				dom.content(dpiResult, box);
+				return;
+			}
+			box.appendChild(E('div', { 'class': 'wiz-note', style: 'font-weight:600' },
+				[ _('Composition test results') ]));
+			(st.notes || []).forEach(function(n) {
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' }, [ '· ' + n ]));
+			});
+			const zt = st.zapret || {};
+			if (zt.args) {
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'margin-top:4px' },
+					[ _('Zapret part (isolated queue):') ]));
+				const t = zt.test;
+				if (!t || t.error) {
 					box.appendChild(E('div', { 'class': 'wiz-note' },
-						[ _('Composition test (joined with --new, isolated queue):') ]));
+						[ (t && t.error) || _('no test data') ]));
+				} else {
 					const row = E('div', { 'class': 'wiz-row' });
-					(data.results || []).forEach(function(r2, i) {
+					(t.results || []).forEach(function(r2, i) {
 						if (i) row.appendChild(document.createTextNode(' · '));
 						row.appendChild(E('span', {
 							style: 'font-weight:600;color:' + (r2.ok ? '#3fbf5f' : '#e05252')
 						}, [ (r2.label || r2.tag) + (r2.ok ? ' ✓ ' + r2.tls + 's' : ' ✗ ' + (r2.reason || 'fail')) ]));
 					});
 					row.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
-						[ '(' + (data.ok || 0) + '/' + (data.total || 0) + ')' ]));
+						[ '(' + (t.ok || 0) + '/' + (t.total || 0) + ')' ]));
 					box.appendChild(row);
-					dom.content(dpiResult, box);
-				});
-			});
-		});
+				}
+			}
+			const bt = st.byedpi || {};
+			if (bt.args) {
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'margin-top:4px' },
+					[ _('ByeDPI part (local tester):') ]));
+				const t = bt.test;
+				if (!t || t.error) {
+					box.appendChild(E('div', { 'class': 'wiz-note' },
+						[ (t && t.error) || _('no test data') ]));
+				} else {
+					const row = E('div', { 'class': 'wiz-row' });
+					(t.results || []).forEach(function(r2, i) {
+						if (i) row.appendChild(document.createTextNode(' · '));
+						row.appendChild(E('span', {
+							style: 'font-weight:600;color:' + (r2.ok ? '#3fbf5f' : '#e05252')
+						}, [ (r2.label || r2.tag) + (r2.ok ? ' ✓ ' + (r2.tls || '') + 's' : ' ✗ ' + (r2.reason || 'fail')) ]));
+					});
+					row.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
+						[ '(' + (t.passed || 0) + '/' + (t.total || 0) + ')' ]));
+					box.appendChild(row);
+				}
+			}
+			box.appendChild(E('details', { style: 'margin-top:4px' }, [
+				E('summary', { style: 'cursor:pointer' }, [ _('Built args') ]),
+				E('pre', { style: 'white-space:pre-wrap;margin:4px 0 0 12px;font-size:.85em' },
+					[ ((zt.args ? ('Zapret: ' + zt.args + '\n') : '') + (bt.args ? ('ByeDPI: ' + bt.args) : '')).trim() ])
+			]));
+			box.appendChild(E('p', { 'class': 'hpui-hint' },
+				[ _('Press "Apply composition" to activate the tested args.') ]));
+			dom.content(dpiResult, box);
+		}
 
-		compApplyBtn.addEventListener('click', function() {
-			if (!state.comp || !state.comp.length) {
-				ui.addNotification(null, E('p', {}, _('Composition is empty — add at least one strategy.')), 'error');
+		/* Persistent Restore row — rendered ONLY from the server snapshot
+		 * (wizard_dpi_status.rollback), so it survives page reloads and also
+		 * covers plain strategy applies. */
+		function renderRollback(prev) {
+			const sig = prev ? JSON.stringify([ prev.ts || 0,
+				prev.zapret && prev.zapret.cmd_opts, prev.zapret && prev.zapret.enabled,
+				prev.byedpi && prev.byedpi.cmd_opts, prev.byedpi && prev.byedpi.enabled ]) : 'none';
+			if (sig === state.rbSig)
+				return;
+			state.rbSig = sig;
+			restoreRow.innerHTML = '';
+			if (!prev || !prev.ts) {
+				restoreRow.appendChild(E('span', { 'style': 'opacity:.6' },
+					[ _('No server snapshot yet — apply a strategy or a composition first.') ]));
 				return;
 			}
-			const s = state.comp.join(' --new ');
-			compApplyBtn.disabled = true;
-			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-				[ _('Applying composition — the service restarts…') ]));
-			/* Capture the LIVE strategy BEFORE applying — the rollback source.
-			 * wizard_dpi_status answers with the running cmd_opts; if it fails
-			 * we fall back to the seeded strategy input (session start value). */
-			L.resolveDefault(callDpiStatus(), {}).then(function(st) {
-				const zst = (st && st.zapret) || {};
-				const prev = zst.strategy || (state.stratInit ? stratInput.value : '');
-				return L.resolveDefault(callFuzzApply(s), {}).then(function(r) {
-					compApplyBtn.disabled = false;
+			const when = new Date(Number(prev.ts) * 1000).toLocaleString();
+			const zopts = (prev.zapret && prev.zapret.cmd_opts) || '';
+			const bopts = (prev.byedpi && prev.byedpi.cmd_opts) || '';
+			const sum = E('span', { title: ((zopts ? 'Zapret: ' + zopts + '\n' : '') +
+				(bopts ? 'ByeDPI: ' + bopts : '')).trim() },
+				[ shortStrategy(zopts || bopts || _('(disabled)'), 80) ]);
+			restoreRow.appendChild(document.createTextNode(_('Server snapshot (%s): ').format(when)));
+			restoreRow.appendChild(sum);
+			const rb = E('button', { 'class': 'btn cbi-button', type: 'button', 'style': 'margin-left:8px' },
+				[ _('Restore') ]);
+			rb.addEventListener('click', function() {
+				rb.disabled = true;
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Restoring the previous strategies — the service restarts…') ]));
+				L.resolveDefault(callComposeRollback(), {}).then(function(r) {
+					rb.disabled = false;
 					if (!r || r.result === false) {
 						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-							[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
+							[ _('Restore failed: ') + ((r && r.error) || _('rpc error')) ]));
 						return;
 					}
-					state.prevStrategy = prev;
-					const box = E('div', {});
-					box.appendChild(E('p', { 'class': 'hpui-hint' },
-						[ _('Composition applied — Zapret enabled, service restarted.') ]));
-					if (prev) {
-						box.appendChild(E('p', { 'class': 'hpui-hint' },
-							[ _('Previous strategy: ') + shortStrategy(prev, 110) ]));
-						const rbBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
-							[ _('Restore previous strategy') ]);
-						rbBtn.addEventListener('click', function() {
-							rbBtn.disabled = true;
-							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-								[ _('Restoring previous strategy — the service restarts…') ]));
-							L.resolveDefault(callFuzzApply(state.prevStrategy), {}).then(function(r2) {
-								if (!r2 || r2.result === false) {
-									rbBtn.disabled = false;
-									dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-										[ _('Restore failed: ') + ((r2 && r2.error) || _('rpc error')) ]));
-									return;
-								}
-								dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-									[ _('Previous strategy restored — Zapret enabled, service restarted.') ]));
-							});
-						});
-						box.appendChild(rbBtn);
-					}
-					box.appendChild(E('p', { 'class': 'hpui-hint' },
-						[ _('Run "Test composition" in ~30 seconds to confirm it works on your ISP.') ]));
-					dom.content(dpiResult, box);
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Previous strategies restored — the service restarts.') ]));
 				});
 			});
-		});
+			restoreRow.appendChild(rb);
+		}
 
 		/* Strategy Lab — the ported panel (node.js): quick/full fuzz buttons,
 		 * rounds, live progress. The RESULT table renders into dpiResult
@@ -2250,7 +2500,8 @@ return view.extend({
 				L.resolveDefault(callStrategyList(), {}),
 				L.resolveDefault(callStrategyStatus(), {}),
 				L.resolveDefault(callFuzzStatus(), {}),
-				L.resolveDefault(callTgwspStatus(), {})
+				L.resolveDefault(callTgwspStatus(), {}),
+				L.resolveDefault(callComposeStatus(), {})
 			]).then(function(data) {
 				const scan = data[0] || {};
 				updateDpiStatus(scan);
@@ -2264,6 +2515,10 @@ return view.extend({
 				renderCorpus(data[2] ? (data[2].corpus || {}) : {}, data[4] || {});
 				renderLab(data[5] || {});
 				renderTgwsp(data[6] || {});
+				/* Ф8-F4: compose test progress/result + the server-snapshot
+				 * Restore row (covers composition AND plain strategy applies). */
+				renderCompose(data[7] || {});
+				renderRollback((data[2] && data[2].rollback) || null);
 
 				/* Deferred live check: fire once the core is running again
 				 * after the apply-triggered reload (min 8 s after apply). */

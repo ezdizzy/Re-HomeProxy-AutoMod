@@ -774,6 +774,283 @@ function hp_corpus_write(corpus) {
 	system(`mv -f ${shellquote(f + '.tmp')} ${shellquote(f)}`);
 }
 
+/* ── Ф8-F4: Composition Builder v2 (server-side build/test/rollback) ─────
+ * Profiles: { engine: 'zapret'|'byedpi', resource: 'youtube'|'discord'|
+ * 'telegram'|'general'|'custom', domains: 'a.com b.com' (custom only),
+ * strategy: '<corpus name | raw engine args>' }.
+ * Both engines try profiles IN ORDER and the first match wins, so scoped
+ * profiles are ordered FIRST and the general (catch-all) profile goes LAST.
+ * Research verdict (session 20, §3 PROMPT_F8): ciadpi supports per-profile
+ * groups — every -A opens a group, -H/:str scopes it to exact domains, -K t
+ * keeps it TCP-only (domains are seen in TLS-CHello/HTTP only; QUIC/UDP is
+ * never domain-scoped and falls to the fallback group). The LAST ciadpi
+ * group must carry NO -H (explicit fallback — main.c only self-adds one
+ * when every group is limited, which we do not rely on). */
+
+const COMP_STATUS = RUN_DIR + '/wizard_compose_result.json';
+const COMP_REQ = RUN_DIR + '/wizard_compose_req.json';
+const COMP_BAK = HP_DIR + '/backups/zapret_prev.json';
+const COMP_LISTS = {
+	youtube: HP_DIR + '/resources/zapret-hosts/youtube.txt',
+	discord: HP_DIR + '/resources/zapret-hosts/discord.txt',
+	telegram: HP_DIR + '/resources/engine_telegram.txt'
+};
+
+/* Server-side apply snapshot: BOTH engines' current opts+enabled go to
+ * /etc/homeproxy/backups/zapret_prev.json before any strategy or
+ * composition apply. Deliberately a file, not a UCI option (no config-dump
+ * pollution, atomic write); the Restore path reads it back server-side, so
+ * rollback never depends on JS memory. */
+function hp_apply_backup_write() {
+	const c = cursor();
+	const snap = {
+		ts: time(),
+		zapret: {
+			cmd_opts: '' + (c.get('homeproxy', 'config', 'zapret_cmd_opts') || ''),
+			enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1')
+		},
+		byedpi: {
+			cmd_opts: '' + (c.get('homeproxy', 'config', 'byedpi_cmd_opts') || ''),
+			enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1')
+		}
+	};
+	system('mkdir -p ' + shellquote(HP_DIR + '/backups'));
+	writefile(COMP_BAK + '.tmp', sprintf("%.J\n", snap));
+	system(`mv -f ${shellquote(COMP_BAK + '.tmp')} ${shellquote(COMP_BAK)}`);
+}
+
+function hp_comp_domain_ok(d) {
+	return (length(d) >= 3 && length(d) <= 253 && !!match(d, /^[A-Za-z0-9._-]+$/));
+}
+
+/* Domain list for a profile: file-backed resource lists or the custom
+ * string. Returns null for 'general' (catch-all), an array for scoped. */
+function hp_comp_domains(p) {
+	if (p.resource === 'general')
+		return null;
+	let out = [];
+	if (p.resource === 'custom') {
+		const raw = split('' + (p.domains || ''), /[[:space:],;]+/);
+		for (let d in raw) {
+			d = trim(d);
+			if (length(d) && hp_comp_domain_ok(d))
+				push(out, d);
+		}
+		if (!length(out))
+			return null;
+	} else {
+		const f = COMP_LISTS[p.resource];
+		if (!f || !access(f))
+			return null;
+		const raw = split(readfile(f) || '', '\n');
+		for (let d in raw) {
+			d = trim(d);
+			if (!length(d) || substr(d, 0, 1) === '#')
+				continue;
+			if (hp_comp_domain_ok(d))
+				push(out, d);
+		}
+		if (!length(out))
+			return null;
+	}
+	/* Sanity cap: a hostlist row must stay a sane one-line option. */
+	if (length(out) > 128) {
+		const capped = [];
+		for (let i = 0; i < 128; i++)
+			push(capped, out[i]);
+		out = capped;
+	}
+	return out;
+}
+
+/* Split an nfqws2 strategy string into profile blocks by '--new'
+ * (lesson 77: never by commas/whitespace — blocks may carry their own
+ * unquoted multi-token options). */
+function hp_comp_split_new(args) {
+	const raw = split('' + args, '--new');
+	const blocks = [];
+	for (let i = 0; i < length(raw); i++) {
+		const b = trim(raw[i]);
+		if (length(b))
+			push(blocks, b);
+	}
+	return blocks;
+}
+
+/* Global --blob tokens are nfqws2-wide and must sit before the first
+ * profile block; pull them out of a block (session-13 probe T8). */
+function hp_comp_extract_blobs(block) {
+	const toks = split(block, ' ');
+	const rest = [], blobs = [];
+	for (let i = 0; i < length(toks); i++) {
+		const t = trim(toks[i]);
+		if (!length(t))
+			continue;
+		if (index(t, '--blob=') === 0)
+			push(blobs, t);
+		else
+			push(rest, t);
+	}
+	return [ join(' ', rest), blobs ];
+}
+
+/* Resolve a profile strategy: raw args when it starts with '--', else a
+ * corpus name lookup. Returns null when unresolvable. */
+function hp_comp_resolve(strategy, corpus) {
+	const s = trim('' + (strategy || ''));
+	if (!length(s))
+		return null;
+	if (index(s, '--') === 0)
+		return s;
+	for (let ci = 0; ci < length(corpus.candidates); ci++) {
+		const c = corpus.candidates[ci];
+		if (type(c) === 'object' && c.name === s)
+			return '' + c.args;
+	}
+	return null;
+}
+
+/* ciadpi group/instance options must come from the BUILDER only — a user
+ * profile carrying -A/-H/-K (or the instance-level -i/-p, which init.d
+ * adds itself) would silently restructure the generated group layout. */
+function hp_comp_ciadpi_struct(args) {
+	const banned = { '-A': 1, '--auto': 1, '-H': 1, '--hosts': 1, '-K': 1,
+		'--proto': 1, '-j': 1, '--ipset': 1, '-V': 1, '--pf': 1,
+		'-i': 1, '--ip': 1, '-p': 1, '--port': 1 };
+	const prefixes = [ '--auto=', '--hosts=', '--proto=', '--ipset=', '--pf=',
+		'--ip=', '--port=', '-A:', '-H:', '-K:', '-j:', '-V:', '-i:', '-p:' ];
+	const toks = split('' + args, ' ');
+	for (let i = 0; i < length(toks); i++) {
+		const t = trim(toks[i]);
+		if (!length(t))
+			continue;
+		if (banned[t])
+			return t;
+		for (let pi = 0; pi < length(prefixes); pi++)
+			if (index(t, prefixes[pi]) === 0)
+				return t;
+	}
+	return null;
+}
+
+/* Build the final strings for both engines. Returns
+ * { zapret, byedpi, notes } or { error }. */
+function hp_compose_build(profiles) {
+	const corpus = hp_corpus_read();
+	const notes = [];
+	const blob_map = {};
+	const z_scoped = [], z_general = [];
+	const b_scoped = [];
+	let b_fallback = '';
+	let n_z = 0, n_b = 0;
+	let z_hl_note = false;
+	let b_tg_note = false;
+	for (let i = 0; i < length(profiles); i++) {
+		const p = profiles[i];
+		if (type(p) !== 'object')
+			return { error: 'bad profile #' + (i + 1) };
+		const engine = trim('' + (p.engine || 'zapret'));
+		if (engine !== 'zapret' && engine !== 'byedpi')
+			return { error: 'unknown engine: ' + engine };
+		const res = trim('' + (p.resource || 'general'));
+		if (res !== 'youtube' && res !== 'discord' && res !== 'telegram' &&
+		    res !== 'general' && res !== 'custom')
+			return { error: 'unknown resource: ' + res };
+		const args = hp_comp_resolve(p.strategy, corpus);
+		if (args == null)
+			return { error: 'unknown or empty strategy: ' + trim('' + (p.strategy || '')) };
+		if (length(args) > 2000)
+			return { error: 'strategy longer than 2000 chars' };
+		const doms = hp_comp_domains({ resource: res, domains: p.domains });
+		if (res === 'custom' && doms == null)
+			return { error: 'the custom profile has no valid domains' };
+		if (res !== 'general' && res !== 'custom' && doms == null)
+			return { error: 'hostlist missing for resource: ' + res };
+		if (engine === 'zapret') {
+			n_z++;
+			/* A strategy that ships its own hostlist already scopes itself;
+			 * stacking a second --hostlist-domains would UNION the sets and
+			 * widen the scope instead of narrowing it — keep it honest. */
+			const has_own_hl = !!match(args, /--hostlist/);
+			const blocks = hp_comp_split_new(args);
+			for (let bi = 0; bi < length(blocks); bi++) {
+				const ex = hp_comp_extract_blobs(blocks[bi]);
+				let blk = ex[0];
+				for (let b in ex[1])
+					blob_map[b] = true;
+				if (doms != null && !has_own_hl)
+					blk += ' --hostlist-domains=' + join(',', doms);
+				if (has_own_hl && doms != null && !z_hl_note) {
+					z_hl_note = true;
+					push(notes, 'Zapret: a strategy carries its own hostlist — the resource scoping was NOT applied to it.');
+				}
+				blk = trim(blk);
+				if (length(blk))
+					push((doms != null) ? z_scoped : z_general, blk);
+			}
+		} else {
+			n_b++;
+			const bad = hp_comp_ciadpi_struct(args);
+			if (bad)
+				return { error: 'ByeDPI args contain a builder-only option: ' + bad };
+			if (res === 'telegram' && doms != null && !b_tg_note) {
+				b_tg_note = true;
+				push(notes, 'Telegram: only the TLS web paths are domain-scoped; MTProto UDP traffic is not.');
+			}
+			if (doms != null)
+				push(b_scoped, '-H :' + join(',', doms) + ' -K t ' + args);
+			else
+				b_fallback = trim(args);
+		}
+	}
+	/* nfqws2: blobs first, scoped blocks, then the catch-all tail (lesson 74:
+	 * a trailing profile after the last --new is mandatory). */
+	let zapret = '';
+	if (n_z) {
+		const blob_arr = [];
+		for (let k in blob_map)
+			push(blob_arr, k);
+		const blocks = [];
+		/* ucode for-in over an array yields the ELEMENTS (lesson 20). */
+		for (let b in z_scoped)
+			push(blocks, b);
+		for (let b in z_general)
+			push(blocks, b);
+		zapret = join(' ', blob_arr);
+		for (let i = 0; i < length(blocks); i++)
+			zapret += ((length(zapret) ? ' ' : '') + blocks[i]) +
+				((i < length(blocks) - 1) ? ' --new' : '');
+		/* safety: a leading --new opens an empty catch-all profile (T11). */
+		while (length(zapret) > 6 && substr(zapret, 0, 6) === '--new ')
+			zapret = trim(substr(zapret, 6));
+		/* Composed strings grow past single-strategy size (blobs are global
+		 * plus per-profile hostlists) — the composed cap is larger than the
+		 * per-profile 2000; UCI holds it and init.d re-parses via eval. */
+		if (length(zapret) > 8000)
+			return { error: 'composed Zapret strategy longer than 8000 chars' };
+		if (length(z_scoped) && length(z_general))
+			push(notes, 'Zapret: resource profiles run first, the general profile stays last (first match wins).');
+		else if (length(z_scoped) && !length(z_general))
+			push(notes, 'Zapret: no general profile — traffic outside the scoped resources passes without desync (nfqws2 leaves unmatched packets untouched).');
+	}
+	/* ciadpi: groups through -A n, the last group without -H. */
+	let byedpi = '';
+	if (n_b) {
+		byedpi = join(' -A n ', b_scoped);
+		if (length(b_fallback))
+			byedpi = (length(byedpi) ? byedpi + ' -A n ' : '') + b_fallback;
+		else if (length(b_scoped)) {
+			byedpi += ' -A n';
+			push(notes, 'ByeDPI: no general profile — an explicit empty fallback group was added; domains outside the scopes pass without desync.');
+		}
+		if (length(byedpi) > 8000)
+			return { error: 'composed ByeDPI strategy longer than 8000 chars' };
+		if (length(b_scoped))
+			push(notes, 'ByeDPI: scoped groups are TCP-only (-K t) with exact domains; QUIC/UDP traffic is not domain-scoped and uses the fallback group.');
+	}
+	return { zapret: zapret, byedpi: byedpi, notes: notes };
+}
+
 /* ── TG WS Proxy (D8, Ф7) ────────────────────────────────────────────────
  * Third-party Telegram bridges (valnesfjord/tg-ws-proxy-rs as the primary
  * variant, the d0mhate Go manager as an alternative) — detected READ-ONLY.
@@ -2710,7 +2987,11 @@ const methods = {
 				restore_cmd += `nft add rule inet fw4 homeproxy_output_redir meta nfproto ${out_chain_nfproto} meta l4proto tcp jump homeproxy_redirect 2>/dev/null; true`;
 			}
 
-			system(`pkill -f 'ciadpi.*${test_port}' 2>/dev/null; true`);
+			/* Lesson 23: busybox has NO pkill — the old `pkill -f` silently
+			 * left the test instance running (and the next test then failed
+			 * to bind the port). ps w + grep + awk kills by exact port; the
+			 * bracket trick keeps the grep from matching its own shell. */
+			system(`kill $(ps w | grep '[c]iadpi' | grep 'p ${test_port}' | awk '{print $1}') 2>/dev/null; true`);
 			system(`/usr/bin/ciadpi -i 127.0.0.1 -p ${test_port} ${cmd_opts} &`);
 			system('sleep 0.5');
 
@@ -2724,7 +3005,11 @@ const methods = {
 			}
 
 			if (!has_curl) {
-				system(`pkill -f 'ciadpi.*${test_port}' 2>/dev/null; true`);
+				/* Lesson 23: busybox has NO pkill — the old `pkill -f` silently
+			 * left the test instance running (and the next test then failed
+			 * to bind the port). ps w + grep + awk kills by exact port; the
+			 * bracket trick keeps the grep from matching its own shell. */
+			system(`kill $(ps w | grep '[c]iadpi' | grep 'p ${test_port}' | awk '{print $1}') 2>/dev/null; true`);
 				system(restore_cmd);
 				return { result: true, method: 'startup', results: [] };
 			}
@@ -2772,7 +3057,11 @@ const methods = {
 			}
 			system(`rm -rf ${tmp} 2>/dev/null; true`);
 
-			system(`pkill -f 'ciadpi.*${test_port}' 2>/dev/null; true`);
+			/* Lesson 23: busybox has NO pkill — the old `pkill -f` silently
+			 * left the test instance running (and the next test then failed
+			 * to bind the port). ps w + grep + awk kills by exact port; the
+			 * bracket trick keeps the grep from matching its own shell. */
+			system(`kill $(ps w | grep '[c]iadpi' | grep 'p ${test_port}' | awk '{print $1}') 2>/dev/null; true`);
 			system(restore_cmd);
 
 			return {
@@ -3127,11 +3416,134 @@ const methods = {
 				return { result: false, error: 'strategy contains forbidden characters' };
 			if (!access('/opt/zapret2/nfq2/nfqws2'))
 				return { result: false, error: 'zapret2 is not installed' };
+			/* Ф8-F4: snapshot the current engines server-side BEFORE writing —
+			 * the Restore button reads this file back on every page load. */
+			hp_apply_backup_write();
 			system(`uci set homeproxy.config.zapret_cmd_opts=${shellquote(strat)}`);
 			system('uci set homeproxy.config.zapret_enabled=1');
 			system('uci commit homeproxy');
 			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
 			return { result: true };
+		}
+	},
+
+	/* ── Ф8-F4: Composition Builder v2 — server-side build/test/apply ──────
+	 * The RPC owns the lock and the build (no dead code: wizard_compose.uc
+	 * is a real runner now); tests run in the background through the runner
+	 * (zapret_test.sh + the existing byedpi_strategy_test tester). Apply
+	 * snapshots both engines server-side before writing, so the rollback is
+	 * independent of JS memory and survives page reloads. */
+
+	wizard_compose_run: {
+		args: { profiles: [] },
+		call: function(req) {
+			const profiles = (req && req.args && req.args.profiles) || [];
+			if (type(profiles) !== 'array' || !length(profiles))
+				return { result: false, error: 'no profiles' };
+			if (length(profiles) > 8)
+				return { result: false, error: 'too many profiles (max 8)' };
+			/* One composition test at a time — the lock lives HERE, never in
+			 * the runner (lesson 44 family: a runner lock deadlocks recovery). */
+			if (access(COMP_STATUS)) {
+				let prev = null;
+				try { prev = json(readfile(COMP_STATUS) || ''); } catch (e) { prev = null; }
+				if (prev && prev.running && (time() - int(prev.ts || 0) < 300))
+					return { result: false, error: 'a composition test is already in progress' };
+			}
+			const built = hp_compose_build(profiles);
+			if (built.error)
+				return { result: false, error: built.error };
+			if (!length(built.zapret) && !length(built.byedpi))
+				return { result: false, error: 'composition is empty' };
+			if (length(built.zapret) && !access('/opt/zapret2/nfq2/nfqws2'))
+				return { result: false, error: 'zapret2 is not installed' };
+			if (length(built.byedpi) && !access('/usr/bin/ciadpi'))
+				return { result: false, error: 'ciadpi is not installed' };
+			writefile(COMP_REQ + '.tmp', sprintf('%.J\n', {
+				zapret: built.zapret, byedpi: built.byedpi,
+				notes: built.notes, ts: time()
+			}));
+			system(`mv -f ${shellquote(COMP_REQ + '.tmp')} ${shellquote(COMP_REQ)}`);
+			/* Fresh status: the poll sees "started" immediately; the runner
+			 * rewrites it at every stage. */
+			writefile(COMP_STATUS + '.tmp', sprintf('%.J\n', {
+				running: true, stage: 'started', zapret: { args: built.zapret },
+				byedpi: { args: built.byedpi }, notes: built.notes, ts: time()
+			}));
+			system(`mv -f ${shellquote(COMP_STATUS + '.tmp')} ${shellquote(COMP_STATUS)}`);
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_compose.uc')} >/dev/null 2>&1 &`);
+			return { result: true, zapret: built.zapret, byedpi: built.byedpi,
+				notes: built.notes };
+		}
+	},
+
+	wizard_compose_status: {
+		call: function(req) {
+			let status = null;
+			if (access(COMP_STATUS)) {
+				try { status = json(readfile(COMP_STATUS) || ''); } catch (e) { status = null; }
+			}
+			return { status: status };
+		}
+	},
+
+	wizard_compose_apply: {
+		args: { zapret: 'zapret', byedpi: 'byedpi' },
+		call: function(req) {
+			const z = trim('' + ((req && req.args && req.args.zapret) || ''));
+			const b = trim('' + ((req && req.args && req.args.byedpi) || ''));
+			if (!length(z) && !length(b))
+				return { result: false, error: 'composition is empty' };
+			if (length(z) > 8000 || length(b) > 8000)
+				return { result: false, error: 'composition is too long' };
+			if (length(z) && (!match(z, /^--[a-z]/) || match(z, /[`$;&|<>\n]/)))
+				return { result: false, error: 'Zapret part contains forbidden characters' };
+			if (length(b)) {
+				if (!match(b, /^-/) || match(b, /[`$;&|<>\n]/))
+					return { result: false, error: 'ByeDPI part contains forbidden characters' };
+				const bad = hp_comp_ciadpi_struct(b);
+				if (bad)
+					return { result: false, error: 'ByeDPI part contains a builder-only option: ' + bad };
+			}
+			if (length(z) && !access('/opt/zapret2/nfq2/nfqws2'))
+				return { result: false, error: 'zapret2 is not installed' };
+			if (length(b) && !access('/usr/bin/ciadpi'))
+				return { result: false, error: 'ciadpi is not installed' };
+			hp_apply_backup_write();
+			const c = cursor();
+			if (length(z)) {
+				c.set('homeproxy', 'config', 'zapret_cmd_opts', z);
+				c.set('homeproxy', 'config', 'zapret_enabled', '1');
+			}
+			if (length(b)) {
+				c.set('homeproxy', 'config', 'byedpi_cmd_opts', b);
+				c.set('homeproxy', 'config', 'byedpi_enabled', '1');
+			}
+			c.commit('homeproxy');
+			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+			return { result: true, applied: { zapret: z, byedpi: b } };
+		}
+	},
+
+	/* Restore from the server snapshot (survives page reloads; applying a
+	 * restored state again is harmless — the snapshot is only overwritten by
+	 * the next apply). */
+	wizard_compose_rollback: {
+		call: function(req) {
+			let bak = null;
+			if (access(COMP_BAK)) {
+				try { bak = json(readfile(COMP_BAK) || ''); } catch (e) { bak = null; }
+			}
+			if (!bak || type(bak.zapret) !== 'object' || type(bak.byedpi) !== 'object')
+				return { result: false, error: 'no server snapshot found' };
+			const c = cursor();
+			c.set('homeproxy', 'config', 'zapret_cmd_opts', '' + (bak.zapret.cmd_opts || ''));
+			c.set('homeproxy', 'config', 'zapret_enabled', bak.zapret.enabled ? '1' : '0');
+			c.set('homeproxy', 'config', 'byedpi_cmd_opts', '' + (bak.byedpi.cmd_opts || ''));
+			c.set('homeproxy', 'config', 'byedpi_enabled', bak.byedpi.enabled ? '1' : '0');
+			c.commit('homeproxy');
+			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+			return { result: true, restored: { zapret: bak.zapret, byedpi: bak.byedpi } };
 		}
 	},
 
@@ -4020,6 +4432,12 @@ const methods = {
 						last_fuzz = h.runs[length(h.runs) - 1];
 				} catch (e) {}
 			}
+			/* Ф8-F4: the server-side apply snapshot — the UI renders the
+			 * persistent Restore row from it (never from JS memory). */
+			let rollback = null;
+			if (access(COMP_BAK)) {
+				try { rollback = json(readfile(COMP_BAK) || ''); } catch (e) { rollback = null; }
+			}
 			return {
 				result: true,
 				zapret: {
@@ -4041,7 +4459,8 @@ const methods = {
 					groups: groups,
 					updated: corpus_updated
 				},
-				last_fuzz: last_fuzz
+				last_fuzz: last_fuzz,
+				rollback: rollback
 			};
 		}
 	},
@@ -4050,7 +4469,32 @@ const methods = {
 	wizard_strategy_list: {
 		call: function(req) {
 			const corpus = hp_corpus_read();
-			return { result: true, candidates: corpus.candidates };
+			/* Ф8-F4: "did it work on this resource" hints — per-host pass
+			 * flags from the LAST fuzz run, keyed by strategy args. */
+			let fuzz_map = {};
+			let fuzz_ts = null;
+			if (access(RUN_DIR + '/zapret_fuzz_result.json')) {
+				try {
+					const fr = json(readfile(RUN_DIR + '/zapret_fuzz_result.json') || '');
+					if (fr && type(fr.strategies) === 'array') {
+						fuzz_ts = fr.ts || null;
+						for (let s in fr.strategies) {
+							if (type(s) !== 'object')
+								continue;
+							const t = {};
+							if (type(s.hosts) === 'array')
+								for (let h in s.hosts)
+									if (type(h) === 'object' && h.tag)
+										t['' + h.tag] = (h.ok == 1) ? 1 : 0;
+							fuzz_map['' + s.args] = t;
+						}
+					}
+				} catch (e) {}
+			}
+			for (let c in corpus.candidates)
+				if (type(c) === 'object' && fuzz_map['' + c.args])
+					c.fuzz = fuzz_map['' + c.args];
+			return { result: true, candidates: corpus.candidates, fuzz_ts: fuzz_ts };
 		}
 	},
 

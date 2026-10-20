@@ -9817,3 +9817,213 @@ msgstr "%d напрямую (Direct)"
 
 msgid "No Master rules protect resources from learning."
 msgstr "Правила Мастера не защищают ресурсы от изучения."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Composition"
+msgstr "Композиция"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Test composition"
+msgstr "Проверить композицию"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Apply composition"
+msgstr "Применить композицию"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Clear"
+msgstr "Очистить"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Add profile"
+msgstr "Добавить профиль"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Telegram (TLS)"
+msgstr "Telegram (TLS)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "General (catch-all)"
+msgstr "Общий (всё остальное)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Custom list"
+msgstr "Свой список"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Domains: a.com, b.com (comma or space separated)"
+msgstr "Домены: a.com, b.com (через запятую или пробел)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "— pick from the catalog —"
+msgstr "— выбрать из каталога —"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "ciadpi args, e.g. --disorder 1"
+msgstr "аргументы ciadpi, напр. --disorder 1"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "nfqws2 --lua-desync=… args (or pick from the catalog)"
+msgstr "аргументы nfqws2 --lua-desync=… (или выберите из каталога)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Catch-all — keep it last; unmatched traffic lands here."
+msgstr "Всё остальное — держите последним; сюда попадает непокрытый трафик."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Exact domains from your list; a general profile must follow."
+msgstr "Точные домены из вашего списка; далее обязателен общий профиль."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Exact domains, TCP only (SNI in TLS-CHello/HTTP); QUIC/UDP is not scoped."
+msgstr "Точные домены, только TCP (SNI в TLS-CHello/HTTP); QUIC/UDP не скоупится."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Limited to the resource domains (--hostlist-domains)."
+msgstr "Ограничено доменами ресурса (--hostlist-domains)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "(empty — add a profile)"
+msgstr "(пусто — добавьте профиль)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Too many profiles (max 8)."
+msgstr "Слишком много профилей (макс. 8)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Composition is empty — add at least one profile."
+msgstr "Композиция пуста — добавьте хотя бы один профиль."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Building and testing the composition on the router…"
+msgstr "Собираю и проверяю композицию на роутере…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Compose failed: "
+msgstr "Сборка не удалась: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Run \"Test composition\" first — Apply uses the server-built args."
+msgstr "Сначала «Проверить композицию» — Apply использует серверные аргументы."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Applying composition — the service restarts…"
+msgstr "Применяю композицию — сервис перезапускается…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Composition applied — the engine(s) are enabled and the service restarts."
+msgstr "Композиция применена — движок(и) включены, сервис перезапускается."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Restore previous"
+msgstr "Вернуть предыдущие"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Restoring the previous strategies — the service restarts…"
+msgstr "Возвращаю предыдущие стратегии — сервис перезапускается…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Previous strategies restored — the service restarts."
+msgstr "Предыдущие стратегии возвращены — сервис перезапускается."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The same Restore stays available below and after a page reload (server snapshot)."
+msgstr "Та же кнопка возврата доступна ниже и после перезагрузки страницы (серверный снапшот)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Testing the Zapret part (isolated queue)…"
+msgstr "Проверяю часть Zapret (изолированная очередь)…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Testing the ByeDPI part (local tester)…"
+msgstr "Проверяю часть ByeDPI (локальный тестер)…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Composition test results"
+msgstr "Результаты проверки композиции"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Zapret part (isolated queue):"
+msgstr "Часть Zapret (изолированная очередь):"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "ByeDPI part (local tester):"
+msgstr "Часть ByeDPI (локальный тестер):"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "no test data"
+msgstr "нет данных проверки"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Built args"
+msgstr "Итоговые аргументы"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Press \"Apply composition\" to activate the tested args."
+msgstr "Нажмите «Применить композицию», чтобы активировать проверенные аргументы."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "No fuzz data for this strategy yet."
+msgstr "Фаззинг-данных по этой стратегии пока нет."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Last fuzz:"
+msgstr "Последний фаззинг:"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Server snapshot (%s): "
+msgstr "Серверный снапшот (%s): "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "No server snapshot yet — apply a strategy or a composition first."
+msgstr "Серверного снапшота ещё нет — сначала примените стратегию или композицию."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "(disabled)"
+msgstr "(отключено)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Profiles are matched in order (first match wins): scoped profiles run first, the general profile last. The server builds the final args, tests them on the isolated queue (Zapret) and through the local tester (ByeDPI); applying snapshots the previous strategies on the server, so Restore survives page reloads. ByeDPI scoped profiles are exact-domain and TCP-only (SNI in TLS-CHello/HTTP); QUIC/UDP is not domain-scoped and falls to the fallback group."
+msgstr "Профили сопоставляются по порядку (первый совпавший побеждает): профили ресурсов идут первыми, общий — последним. Сервер собирает итоговые аргументы и проверяет их на изолированной очереди (Zapret) и локальным тестером (ByeDPI); при применении предыдущие стратегии сохраняются в серверный снапшот, поэтому кнопка возврата переживает перезагрузку страницы. Профили ByeDPI скоупятся точными доменами и только TCP (SNI в TLS-CHello/HTTP); QUIC/UDP не скоупится доменами и уходит в фолбэк-группу."
