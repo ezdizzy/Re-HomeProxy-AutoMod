@@ -68,6 +68,29 @@ const GO_BIN_TMP = '/tmp/tgwsp_go.bin';
 const GO_STATUS = RUN_DIR + '/tgwsp_go_install.json';
 const GO_LOG = RUN_DIR + '/tgwsp_go_install.log';
 const GO_PORT = 1080;
+/* Egress-exempt group (lesson 83): the bridge dials its own upstream —
+ * Cloudflare WS edges AND the tcp_fallback path straight to Telegram IPs.
+ * Without an exclusion those dials are re-intercepted by the OUTPUT
+ * redirect, matched by the telegram rule (91.105.192.x:80 ∈ telegram.srs)
+ * and pushed back into tgws-out → the bridge dials the same target again →
+ * infinite dial loop (~900 conn/s, 9.6M connections in 2.7 h, conntrack
+ * dport=80/dport=1080 ~11k each, CPU 100%, load >10, ping up on every VPN
+ * node). Same defect class as ciadpi: the firewall already returns packets
+ * of the byedpi group from homeproxy_output_redir / homeproxy_mangle_output
+ * (firewall_post.ut skgid guard, infra.byedpi_gid). The bridge carries that
+ * supplementary group so its egress leaves directly, as designed. */
+const GO_EGRESS_GROUP = 'byedpi';
+let _egress_gid = '8181';
+{
+	const gfd = popen('uci -q get homeproxy.infra.byedpi_gid 2>/dev/null');
+	if (gfd) {
+		const gv = lc(trim(gfd.read('all') || ''));
+		gfd.close();
+		if (match(gv, /^[0-9]+$/))
+			_egress_gid = gv;
+	}
+}
+const GO_GID = _egress_gid;
 /* Release asset per OpenWrt arch (verified against the v1.4.1 asset list). */
 const GO_ASSET_MAP = {
 	'aarch64': 'tg-ws-proxy-openwrt-aarch64',
@@ -83,13 +106,21 @@ const GO_INIT_BODY = `#!/bin/sh /etc/rc.common
 # core on this router talks to it, nothing is exposed to LAN or WAN.
 # CF route first: the direct WS path to Telegram IPs is cut by the provider
 # (R3-FIX-2, 2026-10-20), the Cloudflare edge path is not.
+# Egress-exempt group (lesson 83): without it the bridge's own dials loop
+# back through the OUTPUT redirect → tgws-out → the bridge → dial again.
 START=99
 STOP=10
 USE_PROCD=1
 
 start_service() {
+	# Idempotent: the group is shared with ciadpi (byedpi, infra.byedpi_gid);
+	# firewall_post.ut exempts this gid from the redirect by skgid.
+	grep -q '^byedpi:' /etc/group || echo 'byedpi:x:${GO_GID}:' >> /etc/group
 	procd_open_instance tgwsbridge
 	procd_set_param command ${GO_BIN} --mode socks5 --host 127.0.0.1 --port ${GO_PORT} --cf-proxy --cf-proxy-first --cf-balance
+	# Supplementary group only (uid stays root): the socket gid carries the
+	# skgid guard — the bridge's egress skips the redirect and dials directly.
+	procd_set_param group "${GO_EGRESS_GROUP}"
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1
 	procd_set_param stderr 1
