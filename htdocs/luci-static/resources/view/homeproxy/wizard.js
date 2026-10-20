@@ -242,7 +242,15 @@ const callTgwspInstall = rpc.declare({
 const callTgwspLink = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'wizard_tgwsp_link',
-	expect: { '': {} }
+	params: [ ]
+});
+
+/* F8-F2: the transparent SOCKS5 bridge (tg-ws-proxy-go) install — procd
+ * instance managed by the app, loopback-only listener. */
+const callTgwsInstall = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_tgws_install',
+	params: [ ]
 });
 
 /* Resolve a sing-box outbound tag (cfg-<section>-out) to its UCI label
@@ -786,19 +794,24 @@ return view.extend({
 		const twRow = E('div', { 'class': 'wiz-row' });
 		const twResult = E('div', {});
 		let twRsPresent = false;
+		let twGoManaged = false;
 		/* Poll-friendly result area: check/install outcomes are shown ONCE
 		 * (per signature) and never clobber a button answer the user is
 		 * reading (ui.action_buttons_result_placement). */
-		const twState = { insSig: null, ckSig: null, manual: false, seeded: false };
+		const twState = { insSig: null, ckSig: null, goSig: null, manual: false, seeded: false };
 		const twCheckBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Check now') ]);
 		const twLinkBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Show tg:// link') ]);
 		const twInstallBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
 			[ _('Install / update') ]);
+		const twGoInstallBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			[ _('Install tg-ws bridge') ]);
 
 		function renderTgwsp(st) {
 			st = st || {};
-			const rs = st.rs || {}, go = st.go || {}, ck = st.check || {}, ins = st.install || {};
+			const rs = st.rs || {}, go = st.go || {}, ck = st.check || {}, ins = st.install || {},
+				goIns = st.go_install || {};
 			twRsPresent = !!rs.present;
+			twGoManaged = !!go.managed;
 			const parts = [];
 			if (rs.present) {
 				const ver = rs.version ? String(rs.version).trim().split(' ').pop() : '';
@@ -814,7 +827,14 @@ return view.extend({
 			} else {
 				parts.push(E('span', { 'style': 'opacity:.7' }, [ _('tg-ws-proxy-rs is not installed') ]));
 			}
-			if (go.present)
+			if (go.managed) {
+				/* Our procd instance — the transparent bridge of the tgws exit. */
+				parts.push(badge('hpui-b-green', 'tg-ws bridge (SOCKS5)'));
+				parts.push(go.running
+					? badge('hpui-b-blue', _('running') +
+						(go.port ? ' · 127.0.0.1:' + go.port : ''))
+					: badge('hpui-b-red', _('stopped')));
+			} else if (go.present)
 				parts.push(badge('hpui-b-amber',
 					_('variant 2 (Go manager) detected — managed by its own tgm tool')));
 			if (st.conflict)
@@ -836,10 +856,12 @@ return view.extend({
 					twState.ckSig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
 				else if (!ck.running && ck.stage === 'error')
 					twState.ckSig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc);
+				if (!goIns.running && goIns.stage)
+					twState.goSig = 'g' + goIns.stage + ':' + (goIns.rc == null ? '' : goIns.rc) + ':' + (goIns.error || '');
 			}
 			/* Finished operations — report ONCE per signature, and never
 			 * overwrite a button answer the user is currently reading. */
-			if (ins.running || ck.running)
+			if (ins.running || ck.running || goIns.running)
 				twState.manual = false;
 			if (!ins.running && ins.stage && ins.stage !== 'fetch') {
 				const sig = 'i' + ins.stage + ':' + (ins.rc == null ? '' : ins.rc) + ':' + (ins.error || '');
@@ -877,6 +899,22 @@ return view.extend({
 					if (!twState.manual)
 						dom.content(twResult, E('p', { 'class': 'hpui-hint' },
 							[ _('Check failed (exit code %s — see /var/run/homeproxy/tgwsp_check.log on the router).').format(String(ck.rc || '?')) ]));
+				}
+			}
+			/* F8-F2: bridge install outcome — same ONE-place rule. */
+			if (!goIns.running && goIns.stage && goIns.stage !== 'api' && goIns.stage !== 'download') {
+				const gsig = 'g' + goIns.stage + ':' + (goIns.rc == null ? '' : goIns.rc) + ':' + (goIns.error || '');
+				if (gsig !== twState.goSig) {
+					twState.goSig = gsig;
+					if (!twState.manual) {
+						twState.manual = true;
+						if (goIns.stage === 'done')
+							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Bridge installed and running — the exit "tg-ws (transparent)" is now available for the Telegram preset (the select re-checks the bridge on every poll).') ]));
+						else
+							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Bridge installation failed: %s (see /var/run/homeproxy/tgwsp_go_install.log on the router).').format(goIns.error || _('rpc error')) ]));
+					}
 				}
 			}
 		}
@@ -950,13 +988,31 @@ return view.extend({
 			}).finally(function() { twInstallBtn.disabled = false; });
 		});
 
-		const twBtnRow = E('div', { 'class': 'wiz-toolbar' }, [ twCheckBtn, twLinkBtn, twInstallBtn ]);
+		twGoInstallBtn.addEventListener('click', function() {
+			const warn = twGoManaged
+				? _('Re-run the tg-ws bridge installer? It re-downloads the release binary (SHA-256 verified from the GitHub release API) and restarts the local instance.')
+				: _('Install the THIRD-PARTY tg-ws bridge (tg-ws-proxy-go, d0mhate, MIT)? It downloads the release binary (SHA-256 verified from the GitHub release API), installs a local procd instance listening on 127.0.0.1 only, and enables the "tg-ws (transparent)" exit for the Telegram preset. Voice calls (UDP) are not carried by the bridge.');
+			if (!window.confirm(warn))
+				return;
+			twGoInstallBtn.disabled = true;
+			twState.goSig = null;
+			twState.manual = false;
+			dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Downloading and installing the bridge…') ]));
+			L.resolveDefault(callTgwsInstall(), {}).then(function(r) {
+				if (!r || r.result === false)
+					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Bridge installation failed to start: ') + ((r && r.error) || _('rpc error')) ]));
+				return refresh();
+			}).finally(function() { twGoInstallBtn.disabled = false; });
+		});
+
+		const twBtnRow = E('div', { 'class': 'wiz-toolbar' }, [ twCheckBtn, twLinkBtn, twInstallBtn, twGoInstallBtn ]);
 
 		/* DOM order: the card lands right after the Telegram bot block. */
 		panes.extra.appendChild(E('h4', { style: 'margin-top:16px' },
 			[ _('Telegram without a proxy (TG WS Proxy)') ]));
 		panes.extra.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('A THIRD-PARTY local bridge (tg-ws-proxy-rs) that carries Telegram traffic over a WebSocket path DPI does not block — MTProto in, WSS out, with multi-tier fallback. Telegram clients connect by a tg:// link; no VPN and no routing rule is involved. Detection is read-only: the component keeps its own LuCI page and configuration, nothing is packed into this app, and nothing is exposed to the WAN. The Go variant (tgm manager) is recognized as an alternative.') ]));
+			[ _('Two third-party bridges (both MIT) carry Telegram over a WebSocket path DPI does not block. The rs variant is MTProto-only: clients connect by a tg:// link (one per user). The Go bridge (installed by the "Install tg-ws bridge" button) adds a SOCKS5 front on 127.0.0.1 and is what the "tg-ws (transparent)" Telegram-preset exit rides — Telegram apps on your LAN need NO proxy settings; messaging TCP is carried over the bridge with an automatic fallback to the node, voice calls (UDP) are not carried and keep riding the VPN. Detection of foreign installs is read-only; nothing is exposed to LAN or WAN by the transparent bridge, and neither component is packed into this app.') ]));
 		panes.extra.appendChild(twRow);
 		panes.extra.appendChild(twBtnRow);
 		panes.extra.appendChild(twResult);
@@ -1110,6 +1166,7 @@ return view.extend({
 			if (node === 'main-out') return _('Same as main node');
 			if (node === 'byedpi-out') return 'ByeDPI';
 			if (node === 'zapret-out') return 'Zapret';
+			if (node === 'tgws-out') return _('tg-ws (transparent)');
 			if (node === 'urltest') return _('URLTest pool');
 			return resolveTag(node);
 		}
@@ -1183,6 +1240,11 @@ return view.extend({
 					sel.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
 				if (env.zapret_enabled)
 					sel.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
+				/* F8-F2: the transparent tg-ws exit — offered for Telegram only
+				 * and only while the bridge is running (rpcd re-checks both). */
+				if (preset.source === 'telegram' && env.tgws_ok)
+					sel.appendChild(E('option', { value: 'tgws-out' },
+						[ _('tg-ws (transparent)') ]));
 				sel.appendChild(E('option', { value: 'urltest' }, [ _('URLTest pool') ]));
 				for (let n in (list.nodes || []))
 					sel.appendChild(E('option', { value: list.nodes[n].id },
@@ -1236,15 +1298,17 @@ return view.extend({
 					applyBtn.disabled = true;
 					callPresetApply(preset.source, String(sel.value || ''), sel.value === 'urltest' ? ids : []).then(function(r) {
 						if (!r || r.result === false) {
-							const ERRS = {
-								main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
-								byedpi_disabled: _('ByeDPI is not enabled — enable it on the Node Settings page first.'),
-								zapret_disabled: _('Zapret is not enabled — enable it on the Node Settings page first.'),
-								urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
-								unknown_node: _('Unknown node — refresh the page.'),
-								unknown_source: _('Unknown service.'),
-								'config generation failed': _('Config generation failed — the previous config stays active.')
-							};
+						const ERRS = {
+							main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
+							byedpi_disabled: _('ByeDPI is not enabled — enable it on the Node Settings page first.'),
+							zapret_disabled: _('Zapret is not enabled — enable it on the Node Settings page first.'),
+							tgws_not_running: _('The tg-ws bridge is not running — install/start it in the Advanced tab first.'),
+							tgws_telegram_only: _('The tg-ws bridge carries Telegram traffic only.'),
+							urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
+							unknown_node: _('Unknown node — refresh the page.'),
+							unknown_source: _('Unknown service.'),
+							'config generation failed': _('Config generation failed — the previous config stays active.')
+						};
 							const msg = ERRS[(r && r.error)] || ((r && r.error) || _('RPC error'));
 							ui.addNotification(null, E('p', {}, msg), 'error');
 							return;
@@ -1291,10 +1355,11 @@ return view.extend({
 					}
 				}
 
-				/* R3: honest Telegram hint (the live-probe fact + W4 IP rule). */
+				/* R3-FIX-2: honest Telegram hint (2026-10-20 probes) + the
+				 * transparent tg-ws exit and its UDP/voice scope. */
 				if (preset.source === 'telegram')
 					row.appendChild(E('span', { 'class': 'wiz-note wiz-full', style: 'margin:0' },
-						[ _('Telegram: MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs. Live probes (2026-10-18): 443 to some DCs is cut by the provider even through a node — the apps fall back to working ranges/ports on their own; port 80 stays open.') ]));
+						[ _('Telegram: live probes (2026-10-20) — direct 443 is cut on EVERY MTProto DC range now and port 80 no longer completes directly; the node still carries some DCs, so the VPN path remains the fallback. The tg-ws (transparent) exit carries messaging TCP through the local WS bridge with NO client setup (messaging falls back to the node automatically if the bridge dies; after the bridge recovers, re-apply or reload the service to return to it); voice calls (UDP) are not carried by the bridge — they keep riding the VPN. MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs.') ]));
 
 				return row;
 			}

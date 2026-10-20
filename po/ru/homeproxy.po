@@ -8267,8 +8267,8 @@ msgstr "Покрыт массовым списком (%s) → %s — отдел�
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Telegram: MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs. Live probes (2026-10-18): 443 to some DCs is cut by the provider even through a node — the apps fall back to working ranges/ports on their own; port 80 stays open."
-msgstr "Telegram: диапазоны MTProto DC матчатся и IP-правилом — правило здесь маршрутизирует и домены, и IP DC-ов. Живые пробы (2026-10-18): 443 к части DC режется провайдером даже через узел — приложения сами переключаются на рабочие диапазоны/порты; порт 80 открыт."
+msgid "Telegram: live probes (2026-10-20) — direct 443 is cut on EVERY MTProto DC range now and port 80 no longer completes directly; the node still carries some DCs, so the VPN path remains the fallback. The tg-ws (transparent) exit carries messaging TCP through the local WS bridge with NO client setup (messaging falls back to the node automatically if the bridge dies; after the bridge recovers, re-apply or reload the service to return to it); voice calls (UDP) are not carried by the bridge — they keep riding the VPN. MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs."
+msgstr "Telegram: живые пробы (2026-10-20) — 443 напрямую теперь режется на ВСЕХ диапазонах MTProto DC, и порт 80 напрямую больше не проходит до конца; узел по-прежнему берёт часть DC, поэтому VPN-путь остаётся фолбэком. Выход «tg-ws (прозрачно)» несёт TCP-сообщения через локальный WS-мост БЕЗ настройки клиентов (если мост умрёт, сообщения автоматически уходят на узел; когда мост оживёт — пере-applied пресета или перезагрузка службы вернут трафик на мост); звонки (UDP) мост не несёт — они остаются на VPN. Диапазоны MTProto DC матчатся и IP-правилом — правило здесь маршрутизирует и домены, и IP DC-ов."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -9479,8 +9479,8 @@ msgstr "Telegram без прокси (TG WS Proxy)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "A THIRD-PARTY local bridge (tg-ws-proxy-rs) that carries Telegram traffic over a WebSocket path DPI does not block — MTProto in, WSS out, with multi-tier fallback. Telegram clients connect by a tg:// link; no VPN and no routing rule is involved. Detection is read-only: the component keeps its own LuCI page and configuration, nothing is packed into this app, and nothing is exposed to the WAN. The Go variant (tgm manager) is recognized as an alternative."
-msgstr "СТОРОННИЙ локальный мост (tg-ws-proxy-rs): проводит трафик Telegram по WebSocket-пути, который DPI не блокирует — MTProto на входе, WSS наружу, с многоуровневым fallback. Клиенты Telegram подключаются по tg:// ссылке; VPN и правило маршрутизации не нужны. Обнаружение — только чтение: у компонента своя страница LuCI и свой конфиг, в наш пакет ничего не пакуется, в WAN ничего не открывается. Go-вариант (менеджер tgm) распознаётся как альтернатива."
+msgid "Two third-party bridges (both MIT) carry Telegram over a WebSocket path DPI does not block. The rs variant is MTProto-only: clients connect by a tg:// link (one per user). The Go bridge (installed by the \"Install tg-ws bridge\" button) adds a SOCKS5 front on 127.0.0.1 and is what the \"tg-ws (transparent)\" Telegram-preset exit rides — Telegram apps on your LAN need NO proxy settings; messaging TCP is carried over the bridge with an automatic fallback to the node, voice calls (UDP) are not carried and keep riding the VPN. Detection of foreign installs is read-only; nothing is exposed to LAN or WAN by the transparent bridge, and neither component is packed into this app."
+msgstr "Два сторонних моста (оба MIT) проводят Telegram по WebSocket-пути, который DPI не блокирует. rs-вариант — только MTProto: клиенты подключаются по tg:// ссылке (одна на пользователя). Go-мост (кнопка «Установить tg-ws мост») добавляет SOCKS5-вход на 127.0.0.1 — именно его использует выход «tg-ws (прозрачно)» в пресете Telegram: приложениям Telegram в LAN НЕ нужна настройка прокси; TCP-сообщения идут через мост с автоматическим фолбэком на узел, звонки (UDP) мост не несёт и остаются на VPN. Обнаружение чужих установок — только чтение; прозрачный мост слушает только loopback, в LAN/WAN ничего не открывается, в наш пакет ничего не пакуется."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -9586,6 +9586,61 @@ msgstr "Показать tg:// ссылку"
 
 msgid "Install / update"
 msgstr "Установить / обновить"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "tg-ws (transparent)"
+msgstr "tg-ws (прозрачно)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "tg-ws bridge (SOCKS5)"
+msgstr "tg-ws мост (SOCKS5)"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Install tg-ws bridge"
+msgstr "Установить tg-ws мост"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Re-run the tg-ws bridge installer? It re-downloads the release binary (SHA-256 verified from the GitHub release API) and restarts the local instance."
+msgstr "Запустить установщик tg-ws моста ещё раз? Он заново скачает релизный бинарь (SHA-256 проверяется по GitHub release API) и перезапустит локальный инстанс."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Install the THIRD-PARTY tg-ws bridge (tg-ws-proxy-go, d0mhate, MIT)? It downloads the release binary (SHA-256 verified from the GitHub release API), installs a local procd instance listening on 127.0.0.1 only, and enables the \"tg-ws (transparent)\" exit for the Telegram preset. Voice calls (UDP) are not carried by the bridge."
+msgstr "Установить СТОРОННИЙ tg-ws мост (tg-ws-proxy-go, d0mhate, MIT)? Он скачает релизный бинарь (SHA-256 проверяется по GitHub release API), поставит локальный procd-инстанс, слушающий только 127.0.0.1, и включит выход «tg-ws (прозрачно)» в пресете Telegram. Звонки (UDP) мост не несёт."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Downloading and installing the bridge…"
+msgstr "Скачиваю и устанавливаю мост…"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Bridge installation failed to start: "
+msgstr "Не удалось запустить установку моста: "
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Bridge installed and running — the exit \"tg-ws (transparent)\" is now available for the Telegram preset (the select re-checks the bridge on every poll)."
+msgstr "Мост установлен и работает — выход «tg-ws (прозрачно)» доступен в пресете Telegram (селектор перепроверяет мост при каждом опросе)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Bridge installation failed: %s (see /var/run/homeproxy/tgwsp_go_install.log on the router)."
+msgstr "Установка моста не удалась: %s (лог: /var/run/homeproxy/tgwsp_go_install.log на роутере)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The tg-ws bridge is not running — install/start it in the Advanced tab first."
+msgstr "tg-ws мост не запущен — сначала установите/запустите его во вкладке «Дополнительно»."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The tg-ws bridge carries Telegram traffic only."
+msgstr "tg-ws мост несёт только трафик Telegram."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 

@@ -38,7 +38,7 @@
 
 'use strict';
 
-import { access, readfile, writefile, open } from 'fs';
+import { access, readfile, writefile, open, popen } from 'fs';
 
 const RUN_DIR = '/var/run/homeproxy';
 const MODE = RUN_DIR + '/tgwsp_mode.txt';
@@ -54,6 +54,48 @@ const RS_BIN = '/usr/bin/tg-ws-proxy-rs';
  * the GitHub release API inside the installer itself. */
 const INSTALL_URL = 'https://raw.githubusercontent.com/valnesfjord/tg-ws-proxy-rs/main/install.sh';
 const INSTALL_TMP = '/tmp/tgwsp_install.sh';
+
+/* ═══ F8-F2 «tg-ws (transparent)»: the SOCKS5 bridge (go variant) ════════
+ * d0mhate/-tg-ws-proxy-Manager-go is the only variant with a SOCKS5 mode —
+ * the front-end sing-box needs for the transparent tgws-out path. Installed
+ * as OUR procd instance (loopback listener), binary verified against the
+ * GitHub release API digest — the same trust boundary the rs installer uses. */
+const GO_BIN = '/usr/bin/tg-ws-proxy-go';
+const GO_INIT = '/etc/init.d/tgws-go';
+const GO_API_URL = 'https://api.github.com/repos/d0mhate/-tg-ws-proxy-Manager-go/releases/latest';
+const GO_API_TMP = '/tmp/tgwsp_go_api.json';
+const GO_BIN_TMP = '/tmp/tgwsp_go.bin';
+const GO_STATUS = RUN_DIR + '/tgwsp_go_install.json';
+const GO_LOG = RUN_DIR + '/tgwsp_go_install.log';
+const GO_PORT = 1080;
+/* Release asset per OpenWrt arch (verified against the v1.4.1 asset list). */
+const GO_ASSET_MAP = {
+	'aarch64': 'tg-ws-proxy-openwrt-aarch64',
+	'mipsel_24kc': 'tg-ws-proxy-openwrt-mipsel_24kc',
+	'mips_24kc': 'tg-ws-proxy-openwrt-mips_24kc',
+	'armv7': 'tg-ws-proxy-openwrt-armv7',
+	'armv8l': 'tg-ws-proxy-openwrt-armv7',
+	'x86_64': 'tg-ws-proxy-openwrt-x86_64'
+};
+const GO_INIT_BODY = `#!/bin/sh /etc/rc.common
+# tg-ws bridge (SOCKS5, d0mhate/-tg-ws-proxy-Manager-go) — procd instance
+# managed by Re:HomeProxy AutoMod. Loopback-only listener: only the sing-box
+# core on this router talks to it, nothing is exposed to LAN or WAN.
+# CF route first: the direct WS path to Telegram IPs is cut by the provider
+# (R3-FIX-2, 2026-10-20), the Cloudflare edge path is not.
+START=99
+STOP=10
+USE_PROCD=1
+
+start_service() {
+	procd_open_instance tgwsbridge
+	procd_set_param command ${GO_BIN} --mode socks5 --host 127.0.0.1 --port ${GO_PORT} --cf-proxy --cf-proxy-first --cf-balance
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+`;
 
 /* ── Helpers (NO hoisting in ucode: declared before first call) ── */
 
@@ -149,6 +191,186 @@ function run_install() {
 	log(INSTALL_LOG, sprintf('installer finished: rc=%d', rc2));
 }
 
+/* ═══ mode: go_install ══════════════════════════════════════════════════ */
+
+function go_arch_asset() {
+	const rel = trim(readfile('/etc/openwrt_release') || '');
+	let arch = '';
+	for (let l in split(rel, '\n')) {
+		const m = match(l, /DISTRIB_ARCH='([^']*)'/);
+		if (m) { arch = m[1]; break; }
+	}
+	if (!length(arch)) {
+		const fd = popen('uname -m 2>/dev/null');
+		if (fd) { arch = trim(fd.read('all') || ''); fd.close(); }
+	}
+	for (let k in GO_ASSET_MAP) {
+		if (arch === k || index(arch, k) === 0)
+			return GO_ASSET_MAP[k];
+	}
+	return null;
+}
+
+function port_listening(port) {
+	const fd = popen('netstat -tln 2>/dev/null');
+	if (!fd) return false;
+	const out = fd.read('all') || '';
+	fd.close();
+	return index(out, ':' + port + ' ') >= 0;
+}
+
+function run_go_install() {
+	write_status(GO_STATUS, { running: true, stage: 'api' });
+	system('rm -f ' + sq(GO_LOG) + ' ' + sq(GO_API_TMP) + ' ' + sq(GO_BIN_TMP) + ' 2>/dev/null');
+	log(GO_LOG, 'tg-ws bridge install started');
+
+	/* A foreign tgm manager owns its own instance and init script — refuse
+	 * instead of silently fighting it for the binary and the process. */
+	if (access('/usr/bin/tgm')) {
+		write_status(GO_STATUS, { running: false, stage: 'error',
+			error: 'foreign tgm manager detected' });
+		log(GO_LOG, 'aborted: /usr/bin/tgm exists (foreign manager)');
+		return;
+	}
+	/* Flash space check before the download (binary ~6.5 MB). */
+	const dfd = popen('df / 2>/dev/null');
+	if (dfd) {
+		const df_out = trim(dfd.read('all') || '');
+		dfd.close();
+		log(GO_LOG, 'df /: ' + (split(df_out, '\n')[1] || df_out));
+	}
+
+	/* 1. Release API → asset URL + digest (the trust boundary). */
+	const rc1 = system('curl -fsSL --connect-timeout 10 --max-time 30 ' +
+		'-H "Accept: application/vnd.github+json" ' + sq(GO_API_URL) +
+		' -o ' + sq(GO_API_TMP) + ' >> ' + sq(GO_LOG) + ' 2>&1', 40000);
+	if (rc1 !== 0 || !access(GO_API_TMP)) {
+		write_status(GO_STATUS, { running: false, stage: 'error', rc: rc1,
+			error: 'release API fetch failed' });
+		log(GO_LOG, sprintf('API fetch failed: rc=%d', rc1));
+		return;
+	}
+	let api = null;
+	try { api = json(readfile(GO_API_TMP) || ''); } catch (e) { api = null; }
+	const asset_name = go_arch_asset();
+	if (!asset_name) {
+		write_status(GO_STATUS, { running: false, stage: 'error',
+			error: 'no release asset for this arch' });
+		log(GO_LOG, 'arch not in the asset map — aborted');
+		return;
+	}
+	let dl_url = null, digest = '', tag = '';
+	if (api && type(api) === 'object') {
+		tag = '' + (api.tag_name || '');
+		for (let a in (api.assets || [])) {
+			if (('' + (a.name || '')) === asset_name) {
+				dl_url = '' + (a.browser_download_url || '');
+				digest = '' + (a.digest || '');
+				break;
+			}
+		}
+	}
+	if (!length(dl_url)) {
+		write_status(GO_STATUS, { running: false, stage: 'error',
+			error: 'asset not found in the release' });
+		log(GO_LOG, 'asset ' + asset_name + ' missing in ' + tag);
+		return;
+	}
+	const want = match(digest, /sha256:([0-9a-fA-F]{64})/);
+	if (!want) {
+		write_status(GO_STATUS, { running: false, stage: 'error',
+			error: 'no sha256 digest in the release API' });
+		log(GO_LOG, 'digest missing — aborted');
+		return;
+	}
+	log(GO_LOG, sprintf('release %s, asset %s, digest %s', tag, asset_name, want[1]));
+
+	/* 2. Download the binary. */
+	write_status(GO_STATUS, { running: true, stage: 'download' });
+	const rc2 = system('curl -fsSL --connect-timeout 10 --max-time 300 ' +
+		sq(dl_url) + ' -o ' + sq(GO_BIN_TMP) + ' >> ' + sq(GO_LOG) + ' 2>&1', 310000);
+	if (rc2 !== 0 || !access(GO_BIN_TMP)) {
+		write_status(GO_STATUS, { running: false, stage: 'error', rc: rc2,
+			error: 'binary download failed' });
+		log(GO_LOG, sprintf('download failed: rc=%d', rc2));
+		return;
+	}
+
+	/* 3. Verify SHA-256 (busybox sha256sum; compare lc-lowered digests). */
+	write_status(GO_STATUS, { running: true, stage: 'verify' });
+	const sfd = popen('sha256sum ' + sq(GO_BIN_TMP) + ' 2>/dev/null');
+	let got = '';
+	if (sfd) {
+		const sm = match(sfd.read('all') || '', /^([0-9a-fA-F]{64})[[:space:]]/);
+		if (sm) got = lc(sm[1]);
+		sfd.close();
+	}
+	if (got !== lc(want[1])) {
+		write_status(GO_STATUS, { running: false, stage: 'error',
+			error: 'sha256 mismatch' });
+		log(GO_LOG, sprintf('sha256 mismatch: got %s want %s', got, want[1]));
+		system('rm -f ' + sq(GO_BIN_TMP) + ' 2>/dev/null');
+		return;
+	}
+	log(GO_LOG, 'sha256 verified');
+
+	/* 4. Stop any running instance, install the binary (atomic mv + chmod). */
+	write_status(GO_STATUS, { running: true, stage: 'install' });
+	if (access(GO_INIT))
+		system(sq(GO_INIT) + ' stop >/dev/null 2>&1; true');
+	const kfd = popen("pgrep -f 'tg-ws-proxy-go' 2>/dev/null");
+	if (kfd) {
+		for (let pl in split(trim(kfd.read('all') || ''), '\n')) {
+			const pid = int(trim(pl) || '0');
+			if (pid > 0)
+				system('kill ' + pid + ' 2>/dev/null; true');
+		}
+		kfd.close();
+	}
+	system('sleep 1');
+	system('mv -f ' + sq(GO_BIN_TMP) + ' ' + sq(GO_BIN) + ' && chmod 755 ' + sq(GO_BIN));
+	if (!access(GO_BIN)) {
+		write_status(GO_STATUS, { running: false, stage: 'error',
+			error: 'binary install failed' });
+		log(GO_LOG, 'mv to ' + GO_BIN + ' failed');
+		return;
+	}
+
+	/* 5. Our procd instance (loopback-only listener) + autostart. */
+	writefile(GO_INIT, GO_INIT_BODY);
+	system('chmod 755 ' + sq(GO_INIT));
+	system(sq(GO_INIT) + ' enable >/dev/null 2>&1; true');
+	const rc3 = system(sq(GO_INIT) + ' start >> ' + sq(GO_LOG) + ' 2>&1', 20000);
+
+	/* 6. The bridge must actually listen before the exit is offered. */
+	let up = false;
+	for (let t = 0; t < 6 && !up; t++) {
+		system('sleep 1');
+		up = port_listening(GO_PORT);
+	}
+	if (rc3 !== 0 || !up) {
+		write_status(GO_STATUS, { running: false, stage: 'error', rc: rc3,
+			error: 'bridge did not start (see the log)' });
+		log(GO_LOG, sprintf('start rc=%d, listening=%s', rc3, up ? 'yes' : 'no'));
+		return;
+	}
+	log(GO_LOG, 'bridge listening on 127.0.0.1:' + GO_PORT);
+
+	/* 7. Turn the config flags on and regenerate so the tgws-out outbound
+	 * exists in the running config (harmless until a rule references it). */
+	write_status(GO_STATUS, { running: true, stage: 'config' });
+	system('uci -q set homeproxy.config.tgws_enabled=1; true');
+	system('uci -q set homeproxy.config.tgws_port=' + GO_PORT + '; true');
+	system('uci -q commit homeproxy; true');
+	const rc4 = system('ucode ' + sq('/etc/homeproxy/scripts/generate_client.uc') +
+		' >> ' + sq(GO_LOG) + ' 2>&1', 60000);
+	system('/etc/init.d/homeproxy reload >/dev/null 2>&1; true');
+
+	write_status(GO_STATUS, { running: false, stage: 'done', rc: 0,
+		version: tag, port: GO_PORT });
+	log(GO_LOG, sprintf('install finished: rc_cfg=%d (bridge up on %d)', rc4, GO_PORT));
+}
+
 /* ═══ Main ══════════════════════════════════════════════════════════════ */
 
 const mode = trim(readfile(MODE) || '');
@@ -157,3 +379,5 @@ if (mode === 'check')
 	run_check();
 else if (mode === 'install')
 	run_install();
+else if (mode === 'go_install')
+	run_go_install();

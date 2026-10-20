@@ -861,7 +861,8 @@ function hp_tgwsp_detect() {
 	const out = {
 		rs: { present: false, integration: false, running: false, enabled: false,
 			port: null, listening: false, faketls: '', version: null },
-		go: { present: false, manager: false, running: false, port: null, listening: false },
+		go: { present: false, manager: false, managed: false, running: false,
+			port: null, listening: false },
 		conflict: false,
 		our_ports: HP_OUR_PORTS,
 		lan: ''
@@ -903,14 +904,21 @@ function hp_tgwsp_detect() {
 			out.conflict = true;
 	}
 
-	/* Go manager variant (d0mhate): its own tgm manager, SOCKS5/MTProto. */
+	/* Go bridge (d0mhate binary): either OUR procd instance (/etc/init.d/tgws-go,
+	 * installed by the Wizard's «tg-ws (transparent)» button — SOCKS5 on loopback)
+	 * or a foreign tgm-managed setup. 1443 belongs to the rs package, not here. */
 	if (access('/usr/bin/tg-ws-proxy-go') || access('/usr/bin/tgm') ||
 	    index(ps, 'tg-ws-proxy-go') >= 0) {
 		out.go.present = true;
 		out.go.manager = access('/usr/bin/tgm') ? true : false;
+		out.go.managed = access('/etc/init.d/tgws-go') ? true : false;
 		out.go.running = hp_tgwsp_running(ps, 'tg-ws-proxy-go', null);
-		for (let gp in [ 2080, 1080, 1443 ])
+		for (let gp in [ 2080, 1080 ])
 			if (index(ports, gp) >= 0) { out.go.port = gp; break; }
+		/* Our instance: the UCI port is authoritative when it is the one listening. */
+		const tw_port = int('' + (c.get('homeproxy', 'config', 'tgws_port') || '0'));
+		if (tw_port > 0 && index(ports, tw_port) >= 0)
+			out.go.port = tw_port;
 	}
 	if (out.go.port) {
 		out.go.listening = true;
@@ -3783,6 +3791,10 @@ const methods = {
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
 			const lports = hp_listen_ports();
+			/* F8-F2: the «tg-ws (transparent)» exit is offered only while the
+			 * bridge is actually running and listening on a known loopback
+			 * port — otherwise the rule would lead into a black hole. */
+			const twdet = hp_tgwsp_detect();
 			return {
 				result: true,
 				env: {
@@ -3791,6 +3803,9 @@ const methods = {
 					main_is_direct: (main_node === 'direct-out' || main_node === '' || main_node === 'nil'),
 					zapret_enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1'),
 					byedpi_enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1'),
+					tgws_ok: twdet.go.present && twdet.go.running &&
+						twdet.go.listening && twdet.go.port > 0 && !twdet.conflict,
+					tgws_port: twdet.go.port || 0,
 					mixed_port: mixed,
 					direct_in: hp_inbound_listening(lports, 5336),
 					proxy_in: hp_inbound_listening(lports, 5337)
@@ -3839,7 +3854,8 @@ const methods = {
 			if (node === 'main-out' && (main_node === 'direct-out' || main_node === '' || main_node === 'nil'))
 				return { result: false, error: 'main_is_direct' };
 
-			if (node !== '' && node !== 'main-out' && node !== 'byedpi-out' && node !== 'zapret-out' && node !== 'urltest') {
+			if (node !== '' && node !== 'main-out' && node !== 'byedpi-out' &&
+			    node !== 'zapret-out' && node !== 'tgws-out' && node !== 'urltest') {
 				const nc = c.get_all('homeproxy', node);
 				if (!nc || nc['.type'] !== 'node')
 					return { result: false, error: 'unknown node' };
@@ -3848,6 +3864,20 @@ const methods = {
 				return { result: false, error: 'byedpi_disabled' };
 			if (node === 'zapret-out' && c.get('homeproxy', 'config', 'zapret_enabled') !== '1')
 				return { result: false, error: 'zapret_disabled' };
+			/* F8-F2 «tg-ws (transparent)»: the WS bridge carries Telegram MTProto
+			 * only, and it must actually be running — otherwise the rule leads
+			 * into a black hole (the generator adds a main-out fallback urltest,
+			 * but offering a dead exit is dishonest). The bridge's real loopback
+			 * port is pinned into the config so the outbound dials what listens. */
+			if (node === 'tgws-out') {
+				if (src !== 'telegram')
+					return { result: false, error: 'tgws_telegram_only' };
+				const twdet = hp_tgwsp_detect();
+				if (!(twdet.go.present && twdet.go.running && twdet.go.listening && twdet.go.port > 0))
+					return { result: false, error: 'tgws_not_running' };
+				c.set('homeproxy', 'config', 'tgws_enabled', '1');
+				c.set('homeproxy', 'config', 'tgws_port', '' + twdet.go.port);
+			}
 			/* URLTest pool: the generator needs ≥1 usable member node on the
 			 * rule section. Validate every id as a real node section. */
 			let pool = [];
@@ -4072,11 +4102,17 @@ const methods = {
 				conflict: det.conflict,
 				our_ports: det.our_ports,
 				lan: det.lan,
+				tgws: {
+					enabled: (cursor().get('homeproxy', 'config', 'tgws_enabled') === '1'),
+					port: int('' + (cursor().get('homeproxy', 'config', 'tgws_port') || '0')) || null
+				},
 				check: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_check.json'),
 				install: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_install.json'),
+				go_install: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_go_install.json'),
 				logs: {
 					check: length(readfile(RUN_DIR + '/tgwsp_check.log') || ''),
-					install: length(readfile(RUN_DIR + '/tgwsp_install.log') || '')
+					install: length(readfile(RUN_DIR + '/tgwsp_install.log') || ''),
+					go_install: length(readfile(RUN_DIR + '/tgwsp_go_install.log') || '')
 				}
 			};
 		}
@@ -4155,6 +4191,29 @@ const methods = {
 				push(links, 'tg://proxy?server=' + server + '&port=' + port +
 					'&secret=dd' + s);
 			return { result: true, links: links, server: server, port: port };
+		}
+	},
+
+	/* F8-F2 «tg-ws (transparent)»: install the tg-ws-proxy-go bridge (d0mhate,
+	 * MIT — the only variant with a SOCKS5 mode) as OUR procd instance and
+	 * start it. The runner (wizard_tgwsp.uc mode 'go_install') downloads the
+	 * release binary for the router arch, verifies its SHA-256 against the
+	 * digest served by the GitHub release API, writes /etc/init.d/tgws-go
+	 * (loopback-only listener — nothing is exposed even to the LAN) and turns
+	 * the config flags (tgws_enabled/tgws_port). A foreign tgm manager install
+	 * is REFUSED (the binary would collide with its own instance). Deliberate
+	 * action with a UI confirm — third-party component. */
+	wizard_tgws_install: {
+		call: function(req) {
+			if (access('/usr/bin/tgm'))
+				return { result: false, error: 'foreign tgm manager detected — manage the bridge through tgm' };
+			const st = RUN_DIR + '/tgwsp_go_install.json';
+			let prev = hp_tgwsp_status_file(st);
+			if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
+				return { result: false, error: 'an installation is already in progress' };
+			writefile(RUN_DIR + '/tgwsp_mode.txt', 'go_install\n');
+			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_tgwsp.uc')} >/dev/null 2>&1 &`);
+			return { result: true };
 		}
 	},
 
