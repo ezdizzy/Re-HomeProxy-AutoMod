@@ -902,26 +902,45 @@ function tcp_reachable(host, via_proxy, timeout) {
 }
 
 	let engine_protect = {};
+	/* Ф8-F3: how many Master rules / companion hosts currently protect resources
+	 * from learning (surfaced by the stats flush → Engine overview panel). */
+	let protect_stats = { sources: 0, hosts: 0, direct: 0 };
+	let protect_sig = '';
 	function load_engine_protect() {
 		engine_protect = {};
-		/* Hosts already covered by a per-service rule routed to an ENGINE (Zapret /
-		 * ByeDPI) must never be learned: routing order puts user rules above the
-		 * learned lists, so a learned copy would be dead weight — and BEFORE the
-		 * order fix it actively hijacked e.g. YouTube away from Zapret. The full
-		 * domain set lives in remote .srs lists we cannot parse, so presets ship a
-		 * plain-text companion (resources/engine_<source>.txt). */
+		protect_stats = { sources: 0, hosts: 0, direct: 0 };
+		/* Hosts covered by an enabled per-service rule of the Master must never
+		 * be learned — for ANY node kind (a real node, main-out, URLTest pool,
+		 * Direct ("works directly" is the user's explicit opt-out), Zapret,
+		 * ByeDPI or the tg-ws bridge). Routing order puts user rules ABOVE the
+		 * learned lists, so a learned copy is dead weight — and BEFORE the
+		 * order fix it actively hijacked e.g. YouTube away from Zapret; for a
+		 * host OUTSIDE the rule's list a learned copy would even take a
+		 * DIFFERENT path than the user configured (learned rules → main-out).
+		 * The parseable host set is the plain-text companion
+		 * (resources/engine_<source>.txt); remote .srs lists cannot be parsed,
+		 * so hosts beyond the companion stay learnable (honest residual). */
 		uci.foreach('homeproxy', 'proxy_ru_rule', (cfg) => {
 			if (cfg.enabled !== '1') return;
-			if (cfg.node !== 'zapret-out' && cfg.node !== 'byedpi-out') return;
 			const src = trim(cfg.source || '');
 			if (!length(src)) return;
+			if (!engine_protect[src]) protect_stats.sources++;
 			engine_protect[src] = true;
+			if (cfg.node === 'direct-out') protect_stats.direct++;
 			for (let d in read_lines(RES + '/engine_' + src + '.txt')) {
 				d = trim(d);
-				if (length(d) && substr(d, 0, 1) !== '#')
+				if (length(d) && substr(d, 0, 1) !== '#') {
+					if (!engine_protect[d]) protect_stats.hosts++;
 					engine_protect[d] = true;
+				}
 			}
 		});
+		const sig = protect_stats.sources + '/' + protect_stats.hosts + '/' + protect_stats.direct;
+		if (sig !== protect_sig) {
+			protect_sig = sig;
+			log('master-rule protection: ' + protect_stats.sources + ' source(s), ' +
+			    protect_stats.hosts + ' companion host(s), ' + protect_stats.direct + ' direct route(s)');
+		}
 	}
 	function is_engine_protected(host) {
 		host = trim(host);
@@ -2042,6 +2061,10 @@ echo done > "$PRE.done"
 		direct_set = {}; proxy_set = {}; auto_ip_set = {}; auto_set = {};
 		manual_proxy_set = {}; manual_direct_set = {};
 		load_local_ips();
+		/* Ф8-F3: refresh Master-rule protection FIRST — the learned-list load
+		 * below drops entries the rules now cover, and at startup this runs
+		 * before the first per-pass load_engine_protect(). */
+		load_engine_protect();
 		load_resolver_ips(alt_dns);
 		for (let d in read_lines(RES + '/direct_list.txt')) direct_set[trim(d)] = true;
 		for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
@@ -2103,6 +2126,15 @@ echo done > "$PRE.done"
 				dropped++;
 				continue;
 			}
+			/* Ф8-F3: a host covered by an enabled Master rule is routed ABOVE
+			 * the learned lists — the learned copy is dead weight (or takes a
+			 * different path than the rule configures). Self-heal it away,
+			 * same as the manual-direct/OAuth/RU-TLD drops above. */
+			if (is_engine_protected(d)) {
+				log('dropping learned entry (covered by a Master rule): ' + d);
+				dropped++;
+				continue;
+			}
 			auto_set[d] = true;
 		}
 		/* Sanitize on load: infrastructure IPs must never live in the learned set —
@@ -2144,10 +2176,19 @@ echo done > "$PRE.done"
 			}
 			auto_ip_set[d] = true;
 		}
-		if (dropped > 0)
-			write_auto_list(auto_set);
-		if (ip_dropped > 0)
-			write_auto_ip_list(auto_ip_set);
+		if (dropped > 0 || ip_dropped > 0) {
+			if (dropped > 0)
+				write_auto_list(auto_set);
+			if (ip_dropped > 0)
+				write_auto_ip_list(auto_ip_set);
+			/* Ф8-F3: the shrunken learned set must reach the watched rule-set
+			 * files the same way a fresh learn does — regenerate them and flush
+			 * the DNS cache NOW. do_reload()'s pending_reload gate cannot be
+			 * used here: the startup sequence resets that flag after this. */
+			sync_learned_rulesets();
+			system('killall -HUP dnsmasq >/dev/null 2>&1');
+			log('applied purge of covered hosts to the core (hot reload)');
+		}
 		/* ч.61: re-derive the auth-family list (learned/pinned auth-like hosts
 		 * → their registered parent) and hot-sync the watched rule-set. */
 		sync_auth_families();
@@ -3053,6 +3094,9 @@ echo done > "$PRE.done"
 			sources: { dns: p.dns, clash: p.clash, sni: p.sni },
 			learned: { domains: nd, ips: ni },
 			verdicts: v,
+			/* Ф8-F3: Master-rule protection counters (Engine overview panel). */
+			protected: { sources: protect_stats.sources, hosts: protect_stats.hosts,
+				direct: protect_stats.direct },
 			ram_kb: ram_kb,
 			paused: paused,
 			events: eng_stats.events,

@@ -488,6 +488,9 @@ return view.extend({
 		 * feed. Data: the small automation_stats file the daemon writes
 		 * every cycle (read via the light automation_stats RPC). ──────── */
 		const engHint = E('div', { 'class': 'hpauto-hint', style: 'margin:0 0 6px 0' });
+		/* Ф8-F3: Master-rule protection transparency — the user must see that
+		 * resources covered by their configured rules never enter learning. */
+		const engProtect = E('div', { 'class': 'hpauto-eng-note', style: 'margin:0 0 6px 0' });
 		const engCards = E('div', { 'class': 'hpauto-cards' });
 		const ENG_CARD_DEFS = [
 			[ 'cycles',  _('Cycles') ],
@@ -528,6 +531,7 @@ return view.extend({
 		const engPanel = E('div', { 'class': 'hpauto-panel' }, [
 			E('h4', {}, [ _('Engine overview') ]),
 			engHint,
+			engProtect,
 			engCards,
 			engCharts,
 			engCap,
@@ -936,6 +940,17 @@ return view.extend({
 				engHint.textContent = '… ' + _('collecting…');
 			else
 				engHint.textContent = '';
+
+			/* Ф8-F3: Master-rule protection scope — '—' when the daemon has no
+			 * data yet (old stats file), honest zero-line when nothing covers. */
+			const pt = st.protected;
+			if (pt && pt.sources != null) {
+				engProtect.textContent = pt.sources
+					? _('Protected by Master rules: %d source(s), %d host(s)').format(pt.sources, pt.hosts) +
+						(pt.direct ? ' · ' + _('%d routed Direct').format(pt.direct) : '')
+					: _('No Master rules protect resources from learning.');
+			} else
+				engProtect.textContent = '';
 
 			/* Cards (text-only every tick — anti-flicker). */
 			const c = st.cycle || {};

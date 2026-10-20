@@ -8267,8 +8267,8 @@ msgstr "Покрыт массовым списком (%s) → %s — отдел�
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Telegram: live probes (2026-10-20) — direct 443 is cut on EVERY MTProto DC range now and port 80 no longer completes directly; the node still carries some DCs, so the VPN path remains the fallback. The tg-ws (transparent) exit carries messaging TCP through the local WS bridge with NO client setup (messaging falls back to the node automatically if the bridge dies; after the bridge recovers, re-apply or reload the service to return to it); voice calls (UDP) are not carried by the bridge — they keep riding the VPN. MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs."
-msgstr "Telegram: живые пробы (2026-10-20) — 443 напрямую теперь режется на ВСЕХ диапазонах MTProto DC, и порт 80 напрямую больше не проходит до конца; узел по-прежнему берёт часть DC, поэтому VPN-путь остаётся фолбэком. Выход «tg-ws (прозрачно)» несёт TCP-сообщения через локальный WS-мост БЕЗ настройки клиентов (если мост умрёт, сообщения автоматически уходят на узел; когда мост оживёт — пере-applied пресета или перезагрузка службы вернут трафик на мост); звонки (UDP) мост не несёт — они остаются на VPN. Диапазоны MTProto DC матчатся и IP-правилом — правило здесь маршрутизирует и домены, и IP DC-ов."
+msgid "Telegram: live probes (2026-10-20) — direct 443 is cut on EVERY MTProto DC range now and port 80 no longer completes directly; the node still carries some DCs, so the VPN path remains the fallback. The tg-ws (transparent) exit carries messaging TCP through the local WS bridge with NO client setup (messaging falls back to the node automatically if the bridge dies; after the bridge recovers, re-apply or reload the service to return to it); voice calls (UDP) are not carried by the bridge — they keep riding the VPN. MTProto DC ranges are matched by the IP ruleset too, so a rule here routes both the domains and the DC IPs. The bridge egresses via the Cloudflare WS route abroad (measured live: Amsterdam, NL) — Telegram will show that relay country for your devices, not the Russian home IP; the home IP only appears on the direct path, which the provider cuts. This is expected."
+msgstr "Telegram: живые пробы (2026-10-20) — 443 напрямую теперь режется на ВСЕХ диапазонах MTProto DC, и порт 80 напрямую больше не проходит до конца; узел по-прежнему берёт часть DC, поэтому VPN-путь остаётся фолбэком. Выход «tg-ws (прозрачно)» несёт TCP-сообщения через локальный WS-мост БЕЗ настройки клиентов (если мост умрёт, сообщения автоматически уходят на узел; когда мост оживёт — пере-applied пресета или перезагрузка службы вернут трафик на мост); звонки (UDP) мост не несёт — они остаются на VPN. Диапазоны MTProto DC матчатся и IP-правилом — правило здесь маршрутизирует и домены, и IP DC-ов. Мост выходит наружу через WS-маршрут Cloudflare за границей (замер живьём: Амстердам, NL) — Telegram будет показывать устройствам страну этого релея, а не российский домашний IP; домашний IP виден только на прямом пути, который режет провайдер. Это ожидаемое поведение."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -9479,8 +9479,8 @@ msgstr "Telegram без прокси (TG WS Proxy)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Two third-party bridges (both MIT) carry Telegram over a WebSocket path DPI does not block. The rs variant is MTProto-only: clients connect by a tg:// link (one per user). The Go bridge (installed by the \"Install tg-ws bridge\" button) adds a SOCKS5 front on 127.0.0.1 and is what the \"tg-ws (transparent)\" Telegram-preset exit rides — Telegram apps on your LAN need NO proxy settings; messaging TCP is carried over the bridge with an automatic fallback to the node, voice calls (UDP) are not carried and keep riding the VPN. Detection of foreign installs is read-only; nothing is exposed to LAN or WAN by the transparent bridge, and neither component is packed into this app."
-msgstr "Два сторонних моста (оба MIT) проводят Telegram по WebSocket-пути, который DPI не блокирует. rs-вариант — только MTProto: клиенты подключаются по tg:// ссылке (одна на пользователя). Go-мост (кнопка «Установить tg-ws мост») добавляет SOCKS5-вход на 127.0.0.1 — именно его использует выход «tg-ws (прозрачно)» в пресете Telegram: приложениям Telegram в LAN НЕ нужна настройка прокси; TCP-сообщения идут через мост с автоматическим фолбэком на узел, звонки (UDP) мост не несёт и остаются на VPN. Обнаружение чужих установок — только чтение; прозрачный мост слушает только loopback, в LAN/WAN ничего не открывается, в наш пакет ничего не пакуется."
+msgid "Two third-party bridges (both MIT) carry Telegram over a WebSocket path DPI does not block. The rs variant is MTProto-only: clients connect by a tg:// link (one per user). The Go bridge (installed by the \"Install tg-ws bridge\" button) adds a SOCKS5 front on 127.0.0.1 and is what the \"tg-ws (transparent)\" Telegram-preset exit rides — Telegram apps on your LAN need NO proxy settings; messaging TCP is carried over the bridge with an automatic fallback to the node, voice calls (UDP) are not carried and keep riding the VPN. The bridge egresses via a WS relay abroad (measured live: Amsterdam, NL), so Telegram shows that relay country for device sessions — the Russian home IP is only the direct path, which the provider cuts; this is expected. Detection of foreign installs is read-only; nothing is exposed to LAN or WAN by the transparent bridge, and neither component is packed into this app."
+msgstr "Два сторонних моста (оба MIT) проводят Telegram по WebSocket-пути, который DPI не блокирует. rs-вариант — только MTProto: клиенты подключаются по tg:// ссылке (одна на пользователя). Go-мост (кнопка «Установить tg-ws мост») добавляет SOCKS5-вход на 127.0.0.1 — именно его использует выход «tg-ws (прозрачно)» в пресете Telegram: приложениям Telegram в LAN НЕ нужна настройка прокси; TCP-сообщения идут через мост с автоматическим фолбэком на узел, звонки (UDP) мост не несёт и остаются на VPN. Мост выходит наружу через WS-релей за границей (замер живьём: Амстердам, NL), поэтому Telegram показывает устройствам страну этого релея — российский домашний IP виден только на прямом пути, который режет провайдер; это ожидаемо. Обнаружение чужих установок — только чтение; прозрачный мост слушает только loopback, в LAN/WAN ничего не открывается, в наш пакет ничего не пакуется."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -9806,3 +9806,14 @@ msgstr "Чтобы сменить выход: Сервисы → выходы �
 
 msgid "Node check failed: "
 msgstr "Проверка узлов не удалась: "
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Protected by Master rules: %d source(s), %d host(s)"
+msgstr "Защищено правилами Мастера: %d источник(ов), %d хост(ов)"
+
+msgid "%d routed Direct"
+msgstr "%d напрямую (Direct)"
+
+msgid "No Master rules protect resources from learning."
+msgstr "Правила Мастера не защищают ресурсы от изучения."
