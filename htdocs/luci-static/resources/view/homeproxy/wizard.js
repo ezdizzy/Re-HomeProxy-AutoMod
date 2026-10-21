@@ -1989,8 +1989,10 @@ return view.extend({
 			  bFlag(bVoice, _('Discord calls via Zapret')) ]));
 		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Client Settings page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled).') ]));
-		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('Grouped by technique. Based on <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> and community testing. See also <a href="https://github.com/fatyzzz/Byedpi-Setup" target="_blank">fatyzzz/Byedpi-Setup</a>.') ]));
+		const bDesc = E('p', { 'class': 'wiz-note' });
+		/* innerHTML: the description contains HTML links E() would escape */
+		bDesc.innerHTML = _('Grouped by technique. Based on <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> and community testing. See also <a href="https://github.com/fatyzzz/Byedpi-Setup" target="_blank">fatyzzz/Byedpi-Setup</a>.');
+		dpiStrategy.appendChild(bDesc);
 
 		bSave.addEventListener('click', function() {
 			bSave.disabled = true;
