@@ -8,6 +8,9 @@ USE_PROCD=1
 START=99
 STOP=10
 
+# engine_restart: light strategy-apply path (see the function below).
+EXTRA_COMMANDS="engine_restart"
+
 CONF="homeproxy"
 PROG_HIDDIFY="/usr/bin/hiddify-core"
 PROG_SINGBOX="/usr/bin/sing-box"
@@ -28,12 +31,15 @@ log() {
 	echo -e "$(date "+%Y-%m-%d %H:%M:%S") [DAEMON] $*" >> "$LOG_PATH"
 }
 
-# Deadlock guard. rc.common's default lock() waits FOREVER on fd 1000; a long-lived
-# daemon inheriting that fd pins the lock indefinitely and every subsequent
-# stop/start/restart queues behind it forever (observed in the wild: mosdns kept an
-# inherited locked fd and wedged all service actions until reboot). Bound the wait:
-# after 90s proceed anyway — two overlapping actions are recoverable, a permanent
-# wedge is not.
+# Deadlock note: rc.common gates start/stop/reload through procd_lock()
+# (/lib/functions/procd.sh) — an UNBOUNDED `flock 1000`. The lock is inherited
+# (fd 1000, no CLOEXEC) by every child spawned while it is held, so a
+# long-lived synchronous child pins ALL service actions until it dies
+# (observed live: a bootstrap-spawned mosdns wedged start for 20+ minutes).
+# The guard below is therefore a no-op for the procd flow (procd.sh overrides
+# it after sourcing this script); the REAL fix is closing fd 1000 for the
+# bootstrap subshell below — do not spawn long-lived children while the lock
+# is held without doing the same.
 lock() {
 	flock -w 90 1000 || log "Warning: init lock busy >90s (wedged holder?) — proceeding without exclusive lock."
 }
@@ -205,12 +211,17 @@ start_service() {
 		# bootstrap ever hangs it must NOT block start_service, so kill it after 25s.
 		# mosdns is launched detached (setsid) so it survives the kill and keeps
 		# serving; generate_client's mdns_ok guard then repoints to it safely.
+		#
+		# 1000>&- — CRITICAL: procd_lock() holds flock on fd 1000 while this child
+		# runs; mosdns (detached, never exits) must NOT inherit the locked fd or it
+		# pins the lock forever and every later start/stop/reload hangs (live wedge
+		# 2026-10-22, unwedged by killing the bootstrap-spawned mosdns).
 		(
 			/usr/bin/ucode "$HP_DIR/scripts/multidns.uc" bootstrap &
 			_bp=$!
 			( sleep 25; kill -9 "$_bp" 2>/dev/null ) &
 			wait "$_bp"
-		) 2>/dev/null || true
+		) 1000>&- 2>/dev/null || true
 	fi
 
 	# Generate or copy client config
@@ -389,7 +400,6 @@ start_service() {
 	local byedpi_enabled byedpi_cmd_opts byedpi_block_quic byedpi_gid
 	config_get_bool byedpi_enabled "config" "byedpi_enabled" "0"
 	if [ "$byedpi_enabled" = "1" ] && [ -x "/usr/bin/ciadpi" ]; then
-		config_get byedpi_cmd_opts "config" "byedpi_cmd_opts" "--disorder 1"
 		config_get byedpi_gid "infra" "byedpi_gid" "8181"
 
 		/etc/init.d/ciadpi stop 2>/dev/null; /etc/init.d/ciadpi disable 2>/dev/null; true
@@ -402,20 +412,16 @@ start_service() {
 			echo "byedpi:x:${byedpi_gid}:" >> /etc/group
 		fi
 
+		# The instance command is the LAUNCHER (dpi_engine.sh), not ciadpi itself:
+		# the wrapper re-reads the CURRENT UCI strategy on every procd respawn,
+		# which is what makes engine_restart() able to apply a new strategy with
+		# a single kill — no service reload. exec keeps the wrapper's PID, so
+		# procd keeps watching the same process. Args move out of the
+		# registration into the wrapper; quoting stays eval-based there.
 		procd_open_instance "byedpi"
-		procd_set_param command /usr/bin/ciadpi -i 127.0.0.1 -p 5335
-		# Quote-aware split so an argument value containing spaces survives intact —
-		# e.g. an inline hostlist  -H:"host1 host2 host3"  must stay a single argument,
-		# not be torn into separate tokens by plain word-splitting. eval re-parses the
-		# quoting; the string is the admin's own root-owned UCI option, so this is
-		# argument parsing, not a trust boundary. The leading -- protects against an
-		# option-like first token.
-		eval "set -- $byedpi_cmd_opts"
-		for _arg in "$@"; do
-			procd_append_param command "$_arg"
-		done
+		procd_set_param command /bin/sh "$HP_DIR/scripts/dpi_engine.sh" byedpi
 		procd_set_param group "byedpi"
-		procd_set_param respawn
+		procd_set_param respawn 3600 1 5
 		procd_close_instance
 
 		config_get_bool byedpi_block_quic "config" "byedpi_block_quic" "0"
@@ -431,37 +437,20 @@ start_service() {
 	# (firewall_post.ut), so nfqws2 runs WITHOUT hostlists — it desyncs whatever it's fed.
 	# The zapret2 package only supplies the binary + lua; its own service/firewall stays
 	# disabled so it can't fight us for the queue or install conflicting nft rules.
-	local zapret_enabled zapret_cmd_opts zapret_qnum zapret_default_opts
+	local zapret_enabled zapret_qnum
 	config_get_bool zapret_enabled "config" "zapret_enabled" "0"
 	if [ "$zapret_enabled" = "1" ] && [ -x "/opt/zapret2/nfq2/nfqws2" ]; then
 		config_get zapret_qnum "config" "zapret_qnum" "200"
-		# Default strategy = zapret2's shipped recipe minus hostlists, TCP http+tls only.
-		# The strategy is the single source of truth: if it has a --filter-udp profile,
-		# firewall_post.ut queues QUIC to it automatically; if not, QUIC is left alone.
-		zapret_default_opts="--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000 --lua-desync=multidisorder:pos=1,midsld"
-		config_get zapret_cmd_opts "config" "zapret_cmd_opts" "$zapret_default_opts"
 
 		/etc/init.d/zapret2 stop 2>/dev/null; /etc/init.d/zapret2 disable 2>/dev/null; true
 
+		# Same launcher pattern as the byedpi instance above: the strategy
+		# (zapret_cmd_opts or the packaged default) is read by the wrapper on
+		# every respawn, so engine_restart() applies a new strategy with a kill
+		# instead of a full service reload.
 		procd_open_instance "zapret"
-		# Fixed args: drop privileges to daemon, tag reinjected fakes with DESYNC_MARK
-		# 0x40000000 (firewall_post.ut lets that mark escape the redirect and not be
-		# re-queued), and load the lua desync library (nfqws2 reads the shipped .gz directly).
-		procd_set_param command /opt/zapret2/nfq2/nfqws2 \
-			--qnum="$zapret_qnum" \
-			--user=daemon \
-			--fwmark=0x40000000 \
-			--lua-init=@/opt/zapret2/lua/zapret-lib.lua \
-			--lua-init=@/opt/zapret2/lua/zapret-antidpi.lua \
-			--lua-init=@/opt/zapret2/lua/zapret-auto.lua
-		# Strategy opts: quote-aware split so a value with spaces survives intact. The string
-		# is the admin's own root-owned UCI option (argument parsing, not a trust boundary);
-		# leading -- guards an option-like first token. Same rationale as ByeDPI above.
-		eval "set -- $zapret_cmd_opts"
-		for _arg in "$@"; do
-			procd_append_param command "$_arg"
-		done
-		procd_set_param respawn
+		procd_set_param command /bin/sh "$HP_DIR/scripts/dpi_engine.sh" zapret
+		procd_set_param respawn 3600 1 5
 		procd_close_instance
 	fi
 
@@ -740,6 +729,66 @@ reload_service() {
 	start
 	rm -f "$RUN_DIR/.reload_running"
 	date +%s > "$stamp"
+}
+
+# Light strategy-apply path. User report: every strategy apply (Strategy Lab,
+# Composition, auto-pick, auto-pilot repair) restarted the WHOLE service —
+# the core stop RSTs all tunneled connections (a Minecraft session gets
+# kicked), dnsmasq restarts, nft chains are torn down and rebuilt. A strategy
+# change touches ONLY the engine args (dpi_engine.sh re-reads UCI on every
+# respawn) and the UDP-queue shape (a strategy with/without --filter-udp
+# changes the firewall_post.ut render). So: kill the engine processes — procd
+# respawns the wrappers with the fresh UCI — then re-render the nft includes
+# and reload fw4. The core, dnsmasq, ip rules and ESTABLISHED flows are NOT
+# touched: direct and tunneled connections survive; only new zapret
+# handshakes during the ~1 s respawn window pass un-desynced and retry.
+engine_restart() {
+	# Guard: never re-render interception chains over a STOPPED service — the
+	# stop path removes them on purpose, and the next start applies the
+	# strategy anyway.
+	local core_alive=0
+	pidof hiddify-core >/dev/null 2>&1 && core_alive=1
+	# The compressed lite build runs as sing-box-core (the wrapper execs it).
+	pidof sing-box >/dev/null 2>&1 && core_alive=1
+	pidof sing-box-core >/dev/null 2>&1 && core_alive=1
+	if [ "$core_alive" != "1" ]; then
+		log "engine_restart: core not running — skipped (the next start applies the strategy)."
+		return 0
+	fi
+
+	config_load "$CONF"
+	local zapret_enabled byedpi_enabled zapret_qnum p killed=0
+	config_get_bool zapret_enabled "config" "zapret_enabled" "0"
+	config_get_bool byedpi_enabled "config" "byedpi_enabled" "0"
+	if [ "$zapret_enabled" = "1" ] && [ -x /opt/zapret2/nfq2/nfqws2 ]; then
+		config_get zapret_qnum "config" "zapret_qnum" "200"
+		for p in $(pgrep nfqws2 2>/dev/null); do
+			# Match ONLY the live queue (the tester's temp instance runs qnum 209).
+			tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "qnum=$zapret_qnum" && { kill "$p" 2>/dev/null; killed=1; }
+		done
+	fi
+	if [ "$byedpi_enabled" = "1" ] && [ -x /usr/bin/ciadpi ]; then
+		for p in $(pgrep ciadpi 2>/dev/null); do
+			tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "127.0.0.1 -p 5335" && { kill "$p" 2>/dev/null; killed=1; }
+		done
+	fi
+	[ "$killed" = "1" ] && log "engine_restart: engines killed — procd respawns the launcher with the current UCI strategy."
+
+	# Firewall-only refresh (same render recipe as start_service).
+	ucode "$HP_DIR/scripts/firewall_pre.uc"
+	local _fwtmp="$RUN_DIR/fw4_post.raw"
+	utpl -S "$HP_DIR/scripts/firewall_post.ut" > "$_fwtmp" 2>"$RUN_DIR/fw4_render.err"
+	if [ $? -eq 0 ]; then
+		tr -d '\r' < "$_fwtmp" > "$RUN_DIR/fw4_post.nft"
+	else
+		log "Warning: firewall template render FAILED — keeping the previous render (see $RUN_DIR/fw4_render.err)."
+		rm -f "$_fwtmp"
+		return 0
+	fi
+	rm -f "$_fwtmp"
+	fw4 reload >"$RUN_DIR/fw4_reload.log" 2>&1 || \
+		log "Warning: fw4 reload returned an error — check $RUN_DIR/fw4_reload.log."
+	log "engine_restart: done."
 }
 
 service_triggers() {

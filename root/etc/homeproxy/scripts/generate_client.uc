@@ -154,7 +154,23 @@ function hp_core_info() {
 		if (!(path && access(path)))
 			return null;
 	}
-	const fd = popen(hp_shellquote(path) + ' version 2>/dev/null');
+	/* The lite COMPRESSED sing-box build (sing-box-extended-lite, issue #4)
+	 * puts a tiny sh wrapper (<10 KB) at /usr/bin/sing-box that answers
+	 * `version` from a first-line cache — no Tags line — and execs the real
+	 * binary for everything else. Probe /usr/libexec/sing-box-core for the
+	 * REAL tags, else the tag map would come back empty and every tagged
+	 * node type (quic/wireguard/…) would be skipped although the core runs
+	 * them. `path` stays the wrapper: `sing-box check` works through it. */
+	let probe = path;
+	if (path === '/usr/bin/sing-box') {
+		/* 2>/dev/null first: a missing binary must fail silently. */
+		const szf = popen('wc -c 2>/dev/null < /usr/bin/sing-box');
+		const sz = szf ? int(trim(szf.read('all'))) : 0;
+		if (szf) szf.close();
+		if (sz > 0 && sz < 10000 && access('/usr/libexec/sing-box-core'))
+			probe = '/usr/libexec/sing-box-core';
+	}
+	const fd = popen(hp_shellquote(probe) + ' version 2>/dev/null');
 	if (!fd)
 		return { path: path, version: null, tags: {} };
 	const out = fd.read('all'); fd.close();

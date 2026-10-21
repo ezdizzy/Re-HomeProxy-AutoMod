@@ -319,29 +319,48 @@ function main() {
 	c.set('homeproxy', 'config', 'zapret_cmd_opts', res.chosen.args);
 	c.set('homeproxy', 'config', 'zapret_enabled', '1');
 	c.commit('homeproxy');
-	system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-	note(res, 'Strategy applied — the service restarts.');
+	/* Light apply when the zapret instance already runs: the launcher
+	 * (dpi_engine.sh) re-reads UCI on the procd respawn, so the strategy
+	 * swap is a kill — the core keeps running and tunneled sessions (the
+	 * user report: a Minecraft session) are NOT kicked by an auto-pick.
+	 * The verify stage below polls the CORE pid; with the light path the
+	 * core never disappears, so `seen` fills in immediately. */
+	const zq = '' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200');
+	const z_alive = system(`ps w | grep '[n]fqws2' | grep -q "qnum=${zq}"`) === 0;
+	if (z_alive) {
+		system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
+		note(res, 'Strategy applied with a light engine restart (the core stays up).');
+	} else {
+		system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+		note(res, 'Strategy applied — the service restarts.');
+	}
 
 	/* 5. VERIFY — wait for the core, then the configured-path probe. */
 	res.stage = 'verify';
 	wstat(res);
 	let seen = 0;
 	const t0 = time();
-	while ((time() - t0) < CORE_WAIT_MAX) {
-		sleep(5000);
-		const fd = popen('pidof hiddify-core 2>/dev/null');
-		let pid = '';
-		if (fd) { pid = trim(fd.read('all') || ''); fd.close(); }
-		if (length(pid)) {
-			seen++;
-			if (seen >= 2) break;
-		} else {
-			seen = 0;
+	if (!z_alive) {
+		while ((time() - t0) < CORE_WAIT_MAX) {
+			sleep(5000);
+			const fd = popen('pidof hiddify-core 2>/dev/null');
+			let pid = '';
+			if (fd) { pid = trim(fd.read('all') || ''); fd.close(); }
+			if (length(pid)) {
+				seen++;
+				if (seen >= 2) break;
+			} else {
+				seen = 0;
+			}
 		}
+		if (seen < 2)
+			note(res, 'The core did not come back within 90 s — check it on the Overview page.');
+		sleep(3000);
+	} else {
+		/* Light path: the core never went away — give the engine respawn (~1 s)
+		 * and the firewall re-render a moment, then verify. */
+		sleep(5000);
 	}
-	if (seen < 2)
-		note(res, 'The core did not come back within 90 s — check it on the Overview page.');
-	sleep(3000);
 	res.verify = (resource === 'general')
 		? probe_live('http://www.gstatic.com/generate_204', 'gstatic generate_204')
 		: probe_live('https://' + meta.host, meta.host);

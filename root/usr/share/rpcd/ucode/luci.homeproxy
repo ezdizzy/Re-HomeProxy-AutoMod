@@ -3440,10 +3440,25 @@ const methods = {
 			 * the Restore button reads this file back on every page load. */
 			hp_apply_backup_write();
 			system(`uci set homeproxy.config.zapret_cmd_opts=${shellquote(strat)}`);
-			system('uci set homeproxy.config.zapret_enabled=1');
+			/* Light apply when the engine instance already exists: the launcher
+			 * (dpi_engine.sh) re-reads UCI on respawn, so a strategy change is a
+			 * kill — NOT a service reload that RSTs every tunneled connection
+			 * (user report: auto-pick kicked Minecraft sessions). A fresh
+			 * enablement or a dead engine still needs the full start path. */
+			const uci_get = (k, def) => {
+				const f = popen(`uci -q get ${k} 2>/dev/null`);
+				const v = f ? trim(f.read('all')) : '';
+				if (f) f.close();
+				return length(v) ? v : def;
+			};
+			const z_alive = (uci_get('homeproxy.config.zapret_enabled', '0') === '1') &&
+				system(`ps w | grep '[n]fqws2' | grep -q "qnum=${uci_get('homeproxy.config.zapret_qnum', '200')}"`) === 0;
 			system('uci commit homeproxy');
-			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true };
+			if (z_alive)
+				system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
+			else
+				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+			return { result: true, light_apply: z_alive };
 		}
 	},
 
@@ -3531,6 +3546,20 @@ const methods = {
 				return { result: false, error: 'ciadpi is not installed' };
 			hp_apply_backup_write();
 			const c = cursor();
+			/* Light apply when every engine the composition touches already
+			 * runs as a registered instance: the launcher re-reads UCI on
+			 * respawn, so the strategy swap is a kill — the core (and every
+			 * tunneled connection behind it) stays up. A fresh enablement or a
+			 * dead engine needs the full start path to (re)register instances. */
+			const engine_alive = (flag, pat) => (('' + (flag || '')) === '1') &&
+				system(`ps w | grep -q ${shellquote(pat)}`) === 0;
+			const prev_z = c.get('homeproxy', 'config', 'zapret_enabled');
+			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
+			const zq = trim('' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200'));
+			const z_ok = !length(z) || (engine_alive(prev_z, `[n]fqws2`) &&
+				system(`ps w | grep '[n]fqws2' | grep -q "qnum=${zq}"`) === 0);
+			const b_ok = !length(b) || engine_alive(prev_b, `[c]iadpi`);
+			const light = !!(z_ok && b_ok && (length(z) || length(b)));
 			if (length(z)) {
 				c.set('homeproxy', 'config', 'zapret_cmd_opts', z);
 				c.set('homeproxy', 'config', 'zapret_enabled', '1');
@@ -3540,8 +3569,11 @@ const methods = {
 				c.set('homeproxy', 'config', 'byedpi_enabled', '1');
 			}
 			c.commit('homeproxy');
-			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, applied: { zapret: z, byedpi: b } };
+			if (light)
+				system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
+			else
+				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+			return { result: true, light_apply: light, applied: { zapret: z, byedpi: b } };
 		}
 	},
 
@@ -3557,13 +3589,33 @@ const methods = {
 			if (!bak || type(bak.zapret) !== 'object' || type(bak.byedpi) !== 'object')
 				return { result: false, error: 'no server snapshot found' };
 			const c = cursor();
+			/* Light/full split (same as compose_apply), decided from the state
+			 * BEFORE the write: light only when enablement does not change and
+			 * every enabled engine is actually running (a kill respawns it with
+			 * the rolled-back args); any enable/disable needs the full start
+			 * path to add/remove the procd instances. */
+			const prev_z = c.get('homeproxy', 'config', 'zapret_enabled');
+			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
+			const zq = trim('' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200'));
+			const new_z = bak.zapret.enabled ? '1' : '0';
+			const new_b = bak.byedpi.enabled ? '1' : '0';
+			const engine_alive = (flag, pat) => (('' + (flag || '')) === '1') &&
+				system(`ps w | grep -q ${shellquote(pat)}`) === 0;
+			const z_ok = (new_z === '1') ? (engine_alive(prev_z, `[n]fqws2`) &&
+				system(`ps w | grep '[n]fqws2' | grep -q "qnum=${zq}"`) === 0) : true;
+			const b_ok = (new_b === '1') ? engine_alive(prev_b, `[c]iadpi`) : true;
+			const light = (new_z === ('' + (prev_z || ''))) && (new_b === ('' + (prev_b || ''))) &&
+				z_ok && b_ok;
 			c.set('homeproxy', 'config', 'zapret_cmd_opts', '' + (bak.zapret.cmd_opts || ''));
-			c.set('homeproxy', 'config', 'zapret_enabled', bak.zapret.enabled ? '1' : '0');
+			c.set('homeproxy', 'config', 'zapret_enabled', new_z);
 			c.set('homeproxy', 'config', 'byedpi_cmd_opts', '' + (bak.byedpi.cmd_opts || ''));
-			c.set('homeproxy', 'config', 'byedpi_enabled', bak.byedpi.enabled ? '1' : '0');
+			c.set('homeproxy', 'config', 'byedpi_enabled', new_b);
 			c.commit('homeproxy');
-			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, restored: { zapret: bak.zapret, byedpi: bak.byedpi } };
+			if (light)
+				system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
+			else
+				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+			return { result: true, light_apply: light, restored: { zapret: bak.zapret, byedpi: bak.byedpi } };
 		}
 	},
 
@@ -3711,6 +3763,21 @@ const methods = {
 				return { result: false, error: 'options contain forbidden characters' };
 			hp_apply_backup_write();
 			const c = cursor();
+			/* Previous values decide the apply path: the three flags live
+			 * outside the engines (udp_over_tcp/block_quic → generator + the
+			 * init.d QUIC chain, zapret_voice → generator + firewall ports), so
+			 * ANY flag change is a full reload; identical flags only swap the
+			 * ciadpi args — a kill + respawn (no core/DNS teardown). Nothing
+			 * changed at all → no action at all. */
+			const prev_opts = c.get('homeproxy', 'config', 'byedpi_cmd_opts');
+			const prev_uot = c.get('homeproxy', 'config', 'byedpi_udp_over_tcp');
+			const prev_bquic = c.get('homeproxy', 'config', 'byedpi_block_quic');
+			const prev_zvoice = c.get('homeproxy', 'config', 'zapret_voice');
+			/* Absent UCI flags mean '0' (the generator treats them so) — a
+			 * first save must not count as a flag change. */
+			const same = (a, b) => ('' + (a == null ? '0' : a)) === ('' + (b == null ? '0' : b));
+			const flags_changed = !same(prev_uot, uot) || !same(prev_bquic, bquic) || !same(prev_zvoice, zvoice);
+			const opts_changed = !(length(opts) ? same(prev_opts, opts) : !length('' + (prev_opts || '')));
 			if (length(opts))
 				c.set('homeproxy', 'config', 'byedpi_cmd_opts', opts);
 			else
@@ -3719,8 +3786,17 @@ const methods = {
 			c.set('homeproxy', 'config', 'byedpi_block_quic', bquic);
 			c.set('homeproxy', 'config', 'zapret_voice', zvoice);
 			c.commit('homeproxy');
-			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, applied: { cmd_opts: opts, udp_over_tcp: uot,
+			if (!flags_changed && !opts_changed)
+				return { result: true, unchanged: true, applied: { cmd_opts: opts, udp_over_tcp: uot,
+					block_quic: bquic, zapret_voice: zvoice } };
+			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
+			const light = !flags_changed && same(prev_b, '1') &&
+				system(`ps w | grep -q ${shellquote('[c]iadpi')}`) === 0;
+			if (light)
+				system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
+			else
+				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
+			return { result: true, light_apply: light, applied: { cmd_opts: opts, udp_over_tcp: uot,
 				block_quic: bquic, zapret_voice: zvoice } };
 		}
 	},
@@ -4557,6 +4633,29 @@ const methods = {
 					if (!target) target = s['.name'];
 				}
 			});
+
+			/* No-change skip (user report: the auto-pilot ensure-rules path hits
+			 * this RPC on every repair cycle, and the previous behavior —
+			 * regenerate + full reload — was a pure connection-drop source: the
+			 * core stop RSTs every tunneled connection even when nothing
+			 * actually changed). tgws is excluded: applying it also flips
+			 * config.tgws_enabled / tgws_port, so it always re-applies. */
+			let unchanged = false;
+			if (target && node !== 'tgws-out') {
+				const cur = c.get_all('homeproxy', target);
+				unchanged = !!cur && cur.enabled === '1' && ('' + (cur.node || '')) === node;
+				if (unchanged && node === 'urltest') {
+					const cur_pool = (type(cur.urltest_nodes) === 'array') ? cur.urltest_nodes : [];
+					if (length(cur_pool) !== length(pool))
+						unchanged = false;
+					else
+						for (let i = 0; i < length(pool); i++)
+							if (('' + cur_pool[i]) !== ('' + pool[i])) { unchanged = false; break; }
+				}
+			}
+			if (unchanged)
+				return { result: true, action: 'applied', section_id: target,
+					rules_for_source: count, unchanged: true };
 
 			if (node === '') {
 				/* "Direct" preset = no rule at all (default route IS direct). */

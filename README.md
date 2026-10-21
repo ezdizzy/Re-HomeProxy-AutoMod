@@ -4,8 +4,9 @@
 Оригинальный проект - https://github.com/1andrevich/homeproxy-hiddify
 
 
-Современная многоядерная прокси-платформа на основе [hiddify-core](https://github.com/hiddify/hiddify-core) и
-[sing-box-extended](https://github.com/shtorm-7/sing-box-extended).
+Современная многоядерная прокси-платформа на основе [hiddify-core](https://github.com/hiddify/hiddify-core),
+[sing-box-extended](https://github.com/shtorm-7/sing-box-extended) и лёгкого
+[sing-box-extended-lite](https://github.com/MANCrimSon/sing-box-extended-lite).
 Форк [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy).
 
 > **Re:HomeProxy AutoMod** — мод Re-HomeProxy от **@ezdizzy**. Этот мод дополняет оригинальное приложение Re-HomeProxy
@@ -16,7 +17,8 @@
 ## Обзор
 
 Re-HomeProxy — многофункциональная система управления прокси, новый взгляд на HomeProxy от ImmortalWrt. Работает на выбор
-ядра ([hiddify-core](https://github.com/hiddify/hiddify-core) или [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)),
+ядра ([hiddify-core](https://github.com/hiddify/hiddify-core), [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)
+или лёгкий [sing-box-extended-lite](https://github.com/MANCrimSon/sing-box-extended-lite) для устройств с малым объёмом flash),
 включает встроенный обход DPI на основе [Zapret2](https://github.com/bol-van/zapret2) и [ByeDPI](https://github.com/hufrea/byedpi)
 для разблокировки сайтов без VPN, готовые правила маршрутизации для России и установщик ядра в один клик — всё из
 веб-интерфейса LuCI.

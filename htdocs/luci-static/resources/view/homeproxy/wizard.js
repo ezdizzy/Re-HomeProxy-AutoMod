@@ -1455,6 +1455,13 @@ return view.extend({
 							ui.addNotification(null, E('p', {}, msg), 'error');
 							return;
 						}
+						if (r && r.unchanged) {
+							/* Nothing changed — no restart, no auto-check, no
+							 * refresh (a refresh would wipe this message). */
+							dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Rule is already in place — nothing to apply.') ]));
+							return;
+						}
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
 							[ _('Rule applied — the service is restarting, the check will run automatically…') ]));
 						/* The service reload takes a few seconds; the poll loop
@@ -3030,7 +3037,7 @@ return view.extend({
 			}
 			chainBtn.disabled = true;
 			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-				[ _('Creating the rule — the service restarts, the route check follows…') ]));
+				[ _('Applying the rule — the route check follows…') ]));
 			L.resolveDefault(callPresetApply(src, eng, []), {}).then(function(r) {
 				chainBtn.disabled = false;
 				if (!r || r.result === false) {
@@ -3038,6 +3045,9 @@ return view.extend({
 						[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
 					return;
 				}
+				if (r.unchanged)
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Rule is already in place — running the route check…') ]));
 				let hosts = [];
 				for (let p in PRESETS)
 					if (PRESETS[p].source === src)

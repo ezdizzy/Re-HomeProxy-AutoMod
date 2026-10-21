@@ -2,9 +2,22 @@
 # Isolated nfqws2 strategy tester.
 #
 # nfqws2 is a packet mangler (NFQUEUE), not a SOCKS proxy: queue ONLY the
-# resolved test-site IPs to a TEMP NFQUEUE running the candidate strategy,
-# probe the TLS handshake with curl, and tear everything down via a trap —
-# without disturbing the live homeproxy queue (qnum 200) or other traffic.
+# tester's own probe handshakes to a TEMP NFQUEUE running the candidate
+# strategy, probe the TLS handshake with curl, and tear everything down via
+# a trap — without disturbing the live homeproxy queue (qnum 200) or ANY
+# other traffic.
+#
+# Probe isolation (user report: the auto-pick sweep killed live connections):
+# the historical temp table hooked postrouting on the test IPs, which also
+# caught the CORE's own flows to those IPs — unmarked direct-out dials AND
+# zapret-mark (110) dials. Those handshakes were then mangled TWICE (test
+# strategy + live strategy) or by a random test strategy alone, so live
+# YouTube/Telegram/Discord/Speedtest connections kept breaking during every
+# sweep pass. Now the probes run as a NON-ROOT user (daemon) and the temp
+# queue matches `meta skuid` in the OUTPUT hook: locally generated packets
+# only, and sing-box (root) never matches. When su is unavailable the
+# fallback keeps the postrouting hook but matches EXACT-unmarked packets,
+# which still protects the zapret-marked flows (the worst breakage).
 #
 # Usage:  zapret_test.sh [--baseline] "<strategy opts>" [tag=ip tag=ip …]
 # Output: a single JSON line:  {"ok":N,"total":M,"results":[{tag,label,host,ip,tls,ok,reason},…]}
@@ -98,6 +111,17 @@ fi
 IPSET=$(echo "$IPSET" | sed 's/[[:space:]]//g; s/,$//')
 [ -z "$IPSET" ] && fail "could not resolve any test host"
 
+# Probe identity: run the curls as the non-root `daemon` user (uid resolved
+# live) and queue by meta skuid — sing-box (root) can never match. Fallback
+# when su is unusable: keep root probes, but match EXACT-unmarked packets so
+# the zapret-mark (110) flows are still protected from the test instance.
+PROBE_UID=""
+if command -v su >/dev/null 2>&1; then
+	PROBE_UID=$(id -u daemon 2>/dev/null)
+	case "$PROBE_UID" in ''|*[!0-9]*) PROBE_UID="" ;; esac
+	[ -n "$PROBE_UID" ] && ! su -s /bin/sh daemon -c true >/dev/null 2>&1 && PROBE_UID=""
+fi
+
 # 2. Surgically send ONLY the test IPs' TCP/443 direct (return from output_redir,
 #    so router-origin curl egresses direct where our temp queue can catch it).
 #    Tagged with a comment for clean teardown.
@@ -105,13 +129,19 @@ if nft list chain inet fw4 homeproxy_output_redir >/dev/null 2>&1; then
 	nft insert rule inet fw4 homeproxy_output_redir ip daddr "{ $IPSET }" tcp dport 443 counter return comment "\"$CMT\"" 2>/dev/null
 fi
 
-# 3. Temp table: queue test-IP TCP/443 handshakes to QNUM (exclude nfqws's own
-#    reinjected DMARK fakes so they aren't re-queued); notrack those fakes.
+# 3. Temp table: queue ONLY the probe handshakes to QNUM (exclude nfqws's own
+#    reinjected DMARK fakes so they aren't re-queued, and notrack those fakes).
 nft add table inet "$TABLE" 2>/dev/null
-nft add chain inet "$TABLE" pre "{ type filter hook postrouting priority mangle; policy accept; }" 2>/dev/null
-nft add rule  inet "$TABLE" pre "meta mark and $DMARK == 0 ip daddr { $IPSET } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
-nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
-nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
+if [ -n "$PROBE_UID" ]; then
+	nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
+	nft add rule  inet "$TABLE" out "meta skuid $PROBE_UID meta mark and $DMARK == 0 ip daddr { $IPSET } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
+	nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
+else
+	nft add chain inet "$TABLE" pre "{ type filter hook postrouting priority mangle; policy accept; }" 2>/dev/null
+	nft add rule  inet "$TABLE" pre "meta mark 0 ip daddr { $IPSET } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
+	nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
+	nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
+fi
 
 # 4. Start the candidate nfqws2 on the temp queue (skipped in --baseline mode:
 #    no queue listener = packets pass unchanged = pure baseline).
@@ -125,11 +155,20 @@ fi
 # 5. Probe every host in parallel: curl forced to the resolved IP, write
 #    "time_appconnect curl_exit". Collect by POLLING the r_<tag> files
 #    (signal-immune; each curl is capped by --max-time 10, so 25s is a ceiling).
+#    In skuid mode each probe runs as `daemon` (the queue rule matches that
+#    uid only); the temp dir must then accept the daemon's result files.
+[ -n "$PROBE_UID" ] && chmod 777 "$TMP" 2>/dev/null
 for h in $HOSTS; do
 	tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
 	ip=$(cat "$TMP/ip_$tag" 2>/dev/null)
 	if [ -z "$ip" ]; then echo "0 6" > "$TMP/r_$tag"; continue; fi
-	( out=$(curl -s --resolve "${host}:443:${ip}" -o /dev/null -w '%{time_appconnect}' --connect-timeout 4 --max-time 10 "https://${host}" 2>/dev/null); echo "$out $?" > "$TMP/r_$tag" ) >/dev/null 2>&1 &
+	if [ -n "$PROBE_UID" ]; then
+		# tag/host/ip are tester-owned constants (fixed labels, resolved
+		# numeric IPs, /tmp path with PID) — safe to inline in the body.
+		su -s /bin/sh daemon -c "out=\$(curl -s --resolve '${host}:443:${ip}' -o /dev/null -w '%{time_appconnect}' --connect-timeout 4 --max-time 10 'https://${host}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/r_${tag}'" >/dev/null 2>&1 &
+	else
+		( out=$(curl -s --resolve "${host}:443:${ip}" -o /dev/null -w '%{time_appconnect}' --connect-timeout 4 --max-time 10 "https://${host}" 2>/dev/null); echo "$out $?" > "$TMP/r_$tag" ) >/dev/null 2>&1 &
+	fi
 done
 n=0
 while [ "$n" -lt 25 ]; do

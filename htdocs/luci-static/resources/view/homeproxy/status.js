@@ -1102,29 +1102,34 @@ function buildSnapshotsCard() {
 
 function buildCoreCard(core, coreInfo) {
 	const isHiddify = core === 'hiddify';
-	const name = isHiddify ? 'hiddify-core' : 'sing-box-extended';
+	const isLite = core === 'singbox-lite';
+	const name = isHiddify ? 'hiddify-core' : (isLite ? 'sing-box-extended-lite' : 'sing-box-extended');
 	const pkgMgr = coreInfo.pkg_manager;
+	/* full and lite SHARE /usr/bin/sing-box: coreInfo.singbox describes the
+	 * on-disk binary — each card derives its own "installed" from it. */
 	const coreData = (isHiddify ? coreInfo.hiddify : coreInfo.singbox) || {};
 	const canInstall = !!pkgMgr;
 
 	const desc = isHiddify
 		? _('Fork of sing-box 1.13 by the Hiddify team (HiddifyCli). Runs every protocol this app can configure, including NaïveProxy and Hiddify\'s Mieru dialect. Best compatibility with Hiddify App / Hiddify Manager exports.')
+		: isLite
+		? _('Lightweight sing-box 1.14 build by MANCrimSon: VLESS Reality, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard/AmneziaWG (kernel stack) and the Clash API — ~46 MB pure ELF / ~10 MB UPX. No NaïveProxy, MASQUE/WARP, Tailscale or gVisor: such nodes are skipped automatically when this core runs. The installer restarts the service.')
 		: _('Extended sing-box 1.14 base by shtorm-7. Runs every protocol this app can configure plus WARP / MASQUE / TrustTunnel / MTProxy extras — but no NaïveProxy: such nodes are skipped automatically when this core runs.');
 
 	/* Verified capability line from the core's own build tags. */
 	const caps = [];
 	if (coreData.naive) caps.push(_('NaïveProxy') + ' ✓');
-	if (coreData.extended) caps.push('WARP / MASQUE / TrustTunnel ✓');
+	if (coreData.extended && !isLite) caps.push('WARP / MASQUE / TrustTunnel ✓');
 	const capLine = caps.length
 		? E('div', { style: 'margin-top:2px; font-size:0.9em; color:#3fbf5f' }, caps.join(' · '))
-		: null;
+		: E('span');
 
-	let installed = coreData.installed || false;
+	let installed = coreData.installed && (isHiddify || (isLite ? !!coreData.lite : !coreData.lite));
 	let version   = coreData.version   || null;
 
 	const statusEl = E('strong', {
 		style: installed ? 'color:#3fbf5f' : 'color:#9a9a9a'
-	}, installed ? 'v' + version : _('Not installed'));
+	}, installed ? 'v' + version + (coreData.lite && coreData.variant === 'compressed' ? ' [lite·upx]' : (coreData.lite ? ' [lite]' : '')) : _('Not installed'));
 
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
 	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
@@ -1162,7 +1167,7 @@ function buildCoreCard(core, coreInfo) {
 		const fail = (msg) => {
 			installed = prevInstalled;
 			version   = prevVersion;
-			statusEl.textContent = installed ? 'v' + (version || '?') : _('Not installed');
+			statusEl.textContent = installed ? 'v' + (version || '?') + (coreData.lite ? ' [lite]' : '') : _('Not installed');
 			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 			installBtn.disabled = false;
 			removeBtn.disabled  = !installed;
@@ -1173,9 +1178,11 @@ function buildCoreCard(core, coreInfo) {
 		const prep = await L.resolveDefault(callCorePrepare(core, ''), {});
 		if (prep.error) return fail(prep.error);
 
-		const compact = (prep.variant === 'upx');
+		const compact = (prep.variant === 'upx' || prep.variant === 'compressed');
 		setMsg(prep.note || _('Downloading...'), prep.note ? '#d99a1b' : '#9a9a9a');
-		const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
+		/* full/lite prepare results differ: an .apk/.ipk URL vs the lite
+		 * project's install.sh — download_pkg stores it either way. */
+		const dl = await L.resolveDefault(callCoreDownload(prep.dl_url || prep.installer_url, prep.tmp_path), {});
 		if (!dl.result) return fail(dl.error || _('Download failed'));
 
 		setMsg(_('Installing package...'), '#9a9a9a');
@@ -1187,14 +1194,18 @@ function buildCoreCard(core, coreInfo) {
 
 		const fresh = await L.resolveDefault(callCoreInfo(), {});
 		const fd = (isHiddify ? fresh.hiddify : fresh.singbox) || {};
-		installed = fd.installed || false;
+		installed = fd.installed && (isHiddify || (isLite ? !!fd.lite : !fd.lite));
 		version   = fd.version   || null;
-		statusEl.textContent = installed ? 'v' + version : _('Unknown');
+		statusEl.textContent = installed ? 'v' + version + (fd.lite && fd.variant === 'compressed' ? ' [lite·upx]' : (fd.lite ? ' [lite]' : '')) : _('Unknown');
 		statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 		installBtn.textContent = _('Update');
 		installBtn.disabled = false;
-		removeBtn.disabled  = false;
+		removeBtn.disabled  = !installed;
 		setMsg(compact ? _('Installed successfully (compact build)') : _('Installed successfully'), '#3fbf5f');
+		/* Server-side recovery notes (e.g. the lite installer health-check
+		 * watching only sing-box) are shown after the success line. */
+		if (inst.note)
+			setMsg((compact ? _('Installed successfully (compact build)') : _('Installed successfully')) + ' — ' + inst.note, '#d99a1b');
 	};
 
 	const installBtn = E('button', {
@@ -1223,7 +1234,9 @@ function buildCoreCard(core, coreInfo) {
 				statusEl.textContent = _('Not installed');
 				statusEl.style.color = '#9a9a9a';
 				installBtn.textContent = _('Install');
-				setMsg(_('Removed successfully'), '#3fbf5f');
+				/* Removing the lite build can leave the service stopped when no
+				 * other core exists — the backend says so in `warning`. */
+				setMsg(ret.warning || _('Removed successfully'), ret.warning ? '#d99a1b' : '#3fbf5f');
 			} else {
 				removeBtn.disabled = false;
 				setMsg(ret.error || _('Removal failed'), '#e05252');
@@ -1278,6 +1291,10 @@ return view.extend({
 		                 features.core_type === 'singbox' ? 'sing-box' : null;
 		const coreVer = features.version ? ' v' + features.version : '';
 		const coreCustomSuffix = features.core_custom ? ' (custom)' : '';
+		/* The active sing-box may be the LITE build (same binary path): mark it
+		 * from the capability probe, not from the version string. */
+		const coreLiteSuffix = (features.core_type === 'singbox' && coreInfo?.singbox?.lite)
+			? (coreInfo.singbox.variant === 'compressed' ? ' [lite·upx]' : ' [lite]') : '';
 
 		if (!features.core_type) {
 			const callDetectCustomCore = rpc.declare({
@@ -1325,7 +1342,7 @@ return view.extend({
 				])
 			]);
 		} else {
-			o.default = E('strong', { 'style': 'color:#3fbf5f' }, coreName + coreVer + coreCustomSuffix);
+			o.default = E('strong', { 'style': 'color:#3fbf5f' }, coreName + coreVer + coreCustomSuffix + coreLiteSuffix);
 		}
 		o.description = _('Nodes the active core cannot load are skipped automatically (they would crash the core). Switch Preferred core in Client Settings to run them.');
 
@@ -1400,6 +1417,12 @@ return view.extend({
 
 		o = s.option(form.DummyValue, '_core_singbox');
 		o.default = buildCoreCard('singbox', coreInfo);
+
+		/* sing-box-extended-lite (MANCrimSon) — GitHub issue #4. Shares
+		 * /usr/bin/sing-box with the full build; the card derives its own
+		 * installed state from coreInfo.singbox.lite. */
+		o = s.option(form.DummyValue, '_core_singbox_lite');
+		o.default = buildCoreCard('singbox-lite', coreInfo);
 
 		/* ч.69: snapshots + emergency internet recovery. */
 		o = s.option(form.DummyValue, '_snapshots_card');

@@ -7446,6 +7446,11 @@ msgstr "Расширенная база sing-box 1.14 от shtorm-7. Работ�
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
+msgid "Lightweight sing-box 1.14 build by MANCrimSon: VLESS Reality, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard/AmneziaWG (kernel stack) and the Clash API — ~46 MB pure ELF / ~10 MB UPX. No NaïveProxy, MASQUE/WARP, Tailscale or gVisor: such nodes are skipped automatically when this core runs. The installer restarts the service."
+msgstr "Лёгкая сборка sing-box 1.14 от MANCrimSon: VLESS Reality, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard/AmneziaWG (стек ядра) и Clash API — ~46 МБ чистый ELF / ~10 МБ UPX. Без NaïveProxy, MASQUE/WARP, Tailscale и gVisor: такие узлы автоматически пропускаются, когда работает это ядро. Установщик перезапускает сервис."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
 msgid "Nodes the active core cannot load are skipped automatically (they would crash the core). Switch Preferred core in Client Settings to run them."
 msgstr "Узлы, которые не может загрузить активное ядро, пропускаются автоматически (они уронили бы ядро). Чтобы они работали, смените «Предпочтительное ядро» на странице «Клиент»."
 
@@ -8725,10 +8730,18 @@ msgstr "Создать правило и проверить"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
+msgid "Applying the rule — the route check follows…"
+msgstr "Применяю правило — далее проверка маршрута…"
+
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Creating the rule — the service restarts, the route check follows…"
-msgstr "Создаю правило — сервис перезапускается, далее проверка маршрута…"
+msgid "Rule is already in place — nothing to apply."
+msgstr "Правило уже стоит — применять нечего."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Rule is already in place — running the route check…"
+msgstr "Правило уже стоит — запускаю проверку маршрута…"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 

@@ -4,7 +4,7 @@
 # Re:HomeProxy AutoMod
 Orginal project - https://github.com/1andrevich/homeproxy-hiddify
 
-A modern multi-core proxy platform powered by [hiddify-core](https://github.com/hiddify/hiddify-core) and [sing-box-extended](https://github.com/shtorm-7/sing-box-extended).
+A modern multi-core proxy platform powered by [hiddify-core](https://github.com/hiddify/hiddify-core), [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) and the lightweight [sing-box-extended-lite](https://github.com/MANCrimSon/sing-box-extended-lite).
 A fork of [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy).
 
 > **Re:HomeProxy AutoMod** is a mod of Re-HomeProxy by **@ezdizzy**. It builds on the original
@@ -15,7 +15,8 @@ A fork of [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy).
 ## Overview
 
 Re-HomeProxy is a feature-rich proxy management system, a fresh take on ImmortalWrt's HomeProxy. It runs on a choice of
-cores ([hiddify-core](https://github.com/hiddify/hiddify-core) or [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)),
+cores ([hiddify-core](https://github.com/hiddify/hiddify-core), [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)
+or the lightweight [sing-box-extended-lite](https://github.com/MANCrimSon/sing-box-extended-lite) for small-flash devices),
 adds a built-in DPI-bypass based on [Zapret2](https://github.com/bol-van/zapret2) and [ByeDPI](https://github.com/hufrea/byedpi)
 for un-throttling sites without a VPN, ready-made Russia routing rules, and a one-click core installer — all from the LuCI
 web interface.
