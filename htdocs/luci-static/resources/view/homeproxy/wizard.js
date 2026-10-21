@@ -443,12 +443,14 @@ return view.extend({
  * buttons on one line, hints/pool on sub-rows below the card — so the
  * control columns line up across all 26 rows regardless of hint length
  * (the old flex rows had drifting columns and uneven heights). The button
- * column is a FIXED width sized for Apply+Check together: every row is its
- * own grid, so an auto-sized last column would shift the select column on
- * rows that carry the extra Check button. */
+ * column is a FIXED width: every row is its own grid, so an auto-sized last
+ * column would shift the select column on rows that carry the extra Check
+ * button. The button GROUP wraps as a fallback: the shortened RU label
+ * («Применить» + «Проверить») fits the 210px track on one line, but an
+ * overflowing locale must stay INSIDE the card, not spill out of it. */
 .wiz-svc { border: 1px solid rgba(128,128,128,.3); border-radius: 8px; background: rgba(128,128,128,.07); margin: 6px 0; padding: 8px 10px; }
 .wiz-svc-grid { display: grid; grid-template-columns: minmax(140px, 230px) minmax(180px, 1fr) minmax(190px, 300px) 210px; align-items: center; gap: 6px 10px; }
-.wiz-svc-btns { display: flex; align-items: center; gap: 8px; }
+.wiz-svc-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .wiz-svc-grid > .wiz-title, .wiz-svc-grid > .wiz-state { flex: none; }
 .wiz-svc-grid > .wiz-select { width: 100%; }
 .wiz-svc .wiz-pool { margin: 6px 0 0 0; }
@@ -881,9 +883,24 @@ return view.extend({
 		const SVC_NOTES = {
 			telegram: _('Voice calls (UDP) are not measured by an HTTP probe.'),
 			whatsapp: _('Voice calls (UDP) are not measured by an HTTP probe.'),
-			twitch:   _('Page probe only — streaming quality is not measured.'),
-			dpi_detect: _('TSPU watchlist (dpi-detect): the provider is confirmed cutting this resource — a Zapret/ByeDPI strategy is the candidate fix.')
+			twitch:   _('Page probe only — streaming quality is not measured.')
 		};
+		/* TSPU watchlist notes are VERDICT-AWARE: the upstream list flags
+		 * domains cut by SOME provider's TSPU — the note must not claim a cut
+		 * the scan just disproved (a "bare paths work" row would contradict
+		 * its own recommendation column). */
+		const DPI_NOTES = {
+			strategy: _('TSPU watchlist (dpi-detect): the provider is confirmed cutting this resource — a Zapret/ByeDPI strategy is the candidate fix.'),
+			open:     _('TSPU watchlist (dpi-detect): the upstream list flags this domain, but it opens fine here — this provider is not cutting it.'),
+			config:   _('TSPU watchlist (dpi-detect): the upstream list flags this domain, and bare paths work here — the configured path itself is failing: check the rule target or the strategy.'),
+			other:    _('TSPU watchlist (dpi-detect): the upstream list reports confirmed provider cuts — see the measured verdict of this row.')
+		};
+		function dpiDetectNote(v) {
+			if (v === 'needs_strategy') return DPI_NOTES.strategy;
+			if (v === 'opens_direct' || v === 'works_live') return DPI_NOTES.open;
+			if (v === 'config_broken') return DPI_NOTES.config;
+			return DPI_NOTES.other;
+		}
 
 		/* ── TG WS Proxy card (D8, Ф7): «Telegram без прокси» ─────────────
 		 * Third-party component (valnesfjord/tg-ws-proxy-rs). Detection is
@@ -1214,6 +1231,13 @@ return view.extend({
 				/* A rule already covers a "needs proxy" resource — say so. */
 				if (r.verdict === 'needs_proxy' && rule)
 					rec = _('Rule configured (→ %s) — the resource is covered by it.').format(nodeText(rule.node));
+				/* The tg-ws bridge is MTProto-only (ch.91, lesson 95): this
+				 * row's WEB probe cannot pass the bridge, so a needs_proxy
+				 * verdict here does NOT mean "create a rule" — the rule is
+				 * in place and serves the messaging apps, while the web
+				 * version rides the group fallback (node). */
+				if (r.verdict === 'needs_proxy' && rule && rule.enabled && rule.node === 'tgws-out')
+					rec = _('Rule configured (→ %s) — it serves the Telegram apps (MTProto); the web version rides the node (group fallback).').format(nodeText(rule.node));
 				if (r.verdict === 'needs_strategy' && rule && (rule.node === 'zapret-out' || rule.node === 'byedpi-out'))
 					rec = _('The rule already leads to %s — run the Strategy Lab: the current strategy may not handle this resource.').format(nodeText(rule.node));
 				/* google_ai (C2): the page shell opens everywhere; say plainly
@@ -1232,10 +1256,20 @@ return view.extend({
 						rec = _('Covered by the mass list (%s) — it opens via the main node; a rule here overrides the list.').format(mass);
 				}
 				const hostCell = E('div', {}, [ E('span', { style: 'font-weight:600' }, [ String(r.host) ]) ]);
-				if (SVC_NOTES[r.svc]) {
-					const note = E('div', { 'class': 'wiz-note', style: 'margin:0' }, [ SVC_NOTES[r.svc] ]);
+				const svcNote = (r.svc === 'dpi_detect') ? dpiDetectNote(ev) : SVC_NOTES[r.svc];
+				if (svcNote) {
+					const note = E('div', { 'class': 'wiz-note', style: 'margin:0' }, [ svcNote ]);
 					hostCell.appendChild(note);
 				}
+				/* tg-ws rows (rule → tgws-out): the WEB probe result depends
+				 * on which urltest member serves it — the MTProto-only bridge
+				 * stalls on the web version (expected timeout), the node
+				 * serves it. Messaging apps are unaffected either way; a
+				 * timeout on this row does NOT mean the bridge is broken
+				 * (the bridge has its own check in the Advanced tab). */
+				if (r.svc === 'telegram' && rule && rule.enabled && rule.node === 'tgws-out')
+					hostCell.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
+						[ _('The probe checks the WEB version through the configured path; the tg-ws bridge carries the Telegram apps (MTProto) only — the web check may time out while the group sits on the bridge, messaging clients are unaffected. Bridge status and check: the Advanced tab.') ]));
 				const tr = E('tr', {}, [
 					E('td', {}, [ hostCell ]),
 					E('td', {}, [ probeCell(r.live) ]),
@@ -1441,7 +1475,7 @@ return view.extend({
 				if (preset.check) {
 					const checkBtn = E('button', {
 						'class': 'btn cbi-button', type: 'button'
-					}, [ _('Check now') ]);
+					}, [ _('Check') ]);
 					checkBtn.addEventListener('click', function() {
 						checkBtn.disabled = true;
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Checking…') ]));

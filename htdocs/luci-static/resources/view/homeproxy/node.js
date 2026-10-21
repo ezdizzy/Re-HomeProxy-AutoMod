@@ -1659,6 +1659,19 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'wireguard');
 	o.depends('type', 'amneziawg');
 	o.modalonly = true;
+
+	/* GitHub issue #3: the WG/AWG network stack is a real choice — lite
+	 * sing-box builds ship without gVisor ("gVisor is not included") and the
+	 * kernel stack needs its kmod; several WG/AWG endpoints also need the
+	 * unique per-endpoint TUN name the generator emits on the system stack. */
+	o = s.option(form.ListValue, 'wireguard_backend', _('Network stack'),
+		_('auto (default) uses the userspace gVisor stack only when the core binary ships it, otherwise the kernel stack — the wireguard/amneziawg kernel module must be installed (lite sing-box builds have no gVisor and the endpoint fails with "gVisor is not included"). The kernel stack creates a real TUN interface per endpoint; a unique interface name is emitted automatically, so several WG/AWG endpoints can run at once. system forces the kernel stack (faster on ARM routers), gvisor forces the userspace stack.'));
+	o.value('', _('Auto'));
+	o.value('system', _('system (kernel)'));
+	o.value('gvisor', _('gvisor (userspace)'));
+	o.depends('type', 'wireguard');
+	o.depends('type', 'amneziawg');
+	o.modalonly = true;
 	/* Wireguard config end */
 
 	/* AmneziaWG config start */

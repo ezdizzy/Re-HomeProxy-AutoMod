@@ -10338,3 +10338,296 @@ msgstr "Один клик: фаззер ранжирует корпус (пер�
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 msgid "Enable Zapret or ByeDPI on the Client Settings page first."
 msgstr "Сначала включите Zapret или ByeDPI на странице «Клиент»."
+
+#: htdocs/luci-static/resources/view/homeproxy/access.js
+msgid "Bind outbound traffic to specific interface. Leave empty to auto detect."
+msgstr "Привязывает исходящий трафик к конкретному интерфейсу; пусто — автоопределение."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "eco: serial probing for weak routers (still uses the native probe_pool batch when the helper is installed, capped at 8 concurrent probes). perf: up to 64 domains / 32 IPs per pass in parallel batches (16 at once) — for multi-core routers (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
+msgstr "eco: последовательные пробы для слабых роутеров (нативный батч probe_pool всё равно используется при установленном помощнике, до 8 одновременных проб). perf: до 64 доменов / 32 IP за проход параллельными пачками (по 16) — для многоядерных роутеров (например, GL.iNet Flint 2). auto: определяется по ядрам CPU и памяти."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+msgid "last: %s"
+msgstr "последний: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Role"
+msgstr "Роль"
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Performance may degrade slightly, so it is not recommended to enable on when it is not needed."
+msgstr "Производительность может немного снизиться — без необходимости включать не рекомендуется."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "If set, the requested domain name will be resolved to IP before routing."
+msgstr "Если задано, запрошенное доменное имя разрешается в IP перед маршрутизацией."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "The tag of the upstream outbound.<br/>Other dial fields will be ignored when enabled."
+msgstr "Тег вышестоящего outbound.<br/>При включении остальные поля соединения игнорируются."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Sniffed protocol, see <a target=\"_blank\" href=\"https://sing-box.sagernet.org/configuration/route/sniff/\">Sniff</a> for details."
+msgstr "Протокол, определённый сниффером; подробнее — <a target=\"_blank\" href=\"https://sing-box.sagernet.org/configuration/route/sniff/\">Sniff</a>."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "If enabled, for UDP proxy requests addressed to a domain, the original packet address will be sent in the response instead of the mapped domain."
+msgstr "Если включено, для UDP-запросов к домену в ответе отправляется исходный адрес пакета вместо отображённого домена."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "If enabled, attempts to connect UDP connection to the destination instead of listen."
+msgstr "Если включено, UDP-соединение подключается к назначению напрямую, а не прослушивается."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Timeout for UDP connections.<br/>Setting a larger value than the UDP timeout in inbounds will have no effect."
+msgstr "Таймаут UDP-соединений.<br/>Значение больше UDP-таймаута инбаундов эффекта не даст."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Fragment TLS handshakes. Due to poor performance, try <code>%s</code> first."
+msgstr "Фрагментирует TLS-handshake. Из-за низкой производительности сначала попробуйте <code>%s</code>."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "The fallback value in milliseconds used when TLS segmentation cannot automatically determine the wait time."
+msgstr "Резервное значение в миллисекундах на случай, когда TLS-фрагментация не смогла автоматически определить время ожидания."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Specifies DNS server tag to use instead of selecting through DNS routing."
+msgstr "Задаёт тег DNS-сервера в обход выбора через DNS-маршрутизацию."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "<code>%s</code> will be temporarily overwritten to <code>%s</code> after 50 triggers in 30s if not enabled."
+msgstr "Если не включено, <code>%s</code> временно перезаписывается на <code>%s</code> после 50 срабатываний за 30 с."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Make each DNS server's cache independent for special purposes. If enabled, will slightly degrade performance."
+msgstr "Делает кэш каждого DNS-сервера независимым (для особых задач). При включении слегка снижает производительность."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Timeout of rejected DNS response cache in seconds. <code>604800 (7d)</code> is used by default."
+msgstr "Таймаут кэша отклонённых DNS-ответов в секундах. По умолчанию <code>604800 (7 д)</code>."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Tag of a another server to resolve the domain name in the address. Required if address contains domain."
+msgstr "Тег другого сервера для резолва домена в address. Обязателен, если address содержит домен."
+
+#: htdocs/luci-static/resources/view/homeproxy/client.js
+msgid "Match IP CIDR with query response. Current rule will be skipped if not match."
+msgstr "Сопоставляет IP CIDR с ответом на запрос; при несовпадении правило пропускается."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Resolves Russian domains directly, without going through the proxy. You may add several — MultiDNS races all of them, without it the first entry is used. A bare IP is queried over UDP with TCP fallback; entries may force a transport: tcp://IP, or an encrypted direct DoH URL like https://1.1.1.1/dns-query (never proxied)."
+msgstr "Разрешает российские домены напрямую, без прокси. Можно добавить несколько — MultiDNS гоняет их все, без него используется первая запись. Голый IP опрашивается по UDP с фолбэком на TCP; записи могут задавать транспорт: tcp://IP или прямую зашифрованную DoH-ссылку вида https://1.1.1.1/dns-query (никогда не через прокси)."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Automatically detect the DNS servers your provider assigns on the WAN interface and race them together with the \"Russia DNS server\" list above. No manual setup on any router or ISP: MultiDNS measures quality continuously and prunes this server automatically if it is dead, slow or returns forged answers."
+msgstr "Автоматически определяет DNS-серверы, которые провайдер выдаёт на WAN-интерфейсе, и гоняет их вместе со списком «Russia DNS server» выше. Ручная настройка не нужна ни на одном роутере или у провайдера: MultiDNS непрерывно меряет качество и сам вырезает этот сервер, если он мёртв, медленный или подделывает ответы."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "For ISPs that BLOCK or FORGE all plaintext port-53 traffic (UDP swallowed, TCP answered with garbage): two direct encrypted DoH upstreams — Cloudflare 1.1.1.1 and Google 8.8.8.8, queried straight from the router without the proxy — are added to the racing pool automatically so names keep resolving. Leave OFF on a normal network: enabled only after two consecutive verification cycles prove every plaintext answer unverifiable."
+msgstr "Для провайдеров, которые БЛОКИРУЮТ или ПОДДЕЛЫВАЮТ весь открытый трафик порта 53 (UDP глотается, TCP отвечает мусором): два прямых зашифрованных DoH-upstream — Cloudflare 1.1.1.1 и Google 8.8.8.8, опрашиваемые роутером напрямую без прокси — автоматически добавляются в гоночный пул, чтобы имена продолжали резолвиться. В обычной сети держите ВЫКЛЮЧЕННЫМ: включается, только если два проверочных цикла подряд докажут, что ни один открытый ответ нельзя принять за настоящий."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "For setups WITHOUT MultiDNS: watch the first server of each pool list (Russia / Secure above); when it stops answering, move a healthy one from the same list to the front. Every transport is health-checked for real — plain UDP/53, DoH over HTTPS, DoT over TCP:853; only QUIC is assumed always up (no probe tooling). Ignored while MultiDNS is enabled — it already races every server."
+msgstr "Для конфигураций БЕЗ MultiDNS: следит за первым сервером каждого списка (Россия / Secure выше); когда он перестаёт отвечать, здоровый сервер из того же списка ставится первым. Каждый транспорт реально проверяется — открытый UDP/53, DoH через HTTPS, DoT по TCP:853; только QUIC считается всегда живым (нет инструмента пробы). Игнорируется при включённом MultiDNS — он уже гоняет все серверы."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Health-check and rotate the “Russia DNS server” list."
+msgstr "Проверка здоровья и ротация списка «Russia DNS server»."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Health-check and rotate the “Secure DNS server” list."
+msgstr "Проверка здоровья и ротация списка «Secure DNS server»."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Sample the domains your clients actually query (from the dnsmasq log, stays on this router) and cross-check the racing pool's answers against direct encrypted DoH references. A domain whose answers persistently disagree with every reference is quarantined to the secure pool automatically, so forged answers stop reaching clients. Costs a few extra HTTPS checks per quality cycle."
+msgstr "Сэмплирует домены, которые реально запрашивают клиенты (из лога dnsmasq, остаётся на этом роутере), и сверяет ответы гоночного пула с прямыми зашифрованными DoH-эталонами. Домен, чьи ответы устойчиво расходятся со всеми эталонами, автоматически отправляется в карантин secure-пула — подделанные ответы перестают доходить до клиентов. Стоит несколько лишних HTTPS-проверок за цикл качества."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Total HTTPS verification checks the quality daemon may spend per cycle (split equally between the pools). Higher = fresher open-ratio data on big pools, at the cost of more background requests. Default 24."
+msgstr "Сколько всего HTTPS-проверок демон качества может потратить за цикл (делится поровну между пулами). Больше = свежее данные доли открывающихся сайтов на больших пулах, ценой больше фоновых запросов. По умолчанию 24."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "In the check, close sessions that have been idle for longer than this, in seconds."
+msgstr "В проверке закрывать сессии, простаивающие дольше этого времени, в секундах."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "In the check, at least the first <code>n</code> idle sessions are kept open."
+msgstr "В проверке как минимум первые <code>n</code> простаивающих сессий держатся открытыми."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Disables Path MTU Discovery (RFC 8899). Packets will then be at most 1252 (IPv4) / 1232 (IPv6) bytes in size."
+msgstr "Отключает Path MTU Discovery (RFC 8899). Размер пакетов будет не более 1252 (IPv4) / 1232 (IPv6) байт."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "This is the TUIC port of the UDP over TCP protocol, designed to provide a QUIC stream based UDP relay mode that TUIC does not provide."
+msgstr "Это TUIC-вариант протокола UDP over TCP: добавляет режим релея UDP на основе QUIC-потока, которого в TUIC нет."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Interval for sending heartbeat packets for keeping the connection alive (in seconds)."
+msgstr "Интервал отправки heartbeat-пакетов для поддержания соединения (в секундах)."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Legacy protocol support (VMess MD5 Authentication) is provided for compatibility purposes only, use of alterId > 1 is not recommended."
+msgstr "Поддержка легаси-протокола (VMess MD5 Authentication) оставлена только для совместимости; alterId > 1 не рекомендуется."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Protocol parameter. Will waste traffic randomly if enabled (enabled by default in v2ray and cannot be disabled)."
+msgstr "Параметр протокола. При включении случайно расходует трафик (в v2ray включён по умолчанию и отключить нельзя)."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "If the transport doesn't see any activity after a duration of this time (in seconds), it pings the client to check if the connection is still active."
+msgstr "Если транспорт не видит активности в течение этого времени (в секундах), он пингует клиента, проверяя живость соединения."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "The timeout (in seconds) that after performing a keepalive check, the client will wait for activity. If no activity is detected, the connection will be closed."
+msgstr "Таймаут (в секундах): после keepalive-проверки клиент ждёт активность; если её нет, соединение закрывается."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "If enabled, the client transport sends keepalive pings even with no active connections."
+msgstr "Если включено, транспорт клиента отправляет keepalive-пинги даже без активных соединений."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "List of IP (v4 or v6) addresses prefixes to be assigned to the interface."
+msgstr "Список префиксов IP-адресов (v4 или v6) для назначения интерфейсу."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Network stack"
+msgstr "Сетевой стек"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "auto (default) uses the userspace gVisor stack only when the core binary ships it, otherwise the kernel stack — the wireguard/amneziawg kernel module must be installed (lite sing-box builds have no gVisor and the endpoint fails with \"gVisor is not included\"). The kernel stack creates a real TUN interface per endpoint; a unique interface name is emitted automatically, so several WG/AWG endpoints can run at once. system forces the kernel stack (faster on ARM routers), gvisor forces the userspace stack."
+msgstr "Авто (по умолчанию): userspace-стек gVisor, только если он есть в бинарнике ядра, иначе kernel-стек — должен быть установлен модуль ядра wireguard/amneziawg (в lite-сборках sing-box gVisor нет, и endpoint падает с «gVisor is not included»). Kernel-стек создаёт реальный TUN-интерфейс на каждый endpoint; имя интерфейса выдаётся уникальное автоматически, поэтому несколько WG/AWG-endpoint'ов могут работать одновременно. system — принудительно kernel-стек (быстрее на ARM-роутерах), gvisor — принудительно userspace-стек."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "system (kernel)"
+msgstr "system (ядро)"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "gvisor (userspace)"
+msgstr "gvisor (userspace)"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Minimum multiplexed streams in a connection before opening a new connection."
+msgstr "Минимум мультиплексированных потоков в соединении до открытия нового."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Used to verify the hostname on the returned certificates unless insecure is given."
+msgstr "Используется для проверки имени хоста по возвращённым сертификатам, если не задан insecure."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "This is <strong>DANGEROUS</strong>, your traffic is almost like <strong>PLAIN TEXT</strong>! Use at your own risk!"
+msgstr "Это <strong>ОПАСНО</strong>: ваш трафик почти как <strong>ОТКРЫТЫЙ ТЕКСТ</strong>! Используйте на свой риск!"
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "The elliptic curves that will be used in an ECDHE handshake, in preference order. If empty, the default will be used."
+msgstr "Эллиптические кривые для ECDHE-handshake в порядке предпочтения. Пусто — используется значение по умолчанию."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "If you have the root certificate, use this option instead of allowing insecure."
+msgstr "Если у вас есть корневой сертификат, используйте эту опцию вместо разрешения insecure."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "ECH (Encrypted Client Hello) is a TLS extension that allows a client to encrypt the first part of its ClientHello message."
+msgstr "ECH (Encrypted Client Hello) — расширение TLS, позволяющее клиенту шифровать первую часть сообщения ClientHello."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "The path to the ECH config, in PEM format. If empty, load from DNS will be attempted."
+msgstr "Путь к ECH-конфигурации в формате PEM. Пусто — будет предпринята попытка загрузки из DNS."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "uTLS is a fork of \"crypto/tls\", which provides ClientHello fingerprinting resistance."
+msgstr "uTLS — форк «crypto/tls» с защитой от фингерпринтинга ClientHello."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Enable the SUoT protocol, requires server support. Conflict with multiplex."
+msgstr "Включить протокол SUoT; требуется поддержка сервером. Конфликтует с мультиплексированием."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Support Hysteria, Shadowsocks, Trojan, v2rayN (VMess), and XTLS (VLESS) online configuration delivery standard."
+msgstr "Поддержка онлайн-стандарта доставки конфигураций Hysteria, Shadowsocks, Trojan, v2rayN (VMess) и XTLS (VLESS)."
+
+#: htdocs/luci-static/resources/view/homeproxy/node.js
+msgid "Drop/keep nodes that contain the specific keywords. <a target=\"_blank\" href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions\">Regex</a> is supported."
+msgstr "Отбрасывать/оставлять узлы с указанными ключевыми словами. Поддерживается <a target=\"_blank\" href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions\">Regex</a>."
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "Failed"
+msgstr "Сбой"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "disabled"
+msgstr "отключено"
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "The maximum number of QUIC concurrent bidirectional streams that a peer is allowed to open."
+msgstr "Максимум одновременных двунаправленных QUIC-потоков, которые может открыть пир."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Tell the client to use the BBR flow control algorithm instead of Hysteria CC."
+msgstr "Просить клиента использовать алгоритм управления потоком BBR вместо Hysteria CC."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "HTTP3 server behavior when authentication fails.<br/>A 404 page will be returned if empty."
+msgstr "Поведение HTTP3-сервера при неудачной аутентификации.<br/>Пусто — возвращается страница 404."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "How long the server should wait for the client to send the authentication command (in seconds)."
+msgstr "Сколько сервер ждёт команду аутентификации от клиента (в секундах)."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Specifies the time (in seconds) until idle clients should be closed with a GOAWAY frame. PING frames are not considered as activity."
+msgstr "Время (в секундах), после которого простаивающие клиенты закрываются GOAWAY-кадром. PING-кадры активностью не считаются."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "To be compatible with Xray-core, set this to <code>Sec-WebSocket-Protocol</code>."
+msgstr "Для совместимости с Xray-core задайте здесь <code>Sec-WebSocket-Protocol</code>."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "Server name to use when choosing a certificate if the ClientHello's ServerName field is empty."
+msgstr "Имя сервера при выборе сертификата, если поле ServerName в ClientHello пусто."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "The email address to use when creating or selecting an existing ACME server account."
+msgstr "Email-адрес для создания или выбора существующей учётной записи ACME-сервера."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "The alternate port to use for the ACME HTTP challenge; if non-empty, this port will be used instead of 80 to spin up a listener for the HTTP challenge."
+msgstr "Альтернативный порт для ACME HTTP-challenge; если задан, используется вместо 80 для запуска слушателя challenge."
+
+#: htdocs/luci-static/resources/view/homeproxy/server.js
+msgid "The alternate port to use for the ACME TLS-ALPN challenge; the system must forward 443 to this port for challenge to succeed."
+msgstr "Альтернативный порт для ACME TLS-ALPN challenge; для успеха challenge система должна пробрасывать 443 на этот порт."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Bare paths work but the configured path does not — check the rule target or run the Strategy Lab"
+msgstr "Голые пути работают, а настроенный путь нет — проверьте цель правила или запустите Лабораторию стратегий"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "TSPU watchlist (dpi-detect): the upstream list flags this domain, but it opens fine here — this provider is not cutting it."
+msgstr "Список ТСПУ (dpi-detect): апстрим помечает этот домен, но здесь он открывается нормально — этот провайдер его не режет."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "TSPU watchlist (dpi-detect): the upstream list flags this domain, and bare paths work here — the configured path itself is failing: check the rule target or the strategy."
+msgstr "Список ТСПУ (dpi-detect): апстрим помечает этот домен, и голые пути здесь работают — значит, сбойит сам настроенный путь: проверьте цель правила или стратегию."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "TSPU watchlist (dpi-detect): the upstream list reports confirmed provider cuts — see the measured verdict of this row."
+msgstr "Список ТСПУ (dpi-detect): апстрим сообщает о подтверждённых резках у провайдеров — см. измеренный вердикт этой строки."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "error"
+msgstr "ошибка"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "done"
+msgstr "готово"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "The probe checks the WEB version through the configured path; the tg-ws bridge carries the Telegram apps (MTProto) only — the web check may time out while the group sits on the bridge, messaging clients are unaffected. Bridge status and check: the Advanced tab."
+msgstr "Проба проверяет ВЕБ-версию через настроенный путь; мост tg-ws несёт только приложения Telegram (MTProto) — веб-проверка может дать таймаут, пока группа сидит на мосте; мессенджеры это не затрагивает. Статус и проверка моста — на вкладке «Дополнительно»."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+msgid "Rule configured (→ %s) — it serves the Telegram apps (MTProto); the web version rides the node (group fallback)."
+msgstr "Правило (→ %s) настроено — оно обслуживает приложения Telegram (MTProto); веб-версия едет через узел (фолбэк группы)."
+

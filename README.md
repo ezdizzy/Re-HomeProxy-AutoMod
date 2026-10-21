@@ -172,7 +172,10 @@ Re-HomeProxy — многофункциональная система упра�
   переключение «Предпочтительного ядра» учитывает возможности сборки — узлы, которые ядро не может загрузить,
   пропускаются автоматически (и отображаются в интерфейсе).
 - **Широкая поддержка протоколов** — Naive (hiddify-core), Mieru, Hysteria, SOCKS, Shadowsocks, ShadowTLS, Trojan,
-  VLESS (XHTTP), VMess, WireGuard, **AmneziaWG** (оба ядра), SSH и другие.
+  VLESS (XHTTP), VMess, WireGuard, **AmneziaWG** (оба ядра), SSH и другие. Для WireGuard/AmneziaWG выбирается сетевой
+  стек — userspace (gVisor) или модуль ядра (опция `wireguard_backend`: auto/system/gvisor в настройках узла):
+  на сборках sing-box без gVisor kernel-стек включается автоматически, TUN-интерфейсы именуются уникально —
+  несколько WG/AWG-endpoint'ов могут работать одновременно.
 - **Два встроенных двига обхода DPI** — разблокировка сайтов и снятие троттлинга (например, YouTube, Discord) **без
   какой-либо VPN-подписки**:
   - **ByeDPI** ([hufrea/byedpi](https://github.com/hufrea/byedpi)) — рассинхронизирующий прокси на уровне SOCKS, 47

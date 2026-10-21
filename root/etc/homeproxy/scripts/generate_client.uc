@@ -180,6 +180,14 @@ const HP_TYPE_REQ_TAG = {
 	trusttunnel: 'with_trusttunnel'
 };
 
+/* WireGuard/AmneziaWG network stack (GitHub issue #3): the userspace gVisor
+ * stack is only available when the selected binary actually carries the
+ * with_gvisor tag — lite sing-box builds omit it and the endpoint dies with
+ * "gVisor is not included" even though the kernel module works. When the
+ * binary cannot be probed at all (custom core, no version output) the
+ * historical always-gvisor behavior is kept. */
+const hp_wg_gvisor = !hp_core || ('with_gvisor' in hp_core.tags);
+
 /* Runtime-learned rejections (check-heal), keyed per core version so a core
  * update re-tests types rejected by an older build. */
 const hp_core_id = is_hiddify ? 'hiddify' : is_singbox ? 'singbox' : 'custom';
@@ -504,6 +512,22 @@ function generate_endpoint(node) {
 
 	const is_wg = node.type in ['wireguard', 'amneziawg'];
 
+	/* GitHub issue #3: wireguard_backend = auto | system | gvisor (per node,
+	 * default auto). auto uses gVisor only when the core ships it, otherwise
+	 * the kernel (system) stack (needs the wireguard/amneziawg kmod). The
+	 * kernel stack creates a REAL TUN device whose default name is shared by
+	 * every endpoint — with two or more WG/AWG endpoints the second one dies
+	 * with "TUNSETIFF: device or resource busy" — so a per-node name is
+	 * emitted whenever system is in play (capped at IFNAMSIZ 15: 'wg-' + 12
+	 * chars of the UCI section name; section names are [A-Za-z0-9_], valid
+	 * for an interface name). One section may be emitted MORE THAN ONCE
+	 * (dedicated UDP exit + rule reference) — the final pass below de-dupes
+	 * the kernel names with numeric suffixes. */
+	const wg_backend = (node.wireguard_backend === 'system' || node.wireguard_backend === 'gvisor')
+		? node.wireguard_backend : 'auto';
+	const wg_system = (wg_backend === 'system') ? true
+		: (wg_backend === 'gvisor') ? false : !hp_wg_gvisor;
+
 	const addPrefix = (addr) => {
 		if (!addr || match(addr, /\//)) return addr;
 		return match(addr, /:/) ? addr + '/128' : addr + '/32';
@@ -530,7 +554,8 @@ function generate_endpoint(node) {
 				reserved: parse_port(node.wireguard_reserved),
 			}
 		] : null,
-		system: is_wg ? false : null,
+		system: is_wg ? wg_system : null,
+		name: (is_wg && wg_system) ? 'wg-' + substr(node['.name'], 0, 12) : null,
 		amnezia: (node.type === 'amneziawg') ? {
 			jc: strToInt(node.amnezia_jc),
 			jmin: strToInt(node.amnezia_jmin),
@@ -3081,6 +3106,29 @@ sync_auto_auth_ruleset();
  * crash-loop → the whole internet down. A fatal config must never displace the
  * RUNNING one: exit WITHOUT writing the file — init.d then rolls back to
  * hiddify-c.json.lastgood and the service keeps running the previous config. */
+/* GitHub issue #3, part 2: the kernel (system) WG/AWG stack creates a real
+ * TUN device per emitted endpoint object — and the SAME node can be emitted
+ * more than once (a dedicated UDP exit AND a rule reference both push their
+ * own endpoint with a different tag). Two device creations with one name die
+ * with "TUNSETIFF: device or resource busy", so every re-used kernel name
+ * gets a numeric suffix ('-N', IFNAMSIZ-bounded: 12 + dash + digits <= 15).
+ * gVisor endpoints create no kernel device and stay nameless. */
+if (config.endpoints) {
+	const wg_names = {};
+	for (let ep in config.endpoints)
+		if (ep.type === 'wireguard' && ep.system && ep.name) {
+			if (ep.name in wg_names) {
+				const base = substr(ep.name, 0, 12);
+				let n = 2;
+				while (length(base) + 1 + length('' + n) <= 15 && (base + '-' + n) in wg_names)
+					n++;
+				if (length(base) + 1 + length('' + n) <= 15)
+					ep.name = base + '-' + n;
+			}
+			wg_names[ep.name] = true;
+		}
+}
+
 let dup_tags = {};
 const scan_dup_tags = (arr, kind) => {
 	if (type(arr) !== 'array')

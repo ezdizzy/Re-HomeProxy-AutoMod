@@ -170,7 +170,10 @@ This mod adds the following on top of the original Re-HomeProxy app:
   storage (with a compact build for tight-storage devices). Both cores run every protocol the app can configure;
   **Preferred core** switching is capability-aware — nodes a core can't load are skipped automatically (and shown in the UI).
 - **Wide protocol support** — Naive (hiddify-core), Mieru, Hysteria, SOCKS, Shadowsocks, ShadowTLS, Trojan,
-  VLESS (XHTTP), VMess, WireGuard, **AmneziaWG** (both cores), SSH and more.
+  VLESS (XHTTP), VMess, WireGuard, **AmneziaWG** (both cores), SSH and more. WireGuard/AmneziaWG nodes pick their
+  network stack — userspace (gVisor) or the kernel module (the `wireguard_backend` node option: auto/system/gvisor):
+  sing-box builds without gVisor switch to the kernel stack automatically, TUN interfaces get unique names, and
+  several WG/AWG endpoints can run at once.
 - **Two built-in DPI-bypass engines** — un-throttle and unblock sites (e.g. YouTube, Discord) **without any VPN subscription**:
   - **ByeDPI** ([hufrea/byedpi](https://github.com/hufrea/byedpi)) — a SOCKS-level desync proxy, with 47 ready-made
     strategy presets and a multi-site **strategy tester** that shows which setting actually works on your ISP.
