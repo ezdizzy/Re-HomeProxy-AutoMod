@@ -18,6 +18,7 @@
 | [Zapret](Zapret-en) | Packet-level (nfqws2) DPI-bypass — per-rule desync, presets, Discord voice and the tester |
 | [Custom Routing](Custom-Routing-en) | UI routing nodes + rules — match by domain/IP/port/protocol/process |
 | [Custom JSON Config](Custom-JSON-Config-en) | Using the Custom JSON routing mode with raw hiddify-core config |
+| [Automation](Automation-Status-en) | The AutoMod Automation tab: engine internals, A–D states, risks and TODO |
 | [Troubleshooting](Troubleshooting-en) | Common errors and how to fix them |
 
 ---
@@ -38,4 +39,5 @@
 | [Zapret](Zapret-ru) | Обход DPI на уровне пакетов (nfqws2) — рассинхронизация по правилам, пресеты, голос Discord и тестер |
 | [Пользовательская маршрутизация](Custom-Routing-ru) | Узлы и правила маршрутизации в UI — матч по домену/IP/порту/протоколу/процессу |
 | [Пользовательский JSON конфиг](Custom-JSON-Config-ru) | Использование режима «Пользовательский JSON» с конфигом hiddify-core |
+| [Автоматизация](Automation-Status-ru) | Вкладка AutoMod «Автоматизация»: внутренности движка, состояния A–D, риски и TODO |
 | [Устранение неполадок](Troubleshooting-ru) | Типичные ошибки и способы их устранения |
