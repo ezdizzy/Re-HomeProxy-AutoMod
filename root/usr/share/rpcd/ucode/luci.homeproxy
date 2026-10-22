@@ -4883,6 +4883,7 @@ const methods = {
 	wizard_tgwsp_status: {
 		call: function(req) {
 			const det = hp_tgwsp_detect();
+			const c = cursor();
 			return {
 				result: true,
 				rs: det.rs,
@@ -4891,8 +4892,12 @@ const methods = {
 				our_ports: det.our_ports,
 				lan: det.lan,
 				tgws: {
-					enabled: (cursor().get('homeproxy', 'config', 'tgws_enabled') === '1'),
-					port: int('' + (cursor().get('homeproxy', 'config', 'tgws_port') || '0')) || null
+					enabled: (c.get('homeproxy', 'config', 'tgws_enabled') === '1'),
+					port: int('' + (c.get('homeproxy', 'config', 'tgws_port') || '0')) || null,
+					/* Issue #6: the CF-domain sync flag + the currently synced
+					 * list (the runner writes/updates it on every check). */
+					sync_rs: (c.get('homeproxy', 'config', 'tgws_sync_rs') === '1'),
+					rs_domains: trim('' + (c.get('homeproxy', 'config', 'tgws_rs_domains') || ''))
 				},
 				check: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_check.json'),
 				install: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_install.json'),
@@ -5002,6 +5007,38 @@ const methods = {
 			writefile(RUN_DIR + '/tgwsp_mode.txt', 'go_install\n');
 			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_tgwsp.uc')} >/dev/null 2>&1 &`);
 			return { result: true };
+		}
+	},
+
+	/* Issue #6: the CF-domain sync flag (Master → Advanced → TG WS). The
+	 * check runner writes the OK Cloudflare-proxy domains of the rs check
+	 * into config.tgws_rs_domains and restarts OUR bridge when the list
+	 * changed (the foreign rs UCI is never written). Turning the sync OFF
+	 * also clears the synced list and restarts the running bridge — off
+	 * must mean the built-in pool exactly as before the sync. No service
+	 * reload: the bridge is an independent loopback instance. */
+	wizard_tgws_sync_set: {
+		args: { enabled: 'enabled' },
+		call: function(req) {
+			const v = trim('' + ((req && req.args && req.args.enabled) || ''));
+			if (v !== '0' && v !== '1')
+				return { result: false, error: 'enabled must be 0 or 1' };
+			const c = cursor();
+			c.set('homeproxy', 'config', 'tgws_sync_rs', v);
+			if (v === '0')
+				c.delete('homeproxy', 'config', 'tgws_rs_domains');
+			c.commit('homeproxy');
+			if (v === '0' && access('/etc/init.d/tgws-go')) {
+				const pf = popen('pidof tg-ws-proxy-go 2>/dev/null');
+				let running = false;
+				if (pf) {
+					running = length(trim(pf.read('all') || '')) > 0;
+					pf.close();
+				}
+				if (running)
+					system('/etc/init.d/tgws-go restart >/dev/null 2>&1 &');
+			}
+			return { result: true, enabled: (v === '1') };
 		}
 	},
 

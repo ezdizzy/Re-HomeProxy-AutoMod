@@ -9456,6 +9456,41 @@ msgstr "Проверка не удалась (код выхода %s — лог:
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
+msgid "Sync CF domains from the rs check"
+msgstr "Синхронизировать CF-домены из проверки rs"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Every check writes the live CF-proxy domains into the bridge config (tgws_rs_domains) and restarts the bridge when the list changed; off — the bridge uses its built-in domain pool."
+msgstr "При каждой проверке живые CF-домены записываются в конфигурацию моста (tgws_rs_domains); при изменении списка мост перезапускается. Выключено — мост использует встроенный пул доменов."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Live CF domains synced to the bridge (%d) — the bridge restarted with the fresh list."
+msgstr "Живые CF-домены синхронизированы в мост (%d) — мост перезапущен со свежим списком."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Live CF domains synced (%d) — the bridge is stopped; it picks the list up on the next start."
+msgstr "Живые CF-домены синхронизированы (%d) — мост остановлен, подхватит список при следующем запуске."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Sync: the live CF domain list is unchanged (%d domains)."
+msgstr "Синхронизация: список живых CF-доменов не изменился (%d дом.)."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Sync is on, but no CF-proxy probe passed — nothing to sync."
+msgstr "Синхронизация включена, но ни одна CF-проверка не прошла — синхронизировать нечего."
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "Sync setting failed: %s"
+msgstr "Не удалось сохранить настройку синхронизации: %s"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
 msgid "Check failed to start: "
 msgstr "Не удалось запустить проверку: "
 
@@ -10151,6 +10186,11 @@ msgstr "Сохранить автопилот"
 
 msgid "Keep the rules on Zapret"
 msgstr "Держать правила на Zapret"
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "A Zapret strategy serves Telegram only when its rule leads to Zapret. With the tg-ws bridge Telegram is served by the bridge and the auto-pilot leaves it alone — the checkbox can stay off. Without the bridge it works the same way as for YouTube, which only helps where the provider's Telegram block is DPI-shaped rather than a hard cut."
+msgstr "Стратегия Zapret обслуживает Telegram, только когда его правило ведёт на Zapret. С мостом tg-ws Telegram обслуживается мостом, и автопилот его не трогает — галочку можно не включать. Без моста работает так же, как для YouTube, и помогает лишь там, где блокировка Telegram у провайдера имеет DPI-характер, а не жёсткую резку."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 

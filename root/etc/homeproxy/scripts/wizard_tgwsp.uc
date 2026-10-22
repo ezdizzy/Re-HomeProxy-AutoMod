@@ -10,21 +10,27 @@
  * status file + a log file, both under /var/run/homeproxy.
  *
  *   mode 'check'   → /usr/bin/tg-ws-proxy-rs --check  (self-diagnostics:
- *                    probes every configured CF domain and MTProto upstream
- *                    with latency, prints OK/FAIL lines, exit 0 = all pass)
+ *                    reads the component's UCI READ-ONLY and passes the same
+ *                    upstream flags its service runs with, probes every CF
+ *                    domain and MTProto upstream with latency, prints OK/FAIL
+ *                    lines, exit 0 = all pass; results parsed into details[])
  *   mode 'install' → download the OFFICIAL one-liner installer of
  *                    valnesfjord/tg-ws-proxy-rs and run it. The installer
  *                    itself verifies the release archive and LuCI package
  *                    against the SHA-256 digests served by the GitHub
  *                    release API — that is the trust boundary, this script
  *                    only checks that what it fetched is a shell script.
+ *   mode 'go_install' → the d0mhate Go bridge (the transparent SOCKS5 exit).
+ *   mode 'go_init'    → regenerate /etc/init.d/tgws-go from the CURRENT
+ *                    template (no download) + restart the running bridge.
  *
  * This component is THIRD-PARTY (MIT, valnesfjord/tg-ws-proxy-rs): the Wizard
  * never edits its UCI, never packs the binary and never opens a WAN port;
  * the component's own LuCI page stays the single configuration point.
  *
  * Status files (atomic tmp+mv — RPC readers run concurrently):
- *   /var/run/homeproxy/tgwsp_check.json    {running,stage,rc,ok,fail,ts}
+ *   /var/run/homeproxy/tgwsp_check.json    {running,stage,rc,ok,fail,details[],
+ *                                           sync{state,count},ts}
  *   /var/run/homeproxy/tgwsp_install.json  {running,stage,rc,ts}
  * Logs:
  *   /var/run/homeproxy/tgwsp_check.log / tgwsp_install.log
@@ -39,6 +45,7 @@
 'use strict';
 
 import { access, readfile, writefile, open, popen } from 'fs';
+import { cursor } from 'uci';
 
 const RUN_DIR = '/var/run/homeproxy';
 const MODE = RUN_DIR + '/tgwsp_mode.txt';
@@ -68,6 +75,17 @@ const GO_BIN_TMP = '/tmp/tgwsp_go.bin';
 const GO_STATUS = RUN_DIR + '/tgwsp_go_install.json';
 const GO_LOG = RUN_DIR + '/tgwsp_go_install.log';
 const GO_PORT = 1080;
+/* Issue #6: CF-domain sync rs → bridge. The Go bridge has no domain
+ * discovery of its own — its built-in CF pool rots over time and the
+ * provider cuts the tcp_fallback path it degenerates to (ws=0, tcp_fb only).
+ * The rs check fetches + probes the LIVE default CF domain list; with the
+ * sync flag on (config.tgws_sync_rs) the OK Cloudflare-proxy domains are
+ * written to OUR UCI (config.tgws_rs_domains) and the bridge restarts with
+ * --cf-domain when the list actually changed. Our UCI only — the foreign
+ * rs UCI (tg-ws-proxy-rs.*) is never written. */
+const GO_SYNC_FLAG = 'tgws_sync_rs';
+const GO_SYNC_LIST = 'tgws_rs_domains';
+const GO_SYNC_CAP = 40;
 /* Egress-exempt group (lesson 83): the bridge dials its own upstream —
  * Cloudflare WS edges AND the tcp_fallback path straight to Telegram IPs.
  * Without an exclusion those dials are re-intercepted by the OUTPUT
@@ -117,7 +135,17 @@ start_service() {
 	# firewall_post.ut exempts this gid from the redirect by skgid.
 	grep -q '^byedpi:' /etc/group || echo 'byedpi:x:${GO_GID}:' >> /etc/group
 	procd_open_instance tgwsbridge
-	procd_set_param command ${GO_BIN} --mode socks5 --host 127.0.0.1 --port ${GO_PORT} --cf-proxy --cf-proxy-first --cf-balance
+	# Fresh CF domains synced from the rs check (config.tgws_sync_rs, issue
+	# #6): the Go bridge has no domain discovery of its own — its built-in
+	# pool rots and the traffic degenerates to the tcp_fallback path the
+	# provider cuts. The list is written by the Wizard's check; when absent
+	# the bridge runs exactly as before (built-in pool).
+	RS_DOMAINS=$(uci -q get homeproxy.config.tgws_rs_domains)
+	if [ -n "$RS_DOMAINS" ]; then
+		procd_set_param command ${GO_BIN} --mode socks5 --host 127.0.0.1 --port ${GO_PORT} --cf-proxy --cf-proxy-first --cf-balance --cf-domain "$RS_DOMAINS"
+	else
+		procd_set_param command ${GO_BIN} --mode socks5 --host 127.0.0.1 --port ${GO_PORT} --cf-proxy --cf-proxy-first --cf-balance
+	fi
 	# Supplementary group only (uid stays root): the socket gid carries the
 	# skgid guard — the bridge's egress skips the redirect and dials directly.
 	procd_set_param group "${GO_EGRESS_GROUP}"
@@ -155,32 +183,176 @@ function log(path, msg) {
 
 /* ═══ mode: check ═══════════════════════════════════════════════════════ */
 
+/* join() is BROKEN on this ucode build (lesson 47 family: returns null for
+ * arrays) — build the comma list by hand. */
+function join_list(arr) {
+	let s = '';
+	for (let i = 0; i < length(arr); i++)
+		s += (i ? ',' : '') + arr[i];
+	return s;
+}
+
+/* A repeatable rs option: a UCI list (DynamicList) or the legacy scalar
+ * form the component's own init script keeps accepting. */
+function rs_vals(c, opt) {
+	const vals = [];
+	const v = c.get('tg-ws-proxy-rs', 'main', opt);
+	if (type(v) === 'array') {
+		for (let x in v) {
+			const s = trim('' + x);
+			if (length(s))
+				push(vals, s);
+		}
+	} else if (v != null && length(trim('' + v))) {
+		for (let part in split(trim('' + v), /[[:space:],]+/))
+			if (length(trim(part)))
+				push(vals, trim(part));
+	}
+	return vals;
+}
+
+function rs_flag(c, opt) {
+	return (trim('' + (c.get('tg-ws-proxy-rs', 'main', opt) || '')) === '1');
+}
+
+/* (Re)write OUR init script from the CURRENT template — used by the bridge
+ * install and by the CF-domain sync (an install done with an older template
+ * must still get the --cf-domain branch, issue #6). Idempotent, no restart.
+ * The script is ours (written by the go-install runner); the binary must
+ * exist for the script to make sense. */
+function ensure_go_init() {
+	if (!access(GO_BIN))
+		return false;
+	writefile(GO_INIT, GO_INIT_BODY);
+	system('chmod 755 ' + sq(GO_INIT));
+	system(sq(GO_INIT) + ' enable >/dev/null 2>&1; true');
+	return true;
+}
+
+function go_bridge_running() {
+	let running = false;
+	const pf = popen('pidof tg-ws-proxy-go 2>/dev/null');
+	if (pf) {
+		running = length(trim(pf.read('all') || '')) > 0;
+		pf.close();
+	}
+	return running;
+}
+
+/* Issue #6: harvest the OK Cloudflare-proxy domains from the check details
+ * (the probe label of a cf_domain is "kws2.<domain>") into OUR UCI and
+ * restart the bridge only when the list actually changed AND the bridge is
+ * actually running — a deliberately stopped bridge must stay stopped (its
+ * next start picks the fresh list up from UCI). */
+function sync_go_domains(c, details) {
+	if (trim('' + (c.get('homeproxy', 'config', GO_SYNC_FLAG) || '')) !== '1')
+		return { state: 'off', count: 0 };
+	const doms = [];
+	for (let d in details) {
+		if (d.status !== 'ok')
+			continue;
+		if (substr(d.name, 0, 5) !== 'kws2.')
+			continue;
+		const dom = substr(d.name, 5);
+		if (!length(dom) || index(doms, dom) >= 0)
+			continue;
+		push(doms, dom);
+		if (length(doms) >= GO_SYNC_CAP)
+			break;
+	}
+	if (!length(doms))
+		return { state: 'none', count: 0 };
+	const list = join_list(doms);
+	const prev = trim('' + (c.get('homeproxy', 'config', GO_SYNC_LIST) || ''));
+	if (list === prev)
+		return { state: 'unchanged', count: length(doms) };
+	c.set('homeproxy', 'config', GO_SYNC_LIST, list);
+	c.commit('homeproxy');
+	/* Restart OUR bridge only when it is actually running — a deliberately
+	 * stopped bridge must stay stopped; its next start picks the list up.
+	 * The init script is regenerated first: installs made before the sync
+	 * feature carry an older template without the --cf-domain branch. */
+	const running = go_bridge_running();
+	if (running && access(GO_INIT)) {
+		ensure_go_init();
+		system(sq(GO_INIT) + ' restart >/dev/null 2>&1; true');
+	}
+	return { state: running ? 'written' : 'written_stopped', count: length(doms) };
+}
+
 function run_check() {
 	write_status(CHECK_STATUS, { running: true, stage: 'check' });
 	system('rm -f ' + sq(CHECK_LOG) + ' 2>/dev/null');
 	log(CHECK_LOG, 'tg-ws-proxy-rs --check started by the Wizard');
+	/* Read-only peek at the component's UCI (issue #5): --check must probe
+	 * the SAME upstreams the service actually uses — a bare --check has
+	 * nothing configured and honestly answers "Nothing to check". The
+	 * component's own init script translates exactly these UCI options into
+	 * the TG_* environment the binary reads; the Wizard never writes them. */
+	const c = cursor();
+	const dd = rs_flag(c, 'default_domains');
+	const cf = rs_vals(c, 'cf_domain');
+	const cw = rs_vals(c, 'cf_worker_domain');
+	const mp = rs_vals(c, 'mtproto_proxy');
+	const ob = trim('' + (c.get('tg-ws-proxy-rs', 'main', 'outbound_proxy') || ''));
+	const nop = rs_flag(c, 'no_outbound_proxy');
+	const stls = rs_flag(c, 'danger_accept_invalid_certs');
+	let cmd = sq(RS_BIN) + ' --check';
+	if (dd)
+		cmd += ' --default-domains';
+	if (length(cf))
+		cmd += ' --cf-domain ' + sq(join_list(cf));
+	if (length(cw))
+		cmd += ' --cf-worker-domain ' + sq(join_list(cw));
+	for (let p in mp)
+		cmd += ' --mtproto-proxy ' + sq(p);
+	if (length(ob))
+		cmd += ' --outbound-proxy ' + sq(ob);
+	else if (nop)
+		cmd += ' --no-outbound-proxy';
+	if (stls)
+		cmd += ' --danger-accept-invalid-certs';
+	/* Flag SUMMARY only — --mtproto-proxy carries the secret, never log it. */
+	log(CHECK_LOG, sprintf('flags: default_domains=%s cf=%d worker=%d mtproto=%d outbound=%s skip_tls=%s',
+		dd ? 'yes' : 'no', length(cf), length(cw), length(mp),
+		length(ob) ? 'set' : (nop ? 'off' : 'none'), stls ? 'yes' : 'no'));
 	/* system() with a wall-clock cap (no `timeout` binary on this router):
-	 * --check probes each CF domain / upstream with its own latency probe,
-	 * 3 minutes is a generous ceiling; a hang surfaces as a non-zero rc. */
-	const rc = system(sq(RS_BIN) + ' --check >> ' + sq(CHECK_LOG) + ' 2>&1', 180000);
-	/* Count OK / FAIL verdict lines the binary prints. */
+	 * --default-domains first fetches the live list from GitHub, then every
+	 * domain/upstream is probed with its own latency probe — 7 minutes is a
+	 * generous ceiling; a hang surfaces as a non-zero rc. */
+	const rc = system(cmd + ' >> ' + sq(CHECK_LOG) + ' 2>&1', 420000);
+	/* Parse the probe verdicts: the binary prints one line per probe as
+	 * "  <label padded>  ... [OK ]  230ms" / "... [FAIL]  <message>" (the
+	 * OK marker carries a trailing space inside the brackets). POSIX-ERE —
+	 * no lazy quantifiers, greedy is safe: "... [" occurs once per line. */
 	let ok = 0, fail = 0;
+	const details = [];
 	const out = readfile(CHECK_LOG) || '';
+	const re = /^[[:space:]]*(.+)[[:space:]]+\.\.\.[[:space:]]+\[(OK|FAIL)[[:space:]]*\][[:space:]]*(.*)$/;
 	for (let l in split(out, '\n')) {
-		const line = trim(l);
-		if (index(line, 'OK') === 0)
+		const m = match(l, re);
+		if (!m)
+			continue;
+		const good = (m[2] === 'OK');
+		push(details, { name: trim(m[1]), status: good ? 'ok' : 'fail',
+			message: trim(m[3]) });
+		if (good)
 			ok++;
-		else if (index(line, 'FAIL') === 0)
+		else
 			fail++;
 	}
+	const sync = sync_go_domains(c, details);
 	write_status(CHECK_STATUS, {
 		running: false,
 		stage: (rc === 0) ? 'done' : 'error',
 		rc: rc,
 		ok: ok,
-		fail: fail
+		fail: fail,
+		details: details,
+		sync: sync
 	});
-	log(CHECK_LOG, sprintf('check finished: rc=%d ok=%d fail=%d', rc, ok, fail));
+	log(CHECK_LOG, sprintf('check finished: rc=%d ok=%d fail=%d sync=%s(%d)',
+		rc, ok, fail, sync.state, sync.count));
 }
 
 /* ═══ mode: install ═════════════════════════════════════════════════════ */
@@ -402,6 +574,25 @@ function run_go_install() {
 	log(GO_LOG, sprintf('install finished: rc_cfg=%d (bridge up on %d)', rc4, GO_PORT));
 }
 
+/* ═══ mode: go_init ═════════════════════════════════════════════════════ */
+
+/* Maintenance: regenerate /etc/init.d/tgws-go from the CURRENT template
+ * (no download) and restart the running bridge — used when the template
+ * gains behavior the installed script lacks (issue #6 --cf-domain branch). */
+function run_go_init() {
+	write_status(GO_STATUS, { running: true, stage: 'init' });
+	if (!ensure_go_init()) {
+		write_status(GO_STATUS, { running: false, stage: 'error',
+			error: 'tg-ws-proxy-go binary not installed' });
+		return;
+	}
+	const running = go_bridge_running();
+	if (running)
+		system(sq(GO_INIT) + ' restart >/dev/null 2>&1; true');
+	write_status(GO_STATUS, { running: false, stage: 'done', rc: 0,
+		restarted: running });
+}
+
 /* ═══ Main ══════════════════════════════════════════════════════════════ */
 
 const mode = trim(readfile(MODE) || '');
@@ -412,3 +603,5 @@ else if (mode === 'install')
 	run_install();
 else if (mode === 'go_install')
 	run_go_install();
+else if (mode === 'go_init')
+	run_go_init();

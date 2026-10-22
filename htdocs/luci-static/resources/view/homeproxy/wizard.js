@@ -330,6 +330,16 @@ const callTgwsInstall = rpc.declare({
 	params: [ ]
 });
 
+/* Issue #6: the CF-domain sync flag — the check runner writes the OK
+ * Cloudflare-proxy domains of the rs check into the bridge config and
+ * restarts the bridge when the list changed (committed server-side). */
+const callTgwsSyncSet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_tgws_sync_set',
+	params: [ 'enabled' ],
+	expect: { '': {} }
+});
+
 /* Resolve a sing-box outbound tag (cfg-<section>-out) to its UCI label
  * (same logic as diagnostics.js). */
 function resolveTag(tag) {
@@ -920,6 +930,64 @@ return view.extend({
 			[ _('Install / update') ]);
 		const twGoInstallBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
 			[ _('Install tg-ws bridge') ]);
+		/* Issue #6: sync the live CF domains of the rs check into the Go
+		 * bridge (--cf-domain); shown only when OUR bridge instance exists
+		 * (a foreign tgm-managed setup is not ours to restart). */
+		const twSync = E('input', { type: 'checkbox' });
+		let twSyncDirty = false;
+		const twSyncLabel = E('label', {
+			'class': 'wiz-note', style: 'margin-left:10px; cursor:pointer; display:none',
+			title: _('Every check writes the live CF-proxy domains into the bridge config (tgws_rs_domains) and restarts the bridge when the list changed; off — the bridge uses its built-in domain pool.')
+		}, [ twSync, ' ' + _('Sync CF domains from the rs check') ]);
+		twSync.addEventListener('change', function() {
+			const want = twSync.checked;
+			twSyncDirty = true;
+			L.resolveDefault(callTgwsSyncSet(want ? '1' : '0'), {}).then(function(r) {
+				if (!r || r.result !== true) {
+					twSync.checked = !want;
+					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Sync setting failed: %s').format((r && r.error) || _('rpc error')) ]));
+				}
+				twSyncDirty = false;
+			});
+		});
+
+		/* Issue #5: per-probe details of the rs check — one line per probe,
+		 * green ✓ with the latency / red ✗ with the error text. */
+		function appendCheckDetails(box, details) {
+			if (!Array.isArray(details) || !details.length)
+				return;
+			const list = E('div', {
+				'style': 'max-height:220px; overflow-y:auto; margin:4px 0 0 12px; padding:2px 0'
+			});
+			for (let i = 0; i < details.length; i++) {
+				const d = details[i] || {};
+				const line = E('div', { 'class': 'wiz-note', style: 'white-space:nowrap' }, []);
+				line.appendChild(document.createTextNode((d.name || '—') + ' '));
+				line.appendChild(d.status === 'ok'
+					? badge('hpui-b-green', '✓ ' + (d.message || ''))
+					: badge('hpui-b-red', '✗ ' + (d.message || '')));
+				list.appendChild(line);
+			}
+			box.appendChild(list);
+		}
+
+		/* Issue #6: what the sync did during the check (one honest line). */
+		function appendSyncNote(box, sync) {
+			if (!sync || sync.state === 'off')
+				return;
+			let txt = '';
+			if (sync.state === 'written')
+				txt = _('Live CF domains synced to the bridge (%d) — the bridge restarted with the fresh list.').format(sync.count || 0);
+			else if (sync.state === 'written_stopped')
+				txt = _('Live CF domains synced (%d) — the bridge is stopped; it picks the list up on the next start.').format(sync.count || 0);
+			else if (sync.state === 'unchanged')
+				txt = _('Sync: the live CF domain list is unchanged (%d domains).').format(sync.count || 0);
+			else if (sync.state === 'none')
+				txt = _('Sync is on, but no CF-proxy probe passed — nothing to sync.');
+			if (txt)
+				box.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:4px 0 0 12px' }, [ txt ]));
+		}
 
 		function renderTgwsp(st) {
 			st = st || {};
@@ -927,6 +995,11 @@ return view.extend({
 				goIns = st.go_install || {};
 			twRsPresent = !!rs.present;
 			twGoManaged = !!go.managed;
+			/* The sync checkbox is only meaningful for OUR bridge instance;
+			 * the committed value wins unless the user is mid-toggle. */
+			twSyncLabel.style.display = twGoManaged ? '' : 'none';
+			if (!twSyncDirty && st.tgws)
+				twSync.checked = (st.tgws.sync_rs === true);
 			const parts = [];
 			if (rs.present) {
 				const ver = rs.version ? String(rs.version).trim().split(' ').pop() : '';
@@ -967,10 +1040,8 @@ return view.extend({
 				twState.seeded = true;
 				if (!ins.running && ins.stage && ins.stage !== 'fetch')
 					twState.insSig = 'i' + ins.stage + ':' + (ins.rc == null ? '' : ins.rc) + ':' + (ins.error || '');
-				if (!ck.running && ck.stage === 'done')
+				if (!ck.running && (ck.stage === 'done' || ck.stage === 'error'))
 					twState.ckSig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
-				else if (!ck.running && ck.stage === 'error')
-					twState.ckSig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc);
 				if (!goIns.running && goIns.stage)
 					twState.goSig = 'g' + goIns.stage + ':' + (goIns.rc == null ? '' : goIns.rc) + ':' + (goIns.error || '');
 			}
@@ -993,27 +1064,46 @@ return view.extend({
 					}
 				}
 			}
+			/* Issue #5: the check result — per-probe details (rc=1 with
+			 * details = honest failed probes, the binary's contract, not a
+			 * broken check); the generic error line only when there are no
+			 * details at all (a real execution failure). */
 			if (!ck.running && ck.stage === 'done') {
 				const sig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
 				if (sig !== twState.ckSig) {
 					twState.ckSig = sig;
 					if (!twState.manual) {
 						twState.manual = true;
+						const box = E('div', {});
 						if ((ck.ok || 0) === 0 && (ck.fail || 0) === 0)
-							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+							box.appendChild(E('p', { 'class': 'hpui-hint' },
 								[ _('Nothing to check yet — add CF domains or an upstream on the component\'s own page, then run the check again.') ]));
-						else
-							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+						else {
+							box.appendChild(E('p', { 'class': 'hpui-hint' },
 								[ _('Check finished: %d OK, %d FAIL (exit code %d).').format(ck.ok || 0, ck.fail || 0, ck.rc || 0) ]));
+							appendCheckDetails(box, ck.details);
+							appendSyncNote(box, ck.sync);
+						}
+						dom.content(twResult, box);
 					}
 				}
 			} else if (!ck.running && ck.stage === 'error') {
-				const sig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc);
+				const sig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
 				if (sig !== twState.ckSig) {
 					twState.ckSig = sig;
-					if (!twState.manual)
-						dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-							[ _('Check failed (exit code %s — see /var/run/homeproxy/tgwsp_check.log on the router).').format(String(ck.rc || '?')) ]));
+					if (!twState.manual) {
+						twState.manual = true;
+						const box = E('div', {});
+						if (Array.isArray(ck.details) && ck.details.length) {
+							box.appendChild(E('p', { 'class': 'hpui-hint' },
+								[ _('Check finished: %d OK, %d FAIL (exit code %d).').format(ck.ok || 0, ck.fail || 0, ck.rc || 0) ]));
+							appendCheckDetails(box, ck.details);
+							appendSyncNote(box, ck.sync);
+						} else
+							box.appendChild(E('p', { 'class': 'hpui-hint' },
+								[ _('Check failed (exit code %s — see /var/run/homeproxy/tgwsp_check.log on the router).').format(String(ck.rc || '?')) ]));
+						dom.content(twResult, box);
+					}
 				}
 			}
 			/* F8-F2: bridge install outcome — same ONE-place rule. */
@@ -1121,7 +1211,8 @@ return view.extend({
 			}).finally(function() { twGoInstallBtn.disabled = false; });
 		});
 
-		const twBtnRow = E('div', { 'class': 'wiz-toolbar' }, [ twCheckBtn, twLinkBtn, twInstallBtn, twGoInstallBtn ]);
+		const twBtnRow = E('div', { 'class': 'wiz-toolbar' },
+			[ twCheckBtn, twLinkBtn, twInstallBtn, twGoInstallBtn, twSyncLabel ]);
 
 		/* DOM order: the card lands right after the Telegram bot block. */
 		panes.extra.appendChild(E('h4', { style: 'margin-top:16px' },
@@ -2762,10 +2853,17 @@ return view.extend({
 			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer; font-weight:600' },
 				[ apEnabled, ' ' + _('Enable the auto-pilot') ]), apSave ]);
 		const apResWrap = E('div', { 'class': 'wiz-row' });
+		/* The Telegram checkbox is the frequent confusion (issue feedback):
+		 * a Zapret strategy serves a resource ONLY through its rule → Zapret,
+		 * and Telegram is served by the tg-ws bridge whenever it is enabled. */
+		const apHints = {
+			telegram: _('A Zapret strategy serves Telegram only when its rule leads to Zapret. With the tg-ws bridge Telegram is served by the bridge and the auto-pilot leaves it alone — the checkbox can stay off. Without the bridge it works the same way as for YouTube, which only helps where the provider\'s Telegram block is DPI-shaped rather than a hard cut.')
+		};
 		[ ['youtube', _('YouTube')], ['discord', _('Discord')],
 		  ['telegram', _('Telegram')], ['general', _('General (best overall)')] ]
 			.forEach(function(o) {
-				apResWrap.appendChild(E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+				apResWrap.appendChild(E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer',
+					title: apHints[o[0]] || '' },
 					[ apRes[o[0]], ' ' + o[1] ]));
 			});
 		const apRow3 = E('div', { 'class': 'wiz-row' },
