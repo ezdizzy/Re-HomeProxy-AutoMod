@@ -674,6 +674,16 @@ return view.extend({
 
 		function renderTable() {
 			const entries = (state.data && state.data.entries) || [];
+			/* Sig-guard: the entries array only changes when the daemon learns/
+			 * unlearns or a manual edit happened — rebuilding ~700 rows × 8
+			 * cells (fresh listeners) on EVERY 5 s tick for identical data was
+			 * the heaviest DOM churn in the app. The view controls (filter/
+			 * search/sort) are part of the signature: changing one of them must
+			 * still re-render through the early-return path. */
+			const sig = JSON.stringify([entries, state.filter, state.search, state.sortKey, state.sortDir]);
+			if (sig === state.tableSig)
+				return;
+			state.tableSig = sig;
 			let rows = entries;
 			if (state.filter === 'learned') rows = rows.filter(function(e) { return e.src === 'learned'; });
 			else if (state.filter === 'manual') rows = rows.filter(function(e) { return e.src !== 'learned'; });

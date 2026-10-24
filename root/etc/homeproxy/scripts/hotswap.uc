@@ -252,12 +252,13 @@ function tag_label(tag) {
 
 function health_of(tag) {
 	if (type(health[tag]) !== 'object')
-		health[tag] = { fails: 0, oks: 0, first_ok: 0, last_delay: 0 };
+		health[tag] = { fails: 0, oks: 0, first_ok: 0, last_delay: 0, ts: 0 };
 	return health[tag];
 }
 
 function mark_probe(tag, delay) {
 	const h = health_of(tag);
+	h.ts = time();
 	if (delay) {
 		h.fails = 0;
 		h.oks = h.oks + 1;
@@ -290,6 +291,13 @@ function switch_to(group, tag) {
 function write_state(active, primary) {
 	const now = time();
 	const af = (hs != null && hs.antiflap === true);
+	/* Drop health bookkeeping for members untouched for 48 h (nodes removed
+	 * from the group by a contract change would otherwise stay in the UI
+	 * state forever as stale "down" rows). A still-relevant member gets a
+	 * fresh entry on its next probe. */
+	for (let hk in keys(health))
+		if (!(health[hk].ts > 0) || (now - health[hk].ts) > 172800)
+			delete health[hk];
 	let members = {};
 	for (let k, v in health)
 		members[k] = { state: (v.fails ? 'down' : (v.oks ? 'alive' : 'unknown')), fails: v.fails, oks: v.oks, last_delay: v.last_delay };

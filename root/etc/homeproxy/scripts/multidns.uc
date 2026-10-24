@@ -49,6 +49,7 @@ const MD_DIR = RUN_DIR + '/multidns';
 const RES = HP_DIR + '/resources';
 const CONF = MD_DIR + '/mosdns.yaml';
 const PID = MD_DIR + '/mosdns.pid';
+const RESTART_MARK = MD_DIR + '/mosdns.restarting';
 const STATE_FILE = MD_DIR + '/multidns_state.json';
 const LOG_FILE = MD_DIR + '/multidns.log';
 const MOSDNS = '/usr/bin/mosdns';
@@ -94,6 +95,13 @@ function mdns_proxy_endpoint() {
 function log(msg) {
 	const line = `[${sprintf('%d', time())}] [MDNS] ${msg}\n`;
 	try {
+		/* Bounded tmpfs: a misbehaving loop ("not running - restarting" every
+		 * 5 s tick when mosdns cannot start) must not grow the log forever. */
+		const ls = stat(LOG_FILE);
+		if (ls && ls.size > 65536) {
+			system('tail -n 200 ' + shellquote(LOG_FILE) + ' > ' + shellquote(LOG_FILE + '.t')
+				+ ' 2>/dev/null; mv -f ' + shellquote(LOG_FILE + '.t') + ' ' + shellquote(LOG_FILE));
+		}
 		const fd = open(LOG_FILE, 'a');
 		if (fd) { fd.write(line); fd.close(); }
 	} catch (e) { /* best effort */ }
@@ -1102,6 +1110,27 @@ function mosdns_running() {
 }
 
 function start_mosdns() {
+	/* Restart-window marker: for the duration of the routine kill->start
+	 * rebuild no listener exists, but that is not a failure. multidns_status
+	 * reports "restarting" (not "dead") while this marker is fresh (60 s),
+	 * so the Overview card stops flashing the alarming red "enabled, not
+	 * running" on every quality-cycle rebuild. The marker is removed below;
+	 * a stale copy (daemon SIGKILLed mid-restart) self-expires after 60 s. */
+	atomic_write(RESTART_MARK, sprintf('%d', time()));
+	/* mosdns appends its startup banner (INFO "working directory changed" +
+	 * "main config loaded", ~600 B per start) to LOG_FILE.md on EVERY start —
+	 * its log.level=warn only filters plugin logs, the banner always lands.
+	 * With a restart on every quarantine/prune/learned-list change that grows
+	 * unbounded in tmpfs (5.6 MB in two days live). Cap it at 1 MB, keeping
+	 * the newest tail. */
+	let mdlog = LOG_FILE + '.md';
+	if (access(mdlog)) {
+		const mls = stat(mdlog);
+		if (mls && mls.size > 1048576) {
+			system('tail -n 200 ' + shellquote(mdlog) + ' > ' + shellquote(mdlog + '.cut')
+				+ ' 2>/dev/null; mv -f ' + shellquote(mdlog + '.cut') + ' ' + shellquote(mdlog));
+		}
+	}
 	/* MultiDNS accelerates DNS: start the dedicated mosdns instance that races
 	 * several servers of each pool (plain "Russia" + encrypted "secure") and returns
 	 * the fastest valid answer, dropping poisoned/dead-IP answers. Kill any stale
@@ -1143,6 +1172,7 @@ function start_mosdns() {
 		log('mosdns failed to start - resolution will not be accelerated.'
 			+ (err ? ' err: ' + err : ''));
 	}
+	system('rm -f ' + shellquote(RESTART_MARK));
 	return alive;
 }
 
@@ -1335,6 +1365,20 @@ function analyze() {
 		for (let l in read_lines(PROXY_DOMAINS_FILE)) excl[trim(l)] = true;
 		excl['ya.ru'] = true; excl['example.com'] = true; excl['cloudflare.com'] = true;
 		excl['google.com'] = true; excl['www.google.com'] = true;
+		/* Drop verifier bookkeeping (uv_last/uv_fail) for domains that already
+		 * left the recent ring: without this the maps grow forever in the
+		 * state file (tmpfs) over a months-long daemon run. */
+		for (let vk in keys(st.uv_last))
+			if (!st.user_recent[vk]) { delete st.uv_last[vk]; delete st.uv_fail[vk]; }
+		/* Quarantine expiry (30 days): a domain may have left the recent ring
+		 * and can then never be re-verified — it must not stay quarantined
+		 * (routed to secure) forever. ensure_data_files regenerates
+		 * quarantine_domains.txt from st.quarantine, so removal propagates. */
+		for (let qk in keys(st.quarantine || {}))
+			if ((time() - st.quarantine[qk]) > 2592000) {
+				delete st.quarantine[qk];
+				log('quarantine expired (30d): ' + qk);
+			}
 		/* NOTE: quarantined domains are NOT excluded - they must keep being
 		 * sampled (at the usual cadence) or a lifted verdict could never happen. */
 		let cands = [];
@@ -1697,8 +1741,12 @@ function main() {
 				/* Mirror learned lists + quarantine into the data files, then
 				 * rebuild + restart when the built YAML differs from the live
 				 * one (content comparison — a state-derived signature would
-				 * self-loop, issue #8) and keep the probe set in sync. */
-				rebuild_if_changed();
+				 * self-loop, issue #8) and keep the probe set in sync.
+				 * Tick-level catch: a transient error must not bubble to the
+				 * top-level handler — that would kill the daemon, respawn it
+				 * and wipe the accumulated probe state (rm STATE_FILE at
+				 * startup) for nothing. */
+				try { rebuild_if_changed(); } catch (e) { log('cfg-check error: ' + sprintf('%s', e)); }
 				/* If the configured server list changed, re-probe now instead
 				 * of waiting up to a full bench_interval for the monitor to
 				 * reflect the new pool. The signature is immutable UCI only —
@@ -1707,19 +1755,20 @@ function main() {
 				if (sig !== last_pools_sig) {
 					last_pools_sig = sig;
 					dbg('pools changed -> analyze');
-					analyze();
-					rebuild_if_changed();
+					try { analyze(); rebuild_if_changed(); } catch (e) { log('analyze error: ' + sprintf('%s', e)); }
 				}
 			}
 			if ((now - last) > bench_interval) {
 				last = now;
 				dbg('analyze call');
-				analyze();
-				dbg('analyze done');
-				/* analyze() just mutated pruned / quarantine / dead-IP state:
-				 * push a changed config into the live mosdns RIGHT NOW instead
-				 * of waiting for the next cfg-check (issue #8, bench rebuild). */
-				rebuild_if_changed();
+				try {
+					analyze();
+					dbg('analyze done');
+					/* analyze() just mutated pruned / quarantine / dead-IP state:
+					 * push a changed config into the live mosdns RIGHT NOW instead
+					 * of waiting for the next cfg-check (issue #8, bench rebuild). */
+					rebuild_if_changed();
+				} catch (e) { log('analyze error: ' + sprintf('%s', e)); }
 			}
 		}
 		/* inner loop exited because MultiDNS was disabled; outer loop sleeps and

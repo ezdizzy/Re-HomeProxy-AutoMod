@@ -246,7 +246,7 @@ return view.extend({
 				const en = st.enabled === '1';
 				mdStatusEl.innerHTML =
 					_('Enabled') + ': <b>' + (en ? _('yes') : _('no')) + '</b> &nbsp;|&nbsp; ' +
-					_('mosdns') + ': <b>' + (st.mosdns ? _('running') : _('stopped')) + '</b> &nbsp;|&nbsp; ' +
+					_('mosdns') + ': <b>' + (st.mosdns ? _('running') : (st.restarting ? _('restarting...') : _('stopped'))) + '</b> &nbsp;|&nbsp; ' +
 					_('Plain pool') + ': <b>' + (st.active && st.active.ru ? st.active.ru.length : 0) + '</b> &nbsp;|&nbsp; ' +
 					_('Secure pool') + ': <b>' + (st.active && st.active.secure ? st.active.secure.length : 0) + '</b>';
 				mdRenderTable(st.servers);

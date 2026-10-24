@@ -399,6 +399,9 @@ function buildMosdnsCard(mdns, mos) {
 	let installed = !!mos.installed;
 	let version   = mos.version || null;
 	const running    = !!mos.running;
+	/* The routine quality-cycle rebuild bounces mosdns for a few seconds:
+	 * show the neutral "restarting..." instead of a bare "stopped". */
+	const restarting = !running && !!mos.restarting;
 	const enabled    = mdns.enabled === '1';
 	const ru         = (mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
 	const sec        = (mdns.active && mdns.active.secure) ? mdns.active.secure.length : 0;
@@ -409,7 +412,7 @@ function buildMosdnsCard(mdns, mos) {
 
 	const runEl = E('span', {
 		style: 'margin-left:6px; font-size:0.9em; color:' + (running ? '#3fbf5f' : '#9a9a9a')
-	}, running ? _('running') : _('stopped'));
+	}, running ? _('running') : (restarting ? _('restarting...') : _('stopped')));
 
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
 	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };

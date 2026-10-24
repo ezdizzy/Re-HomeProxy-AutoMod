@@ -95,7 +95,10 @@ function flush_dead() {
 	let lines = [];
 	for (let k, v in deadset)
 		push(lines, k);
-	atomic_write(DEAD_FILE, (length(lines) ? join(lines, '\n') + '\n' : ''));
+	/* ⚠ join(arr, sep) returns NULL on this ucode build (lesson 103) — the
+	 * dead-mark file silently became the literal "null" and the generator's
+	 * dead-gate never saw a single host. ucode builtin form: join(sep, arr). */
+	atomic_write(DEAD_FILE, (length(lines) ? join('\n', lines) + '\n' : ''));
 }
 
 /* Parse a Go/Clash timestamp ("2026-09-14T09:00:00.123+03:00") into a Unix

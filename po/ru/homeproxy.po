@@ -5884,6 +5884,13 @@ msgstr "работает"
 msgid "stopped"
 msgstr "остановлен"
 
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "restarting..."
+msgstr "перезапуск..."
+
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
 msgid "Plain pool (Russia) — %s"
@@ -11352,4 +11359,45 @@ msgstr "Применяю %s для «%s» — прогресс ниже…"
 
 msgid "Resource loads as a whole: "
 msgstr "Ресурс грузится целиком: "
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "Creating a snapshot…"
+msgstr "Создание снимка…"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with \"Service start\" or a router reboot."
+msgstr "Остановить прокси-стек и вернуть интернет напрямую? Перехват DNS будет снят; прокси вернётся по «Запуску службы» или после перезагрузки роутера."
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "Checking the latest release…"
+msgstr "Проверка последнего релиза…"
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "Update available: %s → %s (install it on the \"Core & Tools\" page)."
+msgstr "Доступно обновление: %s → %s (установите его на странице «Ядро и службы»)."
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "%d points · ~%d min"
+msgstr "%d точек · ~%d мин"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Click Generate to collect diagnostics…"
+msgstr "Нажмите «Сгенерировать», чтобы собрать диагностику…"
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Collecting diagnostics — this may take a few seconds…"
+msgstr "Идёт сбор диагностики — это займёт несколько секунд…"
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Resolves Russian domains directly, without going through the proxy. You may add several — MultiDNS races all of them, without it the first entry is used. A bare IP is queried over UDP with TCP fallback; entries may force a transport: tcp://IP, or an encrypted direct DoH URL like https://1.1.1.1/dns-query (never proxied)."
+msgstr "Резолвит российские домены напрямую, без прокси. Можно добавить несколько — MultiDNS гонит их все параллельно, без него используется первая запись. Голый IP опрашивается по UDP с фолбэком на TCP; запись может задать транспорт: tcp://IP или шифрованный прямой DoH-URL вида https://1.1.1.1/dns-query (никогда не через прокси)."
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used."
+msgstr "Резолвит заблокированные домены через прокси — провайдер не видит, какие сайты вы открываете. Используется шифрованный DNS (DoH/DoT). Можно добавить несколько — MultiDNS гонит их все параллельно, без него используется первая запись."
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Removed successfully — MultiDNS disabled"
+msgstr "Удалено успешно — MultiDNS отключён"
 

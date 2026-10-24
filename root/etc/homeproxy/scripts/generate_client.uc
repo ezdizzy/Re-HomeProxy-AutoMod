@@ -334,6 +334,16 @@ if (routing_mode !== 'custom') {
 	 * load would FATAL the whole service. Degrade to the URLTest pool of the
 	 * remaining (supported) nodes; if that pool is empty too, its builder
 	 * already falls back to direct. */
+	/* Dangling main_node: the UCI section is gone (deleted node, restore,
+	 * installer) while still selected. The classic path would deref null in
+	 * push_outbound (get_all → {} → generate_outbound → null) and FATAL the
+	 * whole generation — degrade to the URLTest pool like an unsupported
+	 * node. */
+	if (!(main_node in ['direct-out', 'byedpi-out', 'zapret-out', 'urltest']) &&
+	    uci.get_all(uciconfig, main_node) == null) {
+		warn('homeproxy: main node references a missing section (dangling) - falling back to URLTest pool.\n');
+		main_node = 'urltest';
+	}
 	if (!(main_node in ['direct-out', 'byedpi-out', 'zapret-out']) &&
 	    uci.get_all(uciconfig, main_node) != null && !hp_node_usable(main_node)) {
 		warn('homeproxy: main node is not supported by the selected core - falling back to URLTest pool.\n');
@@ -3165,7 +3175,13 @@ scan_dup_tags(config.outbounds, 'outbound');
 scan_dup_tags(config.endpoints, 'endpoint');
 scan_dup_tags(config.route.rule_set, 'rule-set');
 
-writefile(RUN_DIR + '/hiddify-c.json', sprintf('%.J\n', removeBlankAttrs(config)));
+/* Atomic (temp + mv): a kill/power-cut mid-writefile would leave a truncated
+ * hiddify-c.json — the core would die at start with no config at all (the
+ * lastgood rollback only covers a config that FAILED THE CORE, not a missing
+ * one). Same pattern as every state file in the project. */
+const cfg_tmp = RUN_DIR + '/hiddify-c.json.tmp';
+writefile(cfg_tmp, sprintf('%.J\n', removeBlankAttrs(config)));
+system('mv -f ' + hp_shellquote(cfg_tmp) + ' ' + hp_shellquote(RUN_DIR + '/hiddify-c.json'));
 
 /* Hot Swap state contract (ч.59): the daemon reads THIS file, not UCI, so its view
  * always matches the generated config. Written only when the feature is active;
@@ -3200,11 +3216,25 @@ if (hp_core) {
 		if (chk) chk.close();
 		if (!isEmpty(out)) {
 			let m = match(out, /\[[0-9]+\]: ([a-z0-9_]+) (outbound|endpoint) is not included/);
-			if (!m)
+			let bad = null;
+			if (m) {
+				/* Pattern 1 captures the TYPE in m[1] and the word
+				 * "outbound/endpoint" in m[2] — the other two patterns are the
+				 * other way round. The old `m[2] || m[1]` extracted the literal
+				 * word for pattern 1: an inert skip-entry that never matched the
+				 * real type → check failed forever → infinite regen loop. */
+				bad = m[1];
+			}
+			if (!bad) {
 				m = match(out, /unknown (outbound|endpoint) type: ([a-z0-9_]+)/);
-			if (!m)
+				if (m)
+					bad = m[2];
+			}
+			if (!bad) {
 				m = match(out, /outbound type "([a-z0-9_]+)" not implemented/);   /* core dialect phrasing */
-			const bad = m ? (m[2] || m[1]) : null;
+				if (m)
+					bad = m[1];
+			}
 			if (bad) {
 				hp_extra_skip[bad] = true;
 				writefile(hp_extra_skip_file, sprintf('%.J\n', {

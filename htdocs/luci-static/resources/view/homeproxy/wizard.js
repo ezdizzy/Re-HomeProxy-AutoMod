@@ -2705,6 +2705,16 @@ return view.extend({
 
 		let labPollId = null;
 		function labStopPoll() { if (labPollId) { window.clearInterval(labPollId); labPollId = null; } }
+		function labStartPoll() {
+			if (labPollId) return;
+			/* window.setInterval survives view teardown (unlike poll.add) — the
+			 * tick self-cancels once the element is detached (user left the
+			 * page), otherwise it would keep 10 RPCs/5 s forever. */
+			labPollId = window.setInterval(function() {
+				if (!labStatus || !labStatus.isConnected) { labStopPoll(); return; }
+				refresh();
+			}, 5000);
+		}
 
 		function renderLab(r) {
 			const st = (r && r.status) || {};
@@ -2715,7 +2725,7 @@ return view.extend({
 					? _('Deep-checking the top strategies (page/CDN/media fetches)… %d of %d').format(st.done2 || 0, st.total2 || 0)
 					: _('Fuzzing… %d of %d').format(st.done || 0, st.total || 0) +
 						(st.current ? (' · ' + st.current) : '');
-				if (!labPollId) labPollId = window.setInterval(refresh, 5000);
+				labStartPoll();
 				return;
 			}
 			labStopPoll();

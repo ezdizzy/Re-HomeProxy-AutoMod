@@ -50,6 +50,27 @@ function safe_id(id) {
 	return replace(id, /[^A-Za-z0-9_-]/g, '_');
 }
 
+/* Strict validators for everything rendered into nft/dnsmasq syntax: a
+ * garbage UCI value (hand edit, restore, bug) must never break `nft -f`
+ * (all-or-nothing: the whole enforcement would silently disappear) or
+ * inject into a dnsmasq conf. Invalid entries are SKIPPED, not fatal. */
+function valid_ip4(v) {
+	return type(v) === 'string' &&
+		!!match(trim(v), /^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}(\/(3[0-2]|[12]?[0-9]))?$/);
+}
+function valid_mac(v) {
+	return type(v) === 'string' && !!match(trim(v), /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/);
+}
+function valid_ifname(v) {
+	return type(v) === 'string' && !!match(trim(v), /^[A-Za-z0-9._-]{1,15}$/);
+}
+function valid_domain(v) {
+	v = trim('' + (v || ''));
+	return length(v) > 2 && length(v) <= 253 &&
+		!!match(v, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/) &&
+		index(v, '.') > 0 && !match(v, /\.\./);
+}
+
 /* Resolve the active dnsmasq conf-dir at runtime (/var is a symlink to
  * /tmp on OpenWrt, so this finds /tmp/dnsmasq.cfg01411c.d). */
 function dnsmasq_conf_dir() {
@@ -74,11 +95,12 @@ const CONF_DIR = dnsmasq_conf_dir();
  * wifaces: [ names ]                         — live Wi-Fi iface names (iw dev) */
 function render_nft(ips, macs, rule_ips, pc, dnsf, wblk, wifaces) {
 	const lines = [];
-	const ipL = length(ips) ? uniq(ips) : [];
-	const macL = length(macs) ? uniq(macs) : [];
-	const ripL = length(rule_ips) ? uniq(rule_ips) : [];
-	const wblkL = length(wblk) ? uniq(wblk) : [];
-	const wfL = length(wifaces) ? uniq(wifaces) : [];
+	/* Choke-point validation: only well-formed values reach the nft render. */
+	const ipL = length(ips) ? uniq(filter(ips, valid_ip4)) : [];
+	const macL = length(macs) ? uniq(filter(macs, valid_mac)) : [];
+	const ripL = length(rule_ips) ? uniq(filter(rule_ips, valid_ip4)) : [];
+	const wblkL = length(wblk) ? uniq(filter(wblk, valid_mac)) : [];
+	const wfL = length(wifaces) ? uniq(filter(wifaces, valid_ifname)) : [];
 
 	const dnsf_ips = [];
 	for (let i = 0; i < length(dnsf); i++)
@@ -113,15 +135,15 @@ function render_nft(ips, macs, rule_ips, pc, dnsf, wblk, wifaces) {
 	/* per-client IP rule sets */
 	for (let i = 0; i < length(pc); i++) {
 		const p = pc[i];
-		if (!length(p.ips))
+		const pips = (p && length(p.ips)) ? uniq(filter(p.ips, valid_ip4)) : [];
+		if (!length(pips))
 			continue;
 		push(lines, `	set pc_${safe_id(p.id)}_v4 {`);
 		push(lines, `		type ipv4_addr`);
 		push(lines, `		flags interval`);
-		push(lines, `		elements = { ${join(', ', uniq(p.ips))} }`);
+		push(lines, `		elements = { ${join(', ', pips)} }`);
 		push(lines, `	}`);
 	}
-
 	/* DNS-filtered clients (for the DoT/DoQ bypass protection) */
 	push(lines, `	set dnsf_v4 {`);
 	push(lines, `		type ipv4_addr`);
@@ -157,12 +179,12 @@ function render_nft(ips, macs, rule_ips, pc, dnsf, wblk, wifaces) {
 		push(lines, `		iifname @wifi_ifaces ether saddr @wifi_blocked_macs counter drop`);
 	for (let i = 0; i < length(pc); i++) {
 		const p = pc[i];
-		if (!length(p.ips))
+		if (!(p && length(p.ips)) || !length(uniq(filter(p.ips, valid_ip4))))
 			continue;
 		const sname = `pc_${safe_id(p.id)}_v4`;
-		if (p.ip)
+		if (p.ip && valid_ip4(p.ip))
 			push(lines, `		ip saddr ${p.ip} ip daddr @${sname} counter drop`);
-		if (p.mac)
+		if (p.mac && valid_mac(p.mac))
 			push(lines, `		ether saddr ${p.mac} ip daddr @${sname} counter drop`);
 	}
 	if (length(dnsf_ips)) {
@@ -179,11 +201,11 @@ function render_nft(ips, macs, rule_ips, pc, dnsf, wblk, wifaces) {
 	push(lines, `		type nat hook prerouting priority -105; policy accept;`);
 	for (let i = 0; i < length(dnsf); i++) {
 		const d = dnsf[i];
-		if (d.ip) {
+		if (d.ip && valid_ip4(d.ip)) {
 			push(lines, `		ip saddr ${d.ip} udp dport 53 redirect to :${d.port}`);
 			push(lines, `		ip saddr ${d.ip} tcp dport 53 redirect to :${d.port}`);
 		}
-		if (d.mac) {
+		if (d.mac && valid_mac(d.mac)) {
 			push(lines, `		ether saddr ${d.mac} udp dport 53 redirect to :${d.port}`);
 			push(lines, `		ether saddr ${d.mac} tcp dport 53 redirect to :${d.port}`);
 		}
@@ -201,12 +223,12 @@ function render_nft(ips, macs, rule_ips, pc, dnsf, wblk, wifaces) {
 		push(lines, `		iifname @wifi_ifaces ether saddr @wifi_blocked_macs counter drop`);
 	for (let i = 0; i < length(pc); i++) {
 		const p = pc[i];
-		if (!length(p.ips))
+		if (!(p && length(p.ips)) || !length(uniq(filter(p.ips, valid_ip4))))
 			continue;
 		const sname = `pc_${safe_id(p.id)}_v4`;
-		if (p.ip)
+		if (p.ip && valid_ip4(p.ip))
 			push(lines, `		ip saddr ${p.ip} ip daddr @${sname} counter drop`);
-		if (p.mac)
+		if (p.mac && valid_mac(p.mac))
 			push(lines, `		ether saddr ${p.mac} ip daddr @${sname} counter drop`);
 	}
 	if (length(dnsf_ips)) {
@@ -239,8 +261,8 @@ function render_dnsmasq(rules) {
 			continue;
 		const targets = r.target || [];
 		for (let k = 0; k < length(targets); k++)
-			if (length(targets[k]) > 2)
-				push(out, `server=/${targets[k]}/`);
+			if (valid_domain(targets[k]))
+				push(out, `server=/${trim(targets[k])}/`);
 	}
 	const content = length(out) ? (join('\n', out) + '\n') : '';
 
@@ -274,8 +296,8 @@ function dnsf_conf_content(safe, port) {
 function dnsf_domains_content(domains) {
 	const lines = [];
 	for (let i = 0; i < length(domains); i++)
-		if (length(domains[i]) > 2)
-			push(lines, `server=/${domains[i]}/`);
+		if (valid_domain(domains[i]))
+			push(lines, `server=/${trim(domains[i])}/`);
 	return length(lines) ? (join('\n', lines) + '\n') : '';
 }
 

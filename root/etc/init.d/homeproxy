@@ -765,7 +765,10 @@ reload_service() {
 	rpid=$(cat "$RUN_DIR/.reload_running" 2>/dev/null)
 	if [ -n "$rpid" ] && kill -0 "$rpid" 2>/dev/null; then
 		log "reload suppressed (debounce: another reload is in progress) — scheduling a deferred retry."
-		( sleep 30; /etc/init.d/$CONF reload ) >/dev/null 2>&1 &
+		# 1000>&-: procd_lock() holds fd 1000 for the whole action; a child
+		# subshell inherits the LOCKED fd and pins the lock for its whole
+		# sleep (the ch.109 wedge class — lessons 100-104).
+		( sleep 30; /etc/init.d/$CONF reload ) >/dev/null 2>&1 1000>&- &
 		return
 	fi
 	# (b) a reload finished moments ago — its config state is already current.
@@ -774,7 +777,8 @@ reload_service() {
 		# A suppressed reload used to be DROPPED entirely: rapid mode flips could
 		# leave the service running the pre-flip config with no further trigger.
 		# Re-arm one retry after the debounce window instead.
-		( sleep $((25 - (now - last))); /etc/init.d/$CONF reload ) >/dev/null 2>&1 &
+		# 1000>&- — same locked-fd inheritance guard as above.
+		( sleep $((25 - (now - last))); /etc/init.d/$CONF reload ) >/dev/null 2>&1 1000>&- &
 		return
 	fi
 

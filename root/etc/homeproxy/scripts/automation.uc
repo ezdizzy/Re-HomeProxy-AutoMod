@@ -737,6 +737,13 @@ function probe(host, via_proxy, timeout) {
 			code = trim(readfile(codef) || '000');
 			c = classify_code(code);
 		}
+		/* Cap the page at 64 KB (same rationale as the worker): a multi-MB
+		 * portal body would spike the daemon RSS through readfile, while a
+		 * truncated big page still reads as "big" to every <32768 guard. */
+		const bsz = stat(bodyf);
+		if (bsz && bsz.size > 65536)
+			system('head -c 65536 ' + shellquote(bodyf) + ' > ' + shellquote(bodyf + '.t')
+				+ ' 2>/dev/null; mv -f ' + shellquote(bodyf + '.t') + ' ' + shellquote(bodyf));
 		let body = readfile(bodyf) || '';
 		let fp = fingerprint(body);
 		let block = (c === 'block');
@@ -1555,6 +1562,15 @@ if [ -z "$C" ] || [ "\${C%% *}" = "000" ] || [ -z "\${C%% *}" ]; then
 	rm -f "$PRE.code" "$PRE.body"
 	curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code} %{time_total}' -k --connect-timeout "$TO" --max-time "$TO" $HTTP2_FLAG $PX $PIN "http://$H" > "$PRE.code" 2>/dev/null
 fi
+# Cap the page at 64 KB: signatures only need the head, and a multi-MB portal
+# body would spike the daemon RSS through readfile (a truncated big page still
+# reads as "big" to every <32768 size-guard).
+if [ -s "$PRE.body" ]; then
+	BSZ=$(wc -c < "$PRE.body" 2>/dev/null)
+	if [ -n "$BSZ" ] && [ "$BSZ" -gt 65536 ]; then
+		head -c 65536 "$PRE.body" > "$PRE.body.t" 2>/dev/null && mv -f "$PRE.body.t" "$PRE.body"
+	fi
+fi
 echo done > "$PRE.done"
 `);
 	system(`chmod +x ${WORKER} 2>/dev/null`);
@@ -1836,7 +1852,10 @@ echo done > "$PRE.done"
 				if (side === 'direct') {
 					if (is_stub_redirect_host(redir))
 						kind = 'stub';
-					else if (poisoned_hosts[rhost])
+					else if (poisoned_hosts[rhost] && (time() - poisoned_hosts[rhost]) < 2592000)
+						/* 30-day TTL per the module comment: a one-off DNS-poison
+						 * must not pin dns_poison forever (the map itself is
+						 * pruned in the periodic state prune). */
 						kind = 'dns_poison';
 					else if (sigpage)
 						kind = 'sigpage';
@@ -1911,7 +1930,11 @@ echo done > "$PRE.done"
 				 * pool reports as tls_note=reset). Exit 56 = recv failure. */
 				let tlsn = '';
 				if (!ok && (code === '35' || code === '56')) tlsn = 'reset';
-				res = { code: length(code) ? code : '-1', ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: rtt_ms, kind: (side === 'tcp' && tlsn === 'reset') ? '' : '', waf: false, tls_note: tlsn };
+				/* The shell fallback carries no TLS diagnostics beyond the
+				 * exit-code note (tls_note above) — kind stays empty here by
+				 * design: instant-learn signals come from the native path
+				 * (probe_pool), the shell path keeps the conservative verdicts. */
+				res = { code: length(code) ? code : '-1', ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: rtt_ms, kind: '', waf: false, tls_note: tlsn };
 			} else {
 				let c = classify_code(code);
 				let block = (c === 'block');
@@ -2730,6 +2753,9 @@ echo done > "$PRE.done"
 			(a, b) => (num(host_score[b]) - num(host_score[a])));
 		for (let x in rest) push(cand, x);
 		let sel = [];
+		/* keys() allocates a full array per call — hoist out of the candidate
+		 * loop (O(candidates × learned) garbage otherwise on a big list). */
+		const learned_n = length(keys(auto_set));
 		for (let oi = 0; oi < length(cand); oi++) {
 			if (length(sel) >= dom_cap) break;
 			/* Probe the ACTUAL candidate host — no www/base collapsing:
@@ -2739,7 +2765,7 @@ echo done > "$PRE.done"
 			if (substr(dom, -1) === '.') dom = substr(dom, 0, length(dom) - 1);
 			if (!looks_like_host(dom)) continue;
 			if (is_excluded(dom, reeval_set[dom] === true)) continue;
-			if (length(keys(auto_set)) >= max_entries && !auto_set[dom]) continue;
+			if (learned_n >= max_entries && !auto_set[dom]) continue;
 			let st = state[dom];
 			/* Pending hosts (either direction) re-probe after CONFIRM_RETRY, not the daily guard. */
 			if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) || st.status === 'direct_pending' ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) {
@@ -2997,15 +3023,27 @@ echo done > "$PRE.done"
 				save_state(state);
 				log('pruned ' + length(stale) + ' stale state records' + (excess > 0 ? ' +' + excess + ' over cap' : ''));
 			}
+			/* poisoned_hosts has no state record — prune the module map itself:
+			 * entries older than 30 days are inert (the reader TTL-checks) but
+			 * would otherwise grow forever on a months-long daemon run. */
+			let pcut = 0;
+			for (let ph in keys(poisoned_hosts))
+				if ((now - poisoned_hosts[ph]) > 2592000) { delete poisoned_hosts[ph]; pcut++; }
+			if (pcut > 0)
+				log('pruned ' + pcut + ' expired dns-poison marks');
 		}
 
 		/* Persist state ONCE per cycle (not per probe): the file write is atomic but
 		 * still costs fsync-ish work ×24 probes otherwise. Learned-list writes keep
 		 * their own immediate atomic flush inside classify(). ч.66: a pending
 		 * Clear marker invalidates this whole pass - do not write the stale
-		 * in-memory state back over the just-wiped file. */
-		if (!access(RELOAD_MARKER + '_clear'))
+		 * in-memory state back over the just-wiped file. The discovery cursor
+		 * is persisted HERE (final for this cycle): the offset save in main()
+		 * then sees an equal value and skips the second full serialization. */
+		if (!access(RELOAD_MARKER + '_clear')) {
+			state.__dns_offset = dns_log_offset;
 			save_state(state);
+		}
 
 		/* Batch-flush window: apply when the time throttle elapsed OR enough new entries
 		 * accumulated (so a burst of learns triggers a single core restart, not many). */
@@ -3189,9 +3227,13 @@ echo done > "$PRE.done"
 		}
 
 		/* Persist dns log offset so we don't re-scan from the start after a restart.
-	 * Skipped while the pass was paused/inert: nothing consumed the log, so the
-	 * offset must NOT advance — and the flash/tmpfs write is pure churn. */
-		if (ran) {
+		* Skipped while the pass was paused/inert: nothing consumed the log, so the
+		* offset must NOT advance — and the flash/tmpfs write is pure churn.
+		* Also skipped when the pass already saved the identical offset (the
+		* per-cycle save at the end of pass()) and when a Clear marker arrived
+		* in between (writing the stale in-memory state back over the wiped
+		* file would resurrect just-deleted records). */
+		if (ran && !access(RELOAD_MARKER + '_clear') && state.__dns_offset !== dns_log_offset) {
 			state.__dns_offset = dns_log_offset;
 			save_state(state);
 		}

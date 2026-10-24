@@ -256,6 +256,10 @@ return view.extend({
 		o.cfgvalue = function() {
 			const el = E('span', { 'style': 'color:#9a9a9a' }, '—');
 			poll.add(L.bind(function() {
+				/* Hidden (depends) / detached after a re-render: skip the RPC
+				 * instead of polling for a node nobody can see. */
+				if (!el.isConnected)
+					return;
 				/* Focused query: resolve the main-out group itself (descends nested
 				 * urltest pools, e.g. prefer mode's main-out-alt) instead of the
 				 * GLOBAL-follow heuristic, which can latch onto a stale group. */
@@ -525,6 +529,9 @@ return view.extend({
 			 * state. Replaces the ч.59 single status line. */
 			const box = E('div', {}, [ E('span', { 'style': 'color:#9a9a9a' }, '—') ]);
 			poll.add(L.bind(function() {
+				/* Hidden (depends) / detached after a re-render: skip the RPC. */
+				if (!box.isConnected)
+					return;
 				return L.resolveDefault(callHotswapStatus(), {}).then(function(ret) {
 					box.innerHTML = '';
 					if (!ret || ret.error || !ret.enabled) {

@@ -469,11 +469,16 @@ return view.extend({
 			cards.byedpi.note.textContent = (b.enabled && b.opts) ? _('custom options') : '—';
 			cards.byedpi.note.setAttribute('title', (b.enabled && b.opts) ? String(b.opts) : '');
 
-			/* MultiDNS */
+			/* MultiDNS. "restarting..." is the routine quality-cycle rebuild
+			 * window (the daemon rebuilds mosdns.yaml and bounces the instance,
+			 * ~1-4 s): neutral grey, NOT the alarming red "enabled, not
+			 * running" which is reserved for a genuinely dead resolver. */
 			const mdEnabled = (mdns && mdns.enabled === '1') || (uci.get('homeproxy', 'multidns', 'enabled') === '1');
 			const mdRunning = !!(mdEnabled && mdns && mdns.mosdns);
-			cardNum(cards.multidns, mdEnabled ? (mdRunning ? _('running') : _('enabled, not running')) : _('disabled'),
-				mdEnabled ? (mdRunning ? 'hpui-c-green' : 'hpui-c-red') : '');
+			const mdRestart = !!(mdEnabled && !mdRunning && mdns && mdns.restarting);
+			cardNum(cards.multidns,
+				mdEnabled ? (mdRunning ? _('running') : (mdRestart ? _('restarting...') : _('enabled, not running'))) : _('disabled'),
+				mdEnabled ? (mdRunning ? 'hpui-c-green' : (mdRestart ? 'hpui-c-grey' : 'hpui-c-red')) : '');
 			const mdRu = (mdEnabled && mdns && mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
 			const mdSec = (mdEnabled && mdns && mdns.active && mdns.active.secure) ? mdns.active.secure.length : 0;
 			cards.multidns.note.textContent = mdEnabled

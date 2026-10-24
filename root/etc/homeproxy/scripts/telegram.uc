@@ -361,7 +361,7 @@ function cmd_status() {
 	} catch (e) { ctl_line = 'Контроль: ?'; }
 	return `<b>Re:HomeProxy</b>
 Ядро: ${core}
-${esc_html(main_line)}
+${main_line}
 Zapret: ${zapret} · ByeDPI: ${byedpi} · MultiDNS: ${mosdns}
 Автоматизация: ${learned} записей
 ${esc_html(ctl_line)}`;

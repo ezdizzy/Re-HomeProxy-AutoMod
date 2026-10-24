@@ -510,8 +510,14 @@ return view.extend({
 			dom.content(el, E('p', { 'class': 'hpui-hint' }, [ text || _('Please wait…') ]));
 		}
 
-		/* Generic act(): RPC call → refresh → one-place result. */
-		function act(el, promise, okText) {
+		/* Generic act(): RPC call → refresh → one-place result. A double click
+		 * must not fire the call twice (a toggle would flip back): the source
+		 * button is disabled for the duration. */
+		function act(el, promise, okText, btn) {
+			if (btn) {
+				btn.disabled = true;
+				promise.finally(function() { btn.disabled = false; });
+			}
 			busy(el);
 			promise.then(function(r) {
 				if (r && r.result === false) {
@@ -536,12 +542,12 @@ return view.extend({
 		enableBtn.addEventListener('click', function() {
 			const target = (S.status && S.status.enabled) ? '0' : '1';
 			act(dashResult, callSet(target),
-				(target === '1') ? _('Control enabled') : _('Control disabled'));
+				(target === '1') ? _('Control enabled') : _('Control disabled'), enableBtn);
 		});
 		pauseBtn.addEventListener('click', function() {
 			const target = (S.status && S.status.paused) ? '0' : '1';
 			act(dashResult, callSetPaused(target),
-				(target === '1') ? _('Paused — everything is allowed') : _('Enforcement resumed'));
+				(target === '1') ? _('Paused — everything is allowed') : _('Enforcement resumed'), pauseBtn);
 		});
 
 		function tempBlockModal(c) {
@@ -1402,7 +1408,10 @@ return view.extend({
 				E('p', {}, [ _('Clear the events journal? The service log is not touched.') ]),
 				E('div', { 'class': 'right', 'style': 'margin-top:14px' }, [
 					E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
-					E('button', { 'class': 'btn cbi-button-negative important', 'click': function() { ui.hideModal(); callEventsClear(); refreshJournal(); } }, [ _('Clear') ])
+					E('button', { 'class': 'btn cbi-button-negative important', 'click': function() {
+						ui.hideModal();
+						L.resolveDefault(callEventsClear(), {}).finally(function() { refreshJournal(); });
+					} }, [ _('Clear') ])
 				])
 			]);
 		});

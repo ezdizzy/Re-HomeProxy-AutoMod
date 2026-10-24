@@ -3682,6 +3682,12 @@ msgstr ""
 msgid "Restart service"
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "restarting..."
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:287
 msgid "Restarting… (may take ~5 s)"
 msgstr ""
@@ -5788,5 +5794,50 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
 msgid "The Telegram bot settings moved to the dedicated \"Telegram Bot\" page in the main menu — the bot keeps growing (router control, parental control, pushes) and no longer fits a wizard sub-tab."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "Restarting the service…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "Creating a snapshot…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with \"Service start\" or a router reboot."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "Checking the latest release…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "Update available: %s → %s (install it on the \"Core & Tools\" page)."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/overview.js
+msgid "%d points · ~%d min"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Click Generate to collect diagnostics…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
+msgid "Collecting diagnostics — this may take a few seconds…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Resolves Russian domains directly, without going through the proxy. You may add several — MultiDNS races all of them, without it the first entry is used. A bare IP is queried over UDP with TCP fallback; entries may force a transport: tcp://IP, or an encrypted direct DoH URL like https://1.1.1.1/dns-query (never proxied)."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
+msgid "Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+msgid "Removed successfully — MultiDNS disabled"
 msgstr ""
 

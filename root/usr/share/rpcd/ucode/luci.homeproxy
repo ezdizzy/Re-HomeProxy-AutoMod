@@ -233,15 +233,29 @@ function check_update_reply(installed_version, tag) {
 }
 
 /* Installed version of an apk/opkg package, matched with `rx` (first capture).
- * Mirrors the version detection in byedpi/zapret_status. */
+ * Mirrors the version detection in byedpi/zapret_status. Results are cached
+ * for 60 s: monitor_nodes (a ~5 s poll method) calls this twice per tick and
+ * each miss is an apk/opkg fork. A package upgrade mid-cache-window shows the
+ * old version for ≤60 s — acceptable for a status display. */
+const PKG_VER_TTL = 60;
+const pkg_ver_cache = {};
+/* App version cache for overview_sys (see below): { ts, ver }. */
+const app_ver_cache = { ts: 0, ver: null };
+
 function installed_pkg_version(pkg, rx) {
+	const ck = pkg + '|' + rx;
+	const now = time();
+	const e = pkg_ver_cache[ck];
+	if (e && (now - e.ts) < PKG_VER_TTL)
+		return e.ver;
+	let ver = null;
 	if (access('/usr/bin/apk')) {
 		const fd = popen(`apk info ${pkg} 2>/dev/null | head -1`);
 		if (fd) {
 			const out = trim(fd.read('all'));
 			fd.close();
 			const m = match(out, rx);
-			if (m) return m[1];
+			if (m) ver = m[1];
 		}
 	} else if (access('/bin/opkg')) {
 		const fd = popen(`opkg status ${pkg} 2>/dev/null`);
@@ -249,10 +263,11 @@ function installed_pkg_version(pkg, rx) {
 			const out = fd.read('all');
 			fd.close();
 			const m = match(out, /Version: ([0-9][0-9.]*)/);
-			if (m) return m[1];
+			if (m) ver = m[1];
 		}
 	}
-	return null;
+	pkg_ver_cache[ck] = { ts: now, ver: ver };
+	return ver;
 }
 
 const HP_DIR = '/etc/homeproxy';
@@ -277,11 +292,14 @@ function automation_apply_files(geo_too) {
 
 /* Restart one of the service's ucode daemon instances (automation / multidns).
  * `ubus call service event instance.restart` is a NO-OP on this procd build
- * (known issue), so the reliable path is SIGTERM to the script process - procd
- * sees the exit and respawns the instance (all instances run with respawn).
+ * (known issue) and busybox on the target routers has NO pkill either (lesson
+ * 23) — the old `pkill -f` silently did nothing and the daemon never actually
+ * restarted. The reliable path is the ps/awk kill (the bracket trick keeps the
+ * grep from matching its own shell): SIGTERM to the script process, procd sees
+ * the exit and respawns the instance (all instances run with respawn).
  * The ubus event is still fired for builds where it does work. */
 function restart_daemon_instance(script_name, instance_name) {
-	system(`pkill -f ${shellquote(HP_DIR + '/scripts/' + script_name)} 2>/dev/null; true`);
+	system(`kill $(ps w | grep '[${substr(script_name, 0, 1)}]${substr(script_name, 1)}' | awk '{print $1}') 2>/dev/null; true`);
 	system(`ubus call service event '{"type":"instance.restart","data":{"name":"homeproxy","instance":"` + instance_name + `"}}' 2>/dev/null`);
 }
 
@@ -994,8 +1012,14 @@ function hp_comp_resolve(strategy, corpus) {
 	const s = trim('' + (strategy || ''));
 	if (!length(s))
 		return null;
-	if (index(s, '--') === 0)
+	if (index(s, '--') === 0) {
+		/* Raw args reach nfqws2's eval split through the runner file — the
+		 * same guard as zapret_fuzz_apply/compose_apply (length, --shape,
+		 * no shell metacharacters). Protects EVERY caller at one place. */
+		if (length(s) > 8000 || match(s, /[`$;&|<>\n\r]/))
+			return null;
 		return s;
+	}
 	for (let ci = 0; ci < length(corpus.candidates); ci++) {
 		const c = corpus.candidates[ci];
 		if (type(c) === 'object' && c.name === s)
@@ -1645,9 +1669,16 @@ const methods = {
 				return { result: false, error: 'illegal type' };
 
 			const type = req.args?.type;
+			/* params is interpolated into the shell command below — it must be
+			 * argument-shaped and shell-safe (LuCI session input reaches here
+			 * verbatim; the generator types take no extra params today, so an
+			 * empty value is the normal path). */
+			const params = trim('' + (req.args?.params || ''));
+			if (length(params) > 512 || match(params, /[`$;&|<>\n\r]/))
+				return { result: false, error: 'illegal params' };
 			let result = {};
 
-			const fd = popen('/usr/bin/sing-box generate ' + type + ` ${req.args?.params || ''}`);
+			const fd = popen('/usr/bin/sing-box generate ' + type + (length(params) ? ' ' + shellquote(params) : ''));
 			if (fd) {
 				let ech_cfg_set = false;
 				let ech_key_set = false;
@@ -2359,15 +2390,13 @@ const methods = {
 
 			let core_version = null;
 			if (core) {
-				const fd = popen(`${shellquote(core.path)} version 2>/dev/null`);
-				if (fd) {
-					/* POSIX-ERE quirk: \s is NOT whitespace-class in ucode regex —
-					 * spell the character class out. */
-					const raw = fd.read('all');
-					const m = match(raw, /version v?([0-9][0-9A-Za-z.]*)/);
-					core_version = m ? m[1] : null;
-					fd.close();
-				}
+				/* The version probe of a packed core costs 1.5-3 s CPU — the
+				 * mtime+size-validated cache (ch.109) answers in ~0 and is
+				 * shared with core_mgmt.uc. monitor_nodes is a POLL method
+				 * (monitoring tab, ~5 s): a raw probe here would burn the CPU
+				 * every tick. */
+				const info = hp_core_features_cached(core.path);
+				core_version = (info && info.version) ? info.version : null;
 			}
 
 			return {
@@ -2770,7 +2799,10 @@ const methods = {
 			add('## ByeDPI (ciadpi)');
 			if (access('/usr/bin/ciadpi')) {
 				add('Installed: yes');
-				fd = popen('pgrep -x ciadpi 2>/dev/null');
+				/* busybox pgrep -x matches argv0 and MISSES the real ciadpi
+				 * (diag_core_check documents the same trap) — pidof, like
+				 * everywhere else. */
+				fd = popen('pidof ciadpi 2>/dev/null');
 				if (fd) { const bpid = trim(fd.read('all')); fd.close(); add('PID: ' + (length(bpid) > 0 ? bpid : 'not running')); }
 			} else {
 				add('Installed: no');
@@ -3279,6 +3311,13 @@ const methods = {
 				return { result: false, error: 'ciadpi not installed' };
 			const cmd_opts = req.args?.cmd_opts || '--disorder 1';
 			const test_port = req.args?.port || 15335;
+			/* Same guard as wizard_byedpi_set: the args are eval-split by ciadpi
+			 * AND interpolated into grep/pgrep patterns and shell commands below
+			 * — argument-shaped, no shell metacharacters, bounded length. */
+			if (length(cmd_opts) > 8000 || !match(cmd_opts, /^-/) || match(cmd_opts, /[`$;&|<>\n\r]/))
+				return { result: false, error: 'options contain forbidden characters' };
+			if (match('' + test_port, /[^0-9]/) || int(test_port) < 1 || int(test_port) > 65535)
+				return { result: false, error: 'illegal port' };
 			const has_curl = !!access('/usr/bin/curl');
 
 			/* Test panel. Pass = the TLS handshake completes (judged below by time_appconnect),
@@ -5579,30 +5618,24 @@ const methods = {
 				clash_ok: false
 			};
 
-			let fd = popen('cat /proc/uptime 2>/dev/null');
-			if (fd) {
-				const raw = trim(fd.read('all'));
-				fd.close();
-				const m = match(raw, /^([0-9]+)\./);
-				if (m)
-					reply.uptime = int(m[1]);
-			}
+			/* /proc reads need no fork (overview_sys is a 4 s poll method —
+			 * every saved fork counts on a 2-core router). */
+			const upt = readfile('/proc/uptime') || '';
+			const um = match(trim(upt), /^([0-9]+)\./);
+			if (um)
+				reply.uptime = int(um[1]);
 
-			fd = popen('cat /proc/loadavg 2>/dev/null');
-			if (fd) {
-				const raw = trim(fd.read('all'));
-				fd.close();
-				const m = match(raw, /^([0-9.]+) +([0-9.]+) +([0-9.]+)/);
-				if (m) {
-					reply.load1 = m[1];
-					reply.load5 = m[2];
-					reply.load15 = m[3];
-				}
+			const lav = readfile('/proc/loadavg') || '';
+			const lm = match(trim(lav), /^([0-9.]+) +([0-9.]+) +([0-9.]+)/);
+			if (lm) {
+				reply.load1 = lm[1];
+				reply.load5 = lm[2];
+				reply.load15 = lm[3];
 			}
 
 			/* df -k: the last line for the mount (skips the header). POSIX
 			 * ERE — explicit space classes, never \s (ч.32). */
-			fd = popen('df -k / 2>/dev/null | tail -n 1');
+			let fd = popen('df -k / 2>/dev/null | tail -n 1');
 			if (fd) {
 				const raw = trim(fd.read('all'));
 				fd.close();
@@ -5625,17 +5658,26 @@ const methods = {
 				}
 			}
 
-			/* App version — the same lookup app_status uses. */
-			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) {
-				fd = popen('apk info luci-app-re-homeproxy 2>/dev/null | head -1');
-				if (fd) {
-					const out = trim(fd.read('all'));
-					fd.close();
-					const m = match(out, /luci-app-re-homeproxy-([0-9][0-9.]*)/);
-					if (m)
-						reply.app_version = m[1];
+			/* App version — the same lookup app_status uses. Cached 10 min:
+			 * it changes only on a package upgrade, and `apk info` is a fork
+			 * per poll tick otherwise. */
+			const nowv = time();
+			if ((nowv - app_ver_cache.ts) > 600) {
+				let av = null;
+				if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) {
+					const avfd = popen('apk info luci-app-re-homeproxy 2>/dev/null | head -1');
+					if (avfd) {
+						const out = trim(avfd.read('all'));
+						avfd.close();
+						const m = match(out, /luci-app-re-homeproxy-([0-9][0-9.]*)/);
+						if (m)
+							av = m[1];
+					}
 				}
+				app_ver_cache.ts = nowv;
+				app_ver_cache.ver = av;
 			}
+			reply.app_version = app_ver_cache.ver;
 
 			/* Script daemons (automation engine, telegram bot): busybox
 			 * pidof does NOT match ucode script names (the process name is
@@ -5988,13 +6030,24 @@ const methods = {
 				running = length(trim(fd2.read('all'))) > 0;
 				fd2.close();
 			}
+			/* Restart-window honesty (same contract as multidns_status): during
+			 * the routine YAML rebuild no listener exists for a few seconds. */
+			let restarting = false;
+			if (!running) {
+				const mark = RUN_DIR + '/multidns/mosdns.restarting';
+				if (access(mark)) {
+					const ms = stat(mark);
+					if (ms && ms.mtime && (time() - ms.mtime) < 60)
+						restarting = true;
+				}
+			}
 			let pkg_manager = null;
 			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
 			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
 			let arch = null;
 			const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
 			if (afd) { arch = trim(afd.read('all')); afd.close(); }
-			return { installed, version, running, pkg_manager, arch };
+			return { installed, version, running, restarting, pkg_manager, arch };
 		}
 	},
 
@@ -6197,10 +6250,27 @@ const methods = {
 			if (!md_alive)
 				md_alive = (system('pidof mosdns >/dev/null 2>&1') === 0);
 
+			/* Routine rebuild window: the quality daemon restarts mosdns whenever
+			 * the built YAML changes (learned lists / quarantine / prune state),
+			 * so for ~1-4 s no listener exists while DNS is not broken — this is
+			 * not a failure and must not render as the red "enabled, not running".
+			 * start_mosdns() stamps the marker at entry and removes it when done;
+			 * trust it for 60 s (a stale copy from a killed daemon self-expires). */
+			let md_restarting = false;
+			if (!md_alive) {
+				const mark = md_dir + '/mosdns.restarting';
+				if (access(mark)) {
+					const ms = stat(mark);
+					if (ms && ms.mtime && (time() - ms.mtime) < 60)
+						md_restarting = true;
+				}
+			}
+
 			return {
 				enabled: enabled,
 				installed: access('/usr/bin/mosdns'),
 				mosdns: md_alive,
+				restarting: md_restarting,
 				active: active,
 				servers: servers
 			};
@@ -7118,7 +7188,9 @@ const methods = {
 			if (access(HC_EVENTS_PATH)) {
 				try { events = json(readfile(HC_EVENTS_PATH)); } catch (e) { events = []; }
 			}
-			const limit = int(req.args?.limit) || 100;
+			let limit = int(req.args?.limit) || 100;
+			if (limit < 1 || limit > 1000)
+				limit = 100;
 			const start = max(0, length(events) - limit);
 			const out = [];
 			for (let i = start; i < length(events); i++)

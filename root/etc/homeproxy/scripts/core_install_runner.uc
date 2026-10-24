@@ -56,8 +56,12 @@ function run_action(action, args, timeout_ms) {
 	 * install stage (a slow uplink needs minutes), then swaps, restarts the
 	 * service and runs its health-check. 420 s killed a healthy run on a
 	 * throttled link (2026-10-24) — give it headroom; the stage-level caps
-	 * inside core_mgmt (300 s wget) still bound each individual fetch. */
-	const caps = { download_pkg: 420000, install_pkg: 900000 };
+	 * inside core_mgmt (300 s wget) still bound each individual fetch.
+	 * download_pkg: core_mgmt's gh_fetch runs TWO wget attempts (GitHub 300 s
+	 * + mirror fallback 300 s) — a 420 s runner cap killed the mirror attempt
+	 * mid-flight on a slow link and left a partial tmp file (audit 2026-10-25);
+	 * 650 s covers the full budget. */
+	const caps = { download_pkg: 650000, install_pkg: 900000 };
 	const rc = system(full, caps[action] || timeout_ms || 420000);
 	if (rc != 0) {
 		/* system() kills only the DIRECT child — the installer (a grandchild)

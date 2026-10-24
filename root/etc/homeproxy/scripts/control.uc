@@ -19,7 +19,7 @@
 
 'use strict';
 
-import { access, readfile, writefile, open, popen } from 'fs';
+import { access, readfile, writefile, open, popen, stat } from 'fs';
 import { cursor } from 'uci';
 
 export const CONF = 'homecontrol';
@@ -59,6 +59,14 @@ export function systime_stamp() {
 };
 
 export function log(msg) {
+	/* Bounded tmpfs: cap at 64 KB keeping the newest tail (same recipe as
+	 * telegram.uc / urltest_watchdog.uc). */
+	try {
+		const ls = stat(LOG_PATH);
+		if (ls && ls.size > 65536) {
+			system(`tail -n 200 ${shellquote(LOG_PATH)} > ${shellquote(LOG_PATH + '.t')} 2>/dev/null; mv -f ${shellquote(LOG_PATH + '.t')} ${shellquote(LOG_PATH)}`);
+		}
+	} catch (e) { /* best effort */ }
 	const f = open(LOG_PATH, 'a');
 	if (!f)
 		return;
@@ -222,8 +230,16 @@ export function schedule_active(s, now) {
 
 	/* daily / weekly */
 	const days = s.days || [];
-	if (length(days) && !any_day(days, wday))
-		return false;
+	if (length(days) && !any_day(days, wday)) {
+		const t1p = parse_hhmm(s.time_start);
+		const t2p = parse_hhmm(s.time_stop);
+		/* A window that crosses midnight (e.g. Fri 21:00→07:00) is still open
+		 * in the early hours of the NEXT day: the day list must also match the
+		 * PREVIOUS weekday, or the window would silently close at midnight
+		 * even though the start day is selected. */
+		if (t1p == null || t2p == null || t1p <= t2p || !any_day(days, (wday + 6) % 7))
+			return false;
+	}
 
 	const t1 = parse_hhmm(s.time_start);
 	const t2 = parse_hhmm(s.time_stop);
