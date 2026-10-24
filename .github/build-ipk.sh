@@ -8,7 +8,6 @@ set -o pipefail
 
 PKG_MGR="${1:-apk}"
 RELEASE_TYPE="${2:-snapshot}"
-LEGACY="${3:-}"
 # Optional 4th arg: explicit package version (the workflow_dispatch `version` input,
 # or the pushed `v*` tag). When set on a release build it overrides the Makefile's
 # PKG_VERSION so the package files (e.g. luci-app-re-homeproxy_1.0.4_all.apk) match
@@ -131,7 +130,7 @@ add_group_and_user
 		--script "post-install:$TEMP_DIR/post-install" \
 		--script "post-upgrade:$TEMP_DIR/post-upgrade" \
 		--script "pre-deinstall:$TEMP_DIR/pre-deinstall" \
-		--info "depends:libc firewall4 ucode-mod-digest" \
+		--info "depends:libc firewall4" \
 		--info "provides:luci-app-homeproxy" \
 		--info "provides:luci-app-homeproxy-hiddify" \
 		--info "replaces:luci-app-homeproxy" \
@@ -144,40 +143,10 @@ add_group_and_user
 else
 	mkdir -p "$TEMP_PKG_DIR/CONTROL/"
 
-	if [ "$LEGACY" == "legacy" ]; then
-		SUBSC_UC="$TEMP_PKG_DIR/etc/homeproxy/scripts/update_subscriptions.uc"
-		cat > /tmp/hp_legacy_patch.py << 'PYEOF'
-import sys
-path = sys.argv[1]
-with open(path) as f:
-    c = f.read()
-c = c.replace("import { md5 } from 'digest';\n", "")
-c = c.replace("import { open } from 'fs';", "import { open, popen } from 'fs';")
-md5_fn = """
-function md5(s) {
-	const tmp = '/tmp/.hp_md5tmp';
-	const f = open(tmp, 'w');
-	if (!f) return '';
-	f.write(s);
-	f.close();
-	const fd = popen('md5sum < /tmp/.hp_md5tmp');
-	if (!fd) return '';
-	const out = trim(fd.read('line'));
-	fd.close();
-	return split(out, ' ')[0] || '';
-}
-
-"""
-c = c.replace("/* UCI config start */", md5_fn + "/* UCI config start */")
-with open(path, 'w') as f:
-    f.write(c)
-PYEOF
-		python3 /tmp/hp_legacy_patch.py "$SUBSC_UC"
-		rm -f /tmp/hp_legacy_patch.py
-		IPK_DEPS="libc, firewall4, kmod-nft-tproxy"
-	else
-		IPK_DEPS="libc, firewall4, kmod-nft-tproxy, ucode-mod-digest"
-	fi
+	# No ucode-mod-digest dependency: the app code deliberately avoids it
+	# (dependency-free FNV-1a hashing in import_conf.uc / update_subscriptions.uc /
+	# import_link.uc), so the package installs on every ucode-capable OpenWrt.
+	IPK_DEPS="libc, firewall4, kmod-nft-tproxy"
 
 	# Rename handling (ipk): do NOT Provides the old names. opkg treats an installed
 	# package that is also Provided as *satisfying* the dependency and then never
@@ -243,11 +212,7 @@ default_prerm $0 $@' > "$TEMP_PKG_DIR/CONTROL/prerm"
 
 	ipkg-build -m "" "$TEMP_PKG_DIR" "$TEMP_DIR"
 
-	if [ "$LEGACY" == "legacy" ]; then
-		mv "$TEMP_DIR/${PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${PKG_NAME}_${PKG_VERSION}_all-legacy.ipk"
-	else
-		mv "$TEMP_DIR/${PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${PKG_NAME}_${PKG_VERSION}_all.ipk"
-	fi
+	mv "$TEMP_DIR/${PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${PKG_NAME}_${PKG_VERSION}_all.ipk"
 fi
 
 rm -rf "$TEMP_DIR"
@@ -308,11 +273,7 @@ else
 
 	ipkg-build -m "" "$I18N_TEMP_PKG_DIR" "$I18N_TEMP_DIR"
 
-	if [ "$LEGACY" == "legacy" ]; then
-		mv "$I18N_TEMP_DIR/${I18N_PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${I18N_PKG_NAME}_${PKG_VERSION}_all-legacy.ipk"
-	else
-		mv "$I18N_TEMP_DIR/${I18N_PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${I18N_PKG_NAME}_${PKG_VERSION}_all.ipk"
-	fi
+	mv "$I18N_TEMP_DIR/${I18N_PKG_NAME}_${PKG_VERSION}_all.ipk" "$BASE_DIR/${I18N_PKG_NAME}_${PKG_VERSION}_all.ipk"
 fi
 
 rm -rf "$I18N_TEMP_DIR"

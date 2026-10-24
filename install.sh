@@ -1,5 +1,5 @@
 #!/bin/sh
-# Установщик и интерактивный конфигуратор Re:HomeProxy AutoMod для OpenWrt (apk / opkg / 23.05 legacy)
+# Установщик и интерактивный конфигуратор Re:HomeProxy AutoMod для OpenWrt (apk / opkg)
 # https://github.com/ezdizzy/re-homeproxy
 #
 # Вручную ставится только LuCI-приложение + ключ подписи, а ядро, ByeDPI и Zapret
@@ -32,6 +32,7 @@
 # создаётся правило «YouTube → Zapret» (если Zapret установлен; иначе правило деградирует
 # в прямой доступ и просто ничего не блокирует).
 HP_REPO="${HP_REPO:-ezdizzy/re-homeproxy}"
+SUFFIX="_all"   # суффикс имени пакета приложения в релизах
 
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[0;33m'; C='\033[0;36m'; N='\033[0m'
 ok()   { echo -e "${G}$1${N}"; }
@@ -254,8 +255,12 @@ apply_and_check() {
 	MD="выкл"; [ "$(uci -q get homeproxy.multidns.enabled)" = 1 ] && MD="вкл"
 	AU="выкл"; [ "$(uci -q get homeproxy.automation.enabled)" = 1 ] && AU="вкл"
 	ZN="выкл"; [ "$(uci -q get homeproxy.config.zapret_enabled)" = 1 ] && ZN="вкл"
+	TG="выкл"; [ "$(uci -q get homeproxy.telegram.enabled)" = 1 ] && TG="вкл"
+	KC="выкл"; [ "$(uci -q get homecontrol.main.enabled)" = 1 ] && KC="вкл"
+	AP="выкл"; [ "$(uci -q get homeproxy.autopilot.enabled)" = 1 ] && AP="вкл"
 	echo "  Ядро: $CORE | mosdns: $MOS | Zapret: $ZAP ($ZN) | ByeDPI: $BYE | curl: $CURL"
 	echo "  Узлов: $(count_nodes) | Основной узел: $MN | MultiDNS: $MD | Автоматизация: $AU"
+	echo "  Автопилот: $AP | Telegram-бот: $TG | Контроль: $KC"
 }
 
 # ---------------------------------------------------------------- 0. окружение
@@ -271,13 +276,27 @@ if   command -v apk  >/dev/null 2>&1; then PM=apk;  EXT=apk
 elif command -v opkg >/dev/null 2>&1; then PM=opkg; EXT=ipk
 else die "Не найден поддерживаемый менеджер пакетов (apk/opkg)."; fi
 case "$VER" in
-	23.05*)              LEGACY=1 ;;
-	24.10*|25.*|*SNAPSHOT*) LEGACY=0 ;;
-	22.*|21.*|19.*)      die "OpenWrt $VER слишком старая — нужна 23.05 или новее." ;;
-	*)                   LEGACY=0; warn "Непроверенная версия OpenWrt $VER — продолжаю." ;;
+	# 23.05 — EOL, поддержка снята (ucode-mod-digest больше не зависит от пакета,
+	# но старый ucode/23.05 не тестировался). Явный отказ вместо сломанной установки.
+	23.05*)              die "OpenWrt $VER достигла конца поддержки (EOL) и больше не поддерживается. Обновитесь до 24.10 или новее." ;;
+	24.10*|25.*|*SNAPSHOT*) : ;;
+	22.*|21.*|19.*)      die "OpenWrt $VER слишком старая — нужна 24.10 или новее." ;;
+	*)                   warn "Непроверенная версия OpenWrt $VER — продолжаю." ;;
 esac
-SUFFIX="_all"; [ "$LEGACY" = 1 ] && SUFFIX="_all-legacy"
-info "Версия: OpenWrt $VER  |  Архитектура: $ARCH  |  Менеджер пакетов: $PM  |  legacy=$LEGACY"
+info "Версия: OpenWrt $VER  |  Архитектура: $ARCH  |  Менеджер пакетов: $PM"
+# Железо в баннер: слабым роутерам (1–2 ядра, мало RAM) модули ресурсной адаптации
+# (MultiDNS, автоматизация, автопилот) сами выбирают щадящие интервалы.
+CORES=$(nproc 2>/dev/null); [ -z "$CORES" ] && CORES=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+case "$CORES" in ''|*[!0-9]*) CORES='' ;; esac   # нечисловое → нет данных
+RAMKB=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null)
+OVRKB=$(df -k /overlay 2>/dev/null | awk 'NR==2 {print $2}')
+HWLINE="  Железо: ${CORES:-?} ядер | RAM: $([ -n "$RAMKB" ] && echo $((RAMKB/1024)) || echo '?') МБ"
+[ -n "$OVRKB" ] && HWLINE="$HWLINE | Flash (overlay): $((OVRKB/1024)) МБ"
+info "$HWLINE"
+if [ -n "$CORES" ] && [ "$CORES" -le 2 ]; then
+	info "  Слабый роутер: демоны качества работают в ресурсосберегающих интервалах автоматически"
+	info "  (MultiDNS — проверка раз в 600 с, автоматизация подстраивает цикл под load, автопилот — quick-режим)."
+fi
 
 # Прописываем зеркало в бэкенд, чтобы делегированные загрузки тоже его использовали
 # Зеркало GitHub для бэкенда приложения пишем в UCI ПОСЛЕ установки пакета:
@@ -513,7 +532,7 @@ heal_configs() {
 
 # ------------------------------------------------- 1. LuCI-приложение + ключ
 install_app() {
-	ok "[1/8] Устанавливаю LuCI-приложение Re:HomeProxy AutoMod..."
+	ok "[1/10] Устанавливаю LuCI-приложение Re:HomeProxy AutoMod..."
 	ensure_key
 	app_install_pkgs || die "Установка приложения завершилась ошибкой."
 	ok "  приложение установлено."
@@ -534,7 +553,7 @@ install_app() {
 
 # ------------------------------------------------------- 2. ядро прокси
 install_core() {
-	ok "[2/8] Ядро прокси (обязательно — выберите одно)"
+	ok "[2/10] Ядро прокси (обязательно — выберите одно)"
 	warn "  ⚠  Без действующей подписки/конфигурации прокси-часть работать не будет:"
 	warn "     Telegram, WhatsApp, Instagram и другие заблокированные сервисы останутся недоступны."
 	warn "     Интернет при этом останется полностью рабочим (напрямую)."
@@ -747,7 +766,7 @@ choose_main_node() {
 
 # ------------------------------------------------------- 4. Hot Swap (горячий резерв)
 ask_hotswap() {
-	echo; ok "[4/8] Hot Swap — горячий резерв основного узла"
+	echo; ok "[4/10] Hot Swap — горячий резерв основного узла"
 	info "  Держит наготове «горячие» запасные подключения: если активный узел умрёт,"
 	info "  трафик за секунды переедет на живой резерв — БЕЗ рестарта ядра, без разрыва"
 	info "  интернета и без сброса DNS. При восстановлении основной узел вернётся сам."
@@ -768,7 +787,7 @@ ask_hotswap() {
 
 # ------------------------------------------------------- 5. MultiDNS
 ask_multidns() {
-	echo; ok "[5/8] MultiDNS — ускоритель DNS"
+	echo; ok "[5/10] MultiDNS — ускоритель DNS"
 	info "  Гоняет ВСЕ DNS-серверы пула параллельно и отдаёт самый быстрый живой ответ;"
 	info "  демон качества проверяет, что ответы реально открывают сайты, и отсекает мёртвые."
 	info "  Работает и без подписки (обычный пул — напрямую)."
@@ -777,16 +796,16 @@ ask_multidns() {
 	install_mosdns || return 1
 	if [ -x /usr/bin/mosdns ]; then
 		uci -q set homeproxy.multidns.enabled=1
-		uci -q set homeproxy.multidns.bench_interval=120
+		uci -q set homeproxy.multidns.bench_interval=600
 		uci -q commit homeproxy
-		ok "  MultiDNS включён (проверка качества каждые 120 секунд)."
+		ok "  MultiDNS включён (проверка качества каждые 600 секунд)."
 	fi
 	return 0
 }
 
 # ------------------------------------------------------- 6. Автоматизация
 ask_automation() {
-	echo; ok "[6/8] Автоматизация — автообнаружение заблокированных сайтов"
+	echo; ok "[6/10] Автоматизация — автообнаружение заблокированных сайтов"
 	info "  Сама находит сайты, которые не открываются напрямую, и добавляет их в прокси-список."
 	info "  БЕЗ подписки обнаружение работает, но маршрутизировать сайты через прокси нечем —"
 	info "  они добавятся в список и заработают после добавления подписки/узла."
@@ -878,7 +897,7 @@ zapret_pick_strategy() {
 }
 
 install_zapret() {
-	echo; ok "[7/8] Zapret 2 — обход DPI на уровне пакетов (подписка НЕ нужна)"
+	echo; ok "[7/10] Zapret 2 — обход DPI на уровне пакетов (подписка НЕ нужна)"
 	info "  Бесплатно разблокирует YouTube и другие сервисы без VPN-подписки."
 	info "  Встроенные профили + тестер: поставлю Hostfakesplit и проверю YouTube;"
 	info "  если не заработает — сам переберу другие стратегии."
@@ -923,7 +942,7 @@ install_zapret() {
 # корпус стратегий и применяет лучшую для YouTube/Discord/Telegram, ставит правила
 # → Zapret, а при поломке стратегии подбирает новую не дожидаясь цикла.
 ask_autopilot() {
-	echo; ok "[7б/8] Автопилот стратегий — обход поддерживается сам"
+	echo; ok "[8/10] Автопилот стратегий — обход поддерживается сам"
 	info "  По расписанию (по умолчанию каждые 6 ч) гоняет фаззинг корпуса Zapret,"
 	info "  применяет лучшую стратегию для каждого ресурса и держит правила"
 	info "  YouTube/Discord/Telegram на Zapret; если стратегия перестала работать —"
@@ -950,7 +969,7 @@ ask_autopilot() {
 
 # ------------------------------------------------------- 8. ByeDPI
 install_byedpi() {
-	echo; ok "[8/8] ByeDPI — обход DPI через локальный SOCKS (на ваше усмотрение)"
+	echo; ok "[9/10] ByeDPI — обход DPI через локальный SOCKS (на ваше усмотрение)"
 	info "  Альтернатива Zapret; стратегии подбираются в Мастере → Обход DPI (тестер встроен)."
 	ask "  Установить ByeDPI? [y/N]:"
 	if ! is_yes "$REPLY"; then info "  пропускаю."; return 0; fi
@@ -968,6 +987,95 @@ install_byedpi() {
 			else warn "  установка ByeDPI не удалась."; fi
 		else warn "  не удалось скачать ByeDPI — пропускаю."; fi
 	fi
+	return 0
+}
+
+# ------------------------------------------------------- 10. Telegram-бот и «Контроль»
+# Токен проверяется форматом и живым getMe (api.telegram.org может быть недоступен
+# напрямую — тогда токен всё равно сохраняется, бот переподключится сам).
+# chat_id оставляем пустым: бот привязывает ПЕРВЫЙ чат, который напишет боту.
+telegram_setup() {
+	# Боту нужен curl (tg_call ходит в Bot API через curl); если нет — ставим.
+	command -v curl >/dev/null 2>&1 || { [ "$PM" = apk ] && apk add curl >/dev/null 2>&1 || opkg install curl >/dev/null 2>&1; }
+	uci -q get homeproxy.telegram >/dev/null 2>&1 || uci -q set homeproxy.telegram=homeproxy
+	ask "  Вставьте токен бота от @BotFather (123456:ABC-DEF…), пусто — пропустить:"
+	TOK=$(echo "$REPLY" | tr -d ' \t')
+	if [ -z "$TOK" ]; then
+		warn "  токен не задан — бот остаётся выключенным (токен позже: LuCI → Telegram-бот или повторный запуск)."
+		return 0
+	fi
+	if ! printf '%s' "$TOK" | grep -qE '^[0-9]+:[A-Za-z0-9_-]+$'; then
+		warn "  токен не похож на формат Telegram (ожидается цифры:символы) — отмена."
+		return 1
+	fi
+	RES=$(curl -s --max-time 10 "https://api.telegram.org/bot${TOK}/getMe" 2>/dev/null)
+	BOTNAME=$(jget "$RES" username)
+	if printf '%s' "$RES" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+		ok "  токен принят (бот: @${BOTNAME:-?})."
+	else
+		warn "  api.telegram.org не ответил (заблокирован провайдером/нет сети) — токен сохраняю, бот подключится сам."
+	fi
+	uci -q set homeproxy.telegram.token="$TOK"
+	uci -q set homeproxy.telegram.enabled=1
+	uci -q commit homeproxy
+	ok "  Telegram-бот включён."
+	info "  Привяжите чат: отправьте боту /start — первый написавший привязывается автоматически."
+	info "  Держите токен в секрете: кто первый напишет боту, тот и получит управление."
+	return 0
+}
+
+telegram_toggle() {
+	if [ "$(uci -q get homeproxy.telegram.enabled)" = 1 ]; then
+		ask "  Бот включён. Выключить? [y/N]:"
+		if is_yes "$REPLY"; then
+			uci -q set homeproxy.telegram.enabled=0; uci -q commit homeproxy
+			ok "  Telegram-бот выключен (демон остаётся в спящем цикле, токен сохранён)."
+		fi
+	else
+		telegram_setup || true
+		if [ "$(uci -q get homeproxy.telegram.enabled)" = 1 ]; then
+			info "  применяю (рестарт службы)..."
+			/etc/init.d/homeproxy restart >/dev/null 2>&1
+		fi
+	fi
+	return 0
+}
+
+control_setup() {
+	uci -q get homecontrol.main >/dev/null 2>&1 || uci -q set homecontrol.main=main
+	uci -q set homecontrol.main.enabled=1
+	uci -q set homecontrol.main.paused=0
+	uci -q set homecontrol.main.log_enabled=1
+	uci -q set homecontrol.main.log_max=500
+	uci -q commit homecontrol
+	ok "  «Контроль» включён (без правил пока ничего не блокирует)."
+	info "  Устройства / правила / расписания / Wi-Fi: LuCI → Контроль или прямо из бота"
+	info "  (/devices, /blocksite, /wifi). Движок применения правил запускается службой сам."
+	return 0
+}
+
+control_toggle() {
+	if [ "$(uci -q get homecontrol.main.enabled)" = 1 ]; then
+		ask "  «Контроль» включён. Выключить? [y/N]:"
+		if is_yes "$REPLY"; then
+			uci -q set homecontrol.main.enabled=0; uci -q commit homecontrol
+			ok "  «Контроль» выключен (все правила сняты при следующем проходе движка)."
+		fi
+	else
+		control_setup
+	fi
+	return 0
+}
+
+ask_telegram_control() {
+	echo; ok "[10/10] Telegram-бот и родительский контроль («Контроль»)"
+	info "  Бот: /status, /nodes, /switch, /devices, /blocksite, /wifi, /snapshot и пуш-уведомления"
+	info "  о событиях (Hot Swap, Zapret/ByeDPI, обучение, контроль) — управление роутером из чата."
+	info "  «Контроль»: блок сайтов/устройств по расписанию, временные разрешения, Wi-Fi."
+	ask "  Настроить Telegram-бота сейчас (нужен токен от @BotFather)? [y/N]:"
+	if is_yes "$REPLY"; then telegram_setup; fi
+	ask "  Включить «Контроль» (каркас; правила настраиваются потом)? [y/N]:"
+	if is_yes "$REPLY"; then control_setup; fi
 	return 0
 }
 
@@ -989,8 +1097,10 @@ menu() {
 		echo "  10) Переустановить приложение (скачать и поставить заново)"
 		echo "  11) Восстановить критические конфиги (firewall includes и др.)"
 		echo "  12) Нативные помощники автоматизации (установить/обновить)"
+		echo "  13) Telegram-бот (вкл/выкл, токен)"
+		echo "  14) «Контроль» — родительский контроль (вкл/выкл)"
 		echo "  0) Выход"
-		ask "  Выбор [0-12]:"
+		ask "  Выбор [0-14]:"
 		case "$REPLY" in
 			1) subscription_add && apply_and_check ;;
 			2) share_link_add && apply_and_check ;;
@@ -1007,7 +1117,7 @@ menu() {
 					install_mosdns && ask "  Включить MultiDNS? [Д/н]:" && \
 						if ! is_no "$REPLY"; then
 							uci -q set homeproxy.multidns.enabled=1
-							uci -q set homeproxy.multidns.bench_interval=120
+							uci -q set homeproxy.multidns.bench_interval=600
 							uci -q commit homeproxy
 							/etc/init.d/homeproxy restart >/dev/null 2>&1
 							ok "  MultiDNS включён."
@@ -1077,6 +1187,15 @@ menu() {
 					info "  перезапускаю службу, чтобы помощники подхватились сразу..."
 					/etc/init.d/homeproxy restart >/dev/null 2>&1
 				fi ;;
+			13) telegram_toggle; apply_and_check ;;
+			14)
+				control_toggle
+				# Движок контроля гейтится сам на каждом тике — рестарт не нужен,
+				# но разовый apply ускоряет первое применение.
+				if [ "$(uci -q get homecontrol.main.enabled)" = 1 ]; then
+					info "  применяю состояние контроля..."
+					( /usr/bin/ucode -L /etc/homeproxy/scripts /etc/homeproxy/scripts/control_apply.uc >/dev/null 2>&1 & )
+				fi ;;
 			*) warn "  неизвестный пункт." ;;
 		esac
 	done
@@ -1117,7 +1236,7 @@ set_dns_defaults
 
 install_core
 
-echo; ok "[3/8] Подписка или конфигурация (можно добавить позже)"
+echo; ok "[3/10] Подписка или конфигурация (можно добавить позже)"
 info "  Без подписки заблокированные сервисы (Telegram, WhatsApp, Instagram…) недоступны,"
 info "  но интернет будет работать полностью (напрямую)."
 ask "  Добавить подписку (URL) сейчас? [y/N]:"
@@ -1134,6 +1253,7 @@ ask_automation
 install_zapret
 ask_autopilot
 install_byedpi
+ask_telegram_control
 
 ensure_baseline
 

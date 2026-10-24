@@ -537,6 +537,23 @@ const callCoreSkipped = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Background core install (hiddify / sing-box / sing-box-lite): the runner
+ * does prepare → download → install → kmods detached and writes stage
+ * status into /var/run/homeproxy/core_install.json; the card polls it.
+ * A ~46-95 MB download used to freeze the tab for minutes. */
+const callCoreInstallStart = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'core_install_start',
+	params: [ 'core', 'variant' ],
+	expect: { '': {} }
+});
+
+const callCoreInstallStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'core_install_status',
+	expect: { '': {} }
+});
+
 function buildByeDPICard(byedpi, isMainNode) {
 	let installed = byedpi?.installed || false;
 	let version   = byedpi?.version   || null;
@@ -1155,58 +1172,91 @@ function buildCoreCard(core, coreInfo) {
 	}, [ _('Check update') ]);
 
 	/* One smart Install: the backend auto-picks the build that fits this device's flash
-	 * (and RAM for the compact one) — the user never sees "UPX" or has to choose. */
+	 * (and RAM for the compact one) — the user never sees "UPX" or has to choose.
+	 * The heavy work runs in a detached background runner (prepare → download →
+	 * install → kmods); this card only starts it and polls the stage status, so the
+	 * tab stays responsive and a page reload resumes watching the running install. */
+	let installWatch = null;
+	function watchInstall() {
+		if (installWatch)
+			return;
+		const tick = async () => {
+			const st = await L.resolveDefault(callCoreInstallStatus(), {});
+			if (!st || (st.idle && !st.running)) {
+				installWatch = null;
+				return;
+			}
+			if (st.running) {
+				if (st.core !== core) {
+					setMsg(_('Another core is being installed — waiting for it to finish…'), '#9a9a9a');
+				} else {
+					const stageTxt = {
+						prepare: _('Checking requirements...'),
+						download: _('Downloading...'),
+						install: _('Installing package...'),
+						kmods: _('Installing kernel modules...')
+					}[st.stage] || st.stage;
+					setMsg(st.note ? stageTxt + ' — ' + st.note : stageTxt, st.note ? '#d99a1b' : '#9a9a9a');
+				}
+				installWatch = window.setTimeout(tick, 2000);
+				return;
+			}
+			installWatch = null;
+			const fresh = await L.resolveDefault(callCoreInfo(), {});
+			const fd = (isHiddify ? fresh.hiddify : fresh.singbox) || {};
+			installed = fd.installed && (isHiddify || (isLite ? !!fd.lite : !fd.lite));
+			version   = fd.version   || null;
+			coreData.lite = fd.lite;
+			coreData.variant = fd.variant;
+			statusEl.textContent = installed ? 'v' + version + (fd.lite && fd.variant === 'compressed' ? ' [lite·upx]' : (fd.lite ? ' [lite]' : '')) : (st.ok ? _('Not installed') : _('Unknown'));
+			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
+			installBtn.textContent = installed ? _('Update') : _('Install');
+			installBtn.disabled = !canInstall || null;
+			removeBtn.disabled  = !installed;
+			if (st.ok) {
+				let msg = st.note ? _('Installed successfully') + ' — ' + st.note : _('Installed successfully');
+				if (st.warning)
+					msg += ' — ' + st.warning;
+				setMsg(msg, st.warning ? '#d99a1b' : '#3fbf5f');
+			} else {
+				setMsg(st.error || _('Installation failed'), '#e05252');
+			}
+		};
+		installWatch = window.setTimeout(tick, 300);
+	}
+
 	const doInstall = async () => {
-		const prevInstalled = installed;
-		const prevVersion   = version;
 		installBtn.disabled = true;
 		removeBtn.disabled  = true;
 		statusEl.textContent = _('Installing...');
 		statusEl.style.color = '#9a9a9a';
+		setMsg(_('Starting the install...'), '#9a9a9a');
 
-		const fail = (msg) => {
-			installed = prevInstalled;
-			version   = prevVersion;
-			statusEl.textContent = installed ? 'v' + (version || '?') + (coreData.lite ? ' [lite]' : '') : _('Not installed');
-			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
-			installBtn.disabled = false;
+		const start = await L.resolveDefault(callCoreInstallStart(core, ''), {});
+		if (!start || start.result === false) {
+			installBtn.disabled = !canInstall || null;
 			removeBtn.disabled  = !installed;
-			setMsg(msg, '#e05252');
-		};
-
-		setMsg(_('Checking requirements...'), '#9a9a9a');
-		const prep = await L.resolveDefault(callCorePrepare(core, ''), {});
-		if (prep.error) return fail(prep.error);
-
-		const compact = (prep.variant === 'upx' || prep.variant === 'compressed');
-		setMsg(prep.note || _('Downloading...'), prep.note ? '#d99a1b' : '#9a9a9a');
-		/* full/lite prepare results differ: an .apk/.ipk URL vs the lite
-		 * project's install.sh — download_pkg stores it either way. */
-		const dl = await L.resolveDefault(callCoreDownload(prep.dl_url || prep.installer_url, prep.tmp_path), {});
-		if (!dl.result) return fail(dl.error || _('Download failed'));
-
-		setMsg(_('Installing package...'), '#9a9a9a');
-		const inst = await L.resolveDefault(callCoreInstallPkg(core, prep.tmp_path, prep.pkg_manager), {});
-		if (!inst.result) return fail(inst.error || _('Installation failed'));
-
-		setMsg(_('Installing kernel modules...'), '#9a9a9a');
-		await L.resolveDefault(callCoreInstallKmods(prep.pkg_manager), {});
-
-		const fresh = await L.resolveDefault(callCoreInfo(), {});
-		const fd = (isHiddify ? fresh.hiddify : fresh.singbox) || {};
-		installed = fd.installed && (isHiddify || (isLite ? !!fd.lite : !fd.lite));
-		version   = fd.version   || null;
-		statusEl.textContent = installed ? 'v' + version + (fd.lite && fd.variant === 'compressed' ? ' [lite·upx]' : (fd.lite ? ' [lite]' : '')) : _('Unknown');
-		statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
-		installBtn.textContent = _('Update');
-		installBtn.disabled = false;
-		removeBtn.disabled  = !installed;
-		setMsg(compact ? _('Installed successfully (compact build)') : _('Installed successfully'), '#3fbf5f');
-		/* Server-side recovery notes (e.g. the lite installer health-check
-		 * watching only sing-box) are shown after the success line. */
-		if (inst.note)
-			setMsg((compact ? _('Installed successfully (compact build)') : _('Installed successfully')) + ' — ' + inst.note, '#d99a1b');
+			statusEl.textContent = installed ? 'v' + (version || '?') + (coreData.lite && coreData.variant === 'compressed' ? ' [lite·upx]' : (coreData.lite ? ' [lite]' : '')) : _('Not installed');
+			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
+			setMsg((start && start.error) ? start.error : _('Failed to start the install'), '#e05252');
+			return;
+		}
+		/* Resume-safe: the status file outlives the tab (a page reload in the
+		 * middle of an install re-attaches the watcher instead of restarting
+		 * the whole flow). */
+		watchInstall();
 	};
+
+	/* Re-attach the watcher when the page (re)loads while an install runs. */
+	L.resolveDefault(callCoreInstallStatus(), {}).then(function(st) {
+		if (st && st.running) {
+			installBtn.disabled = true;
+			removeBtn.disabled  = true;
+			statusEl.textContent = _('Installing...');
+			statusEl.style.color = '#9a9a9a';
+			watchInstall();
+		}
+	});
 
 	const installBtn = E('button', {
 		class: 'btn cbi-button cbi-button-action',

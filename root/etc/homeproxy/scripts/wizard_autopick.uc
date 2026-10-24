@@ -11,7 +11,8 @@
  *
  * Input:  /var/run/homeproxy/wizard_autopick_req.json
  *         { resource: "youtube"|"discord"|"telegram"|"general",
- *           mode: "quick"|"full", set_rule: true|false, ts }
+ *           mode: "quick"|"full", set_rule: true|false,
+ *           strategy: "<args>" (optional — skip fuzz+pick), ts }
  * Output: /var/run/homeproxy/wizard_autopick.json
  *         { running, stage: "started"|"fuzz"|"pick"|"apply"|"verify"|"done"|"error",
  *           resource, mode, chosen: {name, args, score, avg_tls_ms, tag_ms, runners},
@@ -65,10 +66,18 @@ const BAK = '/etc/homeproxy/backups/zapret_prev.json';
 const NFQWS = '/opt/zapret2/nfq2/nfqws2';
 
 const RESOURCES = {
-	youtube:  { tag: 'yt', host: 'www.youtube.com' },
-	discord:  { tag: 'dc', host: 'discord.com' },
-	telegram: { tag: 'tg', host: 'web.telegram.org' },
-	general:  { tag: null, host: 'www.gstatic.com/generate_204' }
+	youtube:  { tag: 'yt', host: 'www.youtube.com',
+		/* ч.109 deep verify: page (content) + thumbnail CDN + the video-stream
+		 * edge — «сайт открывается» не значит «ресурс работает целиком»
+		 * (карточки, превью и видео идут с разных CDN). The edge root
+		 * legitimately answers 404 — ANY HTTP answer is a pass there. */
+		deep: [ 'https://www.youtube.com/', 'https://i.ytimg.com/generate_204', 'https://redirector.googlevideo.com/' ] },
+	discord:  { tag: 'dc', host: 'discord.com',
+		deep: [ 'https://discord.com/' ] },
+	telegram: { tag: 'tg', host: 'web.telegram.org',
+		deep: [ 'https://web.telegram.org/' ] },
+	general:  { tag: null, host: 'www.gstatic.com/generate_204',
+		deep: [ 'http://www.gstatic.com/generate_204' ] }
 };
 const FUZZ_FRESH = 6 * 3600;      /* reuse a ranking younger than 6 h       */
 const FUZZ_WAIT_MAX = 2700;       /* cap for waiting a full fuzz (~45 min)  */
@@ -197,51 +206,57 @@ function main() {
 		return;
 	}
 
-	/* 1. FUZZ — fresh result / wait for a running sweep / start one. */
+	/* 1. FUZZ — fresh result / wait for a running sweep / start one.
+	 * ч.109: when the request carries an explicit strategy (the
+	 * «apply from the ranking table» flow), stages 1–2 are skipped —
+	 * the table already ranked it; only rule+apply+verify run. */
 	res.stage = 'fuzz';
 	wstat(res);
-	let fz = read_json(FUZZ_RESULT);
-	const st = read_json(FUZZ_STATUS);
-	const fresh = (fz && fz.strategies && length(fz.strategies) &&
-		(fz.ts && (time() - int(fz.ts)) < FUZZ_FRESH));
-	const running = (st && st.running);
-	if (running) {
-		note(res, 'A fuzz run is already in progress — waiting for it to finish…');
-		wstat(res);
-		fz = wait_fuzz(time() + FUZZ_WAIT_MAX);
-		if (fz == null) {
-			fuzz_fail(res);
-			return;
+	const fixed = (req.strategy != null && length(trim('' + req.strategy)));
+	let fz = null;
+	if (!fixed) {
+		fz = read_json(FUZZ_RESULT);
+		const st = read_json(FUZZ_STATUS);
+		const fresh = (fz && fz.strategies && length(fz.strategies) &&
+			(fz.ts && (time() - int(fz.ts)) < FUZZ_FRESH));
+		const running = (st && st.running);
+		if (running) {
+			note(res, 'A fuzz run is already in progress — waiting for it to finish…');
+			wstat(res);
+			fz = wait_fuzz(time() + FUZZ_WAIT_MAX);
+			if (fz == null) {
+				fuzz_fail(res);
+				return;
+			}
+		} else if (!fresh) {
+			note(res, 'Starting a ' + mode + ' fuzz (the previous ranking is missing or older than 6 h)…');
+			wstat(res);
+			const t0 = time();
+			system(`sh /etc/homeproxy/scripts/zapret_fuzz.sh ${mode} 2 >/dev/null 2>&1 &`);
+			if (!wait_fuzz_owner(t0)) {
+				fuzz_fail(res);
+				return;
+			}
+			fz = wait_fuzz(time() + FUZZ_WAIT_MAX);
+			if (fz == null) {
+				fuzz_fail(res);
+				return;
+			}
+		} else {
+			note(res, 'Reusing the existing fuzz ranking (younger than 6 h).');
 		}
-	} else if (!fresh) {
-		note(res, 'Starting a ' + mode + ' fuzz (the previous ranking is missing or older than 6 h)…');
-		wstat(res);
-		const t0 = time();
-		system(`sh /etc/homeproxy/scripts/zapret_fuzz.sh ${mode} 2 >/dev/null 2>&1 &`);
-		if (!wait_fuzz_owner(t0)) {
-			fuzz_fail(res);
-			return;
-		}
-		fz = wait_fuzz(time() + FUZZ_WAIT_MAX);
-		if (fz == null) {
-			fuzz_fail(res);
-			return;
-		}
-	} else {
-		note(res, 'Reusing the existing fuzz ranking (younger than 6 h).');
-	}
 
-	/* 2. PICK — resource-tag ranking (majority pass, non-free-pass host). */
-	res.stage = 'pick';
-	wstat(res);
-	let chosen = null;
-	const runners = [];
-	if (meta.tag == null) {
-		/* general: the global ranking head (score order already encodes
-		 * distinguishing successes minus handshake cost). */
-		for (let s in fz.strategies) {
-			if (s.ok > 0) { chosen = s; break; }
-		}
+		/* 2. PICK — resource-tag ranking (majority pass, non-free-pass host). */
+		res.stage = 'pick';
+		wstat(res);
+		let chosen = null;
+		const runners = [];
+		if (meta.tag == null) {
+			/* general: the global ranking head (score order already encodes
+			 * distinguishing successes minus handshake cost). */
+			for (let s in fz.strategies) {
+				if (s.ok > 0) { chosen = s; break; }
+			}
 	} else {
 		const elig = [];
 		for (let s in fz.strategies) {
@@ -251,34 +266,69 @@ function main() {
 			if (h && h.ok && h.dist)
 				push(elig, { s: s, ms: int(h.tls_ms) || 0 });
 		}
-		sort(elig, (a, b) => (a.ms - b.ms) || (b.s.score - a.s.score));
+		/* ч.109: a deep-verified strategy (page/CDN/media fetches passed)
+		 * beats an equal-TLS one — the resource must work AS A WHOLE. */
+		sort(elig, (a, b) => {
+			const da = (a.s.deep) ? (a.s.deep.total ? a.s.deep.ok / a.s.deep.total : 0) : -1;
+			const db = (b.s.deep) ? (b.s.deep.total ? b.s.deep.ok / b.s.deep.total : 0) : -1;
+			return (db - da) || (a.ms - b.ms) || (b.s.score - a.s.score);
+		});
 		if (length(elig)) {
 			chosen = elig[0].s;
 			for (let i = 1; i < length(elig) && i <= 3; i++)
 				push(runners, elig[i].s.name + ' (' + elig[i].ms + ' ms)');
 		}
 	}
-	if (chosen == null) {
-		res.running = false; res.stage = 'error';
-		res.error = (meta.tag == null)
-			? 'no strategy passed any distinguishing host'
-			: 'no corpus strategy passed the resource probe — try the full fuzz or the strategy generator';
-		wstat(res);
-		return;
+		if (chosen == null) {
+			res.running = false; res.stage = 'error';
+			res.error = (meta.tag == null)
+				? 'no strategy passed any distinguishing host'
+				: 'no corpus strategy passed the resource probe — try the full fuzz or the strategy generator';
+			wstat(res);
+			return;
+		}
+		if (chosen.args && (match(chosen.args, /[`$;&|<>\n]/) || !match(chosen.args, /^--[a-z]/))) {
+			res.running = false; res.stage = 'error';
+			res.error = 'the winning strategy has an unexpected shape — refused for safety';
+			wstat(res);
+			return;
+		}
+		res.chosen = {
+			name: chosen.name || '', args: chosen.args || '',
+			score: int(chosen.score) || 0, avg_tls_ms: int(chosen.avg_tls_ms) || 0,
+			runners: runners
+		};
+		if (chosen.deep)
+			res.chosen.deep = { ok: int(chosen.deep.ok) || 0, total: int(chosen.deep.total) || 0 };
+	} else {
+		/* ч.109: explicit strategy from the ranking table — resolve its
+		 * catalog name for the report, then apply as usual. */
+		const args = trim('' + req.strategy);
+		if (match(args, /[`$;&|<>\n]/) || !match(args, /^--[a-z]/)) {
+			res.running = false; res.stage = 'error';
+			res.error = 'the strategy has an unexpected shape — refused for safety';
+			wstat(res);
+			return;
+		}
+		res.chosen = { name: '', args: args, score: 0, avg_tls_ms: 0, runners: [] };
+		const corpus = read_json('/etc/homeproxy/zapret_candidates.json');
+		if (corpus && type(corpus.candidates) == 'array') {
+			for (let c in corpus.candidates)
+				if (type(c) == 'object' && c.args === args) {
+					res.chosen.name = '' + (c.name || '');
+					break;
+				}
+		}
 	}
-	if (chosen.args && (match(chosen.args, /[`$;&|<>\n]/) || !match(chosen.args, /^--[a-z]/))) {
-		res.running = false; res.stage = 'error';
-		res.error = 'the winning strategy has an unexpected shape — refused for safety';
-		wstat(res);
-		return;
+	if (!fixed) {
+		note(res, 'Picked: ' + (res.chosen.name || 'custom args') +
+			((res.chosen.avg_tls_ms > 0) ? (' · avg TLS ' + res.chosen.avg_tls_ms + ' ms') : '') +
+			((res.chosen.deep && res.chosen.deep.total)
+				? (' · deep ' + res.chosen.deep.ok + '/' + res.chosen.deep.total)
+				: ''));
+	} else {
+		note(res, 'Applying the strategy you picked: ' + (res.chosen.name || 'custom args') + '.');
 	}
-	res.chosen = {
-		name: chosen.name || '', args: chosen.args || '',
-		score: int(chosen.score) || 0, avg_tls_ms: int(chosen.avg_tls_ms) || 0,
-		runners: runners
-	};
-	note(res, 'Picked: ' + (chosen.name || 'custom args') +
-		((res.chosen.avg_tls_ms > 0) ? (' · avg TLS ' + res.chosen.avg_tls_ms + ' ms') : ''));
 
 	/* 3. RULE — through the existing preset RPC (single guard set). */
 	if (req.set_rule === true && resource !== 'general') {
@@ -364,9 +414,37 @@ function main() {
 	res.verify = (resource === 'general')
 		? probe_live('http://www.gstatic.com/generate_204', 'gstatic generate_204')
 		: probe_live('https://' + meta.host, meta.host);
-	if (res.verify.ok)
+	/* ч.109: the deep battery — a resource works when ALL its hosts answer
+	 * through the configured path (YouTube: page + thumbnail CDN + video edge). */
+	res.verify_multi = [];
+	const urls = (meta.deep && length(meta.deep)) ? meta.deep
+		: [ (resource === 'general') ? 'http://www.gstatic.com/generate_204' : ('https://' + meta.host) ];
+	let deep_ok = 0;
+	/* for-in over an array yields the ELEMENTS (lesson 20/31) — url IS the
+	 * URL string, `urls[url]` would be undefined. */
+	for (let url in urls) {
+		let pr = probe_live(url, url);
+		/* one retry: right after the engine respawn a probe can flake
+		 * (DNS/DAD moment) — an honest verdict must not hinge on that. */
+		if (!pr.ok) {
+			sleep(2000);
+			pr = probe_live(url, url);
+		}
+		/* the video-stream edge: ANY HTTP answer = the DPI let it through */
+		if (index('' + url, 'redirector.googlevideo.com') >= 0)
+			pr.ok = (pr.code != '000' && pr.rc == 0);
+		push(res.verify_multi, pr);
+		if (pr.ok) deep_ok++;
+	}
+	res.verify.deep_ok = deep_ok;
+	res.verify.deep_total = length(urls);
+	if (res.verify.ok && deep_ok == length(urls))
 		note(res, 'Live check: ' + res.verify.host + ' → ' + res.verify.code +
-			((res.verify.tsec != null) ? (' in ' + res.verify.tsec + ' s') : ''));
+			((res.verify.tsec != null) ? (' in ' + res.verify.tsec + ' s') : '') +
+			' — all ' + length(urls) + ' resource hosts answer.');
+	else if (res.verify.ok)
+		note(res, 'Live check: the main host answers (' + res.verify.code + '), but ' +
+			(length(urls) - deep_ok) + ' of ' + length(urls) + ' resource hosts FAIL — the resource does NOT work entirely (media/CDN stuck). Try another strategy or the full fuzz.');
 	else
 		note(res, 'Live check FAILED (' + res.verify.code + ') — the rule/mode may not route the resource through Zapret, or this strategy does not hold under real traffic. Restore stays available.');
 

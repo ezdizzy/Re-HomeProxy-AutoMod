@@ -1224,8 +1224,9 @@ function discover_sni(pkts, secs) {
 		if (!spawned) {
 			log('sni_sniffer binary present but could not be started - falling back to tcpdump');
 		} else {
-			/* give a freshly spawned sniffer a moment to attach its filter */
-			if (!access(SNI_EVENTS)) sleep(secs);
+			/* give a freshly spawned sniffer a moment to attach its filter
+			 * (secs is SECONDS — sleep() takes milliseconds, issue #8 class) */
+			if (!access(SNI_EVENTS)) sleep(secs * 1000);
 			if (access(SNI_EVENTS)) {
 				let size = stat(SNI_EVENTS).size;
 				let mtime = 0;
@@ -3226,8 +3227,14 @@ echo done > "$PRE.done"
 		 * resource-aware interval is known, before the sleep). */
 		flush_stats(cycle_ms, cycle_sleep);
 
+		/* Interruptible wait: cycle_sleep is SECONDS (resource-aware 5/10/30),
+		 * and ucode sleep() is MILLISECONDS — the old sleep(1) waited 5–30 ms
+		 * total and the whole automation pass spun at ~30–200 Hz, burning CPU
+		 * on weak 2-core SoCs (same root cause as multidns, issue #8). One
+		 * second per step keeps the trigger/reload/disable reaction at ~1 s
+		 * with zero busy-waiting. */
 		for (let i = 0; i < cycle_sleep; i++) {
-			sleep(1);
+			sleep(1000);
 			if (access(TRIGGER_FILE)) { 		system('rm -f ' + shellquote(TRIGGER_FILE)); break; }
 			if (access(RELOAD_MARKER) || access(RELOAD_MARKER + '_geo') || access(RELOAD_MARKER + '_clear')) break;
 			if (uci.get('homeproxy', 'automation', 'enabled') !== '1') { if (has('dns')) disable_dns_log(); return; }

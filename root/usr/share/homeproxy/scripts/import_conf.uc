@@ -21,9 +21,8 @@ const uciconfig = 'homeproxy';
 function emit(o) { printf('%s\n', o); }
 
 /* Dependency-free stable hash (FNV-1a, 32-bit) for an idempotent section name.
- * Deliberately NOT using `digest`/md5: ucode-mod-digest is absent on OpenWrt 23.05
- * (the legacy build strips it), and that target's build patch only rewrites
- * update_subscriptions.uc — not this script. Pure ucode works everywhere. */
+ * Deliberately NOT using `digest`/md5: the package carries no ucode-mod-digest
+ * dependency (absent on some OpenWrt builds). Pure ucode works everywhere. */
 function strhash(s) {
 	let h = 2166136261;
 	const n = length(s);

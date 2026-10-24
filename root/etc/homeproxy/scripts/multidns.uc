@@ -31,6 +31,10 @@
  *
  * NOTE: this ucode build has NO floating point and NO clamp()/float(), so all
  * ratios are kept as 0..100 scaled integers and all math is integer.
+ * ucode constraints honored: sleep() is MILLISECONDS (issue #8 — the whole
+ * daemon used to be written as if it took seconds: a 5 ms main tick at
+ * ~200 Hz cost 13–31 % idle CPU and restart-looped mosdns); no typeof (use
+ * type()); for-in over an array yields ELEMENTS; no concat() (manual push).
  */
 
 'use strict';
@@ -72,7 +76,7 @@ const CANARIES_SECURE = [ 'cloudflare.com', 'example.com' ];
 
 let uci = null;
 let enabled = '0', use_plain = '1', use_secure = '1', secure_via_proxy = '1',
-    bench_interval = 120, alpha = 40, min_live_ratio = 50, min_score = 20,
+    bench_interval = 600, alpha = 40, min_live_ratio = 50, min_score = 20,
     plain_port = 5453, secure_port = 5454;
 let autodoh_active = null;   /* tri-state: unset/true/false — for one-shot logging */
 let user_dns_offset = 0;     /* incremental read position in the dnsmasq query log */
@@ -459,12 +463,16 @@ function tcp_dns_query(server, port, canary) {
 	/* DNS-over-TCP prefixes the message with its 2-byte big-endian length. */
 	let msg = bchr(int(qlen / 256)) + bchr(qlen % 256) + q;
 	writefile(qf, msg);
-	/* Hold stdin open (sleep keeps the pipe alive) and poll the answer file so a
-	 * fast reply costs ~1s instead of the old unconditional 6s block. */
+	/* Hold stdin open (the shell sleep inside the pipe keeps it alive for 4
+	 * REAL seconds — busybox sleep is seconds) and poll the answer file once
+	 * per second, breaking as soon as a reply lands. ucode sleep() is
+	 * MILLISECONDS: the old sleep(1) polled for 8 ms total, so the TCP probe
+	 * could never see an answer (issue #8) and every plain-pool probe fell
+	 * through to UDP. */
 	system('( cat ' + shellquote(qf) + '; sleep 4 ) | nc ' + shellquote(server)
 		+ ' ' + port + ' > ' + shellquote(af) + ' 2>/dev/null & echo $! > ' + shellquote(pf));
-	for (let i = 0; i < 8; i = i + 1) {
-		sleep(1);
+	for (let i = 0; i < 5; i = i + 1) {
+		sleep(1000);
 		let early = readfile(af);
 		if (early && length(early) >= 3) break;
 	}
@@ -485,11 +493,13 @@ function tcp_dns_query(server, port, canary) {
  * IPs (IPv4 or IPv6); empty means no answer. */
 function udp_dns_query(server, canary) {
   let out = MD_DIR + '/ns.out';
-  /* UDP DNS can drop a packet occasionally; retry a few times so a single
-   * lost query doesn't read as "server dead". Cap each try at ~3s. */
-  for (let attempt = 0; attempt < 3; attempt = attempt + 1) {
+  /* UDP DNS can drop a packet occasionally; retry once so a single lost
+   * query doesn't read as "server dead". The shell sleep caps each try at
+   * ~1 s (busybox sleep is SECONDS); two tries cover the loss case while
+   * keeping the analyze cycle short (issue #8). */
+  for (let attempt = 0; attempt < 2; attempt = attempt + 1) {
     system('nslookup -type=A ' + shellquote(canary) + ' ' + shellquote(server)
-           + ' > ' + shellquote(out) + ' 2>/dev/null & NSPID=$!; sleep 3; kill $NSPID 2>/dev/null');
+           + ' > ' + shellquote(out) + ' 2>/dev/null & NSPID=$!; sleep 1; kill $NSPID 2>/dev/null');
     let r = readfile(out) || '';
     let ips = [];
     let lines = split(r, '\n');
@@ -524,7 +534,7 @@ function doh_query(host, path, canary, via_proxy) {
 		];
 		for (let u = 0; u < length(urls); u = u + 1) {
 			let out = MD_DIR + '/cap.tmp';
-			system(`curl -s --max-time 4 ${proxy}${hdr}-w '\\n%{time_total}' ${shellquote(urls[u])} > ${shellquote(out)} 2>/dev/null`);
+			system(`curl -s --max-time 3 ${proxy}${hdr}-w '\\n%{time_total}' ${shellquote(urls[u])} > ${shellquote(out)} 2>/dev/null`);
 			let raw = readfile(out) || '';
 			let parts = split(raw, '\n');
 			if (!length(parts)) continue;
@@ -548,7 +558,7 @@ function doh_query(host, path, canary, via_proxy) {
 		writefile(qf, build_query(canary));
 		let bfile = MD_DIR + '/doh.body';
 		let tfile = MD_DIR + '/doh.time';
-		system(`curl -s --max-time 4 -X POST --data-binary @${shellquote(qf)} `
+		system(`curl -s --max-time 3 -X POST --data-binary @${shellquote(qf)} `
 			+ `-H 'Content-Type: application/dns-message' -H 'Accept: application/dns-message' `
 			+ `${proxy}-o ${shellquote(bfile)} -w '%{time_total}' ${shellquote('https://' + host + (path || '/dns-query'))} `
 			+ `> ${shellquote(tfile)} 2>/dev/null`);
@@ -644,31 +654,150 @@ function classify_code(code) {
 	return 'fail';
 }
 
-/* HTTP-verify one resolved IP: does it actually OPEN the site over HTTPS?
- * This is the quality signal smartdns could never provide. via_proxy rides the
- * dedicated mdns-proxy-in (127.0.0.1:5338 → main-out) so the secure pool's
- * check exercises the REAL proxied path. NOTE: use `socks5://` (not socks5h)
- * so curl keeps the --resolve mapping (local DNS) and only the TCP flows through
- * the tunnel. */
-function verify_ip(ip, domain, via_proxy) {
-	if (!have_curl()) return { code: '000', opens: false };
-	let proxy = via_proxy ? ' -x socks5://' + PROXY : '';
-	let bodyf = MD_DIR + '/http.body';
-	let codef = MD_DIR + '/http.code';
-	system('curl -sL -k --max-time 8 --connect-timeout 5 --resolve ' + shellquote(domain + ':443:' + ip)
-		+ ' -o ' + shellquote(bodyf) + ' -w "%{http_code}"' + proxy
-		+ ' ' + shellquote('https://' + domain) + ' > ' + shellquote(codef) + ' 2>/dev/null');
-	let code = trim(readfile(codef) || '000');
-	let c = classify_code(code);
-	let opens = (c === 'ok');
-	if (opens) {
-		let body = readfile(bodyf) || '';
-		/* Size guard (mirrors automation.uc): a large page is never a block page —
-		 * without this, a big portal whose markup merely contains a signature word
-		 * would mark the server's IP as dead. */
-		if (length(body) < 32768 && body_blocked(body)) opens = false;
+/* ── batched HTTPS verification (issue #8) ────────────────────────────────
+ * The old verify_ip() ran one curl after another: a 5-server pool with 3
+ * verified IPs cost ~150 s per analyze cycle on a 2-core SoC. The helpers
+ * below run a whole WAVE of requests inside one shell (curl … & curl … &
+ * wait), so a wave costs its SLOWEST member, not the sum of all members.
+ * Temp files are unique per job index and removed after the wave. */
+
+function rm_files(files) {
+	if (!length(files)) return;
+	let cmd = 'rm -f';
+	for (let i = 0; i < length(files); i = i + 1)
+		cmd += ' ' + shellquote(files[i]);
+	system(cmd);
+}
+
+/* HTTP-verify a BATCH of { ip, dom, via, key } jobs: does each IP actually
+ * OPEN the domain over HTTPS? via_proxy rides the dedicated mdns-proxy-in
+ * (socks5://127.0.0.1:5338 → main-out) so the secure pool's check exercises
+ * the REAL proxied path; NOTE: socks5:// (not socks5h) so curl keeps the
+ * --resolve mapping (local DNS) and only the TCP flow tunnels — same as the
+ * old verify_ip(). Results land in VRES[key] = { code, opens } with the
+ * identical verdict rules: 2xx/3xx code, then the block-page body check
+ * (a large page is never a block page — size guard mirrors automation.uc). */
+let VRES = {};
+
+function batch_verify_pairs(jobs) {
+	if (!length(jobs) || !have_curl()) return;
+	let allfiles = [];
+	/* Proxied curls tunnel through the SOCKS inbound — keep those chunks
+	 * smaller than the direct ones so a 2-core SoC stays responsive. */
+	for (let via = 0; via < 2; via = via + 1) {
+		let idxs = [];
+		for (let i = 0; i < length(jobs); i = i + 1)
+			if ((jobs[i].via ? 1 : 0) === via) push(idxs, i);
+		const chunk = via ? 4 : 6;
+		for (let base = 0; base < length(idxs); base = base + chunk) {
+			let end = base + chunk;
+			if (end > length(idxs)) end = length(idxs);
+			let cmd = '';
+			for (let k = base; k < end; k = k + 1) {
+				let i = idxs[k];
+				let j = jobs[i];
+				let bodyf = MD_DIR + '/bv' + i + '.body';
+				let codef = MD_DIR + '/bv' + i + '.code';
+				push(allfiles, bodyf);
+				push(allfiles, codef);
+				let proxy = j.via ? (' -x socks5://' + PROXY) : '';
+				cmd += 'curl -sL -k --max-time 5 --connect-timeout 3 --resolve '
+					+ shellquote(j.dom + ':443:' + j.ip)
+					+ ' -o ' + shellquote(bodyf) + ' -w "%{http_code}"' + proxy
+					+ ' ' + shellquote('https://' + j.dom)
+					+ ' > ' + shellquote(codef) + ' 2>/dev/null & ';
+			}
+			system(cmd + 'wait');
+			for (let k = base; k < end; k = k + 1) {
+				let i = idxs[k];
+				let j = jobs[i];
+				let code = trim(readfile(MD_DIR + '/bv' + i + '.code') || '000');
+				let opens = (classify_code(code) === 'ok');
+				if (opens) {
+					let body = readfile(MD_DIR + '/bv' + i + '.body') || '';
+					if (length(body) < 32768 && body_blocked(body)) opens = false;
+				}
+				VRES[j.key] = { code: code, opens: opens };
+			}
+		}
 	}
-	return { code: code, opens: opens };
+	rm_files(allfiles);
+}
+
+/* Parallel DoH-JSON lookups (Google-style JSON API only — the two reference
+ * resolvers below speak it; the RFC8484 fallback stays in doh_query for pool
+ * probing). items: [{ host, path, dom }]; returns a map keyed "host|dom" →
+ * array of answer IPv4s (unreachable/host-down → []). */
+function batch_doh_json(items, chunk) {
+	let out = {};
+	if (!length(items) || !have_curl()) return out;
+	let allfiles = [];
+	for (let base = 0; base < length(items); base = base + chunk) {
+		let end = base + chunk;
+		if (end > length(items)) end = length(items);
+		let cmd = '';
+		for (let i = base; i < end; i = i + 1) {
+			let it = items[i];
+			let f = MD_DIR + '/bdj' + i + '.json';
+			push(allfiles, f);
+			let url = 'https://' + it.host + (it.path || '/dns-query') + '?name=' + it.dom + '&type=A';
+			cmd += 'curl -s --max-time 3 -H \'accept: application/dns-json\' '
+				+ shellquote(url) + ' -o ' + shellquote(f) + ' 2>/dev/null & ';
+		}
+		system(cmd + 'wait');
+		for (let i = base; i < end; i = i + 1) {
+			let it = items[i];
+			let ips = [];
+			let raw = readfile(MD_DIR + '/bdj' + i + '.json');
+			if (raw) {
+				try {
+					let js = json(raw);
+					let ans = (js && js.Answer) ? js.Answer : [];
+					for (let k = 0; k < length(ans); k = k + 1)
+						if (ans[k].type === 1 && match(ans[k].data, /^[0-9.]+$/))
+							push(ips, ans[k].data);
+				} catch (e) { /* malformed body → no reference */ }
+			}
+			out[it.host + '|' + it.dom] = ips;
+		}
+	}
+	rm_files(allfiles);
+	return out;
+}
+
+/* Parallel DNS-over-TCP queries — the same wire trick as tcp_dns_query()
+ * (2-byte length prefix, stdin held open by the shell so busybox nc does not
+ * hang up before the answer arrives). items: [{ server, port, dom }];
+ * returns a map keyed dom → array of answer IPv4s (silent listener → []). */
+function batch_tcp_dns_query(items, chunk) {
+	let out = {};
+	if (!length(items)) return out;
+	let allfiles = [];
+	for (let base = 0; base < length(items); base = base + chunk) {
+		let end = base + chunk;
+		if (end > length(items)) end = length(items);
+		let cmd = '';
+		for (let i = base; i < end; i = i + 1) {
+			let it = items[i];
+			let qf = MD_DIR + '/btq' + i + '.bin';
+			let af = MD_DIR + '/bta' + i + '.bin';
+			push(allfiles, qf);
+			push(allfiles, af);
+			let q = build_query(it.dom);
+			let qlen = length(q);
+			writefile(qf, bchr(int(qlen / 256)) + bchr(qlen % 256) + q);
+			cmd += '( cat ' + shellquote(qf) + '; sleep 4 ) | nc ' + shellquote(it.server)
+				+ ' ' + it.port + ' > ' + shellquote(af) + ' 2>/dev/null & ';
+		}
+		system(cmd + 'wait');
+		for (let i = base; i < end; i = i + 1) {
+			let it = items[i];
+			let a = readfile(MD_DIR + '/bta' + i + '.bin');
+			out[it.dom] = (a && length(a) >= 14) ? parse_a(substr(a, 2)) : [];
+		}
+	}
+	rm_files(allfiles);
+	return out;
 }
 
 /* Composite quality score 0..100 (all integer math). HTTP "site opens" is the
@@ -955,10 +1084,15 @@ function kill_our_mosdns() {
 	let pids = split(out, ' ');
 	for (let i = 0; i < length(pids); i = i + 1)
 		system('kill -9 ' + trim(pids[i]) + ' 2>/dev/null');
-	/* Wait for the process(es) to actually disappear before we rebind. */
+	/* Wait for the process(es) to actually disappear before we rebind.
+	 * ucode sleep() is MILLISECONDS — the old sleep(1) polled for 10 ms and
+	 * returned while mosdns was still dying, so the next start_mosdns raced
+	 * the corpse and the "not running - restarting" loop began (issue #8).
+	 * The first pidof after SIGKILL normally finds nothing and breaks at
+	 * once; 10 × 1 s is only the pathological ceiling. */
 	for (let i = 0; i < 10; i = i + 1) {
 		if (!length(trim(capture('pidof mosdns 2>/dev/null')))) break;
-		sleep(1);
+		sleep(1000);
 	}
 }
 
@@ -977,12 +1111,12 @@ function start_mosdns() {
 	let conf = build_mosdns_conf();
 	atomic_write(CONF, conf);
 	kill_our_mosdns();
-	sleep(1);
+	sleep(1000);
 	system('setsid ' + MOSDNS + ' start -c ' + shellquote(CONF) + ' -d ' + shellquote(MD_DIR)
 		+ ' </dev/null >>' + shellquote(LOG_FILE + '.md') + ' 2>&1 &');
 	let alive = false;
 	for (let i = 0; i < 10; i = i + 1) {
-		sleep(1);
+		sleep(1000);
 		if (mosdns_running()) { alive = true; break; }
 	}
 	if (alive) {
@@ -992,11 +1126,11 @@ function start_mosdns() {
 		/* One retry: the previous instance's socket may still be held by the OS
 		 * for a moment after kill. Force-clear and try again. */
 		kill_our_mosdns();
-		sleep(2);
+		sleep(2000);
 		system('setsid ' + MOSDNS + ' start -c ' + shellquote(CONF) + ' -d ' + shellquote(MD_DIR)
 			+ ' </dev/null >>' + shellquote(LOG_FILE + '.md') + ' 2>&1 &');
 		for (let i = 0; i < 10; i = i + 1) {
-			sleep(1);
+			sleep(1000);
 			if (mosdns_running()) { alive = true; break; }
 		}
 		if (alive) {
@@ -1021,8 +1155,45 @@ function stop_mosdns() {
 	kill_our_mosdns();
 }
 
+/* Signature of the CONFIGURED server pools — immutable UCI options only.
+ * NEVER mix runtime state (pruned / quarantine / dead-IPs) into a rebuild
+ * trigger: analyze() itself mutates that state every cycle, so a state-based
+ * signature changes as a RESULT of the rebuild machinery and self-loops
+ * (issue #8, problem 2: sig → analyze → pruned → sig …). The learned
+ * proxy lists are propagated through the data files (ensure_data_files),
+ * not through this signature. */
+function pools_sig() {
+	return join(',', to_list(uci.get('homeproxy', 'config', 'russia_dns_server')))
+		+ '|' + join(',', to_list(uci.get('homeproxy', 'config', 'china_dns_server')))
+		+ '|' + join(',', to_list(uci.get('homeproxy', 'config', 'iran_dns_server')))
+		+ '|' + join(',', to_list(uci.get('homeproxy', 'config', 'dns_server')))
+		+ '|' + join(',', to_list(uci.get('homeproxy', 'config', 'secure_dns_server')))
+		+ '|' + ((uci.get('homeproxy', 'config', 'russia_dns_use_wan') || '0') === '1'
+			? join(',', wan_dns_servers()) : '');
+}
+
+/* Rebuild the mosdns YAML from the current UCI + state and restart the
+ * instance when it differs from the live file. The comparison is FILE
+ * CONTENT (never a signature) and the learned lists / quarantine mirror are
+ * refreshed first, so a restart always picks up the freshest state. Called
+ * from the cfg-check, after the bench analyze() and after a pool-list
+ * change — the single, bounded place where state changes reach mosdns
+ * (issue #8, problems 2–4). */
+function rebuild_if_changed() {
+	let data_changed = ensure_data_files();
+	let fresh = build_mosdns_conf();
+	if (data_changed || !access(CONF) || trim(readfile(CONF)) !== fresh) {
+		atomic_write(CONF, fresh);
+		start_mosdns();
+	}
+	update_probe_set(v4_hosts(assemble_plain_pool(load_state())));
+}
+
 function analyze() {
 	dbg('a:enter');
+	/* Verify results are cycle-local: drop the previous cycle's entries so
+	 * the map cannot grow unboundedly over a months-long daemon lifetime. */
+	VRES = {};
 	let st = load_state();
 	if (!st.servers) st.servers = {};
 	let mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
@@ -1074,20 +1245,35 @@ function analyze() {
 	 * IP "opens" a proxied domain regardless of its validity. */
 	if (use_plain) {
 		let gbad = 0, gtotal = 0;
+		/* Issue #8: the references used to be fetched one doh_query() after
+		 * another (≈3–4 s per canary) and the listener queried per canary too.
+		 * Two parallel waves instead — wall time is the slowest member of the
+		 * wave, not the sum. */
+		let refitems = [];
+		for (let ci = 0; ci < length(CANARIES_PLAIN); ci = ci + 1) {
+			push(refitems, { host: '1.1.1.1', path: '/dns-query', dom: CANARIES_PLAIN[ci] });
+			push(refitems, { host: '8.8.8.8', path: '/resolve', dom: CANARIES_PLAIN[ci] });
+		}
+		let refj = batch_doh_json(refitems, 6);
+		let tcpitems = [];
+		for (let ci = 0; ci < length(CANARIES_PLAIN); ci = ci + 1)
+			push(tcpitems, { server: '127.0.0.1', port: '' + plain_port, dom: CANARIES_PLAIN[ci] });
+		let gotj = batch_tcp_dns_query(tcpitems, 3);
 		for (let ci = 0; ci < length(CANARIES_PLAIN); ci = ci + 1) {
 			let dom = CANARIES_PLAIN[ci];
+			let r1 = refj['1.1.1.1|' + dom] || [];
+			let r2 = refj['8.8.8.8|' + dom] || [];
 			let ref = {};
-			let r1 = doh_query('1.1.1.1', '/dns-query', dom, false);
-			for (let i = 0; i < length(r1.ips); i = i + 1) ref[r1.ips[i]] = true;
-			let r2 = doh_query('8.8.8.8', '/resolve', dom, false);
-			for (let i = 0; i < length(r2.ips); i = i + 1) ref[r2.ips[i]] = true;
+			for (let i = 0; i < length(r1); i = i + 1) ref[r1[i]] = true;
+			for (let i = 0; i < length(r2); i = i + 1) ref[r2[i]] = true;
 			if (!length(keys(ref))) continue;   /* references unreachable — cannot judge */
 			/* A config-rebuild restart may briefly bounce the listener; retry
 			 * once so a restart window isn't mistaken for a healthy answer. */
-			let ips = tcp_dns_query('127.0.0.1', '' + plain_port, dom);
+			let ips = gotj[dom] || [];
 			if (!length(ips)) {
-				sleep(2);
-				ips = tcp_dns_query('127.0.0.1', '' + plain_port, dom);
+				sleep(2000);
+				let one = batch_tcp_dns_query([ { server: '127.0.0.1', port: '' + plain_port, dom: dom } ], 1);
+				ips = one[dom] || [];
 			}
 			if (!length(ips)) continue;         /* listener silent — not evidence of poison */
 			gtotal = gtotal + 1;
@@ -1158,33 +1344,48 @@ function analyze() {
 			if ((cyc - (st.uv_last[k] || -100)) < 3) continue;   /* verified recently */
 			push(cands, { d: k, t: st.user_recent[k] });
 		}
-		let verified = 0;
-		while (verified < 4 && length(cands)) {
-			let mi = 0;   /* freshest query first — the user's current pain */
-			for (let i = 1; i < length(cands); i++)
-				if (cands[i].t > cands[mi].t) mi = i;
-			let dom = cands[mi].d;
-			let rest = [];
-			for (let i = 0; i < length(cands); i++) if (i !== mi) push(rest, cands[i]);
-			cands = rest;
+		/* Freshest queries first (the user's current pain), max 4 per cycle. */
+		sort(cands, (a, b) => (a.t < b.t) ? 1 : -1);
+		if (length(cands) > 4) cands = slice(cands, 0, 4);
+		/* Issue #8: each candidate used to be verified sequentially (2 DoH +
+		 * 1 TCP ≈ 10 s each → ~40 s per analyze). Two parallel waves instead:
+		 * wave 1 fetches every reference, wave 2 queries the plain listener
+		 * only for the names that survived the self-consistency gate. */
+		let refitems = [];
+		for (let i = 0; i < length(cands); i = i + 1) {
+			push(refitems, { host: '1.1.1.1', path: '/dns-query', dom: cands[i].d });
+			push(refitems, { host: '8.8.8.8', path: '/resolve', dom: cands[i].d });
+		}
+		let refj = batch_doh_json(refitems, 6);
+		let tcpitems = [];
+		for (let i = 0; i < length(cands); i = i + 1) {
+			let dom = cands[i].d;
 			st.uv_last[dom] = cyc;
-			let r1 = doh_query('1.1.1.1', '/dns-query', dom, false);
-			let r2 = doh_query('8.8.8.8', '/resolve', dom, false);
 			/* Self-consistency gate: if the two references disagree with each
-			 * other, the name rotates by design (pool.ntp.org, geo CDN) and can
-			 * not be judged at all - cross-validation would flag EVERY answer. */
+			 * other, the name rotates by design (pool.ntp.org, geo CDN) and
+			 * can not be judged at all - cross-validation would flag EVERY
+			 * answer. */
+			let r1 = refj['1.1.1.1|' + dom] || [];
+			let r2 = refj['8.8.8.8|' + dom] || [];
 			let consistent = false;
-			for (let i = 0; i < length(r1.ips) && !consistent; i = i + 1)
-				if (index(r2.ips, r1.ips[i]) >= 0) consistent = true;
-			if (!consistent) continue;
+			for (let x = 0; x < length(r1) && !consistent; x = x + 1)
+				if (index(r2, r1[x]) >= 0) consistent = true;
+			if (consistent)
+				push(tcpitems, { server: '127.0.0.1', port: '' + plain_port, dom: dom });
+		}
+		let gotj = batch_tcp_dns_query(tcpitems, 4);
+		for (let i = 0; i < length(tcpitems); i = i + 1) {
+			let dom = tcpitems[i].dom;
+			let r1 = refj['1.1.1.1|' + dom] || [];
+			let r2 = refj['8.8.8.8|' + dom] || [];
 			let ref = {};
-			for (let i = 0; i < length(r1.ips); i = i + 1) ref[r1.ips[i]] = true;
-			for (let i = 0; i < length(r2.ips); i = i + 1) ref[r2.ips[i]] = true;
-			let got = tcp_dns_query('127.0.0.1', '' + plain_port, dom);
+			for (let x = 0; x < length(r1); x = x + 1) ref[r1[x]] = true;
+			for (let x = 0; x < length(r2); x = x + 1) ref[r2[x]] = true;
+			let got = gotj[dom] || [];
 			if (!length(got)) continue;                     /* listener silent — no verdict */
 			let clean = false;
-			for (let i = 0; i < length(got); i = i + 1)
-				if (ref[got[i]]) { clean = true; break; }
+			for (let x = 0; x < length(got); x = x + 1)
+				if (ref[got[x]]) { clean = true; break; }
 			if (clean) {
 				delete st.uv_fail[dom];
 				if (st.quarantine && st.quarantine[dom]) {
@@ -1196,23 +1397,29 @@ function analyze() {
 				if (!st.quarantine) st.quarantine = {};
 				if (st.uv_fail[dom] >= 3 && !st.quarantine[dom]) {
 					st.quarantine[dom] = time();
-					for (let i = 0; i < length(got); i = i + 1)
-						dead_this[got[i]] = (dead_this[got[i]] || 0) + 1;
+					for (let x = 0; x < length(got); x = x + 1)
+						dead_this[got[x]] = (dead_this[got[x]] || 0) + 1;
 					log('user domain ' + dom + ' forged across ' + st.uv_fail[dom]
 						+ ' samples - QUARANTINED to secure pool');
 				}
 			}
-			verified = verified + 1;
 		}
 	}
 
+	/* ── pool probing + HTTPS verification scheduling ─────────────────────
+	 * Probes stay per-server; the HTTPS verifies are only SCHEDULED here and
+	 * run in two parallel waves right below (issue #8: the old inline
+	 * sequential verify_ip() cost up to ~150 s per cycle on 2 cores).
+	 * Budget semantics are unchanged: each pool gets an equal slice of
+	 * http_budget so a long plain list can't starve secure-pool verification
+	 * (AdGuard once showed open=— purely from budget exhaustion), and every
+	 * scheduled curl (primary + fallback) consumes one unit. UCI-tunable
+	 * (multidns.http_budget, default 24). */
+	let pbr = {};    /* remaining verify budget per pool index */
+	let vjobs = [];  /* wave A: { sk, pi, ip, dom, via, c2, key } */
 	for (let pi = 0; pi < length(pools); pi = pi + 1) {
 		let p = pools[pi];
-		/* Fair share: each pool gets an equal slice of the HTTP budget so a long
-		 * plain list can't starve secure-pool verification (AdGuard showed
-		 * open=— purely from budget exhaustion). Budget is UCI-tunable
-		 * (multidns.http_budget, default 24). */
-		let pool_budget = int(http_budget_total / length(pools));
+		pbr[pi] = int(http_budget_total / length(pools));
 		let cs = p.canaries;
 		let c1 = cs[cyc % length(cs)];
 		let c2 = cs[(cyc + 1) % length(cs)];
@@ -1240,36 +1447,66 @@ function analyze() {
 				cur.last_ok = r.ok;
 				cur.last_live = r.live;
 				cur.lat = r.lat;
+				st.servers[sk] = cur;
 
-				/* HTTP verification: does the IP this server returned actually open
-				 * the site? Multi-canary verdict: an IP is "open" if it opens the
-				 * primary canary, or — when the primary fails — the secondary one.
-				 * A poisoned/block-page answer opens neither. This avoids false
-				 * dead-verdicts when a single canary site is temporarily down. */
-				let opens = 0, checked = 0;
-				if (r.ok && length(r.ips) && pool_budget > 0) {
+				/* Multi-canary HTTP verification for up to 3 answered IPs: the
+				 * primary canary runs in wave A; the secondary runs as the
+				 * wave-B fallback for failures, so a temporarily-down canary
+				 * site never reads as a dead server, while a poisoned /
+				 * block-page answer opens neither. */
+				if (r.ok && length(r.ips) && pbr[pi] > 0) {
 					let n = (length(r.ips) > 3) ? 3 : length(r.ips);
-					for (let vi = 0; vi < n && pool_budget > 0; vi = vi + 1) {
-						pool_budget = pool_budget - 1;
-						checked = checked + 1;
-						let h = verify_ip(r.ips[vi], c1, p.via);
-						let ok_open = h.opens;
-						if (!ok_open && pool_budget > 0) {
-							pool_budget = pool_budget - 1;
-							let h2 = verify_ip(r.ips[vi], c2, p.via);
-							ok_open = h2.opens;
-						}
-						if (ok_open) { opens = opens + 1; good_this[r.ips[vi]] = true; }
-						else dead_this[r.ips[vi]] = (dead_this[r.ips[vi]] || 0) + 1;
+					for (let vi = 0; vi < n && pbr[pi] > 0; vi = vi + 1) {
+						pbr[pi] = pbr[pi] - 1;
+						push(vjobs, { sk: sk, pi: pi, ip: r.ips[vi], dom: c1, via: p.via,
+							c2: c2, key: r.ips[vi] + '|' + c1, ok: false, checked: 0 });
 					}
 				}
-				if (checked > 0) {
-					let openf = int((opens * 100) / checked);
-					cur.open = (cur.open == null) ? openf : ((a_ok * openf + a_old * cur.open) / 100);
-				}
-				st.servers[sk] = cur;
 			} catch (e) { dbg('probe error [' + s + ']: ' + sprintf('%s', e)); }
 		}
+	}
+
+	/* Wave A: primary canary for every scheduled pair, in parallel chunks. */
+	batch_verify_pairs(vjobs);
+	for (let i = 0; i < length(vjobs); i = i + 1) {
+		let j = vjobs[i];
+		let res = VRES[j.key];
+		j.checked = 1;
+		j.ok = !!(res && res.opens);
+	}
+	/* Wave B: secondary canary fallback for the failed primaries. */
+	let vjobs2 = [];
+	for (let i = 0; i < length(vjobs); i = i + 1) {
+		let j = vjobs[i];
+		if (j.ok || pbr[j.pi] <= 0) continue;
+		pbr[j.pi] = pbr[j.pi] - 1;
+		push(vjobs2, { sk: j.sk, pi: j.pi, ip: j.ip, dom: j.c2, via: j.via,
+			key: j.ip + '|' + j.c2, ok: false, checked: 0 });
+	}
+	batch_verify_pairs(vjobs2);
+	for (let i = 0; i < length(vjobs2); i = i + 1) {
+		let j = vjobs2[i];
+		let res = VRES[j.key];
+		j.checked = 1;
+		j.ok = !!(res && res.opens);
+	}
+
+	/* Apply the verdicts: open-ratio EWMA per server + dead-IP bookkeeping
+	 * (one unit per curl, exactly like the old inline loop). */
+	let agg = {};
+	let apply_vjob = function(j) {
+		if (!agg[j.sk]) agg[j.sk] = { opens: 0, checked: 0 };
+		agg[j.sk].checked = agg[j.sk].checked + 1;
+		if (j.ok) { agg[j.sk].opens = agg[j.sk].opens + 1; good_this[j.ip] = true; }
+		else dead_this[j.ip] = (dead_this[j.ip] || 0) + 1;
+	};
+	for (let i = 0; i < length(vjobs); i = i + 1) apply_vjob(vjobs[i]);
+	for (let i = 0; i < length(vjobs2); i = i + 1) apply_vjob(vjobs2[i]);
+	for (let sk in agg) {
+		let cur = st.servers[sk];
+		if (!cur) continue;
+		let openf = int((agg[sk].opens * 100) / agg[sk].checked);
+		cur.open = (cur.open == null) ? openf : ((a_ok * openf + a_old * cur.open) / 100);
 	}
 
 	/* Dead-IP blacklist streaks: an IP must fail to open the site in >=2
@@ -1382,13 +1619,15 @@ function main() {
 		if (enabled !== '1') {
 			stop_mosdns();
 			dbg('main: disabled, waiting');
-			sleep(10);
+			/* ucode sleep() is MILLISECONDS: the old sleep(10) idled for 10 ms,
+			 * spinning this branch at ~100 Hz (issue #8). */
+			sleep(10000);
 			continue;
 		}
 		use_plain = (uci.get('homeproxy', 'multidns', 'use_plain') || '1') !== '0';
 		use_secure = (uci.get('homeproxy', 'multidns', 'use_secure') || '1') !== '0';
 		secure_via_proxy = (uci.get('homeproxy', 'multidns', 'secure_via_proxy') || '1') !== '0';
-			bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '120') || 120;
+		bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '600') || 600;
 		alpha = ratio100(uci.get('homeproxy', 'multidns', 'alpha') || '0.4', 40);
 		min_live_ratio = ratio100(uci.get('homeproxy', 'multidns', 'min_live_ratio') || '0.5', 50);
 		min_score = int(uci.get('homeproxy', 'multidns', 'min_score') || '20') || 20;
@@ -1399,7 +1638,7 @@ function main() {
 		self_mark = int(uci.get('homeproxy', 'infra', 'self_mark') || '100') || 100;
 		ensure_probe_table(self_mark);
 
-		if (!access(MOSDNS)) { log('mosdns binary missing - install mosdns to use MultiDNS.'); sleep(30); continue; }
+		if (!access(MOSDNS)) { log('mosdns binary missing - install mosdns to use MultiDNS.'); sleep(30000); continue; }
 
 	log('MultiDNS analyzer started (plain=' + use_plain + ', secure=' + use_secure + ', via_proxy=' + secure_via_proxy + ').');
 	ensure_data_files();
@@ -1416,10 +1655,22 @@ function main() {
 		dbg('analyze call (initial)');
 		analyze();
 		dbg('analyze done (initial)');
+		/* Pruned / quarantine state just changed — push it into the live
+		 * instance right away instead of waiting for the first cfg-check. */
+		rebuild_if_changed();
 
-		let last = time(), last_cfg = 0, last_pools_sig = '';
+		let last = time(), last_cfg = 0;
+		/* Seed the pools signature with the just-analyzed configuration: the
+		 * initial analyze() above already covered exactly this UCI snapshot,
+		 * so starting from '' would fire a duplicate analyze ~30 s after
+		 * every daemon start (issue #8). */
+		let last_pools_sig = pools_sig();
 		while (true) {
-			sleep(5);
+			/* ucode sleep() is MILLISECONDS — the old sleep(5) ticked every
+			 * 5 ms (~200 iterations/s, each with uci.load + fork+execve
+			 * pidof: 13–31 % idle CPU and a load average of 1.2+ on a
+			 * 2-core MT7981B — issue #8, root cause). */
+			sleep(5000);
 			let now = time();
 			uci.load('homeproxy');
 			let en2 = uci.get('homeproxy', 'multidns', 'enabled') || '0';
@@ -1427,7 +1678,7 @@ function main() {
 			use_plain = (uci.get('homeproxy', 'multidns', 'use_plain') || '1') !== '0';
 			use_secure = (uci.get('homeproxy', 'multidns', 'use_secure') || '1') !== '0';
 			secure_via_proxy = (uci.get('homeproxy', 'multidns', 'secure_via_proxy') || '1') !== '0';
-		bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '120') || 120;
+			bench_interval = int(uci.get('homeproxy', 'multidns', 'bench_interval') || '600') || 600;
 			plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
 			secure_port = uci.get('homeproxy', 'multidns', 'secure_port') || '5454';
 			alpha = ratio100(uci.get('homeproxy', 'multidns', 'alpha') || '0.4', 40);
@@ -1443,29 +1694,21 @@ function main() {
 			if ((now - last_cfg) > 30) {
 				dbg('loop cfg-check');
 				last_cfg = now;
-				/* mirror learned lists + ensure data files; restart if any changed */
-				let data_changed = ensure_data_files();
-				let fresh = build_mosdns_conf();
-				if (data_changed || !access(CONF) || trim(readfile(CONF)) !== fresh) {
-					atomic_write(CONF, fresh);
-					start_mosdns();
-				}
-				/* Keep the direct-path probe set in sync with the current pool. */
-				update_probe_set(v4_hosts(assemble_plain_pool(load_state())));
+				/* Mirror learned lists + quarantine into the data files, then
+				 * rebuild + restart when the built YAML differs from the live
+				 * one (content comparison — a state-derived signature would
+				 * self-loop, issue #8) and keep the probe set in sync. */
+				rebuild_if_changed();
 				/* If the configured server list changed, re-probe now instead
 				 * of waiting up to a full bench_interval for the monitor to
-				 * reflect the new pool. */
-				let sig = join(',', to_list(uci.get('homeproxy', 'config', 'russia_dns_server')))
-				        + '|' + join(',', to_list(uci.get('homeproxy', 'config', 'china_dns_server')))
-				        + '|' + join(',', to_list(uci.get('homeproxy', 'config', 'iran_dns_server')))
-				        + '|' + join(',', to_list(uci.get('homeproxy', 'config', 'dns_server')))
-				        + '|' + join(',', to_list(uci.get('homeproxy', 'config', 'secure_dns_server')))
-			        + '|' + ((uci.get('homeproxy', 'config', 'russia_dns_use_wan') || '0') === '1'
-					? join(',', wan_dns_servers()) : '');
+				 * reflect the new pool. The signature is immutable UCI only —
+				 * analyze() output can never feed back into it. */
+				let sig = pools_sig();
 				if (sig !== last_pools_sig) {
 					last_pools_sig = sig;
 					dbg('pools changed -> analyze');
 					analyze();
+					rebuild_if_changed();
 				}
 			}
 			if ((now - last) > bench_interval) {
@@ -1473,6 +1716,10 @@ function main() {
 				dbg('analyze call');
 				analyze();
 				dbg('analyze done');
+				/* analyze() just mutated pruned / quarantine / dead-IP state:
+				 * push a changed config into the live mosdns RIGHT NOW instead
+				 * of waiting for the next cfg-check (issue #8, bench rebuild). */
+				rebuild_if_changed();
 			}
 		}
 		/* inner loop exited because MultiDNS was disabled; outer loop sleeps and

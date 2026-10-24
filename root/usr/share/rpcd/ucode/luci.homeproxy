@@ -7,7 +7,7 @@
 
 'use strict';
 
-import { access, error, lstat, popen, readfile, writefile } from 'fs';
+import { access, error, lstat, popen, readfile, writefile, stat, rename, mkdir } from 'fs';
 import { cursor } from 'uci';
 import {
 	sync_learned_rulesets,
@@ -15,6 +15,18 @@ import {
 	sync_ru_geo_rulesets,
 	sync_auto_auth_ruleset
 } from '/etc/homeproxy/scripts/homeproxy.uc';
+import {
+	RUN_DIR as HC_RUN_DIR, EVENTS_PATH as HC_EVENTS_PATH, LOG_PATH as HC_LOG_PATH,
+	main_opt as hc_main_opt, get_sections as hc_get_sections, get_section as hc_get_section,
+	add_event as hc_add_event, read_temps as hc_read_temps, write_temps as hc_write_temps,
+	read_wifi_temps as hc_read_wifi_temps, wifi_temp_set as hc_wifi_temp_set,
+	wifi_temp_clear as hc_wifi_temp_clear, 	client_states as hc_client_states,
+	get_schedules as hc_get_schedules, active_rules as hc_active_rules,
+	list_devices as hc_list_devices, parse_hhmm as hc_parse_hhmm,
+	wd_index as hc_wd_index, valid_ip4 as hc_valid_ip4, normalize_mac as hc_norm_mac,
+	read_arp as hc_read_arp, schedule_active as hc_sched_active,
+	bump_cursor as hc_bump_cursor
+} from '/etc/homeproxy/scripts/control.uc';
 
 /* Apply an edited learned list WITHOUT a service restart: rewrite the watched local
  * rule-set files (proxy_domain.json / auto_ip.json) — the core hot-reloads them.
@@ -96,6 +108,68 @@ function gh_fetch(url, dest, timeout_ms) {
 function hasKernelModule(kmod) {
 	const modname = replace(replace(kmod, /\.ko$/, ''), /-/g, '_');
 	return !!access('/sys/module/' + modname);
+}
+
+/* Version-probe cache — shared with core_mgmt.uc (SAME file and schema:
+ * cache[binary_path] = { mtime, size, info }). Probing a packed core binary
+ * (`version` = 1.5–3 s for UPX builds) otherwise runs on EVERY page of the
+ * app. Entries are mtime+size-validated; a probe with no version is never
+ * cached. Lesson 44: fs.stat fields carry NO st_ prefix. */
+const VERSION_CACHE_FILE = '/var/run/homeproxy/core_versions.json';
+
+function hp_version_cache_read() {
+	if (!access(VERSION_CACHE_FILE))
+		return {};
+	let cache;
+	try { cache = json(readfile(VERSION_CACHE_FILE) || ''); } catch (e) { cache = null; }
+	return (cache && type(cache) == 'object') ? cache : {};
+}
+
+function hp_version_cache_write(cache) {
+	const tmp = VERSION_CACHE_FILE + '.tmp';
+	writefile(tmp, sprintf('%.J', cache) + '\n');
+	rename(tmp, VERSION_CACHE_FILE);
+}
+
+function hp_core_probe(bin) {
+	/* Wrapper-aware (lite UPX builds): a tiny sh wrapper answers `version`
+	 * from a first-line cache without Tags — probe the real binary then. */
+	let probe = bin;
+	if (access(bin)) {
+		const wb = stat(bin);
+		if (wb && wb.size < 10000 && access('/usr/libexec/sing-box-core'))
+			probe = '/usr/libexec/sing-box-core';
+	}
+	let info = { tags: {} };
+	const fd = popen(probe + ' version 2>/dev/null');
+	if (!fd) return info;
+	const out = fd.read('all'); fd.close();
+	const vm = match(out, /version v?([0-9][0-9a-zA-Z._-]*)/);
+	if (vm) info.version = vm[1];
+	const tm = match(out, /\nTags: ([^\n]+)/);
+	if (tm)
+		for (let t in split(tm[1], ','))
+			info.tags[trim(t)] = true;
+	info.naive = ('with_naive_outbound' in info.tags);
+	info.extended = !!match(out, /-extended-/);
+	info.wrapper = (probe !== bin);
+	return info;
+}
+
+function hp_core_features_cached(bin) {
+	const st = stat(bin);
+	if (!st)
+		return null;
+	const cache = hp_version_cache_read();
+	const e = cache[bin];
+	if (e && e.mtime == st.mtime && e.size == st.size && e.info && e.info.version)
+		return e.info;
+	const info = hp_core_probe(bin);
+	if (info && info.version) {
+		cache[bin] = { mtime: st.mtime, size: st.size, info: info };
+		hp_version_cache_write(cache);
+	}
+	return info;
 }
 
 /* Latest Re:HomeProxy AutoMod release (from the app's own fork repo). Honors the
@@ -1225,6 +1299,190 @@ function hp_tgwsp_detect() {
 	return out;
 }
 
+/* ── «Контроль» (HomeControl integration, plan 14): helpers ────────────
+ * Declared ABOVE `const methods` (no forward references in rpcd ucode).
+ * UCI writes go through the shell `uci` tool (proven pattern of the
+ * HomeControl backend); free-text fields are sanitized (quotes, newlines
+ * and shell metacharacters stripped). */
+
+const HC_CONF = 'homecontrol';
+
+function ctrl_apply_async() {
+	/* Detached so rpcd never blocks on the apply (dnsmasq restart etc.). */
+	system(`( /usr/bin/ucode -L /etc/homeproxy/scripts /etc/homeproxy/scripts/control_apply.uc >/dev/null 2>&1 ) &`);
+}
+
+function ctrl_clean(s) {
+	return trim(replace('' + (s ?? ''), /['"`\\\n\r]/g, ''));
+}
+
+function ctrl_split_list(s) {
+	const out = [];
+	const parts = split(trim('' + (s || '')), /[,\n]+/);
+	for (let i = 0; i < length(parts); i++) {
+		const t = trim(parts[i]);
+		if (length(t))
+			push(out, t);
+	}
+	return out;
+}
+
+function ctrl_valid_domain(d) {
+	/* dnsmasq server=/d/ accepts a plain domain or a *.wildcard; IDN must be
+	 * punycode (ASCII) — a Cyrillic label would be silently useless. */
+	return (match(d, /^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z-]{2,}$/) != null);
+}
+
+function ctrl_valid_cidr(v) {
+	const m = match(v, /^(\d{1,3}\.){3}\d{1,3}\/(\d{1,2})$/);
+	if (m == null)
+		return false;
+	const ip = substr(v, 0, index(v, '/'));
+	const bits = int(substr(v, index(v, '/') + 1));
+	if (!hc_valid_ip4(ip) || bits < 0 || bits > 32)
+		return false;
+	return true;
+}
+
+function ctrl_set(sid, opt, val) {
+	system(`uci -q set ${HC_CONF}.${sid}.${opt}='${val}'`);
+}
+
+function ctrl_del_opt(sid, opt) {
+	system(`uci -q delete ${HC_CONF}.${sid}.${opt}`);
+}
+
+function ctrl_commit() {
+	system(`uci -q commit ${HC_CONF}`);
+	/* The cached ucode uci cursor snapshots config at creation — a rapid
+	 * delete→re-add sequence must not read the stale snapshot (ч.108). */
+	hc_bump_cursor();
+}
+
+function ctrl_client_by_id(id) {
+	const secs = hc_get_sections('client');
+	for (let i = 0; i < length(secs); i++)
+		if (secs[i].id === id)
+			return secs[i];
+	return null;
+}
+
+/* The full status view (UI + Telegram share it). */
+function ctrl_status_view() {
+	const now = time();
+	const arp = hc_read_arp();
+	const states = hc_client_states(now);
+	for (let i = 0; i < length(states); i++)
+		states[i].online = (states[i].ip && (states[i].ip in arp.byip)) ? true : false;
+
+	let blocked = 0, temp = 0;
+	for (let i = 0; i < length(states); i++) {
+		if (states[i].blocked) {
+			blocked++;
+			if (states[i].reason === 'temp')
+				temp++;
+		}
+	}
+
+	const scheds_raw = hc_get_sections('schedule');
+	const schedules = [];
+	for (let i = 0; i < length(scheds_raw); i++) {
+		const s = scheds_raw[i];
+		push(schedules, {
+			id: s.id, name: s.name || '', type: s.type || 'daily',
+			action: s.action || 'deny', enabled: s.enabled === '1',
+			time_start: s.time_start || '', time_stop: s.time_stop || '',
+			days: s.days || [], date_start: s.date_start || '', date_stop: s.date_stop || '',
+			client_ids: s.client_ids || [], wifi_ids: s.wifi_ids || [],
+			active_now: hc_sched_active(s, now)
+		});
+	}
+
+	const rules_raw = hc_get_sections('rule');
+	const rules = [];
+	for (let i = 0; i < length(rules_raw); i++) {
+		const r = rules_raw[i];
+		const du = int(r.disabled_until) || 0;
+		push(rules, {
+			id: r.id, name: r.name || '', type: r.type || 'domain',
+			target: r.target || [], client_ids: r.client_ids || [],
+			enabled: r.enabled === '1', paused_until: (du > now) ? du : 0,
+			time_start: r.time_start || '', time_stop: r.time_stop || '',
+			days: r.days || [], date_start: r.date_start || '', date_stop: r.date_stop || ''
+		});
+	}
+
+	const dnsf = {};
+	const insts_path = HC_RUN_DIR + '/dnsf/instances.json';
+	if (access(insts_path)) {
+		try {
+			const insts = json(readfile(insts_path) || '[]');
+			for (let i = 0; i < length(insts); i++)
+				dnsf[insts[i].id] = insts[i].port;
+		} catch (e) { /* ignore corrupt state */ }
+	}
+
+	const devices = hc_list_devices();
+	let unseen = 0;
+	for (let i = 0; i < length(devices); i++)
+		if (!devices[i].configured)
+			unseen++;
+
+	return {
+		result: true,
+		enabled: hc_main_opt('enabled', '0') === '1',
+		paused: hc_main_opt('paused', '0') === '1',
+		clients: states,
+		schedules: schedules,
+		rules: rules,
+		stats: {
+			blocked: blocked, temp: temp,
+			allowed: length(states) - blocked,
+			schedules: length(schedules), rules: length(rules),
+			devices_total: length(devices), devices_new: unseen
+		},
+		dns_filters: dnsf,
+		wifi_temps: hc_read_wifi_temps()
+	};
+}
+
+/* Wi-Fi radios/ifaces view (HomeControl wifi_status logic). */
+function ctrl_wifi_view() {
+	const fd = popen(`ubus call network.wireless status 2>/dev/null`);
+	if (!fd)
+		return { radios: [], temps: {} };
+	const raw = fd.read('all');
+	fd.close();
+	let st = null;
+	try { st = json(raw); } catch (e) { st = null; }
+	if (!st)
+		return { radios: [], temps: {} };
+
+	const out = [];
+	const radio_names = [];
+	for (let radio in st)
+		push(radio_names, radio);
+	for (let ri = 0; ri < length(radio_names); ri++) {
+		const radio = radio_names[ri];
+		const r = st[radio];
+		const ifaces = [];
+		const confs = r.interfaces || [];
+		for (let i = 0; i < length(confs); i++) {
+			const cf = confs[i];
+			const cfg = cf.config || {};
+			const ifdis = (cfg.disabled === true);
+			push(ifaces, {
+				id: cf.section || '',
+				ssid: cfg.ssid || '',
+				up: (r.up === true) && !ifdis,
+				disabled: ifdis
+			});
+		}
+		push(out, { radio: radio, up: r.up === true, ifaces: ifaces });
+	}
+	return { radios: out, temps: hc_read_wifi_temps() };
+}
+
 
 const methods = {
 	acllist_read: {
@@ -1441,20 +1699,30 @@ const methods = {
 						features.core_custom = true;
 				}
 
+				/* Active core — version cache first (packed binaries probe
+				 * for seconds; see hp_core_features_cached). */
 				if (core_binary) {
-					const fd = popen(core_binary + ' version');
-					if (fd) {
-						const out = fd.read('all');
-						fd.close();
+					const cached = hp_core_features_cached(core_binary);
+					if (cached) {
+						if (cached.version)
+							features.version = cached.version;
+						for (let t in (cached.tags || {}))
+							features[t] = true;
+					} else {
+						const fd = popen(core_binary + ' version');
+						if (fd) {
+							const out = fd.read('all');
+							fd.close();
 
-						const verMatch = match(out, / version v?(\S+)/);
-						if (verMatch)
-							features.version = verMatch[1];
+							const verMatch = match(out, / version v?(\S+)/);
+							if (verMatch)
+								features.version = verMatch[1];
 
-						const tagsMatch = match(out, /\nTags: ([^\n]+)/);
-						if (tagsMatch) {
-							for (let tag in split(tagsMatch[1], ','))
-								features[trim(tag)] = true;
+							const tagsMatch = match(out, /\nTags: ([^\n]+)/);
+							if (tagsMatch) {
+								for (let tag in split(tagsMatch[1], ','))
+									features[trim(tag)] = true;
+							}
 						}
 					}
 				}
@@ -1474,19 +1742,27 @@ const methods = {
 					const cid = def[0], cpath = def[1];
 					let info = { installed: !!access(cpath) };
 					if (info.installed) {
-						const fd = popen(cpath + ' version 2>/dev/null');
-						if (fd) {
-							const out = fd.read('all'); fd.close();
-							const vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
-							if (vm) info.version = vm[1];
-							const tm = match(out, /\nTags: ([^\n]+)/);
-							let tags = {};
-							if (tm)
-								for (let t in split(tm[1], ','))
-									tags[trim(t)] = true;
-							info.tags = tags;
-							info.naive = ('with_naive_outbound' in tags);
-							info.extended = !!match(out, /-extended-/);
+						const cached = hp_core_features_cached(cpath);
+						if (cached) {
+							info.version = cached.version;
+							info.tags = cached.tags || {};
+							info.naive = ('with_naive_outbound' in info.tags);
+							info.extended = !!cached.extended;
+						} else {
+							const fd = popen(cpath + ' version 2>/dev/null');
+							if (fd) {
+								const out = fd.read('all'); fd.close();
+								const vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
+								if (vm) info.version = vm[1];
+								const tm = match(out, /\nTags: ([^\n]+)/);
+								let tags = {};
+								if (tm)
+									for (let t in split(tm[1], ','))
+										tags[trim(t)] = true;
+								info.tags = tags;
+								info.naive = ('with_naive_outbound' in tags);
+								info.extended = !!match(out, /-extended-/);
+							}
 						}
 					}
 					features.cores[cid] = info;
@@ -1502,6 +1778,54 @@ const methods = {
 				if (access('/usr/bin/sing-box'))     push(features.available_cores, 'singbox');
 
 				return features;
+		}
+	},
+
+	core_install_start: {
+		args: { core: 'core', variant: 'variant' },
+		call: function(req) {
+			/* Background core install (issue: the synchronous download+install
+			 * froze the UI for minutes and a mid-install reload lost progress).
+			 * Spawns the detached runner and returns at once; the UI polls
+			 * core_install_status (the status file survives page reloads). */
+			const core = (req && req.args && req.args.core) || '';
+			const variant = (req && req.args && req.args.variant) || '';
+			if (!(core in ['hiddify', 'singbox', 'singbox-lite']))
+				return { result: false, error: 'illegal core' };
+			if (length(variant) && !(variant in ['upx', 'standard', 'normal', 'compressed']))
+				return { result: false, error: 'illegal variant' };
+			const st = RUN_DIR + '/core_install.json';
+			let prev = null;
+			if (access(st)) {
+				try { prev = json(readfile(st) || ''); } catch (e) { prev = null; }
+			}
+			/* One install at a time; a runner killed mid-way stops blocking
+			 * after 40 minutes (the runner self-heals its stale lock). */
+			if (prev && prev.running && (time() - int(prev.ts || prev.started || 0) < 2400))
+				return { result: false, error: 'an install is already running' };
+			/* Drop a finished status file so the poller never shows a stale run */
+			system(`rm -f ${shellquote(st)} 2>/dev/null`);
+			const args = (length(variant) && !(variant in ['upx', 'standard']))
+				? `${shellquote(core)} ${shellquote(variant)}`
+				: shellquote(core);
+			/* 1000>&- — the detached runner must never inherit a procd_lock fd
+			 * (an inherited locked fd 1000 survives its parent and wedges every
+			 * later stop/reload — the 2026-10-24 live wedge during lite install). */
+			system(`ucode ${shellquote(HP_DIR + '/scripts/core_install_runner.uc')} ${args} >/dev/null 2>&1 1000>&- &`);
+			return { result: true, started: true, core: core };
+		}
+	},
+
+	core_install_status: {
+		call: function() {
+			const st = RUN_DIR + '/core_install.json';
+			let status = null;
+			if (access(st)) {
+				try { status = json(readfile(st) || ''); } catch (e) { status = null; }
+			}
+			if (!status)
+				return { running: false, idle: true };
+			return status;
 		}
 	},
 
@@ -3619,6 +3943,85 @@ const methods = {
 		}
 	},
 
+	/* ── ч.109: composition profile DRAFT persistence — the user complaint
+	 * «выбранная композиция пропадает если перезагрузить страницу». The
+	 * draft (per-resource profile list) is written HERE on every edit and
+	 * read back by wizard_dpi_status, so the builder restores itself after
+	 * any reload. The APPLIED args still live in UCI + the snapshot. */
+	wizard_compose_save: {
+		args: { profiles: [] },
+		call: function(req) {
+			const profiles = (req && req.args && req.args.profiles) || [];
+			if (type(profiles) !== 'array' || length(profiles) > 8)
+				return { result: false, error: 'invalid profiles' };
+			for (let p in profiles) {
+				if (type(p) !== 'object')
+					return { result: false, error: 'invalid profile' };
+				if (!((('' + (p.engine || '')) in ['zapret', 'byedpi']) &&
+				      (('' + (p.resource || '')) in ['youtube', 'discord', 'telegram', 'general', 'custom'])))
+					return { result: false, error: 'invalid profile fields' };
+				const doms = '' + (p.domains || ''), strat = '' + (p.strategy || '');
+				if (length(doms) > 2000 || length(strat) > 4000)
+					return { result: false, error: 'profile too long' };
+				if (match(doms, /[`$;&|<>\n]/) || match(strat, /[`$;&|<>\n]/))
+					return { result: false, error: 'forbidden characters' };
+			}
+			const path = HP_DIR + '/wizard_comp_profiles.json';
+			writefile(path + '.tmp', sprintf('%.J\n', { ts: time(), profiles: profiles }));
+			system(`mv -f ${shellquote(path + '.tmp')} ${shellquote(path)}`);
+			return { result: true, saved: length(profiles) };
+		}
+	},
+
+	/* ч.109: router-originated live probe of a DPI resource through the
+	 * CONFIGURED path (the auto-pick verify method — the app's output
+	 * interception serves the router exactly the way LAN clients are
+	 * served). The YouTube row checks the WHOLE resource (page, thumbnail
+	 * CDN, the video-stream edge) — «сайт открывается» is not enough, the
+	 * user must see that media hosts work too. */
+	wizard_dpi_probe: {
+		args: { resource: 'resource' },
+		call: function(req) {
+			const resource = trim('' + ((req && req.args && req.args.resource) || ''));
+			if (!(resource in ['youtube', 'discord', 'telegram', 'general']))
+				return { result: false, error: 'invalid resource' };
+			const targets = {
+				youtube:  [ 'https://www.youtube.com/', 'https://i.ytimg.com/generate_204', 'https://redirector.googlevideo.com/' ],
+				discord:  [ 'https://discord.com/' ],
+				telegram: [ 'https://web.telegram.org/' ],
+				general:  [ 'http://www.gstatic.com/generate_204' ]
+			};
+			const probes = [];
+			/* for-in over an array yields the ELEMENTS (lesson 20/31) — t IS
+			 * the URL string, never an index. */
+			for (let url in targets[resource]) {
+				const cf = RUN_DIR + '/wiz_probe_res';
+				system(`rm -f ${shellquote(cf)} 2>/dev/null`);
+				const cmd = `curl -sL --max-redirs 3 -o /dev/null -w '%{http_code} %{time_total} %{size_download}' -k ` +
+					`--connect-timeout 4 --max-time 9 ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`;
+				const rc = system(cmd, 12000);
+				const parts = split(trim(readfile(cf) || ''), /[[:space:]]+/);
+				const code = (length(parts) && match(parts[0], /^[0-9]{3}$/)) ? parts[0] : '000';
+				const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
+				const bytes = (length(parts) > 2) ? int(parts[2]) : 0;
+				/* pass = HTTP answered within the window AND (for content
+				 * probes) some body came through; 204 carries no body. The
+				 * video-stream edge legitimately answers 404 on its root —
+				 * ANY HTTP answer there means the DPI let the host through. */
+				const edge = (index(url, 'redirector.googlevideo.com') >= 0);
+				const cok = edge
+					? (code != '000')
+					: (rc === 0 && int(code) >= 200 && int(code) < 400 &&
+						(int(code) === 204 || bytes > 0));
+				push(probes, { url: url, code: code, tsec: tsec, bytes: bytes, ok: cok });
+			}
+			let ok = 1;
+			for (let p in probes)
+				if (!p.ok) ok = 0;
+			return { result: true, resource: resource, ok: ok, probes: probes };
+		}
+	},
+
 	/* ── ч.97: Zapret strategy auto-pilot — config/status RPCs + a build-only
 	 * compose endpoint. The daemon (scripts/zapret_autopilot.uc) reads the
 	 * UCI section every tick (no restart on save) and drives the scheduled
@@ -3812,8 +4215,11 @@ const methods = {
 	wizard_auto_pick_start: {
 		/* set_rule is a BOOLEAN typehint (rpcd maps it to BLOBMSG_TYPE_INT8):
 		 * a string typehint made ubus reject the JS boolean with
-		 * "Invalid argument" (the diag_config_heal lesson). */
-		args: { resource: 'resource', mode: 'mode', set_rule: true },
+		 * "Invalid argument" (the diag_config_heal lesson). strategy is
+		 * optional: when set, the runner skips fuzz+pick and uses THIS
+		 * strategy (the "apply from the ranking table" flow — the resource
+		 * rule/verify machinery stays the single implementation). */
+		args: { resource: 'resource', mode: 'mode', set_rule: true, strategy: 'strategy' },
 		call: function(req) {
 			const a = (req && req.args) || {};
 			const resource = trim('' + (a.resource || ''));
@@ -3821,6 +4227,10 @@ const methods = {
 				return { result: false, error: 'invalid resource' };
 			const mode = (a.mode === 'full') ? 'full' : 'quick';
 			const set_rule = (a.set_rule === true);
+			const strategy = trim('' + (a.strategy || ''));
+			if (length(strategy) > 2000 || (length(strategy) &&
+					(!match(strategy, /^--[a-z]/) || match(strategy, /[`$;&|<>\n]/))))
+				return { result: false, error: 'invalid strategy' };
 			if (set_rule && resource === 'general')
 				return { result: false, error: 'set_rule makes no sense for "general"' };
 			if (set_rule) {
@@ -3845,11 +4255,12 @@ const methods = {
 			/* Initial status so the first poll sees the run immediately. */
 			writefile(st + '.tmp', sprintf("%.J\n", {
 				running: true, stage: 'started', resource: resource, mode: mode,
-				set_rule: set_rule, ts: time()
+				set_rule: set_rule, has_strategy: length(strategy), ts: time()
 			}));
 			system(`mv -f ${shellquote(st + '.tmp')} ${shellquote(st)}`);
 			writefile(RUN_DIR + '/wizard_autopick_req.json.tmp', sprintf("%.J\n", {
-				resource: resource, mode: mode, set_rule: set_rule, ts: time()
+				resource: resource, mode: mode, set_rule: set_rule,
+				strategy: strategy, ts: time()
 			}));
 			system(`mv -f ${shellquote(RUN_DIR + '/wizard_autopick_req.json.tmp')} ${shellquote(RUN_DIR + '/wizard_autopick_req.json')}`);
 			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_autopick.uc')} >/dev/null 2>&1 &`);
@@ -4782,6 +5193,16 @@ const methods = {
 			if (access(COMP_BAK)) {
 				try { rollback = json(readfile(COMP_BAK) || ''); } catch (e) { rollback = null; }
 			}
+			/* ч.109: the saved composition DRAFT (the builder restores it). */
+			let comp_profiles = null;
+			const cprof_path = HP_DIR + '/wizard_comp_profiles.json';
+			if (access(cprof_path)) {
+				try {
+					const cp = json(readfile(cprof_path) || '');
+					if (cp && type(cp.profiles) === 'array')
+						comp_profiles = cp.profiles;
+				} catch (e) { comp_profiles = null; }
+			}
 			return {
 				result: true,
 				zapret: {
@@ -4804,7 +5225,8 @@ const methods = {
 					updated: corpus_updated
 				},
 				last_fuzz: last_fuzz,
-				rollback: rollback
+				rollback: rollback,
+				comp_profiles: comp_profiles
 			};
 		}
 	},
@@ -5253,7 +5675,7 @@ const methods = {
 			const reply = {
 				enabled: false, running: false, chat_id: null, muted: false,
 				token_set: false, poll_timeout: 25, push_interval: 2,
-				pushes: { hotswap: true, watchdog: true, learn: true, service: true }
+				pushes: { hotswap: true, watchdog: true, learn: true, service: true, control: true }
 			};
 			const c = cursor();
 			const g = (opt, def) => {
@@ -5272,6 +5694,7 @@ const methods = {
 			reply.pushes.watchdog = (g('push_watchdog', '1') === '1');
 			reply.pushes.learn = (g('push_learn', '1') === '1');
 			reply.pushes.service = (g('push_service', '1') === '1');
+			reply.pushes.control = (g('push_control', '1') === '1');
 			/* Daemon liveness: busybox pidof does NOT match ucode script
 			 * names (lesson 23/58) — one ps w scan + match. */
 			const fd = popen('ps w 2>/dev/null');
@@ -5289,6 +5712,7 @@ const methods = {
 			enabled: 'enabled', token: 'token', chat_id: 'chat_id', mute: 'mute',
 			push_hotswap: 'push_hotswap', push_watchdog: 'push_watchdog',
 			push_learn: 'push_learn', push_service: 'push_service',
+			push_control: 'push_control',
 			poll_timeout: 'poll_timeout', push_interval: 'push_interval'
 		},
 		call: function(req) {
@@ -5316,7 +5740,7 @@ const methods = {
 			if (mute == null)
 				return { result: false, error: 'bad mute' };
 			const pushes = {};
-			for (let k in [ 'push_hotswap', 'push_watchdog', 'push_learn', 'push_service' ]) {
+			for (let k in [ 'push_hotswap', 'push_watchdog', 'push_learn', 'push_service', 'push_control' ]) {
 				const v = flag(a[k]);
 				if (v == null)
 					return { result: false, error: 'bad ' + k };
@@ -5351,6 +5775,7 @@ const methods = {
 			c.set('homeproxy', 'telegram', 'push_watchdog', pushes.push_watchdog);
 			c.set('homeproxy', 'telegram', 'push_learn', pushes.push_learn);
 			c.set('homeproxy', 'telegram', 'push_service', pushes.push_service);
+			c.set('homeproxy', 'telegram', 'push_control', pushes.push_control);
 			c.set('homeproxy', 'telegram', 'poll_timeout', sprintf('%d', poll));
 			c.set('homeproxy', 'telegram', 'push_interval', sprintf('%d', pival));
 			c.commit('homeproxy');
@@ -6147,6 +6572,580 @@ const methods = {
 	automation_geo_status: {
 		call: function(req) {
 			return { meta: ru_geo_read_meta() };
+		}
+	},
+
+	/* ── «Контроль» (HomeControl integration, plan 14) ─────────────────── */
+
+	control_status: {
+		call: function(req) {
+			return ctrl_status_view();
+		}
+	},
+
+	control_devices: {
+		call: function(req) {
+			return { result: true, devices: hc_list_devices() };
+		}
+	},
+
+	control_set: {
+		args: { enabled: 'enabled' },
+		call: function(req) {
+			const en = (req.args?.enabled === true || req.args?.enabled === '1') ? '1' : '0';
+			ctrl_set('main', 'enabled', en);
+			ctrl_commit();
+			hc_add_event('system', '', (en === '1') ? 'control enabled' : 'control disabled');
+			ctrl_apply_async();
+			return { result: true, enabled: en === '1' };
+		}
+	},
+
+	control_set_paused: {
+		args: { paused: 'paused' },
+		call: function(req) {
+			const p = (req.args?.paused === true || req.args?.paused === '1') ? '1' : '0';
+			ctrl_set('main', 'paused', p);
+			ctrl_commit();
+			hc_add_event('system', '', (p === '1') ? 'enforcement paused (allow everything)' : 'enforcement resumed');
+			ctrl_apply_async();
+			return { result: true, paused: p === '1' };
+		}
+	},
+
+	/* Add a managed client: identity = MAC (survives DHCP address changes);
+	 * a static IP is an optional override. */
+	control_client_add: {
+		args: { name: 'name', mac: 'mac', ip: 'ip' },
+		call: function(req) {
+			const name = ctrl_clean(req.args?.name);
+			const mac = hc_norm_mac(req.args?.mac);
+			const ip = trim('' + (req.args?.ip || ''));
+			if (!mac && !hc_valid_ip4(ip))
+				return { result: false, error: 'mac or a valid IPv4 address is required' };
+			if (length(ip) && !hc_valid_ip4(ip))
+				return { result: false, error: 'invalid ip' };
+			if (mac || ip) {
+				const existing = hc_get_sections('client');
+				for (let i = 0; i < length(existing); i++) {
+					const e = existing[i];
+					if (mac && hc_norm_mac(e.mac) === mac)
+						return { result: false, error: 'a client with this MAC already exists' };
+					if (length(ip) && e.ip === ip)
+						return { result: false, error: 'a client with this IP already exists' };
+				}
+			}
+			const fd = popen(`uci -q add ${HC_CONF} client`);
+			const newid = fd ? trim((fd.read('line') || '')) : '';
+			if (fd)
+				fd.close();
+			if (!length(newid))
+				return { result: false, error: 'uci add failed' };
+			if (length(name))
+				ctrl_set(newid, 'name', name);
+			if (length(mac))
+				ctrl_set(newid, 'mac', mac);
+			if (length(ip))
+				ctrl_set(newid, 'ip', ip);
+			ctrl_set(newid, 'blocked', '0');
+			ctrl_commit();
+			hc_add_event('system', name || ip || mac, 'client added');
+			ctrl_apply_async();
+			/* provisional id (lesson 18) — the UI re-reads the status */
+			return { result: true, id: newid };
+		}
+	},
+
+	control_client_delete: {
+		args: { id: 'id' },
+		call: function(req) {
+			const id = req.args?.id;
+			const c = id ? ctrl_client_by_id(id) : null;
+			if (!c)
+				return { result: false, error: 'unknown client id' };
+			/* drop its temporary blocks too */
+			const temps = hc_read_temps();
+			const mac = hc_norm_mac(c.mac);
+			if (mac && (mac in temps)) { delete temps[mac]; hc_write_temps(temps); }
+			if (c.ip && (c.ip in temps)) { delete temps[c.ip]; hc_write_temps(temps); }
+			system(`uci -q delete ${HC_CONF}.${id}`);
+			ctrl_commit();
+			hc_add_event('system', c.name || id, 'client deleted');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	/* Alias: the friendly name shown everywhere (UI + Telegram). */
+	control_client_rename: {
+		args: { id: 'id', name: 'name' },
+		call: function(req) {
+			const id = req.args?.id;
+			const name = ctrl_clean(req.args?.name);
+			if (!id || !ctrl_client_by_id(id))
+				return { result: false, error: 'unknown client id' };
+			if (!length(name))
+				return { result: false, error: 'empty name' };
+			ctrl_set(id, 'name', name);
+			ctrl_commit();
+			hc_add_event('system', name, 'alias updated');
+			return { result: true };
+		}
+	},
+
+	control_client_block: {
+		args: { id: 'id', blocked: 'blocked' },
+		call: function(req) {
+			const id = req.args?.id;
+			const c = id ? ctrl_client_by_id(id) : null;
+			if (!c)
+				return { result: false, error: 'unknown client id' };
+			const b = (req.args?.blocked === true || req.args?.blocked === '1') ? '1' : '0';
+			if (b === '1' && !length(c.ip || '') && !length(c.mac || ''))
+				return { result: false, error: 'client has no mac/ip — pick an address first' };
+			ctrl_set(id, 'blocked', b);
+			ctrl_commit();
+			hc_add_event((b === '1') ? 'block' : 'allow', c.name || id,
+				(b === '1') ? 'blocked manually' : 'unblocked');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	/* Temporary block: any positive number of minutes (auto-restore). */
+	control_client_temp_block: {
+		args: { id: 'id', minutes: 'minutes' },
+		call: function(req) {
+			const id = req.args?.id;
+			const c = id ? ctrl_client_by_id(id) : null;
+			if (!c)
+				return { result: false, error: 'unknown client id' };
+			const mins = int(req.args?.minutes) || 0;
+			if (mins < 1 || mins > 60 * 24 * 30)
+				return { result: false, error: 'bad minutes (1..43200)' };
+			const mac = hc_norm_mac(c.mac);
+			if (!length(c.ip || '') && !length(mac))
+				return { result: false, error: 'client has no mac/ip' };
+			const temps = hc_read_temps();
+			const until = time() + mins * 60;
+			if (length(mac))
+				temps[mac] = { until: until, mode: 'block' };
+			if (length(c.ip || ''))
+				temps[c.ip] = { until: until, mode: 'block' };
+			hc_write_temps(temps);
+			hc_add_event('temp', c.name || id, `temporary block for ${mins} min`);
+			ctrl_apply_async();
+			return { result: true, until: until };
+		}
+	},
+
+	/* Temporary PERMISSION (plan 15): poke a hole through a schedule for a
+	 * while ("allow for an hour"). A manual block wins — unblock first. */
+	control_client_temp_allow: {
+		args: { id: 'id', minutes: 'minutes' },
+		call: function(req) {
+			const id = req.args?.id;
+			const c = id ? ctrl_client_by_id(id) : null;
+			if (!c)
+				return { result: false, error: 'unknown client id' };
+			const mins = int(req.args?.minutes) || 0;
+			if (mins < 1 || mins > 60 * 24 * 30)
+				return { result: false, error: 'bad minutes (1..43200)' };
+			const mac = hc_norm_mac(c.mac);
+			if (!length(c.ip || '') && !length(mac))
+				return { result: false, error: 'client has no mac/ip' };
+			if (c.blocked === '1')
+				return { result: false, error: 'client is blocked manually — unblock first' };
+			const temps = hc_read_temps();
+			const until = time() + mins * 60;
+			if (length(mac))
+				temps[mac] = { until: until, mode: 'allow' };
+			if (length(c.ip || ''))
+				temps[c.ip] = { until: until, mode: 'allow' };
+			hc_write_temps(temps);
+			hc_add_event('temp', c.name || id, `temporary ALLOW for ${mins} min`);
+			ctrl_apply_async();
+			return { result: true, until: until };
+		}
+	},
+
+	/* Per-client Wi-Fi block (plan 15): drop the client on Wi-Fi interfaces
+	 * only (nft `iifname @wifi_ifaces` + deauth kick); wired stays online. */
+	control_client_wifi_block: {
+		args: { id: 'id', blocked: 'blocked' },
+		call: function(req) {
+			const id = req.args?.id;
+			const c = id ? ctrl_client_by_id(id) : null;
+			if (!c)
+				return { result: false, error: 'unknown client id' };
+			if (!length(c.mac || ''))
+				return { result: false, error: 'client has no mac — Wi-Fi block works by MAC' };
+			const b = (req.args?.blocked === true || req.args?.blocked === '1') ? '1' : '0';
+			ctrl_set(id, 'wifi_blocked', b);
+			ctrl_commit();
+			hc_add_event((b === '1') ? 'block' : 'allow', c.name || id,
+				(b === '1') ? 'Wi-Fi blocked (wired stays online)' : 'Wi-Fi block removed');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	control_client_temp_unblock: {
+		args: { id: 'id' },
+		call: function(req) {
+			const id = req.args?.id;
+			const c = id ? ctrl_client_by_id(id) : null;
+			if (!c)
+				return { result: false, error: 'unknown client id' };
+			const mac = hc_norm_mac(c.mac);
+			const temps = hc_read_temps();
+			if (length(mac))
+				delete temps[mac];
+			if (length(c.ip || ''))
+				delete temps[c.ip];
+			hc_write_temps(temps);
+			hc_add_event('temp', c.name || id, 'temporary block/allow removed');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	/* Site rule: domains or IPs, whole network (no client_ids) or selected
+	 * clients only, with an optional time/date window. */
+	control_rule_add: {
+		args: { name: 'name', type: 'type', targets: 'targets', client_ids: 'client_ids',
+			time_start: 'time_start', time_stop: 'time_stop', days: 'days',
+			date_start: 'date_start', date_stop: 'date_stop' },
+		call: function(req) {
+			const name = ctrl_clean(req.args?.name);
+			const rtype = (req.args?.type === 'ip') ? 'ip' : 'domain';
+			const targets = ctrl_split_list(req.args?.targets);
+			const cids = ctrl_split_list(req.args?.client_ids);
+			const t1 = trim('' + (req.args?.time_start || ''));
+			const t2 = trim('' + (req.args?.time_stop || ''));
+			const days = ctrl_split_list(req.args?.days);
+			const d1 = trim('' + (req.args?.date_start || ''));
+			const d2 = trim('' + (req.args?.date_stop || ''));
+
+			if (!length(targets))
+				return { result: false, error: 'no targets given' };
+			for (let i = 0; i < length(targets); i++) {
+				const v = lc(targets[i]);
+				if (rtype === 'ip') {
+					if (!hc_valid_ip4(v) && !ctrl_valid_cidr(v))
+						return { result: false, error: 'invalid IP or CIDR: ' + v };
+				} else if (!ctrl_valid_domain(v)) {
+					return { result: false, error: 'invalid domain: ' + v };
+				}
+				targets[i] = v;
+			}
+			for (let i = 0; i < length(days); i++)
+				if (hc_wd_index(days[i]) < 0)
+					return { result: false, error: 'bad weekday: ' + days[i] };
+			if (length(t1) && hc_parse_hhmm(t1) == null)
+				return { result: false, error: 'bad time_start' };
+			if (length(t2) && hc_parse_hhmm(t2) == null)
+				return { result: false, error: 'bad time_stop' };
+			const dcheck = [d1, d2];
+			for (let i = 0; i < length(dcheck); i++)
+				if (length(dcheck[i]) && match(dcheck[i], /^\d{4}-\d{2}-\d{2}$/) == null)
+					return { result: false, error: 'bad date (YYYY-MM-DD)' };
+
+			const fd = popen(`uci -q add ${HC_CONF} rule`);
+			const newid = fd ? trim((fd.read('line') || '')) : '';
+			if (fd)
+				fd.close();
+			if (!length(newid))
+				return { result: false, error: 'uci add failed' };
+			if (length(name))
+				ctrl_set(newid, 'name', name);
+			ctrl_set(newid, 'type', rtype);
+			for (let i = 0; i < length(targets); i++)
+				system(`uci -q add_list ${HC_CONF}.${newid}.target='${targets[i]}'`);
+			for (let i = 0; i < length(cids); i++)
+				system(`uci -q add_list ${HC_CONF}.${newid}.client_ids='${cids[i]}'`);
+			if (length(t1))
+				ctrl_set(newid, 'time_start', t1);
+			if (length(t2))
+				ctrl_set(newid, 'time_stop', t2);
+			for (let i = 0; i < length(days); i++)
+				system(`uci -q add_list ${HC_CONF}.${newid}.days='${days[i]}'`);
+			if (length(d1))
+				ctrl_set(newid, 'date_start', d1);
+			if (length(d2))
+				ctrl_set(newid, 'date_stop', d2);
+			ctrl_set(newid, 'enabled', '1');
+			ctrl_commit();
+			hc_add_event('system', name || targets[0],
+				`site rule added (${rtype}, ${length(cids) ? length(cids) + ' client(s)' : 'whole network'})`);
+			ctrl_apply_async();
+			return { result: true, id: newid };
+		}
+	},
+
+	control_rule_delete: {
+		args: { id: 'id' },
+		call: function(req) {
+			const id = req.args?.id;
+			if (!id)
+				return { result: false, error: 'missing id' };
+			system(`uci -q delete ${HC_CONF}.${id}`);
+			ctrl_commit();
+			hc_add_event('system', id, 'site rule deleted');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	control_rule_toggle: {
+		args: { id: 'id', enabled: 'enabled' },
+		call: function(req) {
+			const id = req.args?.id;
+			if (!id)
+				return { result: false, error: 'missing id' };
+			const en = (req.args?.enabled === true || req.args?.enabled === '1') ? '1' : '0';
+			ctrl_set(id, 'enabled', en);
+			if (en === '1')
+				ctrl_del_opt(id, 'disabled_until');
+			ctrl_commit();
+			hc_add_event('system', id, (en === '1') ? 'site rule enabled' : 'site rule disabled');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	/* Temporarily suspend a rule ("allow it for 1 hour"). */
+	control_rule_pause: {
+		args: { id: 'id', minutes: 'minutes' },
+		call: function(req) {
+			const id = req.args?.id;
+			if (!id)
+				return { result: false, error: 'missing id' };
+			const mins = int(req.args?.minutes) || 60;
+			if (mins < 1 || mins > 60 * 24 * 30)
+				return { result: false, error: 'bad minutes' };
+			const until = time() + mins * 60;
+			ctrl_set(id, 'disabled_until', '' + until);
+			ctrl_commit();
+			hc_add_event('temp', id, `rule paused for ${mins} min`);
+			ctrl_apply_async();
+			return { result: true, until: until };
+		}
+	},
+
+	control_rule_resume: {
+		args: { id: 'id' },
+		call: function(req) {
+			const id = req.args?.id;
+			if (!id)
+				return { result: false, error: 'missing id' };
+			ctrl_del_opt(id, 'disabled_until');
+			ctrl_commit();
+			hc_add_event('temp', id, 'rule resumed');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	/* Schedule: daily/weekly/range/timer windows for clients and/or Wi-Fi. */
+	control_schedule_add: {
+		args: { name: 'name', type: 'type', action: 'action', time_start: 'time_start',
+			time_stop: 'time_stop', days: 'days', date_start: 'date_start',
+			date_stop: 'date_stop', client_ids: 'client_ids', wifi_ids: 'wifi_ids' },
+		call: function(req) {
+			const name = ctrl_clean(req.args?.name);
+			const stype = trim('' + (req.args?.type || 'daily'));
+			const action = (req.args?.action === 'allow') ? 'allow' : 'deny';
+			const t1 = trim('' + (req.args?.time_start || ''));
+			const t2 = trim('' + (req.args?.time_stop || ''));
+			const days = ctrl_split_list(req.args?.days);
+			const d1 = trim('' + (req.args?.date_start || ''));
+			const d2 = trim('' + (req.args?.date_stop || ''));
+			const cids = ctrl_split_list(req.args?.client_ids);
+			const wids = ctrl_split_list(req.args?.wifi_ids);
+
+			if (index(['daily', 'weekly', 'range', 'timer'], stype) === -1)
+				return { result: false, error: 'bad schedule type' };
+			if (!length(cids) && !length(wids))
+				return { result: false, error: 'bind at least one client or Wi-Fi network' };
+			if (stype === 'weekly') {
+				if (!length(days))
+					return { result: false, error: 'select the days of the week' };
+				for (let i = 0; i < length(days); i++)
+					if (hc_wd_index(days[i]) < 0)
+						return { result: false, error: 'bad weekday: ' + days[i] };
+			}
+			if (stype === 'daily' || stype === 'weekly' || stype === 'timer') {
+				if (hc_parse_hhmm(t1) == null || hc_parse_hhmm(t2) == null)
+					return { result: false, error: 'time window (HH:MM) is required' };
+			}
+			if (stype === 'range') {
+				if (!length(d1) && !length(d2))
+					return { result: false, error: 'date range is required' };
+			}
+			if (stype === 'timer') {
+				if (match(d1, /^\d{4}-\d{2}-\d{2}$/) == null || match(d2, /^\d{4}-\d{2}-\d{2}$/) == null)
+					return { result: false, error: 'both dates (YYYY-MM-DD) are required' };
+			}
+			if (length(d1) && match(d1, /^\d{4}-\d{2}-\d{2}$/) == null)
+				return { result: false, error: 'bad date (YYYY-MM-DD)' };
+			if (length(d2) && match(d2, /^\d{4}-\d{2}-\d{2}$/) == null)
+				return { result: false, error: 'bad date (YYYY-MM-DD)' };
+
+			const fd = popen(`uci -q add ${HC_CONF} schedule`);
+			const newid = fd ? trim((fd.read('line') || '')) : '';
+			if (fd)
+				fd.close();
+			if (!length(newid))
+				return { result: false, error: 'uci add failed' };
+			if (length(name))
+				ctrl_set(newid, 'name', name);
+			ctrl_set(newid, 'type', stype);
+			ctrl_set(newid, 'action', action);
+			ctrl_set(newid, 'enabled', '1');
+			if (length(t1))
+				ctrl_set(newid, 'time_start', t1);
+			if (length(t2))
+				ctrl_set(newid, 'time_stop', t2);
+			for (let i = 0; i < length(days); i++)
+				system(`uci -q add_list ${HC_CONF}.${newid}.days='${days[i]}'`);
+			if (length(d1))
+				ctrl_set(newid, 'date_start', d1);
+			if (length(d2))
+				ctrl_set(newid, 'date_stop', d2);
+			for (let i = 0; i < length(cids); i++)
+				system(`uci -q add_list ${HC_CONF}.${newid}.client_ids='${cids[i]}'`);
+			for (let i = 0; i < length(wids); i++)
+				system(`uci -q add_list ${HC_CONF}.${newid}.wifi_ids='${wids[i]}'`);
+			ctrl_commit();
+			hc_add_event('system', name || stype, 'schedule added');
+			ctrl_apply_async();
+			return { result: true, id: newid };
+		}
+	},
+
+	control_schedule_delete: {
+		args: { id: 'id' },
+		call: function(req) {
+			const id = req.args?.id;
+			if (!id)
+				return { result: false, error: 'missing id' };
+			system(`uci -q delete ${HC_CONF}.${id}`);
+			ctrl_commit();
+			hc_add_event('system', id, 'schedule deleted');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	control_schedule_toggle: {
+		args: { id: 'id', enabled: 'enabled' },
+		call: function(req) {
+			const id = req.args?.id;
+			if (!id)
+				return { result: false, error: 'missing id' };
+			const en = (req.args?.enabled === true || req.args?.enabled === '1') ? '1' : '0';
+			ctrl_set(id, 'enabled', en);
+			ctrl_commit();
+			hc_add_event('system', id, (en === '1') ? 'schedule enabled' : 'schedule disabled');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	control_wifi_status: {
+		call: function(req) {
+			const view = ctrl_wifi_view();
+			return { result: true, radios: view.radios, temps: view.temps };
+		}
+	},
+
+	control_wifi_set: {
+		args: { iface: 'iface', disabled: 'disabled' },
+		call: function(req) {
+			const iface = trim('' + (req.args?.iface || ''));
+			if (!iface || match(iface, /^[A-Za-z0-9_]+$/) == null)
+				return { result: false, error: 'bad iface' };
+			const dis = (req.args?.disabled === true || req.args?.disabled === '1') ? '1' : '0';
+			if (dis === '1') {
+				system(`uci -q set wireless.${iface}.disabled='1'`);
+				hc_add_event('wifi', iface, 'turned off');
+			} else {
+				system(`uci -q delete wireless.${iface}.disabled`);
+				system(`rm -f '${HC_RUN_DIR}/wifi.off.${iface}'`);
+				hc_add_event('wifi', iface, 'turned on');
+			}
+			system(`uci -q commit wireless`);
+			system(`wifi reload 2>/dev/null`);
+			return { result: true };
+		}
+	},
+
+	/* Temporarily turn a Wi-Fi iface off; auto re-enables after minutes. */
+	control_wifi_temp: {
+		args: { iface: 'iface', minutes: 'minutes' },
+		call: function(req) {
+			const iface = trim('' + (req.args?.iface || ''));
+			if (!iface || match(iface, /^[A-Za-z0-9_]+$/) == null)
+				return { result: false, error: 'bad iface' };
+			const mins = int(req.args?.minutes) || 60;
+			if (mins < 1 || mins > 60 * 24 * 30)
+				return { result: false, error: 'bad minutes' };
+			hc_wifi_temp_set(iface, time() + mins * 60);
+			hc_add_event('wifi', iface, `temporarily off for ${mins} min`);
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	control_wifi_temp_clear: {
+		args: { iface: 'iface' },
+		call: function(req) {
+			const iface = trim('' + (req.args?.iface || ''));
+			if (!iface || match(iface, /^[A-Za-z0-9_]+$/) == null)
+				return { result: false, error: 'bad iface' };
+			hc_wifi_temp_clear(iface);
+			hc_add_event('wifi', iface, 'temporary off removed');
+			ctrl_apply_async();
+			return { result: true };
+		}
+	},
+
+	control_events: {
+		args: { limit: 'limit' },
+		call: function(req) {
+			let events = [];
+			if (access(HC_EVENTS_PATH)) {
+				try { events = json(readfile(HC_EVENTS_PATH)); } catch (e) { events = []; }
+			}
+			const limit = int(req.args?.limit) || 100;
+			const start = max(0, length(events) - limit);
+			const out = [];
+			for (let i = start; i < length(events); i++)
+				push(out, events[i]);
+			return { events: out };
+		}
+	},
+
+	control_events_clear: {
+		call: function(req) {
+			if (access(HC_EVENTS_PATH))
+				system(`rm -f '${HC_EVENTS_PATH}'`);
+			hc_add_event('system', '', 'events journal cleared');
+			return { result: true };
+		}
+	},
+
+	control_log_tail: {
+		args: { lines: 'lines' },
+		call: function(req) {
+			const n = int(req.args?.lines) || 50;
+			const fd = popen(`tail -n ${n} ${shellquote(HC_LOG_PATH)} 2>/dev/null`);
+			if (!fd)
+				return { content: '' };
+			const raw = fd.read('all');
+			fd.close();
+			return { content: raw || '' };
 		}
 	}
 

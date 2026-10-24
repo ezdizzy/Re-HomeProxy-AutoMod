@@ -42,6 +42,13 @@
 'use strict';
 
 import { access, popen, readfile, open, stat, writefile } from 'fs';
+/* «Контроль» module (plan 14): the control feature rides the same bot —
+ * the module receives the bot primitives (api object) and never touches
+ * the daemon internals itself. */
+import * as ctrl from '/etc/homeproxy/scripts/telegram_control.uc';
+/* Control state summary for /status (plan 15): the same library the
+ * rpcd backend and the enforcer use. */
+import { client_states, main_opt } from '/etc/homeproxy/scripts/control.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const LOG_FILE = RUN_DIR + '/telegram.log';
@@ -64,7 +71,8 @@ let last_send_ts = 0;
 let cfg = {
 	enabled: '0', token: '', chat_id: '', mute: '0',
 	poll: '25', push_interval: '2',
-	push_hotswap: '1', push_watchdog: '1', push_learn: '1', push_service: '1'
+	push_hotswap: '1', push_watchdog: '1', push_learn: '1', push_service: '1',
+	push_control: '1'
 };
 let seen = {
 	hs_switches: -1, hs_active: '', dead_str: null,
@@ -123,6 +131,7 @@ function read_cfg() {
 	cfg.push_watchdog = uci_get('push_watchdog', '1');
 	cfg.push_learn    = uci_get('push_learn', '1');
 	cfg.push_service  = uci_get('push_service', '1');
+	cfg.push_control  = uci_get('push_control', '1');
 }
 
 function token_ok(t) {
@@ -213,15 +222,28 @@ function tg_send_html(chat_id, text, kb) {
 }
 
 function kb_rows(rows) {
-	/* rows: array of arrays of [text, callback_data]. */
+	/* rows: array of rows; each row is EITHER
+	 *   - [text, callback_data]          — a single button, OR
+	 *   - [[text, callback_data], ...]   — a row of buttons.
+	 * Both forms are accepted (issue #7): every caller except main_menu_kb()
+	 * passed the flat form, and indexing a *string* with [0] throws
+	 * "left-hand side expression is not an array or object" — /status and
+	 * /status_engine died on it (the exception was caught in main(), so the
+	 * chat just got no reply). */
 	let parts = [];
 	for (let r = 0; r < length(rows); r++) {
+		const row = rows[r];
 		let cells = [];
-		for (let c = 0; c < length(rows[r]); c++) {
-			const b = rows[r][c];
-			push(cells, sprintf('{"text":"%s","callback_data":"%s"}', jesc(b[0]), jesc(b[1])));
+		if (length(row) > 0 && type(row[0]) === 'array') {
+			for (let c = 0; c < length(row); c++) {
+				const b = row[c];
+				push(cells, sprintf('{"text":"%s","callback_data":"%s"}', jesc(b[0]), jesc(b[1])));
+			}
+		} else if (length(row) >= 2) {
+			push(cells, sprintf('{"text":"%s","callback_data":"%s"}', jesc(row[0]), jesc(row[1])));
 		}
-		push(parts, '[' + join(',', cells) + ']');
+		if (length(cells))
+			push(parts, '[' + join(',', cells) + ']');
 	}
 	return '{"inline_keyboard":[' + join(',', parts) + ']}';
 }
@@ -323,11 +345,26 @@ function cmd_status() {
 	if (sf) {
 		try { const j = json(sf); if (j && j.learned) learned = (j.learned.domains || 0) + (j.learned.ips || 0); } catch (e) {}
 	}
+	/* Control line (plan 15): one glanceable summary of parental control. */
+	let ctl_line = 'Контроль: выкл';
+	try {
+		if (main_opt('enabled', '0') === '1') {
+			let blocked = 0;
+			const states = client_states(time());
+			for (let i = 0; i < length(states); i++)
+				if (states[i].blocked)
+					blocked++;
+			ctl_line = (main_opt('paused', '0') === '1')
+				? 'Контроль: пауза (всё разрешено)'
+				: `Контроль: вкл · заблокировано: ${blocked}`;
+		}
+	} catch (e) { ctl_line = 'Контроль: ?'; }
 	return `<b>Re:HomeProxy</b>
 Ядро: ${core}
 ${esc_html(main_line)}
 Zapret: ${zapret} · ByeDPI: ${byedpi} · MultiDNS: ${mosdns}
-Автоматизация: ${learned} записей`;
+Автоматизация: ${learned} записей
+${esc_html(ctl_line)}`;
 }
 
 function cmd_ping() {
@@ -495,9 +532,15 @@ function cmd_switch(arg, chat_id) {
 }
 
 const HELP = '<b>Команды</b>\n' +
-	'/status — ядро, выход, движки, автоматизация\n' +
+	'/menu — инлайн-меню (всё в кнопках)\n' +
+	'/status — ядро, выход, движки, контроль\n' +
 	'/nodes — узлы и задержки\n' +
 	'/switch N — переключить выход (без рестарта)\n' +
+	'/control — контроль (родительский): панель\n' +
+	'/devices — устройства сети (блок / ⏱ временный / ✅ разрешить / 📶 Wi-Fi-блок)\n' +
+	'/blocksite домен [№] — блок сайта (/unblocksite)\n' +
+	'/pause · /resume — пауза контроля\n' +
+	'/wifi — Wi-Fi сети вкл/выкл\n' +
 	'/ping — аптайм, load, память\n' +
 	'/connections — активные соединения\n' +
 	'/close — закрыть все соединения\n' +
@@ -508,6 +551,21 @@ const HELP = '<b>Команды</b>\n' +
 	'/restart — перезапуск службы\n' +
 	'/help — этот список';
 
+/* Main inline menu (plan 15): every feature one tap away — no need to
+ * remember command names. */
+function main_menu_text() {
+	return '<b>Re:HomeProxy — меню</b>\nЯдро, узлы, родительский контроль и Wi-Fi — в кнопках ниже.';
+}
+
+function main_menu_kb() {
+	return kb_rows([
+		[ [ '📊 Статус', 'act:refresh' ], [ '📡 Узлы', 'act:nodes' ] ],
+		[ [ '🛡 Контроль', 'ctl:menu' ], [ '📶 Wi-Fi', 'ctl:wifi' ] ],
+		[ [ '⚙️ Движки', 'act:engine' ], [ '📸 Снапшот', 'act:snapshot' ] ],
+		[ [ '❓ Помощь', 'act:help' ] ]
+	]);
+}
+
 /* ── push notifications (observer over run-state files) ───────────────── */
 
 function push_enabled(kind) {
@@ -516,6 +574,7 @@ function push_enabled(kind) {
 	if (kind === 'watchdog') return cfg.push_watchdog === '1';
 	if (kind === 'learn') return cfg.push_learn === '1';
 	if (kind === 'service') return cfg.push_service === '1';
+	if (kind === 'control') return cfg.push_control === '1';
 	return false;
 }
 
@@ -648,7 +707,21 @@ function push_scan() {
 	try { push_watchdog(); } catch (e) { log('push watchdog: ' + e); }
 	try { push_learn(); } catch (e) { log('push learn: ' + e); }
 	try { push_service(); } catch (e) { log('push service: ' + e); }
+	try { ctrl.push_scan(ctrl_api); } catch (e) { log('push control: ' + e); }
 }
+
+/* Primitives handed to the «Контроль» module (declared after the functions
+ * it references — module scope, evaluated at load time). */
+const ctrl_api = {
+	send_html: tg_send_html,
+	kb_rows: kb_rows,
+	answer_cb: tg_answer_cb,
+	esc_html: esc_html,
+	jesc: jesc,
+	log: log,
+	uci_get: uci_get,
+	push: send_push
+};
 
 /* ── dispatch ─────────────────────────────────────────────────────────── */
 
@@ -657,6 +730,14 @@ function handle_command(chat_id, text) {
 	if (!m) return;
 	const cmd = m[1];
 	const rest = trim(m[3] || '');
+	/* «Контроль» commands (/control /devices /sites /blocksite /unblocksite
+	 * /pause /resume /wifi) — the module answers them itself. */
+	try {
+		if (ctrl.handle_command(ctrl_api, chat_id, cmd, rest))
+			return;
+	} catch (e) {
+		log('control cmd: ' + e);
+	}
 	if (cmd === 'status') {
 		tg_send_html(chat_id, cmd_status(), kb_rows([ [ 'Узлы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ] ]));
 	} else if (cmd === 'ping') {
@@ -690,8 +771,10 @@ function handle_command(chat_id, text) {
 		system('uci -q set homeproxy.telegram.mute=0; uci commit homeproxy');
 		cfg.mute = '0';
 		tg_send_html(chat_id, '🔔 Пуш-уведомления включены.', null);
-	} else if (cmd === 'help' || cmd === 'start') {
-		tg_send_html(chat_id, HELP, null);
+	} else if (cmd === 'menu' || cmd === 'start') {
+		tg_send_html(chat_id, main_menu_text(), main_menu_kb());
+	} else if (cmd === 'help') {
+		tg_send_html(chat_id, HELP, main_menu_kb());
 	} else {
 		tg_send_html(chat_id, 'неизвестная команда — /help', null);
 	}
@@ -759,11 +842,28 @@ function handle_update(u) {
 		} else if (data === 'act:restart') {
 			tg_answer_cb(cbid, 'Перезапуск службы');
 			do_service('restart', chat_id);
+		} else if (data === 'act:help') {
+			tg_answer_cb(cbid, 'Помощь');
+			tg_send_html(chat_id, HELP, main_menu_kb());
+		} else if (data === 'act:menu') {
+			tg_answer_cb(cbid, 'Меню');
+			tg_send_html(chat_id, main_menu_text(), main_menu_kb());
 		} else if (data === 'act:refresh') {
 			tg_answer_cb(cbid, 'Обновляю');
 			tg_send_html(chat_id, cmd_status(), kb_rows([ [ 'Узлы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ] ]));
 		} else {
-			tg_answer_cb(cbid, '');
+			/* «Контроль» callbacks — device actions first, then the panel
+			 * views; an unconsumed callback is acknowledged silently. */
+			let consumed = false;
+			try {
+				consumed = ctrl.handle_dev_action(ctrl_api, chat_id, data, cbid);
+				if (!consumed)
+					consumed = ctrl.handle_cb(ctrl_api, chat_id, data, cbid);
+			} catch (e) {
+				log('control cb: ' + e);
+			}
+			if (!consumed)
+				tg_answer_cb(cbid, '');
 		}
 	}
 }

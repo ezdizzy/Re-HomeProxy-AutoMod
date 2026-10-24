@@ -81,10 +81,16 @@ done < "$TMP/pairs.tsv"
 # Aggregate + rank — ucode does everything nontrivial (shell cannot escape
 # strategy strings safely, and the ч.69 greedy-sed parse of "ok" was WRONG:
 # it matched the last per-host flag instead of the top-level count).
+# ч.109: TWO passes — pass 1 ranks by handshakes and writes the top-5 list;
+# the shell then runs the DEEP content battery on those five (a handshake
+# passing is not «ресурс работает» — the page, the thumbnail CDN and the
+# video edge must load); pass 2 merges the deep verdicts and finalizes the
+# ranking (deep-verified first). The corpus keeps the RANKING DEPTH: the
+# resource auto-pick prefers deep-verified winners.
+echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"rank","current":"ranking…"}' > "$STATUS"
 ucode -e '
 import {readfile, writefile, access} from "fs";
 const TMP = "'$TMP'", ROUNDS = int('$ROUNDS'), MAJ = int('$MAJ'), TOTAL = int('$TOTAL');
-const RESULT = "'$RESULT'", HISTORY = "'$HISTORY'";
 const now = time();
 
 /* corpus order: name \t args per line */
@@ -169,16 +175,88 @@ for (let n = 0; n < length(pairs); n++) {
 	                   avg_tls_ms: avg, score: score, hosts: hosts });
 }
 sort(strategies, (a, b) => b.score - a.score);
+writefile(TMP + "/rank.json", sprintf("%.J\n", { strategies: strategies, ts: now }));
+/* top-5 for the deep content battery */
+let top5 = [];
+for (let i = 0; i < length(strategies) && i < 5; i++)
+	push(top5, { idx: i + 1, args: strategies[i].args });
+writefile(TMP + "/top5.json", sprintf("%.J\n", { list: top5 }));
+' 2>/dev/null
+
+if [ ! -s "$TMP/rank.json" ]; then
+	rm -rf "$TMP"
+	echo '{"running":false,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"error":"ranking failed"}' > "$STATUS"
+	exit 0
+fi
+
+# Deep content battery on the top-5 (one pass each, same isolated queue).
+TOPN=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/top5.json")); print(length((j && j.list) || 0));' 2>/dev/null)
+i=0
+while [ "$i" -lt "$TOPN" ]; do
+	i=$((i + 1))
+	ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/top5.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
+	[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
+	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"'}' > "$STATUS"
+	sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i.json"
+done
+
+ucode -e '
+import {readfile, writefile, access} from "fs";
+const TMP = "'$TMP'", RESULT = "'$RESULT'", HISTORY = "'$HISTORY'";
+const ROUNDS = int('$ROUNDS'), MAJ = int('$MAJ');
+const now = time();
+const parse = (path) => {
+	if (!access(path)) return null;
+	try { return json(readfile(path) || ""); } catch (e) { return null; }
+};
+
+/* Pass 2 — merge the deep content verdicts into the handshake ranking.
+ * d<i>.json corresponds to rank.json strategies[i-1] (the top5 order). */
+const rank = parse(TMP + "/rank.json") || { strategies: [] };
+const strategies = rank.strategies || [];
+let deepN = 0;
+for (let i = 1; i <= 5; i++) {
+	const d = parse(TMP + "/d" + i + ".json");
+	if (!d || type(d.results) != "array") continue;
+	const s = strategies[i - 1];
+	if (!s) continue;
+	deepN++;
+	let dok = 0, dtot = 0, hosts = [];
+	for (let r in d.results) {
+		if (type(r) != "object" || r.tag == null) continue;
+		dok += (r.deep_ok == 1) ? 1 : 0;
+		dtot += int(r.deep_total) || 0;
+		push(hosts, { tag: r.tag, label: r.label || r.tag,
+			deep_ok: (r.deep_ok == 1), deep_total: int(r.deep_total) || 0,
+			items: r.deep || [] });
+	}
+	s.deep = { ok: dok, total: dtot, hosts: hosts };
+}
+/* Final order: deep-tested strategies first (deep ratio, then handshake
+ * score), the rest keep their handshake rank order. */
+const tested = [], rest = [];
+for (let s in strategies)
+	(s.deep) ? push(tested, s) : push(rest, s);
+sort(tested, (a, b) => {
+	const ra = a.deep.total ? (a.deep.ok * 1.0 / a.deep.total) : 0;
+	const rb = b.deep.total ? (b.deep.ok * 1.0 / b.deep.total) : 0;
+	return (rb - ra) || (b.score - a.score);
+});
+const final = [];
+for (let s in tested) push(final, s);
+for (let s in rest) push(final, s);
 
 const bnote = [];
+const bj = parse(TMP + "/baseline.json");
 if (bj && type(bj.results) == "array")
 	for (let r in bj.results)
 		if (type(r) == "object")
 			push(bnote, { tag: r.tag, label: r.label || r.tag, host: r.host || "", ok: (r.ok == 1) });
 
 writefile(RESULT, sprintf("%.J\n", {
-	running: false, done: length(strategies), total: length(strategies),
-	rounds: ROUNDS, majority: MAJ, ts: now, baseline: bnote, strategies: strategies
+	running: false, done: length(final), total: length(final),
+	rounds: ROUNDS, majority: MAJ, ts: now, baseline: bnote, strategies: final,
+	deep_count: deepN, deep_note: "top " + deepN + " deep-checked: page/CDN/media-edge fetches"
 }));
 
 /* history: keep the last 5 runs (tmpfs — survives until reboot) */
@@ -187,7 +265,7 @@ if (access(HISTORY)) {
 	const hj = parse(HISTORY);
 	if (hj && type(hj.runs) == "array") hist = hj.runs;
 }
-const best = (length(strategies)) ? strategies[0] : null;
+const best = (length(final)) ? final[0] : null;
 push(hist, { ts: now, mode: "'$MODE'", rounds: ROUNDS,
              best: best ? { name: best.name, ok: best.ok, total: best.total,
                             dist_ok: best.dist_ok, dist_total: best.dist_total } : null });

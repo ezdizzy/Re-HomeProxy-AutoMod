@@ -1,0 +1,30 @@
+# Re:HomeProxy AutoMod — «Контроль» (HomeControl integration, plan 14)
+# Advanced parental control: client blocks, site rules, schedules, Wi-Fi.
+# See /etc/homeproxy/scripts/control.uc for the enforcement model.
+
+config main 'main'
+	option enabled '0'
+	# paused: global kill-switch ("allow everything", parent override)
+	option paused '0'
+	option log_enabled '1'
+	option log_max '500'
+
+# config section per managed client: homecontrol.<id>=client
+#	options: name (alias), mac (identity — survives DHCP address changes),
+#		 ip (static override), note, blocked (0/1 quick toggle)
+
+# config section per wifi iface: homecontrol.<id>=wifi
+#	options: name, network (iface)
+
+# config section per block rule: homecontrol.<id>=rule
+#	options: name, type (domain|ip), target (list), client_ids (list —
+#		 empty = whole network), enabled, disabled_until (paused until epoch),
+#		 time_start, time_stop, days (list Mon..Sun), date_start, date_stop
+
+# config section per schedule: homecontrol.<id>=schedule
+#	options: name, type (daily|weekly|range|timer), enabled, action (deny|allow),
+#		 time_start, time_stop, days (list), date_start, date_stop,
+#		 client_ids (list), wifi_ids (list)
+
+config dummy 'dummy'
+	option placeholder '1'

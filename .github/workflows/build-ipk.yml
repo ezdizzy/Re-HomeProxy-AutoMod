@@ -166,15 +166,6 @@ jobs:
           echo "I18N_IPK_ASSET_NAME=$(ls luci-i18n-homeproxy-ru_*_all.ipk)" >> $GITHUB_ENV
           popd
 
-      - name: Build legacy IPK (OpenWRT 23.05)
-        if: steps.tag.outputs.publish_release == 'true'
-        run: |
-          mkdir -p .github/legacy
-          pushd .github
-          fakeroot bash build-ipk.sh ipk "${{ steps.tag.outputs.release_type }}" legacy "${{ steps.tag.outputs.release_version }}"
-          mv luci-*-legacy.ipk legacy/
-          popd
-
       - name: Publishing APK files to GitHub Artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -236,16 +227,3 @@ jobs:
           file: ${{ env.GO_BIN_DIR }}/*.zip
           file_glob: true
           tag: ${{ steps.tag.outputs.release_tag }}
-
-      - name: Publish legacy release to GitHub Releases
-        if: steps.tag.outputs.publish_release == 'true'
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ github.token }}
-          file: .github/legacy/*.ipk
-          file_glob: true
-          tag: ${{ steps.tag.outputs.release_tag }}-legacy
-          release_name: Re:HomeProxy AutoMod ${{ steps.tag.outputs.release_tag }}-legacy (OpenWRT 23.05)
-          prerelease: true
-          draft: true
-          body: "Legacy build for OpenWRT 23.05 — no ucode-mod-digest dependency."

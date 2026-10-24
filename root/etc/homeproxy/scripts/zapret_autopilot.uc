@@ -400,7 +400,9 @@ function tried_add(res, args) {
 
 /* Best eligible strategy for a resource tag: majority pass AND a
  * distinguishing host (a baseline pass cannot credit a strategy), ranked
- * by that host's minimal TLS (fastest = best), tie-break global score. */
+ * by that host's minimal TLS (fastest = best), tie-break global score.
+ * ч.109: a deep-verified strategy (page/CDN/media fetches passed) beats an
+ * equal-TLS one — the resource must work AS A WHOLE, not just open. */
 function pick_resource(fz, res, exclude_args) {
 	const tag = RESOURCES[res].tag;
 	const elig = [];
@@ -413,7 +415,11 @@ function pick_resource(fz, res, exclude_args) {
 		if (h && h.ok && h.dist)
 			push(elig, { s: s, ms: int(h.tls_ms) || 0 });
 	}
-	sort(elig, (a, b) => (a.ms - b.ms) || (b.s.score - a.s.score));
+	sort(elig, (a, b) => {
+		const da = (a.s.deep) ? (a.s.deep.total ? a.s.deep.ok * 1.0 / a.s.deep.total : 0) : -1;
+		const db = (b.s.deep) ? (b.s.deep.total ? b.s.deep.ok * 1.0 / b.s.deep.total : 0) : -1;
+		return (db - da) || (a.ms - b.ms) || (b.s.score - a.s.score);
+	});
 	if (!length(elig))
 		return null;
 	const runners = [];

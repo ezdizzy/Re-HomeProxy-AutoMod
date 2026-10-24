@@ -19,8 +19,12 @@
 # fallback keeps the postrouting hook but matches EXACT-unmarked packets,
 # which still protects the zapret-marked flows (the worst breakage).
 #
-# Usage:  zapret_test.sh [--baseline] "<strategy opts>" [tag=ip tag=ip …]
+# Usage:  zapret_test.sh [--baseline] [--deep] "<strategy opts>" [tag=ip tag=ip …]
 # Output: a single JSON line:  {"ok":N,"total":M,"results":[{tag,label,host,ip,tls,ok,reason},…]}
+#         with --deep each result also carries code/bytes/deep_ok (a content
+#         fetch through the same temp queue) — «сайт открывается» is not the
+#         verdict, the resource must load its media hosts too (user report:
+#         a strategy can pass the TLS handshake and still stall the video).
 #
 # Pass signal = curl time_appconnect > 0 (the TLS handshake completed = the desync
 # got the ClientHello past the DPI). HTTP status is irrelevant.
@@ -38,8 +42,13 @@
 # survive a watchdog teardown so the caller still gets REAL data.
 
 BASELINE=0
+DEEP=0
 if [ "$1" = "--baseline" ]; then
 	BASELINE=1
+	shift
+fi
+if [ "$1" = "--deep" ]; then
+	DEEP=1
 	shift
 fi
 
@@ -55,6 +64,18 @@ TMP=/tmp/zapret_test.$$
 
 # tag|label|host  — far/near spread (mirrors the ByeDPI tester)
 HOSTS="yt|YouTube|redirector.googlevideo.com tg|Telegram|telegram.org dc|Discord|discord.com st|Speedtest|www.speedtest.net"
+
+# --deep content probes (ч.109): a handshake passing ≠ the resource working.
+# Each resource gets real fetches through the SAME temp queue — YouTube is
+# checked on the page (a ~1MB content fetch), the thumbnail CDN (generate_204)
+# and the video-stream edge (ANY HTTP answer proves the DPI let the host
+# through; its root path legitimately answers 404). Telegram/Discord/Speedtest
+# on their main pages.
+# id|url  (the yt edge reuses the yt handshake host/IP; id ytr = edge probe)
+DEEP_PROBES=""
+if [ "$DEEP" = "1" ]; then
+	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytr|https://redirector.googlevideo.com/ tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/"
+fi
 
 NFQ_PID=""
 WATCH_PID=""
@@ -110,6 +131,25 @@ else
 fi
 IPSET=$(echo "$IPSET" | sed 's/[[:space:]]//g; s/,$//')
 [ -z "$IPSET" ] && fail "could not resolve any test host"
+
+# Deep-mode resolution: every deep URL host must be pinned to a resolved IP AND
+# its IP must join the temp-queue IPSET BEFORE the nft rules render — otherwise
+# the deep fetch would ride the LIVE path and measure the wrong thing.
+if [ "$DEEP" = "1" ]; then
+	for dp in $DEEP_PROBES; do
+		did=${dp%%|*}; durl=${dp#*|}
+		dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
+		if [ "$did" = "ytr" ]; then
+			cp "$TMP/ip_yt" "$TMP/dip_$did" 2>/dev/null
+		else
+			dip=$(nslookup "$dhost" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^127\.' | tail -1)
+			echo "$dip" > "$TMP/dip_$did"
+			echo "$dhost" > "$TMP/dhost_$did"
+		fi
+		dep=$(cat "$TMP/dip_$did" 2>/dev/null)
+		[ -n "$dep" ] && case ",$IPSET," in *",$dep,"*) ;; *) IPSET="$IPSET,$dep";; esac
+	done
+fi
 
 # Probe identity: run the curls as the non-root `daemon` user (uid resolved
 # live) and queue by meta skuid — sing-box (root) can never match. Fallback
@@ -182,8 +222,74 @@ while [ "$n" -lt 25 ]; do
 	n=$((n + 1))
 done
 
+# 5b. Deep content fetches (--deep): run through the SAME temp queue (the
+# fetch IPs joined the IPSET above, each URL host pinned with --resolve).
+# Pass = an HTTP answer within the window (2xx–399) AND a body except 204 —
+# a DPI-stalled media host fails here even when its TLS handshake passed.
+DJSON_ALL=""
+if [ "$DEEP" = "1" ]; then
+	[ -n "$PROBE_UID" ] && chmod 777 "$TMP" 2>/dev/null
+	for dp in $DEEP_PROBES; do
+		did=${dp%%|*}; durl=${dp#*|}
+		dhost=$(cat "$TMP/dhost_$did" 2>/dev/null)
+		[ -z "$dhost" ] && dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
+		dip=$(cat "$TMP/dip_$did" 2>/dev/null)
+		if [ -z "$dip" ]; then echo "000 0 0 6" > "$TMP/d_$did"; continue; fi
+		if [ -n "$PROBE_UID" ]; then
+			su -s /bin/sh daemon -c "out=\$(curl -sL --max-redirs 3 --resolve '${dhost}:443:${dip}' -o /dev/null -w '%{http_code} %{time_total} %{size_download}' --connect-timeout 4 --max-time 9 -k '${durl}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/d_${did}'" >/dev/null 2>&1 &
+		else
+			( out=$(curl -sL --max-redirs 3 --resolve "${dhost}:443:${dip}" -o /dev/null -w '%{http_code} %{time_total} %{size_download}' --connect-timeout 4 --max-time 9 -k "$durl" 2>/dev/null); echo "$out $?" > "$TMP/d_$did" ) >/dev/null 2>&1 &
+		fi
+	done
+	dn=0
+	while [ "$dn" -lt 14 ]; do
+		all=1
+		for dp in $DEEP_PROBES; do
+			did=${dp%%|*}
+			[ -s "$TMP/d_$did" ] || all=0
+		done
+		[ "$all" = 1 ] && break
+		sleep 1
+		dn=$((dn + 1))
+	done
+	# attach the deep results to the owning main tag: yt ← ytp,yti,ytr; tg ← tgp; dc ← dcp; st ← stp
+	for h in $HOSTS; do
+		tag=${h%%|*}
+		case "$tag" in
+			yt) OWNER="ytp yti ytr" ;;
+			tg) OWNER="tgp" ;;
+			dc) OWNER="dcp" ;;
+			st) OWNER="stp" ;;
+		esac
+		DJSON=""
+		DOK=0; DTOT=0
+		for did in $OWNER; do
+			raw=$(cat "$TMP/d_$did" 2>/dev/null)
+			dcode=$(printf '%s' "$raw" | awk '{print $1}')
+			dsec=$(printf '%s' "$raw" | awk '{print $2}')
+			dbytes=$(printf '%s' "$raw" | awk '{print $3}')
+			drc=$(printf '%s' "$raw" | awk '{print $4}')
+			DTOT=$((DTOT+1))
+			case "$dcode" in ''|000) dok=0;; *)
+			dok=1
+			case "$dcode" in 2*|3*) : ;; *) dok=0 ;; esac
+			# edge probe: ANY HTTP answer proves the DPI let the host through
+			case "$did" in ytr) [ "$dcode" != "000" ] && dok=1 ;; esac
+			[ "$dcode" = "204" ] || [ "$dbytes" -gt 0 ] 2>/dev/null || dok=0
+			;; esac
+			[ "$dok" = 1 ] && DOK=$((DOK+1))
+			[ -n "$DJSON" ] && DJSON="$DJSON,"
+			DJSON="$DJSON{\"id\":\"$did\",\"code\":\"$dcode\",\"sec\":\"$dsec\",\"bytes\":$dbytes,\"ok\":$dok}"
+		done
+		eval "D_${tag}_OK=$DOK"
+		eval "D_${tag}_TOT=$DTOT"
+		eval "D_${tag}_JSON='$DJSON'"
+		DJSON_ALL="$DJSON_ALL $tag:$DOK/$DTOT"
+	done
+fi
+
 # 6. Build JSON (the temp dir survives watchdog teardowns now).
-JSON=""; OKC=0; TOT=0
+JSON=""; OKC=0; TOT=0; ALLOK=0; ALLTOT=0
 for h in $HOSTS; do
 	tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
 	ip=$(cat "$TMP/ip_$tag" 2>/dev/null)
@@ -195,9 +301,19 @@ for h in $HOSTS; do
 	if [ "$ok" = 0 ]; then
 		case "$rc" in 6) reason=dns;; 7) reason=refused;; 28) reason=timeout;; 35|51|53|56|58|59|60) reason=tls;; *) reason=fail;; esac
 	fi
+	DEEPJSON=""
+	if [ "$DEEP" = "1" ]; then
+		eval "dok=\$D_${tag}_OK"; eval "dtot=\$D_${tag}_TOT"; eval "dj=\$D_${tag}_JSON"
+		ALLOK=$((ALLOK+dok)); ALLTOT=$((ALLTOT+dtot))
+		DEEPJSON=",\"deep_ok\":$dok,\"deep_total\":$dtot,\"deep\":[$dj]"
+	fi
 	[ -n "$JSON" ] && JSON="$JSON,"
-	JSON="$JSON{\"tag\":\"$tag\",\"label\":\"$label\",\"host\":\"$host\",\"ip\":\"$ip\",\"tls\":\"$tls\",\"ok\":$ok,\"reason\":\"$reason\"}"
+	JSON="$JSON{\"tag\":\"$tag\",\"label\":\"$label\",\"host\":\"$host\",\"ip\":\"$ip\",\"tls\":\"$tls\",\"ok\":$ok,\"reason\":\"$reason\"$DEEPJSON}"
 done
 
-echo "{\"ok\":$OKC,\"total\":$TOT,\"results\":[$JSON]}"
+if [ "$DEEP" = "1" ]; then
+	echo "{\"ok\":$OKC,\"total\":$TOT,\"deep_ok\":$ALLOK,\"deep_total\":$ALLTOT,\"results\":[$JSON]}"
+else
+	echo "{\"ok\":$OKC,\"total\":$TOT,\"results\":[$JSON]}"
+fi
 rm -rf "$TMP" 2>/dev/null

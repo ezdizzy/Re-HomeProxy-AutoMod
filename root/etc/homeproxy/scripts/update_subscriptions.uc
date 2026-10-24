@@ -24,13 +24,12 @@ import {
  * hopping) whenever only one of the two copies was updated. */
 import { parse_uri } from 'node_parse';
 
-/* The ucode 'digest' module is NOT shipped on OpenWrt 23.05 legacy builds (the
- * CI legacy ipk deliberately drops that dependency; import_link.uc hit this
- * before) — an unconditional import here made subscription updates crash at
- * load time on legacy. Use the same dependency-free FNV-1a hash as import_link:
- * collision-safe for realistic node counts and stable across runs. NOTE: hash
- * values differ from the old md5 ones — the first update after this change
- * re-creates subscription node sections once (user tweaks on them are lost). */
+/* The ucode 'digest' module is deliberately NOT used: the package must not
+ * depend on it (it is absent on some OpenWrt builds). Use the same
+ * dependency-free FNV-1a hash as import_link: collision-safe for realistic
+ * node counts and stable across runs. NOTE: hash values differ from the old
+ * md5 ones — the first update after that switch re-created subscription node
+ * sections once (user tweaks on them were lost). */
 function strhash(s) {
 	let h = 2166136261;
 	const n = length(s);

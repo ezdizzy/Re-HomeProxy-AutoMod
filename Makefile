@@ -29,6 +29,7 @@ PKG_LICENSE_FILES:=LICENSE
 
 define Package/luci-app-re-homeproxy/conffiles
 /etc/config/homeproxy
+/etc/config/homecontrol
 /etc/homeproxy/certs/
 /etc/homeproxy/ruleset/
 	/etc/homeproxy/resources/direct_list.txt

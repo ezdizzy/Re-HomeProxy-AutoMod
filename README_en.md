@@ -201,7 +201,7 @@ This mod adds the following on top of the original Re-HomeProxy app:
 - OpenWRT / ImmortalWrt 24.10 or higher (opkg)
 - OpenWRT / ImmortalWrt 25.12 or higher (apk)
 
-Optionally legacy build for 23.05 is available in Releases.
+The OpenWrt 23.05 build is discontinued (branch is EOL): please update OpenWrt to 24.10+.
 
 ## Installation
 
@@ -219,8 +219,8 @@ strategy testing (starts with Hostfakesplit and checks YouTube), the strategy **
 
 Key point: **you are never left without internet** — with no subscription the script switches to direct mode and
 immediately creates a "Source YouTube → Node Zapret" rule. Re-running the script opens a **configuration menu**: add a
-subscription/node, pick the main node, toggle MultiDNS/Automation, retest Zapret strategies, update the core, etc. Works
-on APK (25.12+), opkg (24.10) and 23.05 legacy. Run over SSH on the router:
+subscription/node, pick the main node, toggle MultiDNS/Automation, retest Zapret strategies, set up the Telegram bot and
+parental control, update the core, etc. Works on APK (25.12+) and opkg (24.10). Run over SSH on the router:
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh

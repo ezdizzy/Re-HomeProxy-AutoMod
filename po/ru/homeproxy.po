@@ -5919,10 +5919,10 @@ msgstr "Опрашивает параллельно каждую запись Do
 msgid "Send the secure pool’s DoH/DoT queries through the proxy tunnel (SOCKS5) so your ISP cannot see which sites you look up. Disable to resolve them directly (still encrypted)."
 msgstr "Отправляет DoH/DoT-запросы защищённого пула через туннель прокси (SOCKS5), чтобы провайдер не видел, какие сайты вы ищете. Выключите, чтобы резолвить напрямую (всё ещё шифруется)."
 
-#: htdocs/luci-static/resources/view/homeproxy/client.js
+#: htdocs/luci-static/resources/view/homeproxy/dns.js
 
-msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 120s — lower reacts faster to a bad server but verifies sites more often."
-msgstr "Как часто анализатор опрашивает каждый сервер на задержку, живость и отравление и обновляет тренды. По умолчанию 120 с — меньше значение быстрее реагирует на плохой сервер, но чаще проверяет сайты."
+msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 600s — lower reacts faster to a bad server but verifies sites more often (40–60 s of probing per cycle on weak SoCs)."
+msgstr "Как часто анализатор опрашивает каждый сервер на задержку, живость и отравление и обновляет тренды. По умолчанию 600 с — меньше значение быстрее реагирует на плохой сервер, но чаще проверяет сайты (40–60 с опроса за цикл на слабых SoC)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -8869,10 +8869,6 @@ msgid "not loaded"
 msgstr "не загружен"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
-msgid "updating…"
-msgstr "обновление…"
-
-#: htdocs/luci-static/resources/view/homeproxy/wizard.js
 msgid "error: %s"
 msgstr "ошибка: %s"
 
@@ -9822,11 +9818,6 @@ msgstr "Домены: a.com, b.com (через запятую или пробе�
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "— pick from the catalog —"
-msgstr "— выбрать из каталога —"
-
-#: htdocs/luci-static/resources/view/homeproxy/wizard.js
-
 msgid "ciadpi args, e.g. --disorder 1"
 msgstr "аргументы ciadpi, напр. --disorder 1"
 
@@ -10683,4 +10674,682 @@ msgstr "Проба проверяет ВЕБ-версию через настр�
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 msgid "Rule configured (→ %s) — it serves the Telegram apps (MTProto); the web version rides the node (group fallback)."
 msgstr "Правило (→ %s) настроено — оно обслуживает приложения Telegram (MTProto); веб-версия едет через узел (фолбэк группы)."
+
+msgid "Messengers"
+msgstr "Мессенджеры"
+
+msgid "Social networks"
+msgstr "Соцсети"
+
+msgid "Video & music"
+msgstr "Видео и музыка"
+
+msgid "Gaming platforms"
+msgstr "Игровые платформы"
+
+msgid "Russia: social & video"
+msgstr "Россия: соцсети и видео"
+
+msgid "18+: adult"
+msgstr "18+: для взрослых"
+
+msgid "18+: betting & casinos"
+msgstr "18+: ставки и казино"
+
+msgid "d"
+msgstr "д"
+
+msgid "every day"
+msgstr "каждый день"
+
+msgid "Allowed"
+msgstr "Разрешено"
+
+msgid "Temp block"
+msgstr "Врем. блок"
+
+msgid "Schedule"
+msgstr "Расписание"
+
+msgid "temporarily allowed until"
+msgstr "временно разрешён до"
+
+msgid "allowed now"
+msgstr "сейчас разрешено"
+
+msgid "temporarily blocked until"
+msgstr "временно заблокирован до"
+
+msgid "blocked by a schedule window"
+msgstr "заблокирован по расписанию"
+
+msgid "blocked manually"
+msgstr "заблокирован вручную"
+
+msgid "minutes"
+msgstr "минут"
+
+msgid "hours"
+msgstr "часов"
+
+msgid "days"
+msgstr "дн."
+
+msgid "Access will be restored automatically when the time is up."
+msgstr "Доступ восстановится автоматически, когда время истечёт."
+
+msgid "Enter a positive number"
+msgstr "Введите положительное число"
+
+msgid "Dashboard"
+msgstr "Обзор"
+
+msgid "Devices"
+msgstr "Устройства"
+
+msgid "Site rules"
+msgstr "Правила сайтов"
+
+msgid "Schedules"
+msgstr "Расписания"
+
+msgid "Journal"
+msgstr "Журнал"
+
+msgid "Please wait…"
+msgstr "Подождите…"
+
+msgid "Operation failed"
+msgstr "Операция не удалась"
+
+msgid "Enable control"
+msgstr "Включить контроль"
+
+msgid "Pause all (allow everything)"
+msgstr "Пауза (разрешить всё)"
+
+msgid "Control enabled"
+msgstr "Контроль включён"
+
+msgid "Control disabled"
+msgstr "Контроль выключен"
+
+msgid "Paused — everything is allowed"
+msgstr "Пауза — всё разрешено"
+
+msgid "Enforcement resumed"
+msgstr "Применение возобновлено"
+
+msgid "Temporary block"
+msgstr "Временный блок"
+
+msgid "Temporarily blocked"
+msgstr "Временно заблокирован"
+
+msgid "Control is disabled — the network is unrestricted."
+msgstr "Контроль выключен — сеть не ограничена."
+
+msgid "PAUSED — everything is allowed. Press \"Resume\" to re-enable enforcement."
+msgstr "ПАУЗА — разрешено всё. Нажмите «Продолжить контроль», чтобы снова включить принуждение."
+
+msgid "Control is active: blocks, site rules and schedules are enforced."
+msgstr "Контроль активен: блокировки, правила сайтов и расписания применяются."
+
+msgid "Disable control"
+msgstr "Выключить контроль"
+
+msgid "Resume enforcement"
+msgstr "Продолжить контроль"
+
+msgid "Devices on the network"
+msgstr "Устройств в сети"
+
+msgid "Blocked now"
+msgstr "Заблокировано сейчас"
+
+msgid "Temporary blocks"
+msgstr "Временные блоки"
+
+msgid "New (unconfigured)"
+msgstr "Новые (не добавлены)"
+
+msgid "No managed clients yet — add devices on the Devices pane (they can also be picked from the live network list)."
+msgstr "Управляемых устройств ещё нет — добавьте их на панели «Устройства» (можно выбрать из живого списка сети)."
+
+msgid "no address"
+msgstr "нет адреса"
+
+msgid "Allow internet access again"
+msgstr "Снова разрешить доступ в интернет"
+
+msgid "Full internet block for this device (firewall drop)"
+msgstr "Полный блок интернета этому устройству (firewall drop)"
+
+msgid "Allow"
+msgstr "Разрешить"
+
+msgid "Temporary allow (pokes a hole in the schedule)"
+msgstr "Временно разрешить (дырка в расписании)"
+
+msgid "Temporary allow"
+msgstr "Временное разрешение"
+
+msgid "Temporarily allowed"
+msgstr "Временно разрешён"
+
+msgid "Wi-Fi block is on — click to allow"
+msgstr "Wi-Fi заблокирован — нажмите, чтобы разрешить"
+
+msgid "Block Wi-Fi for this device (wired stays online)"
+msgstr "Запретить Wi-Fi этому устройству (кабель продолжит работать)"
+
+msgid "Wi-Fi block removed"
+msgstr "Блок Wi-Fi снят"
+
+msgid "Wi-Fi blocked for this device"
+msgstr "Wi-Fi заблокирован для устройства"
+
+msgid "The same actions are available from the Telegram bot: /menu (all in buttons), /devices, /blocksite, /pause, /resume, /wifi. Blocks follow DHCP address changes — devices are tracked by MAC."
+msgstr "Те же действия доступны из Telegram-бота: /menu (всё в кнопках), /devices, /blocksite, /pause, /resume, /wifi. Блоки следуют за сменой DHCP-адреса — устройства отслеживаются по MAC."
+
+msgid "Pick a device from the network"
+msgstr "Выберите устройство из сети"
+
+msgid "Alias (e.g. Kid tablet)"
+msgstr "Псевдоним (например, «Планшет ребёнка»)"
+
+msgid "Add device"
+msgstr "Добавить устройство"
+
+msgid "MAC or IP is required"
+msgstr "Требуется MAC или IP"
+
+msgid "Device added"
+msgstr "Устройство добавлено"
+
+msgid "Device"
+msgstr "Устройство"
+
+msgid "Online"
+msgstr "В сети"
+
+msgid "Actions"
+msgstr "Действия"
+
+msgid "No managed devices yet."
+msgstr "Управляемых устройств пока нет."
+
+msgid "Temporary block set"
+msgstr "Временный блок установлен"
+
+msgid "Remove temporary block"
+msgstr "Снять временный блок"
+
+msgid "Temporary block removed"
+msgstr "Временный блок снят"
+
+msgid "Rename"
+msgstr "Переименовать"
+
+msgid "Enter a name"
+msgstr "Введите имя"
+
+msgid "Renamed"
+msgstr "Переименовано"
+
+msgid "Rename device"
+msgstr "Переименовать устройство"
+
+msgid "Remove device"
+msgstr "Удалить устройство"
+
+msgid "from control?"
+msgstr "из-под контроля?"
+
+msgid "Device removed"
+msgstr "Устройство удалено"
+
+msgid "Wi-Fi off"
+msgstr "Wi-Fi выкл"
+
+msgid "Devices are identified by MAC: when the DHCP address changes the block follows the device automatically. The current IP is resolved from the DHCP lease file at every apply."
+msgstr "Устройства отслеживаются по MAC: при смене DHCP-адреса блокировка следует за устройством автоматически. Текущий IP резолвится из файла DHCP-аренд при каждом применении."
+
+msgid "From the network"
+msgstr "Из сети"
+
+msgid "Alias"
+msgstr "Псевдоним"
+
+msgid "IP (static, optional)"
+msgstr "IP (статический, необязательно)"
+
+msgid "Managed devices"
+msgstr "Управляемые устройства"
+
+msgid "Name (optional)"
+msgstr "Название (необязательно)"
+
+msgid "IP / subnets"
+msgstr "IP / подсети"
+
+msgid "Search the service catalog…"
+msgstr "Поиск по каталогу сервисов…"
+
+msgid "No service matches the search."
+msgstr "По запросу ничего не найдено."
+
+msgid "Add rule"
+msgstr "Добавить правило"
+
+msgid "Enter at least one domain or IP"
+msgstr "Введите хотя бы один домен или IP"
+
+msgid "Rule added"
+msgstr "Правило добавлено"
+
+msgid "Scope"
+msgstr "Область"
+
+msgid "Window"
+msgstr "Окно"
+
+msgid "No site rules yet. Use the service chips above for quick blocks (TikTok, Instagram…)."
+msgstr "Правил сайтов нет. Используйте чипы сервисов выше для быстрой блокировки (TikTok, Instagram…)."
+
+msgid "Whole network"
+msgstr "Вся сеть"
+
+msgid "always"
+msgstr "всегда"
+
+msgid "Paused"
+msgstr "На паузе"
+
+msgid "Resume now"
+msgstr "Возобновить сейчас"
+
+msgid "Rule resumed"
+msgstr "Правило возобновлено"
+
+msgid "Pause the rule"
+msgstr "Приостановить правило"
+
+msgid "Pause rule"
+msgstr "Пауза правила"
+
+msgid "Rule paused"
+msgstr "Правило на паузе"
+
+msgid "On"
+msgstr "Вкл"
+
+msgid "Rule disabled"
+msgstr "Правило выключено"
+
+msgid "Rule enabled"
+msgstr "Правило включено"
+
+msgid "Remove rule"
+msgstr "Удалить правило"
+
+msgid "Remove the rule"
+msgstr "Удалить правило"
+
+msgid "Rule removed"
+msgstr "Правило удалено"
+
+msgid "Domain rules are enforced by DNS (the domain stops resolving) — for the whole network or only for the selected devices. IP rules are enforced by the firewall. Pick a service chip to fill the list, or type your own domains."
+msgstr "Правила доменов применяются через DNS (домен перестаёт резолвиться) — на всю сеть или только на выбранные устройства. Правила IP применяются файрволом. Нажмите чип сервиса, чтобы заполнить список, или введите свои домены."
+
+msgid "Name"
+msgstr "Название"
+
+msgid "Targets (one per line)"
+msgstr "Цели (по одной в строке)"
+
+msgid "Days (empty = every day)"
+msgstr "Дни (пусто = каждый день)"
+
+msgid "From (time)"
+msgstr "С (время)"
+
+msgid "To (time)"
+msgstr "По (время)"
+
+msgid "Date from"
+msgstr "Дата с"
+
+msgid "Date to"
+msgstr "Дата до"
+
+msgid "Apply to devices (empty = whole network)"
+msgstr "Применять к устройствам (пусто = вся сеть)"
+
+msgid "Name (e.g. Lessons)"
+msgstr "Название (например, «Уроки»)"
+
+msgid "Daily (time window each day)"
+msgstr "Ежедневно (окно времени каждый день)"
+
+msgid "By days of the week"
+msgstr "По дням недели"
+
+msgid "Date range (all day)"
+msgstr "Диапазон дат (целые дни)"
+
+msgid "One-shot (date + time)"
+msgstr "Одноразовое (дата + время)"
+
+msgid "Block during the window (allowed outside)"
+msgstr "Блокировать в окне (вне окна — разрешено)"
+
+msgid "Allow only during the window (blocked outside)"
+msgstr "Разрешать только в окне (вне окна — заблокировано)"
+
+msgid "During the window the bound devices (and Wi-Fi) are BLOCKED; outside it everything is allowed."
+msgstr "В окне привязанные устройства (и Wi-Fi) ЗАБЛОКИРОВАНЫ; вне окна всё разрешено."
+
+msgid "During the window the bound devices (and Wi-Fi) are ALLOWED; outside it they are blocked."
+msgstr "В окне привязанные устройства (и Wi-Fi) РАЗРЕШЕНЫ; вне окна — заблокированы."
+
+msgid "Lessons (school hours)"
+msgstr "Уроки (учебное время)"
+
+msgid "Night sleep"
+msgstr "Ночной сон"
+
+msgid "Evening, weekdays only"
+msgstr "Вечер, только будни"
+
+msgid "Add schedule"
+msgstr "Добавить расписание"
+
+msgid "Bind at least one device or Wi-Fi network"
+msgstr "Привяжите хотя бы одно устройство или сеть Wi-Fi"
+
+msgid "Schedule added"
+msgstr "Расписание добавлено"
+
+msgid "Daily"
+msgstr "Ежедневно"
+
+msgid "Date range"
+msgstr "Диапазон дат"
+
+msgid "One-shot"
+msgstr "Разовый"
+
+msgid "Bound to"
+msgstr "Привязано к"
+
+msgid "No schedules yet — pick a template above, adjust and bind devices."
+msgstr "Расписаний нет — выберите шаблон выше, скорректируйте и привяжите устройства."
+
+msgid "In window now"
+msgstr "Сейчас в окне"
+
+msgid "Schedule disabled"
+msgstr "Расписание выключено"
+
+msgid "Schedule enabled"
+msgstr "Расписание включено"
+
+msgid "Remove schedule"
+msgstr "Удалить расписание"
+
+msgid "Remove the schedule"
+msgstr "Удалить расписание"
+
+msgid "Schedule removed"
+msgstr "Расписание удалено"
+
+msgid "Allow only in window"
+msgstr "Разрешено только в окне"
+
+msgid "Block in window"
+msgstr "Блок в окне"
+
+msgid "A schedule binds devices and/or Wi-Fi networks to a time window. Templates are prefilled examples — adjust before saving. Windows may cross midnight (22:00 → 07:00)."
+msgstr "Расписание привязывает устройства и/или сети Wi-Fi к временному окну. Шаблоны — готовые примеры, скорректируйте перед сохранением. Окна могут переходить через полночь (22:00 → 07:00)."
+
+msgid "From"
+msgstr "С"
+
+msgid "To"
+msgstr "По"
+
+msgid "Days of the week (for the \"By days\" type)"
+msgstr "Дни недели (для типа «По дням недели»)"
+
+msgid "Wi-Fi networks"
+msgstr "Сети Wi-Fi"
+
+msgid "Wi-Fi status is unavailable (no radios?)."
+msgstr "Статус Wi-Fi недоступен (нет радиомодулей?)."
+
+msgid "Turn off"
+msgstr "Выключить"
+
+msgid "Turn on"
+msgstr "Включить"
+
+msgid "Wi-Fi turned off"
+msgstr "Wi-Fi выключен"
+
+msgid "Wi-Fi turned on"
+msgstr "Wi-Fi включён"
+
+msgid "Turn off temporarily"
+msgstr "Выключить на время"
+
+msgid "Wi-Fi off for"
+msgstr "Wi-Fi выключить на"
+
+msgid "Wi-Fi will turn back on automatically"
+msgstr "Wi-Fi включится обратно автоматически"
+
+msgid "Cancel the temporary off"
+msgstr "Отменить временное выключение"
+
+msgid "Temporary off removed"
+msgstr "Временное выключение отменено"
+
+msgid "Manual switching is never overridden by schedules (the enforcer only touches what it switched itself). For time-based Wi-Fi control create a schedule and bind Wi-Fi networks on the Schedules pane."
+msgstr "Ручное переключение никогда не перехватывается расписаниями (исполнитель трогает только то, что переключил сам). Для Wi-Fi по времени создайте расписание и привяжите сети Wi-Fi на панели «Расписания»."
+
+msgid "Wireless networks"
+msgstr "Беспроводные сети"
+
+msgid "The journal is empty."
+msgstr "Журнал пуст."
+
+msgid "Clear the journal"
+msgstr "Очистить журнал"
+
+msgid "Clear the events journal? The service log is not touched."
+msgstr "Очистить журнал событий? Журнал службы не затрагивается."
+
+msgid "Refresh log"
+msgstr "Обновить журнал службы"
+
+msgid "Events"
+msgstr "События"
+
+msgid "Service log"
+msgstr "Журнал службы"
+
+msgid "How it works"
+msgstr "Как это работает"
+
+msgid "Blocked devices lose all internet access (firewall drop, including intercepted traffic). Site rules stop the domain resolving (DNS) or drop the IP — globally, or only for the selected devices."
+msgstr "Заблокированные устройства теряют доступ в интернет (дроп в файрволе, включая перехваченный трафик). Правила сайтов прекращают резолв домена (DNS) или дропают IP — глобально или только для выбранных устройств."
+
+msgid "The Wi-Fi button blocks only the Wi-Fi network for that device (wired stays online); a manual block is the FULL internet block. The ✅ button temporarily ALLOWS a device for a while — a hole in the schedule that closes itself. Neither overrides a manual block."
+msgstr "Кнопка Wi-Fi блокирует только Wi-Fi-сеть устройства (провод остаётся онлайн); кнопка «Блок» — ПОЛНАЯ блокировка интернета. Кнопка ✅ ВРЕМЕННО разрешает устройство — «дырка» в расписании, закрывается сама. Ни одна не отменяет ручную блокировку."
+
+msgid "Schedules apply blocks during (or only during) a time window; Wi-Fi networks can be scheduled the same way. The watcher re-applies the state every minute — schedule boundaries take effect within a minute."
+msgstr "Расписания применяют блокировку в (или только в) временном окне; Wi-Fi-сети планируются так же. Сторож переприменяет состояние каждую минуту — границы окон срабатывают в течение минуты."
+
+msgid "Honest limitations: per-client DNS filtering is IPv4; DNS-over-HTTPS of a savvy child theoretically bypasses domain rules (DoT/DoQ are blocked); a device without MAC/IP cannot be filtered; Windows/MAC randomization changes the MAC — re-add the device then."
+msgstr "Честные ограничения: per-client DNS-фильтрация — IPv4; DNS-over-HTTPS теоретически обходит правила доменов (DoT/DoQ заблокированы); устройство без MAC/IP отфильтровать нельзя; рандомизация MAC в устройствах меняет MAC — добавьте устройство заново."
+
+msgid "The Telegram bot controls the same state: /menu (everything in buttons), /devices, /blocksite <domain> [device No], /pause, /resume, /wifi. Pushes: blocks, schedule windows, Wi-Fi events, new devices."
+msgstr "Telegram-бот управляет тем же состоянием: /menu (всё в кнопках), /devices, /blocksite <домен> [№ устройства], /pause, /resume, /wifi. Пуши: блокировки, окна расписаний, события Wi-Fi, новые устройства."
+
+msgid "Control"
+msgstr "Контроль"
+
+msgid "Another core is being installed — waiting for it to finish…"
+msgstr "Идёт установка другого ядра — ждём её завершения…"
+
+msgid "Starting the install..."
+msgstr "Запускаю установку…"
+
+msgid "Failed to start the install"
+msgstr "Не удалось запустить установку"
+
+msgid "Bot status"
+msgstr "Состояние бота"
+
+msgid "Chat"
+msgstr "Чат"
+
+msgid "not bound yet — send any message to the bot"
+msgstr "не привязан — отправьте боту любое сообщение"
+
+msgid "Pushes"
+msgstr "Пуши"
+
+msgid "muted"
+msgstr "заглушены"
+
+msgid "on"
+msgstr "вкл"
+
+msgid "Long-poll timeout"
+msgstr "Таймаут long-poll"
+
+msgid "Push interval"
+msgstr "Интервал пушей"
+
+msgid "Connection"
+msgstr "Подключение"
+
+msgid "The daemon instance is always running; it re-reads these settings on its own — saving never restarts the service."
+msgstr "Инстанс демона работает всегда; он сам перечитывает эти настройки — сохранение службу не рестартует."
+
+msgid "Bot token"
+msgstr "Токен бота"
+
+msgid "Chat ID"
+msgstr "ID чата"
+
+msgid "Leave empty — the first message to the bot binds your chat automatically. Get the token from @BotFather."
+msgstr "Оставьте пустым — первое сообщение боту привяжет чат автоматически. Токен — у @BotFather."
+
+msgid "Push notifications"
+msgstr "Пуш-уведомления"
+
+msgid "Pushes watch the router state files; \"Mute\" silences pushes only — commands keep working."
+msgstr "Пуши наблюдают за файлами-стейтами роутера; «Выключить пуш-уведомления» глушит только пуши — команды продолжают работать."
+
+msgid "Control: blocks, schedules, Wi-Fi, new devices"
+msgstr "Контроль: блокировки, расписания, Wi-Fi, новые устройства"
+
+msgid "Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Parental control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat."
+msgstr "Управление из вашего Telegram-чата. Роутер: /status, /nodes, /switch N (переключение выхода без рестарта), /service, /snapshot, /status_engine, /connections, /close. Родительский контроль: /menu (всё в кнопках), /devices (блок / временный блок / временное разрешение / блок Wi-Fi), /blocksite, /pause, /resume, /wifi. Пуш-уведомления следят за файлами состояния роутера; демон всегда запущен и сам перечитывает эти настройки — сохранение не перезапускает службу. Токен — от @BotFather; первое сообщение боту привязывает ваш чат."
+
+msgid "Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). \"Mute\" silences pushes only — commands keep working."
+msgstr "Пуши: смены узлов Hot Swap, мёртвые узлы URLTest (и восстановления), обучение автоматизации и самолечения, отказы ядра — и всё по родительскому контролю (блокировки, истечение временных блоков/разрешений, окна расписаний, Wi-Fi, новые устройства в сети). «Тише» выключает только пуши — команды продолжают работать."
+
+msgid "Telegram Bot"
+msgstr "Telegram-бот"
+
+msgid "The Telegram bot settings moved to the dedicated \"Telegram Bot\" page in the main menu — the bot keeps growing (router control, parental control, pushes) and no longer fits a wizard sub-tab."
+msgstr "Настройки Telegram-бота переехали на отдельную страницу «Telegram-бот» в главном меню — бот растёт (управление роутером, родительский контроль, пуши) и больше не помещается на под-вкладке Мастера."
+
+msgid "one per line: example.com"
+msgstr "по одному в строке: example.com"
+
+msgid "wildcards: *.example.com"
+msgstr "поддомены: *.example.com"
+
+msgid "for IPs: 1.2.3.4 or 1.2.3.0/24"
+msgstr "для IP: 1.2.3.4 или 1.2.3.0/24"
+
+msgid "What serves what right now"
+msgstr "Что чем обслуживается сейчас"
+
+msgid "Serving strategy"
+msgstr "Обслуживающая стратегия"
+
+msgid "The map is live: the rule column shows where the resource is routed, the strategy column — the engine and the strategy actually serving it now; «Check» probes the resource through the configured path (YouTube checks the page, the thumbnail CDN and the video-stream edge)."
+msgstr "Карта живая: колонка правила показывает, куда направлен ресурс, колонка стратегии — движок и стратегию, которая обслуживает его прямо сейчас; «Проверить» пробует ресурс через настроенный путь (YouTube проверяется по странице, CDN превью и видео-ребру)."
+
+msgid "no strategy set"
+msgstr "стратегия не задана"
+
+msgid "Rides %s — no DPI strategy applies."
+msgstr "Идёт через %s — DPI-стратегия не применяется."
+
+msgid "Catch-all: main path / mass lists."
+msgstr "Всё остальное: основной путь / массовые списки."
+
+msgid "No rule — rides the main path or the mass lists."
+msgstr "Правила нет — идёт основным путём или через массовые списки."
+
+msgid "catch-all — unmatched traffic"
+msgstr "всё остальное — трафик без правил"
+
+msgid "pilot: %s"
+msgstr "автопилот: %s"
+
+msgid "Probing %s through the configured path…"
+msgstr "Проверяю %s через настроенный путь…"
+
+msgid "Live check — %s:"
+msgstr "Живая проверка — %s:"
+
+msgid "A failed sub-check means the resource does NOT work entirely — pick another strategy for it in the Strategy Lab below."
+msgstr "Провал под-проверки значит, что ресурс НЕ работает целиком — подберите ему другую стратегию в Лаборатории ниже."
+
+msgid "Custom args (not in the catalog)"
+msgstr "Своя строка (нет в каталоге)"
+
+msgid "Saving the composition draft failed: %s — the builder still works, the draft just will not survive a reload."
+msgstr "Не удалось сохранить черновик композиции: %s — конструктор работает, но черновик не переживёт перезагрузку страницы."
+
+msgid "Best strategies (last fuzz)"
+msgstr "Лучшие стратегии (последний фаззинг)"
+
+msgid "Deep-checking the top strategies (page/CDN/media fetches)… %d of %d"
+msgstr "Глубокая проверка лидеров (страница/CDN/медиа)… %d из %d"
+
+msgid "No fuzz ranking yet — run the fuzzer above; the ranked list stays here until the next run."
+msgstr "Ранжирования ещё нет — запустите фаззинг выше; список остаётся здесь до следующего запуска."
+
+msgid "Resource loads"
+msgstr "Ресурс грузится"
+
+msgid "Apply for"
+msgstr "Применить для"
+
+msgid "— whole Zapret —"
+msgstr "— весь Zapret —"
+
+msgid "General"
+msgstr "Общий"
+
+msgid "Apply this Zapret strategy globally (every flow routed to Zapret) and restart the service?"
+msgstr "Применить эту стратегию Zapret глобально (весь трафик, направленный в Zapret) и перезапустить службу?"
+
+msgid "Apply this strategy for %s: the rule goes to Zapret, the strategy applies with a server snapshot, then the resource is checked live. Continue?"
+msgstr "Применить эту стратегию для «%s»: правило уйдёт на Zapret, стратегия применится со снимком на сервере, затем ресурс проверится живьём. Продолжить?"
+
+msgid "Applying %s for %s — progress below…"
+msgstr "Применяю %s для «%s» — прогресс ниже…"
+
+msgid "Resource loads as a whole: "
+msgstr "Ресурс грузится целиком: "
 

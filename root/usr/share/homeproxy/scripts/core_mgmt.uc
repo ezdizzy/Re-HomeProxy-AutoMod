@@ -7,7 +7,7 @@
 
 'use strict';
 
-import { access, popen, readfile } from 'fs';
+import { access, popen, readfile, writefile, rename, stat, mkdir, unlink, opendir } from 'fs';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -106,6 +106,30 @@ function bin_bytes(path) {
 	return v || 0;
 }
 
+/* Version-probe cache (tmpfs). Probing a core's `version` costs 1.5–3 s for
+ * a UPX/packed binary (hiddify-core) and runs on EVERY page of the app
+ * (rpcd singbox_get_features) and in every core_mgmt 'info' — the cache
+ * turns those into instant reads. Entries are validated against the
+ * binary's mtime+size: replacing the core invalidates its entry. The same
+ * file/schema is used by rpcd's singbox_get_features (lesson 44: fs.stat
+ * fields carry NO st_ prefix). */
+const VERSION_CACHE = '/var/run/homeproxy/core_versions.json';
+
+function read_version_cache() {
+	if (!access(VERSION_CACHE))
+		return {};
+	let cache;
+	try { cache = json(readfile(VERSION_CACHE) || ''); } catch (e) { cache = null; }
+	return (cache && type(cache) == 'object') ? cache : {};
+}
+
+function write_version_cache(cache) {
+	mkdir('/var/run/homeproxy');
+	const tmp = VERSION_CACHE + '.tmp';
+	writefile(tmp, sprintf('%.J', cache) + '\n');
+	rename(tmp, VERSION_CACHE);
+}
+
 /* Parse a core's version output into display + capability info. Tags are
  * the only reliable capability source: e.g. sing-box-extended ships
  * WITHOUT with_naive_outbound (NaïveProxy dropped), while hiddify-core
@@ -129,6 +153,9 @@ function core_features(bin) {
 	if (tm)
 		for (let t in split(tm[1], ','))
 			tags[trim(t)] = true;
+	/* tags stored in the cached info as well: rpcd's singbox_get_features
+	 * shares this cache and needs the tag map (hp_core_info consumers). */
+	info.tags = tags;
 	info.naive = ('with_naive_outbound' in tags);
 	info.quic = ('with_quic' in tags);
 	info.wireguard = ('with_wireguard' in tags);
@@ -146,6 +173,25 @@ function core_features(bin) {
 	return info;
 }
 
+/* Cached wrapper: stat the binary, return the cached probe result when the
+ * file is unchanged, probe+store otherwise. A probe that yields no version
+ * is NOT cached (a transient failure must not stick). */
+function core_features_cached(bin) {
+	const st = stat(bin);
+	if (!st)
+		return {};
+	const cache = read_version_cache();
+	const e = cache[bin];
+	if (e && e.mtime == st.mtime && e.size == st.size && e.info && e.info.version)
+		return e.info;
+	const info = core_features(bin);
+	if (info && info.version) {
+		cache[bin] = { mtime: st.mtime, size: st.size, info: info };
+		write_version_cache(cache);
+	}
+	return info;
+}
+
 const action = ARGV[0];
 let result;
 
@@ -159,11 +205,12 @@ let result;
 		const ram_free_kb = free_ram_kb();
 
 		/* Parse a core's version output into display + capability info —
-		 * core_features() (top of file) is wrapper-aware for lite builds. */
+		 * core_features_cached() (top of file) is wrapper-aware for lite
+		 * builds and reuses the shared version cache. */
 		const hiddify_installed = !!access('/usr/bin/hiddify-core');
 		const singbox_installed = !!access('/usr/bin/sing-box');
-		const hid_f = hiddify_installed ? core_features('/usr/bin/hiddify-core') : {};
-		const sb_f  = singbox_installed ? core_features('/usr/bin/sing-box') : {};
+		const hid_f = hiddify_installed ? core_features_cached('/usr/bin/hiddify-core') : {};
+		const sb_f  = singbox_installed ? core_features_cached('/usr/bin/sing-box') : {};
 
 		result = {
 			pkg_manager, arch, tmp_free_kb, overlay_free_kb, ram_free_kb,
@@ -494,7 +541,8 @@ let result;
 		const is_wrapper = access(sb) && bin_bytes(sb) < LITE_WRAPPER_MAX_BYTES;
 		let is_lite = is_wrapper;
 		if (!is_wrapper && access(sb)) {
-			const f = core_features(sb);
+			/* cached wrapper is mtime/size-validated — a replaced binary re-probes */
+			const f = core_features_cached(sb);
 			is_lite = !!f.extended && !f.wrapper && (f.lite ?? false);
 		}
 		if (!access(sb)) {

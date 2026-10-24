@@ -213,10 +213,10 @@ return view.extend({
 		so.depends({ 'enabled': '1', 'use_secure': '1' });
 
 		so = ss.option(form.Value, 'bench_interval', _('Quality check interval (seconds)'),
-			_('How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 120s — lower reacts faster to a bad server but verifies sites more often.'));
+			_('How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 600s — lower reacts faster to a bad server but verifies sites more often (40–60 s of probing per cycle on weak SoCs).'));
 		so.datatype = 'uinteger';
-		so.default = '120';
-		so.placeholder = '120';
+		so.default = '600';
+		so.placeholder = '600';
 		so.rmempty = false;
 		/* Visible with EITHER pool: single-pool setups still run the analyzer. */
 		so.depends({ 'enabled': '1', 'use_plain': '1' });

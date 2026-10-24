@@ -23,13 +23,12 @@
  *   (wizard_strategy_update/status/apply via wizard_strategies.uc) and the
  *   mutation generator (wizard_fuzz_generate), plus the
  *   «apply strategy → service rule → live check» chain.
- *   «Дополнительно» (Ф6) — the Telegram bot v2 (settings/status/test via
- *   telegram_status/set/test RPCs; the always-on telegram.uc daemon
- *   hot-reloads UCI, so saving never restarts the service) and (Ф7, D8)
- *   the TG WS Proxy card: READ-ONLY detection of the third-party
- *   tg-ws-proxy-rs bridge (and the d0mhate Go variant), its --check
- *   self-diagnostics, the official installer (digests verified by the
- *   installer from the GitHub release API) and the tg:// link.
+ *   «Дополнительно» (plan 15) — the TG WS Proxy card: READ-ONLY detection
+ *   of the third-party tg-ws-proxy-rs bridge (and the d0mhate Go variant),
+ *   its --check self-diagnostics, the official installer (digests verified
+ *   by the installer from the GitHub release API) and the tg:// link.
+ *   The Telegram bot settings (Ф6) moved to the dedicated "Telegram Bot"
+ *   main-menu page (telegram.js) — the bot outgrew a wizard sub-tab.
  *
  * Checks are on-demand (D6 pattern): nothing monitors permanently here —
  * the user runs the diagnostics when they need an answer.
@@ -198,11 +197,32 @@ const callByedpiTest = rpc.declare({
 });
 
 /* Ф8-F7 T3: one-click strategy auto-pick — fuzz → pick per resource →
- * rule (optional) → apply (server snapshot) → live verify. */
+ * rule (optional) → apply (server snapshot) → live verify. ч.109: an
+ * explicit `strategy` skips the fuzz+pick stages (the «apply from the
+ * ranking table» flow reuses the same rule/apply/verify machinery). */
 const callAutoPickStart = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'wizard_auto_pick_start',
-	params: [ 'resource', 'mode', 'set_rule' ],
+	params: [ 'resource', 'mode', 'set_rule', 'strategy' ],
+	expect: { '': {} }
+});
+
+/* ч.109: composition DRAFT persistence — the server keeps the per-resource
+ * profile list, so the builder survives page reloads. */
+const callComposeSave = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_compose_save',
+	params: [ 'profiles' ],
+	expect: { '': {} }
+});
+
+/* ч.109: router-originated live probe of a DPI resource through the
+ * configured path — the Serving map «Check» button (YouTube is probed
+ * on the page, the thumbnail CDN and the video-stream edge). */
+const callDpiProbe = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_dpi_probe',
+	params: [ 'resource' ],
 	expect: { '': {} }
 });
 
@@ -256,27 +276,10 @@ const callComposeRollback = rpc.declare({
 	expect: { '': {} }
 });
 
-/* ── Telegram bot v2 (Ф6): settings/status/test — on demand (D6) ────────── */
-
-const callTelegramStatus = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'telegram_status',
-	expect: { '': {} }
-});
-
-const callTelegramSet = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'telegram_set',
-	params: [ 'enabled', 'token', 'chat_id', 'mute', 'push_hotswap', 'push_watchdog',
-		'push_learn', 'push_service', 'poll_timeout', 'push_interval' ],
-	expect: { '': {} }
-});
-
-const callTelegramTest = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'telegram_test',
-	expect: { '': {} }
-});
+/* ── Telegram bot settings moved OUT of the Wizard (plan 15): the bot
+ * keeps growing (router control, parental control, pushes) and got its own
+ * main-menu page "Telegram Bot" (admin/services/homeproxy/telegram). The
+ * TG WS Proxy card below stays on this pane. ───────────────────────────── */
 
 /* Custom domain lists (Ф7/D6): the manual proxy/direct domain lists —
  * routing inputs the generator merges with the learned lists. Formerly
@@ -644,6 +647,10 @@ return view.extend({
 		/* ── DPI pane ──────────────────────────────────────────────────── */
 		const dpiBanner = E('div', {});
 		const dpiCards = E('div', { 'class': 'hpui-cards' });
+		/* ч.109: the Serving map — what actually serves each resource right
+		 * now (rule → engine → strategy → last check), the user complaint
+		 * «не видно какие реально сейчас используются стратегии». */
+		const dpiMap = E('div', {});
 		const dpiStrategy = E('div', {});
 		const dpiLab = E('div', {});
 		const dpiCorpus = E('div', {});
@@ -653,6 +660,8 @@ return view.extend({
 			[ _('Zapret (nfqws2) and ByeDPI fragment or fake the traffic of the services routed to them — pick a strategy, test it against your ISP in the Strategy Lab, then send a service through the engine and verify live. Everything here runs on the router; results appear below, in one place.') ]));
 		panes.dpi.appendChild(dpiBanner);
 		panes.dpi.appendChild(dpiCards);
+		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('What serves what right now') ]));
+		panes.dpi.appendChild(dpiMap);
 		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy') ]));
 		panes.dpi.appendChild(dpiStrategy);
 		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy Lab') ]));
@@ -662,160 +671,10 @@ return view.extend({
 		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Results') ]));
 		panes.dpi.appendChild(dpiResult);
 
-		/* ── Advanced pane (Ф6): Telegram bot v2 — on-demand checks ────── */
-		const tgStatus = E('div', { 'class': 'wiz-row' });
-		const tgResult = E('div', {});
-
-		const tgEnabled = E('input', { type: 'checkbox' });
-		const tgMute = E('input', { type: 'checkbox' });
-		const tgToken = E('input', {
-			type: 'password', 'class': 'cbi-input-text', style: 'flex:1 1 260px',
-			placeholder: _('BotFather token (kept if left empty)')
-		});
-		const tgClearToken = E('input', { type: 'checkbox' });
-		const tgChat = E('input', {
-			type: 'text', 'class': 'cbi-input-text', style: 'flex:1 1 260px',
-			placeholder: _('chat_id (leave empty — the first message to the bot pins the chat)')
-		});
-		const tgPushHs = E('input', { type: 'checkbox' });
-		const tgPushWd = E('input', { type: 'checkbox' });
-		const tgPushLr = E('input', { type: 'checkbox' });
-		const tgPushSv = E('input', { type: 'checkbox' });
-		const tgPoll = E('input', { type: 'number', min: '5', max: '60', style: 'width:90px', 'class': 'cbi-input-text' });
-		const tgPival = E('input', { type: 'number', min: '1', max: '30', style: 'width:90px', 'class': 'cbi-input-text' });
-
-		const tgU = (opt, def) => {
-			const v = uci.get('homeproxy', 'telegram', opt);
-			return (v != null && String(v).length && String(v) !== '0') ? String(v) : def;
-		};
-		tgEnabled.checked = (tgU('enabled', '0') === '1');
-		tgMute.checked = (tgU('mute', '0') === '1');
-		tgPushHs.checked = (tgU('push_hotswap', '1') === '1');
-		tgPushWd.checked = (tgU('push_watchdog', '1') === '1');
-		tgPushLr.checked = (tgU('push_learn', '1') === '1');
-		tgPushSv.checked = (tgU('push_service', '1') === '1');
-		tgPoll.value = tgU('poll_timeout', '25');
-		tgPival.value = tgU('push_interval', '2');
-		tgChat.value = tgU('chat_id', '');
-
-		const tgLabel = (input, text) => E('label', {
-			style: 'display:inline-flex;align-items:center;gap:5px;white-space:nowrap'
-		}, [ input, E('span', {}, [ text ]) ]);
-
-		function renderTelegramStatus(st) {
-			st = st || {};
-			let state;
-			if (st.running && st.enabled)
-				state = badge('hpui-b-green', _('Bot is running'));
-			else if (st.running && !st.enabled)
-				state = badge('hpui-b-grey', _('Daemon idle — bot disabled'));
-			else
-				state = badge('hpui-b-red', _('Daemon is not running'));
-			const bits = [
-				state,
-				' ',
-				st.chat_id ? E('span', {}, [ _('Chat: ') + String(st.chat_id) ])
-					: E('span', { style: 'opacity:.8' }, [ _('Chat: not bound yet') ]),
-				st.muted ? E('span', {}, [ ' · ', _('pushes muted') ]) : E('span', {}, [ ' · ', _('pushes on') ]),
-				E('span', {}, [ ' · ' + _('long-poll') + ' ' + (st.poll_timeout || 25) + ' s · ' +
-					_('push gap') + ' ' + (st.push_interval || 2) + ' s' ])
-			];
-			dom.content(tgStatus, E('span', {}, bits));
-		}
-
-		function checkTelegram() {
-			return L.resolveDefault(callTelegramStatus(), {}).then(function(st) {
-				renderTelegramStatus(st);
-			});
-		}
-
-		const tgSaveBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Save bot settings') ]);
-		const tgTestBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Send test message') ]);
-		const tgCheckBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Check status') ]);
-
-		tgSaveBtn.addEventListener('click', function() {
-			tgSaveBtn.disabled = true;
-			callTelegramSet(
-				tgEnabled.checked ? '1' : '0',
-				tgClearToken.checked ? '!' : String(tgToken.value || '').trim(),
-				String(tgChat.value || '').trim(),
-				tgMute.checked ? '1' : '0',
-				tgPushHs.checked ? '1' : '0',
-				tgPushWd.checked ? '1' : '0',
-				tgPushLr.checked ? '1' : '0',
-				tgPushSv.checked ? '1' : '0',
-				String(tgPoll.value || '25'),
-				String(tgPival.value || '2')
-			).then(function(r) {
-				dom.content(tgResult, E('p', { 'class': 'hpui-hint' },
-					(!r || r.result === false)
-						? [ _('Save failed: ') + ((r && r.error) || _('rpc error')) ]
-						: [ _('Saved. The bot re-reads its settings within ~15 s — no service restart needed.') ]));
-				return checkTelegram();
-			}).finally(function() { tgSaveBtn.disabled = false; });
-		});
-
-		tgTestBtn.addEventListener('click', function() {
-			tgTestBtn.disabled = true;
-			dom.content(tgResult, E('p', { 'class': 'hpui-hint' }, [ _('Checking...') ]));
-			L.resolveDefault(callTelegramTest(), {}).then(function(r) {
-				let txt;
-				if (r && r.bot_username)
-					txt = _('Bot: @') + r.bot_username;
-				else
-					txt = _('Bot check failed');
-				if (r && r.result !== false) {
-					if (r.sent === true)
-						txt += ' · ' + _('test message sent — check your chat');
-					else if (r.error === 'no chat yet')
-						txt += ' · ' + _('no chat bound yet — send any message to the bot first');
-					else if (r.sent === false)
-						txt += ' · ' + _('test message NOT sent');
-				} else {
-					txt += ((r && r.error) ? (' · ' + r.error) : '');
-				}
-				dom.content(tgResult, E('p', { 'class': 'hpui-hint' }, [ txt ]));
-				return checkTelegram();
-			}).finally(function() { tgTestBtn.disabled = false; });
-		});
-
-		tgCheckBtn.addEventListener('click', function() {
-			tgCheckBtn.disabled = true;
-			checkTelegram().finally(function() { tgCheckBtn.disabled = false; });
-		});
-
-		const tgRow1 = E('div', { 'class': 'wiz-row' }, [
-			tgLabel(tgEnabled, _('Enable Telegram bot')),
-			tgLabel(tgMute, _('Mute push notifications'))
-		]);
-		const tgRow2 = E('div', { 'class': 'wiz-row' }, [
-			tgToken,
-			tgLabel(tgClearToken, _('remove stored token'))
-		]);
-		const tgRow3 = E('div', { 'class': 'wiz-row' }, [ tgChat ]);
-		const tgRow4 = E('div', { 'class': 'wiz-row' }, [
-			tgLabel(tgPushHs, _('Hot Swap node changes / failback')),
-			tgLabel(tgPushWd, _('URLTest dead nodes')),
-			tgLabel(tgPushLr, _('Automation learned blocks')),
-			tgLabel(tgPushSv, _('Service faults'))
-		]);
-		const tgRow5 = E('div', { 'class': 'wiz-row' }, [
-			E('span', {}, [ _('Long-poll timeout, s') + ' ' ]), tgPoll,
-			E('span', {}, [ _('Min gap between pushes, s') + ' ' ]), tgPival
-		]);
-		const tgRow6 = E('div', { 'class': 'wiz-toolbar' }, [ tgSaveBtn, tgTestBtn, tgCheckBtn ]);
-
+		/* ── Advanced pane (plan 15): the Telegram bot settings block moved
+		 * to the dedicated "Telegram Bot" main-menu page. ─────────────── */
 		panes.extra.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Remote control from your Telegram chat: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /mute. Push notifications watch the router state files — Hot Swap node changes, dead URLTest nodes, automation learning and service faults. The daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat.') ]));
-		panes.extra.appendChild(tgStatus);
-		panes.extra.appendChild(tgRow1);
-		panes.extra.appendChild(tgRow2);
-		panes.extra.appendChild(tgRow3);
-		panes.extra.appendChild(tgRow4);
-		panes.extra.appendChild(tgRow5);
-		panes.extra.appendChild(tgRow6);
-		panes.extra.appendChild(tgResult);
-		checkTelegram();
+			[ _('The Telegram bot settings moved to the dedicated "Telegram Bot" page in the main menu — the bot keeps growing (router control, parental control, pushes) and no longer fits a wizard sub-tab.') ]));
 
 		/* Badge / text helpers ─────────────────────────────────────────── */
 		const badge = (cls, text) => E('span', { 'class': 'hpui-badge ' + cls }, [ text ]);
@@ -1384,11 +1243,12 @@ return view.extend({
 		const state = { data: null, pendingCheck: null, presetsSig: null, scanSig: null,
 			dpiSig: null, stratSig: null, fuzzSig: null, corpusSig: null, prevSig: null,
 			dpiPendingCheck: null,
-			/* Ф8-F4 composition builder: session-local profile draft (the
-			 * APPLIED state lives on the server), the built args of the last
-			 * server test, poll signatures. */
+			/* Ф8-F4 composition builder: the profile draft is PERSISTED on the
+			 * server (ч.109) — compDirty guards the one-time seed from it. */
 			compProfiles: [ { engine: 'zapret', resource: 'youtube', domains: '', strategy: '' } ],
-			compBuilt: null, composeSig: null, composeSeeded: false, rbSig: null };
+			compBuilt: null, composeSig: null, composeSeeded: false, rbSig: null,
+			compSeeded: false, compDirty: false, compSaveError: null,
+			mapSig: null, fuzzShownSig: null };
 
 		function nodeText(node) {
 			if (node === 'main-out') return _('Same as main node');
@@ -1844,8 +1704,16 @@ return view.extend({
 				const zn = document.getElementById('wiz-zapnum');
 				zn.textContent = engineText(z);
 				zn.className = 'hpui-num ' + engineClass(z);
-				document.getElementById('wiz-zapnote').textContent =
-					z.strategy ? shortStrategy(z.strategy, 110) : '—';
+				/* ч.109: the NAME first («какая стратегия работает»), the raw
+				 * args stay one click away in the title tooltip. */
+				const znTitle = z.strategy
+					? ((z.strategy_name ? z.strategy_name + '\n' : '') + z.strategy)
+					: '';
+				const znSpan = document.getElementById('wiz-zapnote');
+				znSpan.textContent = z.strategy
+					? ((z.strategy_name ? z.strategy_name + ' · ' : '') + shortStrategy(z.strategy, 90))
+					: '—';
+				znSpan.title = znTitle;
 				const bn = document.getElementById('wiz-bnum');
 				bn.textContent = engineText(b);
 				bn.className = 'hpui-num ' + engineClass(b);
@@ -1871,6 +1739,129 @@ return view.extend({
 			document.getElementById('wiz-zapq').textContent = z.enabled
 				? (' · NFQUEUE: ' + (q.packets || 0) + ' pkts / ' + fmtBytes(q.bytes))
 				: '';
+		}
+
+		/* ── ч.109: Serving map — per-resource live view: rule → engine →
+		 * strategy → last health check. Everything the user complained was
+		 * invisible («какая стратегия работает, какая нет»). Data is merged
+		 * from dpi_status + preset rules + the auto-pilot probe journal. */
+		const MAP_ROWS = [
+			[ 'youtube', 'YouTube' ],
+			[ 'discord', 'Discord' ],
+			[ 'telegram', _('Telegram (TLS)') ],
+			[ 'general', _('General (catch-all)') ]
+		];
+		const mapBody = E('tbody', {});
+		const mapWrap = E('div', { 'class': 'hpui-wrap' });
+		mapWrap.appendChild(E('table', { 'class': 'hpui-table' }, [
+			E('thead', {}, E('tr', {}, [
+				E('th', {}, [ _('Resource') ]),
+				E('th', {}, [ _('Rule') ]),
+				E('th', {}, [ _('Serving strategy') ]),
+				E('th', {}, [ _('Last check') ]),
+				E('th', {}, [ '' ])
+			])),
+			mapBody
+		]));
+		dpiMap.appendChild(mapWrap);
+		dpiMap.appendChild(E('p', { 'class': 'wiz-note', style: 'margin-top:2px' },
+			[ _('The map is live: the rule column shows where the resource is routed, the strategy column — the engine and the strategy actually serving it now; «Check» probes the resource through the configured path (YouTube checks the page, the thumbnail CDN and the video-stream edge).') ]));
+
+		function servingText(rk, rule, dpiSt) {
+			const z = dpiSt.zapret || {}, b = dpiSt.byedpi || {};
+			if (rule && rule.node === 'zapret-out')
+				return (z.strategy)
+					? 'Zapret: ' + (z.strategy_name ? z.strategy_name + ' · ' : '') + shortStrategy(z.strategy, 60)
+					: 'Zapret: ' + _('no strategy set');
+			if (rule && rule.node === 'byedpi-out')
+				return (b.opts) ? 'ByeDPI: ' + shortStrategy(b.opts, 60) : 'ByeDPI: ' + _('no strategy set');
+			if (rule && rule.node)
+				return _('Rides %s — no DPI strategy applies.').format(nodeText(rule.node));
+			return (rk === 'general')
+				? _('Catch-all: main path / mass lists.')
+				: _('No rule — rides the main path or the mass lists.');
+		}
+
+		function renderServingMap(dpiSt, presets, apSt) {
+			const rules = (presets && presets.rules) || {};
+			const counts = (presets && presets.rule_counts) || {};
+			const st = (apSt && apSt.status) || null;
+			const apOk = !!(apSt && apSt.daemon_ok && st);
+			const sig = JSON.stringify([
+				dpiSt && dpiSt.zapret, dpiSt && dpiSt.byedpi, rules, counts,
+				apOk, apOk ? st.resources : null
+			]);
+			if (sig === state.mapSig)
+				return;
+			state.mapSig = sig;
+			mapBody.innerHTML = '';
+			for (let r in MAP_ROWS) {
+				const rk = MAP_ROWS[r][0], label = MAP_ROWS[r][1];
+				const rule = rules[rk] || null;
+				const tr = E('tr', {});
+				tr.appendChild(E('td', { style: 'font-weight:600; white-space:nowrap' }, [ label ]));
+				const ruleTd = E('td', {});
+				if (rk === 'general') {
+					const env = lastEnv || {};
+					ruleTd.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
+						[ _('catch-all — unmatched traffic') ]));
+				} else
+					ruleTd.appendChild(ruleStateText(rule, counts[rk] || 0));
+				tr.appendChild(ruleTd);
+				tr.appendChild(E('td', { style: 'font-size:.85em' },
+					[ servingText(rk, rule, dpiSt || {}) ]));
+				const lastTd = E('td', { style: 'white-space:nowrap' }, [ '—' ]);
+				if (apOk && st.resources && st.resources[rk]) {
+					const p = st.resources[rk].probe || {};
+					const w = st.resources[rk].winner || {};
+					lastTd.innerHTML = '';
+					if (p && p.ts)
+						lastTd.appendChild(p.ok
+							? badge('hpui-b-green', '✓ ' + (p.code || '') + ((p.tsec != null) ? (' · ' + p.tsec + ' s') : ''))
+							: badge('hpui-b-red', '✗ ' + (p.code || '000')));
+					if (w && w.name)
+						lastTd.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0 0 0 4px' },
+							[ _('pilot: %s').format(w.name) ]));
+					if (!lastTd.firstChild)
+						lastTd.textContent = '—';
+				}
+				tr.appendChild(lastTd);
+				const chk = E('button', { 'class': 'btn cbi-button', type: 'button',
+					'style': 'font-size:.82em; padding:0 8px' }, [ _('Check') ]);
+				chk.addEventListener('click', function() {
+					chk.disabled = true;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Probing %s through the configured path…').format(label) ]));
+					L.resolveDefault(callDpiProbe(rk), {}).then(function(pr) {
+						chk.disabled = false;
+						if (!pr || pr.result === false) {
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ (pr && pr.error) || _('rpc error') ]));
+							return;
+						}
+						const box = E('div', {});
+						box.appendChild(E('div', { 'class': 'wiz-note', style: 'font-weight:600' },
+							[ _('Live check — %s:').format(label) ]));
+						(pr.probes || []).forEach(function(pb) {
+							const line = E('div', { 'class': 'wiz-note' });
+							line.appendChild(pb.ok
+								? badge('hpui-b-green', '✓ ' + (pb.code || ''))
+								: badge('hpui-b-red', '✗ ' + (pb.code || '000')));
+							line.appendChild(document.createTextNode(' ' +
+								pb.url.replace(/^https?:\/\//, '') +
+								(pb.tsec != null ? (' · ' + pb.tsec + ' s') : '') +
+								(pb.bytes > 0 ? (' · ' + fmtBytes(pb.bytes)) : '')));
+							box.appendChild(line);
+						});
+						if (!pr.ok)
+							box.appendChild(E('p', { 'class': 'hpui-hint' },
+								[ _('A failed sub-check means the resource does NOT work entirely — pick another strategy for it in the Strategy Lab below.') ]));
+						dom.content(dpiResult, box);
+					});
+				});
+				tr.appendChild(E('td', {}, [ chk ]));
+				mapBody.appendChild(tr);
+			}
 		}
 
 		/* Strategy row — persistent elements, options rebuilt on corpus change. */
@@ -2312,6 +2303,7 @@ return view.extend({
 			engSel.value = p.engine || 'zapret';
 			engSel.addEventListener('change', function() {
 				p.engine = engSel.value;
+				saveComposeDraft();
 				renderCompProfiles();
 			});
 
@@ -2321,6 +2313,7 @@ return view.extend({
 			resSel.value = p.resource || 'general';
 			resSel.addEventListener('change', function() {
 				p.resource = resSel.value;
+				saveComposeDraft();
 				renderCompProfiles();
 			});
 
@@ -2332,6 +2325,7 @@ return view.extend({
 			domInput.value = p.domains || '';
 			domInput.addEventListener('change', function() {
 				p.domains = String(domInput.value || '');
+				saveComposeDraft();
 			});
 
 			const stratSel = E('select', { 'class': 'cbi-input-select wiz-select', 'style': 'min-width:190px' });
@@ -2345,10 +2339,12 @@ return view.extend({
 				if (og.children.length)
 					stratSel.appendChild(og);
 			}
-			stratSel.value = (p.strategy && p.strategy.indexOf('--') === 0) ? '' : (p.strategy || '');
+			stratSel.value = compCandidateByArgs(p.strategy) ? (p.strategy || '') : '';
 			stratSel.addEventListener('change', function() {
-				if (stratSel.value)
+				if (stratSel.value) {
 					p.strategy = stratSel.value;
+					saveComposeDraft();
+				}
 				renderCompProfiles();
 			});
 
@@ -2360,6 +2356,7 @@ return view.extend({
 			stratInput.value = p.strategy || '';
 			stratInput.addEventListener('change', function() {
 				p.strategy = String(stratInput.value || '').trim();
+				saveComposeDraft();
 				renderCompProfiles();
 			});
 
@@ -2376,16 +2373,24 @@ return view.extend({
 			else
 				hintText = _('Limited to the resource domains (--hostlist-domains).');
 			hint.appendChild(E('span', { 'style': 'opacity:.7' }, [ hintText ]));
-			if (eng === 'zapret' && p.strategy && p.strategy.indexOf('--') === 0) {
+			/* ч.109 (user report): the picked catalog strategy must show its
+			 * NAME — the raw args alone read like noise. The name is resolved
+			 * from the corpus by the args, so a page reload keeps it too. */
+			if (eng === 'zapret' && p.strategy) {
+				const cand = compCandidateByArgs(p.strategy);
+				hint.appendChild(document.createTextNode(' · '));
+				hint.appendChild(E('span', { 'style': 'font-weight:600' },
+					[ cand ? cand.name : _('Custom args (not in the catalog)') ]));
 				hint.appendChild(document.createTextNode(' · '));
 				hint.appendChild(E('span', { 'style': 'opacity:.7' },
-					[ fuzzHintText(compCandidateByArgs(p.strategy)) ]));
+					[ fuzzHintText(cand) ]));
 			}
 
 			const rm = E('button', { 'class': 'btn cbi-button', type: 'button',
 				'style': 'padding:0 6px', title: _('Remove') }, [ '×' ]);
 			rm.addEventListener('click', function() {
 				state.compProfiles.splice(idx, 1);
+				saveComposeDraft();
 				renderCompProfiles();
 			});
 
@@ -2407,6 +2412,9 @@ return view.extend({
 
 		function renderCompProfiles() {
 			compRowsBox.innerHTML = '';
+			if (state.compSaveError)
+				compRowsBox.appendChild(E('div', { 'class': 'hpui-banner', style: 'margin:0 0 4px 0' },
+					[ _('Saving the composition draft failed: %s — the builder still works, the draft just will not survive a reload.').format(state.compSaveError) ]));
 			if (!state.compProfiles.length) {
 				compRowsBox.appendChild(E('span', { 'style': 'opacity:.6' },
 					[ _('(empty — add a profile)') ]));
@@ -2423,13 +2431,51 @@ return view.extend({
 				return;
 			}
 			state.compProfiles.push({ engine: 'zapret', resource: 'youtube', domains: '', strategy: '' });
+			saveComposeDraft();
 			renderCompProfiles();
 		});
 
 		compClearBtn.addEventListener('click', function() {
 			state.compProfiles = [];
+			saveComposeDraft();
 			renderCompProfiles();
 		});
+
+		/* ч.109: the composition draft persists on the SERVER (survives page
+		 * reloads and reboots — «выбранная композиция пропадает» fixed). The
+		 * save is fire-and-forget: edits are user-rate, failures surface in
+		 * the next dpi poll as a hint. */
+		function saveComposeDraft() {
+			state.compDirty = true;
+			L.resolveDefault(callComposeSave(state.compProfiles), {}).then(function(r) {
+				if (r && r.result === false)
+					state.compSaveError = (r && r.error) || _('rpc error');
+				else
+					state.compSaveError = null;
+			});
+		}
+
+		/* Seed the builder once from the server draft (first dpi poll): the
+		 * user's saved profiles beat the empty default; nothing overwrites
+		 * unsaved local edits (compDirty). */
+		function seedCompProfiles(server) {
+			if (state.compSeeded || state.compDirty || !server || !server.length)
+				return;
+			state.compSeeded = true;
+			const arr = [];
+			for (let i = 0; i < server.length; i++) {
+				const p = server[i];
+				if (p && (p.engine === 'zapret' || p.engine === 'byedpi'))
+					arr.push({
+						engine: p.engine, resource: p.resource || 'general',
+						domains: '' + (p.domains || ''), strategy: '' + (p.strategy || '')
+					});
+			}
+			if (arr.length) {
+				state.compProfiles = arr;
+				renderCompProfiles();
+			}
+		}
 
 		compTestBtn.addEventListener('click', function() {
 			if (!state.compProfiles.length) {
@@ -2629,8 +2675,9 @@ return view.extend({
 		}
 
 		/* Strategy Lab — the ported panel (node.js): quick/full fuzz buttons,
-		 * rounds, live progress. The RESULT table renders into dpiResult
-		 * (results live in ONE place); history stays here as a details block. */
+		 * rounds, live progress. ч.109: the RANKING lives in its own
+		 * persistent block (labBest — it never disappears when an action
+		 * result renders); action results stay in dpiResult (ONE place). */
 		const labRounds = E('select', { 'class': 'cbi-input-select', 'style': 'width:auto' });
 		for (const n of [ 1, 2, 3 ]) {
 			const op = E('option', { value: String(n), selected: (n === 2) ? '' : null },
@@ -2638,6 +2685,7 @@ return view.extend({
 			labRounds.appendChild(op);
 		}
 		const labStatus = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
+		const labBest = E('div', { style: 'margin-top:6px' });
 		const labHist = E('div', {});
 		const labRow = E('div', { 'class': 'wiz-row' });
 		const labQuick = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Fuzz (quick)') ]);
@@ -2648,6 +2696,9 @@ return view.extend({
 		labRow.appendChild(labRounds);
 		labRow.appendChild(labStatus);
 		dpiLab.appendChild(labRow);
+		dpiLab.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:4px 0 0 0; font-weight:600' },
+			[ _('Best strategies (last fuzz)') ]));
+		dpiLab.appendChild(labBest);
 		dpiLab.appendChild(labHist);
 		dpiLab.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes). A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes.') ]));
@@ -2660,8 +2711,10 @@ return view.extend({
 			const res = (r && r.result) || null;
 			const hist = (r && r.history && r.history.runs) || [];
 			if (st.running) {
-				labStatus.textContent = _('Fuzzing… %d of %d').format(st.done || 0, st.total || 0) +
-					(st.current ? (' · ' + st.current) : '');
+				labStatus.textContent = (st.stage === 'deep')
+					? _('Deep-checking the top strategies (page/CDN/media fetches)… %d of %d').format(st.done2 || 0, st.total2 || 0)
+					: _('Fuzzing… %d of %d').format(st.done || 0, st.total || 0) +
+						(st.current ? (' · ' + st.current) : '');
 				if (!labPollId) labPollId = window.setInterval(refresh, 5000);
 				return;
 			}
@@ -2671,13 +2724,21 @@ return view.extend({
 				return;
 			} else
 				labStatus.textContent = '';
-			/* Result table — rebuilt only when a NEW result arrived. */
+			/* Result table — ч.109: lives in its OWN persistent container
+			 * (labBest) instead of the shared result area. Picking a strategy
+			 * used to WIPE the ranking (the user complaint) — now the action
+			 * result goes to dpiResult (ONE place) while the table stays and
+			 * the picked row is marked. */
 			const sig = res ? ('' + (res.ts || 0)) : 'none';
-			if (sig === state.fuzzSig)
+			if (sig === state.fuzzShownSig)
 				return;
-			state.fuzzSig = sig;
-			if (!res || !res.strategies || !res.strategies.length)
+			state.fuzzShownSig = sig;
+			labBest.innerHTML = '';
+			if (!res || !res.strategies || !res.strategies.length) {
+				labBest.appendChild(E('span', { 'class': 'wiz-note', style: 'opacity:.6' },
+					[ _('No fuzz ranking yet — run the fuzzer above; the ranked list stays here until the next run.') ]));
 				return;
+			}
 			const box = E('div', {});
 			const bl = res.baseline || [];
 			const blParts = bl.map(function(b2) { return (b2.label || b2.tag) + ' ' + (b2.ok ? '✓' : '✗'); });
@@ -2699,7 +2760,8 @@ return view.extend({
 				E('th', {}, [ _('Strategy') ]),
 				E('th', {}, [ _('Passed') ]),
 				E('th', {}, [ _('Avg TLS, ms') ]),
-				E('th', {}, [ '' ])
+				E('th', {}, [ _('Resource loads') ]),
+				E('th', {}, [ _('Apply for') ])
 			]));
 			const tbody = E('tbody', {});
 			res.strategies.slice(0, 15).forEach(function(s, i) {
@@ -2709,32 +2771,79 @@ return view.extend({
 						      : '✗ ' + (h.reason || 'fail')) +
 						(h.dist ? '' : ' (' + _('free pass') + ')');
 				}).join(' · ');
+				/* ч.109 (user request): pick THIS strategy for ONE resource —
+				 * the rule/apply/verify chain of the auto-pick runs for the
+				 * chosen resource with the table's strategy (no re-fuzz). */
+				const resSel = E('select', { 'class': 'cbi-input-select',
+					'style': 'width:auto; font-size:.85em; padding:0' });
+				resSel.appendChild(E('option', { value: '' }, [ _('— whole Zapret —') ]));
+				[ ['youtube', _('YouTube')], ['discord', _('Discord')],
+				  ['telegram', _('Telegram')], ['general', _('General')] ]
+					.forEach(function(o) { resSel.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
 				const ab = E('button', { 'class': 'btn cbi-button cbi-button-apply', 'style': 'font-size:.82em; padding:0 8px' },
 					[ _('Apply') ]);
 				ab.addEventListener('click', function() {
-					if (!window.confirm(_('Apply this Zapret strategy and restart the service?')))
+					const target = resSel.value;
+					const targetLabel = resSel.options[resSel.selectedIndex].text;
+					if (!target) {
+						if (!window.confirm(_('Apply this Zapret strategy globally (every flow routed to Zapret) and restart the service?')))
+							return;
+						ab.disabled = true;
+						L.resolveDefault(callFuzzApply(s.args), {}).then(function(r2) {
+							ab.disabled = false;
+							ab.textContent = (r2 && r2.result) ? '✓' : '✗';
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ r2 && r2.result
+								? _('Strategy applied — the service restarts; run "Test strategy" in ~30 s to confirm.')
+								: ((r2 && r2.error) || _('Apply failed')) ]));
+						});
+						return;
+					}
+					if (!window.confirm(_('Apply this strategy for %s: the rule goes to Zapret, the strategy applies with a server snapshot, then the resource is checked live. Continue?').format(targetLabel)))
 						return;
 					ab.disabled = true;
-					L.resolveDefault(callFuzzApply(s.args), {}).then(function(r2) {
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Applying %s for %s — progress below…').format(s.name || _('custom args'), targetLabel) ]));
+					L.resolveDefault(callAutoPickStart(target, 'quick', true, s.args), {}).then(function(r2) {
 						ab.disabled = false;
-						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ r2 && r2.result
-							? _('Strategy applied — the service restarts; run "Test strategy" in ~30 s to confirm.')
-							: ((r2 && r2.error) || _('Apply failed')) ]));
+						if (!r2 || r2.result !== true) {
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Auto-pick failed to start: %s').format((r2 && r2.error) || _('rpc error')) ]));
+							return;
+						}
+						refresh();
 					});
 				});
-				tbody.appendChild(E('tr', {}, [
+				/* ч.109: the deep verdict — did the resource LOAD (page/CDN/
+				 * media fetches), not only the handshake. */
+				let deepTd;
+				if (s.deep)
+					deepTd = E('td', { style: 'white-space:nowrap',
+						title: (s.deep.hosts || []).map(function(hd) {
+							return (hd.label || hd.tag) + ': ' + (hd.deep_ok ? '✓ loads' : '✗ stalled') +
+								((hd.items || []).length ? ' — ' + hd.items.map(function(it) {
+									return (it.code || '000') + (it.bytes > 0 ? ('/' + Math.round(it.bytes / 1024) + 'KB') : '');
+								}).join(', ') : '');
+						}).join(' · ') },
+						[ (s.deep.ok === s.deep.total && s.deep.total > 0)
+							? E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ '✓ ' + s.deep.ok + '/' + s.deep.total ])
+							: E('span', { style: 'color:#e05252; font-weight:600' }, [ '✗ ' + s.deep.ok + '/' + s.deep.total ]) ]);
+				else
+					deepTd = E('td', { style: 'opacity:.5' }, [ '—' ]);
+				const row = E('tr', { 'data-fuzz-args': s.args }, [
 					E('td', { style: 'opacity:.7' }, [ String(i + 1) ]),
-					E('td', { style: 'font-size:.85em; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap', title: s.args },
+					E('td', { style: 'font-size:.85em; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap', title: (s.args + ' — ' + hostsTip) },
 						[ s.name || s.args ]),
 					E('td', { style: 'white-space:nowrap' }, [ '%d / %d'.format(s.ok || 0, s.total || 0) ]),
 					E('td', {}, [ String(s.avg_tls_ms || 0) ]),
-					E('td', {}, [ ab ])
-				]));
+					deepTd,
+					E('td', { style: 'white-space:nowrap' }, [ resSel, ' ', ab ])
+				]);
+				tbody.appendChild(row);
 			});
 			const wrap = E('div', { 'class': 'hpui-wrap' });
 			wrap.appendChild(E('table', { 'class': 'hpui-table' }, [ thead, tbody ]));
 			box.appendChild(wrap);
-			dom.content(dpiResult, box);
+			labBest.appendChild(box);
 			/* History — persistent info under the Lab row. */
 			labHist.innerHTML = '';
 			if (hist.length) {
@@ -3066,6 +3175,21 @@ return view.extend({
 					? badge('hpui-b-green', '✓ ' + (v.code || '') + ((v.tsec != null) ? (' · ' + v.tsec + ' s') : ''))
 					: badge('hpui-b-red', '✗ ' + (v.code || '000') + ((v.tsec != null) ? (' · ' + v.tsec + ' s') : ''))
 			]));
+			/* ч.109: the deep battery — every resource host must answer. */
+			if (st.verify_multi && st.verify_multi.length > 1) {
+				const deepBox = E('div', { 'class': 'wiz-note' });
+				deepBox.appendChild(document.createTextNode(_('Resource loads as a whole: ') + ' '));
+				st.verify_multi.forEach(function(vm, vi) {
+					if (vi) deepBox.appendChild(document.createTextNode(' · '));
+					deepBox.appendChild(vm.ok
+						? badge('hpui-b-green', '✓ ' + (vm.code || ''))
+						: badge('hpui-b-red', '✗ ' + (vm.code || '000')));
+					deepBox.appendChild(document.createTextNode(' ' +
+						'' + (vm.host || '').replace(/^https?:\/\//, '') +
+						((vm.tsec != null) ? (' (' + vm.tsec + ' s)') : '')));
+				});
+				box.appendChild(deepBox);
+			}
 			/* Honest rule state: the strategy serves the resource only
 			 * through its rule. */
 			const rule = st.rule || {};
@@ -3317,6 +3441,7 @@ return view.extend({
 					renderChain();
 				}
 				renderDpi(data[2] || {});
+				seedCompProfiles((data[2] || {}).comp_profiles);
 				renderStrategySel((data[3] && data[3].candidates) || []);
 				renderCorpus(data[2] ? (data[2].corpus || {}) : {}, data[4] || {});
 				renderLab(data[5] || {});
@@ -3328,6 +3453,8 @@ return view.extend({
 				renderAutoPick(data[8] || {});
 				/* ч.97: the scheduled auto-pilot card (settings + live state). */
 				renderAutoPilot(data[9] || {});
+				/* ч.109: the Serving map (rule → engine → strategy → check). */
+				renderServingMap(data[2] || {}, (data[1] && data[1].rules) ? data[1] : null, data[9] || {});
 				renderRollback((data[2] && data[2].rollback) || null);
 
 				/* Deferred live check: fire once the core is running again

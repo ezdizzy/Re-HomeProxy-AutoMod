@@ -96,7 +96,7 @@ start_service() {
 		uci -q set "$CONF.multidns.use_plain=1"
 		uci -q set "$CONF.multidns.use_secure=1"
 		uci -q set "$CONF.multidns.secure_via_proxy=1"
-		uci -q set "$CONF.multidns.bench_interval=120"
+		uci -q set "$CONF.multidns.bench_interval=600"
 		uci -q commit "$CONF"
 		log "created missing $CONF.multidns section (defaults)."
 	fi
@@ -125,6 +125,21 @@ start_service() {
 		uci -q set "$CONF.autopilot.fuzz_mode=quick"
 		uci -q commit "$CONF"
 		log "created missing $CONF.autopilot section (defaults)."
+	fi
+
+	# «Контроль» (HomeControl integration, plan 14): self-heal the SEPARATE
+	# UCI config /etc/config/homecontrol (conffile). The control engine and
+	# the RPC layer need the `main` section to exist even if the conffile
+	# was deleted or the overlay wiped. Idempotent; the rest of the schema
+	# (client/wifi/rule/schedule sections) is created on demand by the RPC.
+	if ! uci -q get homecontrol.main >/dev/null 2>&1; then
+		uci -q set homecontrol.main=main
+		uci -q set homecontrol.main.enabled='0'
+		uci -q set homecontrol.main.paused='0'
+		uci -q set homecontrol.main.log_enabled='1'
+		uci -q set homecontrol.main.log_max='500'
+		uci -q commit homecontrol
+		log "created missing homecontrol.main section (defaults)."
 	fi
 
 	# Auto-enable the AntiDPI engines when a *-out node/rule reference exists but the
@@ -554,6 +569,19 @@ start_service() {
 	procd_set_param respawn_retry 0
 	procd_close_instance
 
+	# «Контроль» watcher (plan 14): ALWAYS-ON instance like the telegram
+	# bot — the daemon gates itself on homecontrol.main.enabled EVERY tick,
+	# so enabling/disabling or editing rules never restarts the service.
+	# It re-applies the enforcement state only when its signature changes
+	# (schedule boundaries, temp-block expiry, DHCP address changes).
+	mkdir -p "$RUN_DIR" /var/run/homecontrol
+	procd_open_instance "control"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/control_engine.uc"
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
 	# Subscription auto-update cron. This install half was dropped in the init rewrite
 	# (commit 4f3511f) while the stop_service cleanup below was kept, leaving the UI
 	# "Auto update" checkbox wired to nothing. Restored verbatim from upstream: when
@@ -678,6 +706,34 @@ stop_service() {
 
 	# Only remove the log; hiddify-c.json is manually placed by the user
 	rm -f "$RUN_DIR/hiddify-c.log"
+
+	# «Контроль» (plan 14): tear down the enforcement of the separate nft
+	# table, the per-client dnsmasq filter instances and the Wi-Fi we
+	# switched — same cleanup the standalone HomeControl service did on
+	# stop. Stopping homeproxy stops the parental control with it.
+	HC_RUN="/var/run/homecontrol"
+	HC_WIFI=0
+	nft delete table inet homecontrol 2>"/dev/null"
+	if [ -d "$HC_RUN/dnsf" ]; then
+		for f in "$HC_RUN"/dnsf/*.pid; do
+			[ -e "$f" ] || break
+			pid="$(cat "$f" 2>/dev/null)"
+			[ -n "$pid" ] && kill "$pid" 2>/dev/null
+			rm -f "$f"
+		done
+		rm -rf "$HC_RUN/dnsf"
+	fi
+	for f in "$HC_RUN"/wifi.off.*; do
+		[ -e "$f" ] || break
+		iface="${f##*wifi.off.}"
+		uci -q delete "wireless.$iface.disabled"
+		rm -f "$f"
+		HC_WIFI=1
+	done
+	if [ "$HC_WIFI" = "1" ]; then
+		uci -q commit wireless
+		wifi reload 2>"/dev/null"
+	fi
 
 	log "Service stopped."
 }

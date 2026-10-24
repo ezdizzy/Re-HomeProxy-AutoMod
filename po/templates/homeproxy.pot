@@ -1894,8 +1894,8 @@ msgstr ""
 msgid "How often each node is tested (seconds). Lower = faster failover, higher = less overhead."
 msgstr ""
 
-#: htdocs/luci-static/resources/view/homeproxy/client.js:1977
-msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends."
+#: htdocs/luci-static/resources/view/homeproxy/dns.js:216
+msgid "How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 600s — lower reacts faster to a bad server but verifies sites more often (40–60 s of probing per cycle on weak SoCs)."
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js:139
@@ -5663,3 +5663,130 @@ msgstr ""
 
 msgid "eco: serial probing for weak routers (still uses the native probe_pool batch when the helper is installed, capped at 8 concurrent probes). perf: up to 64 domains / 32 IPs per pass in parallel batches (16 at once) — for multi-core routers (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
 msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+#: htdocs/luci-static/resources/view/homeproxy/telegram.js
+
+msgid "Temporary allow"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Temporary allow (pokes a hole in the schedule)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Temporarily allowed"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "temporarily allowed until"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Allow internet access again"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Full internet block for this device (firewall drop)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Block Wi-Fi for this device (wired stays online)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Wi-Fi block is on — click to allow"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Wi-Fi blocked for this device"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Wi-Fi block removed"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Search the service catalog…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "No service matches the search."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Messengers"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Social networks"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Video & music"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Gaming platforms"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Russia: social & video"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "18+: adult"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "18+: betting & casinos"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/telegram.js
+
+msgid "Telegram Bot"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/telegram.js
+
+msgid "Push notifications"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/telegram.js
+
+msgid "Control: blocks, schedules, Wi-Fi, new devices"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/telegram.js
+
+msgid "Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Parental control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/telegram.js
+
+msgid "Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). \"Mute\" silences pushes only — commands keep working."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/wizard.js
+
+msgid "The Telegram bot settings moved to the dedicated \"Telegram Bot\" page in the main menu — the bot keeps growing (router control, parental control, pushes) and no longer fits a wizard sub-tab."
+msgstr ""
+
