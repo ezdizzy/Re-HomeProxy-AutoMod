@@ -1,0 +1,20 @@
+# Re:HomeProxy AutoMod — stable public video IDs for the sustained-flow
+# throughput probe (ч.116): for each ID two real thumbnails are fetched over
+# ONE keep-alive TLS flow to i.ytimg.com (mqdefault.jpg always exists,
+# hq720.jpg on HD videos; 404s are excluded from the sum). The SUM of bytes
+# over the SUM of transfer times is the honest per-flow bytes/second — the
+# «превью/видео грузятся вечность» metric a TLS handshake cannot see.
+# Sources: the most stable public YouTube videos (Me at the zoo, Big Buck
+# Bunny, the most-watched music videos — stable for 10+ years).
+jNQXAC9IVRw
+aqz-KE-bpKQ
+dQw4w9WgXcQ
+9bZkp7q19f0
+kJQP7kiw5Fk
+fJ9rUzIMcZQ
+JGwWNGJdvx8
+OPf0YbXqDm0
+CevxZvSJLk8
+YQHsXMglC9A
+e-ORHEEtVVw
+60ItHLz5WEA

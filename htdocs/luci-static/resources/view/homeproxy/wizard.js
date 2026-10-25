@@ -1765,16 +1765,43 @@ return view.extend({
 		]));
 		dpiMap.appendChild(mapWrap);
 		dpiMap.appendChild(E('p', { 'class': 'wiz-note', style: 'margin-top:2px' },
-			[ _('The map is live: the rule column shows where the resource is routed, the strategy column — the engine and the strategy actually serving it now; «Check» probes the resource through the configured path (YouTube checks the page, the thumbnail CDN and the video-stream edge).') ]));
+			[ _('The map is live: the rule column shows where the resource is routed, the strategy column — the engine profile actually serving it now (an own scoped profile, the general tail, or a global strategy). «Check» probes the resource through the configured path (YouTube: the page, the thumbnail CDN, the video edge AND the real video stream measured in KB/s).') ]));
 
 		function servingText(rk, rule, dpiSt) {
 			const z = dpiSt.zapret || {}, b = dpiSt.byedpi || {};
-			if (rule && rule.node === 'zapret-out')
-				return (z.strategy)
-					? 'Zapret: ' + (z.strategy_name ? z.strategy_name + ' · ' : '') + shortStrategy(z.strategy, 60)
-					: 'Zapret: ' + _('no strategy set');
 			if (rule && rule.node === 'byedpi-out')
 				return (b.opts) ? 'ByeDPI: ' + shortStrategy(b.opts, 60) : 'ByeDPI: ' + _('no strategy set');
+			if (rule && rule.node === 'zapret-out') {
+				/* ч.116: the map reads the parsed profile blocks — the user
+				 * complaint «применить для YouTube применило и к Discord» was
+				 * the GLOBAL strategy written on every Zapret-routed row with
+				 * no scope shown. Own block → its strategy; no own block →
+				 * the general tail; no hostlists at all → the honest
+				 * «the strategy is global for the engine». */
+				const blocks = z.blocks || [];
+				if (blocks.length) {
+					const scoped = blocks.filter(function(bk) { return bk.scope === rk; });
+					if (scoped.length) {
+						/* A resource may have several scoped blocks (http + tls);
+						 * the TLS one is what actually serves the flow to :443 —
+						 * show it (the raw http fragment's name misleads). */
+						const tls = scoped.filter(function(bk) { return /--filter-tcp=443/.test(bk.base || ''); });
+						const bk = tls.length ? tls[0] : scoped[0];
+						return 'Zapret: ' + (bk.name || shortStrategy(bk.base, 60)) +
+							' — ' + _('own profile');
+					}
+					const tail = blocks[blocks.length - 1];
+					if (tail.scope == null)
+						return 'Zapret: ' + (tail.name || shortStrategy(tail.base, 60)) +
+							' — ' + _('general profile (catch-all)');
+					return _('Zapret: no general profile — this traffic passes WITHOUT desync.');
+				}
+				return (z.strategy)
+					? 'Zapret: ' + (z.strategy_name ? z.strategy_name + ' · ' : '') +
+						shortStrategy(z.strategy, 60) + ' — ' +
+						_('global strategy (serves every flow routed to Zapret)')
+					: 'Zapret: ' + _('no strategy set');
+			}
 			if (rule && rule.node)
 				return _('Rides %s — no DPI strategy applies.').format(nodeText(rule.node));
 			return (rk === 'general')
@@ -1850,9 +1877,13 @@ return view.extend({
 							line.appendChild(document.createTextNode(' ' +
 								pb.url.replace(/^https?:\/\//, '') +
 								(pb.tsec != null ? (' · ' + pb.tsec + ' s') : '') +
-								(pb.bytes > 0 ? (' · ' + fmtBytes(pb.bytes)) : '')));
+								(pb.bytes > 0 ? (' · ' + fmtBytes(pb.bytes)) : '') +
+								(pb.speed > 0 ? (' · ' + Math.round(pb.speed / 1024) + ' KB/s') : '')));
 							box.appendChild(line);
 						});
+						if (pr.stream_note)
+							box.appendChild(E('p', { 'class': 'hpui-hint' },
+								[ _('The video-stream probe was skipped: the test stream URL is unavailable (%s) — the rest of the check still decided.').format(pr.stream_note) ]));
 						if (!pr.ok)
 							box.appendChild(E('p', { 'class': 'hpui-hint' },
 								[ _('A failed sub-check means the resource does NOT work entirely — pick another strategy for it in the Strategy Lab below.') ]));
@@ -1879,7 +1910,7 @@ return view.extend({
 		stratRow.appendChild(testStratBtn);
 		dpiStrategy.appendChild(stratRow);
 		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('The strategy applies to every flow routed to Zapret (no hostlists — the routing rules select the traffic). Applying also enables Zapret and restarts the service; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest).') ]));
+			[ _('The global "Apply strategy" serves EVERY flow routed to Zapret (one engine strategy, no hostlists — the routing rules select the traffic). A per-resource apply (Strategy Lab rows, auto-pick) builds a SCOPED profile instead — other managed resources keep their strategies; the Composition below edits the same blocks manually. Applying also enables Zapret and restarts the service; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest).') ]));
 
 		function renderStrategySel(cands) {
 			state.cands = cands || [];
@@ -2701,7 +2732,7 @@ return view.extend({
 		dpiLab.appendChild(labBest);
 		dpiLab.appendChild(labHist);
 		dpiLab.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes). A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes.') ]));
+			[ _('The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the top five with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes.') ]));
 
 		let labPollId = null;
 		function labStopPoll() { if (labPollId) { window.clearInterval(labPollId); labPollId = null; } }
@@ -2808,7 +2839,7 @@ return view.extend({
 						});
 						return;
 					}
-					if (!window.confirm(_('Apply this strategy for %s: the rule goes to Zapret, the strategy applies with a server snapshot, then the resource is checked live. Continue?').format(targetLabel)))
+					if (!window.confirm(_('Apply this strategy for %s: a SCOPED profile is built (other managed resources keep their strategies), the rule goes to Zapret, then the resource is checked live — page, CDN and the REAL video stream. Continue?').format(targetLabel)))
 						return;
 					ab.disabled = true;
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
@@ -2824,19 +2855,48 @@ return view.extend({
 					});
 				});
 				/* ч.109: the deep verdict — did the resource LOAD (page/CDN/
-				 * media fetches), not only the handshake. */
+				 * media fetches), not only the handshake. ч.117: a fully
+				 * NON-DIFFERENTIAL battery (every probe passes or fails
+				 * identically on all deep-tested strategies — live run: all
+				 * 5 passed the whole YouTube battery) leaves the differential
+				 * counters at 0/0; the RAW fetches still say whether the
+				 * resource loads, so the cell shows an honest '≈' verdict
+				 * (identical for everyone, not ranked) instead of the old red
+				 * '✗ 0/0' or a bare '—'. */
 				let deepTd;
-				if (s.deep)
+				if (s.deep) {
+					const dhosts = s.deep.hosts || [];
+					let rawOk = 0, rawTot = 0;
+					dhosts.forEach(function(hd) {
+						(hd.items || []).forEach(function(it) {
+							rawTot++;
+							if (it.ok == 1) rawOk++;
+						});
+					});
 					deepTd = E('td', { style: 'white-space:nowrap',
-						title: (s.deep.hosts || []).map(function(hd) {
-							return (hd.label || hd.tag) + ': ' + (hd.deep_ok ? '✓ loads' : '✗ stalled') +
-								((hd.items || []).length ? ' — ' + hd.items.map(function(it) {
-									return (it.code || '000') + (it.bytes > 0 ? ('/' + Math.round(it.bytes / 1024) + 'KB') : '');
+						title: dhosts.map(function(hd) {
+							const items = hd.items || [];
+							const hAll = items.length && items.every(function(it) { return it.ok == 1; });
+							return (hd.label || hd.tag) + ': ' +
+								(hd.deep_total > 0
+									? ((hd.deep_pass || 0) + '/' + hd.deep_total + (hd.deep_ok ? ' ✓' : ' ✗'))
+									: ((hAll ? '✓ loads' : '✗ stalled') + ' (' + _('identical for all') + ')')) +
+								(items.length ? ' — ' + items.map(function(it) {
+									return (it.code || '000') +
+										(it.bytes > 0 ? ('/' + Math.round(it.bytes / 1024) + 'KB') : '') +
+										(it.speed > 0 ? ('@' + Math.round(it.speed / 1024) + 'KB/s') : '');
 								}).join(', ') : '');
 						}).join(' · ') },
-						[ (s.deep.ok === s.deep.total && s.deep.total > 0)
-							? E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ '✓ ' + s.deep.ok + '/' + s.deep.total ])
-							: E('span', { style: 'color:#e05252; font-weight:600' }, [ '✗ ' + s.deep.ok + '/' + s.deep.total ]) ]);
+						[ (s.deep.total > 0)
+							? (((s.deep.ok === s.deep.total) && s.deep.total > 0)
+								? E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ '✓ ' + s.deep.ok + '/' + s.deep.total ])
+								: E('span', { style: 'color:#e05252; font-weight:600' }, [ '△ ' + s.deep.ok + '/' + s.deep.total ]))
+							: ((rawTot > 0)
+								? ((rawOk === rawTot)
+									? E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ '≈ ' + rawOk + '/' + rawTot ])
+									: E('span', { style: 'color:#888; font-weight:600' }, [ '≈ ' + rawOk + '/' + rawTot ]))
+								: E('span', { style: 'opacity:.5' }, [ '—' ])) ]);
+				}
 				else
 					deepTd = E('td', { style: 'opacity:.5' }, [ '—' ]);
 				const row = E('tr', { 'data-fuzz-args': s.args }, [
@@ -2913,7 +2973,7 @@ return view.extend({
 			[ autBtn, autSel, autFullWrap, autSetRuleWrap, autStatus ]);
 		dpiLab.appendChild(autRow);
 		dpiLab.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied with a server snapshot, and the resource is then checked through the configured path (code + seconds). Zapret only — ByeDPI strategies are configured in the ByeDPI card above.') ]));
+			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the ByeDPI card above.') ]));
 		autSel.addEventListener('change', function() {
 			autSetRuleWrap.style.display = (autSel.value === 'general') ? 'none' : '';
 		});
@@ -3091,7 +3151,8 @@ return view.extend({
 							: (w.name || '—'))));
 					if (w.name)
 						line.appendChild(document.createTextNode(
-							(w.tls_ms > 0 ? ' · ' + _('~%d ms TLS').format(w.tls_ms) : '')));
+							(w.tls_ms > 0 ? ' · ' + _('~%d ms TLS').format(w.tls_ms) : '') +
+							(w.stream > 0 ? ' · ' + Math.round(w.stream / 1024) + ' KB/s' : '')));
 					const p = r.probe || {};
 					if (p && p.ts)
 						line.appendChild(document.createTextNode(' '));
@@ -3196,7 +3257,8 @@ return view.extend({
 						: badge('hpui-b-red', '✗ ' + (vm.code || '000')));
 					deepBox.appendChild(document.createTextNode(' ' +
 						'' + (vm.host || '').replace(/^https?:\/\//, '') +
-						((vm.tsec != null) ? (' (' + vm.tsec + ' s)') : '')));
+						((vm.tsec != null) ? (' (' + vm.tsec + ' s)') : '') +
+						((vm.speed > 0) ? (' · ' + Math.round(vm.speed / 1024) + ' KB/s') : '')));
 				});
 				box.appendChild(deepBox);
 			}

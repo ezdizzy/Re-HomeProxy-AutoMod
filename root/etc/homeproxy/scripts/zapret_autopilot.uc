@@ -34,14 +34,24 @@
  * Policy:
  *   - scheduled re-rank: fresh fuzz ranking (reuse < 6 h / wait a running
  *     sweep / spawn one, setsid-detached) → best strategy PER RESOURCE
- *     (majority pass, distinguishing host, minimal TLS = fastest) → rebuild
- *     the composition (scoped blocks + general tail) through the EXISTING
- *     wizard_compose_build/compose_apply RPCs (server snapshot, the Restore
- *     button keeps working) → post-verify. A resource that was OK before
- *     and fails after the apply → automatic rollback and the winner goes
- *     into the tried-failed list (24 h TTL).
+ *     (majority pass, distinguishing host; ч.116: the resource's OWN deep
+ *     verdict — incl. the REAL video-stream throughput — ranks first, a
+ *     merely-faster handshake on an equal deep verdict does not switch)
+ *     → rebuild the composition (scoped blocks + general tail) through the
+ *     EXISTING wizard_compose_build/compose_apply RPCs (server snapshot,
+ *     the Restore button keeps working) → post-verify. A resource that was
+ *     OK before and fails after the apply → automatic rollback and the
+ *     winner goes into the tried-failed list (24 h TTL).
  *   - health re-pick: fail_strikes failed probes in a row → the next
  *     alternative (excluding tried-failed and the current one) applies NOW.
+ *     ч.116: a probe covers the WHOLE resource — for YouTube that includes
+ *     the media hosts and the REAL video-stream throughput (a page probe
+ *     alone passes while TSPU throttles the video, the user's complaint).
+ *   - manual picks: the Strategy Lab's scoped apply hands the chosen
+ *     strategy over through zapret_autopilot_manual.json; the daemon
+ *     adopts it as the winner on its next tick (the user's explicit
+ *     choice must not be overwritten by the next re-rank before it
+ *     mattered).
  *   - anti-flap: a scheduled switch needs a >10% TLS win (or a failing
  *     current); an equal winner never triggers an apply. While enabled the
  *     auto-pilot OWNS the Zapret strategy — manual changes are overwritten
@@ -72,12 +82,17 @@ const RELOAD_MARK = RUN_DIR + '/.reload_running';
 const NFQWS = '/opt/zapret2/nfq2/nfqws2';
 
 const RESOURCES = {
-	youtube:  { tag: 'yt', url: 'https://www.youtube.com', host: 'www.youtube.com' },
+	youtube:  { tag: 'yt', url: 'https://www.youtube.com', host: 'www.youtube.com',
+		/* ч.116: the health check covers the WHOLE resource — the page alone
+		 * passes while TSPU throttles the video stream (the user's exact
+		 * complaint: «страница открывается, а видео грузится вечность»). */
+		deep: [ 'https://i.ytimg.com/generate_204', 'https://redirector.googlevideo.com/' ] },
 	discord:  { tag: 'dc', url: 'https://discord.com', host: 'discord.com' },
 	telegram: { tag: 'tg', url: 'https://web.telegram.org', host: 'web.telegram.org' },
 	general:  { tag: null, url: 'http://www.gstatic.com/generate_204', host: 'gstatic generate_204' }
 };
 const RES_KEYS = ['youtube', 'discord', 'telegram', 'general'];
+const MANUAL_FILE = RUN_DIR + '/zapret_autopilot_manual.json';
 
 const TICK = 60;                /* main loop step, s                     */
 const FUZZ_FRESH = 6 * 3600;    /* reuse a ranking younger than 6 h      */
@@ -305,6 +320,22 @@ function probe_live(url) {
 	return { code: code, tsec: tsec, ok: (rc === 0 && int(code) >= 200 && int(code) < 400), ts: time() };
 }
 
+/* ч.116: the SUSTAINED-FLOW throughput probe (the LIVE path, the shared
+ * yt_flow_probe.sh — 24 real thumbnails over ONE keep-alive TLS flow to
+ * i.ytimg.com, Σbytes/Σtime). TSPU lets the handshake through and throttles
+ * the flow — a page probe cannot see it, this can. null = the probe did not
+ * run (no ids file); ok:false = throttled (honest). */
+function probe_flow() {
+	const of = RUN_DIR + '/autopilot_flow.json';
+	system(`sh /etc/homeproxy/scripts/yt_flow_probe.sh > ${sq(of)} 2>/dev/null`, 30000);
+	const j = read_json(of);
+	system(`rm -f ${sq(of)} 2>/dev/null`);
+	if (j == null || type(j) !== 'object')
+		return null;
+	return { ok: (j.ok == 1), code: '' + (j.code || '0'), speed: int(j.speed || 0),
+		bytes: int(j.bytes || 0), secs: j.secs, fetched: int(j.fetched || 0) };
+}
+
 /* ── fuzz ───────────────────────────────────────────────────────────── */
 
 function wait_fuzz_owner(t0) {
@@ -398,11 +429,26 @@ function tried_add(res, args) {
 	tried_prune();
 }
 
+/* The resource's OWN deep verdict (differential-only items — the fuzzer
+ * filters probe items identical across all deep-tested strategies).
+ * null = not deep-tested for this resource; a 0..1 ratio otherwise. */
+function deep_ratio_of(s, tag) {
+	if (s.deep == null || type(s.deep) !== 'object' || type(s.deep.hosts) !== 'array')
+		return null;
+	for (let h in s.deep.hosts)
+		if (type(h) === 'object' && h.tag === tag && int(h.deep_total || 0) > 0)
+			return (int(h.deep_pass || 0) * 1.0) / int(h.deep_total);
+	return null;
+}
+
 /* Best eligible strategy for a resource tag: majority pass AND a
- * distinguishing host (a baseline pass cannot credit a strategy), ranked
- * by that host's minimal TLS (fastest = best), tie-break global score.
- * ч.109: a deep-verified strategy (page/CDN/media fetches passed) beats an
- * equal-TLS one — the resource must work AS A WHOLE, not just open. */
+ * distinguishing host (a baseline pass cannot credit a strategy).
+ * ч.116 ranking: the resource's OWN deep verdict ranks FIRST (deep-verified
+ * passes above untested, deep-failed below untested), then that host's
+ * minimal TLS, then the global score. The old TLS-first order promoted
+ * handshake-fast strategies that throttle the actual video stream (the
+ * user report: Multisplit beat Hostfakesplit on the handshake while the
+ * video crawled). */
 function pick_resource(fz, res, exclude_args) {
 	const tag = RESOURCES[res].tag;
 	const elig = [];
@@ -412,13 +458,45 @@ function pick_resource(fz, res, exclude_args) {
 		let h = null;
 		for (let x in s.hosts)
 			if (x.tag === tag) { h = x; break; }
-		if (h && h.ok && h.dist)
-			push(elig, { s: s, ms: int(h.tls_ms) || 0 });
+		if (h && h.ok && h.dist) {
+			const dr = deep_ratio_of(s, tag);
+			let dp = null, dt = null, stm = 0;
+			if (s.deep && type(s.deep.hosts) === 'array')
+				for (let dh in s.deep.hosts)
+					if (type(dh) === 'object' && dh.tag === tag) {
+						if (int(dh.deep_total || 0) > 0) {
+							dp = int(dh.deep_pass || 0);
+							dt = int(dh.deep_total);
+						}
+						stm = int(dh.stream || 0);
+					}
+			push(elig, { s: s, ms: int(h.tls_ms) || 0, deep: dr,
+				deep_pass: dp, deep_total: dt, stream: stm });
+		}
 	}
+	/* ч.116 ranking: a MEASURED strategy ranks first — the resource's own
+	 * deep verdict or the sustained video flow speed (the TLS handshake
+	 * time does not predict the throttled flow — the live ч.116 comparison:
+	 * Multisplit 306 KB/s vs Syndata 555 KB/s at a 3 ms handshake
+	 * difference). deep-failed ranks last. When the differential deep
+	 * totals zero out (every probe identical across the deep-tested
+	 * strategies), the stream measurement still separates the tested
+	 * strategies from the untested ones. */
+	const band = (e) => (((e.deep != null) && (e.deep > 0)) ||
+		((e.deep == null) && (int(e.stream || 0) > 0))) ? 0
+		: (((e.deep != null) && (e.deep == 0)) ? 2 : 1);
 	sort(elig, (a, b) => {
-		const da = (a.s.deep) ? (a.s.deep.total ? a.s.deep.ok * 1.0 / a.s.deep.total : 0) : -1;
-		const db = (b.s.deep) ? (b.s.deep.total ? b.s.deep.ok * 1.0 / b.s.deep.total : 0) : -1;
-		return (db - da) || (a.ms - b.ms) || (b.s.score - a.s.score);
+		const ba = band(a), bb = band(b);
+		if (ba != bb)
+			return ba - bb;
+		const da = (a.deep == null) ? -1 : a.deep;
+		const db_ = (b.deep == null) ? -1 : b.deep;
+		if (da != db_)
+			return db_ - da;
+		const sa = int(a.stream || 0), sb = int(b.stream || 0);
+		if (sa > 0 && sb > 0 && sa != sb)
+			return sb - sa;
+		return (a.ms - b.ms) || (b.s.score - a.s.score);
 	});
 	if (!length(elig))
 		return null;
@@ -426,7 +504,10 @@ function pick_resource(fz, res, exclude_args) {
 	for (let i = 1; i < length(elig) && i <= 3; i++)
 		push(runners, { name: elig[i].s.name, ms: elig[i].ms });
 	return { name: '' + (elig[0].s.name || 'custom args'), args: '' + elig[0].s.args,
-		tls_ms: elig[0].ms, score: int(elig[0].s.score) || 0, runners: runners };
+		tls_ms: elig[0].ms, deep: elig[0].deep,
+		deep_pass: elig[0].deep_pass, deep_total: elig[0].deep_total,
+		stream: int(elig[0].stream || 0),
+		score: int(elig[0].s.score) || 0, runners: runners };
 }
 
 /* General: the global ranking head (score order already encodes
@@ -765,11 +846,42 @@ function cycle(cfg) {
 		let use = cand;
 		if (cur && cand && cand.args == cur.args)
 			use = null;
-		else if (cur && cand && (S.resources[res].strikes == 0) &&
-			cand.tls_ms > 0 && cur.tls_ms > 0 &&
-			cand.tls_ms >= int(cur.tls_ms * (100 - MARGIN_PCT) / 100)) {
-			log_once('hold_' + res, res + ': the current strategy stays best within the ' + MARGIN_PCT + '% margin');
-			use = null;
+		else if (cur && cand && (S.resources[res].strikes == 0)) {
+			/* ч.116 anti-flap: a switch needs a clear win on the resource's
+			 * MEASURED verdicts — a tested candidate replaces an untested
+			 * one, the deep ratio (≥ +0.25 = one probe), or the sustained
+			 * video flow (>25% faster), or (both untested) a >10% TLS win.
+			 * The old TLS-only margin is exactly how handshake-fast
+			 * video-throttlers got promoted. A candidate with a WORSE band
+			 * never replaces the current one. */
+			const band = (e) => (((e.deep != null) && (e.deep > 0)) ||
+				((e.deep == null) && (int(e.stream || 0) > 0))) ? 0
+				: (((e.deep != null) && (e.deep == 0)) ? 2 : 1);
+			const cd = (cand.deep == null) ? -1 : cand.deep;
+			const cud = (cur.deep == null) ? -1 : cur.deep;
+			const cspd = int(cand.stream || 0), uspd = int(cur.stream || 0);
+			const cb = band(cand), ub = band(cur);
+			const tls_better = cand.tls_ms > 0 && cur.tls_ms > 0 &&
+				cand.tls_ms < int(cur.tls_ms * (100 - MARGIN_PCT) / 100);
+			const stream_better = (uspd > 0) &&
+				(cspd > int(uspd * (100 + MARGIN_PCT) / 100));
+			let switch_ok = false;
+			if (cb > ub)
+				switch_ok = false;
+			else if (cb < ub)
+				switch_ok = true;
+			else if (cd >= cud + 0.25)
+				switch_ok = true;
+			else if (cb == 0)
+				switch_ok = stream_better || (tls_better && cspd >= uspd);
+			else if (cb == 1)
+				switch_ok = tls_better;
+			if (!switch_ok) {
+				log_once('hold_' + res, res + ': the current strategy stays best within the margin (deep ' +
+					((cud >= 0) ? '' + cud : 'n/a') + ' vs ' + ((cd >= 0) ? '' + cd : 'n/a') +
+					', flow ' + uspd + ' vs ' + cspd + ' B/s, TLS ' + cand.tls_ms + ' vs ' + cur.tls_ms + ' ms)');
+				use = null;
+			}
 		}
 		if (use)
 			target.resources[res] = use;
@@ -857,6 +969,47 @@ function health(cfg) {
 		}
 		const meta = RESOURCES[res];
 		const pr = probe_live(meta.url);
+		/* ч.116: the whole-resource check. For YouTube the page alone
+		 * passes while the media hosts fail or the video stream is
+		 * throttled — the honest «ресурс работает» verdict needs them all;
+		 * otherwise the auto-pilot never re-picks a throttling strategy
+		 * (the user's exact complaint). */
+		let ok_all = pr.ok;
+		let fail_note = '';
+		if (meta.deep != null && length(meta.deep)) {
+			for (let du in meta.deep) {
+				const dpr = probe_live(du);
+				/* the video-stream edge legitimately answers 404 on its root —
+				 * ANY HTTP answer there means the DPI let the host through
+				 * (caught live ч.116: the honest 404 failed the check and
+				 * churned repairs; probe_live carries no rc — decide by the
+				 * code alone). */
+				const d_ok = (index(du, 'redirector.googlevideo.com') >= 0)
+					? (dpr.code != '000' && length('' + dpr.code) === 3)
+					: dpr.ok;
+				if (ok_all && !d_ok) {
+					ok_all = false;
+					fail_note = 'media host fails (' + dpr.code + '): ' + du;
+				}
+			}
+		}
+		if (res === 'youtube') {
+			const fp = probe_flow();
+			if (fp == null)
+				log_once('ytflow', 'the sustained-flow probe did not run (no ids file)');
+			else {
+				once_clear('ytflow');
+				pr.speed = fp.speed;
+				if (ok_all && !fp.ok) {
+					ok_all = false;
+					fail_note = 'the video flow is throttled (' + int((fp.speed || 0) / 1024) + ' KB/s, ' +
+						int((fp.bytes || 0) / 1024) + ' KB in ' + ((fp.secs != null) ? fp.secs : '?') + ' s)';
+				}
+			}
+		}
+		pr.ok = ok_all;
+		if (length(fail_note))
+			pr.note = fail_note;
 		const st = (res === 'general') ? S.general : S.resources[res];
 		st.probe = pr;
 		if (pr.ok) {
@@ -886,6 +1039,33 @@ function health(cfg) {
 			return;   /* one repair per tick */
 		}
 	}
+}
+
+/* ч.116: manual picks from the Strategy Lab (the scoped apply of the
+ * auto-pick runner) are handed over through zapret_autopilot_manual.json;
+ * the daemon adopts them as the resource winners on its next tick —
+ * otherwise the next re-rank could overwrite the user's explicit choice
+ * before it ever mattered. The file is consumed (deleted) after adoption. */
+function adopt_manual() {
+	const m = read_json(MANUAL_FILE);
+	if (m == null || type(m) !== 'object' || type(m.resources) !== 'object')
+		return;
+	let any = false;
+	for (let res in keys(m.resources)) {
+		const w = m.resources[res];
+		if (RESOURCES[res] == null || type(w) !== 'object' || !length('' + (w.args || '')))
+			continue;
+		S.resources[res].winner = { name: '' + (w.name || 'manual pick'),
+			args: '' + w.args, tls_ms: 0, deep: null,
+			stream: int(w.stream || 0), score: 0,
+			manual: true, runners: [] };
+		S.resources[res].strikes = 0;
+		log('the manual pick from the Strategy Lab is adopted for ' + res + ': ' + (w.name || 'custom args'));
+		any = true;
+	}
+	if (any)
+		wstat();
+	system(`rm -f ${sq(MANUAL_FILE)} 2>/dev/null`);
 }
 
 /* ── main loop ──────────────────────────────────────────────────────── */
@@ -953,6 +1133,8 @@ function tick() {
 		if (res === 'telegram' && S.tgws)
 			log_once('tgrule', 'telegram is served by the tg-ws bridge — its rule is not touched');
 	}
+
+	adopt_manual();
 
 	health(cfg);
 

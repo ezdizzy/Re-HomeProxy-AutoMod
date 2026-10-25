@@ -8719,9 +8719,6 @@ msgstr "TLS-рукопожатия на 4 тест-сайтах (изолиро�
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes). A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes."
-msgstr "Фаззер проверяет каждую стратегию каталога на изолированной NFQUEUE (TLS-рукопожатия YouTube / Telegram / Discord / Speedtest). Замер без дезинка помечает хосты, которые провайдер не блокирует; хост должен пройти большинство раундов. Живой трафик не затрагивается. Полный прогон занимает до ~15 минут."
-
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
 msgid "No strategy passes the distinguishing hosts — try the full fuzz, the strategy generator, or check your ISP blocking."
@@ -11413,3 +11410,46 @@ msgstr "Резолвит заблокированные домены через 
 msgid "Removed successfully — MultiDNS disabled"
 msgstr "Удалено успешно — MultiDNS отключён"
 
+# DPI video-stream probe (ч.116)
+msgid "own profile"
+msgstr "свой профиль"
+
+# DPI video-stream probe (ч.116)
+msgid "general profile (catch-all)"
+msgstr "общий профиль (catch-all)"
+
+# DPI video-stream probe (ч.116)
+msgid "Zapret: no general profile — this traffic passes WITHOUT desync."
+msgstr "Zapret: общего профиля нет — этот трафик идёт БЕЗ дезинка."
+
+# DPI video-stream probe (ч.116)
+msgid "global strategy (serves every flow routed to Zapret)"
+msgstr "глобальная стратегия (обслуживает весь трафик, направленный на Zapret)"
+
+# DPI video-stream probe (ч.116)
+msgid "The map is live: the rule column shows where the resource is routed, the strategy column — the engine profile actually serving it now (an own scoped profile, the general tail, or a global strategy). «Check» probes the resource through the configured path (YouTube: the page, the thumbnail CDN, the video edge AND the real video stream measured in KB/s)."
+msgstr "Карта живая: колонка «Правило» показывает, куда направлен ресурс, колонка «Стратегия» — какой профиль движка обслуживает его сейчас (свой профиль, общий хвост или глобальная стратегия). «Проверить» пробует ресурс через настроенный путь (YouTube: страница, CDN превью, видео-ребро И реальный видеопоток с замером в КБ/с)."
+
+# DPI video-stream probe (ч.116)
+msgid "The video-stream probe was skipped: the test stream URL is unavailable (%s) — the rest of the check still decided."
+msgstr "Проба видеопотока пропущена: тестовый URL стрима недоступен (%s) — остальная проверка всё равно решает вердикт."
+
+# DPI video-stream probe (ч.116)
+msgid "Apply this strategy for %s: a SCOPED profile is built (other managed resources keep their strategies), the rule goes to Zapret, then the resource is checked live — page, CDN and the REAL video stream. Continue?"
+msgstr "Применить эту стратегию для %s: будет собран СКОПИРОВАННЫЙ профиль (остальные управляемые ресурсы сохранят свои стратегии), правило будет направлено на Zapret, затем ресурс проверяется живьём — страница, CDN и РЕАЛЬНЫЙ видеопоток. Продолжить?"
+
+# DPI video-stream probe (ч.116)
+msgid "The global \"Apply strategy\" serves EVERY flow routed to Zapret (one engine strategy, no hostlists — the routing rules select the traffic). A per-resource apply (Strategy Lab rows, auto-pick) builds a SCOPED profile instead — other managed resources keep their strategies; the Composition below edits the same blocks manually. Applying also enables Zapret and restarts the service; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest)."
+msgstr "Глобальное «Применить стратегию» обслуживает ВЕСЬ трафик, направленный на Zapret (одна стратегия на движок, без hostlist'ов — трафик выбирают правила маршрутизации). Применение для конкретного ресурса (строки Лаборатории, автоподбор) собирает СКОПИРОВАННЫЙ профиль — остальные управляемые ресурсы сохраняют свои стратегии; «Композиция» ниже правит те же блоки вручную. Применение также включает Zapret и перезапускает службу; проверка гоняет стратегию на изолированной очереди по 4 тест-сайтам (YouTube, Telegram, Discord, Speedtest)."
+
+# DPI video-stream probe (ч.116)
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the ByeDPI card above."
+msgstr "Один клик: фаззер ранжирует корпус (свежий переиспользуется), лучшая стратегия для ресурса применяется как скопированный профиль со снимком сервера, затем ресурс проверяется через настроенный путь (страница, CDN, РЕАЛЬНЫЙ видеопоток в КБ/с). Только Zapret — стратегии ByeDPI настраиваются в карточке ByeDPI выше."
+
+# DPI video-stream probe (ч.116) + non-differential deep verdict (ч.117)
+msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the top five with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes."
+msgstr "Фаззер прогоняет каждую стратегию каталога на изолированной NFQUEUE (TLS-хендшейки YouTube / Telegram / Discord / Speedtest), затем глубоко проверяет пятёрку лидеров РЕАЛЬНЫМИ контентными загрузками — включая сам видеопоток с замером в КБ/с (хендшейк не видит ТСПУ-троттлинг видео). Пробы, которые все глубоко-проверенные стратегии проходят или валят одинаково, не ранжируют (не различают): колонка «Ресурс грузится» показывает тогда ≈ со счётом сырых проб — равно у всех, не ранжирует. Baseline без дезинка помечает хосты, которые ваш провайдер не режет; каждый хост должен пройти большинство раундов. Живой трафик не затрагивается. Полный прогон занимает до ~15 минут."
+
+# non-differential deep verdict (ч.117)
+msgid "identical for all"
+msgstr "равно у всех"

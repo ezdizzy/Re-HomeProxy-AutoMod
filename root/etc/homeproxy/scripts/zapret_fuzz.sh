@@ -190,14 +190,32 @@ if [ ! -s "$TMP/rank.json" ]; then
 fi
 
 # Deep content battery on the top-5 (one pass each, same isolated queue).
+# ч.116: the battery carries the SUSTAINED-FLOW throughput probe (ytv — 24
+# real thumbnails over ONE keep-alive TLS flow to i.ytimg.com, Σbytes/Σtime)
+# and, when yt_stream_probe.uc hands out a live videoplayback URL (often
+# bot-gated), ALSO yts — a ranged 4 MB download of the REAL video stream.
+# A handshake and tiny fetches cannot see TSPU throttling of the flow,
+# which is exactly what the user complains about («страница открывается,
+# а превью/видео грузятся вечность»).
 TOPN=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/top5.json")); print(length((j && j.list) || 0));' 2>/dev/null)
+YTV_URL=$(ucode /etc/homeproxy/scripts/yt_stream_probe.uc get 2>/dev/null | ucode -e '
+import {readfile} from "fs";
+let j = null;
+try { j = json(readfile("/dev/stdin") || ""); } catch (e) { j = null; }
+if (j && j.ok && j.url) print(j.url);
+' 2>/dev/null)
+if [ -z "$YTV_URL" ]; then
+	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","note":"deep battery: page/CDN/edge + the sustained-flow throughput probe (the real-stream URL is unavailable)"}' > "$STATUS"
+else
+	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","note":"deep battery includes the real video-stream probe"}' > "$STATUS"
+fi
 i=0
 while [ "$i" -lt "$TOPN" ]; do
 	i=$((i + 1))
 	ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/top5.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 	[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
-	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"'}' > "$STATUS"
-	sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i.json"
+	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"'"}' > "$STATUS"
+	YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i.json"
 done
 
 ucode -e '
@@ -211,24 +229,73 @@ const parse = (path) => {
 };
 
 /* Pass 2 — merge the deep content verdicts into the handshake ranking.
- * d<i>.json corresponds to rank.json strategies[i-1] (the top5 order). */
+ * d<i>.json corresponds to rank.json strategies[i-1] (the top5 order).
+ * ч.116: probes are compared ACROSS the deep-tested strategies FIRST —
+ * a probe every strategy passed (or none passed) is NOT differential and
+ * must not rank strategies (ч.110 live fact: the ~1 MB YouTube page fetch
+ * failed for ALL top-5 on the live ISP, which dragged every deep verdict
+ * equally and let the raw TLS tie-break promote a strategy that throttles
+ * the actual video stream). The merge keeps the RAW items for the tooltip
+ * and ranks by the differential-only deep ratio. */
 const rank = parse(TMP + "/rank.json") || { strategies: [] };
 const strategies = rank.strategies || [];
 let deepN = 0;
+const drawn = [];
 for (let i = 1; i <= 5; i++) {
 	const d = parse(TMP + "/d" + i + ".json");
 	if (!d || type(d.results) != "array") continue;
-	const s = strategies[i - 1];
-	if (!s) continue;
+	if (!strategies[i - 1]) continue;
+	push(drawn, { s: strategies[i - 1], results: d.results });
 	deepN++;
+}
+const probe_cnt = {};
+for (let r in drawn)
+	for (let res in r.results) {
+		if (type(res) != "object" || res.tag == null) continue;
+		for (let it in (res.deep || [])) {
+			if (type(it) != "object" || it.id == null) continue;
+			const pc = probe_cnt[it.id] || { have: 0, ok: 0 };
+			pc.have++;
+			if (it.ok == 1) pc.ok++;
+			probe_cnt[it.id] = pc;
+		}
+	}
+const diff_ids = {};
+for (let id in keys(probe_cnt))
+	if (probe_cnt[id].ok > 0 && probe_cnt[id].ok < probe_cnt[id].have)
+		diff_ids[id] = true;
+const skipped_ids = [];
+for (let id in keys(probe_cnt))
+	if (!diff_ids[id])
+		push(skipped_ids, id);
+for (let r in drawn) {
+	const s = r.s;
 	let dok = 0, dtot = 0, hosts = [];
-	for (let r in d.results) {
-		if (type(r) != "object" || r.tag == null) continue;
-		dok += (r.deep_ok == 1) ? 1 : 0;
-		dtot += int(r.deep_total) || 0;
-		push(hosts, { tag: r.tag, label: r.label || r.tag,
-			deep_ok: (r.deep_ok == 1), deep_total: int(r.deep_total) || 0,
-			items: r.deep || [] });
+	for (let res in r.results) {
+		if (type(res) != "object" || res.tag == null) continue;
+		let hdok = 0, dtot_h = 0, stream = 0;
+		for (let it in (res.deep || [])) {
+			if (type(it) != "object" || it.id == null) continue;
+			/* the sustained-flow speed (ytv batch / yts real stream) — the
+			 * honest quality metric WITHIN a passing deep verdict: both
+			 * strategies can pass the ≥128 KB/s bar while one crawls at
+			 * 350 KB/s and the other flies at 540 KB/s (the live ч.116
+			 * comparison the user reported). */
+			if ((it.id == "ytv" || it.id == "yts") && int(it.speed || 0) > stream)
+				stream = int(it.speed || 0);
+			if (!diff_ids[it.id]) continue;
+			dtot_h++;
+			if (it.ok == 1) hdok++;
+		}
+		dok += hdok;
+		dtot += dtot_h;
+		push(hosts, { tag: res.tag, label: res.label || res.tag,
+			deep_ok: (dtot_h > 0 && hdok == dtot_h),
+			deep_pass: hdok, deep_total: dtot_h,
+			deep_total_raw: int(res.deep_total) || 0,
+			stream: stream, items: res.deep || [] });
+		if (res.tag == "yt")
+			s.stream = stream;
 	}
 	s.deep = { ok: dok, total: dtot, hosts: hosts };
 }
@@ -240,7 +307,14 @@ for (let s in strategies)
 sort(tested, (a, b) => {
 	const ra = a.deep.total ? (a.deep.ok * 1.0 / a.deep.total) : 0;
 	const rb = b.deep.total ? (b.deep.ok * 1.0 / b.deep.total) : 0;
-	return (rb - ra) || (b.score - a.score);
+	if (ra != rb)
+		return rb - ra;
+	/* ч.116: equal deep verdicts → the faster sustained video flow wins
+	 * (the TLS handshake time does not predict the throttled flow). */
+	const sa = int(a.stream || 0), sb = int(b.stream || 0);
+	if (sa > 0 && sb > 0 && sa != sb)
+		return sb - sa;
+	return b.score - a.score;
 });
 const final = [];
 for (let s in tested) push(final, s);
@@ -256,7 +330,8 @@ if (bj && type(bj.results) == "array")
 writefile(RESULT, sprintf("%.J\n", {
 	running: false, done: length(final), total: length(final),
 	rounds: ROUNDS, majority: MAJ, ts: now, baseline: bnote, strategies: final,
-	deep_count: deepN, deep_note: "top " + deepN + " deep-checked: page/CDN/media-edge fetches"
+	deep_count: deepN, deep_skipped: skipped_ids,
+	deep_note: "top " + deepN + " deep-checked: page/CDN/media-edge fetches + the real video-stream throughput probe (ytv); probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank"
 }));
 
 /* history: keep the last 5 runs (tmpfs — survives until reboot) */

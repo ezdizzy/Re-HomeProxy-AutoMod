@@ -1169,6 +1169,68 @@ function hp_compose_build(profiles) {
 	return { zapret: zapret, byedpi: byedpi, notes: notes };
 }
 
+/* ч.116: parse the CURRENT zapret_cmd_opts into profile blocks so the UI
+ * «Что чем обслуживается» can show WHICH strategy serves WHICH resource.
+ * The old map printed the global strategy on every Zapret-routed row —
+ * the user read «применить для YouTube» as «применилось и к Discord
+ * тоже». scope: the resource a block's hostlist names (a --hostlist file
+ * path or a --hostlist-domains CSV matched by its distinctive domains);
+ * null = a catch-all/general block. name: the corpus entry matching the
+ * block with its appended scoping token stripped (falling back to the
+ * raw block — corpus entries may carry their own hostlist). */
+function hp_zapret_blocks(args, corpus) {
+	const blocks = [];
+	for (let b in hp_comp_split_new(args)) {
+		const raw = '' + b;
+		let scope = null;
+		const mh = match(raw, /--hostlist=(\/[^ ]+)/);
+		if (mh != null) {
+			const f = '' + mh[1];
+			if (index(f, 'youtube') >= 0)
+				scope = 'youtube';
+			else if (index(f, 'discord') >= 0)
+				scope = 'discord';
+			else if (index(f, 'telegram') >= 0)
+				scope = 'telegram';
+		} else {
+			const md = match(raw, /--hostlist-domains=([^ ]+)/);
+			if (md != null) {
+				const csv = '' + md[1];
+				if (index(csv, 'googlevideo') >= 0 || index(csv, 'youtube') >= 0 ||
+					index(csv, 'youtu') >= 0)
+					scope = 'youtube';
+				else if (index(csv, 'discord') >= 0)
+					scope = 'discord';
+				else if (index(csv, 'telegram') >= 0)
+					scope = 'telegram';
+			}
+		}
+		const base = trim(replace(raw, / --hostlist(-domains)?=[^ ]+/, ''));
+		let name = null;
+		if (length(base))
+			for (let x in corpus.candidates)
+				if (type(x) === 'object' && x.args === base) { name = '' + x.name; break; }
+		if (name == null && length(raw))
+			for (let x in corpus.candidates)
+				if (type(x) === 'object' && x.args === raw) { name = '' + x.name; break; }
+		if (name == null && length(base)) {
+			/* composition blocks are fragments of corpus strategies — match
+			 * by containment, the shortest containing entry wins (caught live
+			 * ч.116: the map showed raw args where the corpus name exists). */
+			let best = null, best_len = 0;
+			for (let x in corpus.candidates)
+				if (type(x) === 'object' && index('' + x.args, base) >= 0) {
+					const al = length('' + x.args);
+					if (best == null || al < best_len) { best = x; best_len = al; }
+				}
+			if (best != null)
+				name = '' + (best.name || '');
+		}
+		push(blocks, { scope: scope, name: name, base: base });
+	}
+	return blocks;
+}
+
 /* ── TG WS Proxy (D8, Ф7) ────────────────────────────────────────────────
  * Third-party Telegram bridges (valnesfjord/tg-ws-proxy-rs as the primary
  * variant, the d0mhate Go manager as an alternative) — detected READ-ONLY.
@@ -4057,7 +4119,59 @@ const methods = {
 			let ok = 1;
 			for (let p in probes)
 				if (!p.ok) ok = 0;
-			return { result: true, resource: resource, ok: ok, probes: probes };
+			/* ч.116: the SUSTAINED-FLOW throughput probe (the live path). An
+			 * HTTP answer on the tiny edge 404 does not exclude TSPU
+			 * throttling of the flow — the batch of real thumbnails over ONE
+			 * keep-alive TLS flow, measured in bytes/s, does. */
+			let stream_note = null;
+			if (resource === 'youtube') {
+				const ff = RUN_DIR + '/wiz_probe_flow.json';
+				system(`sh ${shellquote(HP_DIR + '/scripts/yt_flow_probe.sh')} > ${shellquote(ff)} 2>/dev/null`, 30000);
+				let fj = null;
+				if (access(ff)) {
+					try { fj = json(readfile(ff) || ''); } catch (e) { fj = null; }
+					system(`rm -f ${shellquote(ff)} 2>/dev/null`);
+				}
+				if (fj != null && type(fj) === 'object' && fj.code != null) {
+					push(probes, { url: '(sustained video flow, 24 thumbnails / one TLS flow)',
+						code: '' + (fj.code || '0'), tsec: (fj.secs != null) ? ('' + fj.secs) : null,
+						bytes: int(fj.bytes || 0), speed: int(fj.speed || 0),
+						ok: (fj.ok == 1) });
+					if (fj.ok != 1) ok = 0;
+				}
+				/* the REAL video stream when the upstream hands out a URL
+				 * (often bot-gated — then honestly absent). */
+				const sf = RUN_DIR + '/wiz_probe_stream.json';
+				system(`ucode ${shellquote(HP_DIR + '/scripts/yt_stream_probe.uc')} get > ${shellquote(sf)} 2>/dev/null`, 30000);
+				let yj = null;
+				if (access(sf)) {
+					try { yj = json(readfile(sf) || ''); } catch (e) { yj = null; }
+					system(`rm -f ${shellquote(sf)} 2>/dev/null`);
+				}
+				if (yj != null && type(yj) === 'object' && yj.ok && yj.url &&
+					index('' + yj.url, "'") < 0) {
+					const cf = RUN_DIR + '/wiz_probe_res_stream';
+					system(`rm -f ${shellquote(cf)} 2>/dev/null`);
+					const cmd = `curl -s -r 0-4194303 -o /dev/null ` +
+						`-w '%{http_code} %{time_total} %{size_download} %{speed_download}' ` +
+						`--connect-timeout 4 --max-time 9 ${shellquote('' + yj.url)} > ${shellquote(cf)} 2>/dev/null`;
+					const rc = system(cmd, 12000);
+					const parts = split(trim(readfile(cf) || ''), /[[:space:]]+/);
+					const code = (length(parts) && match(parts[0], /^[0-9]{3}$/)) ? parts[0] : '000';
+					const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
+					const bytes = (length(parts) > 2) ? int(parts[2]) : 0;
+					const speed = (length(parts) > 3) ? int(parts[3]) : 0;
+					const sok = (rc === 0 && (code === '200' || code === '206') &&
+						speed >= 131072 && bytes >= 524288);
+					push(probes, { url: '(real video stream)', code: code, tsec: tsec,
+						bytes: bytes, speed: speed, ok: sok });
+					if (!sok) ok = 0;
+				} else {
+					stream_note = (yj != null && yj.note != null) ? ('' + yj.note) : 'unavailable';
+				}
+			}
+			return { result: true, resource: resource, ok: ok, probes: probes,
+				stream_note: stream_note };
 		}
 	},
 
@@ -5250,6 +5364,10 @@ const methods = {
 					running: hp_proc_running('nfqws2'),
 					strategy: zstrat,
 					strategy_name: zname,
+					/* ч.116: per-block scopes — the UI map shows WHICH block
+					 * (own profile vs the general tail vs a global strategy)
+					 * serves each resource. */
+					blocks: length(zstrat) ? hp_zapret_blocks(zstrat, corpus) : [],
 					nfqueue: hp_zapret_queue_counters()
 				},
 				byedpi: {

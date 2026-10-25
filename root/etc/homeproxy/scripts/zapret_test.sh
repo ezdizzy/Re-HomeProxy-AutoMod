@@ -71,10 +71,29 @@ HOSTS="yt|YouTube|redirector.googlevideo.com tg|Telegram|telegram.org dc|Discord
 # and the video-stream edge (ANY HTTP answer proves the DPI let the host
 # through; its root path legitimately answers 404). Telegram/Discord/Speedtest
 # on their main pages.
-# id|url  (the yt edge reuses the yt handshake host/IP; id ytr = edge probe)
+# ч.116: the SUSTAINED-FLOW throughput probe (ytv) — the user's complaint is
+# exactly what a handshake cannot see: TSPU lets the ClientHello through and
+# then THROTTLES the flow («превью и видео грузятся вечность»). ytv fetches
+# 24 real thumbnails of stable public videos over ONE keep-alive TLS flow to
+# i.ytimg.com (the google-CDN class the complaint is about) and measures
+# Σbytes/Σtime — a throttled flow fails the bar honestly. yts = the REAL
+# video-stream download (a ranged 4 MB of a live videoplayback URL from
+# yt_stream_probe.uc) when the upstream hands one out (often bot-gated —
+# then the probe is honestly absent).
+# id|url  (the yt edge reuses the yt handshake host/IP; id ytr = edge probe;
+# id ytv = sustained-flow throughput; id yts = real video stream)
 DEEP_PROBES=""
+YTV_URLS=""
 if [ "$DEEP" = "1" ]; then
-	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytr|https://redirector.googlevideo.com/ tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/"
+	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytr|https://redirector.googlevideo.com/ ytv|BATCH tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/"
+	if [ -f /etc/homeproxy/resources/yt_probe_ids.txt ]; then
+		for vid in $(grep -vE '^\s*(#|$)' /etc/homeproxy/resources/yt_probe_ids.txt); do
+			YTV_URLS="$YTV_URLS https://i.ytimg.com/vi/$vid/mqdefault.jpg https://i.ytimg.com/vi/$vid/hq720.jpg"
+		done
+	fi
+	if [ -n "$YTV_URL" ]; then
+		DEEP_PROBES="$DEEP_PROBES yts|$YTV_URL"
+	fi
 fi
 
 NFQ_PID=""
@@ -103,11 +122,13 @@ fail() { echo "{\"ok\":0,\"total\":0,\"error\":\"$1\"}"; exit 0; }
 command -v curl >/dev/null 2>&1 || fail "curl missing"
 mkdir -p "$TMP" 2>/dev/null
 
-# Watchdog: guarantee teardown within 35s even if curl/nslookup wedges, so the
+# Watchdog: guarantee teardown within 50s even if curl/nslookup wedges, so the
 # live firewall is never left modified (busybox has no `timeout` applet).
+# 50 s (ч.116): the deep battery grew a 9 s stream download on top of the
+# 25 s handshake poll — 35 s could tear down mid-deep and drop results.
 # Redirect its fds to /dev/null: otherwise the backgrounded `sleep` keeps the
 # caller's stdout pipe open and rpcd/popen blocks on read() for the full span.
-( sleep 35; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
+( sleep 50; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
 WATCH_PID=$!
 
 # 1. Test-host IPs — BEFORE touching the firewall, so a slow resolver never runs
@@ -141,6 +162,10 @@ if [ "$DEEP" = "1" ]; then
 		dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
 		if [ "$did" = "ytr" ]; then
 			cp "$TMP/ip_yt" "$TMP/dip_$did" 2>/dev/null
+		elif [ "$did" = "ytv" ]; then
+			# the sustained-flow batch rides the SAME host+IP as the yti probe
+			cp "$TMP/dip_yti" "$TMP/dip_$did" 2>/dev/null
+			echo "i.ytimg.com" > "$TMP/dhost_$did"
 		else
 			dip=$(nslookup "$dhost" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^127\.' | tail -1)
 			echo "$dip" > "$TMP/dip_$did"
@@ -234,11 +259,33 @@ if [ "$DEEP" = "1" ]; then
 		dhost=$(cat "$TMP/dhost_$did" 2>/dev/null)
 		[ -z "$dhost" ] && dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
 		dip=$(cat "$TMP/dip_$did" 2>/dev/null)
-		if [ -z "$dip" ]; then echo "000 0 0 6" > "$TMP/d_$did"; continue; fi
+		if [ -z "$dip" ]; then echo "000 0 0 0 6" > "$TMP/d_$did"; continue; fi
+		# ч.116: the stream probe downloads a ranged 4 MB of the REAL video —
+		# the speed_download field is the honest verdict metric.
+		DRANGE=""
+		[ "$did" = "yts" ] && DRANGE="-r 0-4194303"
+		if [ "$did" = "ytv" ]; then
+			# SUSTAINED-FLOW throughput: 24 real thumbnails over ONE keep-alive
+			# flow (--max-time caps the WHOLE run; curl exits 28 on a throttled
+			# link — the completed transfers still report). Σbytes/Σtime = the
+			# honest per-flow bytes/s; ≥8 successful transfers = code 200.
+			# One -o per URL: with a single -o curl discards only the FIRST
+			# body and dumps the rest to stdout (caught live ч.116).
+			CURL_ARGS=""
+			for yu in $YTV_URLS; do
+				CURL_ARGS="$CURL_ARGS -o /dev/null $yu"
+			done
+			if [ -n "$PROBE_UID" ]; then
+				su -s /bin/sh daemon -c "out=\$(curl -sL --max-redirs 2 --resolve '${dhost}:443:${dip}' -w '%{http_code} %{time_total} %{size_download}\n' --connect-timeout 4 --max-time 9 -k ${CURL_ARGS} 2>/dev/null | awk '{s+=\$3; t+=\$2; o++; if (\$1==200 || \$1==206) n++;} END {if (t<0.1) t=0.1; code=0; if (n>=8) code=200; print code, t, s, int(s/t), o}'); echo \"\$out\" > '${TMP}/d_${did}'" >/dev/null 2>&1 &
+			else
+				( out=$(curl -sL --max-redirs 2 --resolve "${dhost}:443:${dip}" -w '%{http_code} %{time_total} %{size_download}\n' --connect-timeout 4 --max-time 9 -k ${CURL_ARGS} 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++;} END {if (t<0.1) t=0.1; code=0; if (n>=8) code=200; print code, t, s, int(s/t), o}'); echo "$out" > "$TMP/d_ytv" ) >/dev/null 2>&1 &
+			fi
+			continue
+		fi
 		if [ -n "$PROBE_UID" ]; then
-			su -s /bin/sh daemon -c "out=\$(curl -sL --max-redirs 3 --resolve '${dhost}:443:${dip}' -o /dev/null -w '%{http_code} %{time_total} %{size_download}' --connect-timeout 4 --max-time 9 -k '${durl}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/d_${did}'" >/dev/null 2>&1 &
+			su -s /bin/sh daemon -c "out=\$(curl -sL $DRANGE --max-redirs 3 --resolve '${dhost}:443:${dip}' -o /dev/null -w '%{http_code} %{time_total} %{size_download} %{speed_download}' --connect-timeout 4 --max-time 9 -k '${durl}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/d_${did}'" >/dev/null 2>&1 &
 		else
-			( out=$(curl -sL --max-redirs 3 --resolve "${dhost}:443:${dip}" -o /dev/null -w '%{http_code} %{time_total} %{size_download}' --connect-timeout 4 --max-time 9 -k "$durl" 2>/dev/null); echo "$out $?" > "$TMP/d_$did" ) >/dev/null 2>&1 &
+			( out=$(curl -sL $DRANGE --max-redirs 3 --resolve "${dhost}:443:${dip}" -o /dev/null -w '%{http_code} %{time_total} %{size_download} %{speed_download}' --connect-timeout 4 --max-time 9 -k "$durl" 2>/dev/null); echo "$out $?" > "$TMP/d_$did" ) >/dev/null 2>&1 &
 		fi
 	done
 	dn=0
@@ -252,11 +299,11 @@ if [ "$DEEP" = "1" ]; then
 		sleep 1
 		dn=$((dn + 1))
 	done
-	# attach the deep results to the owning main tag: yt ← ytp,yti,ytr; tg ← tgp; dc ← dcp; st ← stp
+	# attach the deep results to the owning main tag: yt ← ytp,yti,ytr,ytv,yts; tg ← tgp; dc ← dcp; st ← stp
 	for h in $HOSTS; do
 		tag=${h%%|*}
 		case "$tag" in
-			yt) OWNER="ytp yti ytr" ;;
+			yt) OWNER="ytp yti ytr ytv yts" ;;
 			tg) OWNER="tgp" ;;
 			dc) OWNER="dcp" ;;
 			st) OWNER="stp" ;;
@@ -265,21 +312,44 @@ if [ "$DEEP" = "1" ]; then
 		DOK=0; DTOT=0
 		for did in $OWNER; do
 			raw=$(cat "$TMP/d_$did" 2>/dev/null)
+			# An ABSENT probe (e.g. no real-stream URL this sweep) is not a
+			# failure — emitting empty fields produced INVALID JSON (caught
+			# live ч.116: "bytes":, broke the fuzzer's json() parse) and the
+			# whole deep verdict was lost. Absent = skipped entirely.
+			[ -n "$raw" ] || continue
 			dcode=$(printf '%s' "$raw" | awk '{print $1}')
 			dsec=$(printf '%s' "$raw" | awk '{print $2}')
 			dbytes=$(printf '%s' "$raw" | awk '{print $3}')
-			drc=$(printf '%s' "$raw" | awk '{print $4}')
+			dspeed=$(printf '%s' "$raw" | awk '{print $4}')
+			# curl prints speed_download as a double ("9563726.000") — busybox
+			# test needs an integer: truncate at the decimal point.
+			dspeed=${dspeed%%.*}
+			drc=$(printf '%s' "$raw" | awk '{print $5}')
 			DTOT=$((DTOT+1))
-			case "$dcode" in ''|000) dok=0;; *)
+			case "$dcode" in ''|000|0) dok=0;; *)
 			dok=1
 			case "$dcode" in 2*|3*) : ;; *) dok=0 ;; esac
 			# edge probe: ANY HTTP answer proves the DPI let the host through
 			case "$did" in ytr) [ "$dcode" != "000" ] && dok=1 ;; esac
+			# ч.116 ytv (sustained-flow batch): ≥8 real thumbnails fetched AND
+			# ≥128 KB/s over ONE keep-alive flow AND ≥0.4 MB total — the
+			# «превью грузятся вечность» case fails here honestly.
+			case "$did" in ytv)
+				case "$dcode" in 200) : ;; *) dok=0 ;; esac
+				[ "$dspeed" -ge 131072 ] 2>/dev/null || dok=0
+				[ "$dbytes" -ge 409600 ] 2>/dev/null || dok=0
+			;; esac
+			# ч.116 yts (real video stream): 2xx AND ≥128 KB/s AND ≥0.5 MB.
+			case "$did" in yts)
+				case "$dcode" in 200|206) : ;; *) dok=0 ;; esac
+				[ "$dspeed" -ge 131072 ] 2>/dev/null || dok=0
+				[ "$dbytes" -ge 524288 ] 2>/dev/null || dok=0
+			;; esac
 			[ "$dcode" = "204" ] || [ "$dbytes" -gt 0 ] 2>/dev/null || dok=0
 			;; esac
 			[ "$dok" = 1 ] && DOK=$((DOK+1))
 			[ -n "$DJSON" ] && DJSON="$DJSON,"
-			DJSON="$DJSON{\"id\":\"$did\",\"code\":\"$dcode\",\"sec\":\"$dsec\",\"bytes\":$dbytes,\"ok\":$dok}"
+			DJSON="$DJSON{\"id\":\"$did\",\"code\":\"$dcode\",\"sec\":\"$dsec\",\"bytes\":$dbytes,\"speed\":$dspeed,\"ok\":$dok}"
 		done
 		eval "D_${tag}_OK=$DOK"
 		eval "D_${tag}_TOT=$DTOT"

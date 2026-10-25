@@ -5856,3 +5856,46 @@ msgstr ""
 msgid "Removed successfully — MultiDNS disabled"
 msgstr ""
 
+# DPI video-stream probe (ч.116)
+msgid "own profile"
+msgstr ""
+
+# DPI video-stream probe (ч.116)
+msgid "general profile (catch-all)"
+msgstr ""
+
+# DPI video-stream probe (ч.116)
+msgid "Zapret: no general profile — this traffic passes WITHOUT desync."
+msgstr ""
+
+# DPI video-stream probe (ч.116)
+msgid "global strategy (serves every flow routed to Zapret)"
+msgstr ""
+
+# DPI video-stream probe (ч.116)
+msgid "The map is live: the rule column shows where the resource is routed, the strategy column — the engine profile actually serving it now (an own scoped profile, the general tail, or a global strategy). «Check» probes the resource through the configured path (YouTube: the page, the thumbnail CDN, the video edge AND the real video stream measured in KB/s)."
+msgstr ""
+
+# DPI video-stream probe (ч.116)
+msgid "The video-stream probe was skipped: the test stream URL is unavailable (%s) — the rest of the check still decided."
+msgstr ""
+
+# DPI video-stream probe (ч.116)
+msgid "Apply this strategy for %s: a SCOPED profile is built (other managed resources keep their strategies), the rule goes to Zapret, then the resource is checked live — page, CDN and the REAL video stream. Continue?"
+msgstr ""
+
+# DPI video-stream probe (ч.116)
+msgid "The global \"Apply strategy\" serves EVERY flow routed to Zapret (one engine strategy, no hostlists — the routing rules select the traffic). A per-resource apply (Strategy Lab rows, auto-pick) builds a SCOPED profile instead — other managed resources keep their strategies; the Composition below edits the same blocks manually. Applying also enables Zapret and restarts the service; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest)."
+msgstr ""
+
+# DPI video-stream probe (ч.116)
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the ByeDPI card above."
+msgstr ""
+
+# DPI video-stream probe (ч.116) + non-differential deep verdict (ч.117)
+msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the top five with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes."
+msgstr ""
+
+# non-differential deep verdict (ч.117)
+msgid "identical for all"
+msgstr ""
