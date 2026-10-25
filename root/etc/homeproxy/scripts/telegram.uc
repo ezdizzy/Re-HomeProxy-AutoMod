@@ -82,26 +82,41 @@ let last_push = {};   /* kind -> { text, ts } dedup */
 
 /* ── basics ───────────────────────────────────────────────────────────── */
 
+/* ч.118: shellquote MUST stay ABOVE log() — in this ucode dialect a
+ * top-level function declared LATER is INVISIBLE at call time to a
+ * function declared earlier (router-proven A–F matrix: plain script,
+ * 'use strict', module import, template and concat call forms all fail
+ * with "access to undeclared variable / not a function" the moment the
+ * caller runs). The log-rotation branch below used to carry the ONLY
+ * shellquote reference of log() while shellquote sat BELOW log(): the
+ * daemon worked for weeks until the log crossed the 64 KB cap, then every
+ * log() call killed the process (respawn spam, retries exhausted, bot
+ * dead until a manual intervention — the live ч.118 incident). */
+function shellquote(s) {
+	return `'${replace(s, "'", "'\\''")}'`;
+}
+
 function log(msg) {
 	/* Standalone ucode has NO strftime (v1 carried this bug since ч.69 —
 	 * its log() crashed the daemon at the very first call). Epoch-only,
-	 * same as automation.uc/metrics.uc. */
-	const line = sprintf('[%d] [TG] %s\n', time(), msg);
-	let f = open(LOG_FILE, 'a');
-	if (f) { f.write(line); f.close(); }
-	if (!access(LOG_FILE)) return;
-	const st = stat(LOG_FILE);
-	if (st && st.size > 65536) {
-		const old = popen(`tail -n 100 ${shellquote(LOG_FILE)}`);
-		const tail = old ? old.read('all') : '';
-		if (old) old.close();
-		let w = open(LOG_FILE, 'w');
-		if (w) { w.write(tail); w.close(); }
-	}
-}
-
-function shellquote(s) {
-	return `'${replace(s, "'", "'\\''")}'`;
+	 * same as automation.uc/metrics.uc. ч.118: the WHOLE body is
+	 * best-effort try/catch — the logger must never throw (a throwing
+	 * logger turned the ч.113 log-cap into a death spiral: the rotation
+	 * branch itself was the crash, so every write killed the daemon). */
+	try {
+		const line = sprintf('[%d] [TG] %s\n', time(), msg);
+		let f = open(LOG_FILE, 'a');
+		if (f) { f.write(line); f.close(); }
+		if (!access(LOG_FILE)) return;
+		const st = stat(LOG_FILE);
+		if (st && st.size > 65536) {
+			const old = popen(`tail -n 100 ${shellquote(LOG_FILE)}`);
+			const tail = old ? old.read('all') : '';
+			if (old) old.close();
+			let w = open(LOG_FILE, 'w');
+			if (w) { w.write(tail); w.close(); }
+		}
+	} catch (e) { /* best effort — logging must never kill the daemon */ }
 }
 
 function capture(cmd) {
@@ -702,16 +717,14 @@ function push_service() {
 		send_push('service', '✅ <b>Ядро снова отвечает</b>.');
 }
 
-function push_scan() {
-	try { push_hotswap(); } catch (e) { log('push hotswap: ' + e); }
-	try { push_watchdog(); } catch (e) { log('push watchdog: ' + e); }
-	try { push_learn(); } catch (e) { log('push learn: ' + e); }
-	try { push_service(); } catch (e) { log('push service: ' + e); }
-	try { ctrl.push_scan(ctrl_api); } catch (e) { log('push control: ' + e); }
-}
-
-/* Primitives handed to the «Контроль» module (declared after the functions
- * it references — module scope, evaluated at load time). */
+/* Primitives handed to the «Контроль» module. ч.118: moved ABOVE push_scan —
+ * in this ucode dialect a name declared LATER is invisible to a function
+ * defined earlier (no hoisting at all; lesson 126), so push_scan's
+ * ctrl.push_scan(ctrl_api) compiled as an unresolved lookup and EVERY
+ * control push died with "access to undeclared variable ctrl_api" — the
+ * feature never fired once since plan 14 (each failure was caught and
+ * logged, the bot itself kept working). All referenced primitives are
+ * declared above this block; push_scan follows it. */
 const ctrl_api = {
 	send_html: tg_send_html,
 	kb_rows: kb_rows,
@@ -722,6 +735,14 @@ const ctrl_api = {
 	uci_get: uci_get,
 	push: send_push
 };
+
+function push_scan() {
+	try { push_hotswap(); } catch (e) { log('push hotswap: ' + e); }
+	try { push_watchdog(); } catch (e) { log('push watchdog: ' + e); }
+	try { push_learn(); } catch (e) { log('push learn: ' + e); }
+	try { push_service(); } catch (e) { log('push service: ' + e); }
+	try { ctrl.push_scan(ctrl_api); } catch (e) { log('push control: ' + e); }
+}
 
 /* ── dispatch ─────────────────────────────────────────────────────────── */
 
@@ -919,8 +940,21 @@ function main() {
 	}
 }
 
-try {
-	main();
-} catch (e) {
-	log('fatal: ' + sprintf('%s', e) + ((type(e) === 'object' && e.stackline) ? ' @line ' + e.stackline : ''));
+/* ч.118: IMMORTAL wrapper. The instance runs with procd respawn_retry 0 by
+ * design (a self-exiting daemon must not respawn-spam), so ANY escaped
+ * fatal ended the process with exit code 0 — procd marks the instance
+ * "done" and never starts it again, and telegram_set() deliberately never
+ * touches the service (hot reload), i.e. the bot stayed dead until a full
+ * service restart no matter how often settings were saved (the live ч.118
+ * incident). main()'s own while(true) never returns; if anything ever
+ * escapes it, log, pause and re-enter — the update offset survives via
+ * OFF_FILE. */
+while (true) {
+	try {
+		main();
+		log('main returned?! (immortal loop re-entering)');
+	} catch (e) {
+		log('fatal: ' + sprintf('%s', e) + ((type(e) === 'object' && e.stackline) ? ' @line ' + e.stackline : ''));
+	}
+	sleep(15000);
 }

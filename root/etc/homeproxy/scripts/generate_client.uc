@@ -913,6 +913,24 @@ function push_outbound(list, node) {
 	push(list, generate_outbound(node));
 }
 
+/* ч.118: `config` + `has_outbound` hoisted ABOVE get_outbound — in this
+ * ucode dialect a name declared LATER is invisible to a function defined
+ * earlier (no hoisting at all; lesson 126), and get_outbound's tgws-off /
+ * reroute branches call has_outbound() — for every user WITHOUT the tg-ws
+ * bridge those branches threw "left-hand side is not a function" and the
+ * whole generation died (dormant since the helpers sat at the file tail;
+ * this router has the bridge, so the branch never ran here). The block
+ * references nothing but itself — the hoist is behavior-neutral. */
+const config = {};
+
+const has_outbound = (tag) => {
+	for (let ob in config.outbounds)
+		if (ob?.tag === tag) return true;
+	for (let ep in (config.endpoints || []))
+		if (ep?.tag === tag) return true;
+	return false;
+};
+
 function get_outbound(cfg) {
 	if (isEmpty(cfg))
 		return null;
@@ -998,16 +1016,6 @@ function get_ruleset(cfg) {
 	return rules;
 }
 /* Config helper end */
-
-const config = {};
-
-const has_outbound = (tag) => {
-	for (let ob in config.outbounds)
-		if (ob?.tag === tag) return true;
-	for (let ep in (config.endpoints || []))
-		if (ep?.tag === tag) return true;
-	return false;
-};
 
 /* Log */
 config.log = {

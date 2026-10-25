@@ -114,6 +114,18 @@ function mdns_proxy_endpoint() {
 	return '127.0.0.1:' + p;
 }
 
+/* ч.118: shellquote MUST stay ABOVE log() — in this ucode dialect a
+ * top-level function declared LATER is invisible at call time to a
+ * function declared earlier (router-proven A–F matrix; lesson 126). The
+ * ch113 rotation branch inside log() carried the only shellquote
+ * reference while shellquote sat below — log()'s own try/catch turned the
+ * broken rotation into a SILENT no-op (the md log cap never actually ran;
+ * the ch113 5.6MB->42KB shrink was the fresh file of the restart, not a
+ * rotation). Reordered — the rotation now really works, still best-effort. */
+function shellquote(s) {
+	return `'${replace(s, "'", "'\\''")}'`;
+}
+
 function log(msg) {
 	const line = `[${sprintf('%d', time())}] [MDNS] ${msg}\n`;
 	try {
@@ -134,10 +146,6 @@ function dbg(m) {
 	 * version appended to /tmp/mdbg.txt forever (tmpfs growth for zero value). */
 	if (!access('/tmp/mdbg.enable')) return;
 	try { const fd = open('/tmp/mdbg.txt', 'a'); if (fd) { fd.write(m + '\n'); fd.close(); } } catch (e) {}
-}
-
-function shellquote(s) {
-	return `'${replace(s, "'", "'\\''")}'`;
 }
 
 function capture(cmd) {

@@ -68,8 +68,14 @@ const CSS = `
 
 return view.extend({
 	load() {
+		/* ч.118: uci.load was MISSING — every form field read from an EMPTY
+		 * uci store and rendered defaults (enabled unchecked, chat empty,
+		 * pushes on); pressing "Save bot settings" on that form sent
+		 * enabled='0' and DISABLED the bot while the status card kept
+		 * showing live RPC truth — the "settings don't save" report. */
 		return Promise.all([
-			L.resolveDefault(callTelegramStatus(), null)
+			L.resolveDefault(callTelegramStatus(), null),
+			uci.load('homeproxy')
 		]);
 	},
 
@@ -125,6 +131,16 @@ return view.extend({
 		tgPival.value = tgU('push_interval', '2');
 		tgChat.value = tgU('chat_id', '');
 
+		/* ч.118: typing a token always means "store THIS token" — the remove
+		 * checkbox used to win unconditionally and the save silently
+		 * discarded the typed token (the user-visible «Saved., but the bot
+		 * answers no token»). Typing unchecks the box; the save also prefers
+		 * a typed token and only honors the checkbox when the field is
+		 * empty. */
+		tgToken.addEventListener('input', function() {
+			if (String(tgToken.value || '').trim()) tgClearToken.checked = false;
+		});
+
 		/* ── status card ────────────────────────────────────────────── */
 		const tgState = E('span', {});
 		const tgStatusGrid = E('div', { 'class': 'tg-status-row' });
@@ -151,6 +167,7 @@ return view.extend({
 				dom.content(tgState, [ badge('hpui-b-red', _('Daemon is not running')) ]);
 
 			dom.content(tgStatusGrid, [
+				statusItem(_('Token'), st.token_set ? badge('hpui-b-green', _('stored')) : badge('hpui-b-amber', _('missing'))),
 				statusItem(_('Chat'), st.chat_id ? String(st.chat_id) : E('span', { style: 'opacity:.75' }, [ _('not bound yet — send any message to the bot') ])),
 				statusItem(_('Pushes'), st.muted ? badge('hpui-b-amber', _('muted')) : badge('hpui-b-green', _('on'))),
 				statusItem(_('Long-poll timeout'), (st.poll_timeout || 25) + ' s'),
@@ -220,9 +237,10 @@ return view.extend({
 
 		tgSaveBtn.addEventListener('click', function() {
 			tgSaveBtn.disabled = true;
+			const tokenVal = String(tgToken.value || '').trim();
 			callTelegramSet(
 				tgEnabled.checked ? '1' : '0',
-				tgClearToken.checked ? '!' : String(tgToken.value || '').trim(),
+				(tgClearToken.checked && !tokenVal) ? '!' : tokenVal,
 				String(tgChat.value || '').trim(),
 				tgMute.checked ? '1' : '0',
 				tgPushHs.checked ? '1' : '0',
@@ -237,6 +255,8 @@ return view.extend({
 					(!r || r.result === false)
 						? [ E('span', { 'class': 'hpui-c-red' }, [ _('Save failed: ') + ((r && r.error) || _('rpc error')) ]) ]
 						: [ E('span', { 'class': 'hpui-c-green' }, [ _('Saved. The bot re-reads its settings within ~15 s — no service restart needed.') ]) ]));
+				if (r && r.result !== false)
+					tgClearToken.checked = false;
 				return checkTelegram();
 			}).finally(function() { tgSaveBtn.disabled = false; });
 		});

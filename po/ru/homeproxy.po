@@ -11453,3 +11453,15 @@ msgstr "Фаззер прогоняет каждую стратегию ката
 # non-differential deep verdict (ч.117)
 msgid "identical for all"
 msgstr "равно у всех"
+
+# Telegram bot page: token status + resilient daemon (ч.118)
+msgid "Token"
+msgstr "Токен"
+
+# Telegram bot page: token status + resilient daemon (ч.118)
+msgid "stored"
+msgstr "сохранён"
+
+# Telegram bot page: token status + resilient daemon (ч.118)
+msgid "missing"
+msgstr "отсутствует"

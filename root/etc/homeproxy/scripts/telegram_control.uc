@@ -25,6 +25,11 @@
 'use strict';
 
 import { access, readfile, popen } from 'fs';
+/* ч.118: ceil was used by the device-list pagination without an import —
+ * every /devices page beyond the first threw "access to undeclared variable
+ * ceil" and the callback died. NOTE: this ucode build's 'math' module does
+ * NOT export ceil (importing it breaks the whole module load — proven
+ * live), so the ceiling is done with integer arithmetic instead. */
 import {
 	EVENTS_PATH,
 	client_states, get_sections, get_section,
@@ -219,7 +224,7 @@ function devices_text(page) {
 		out += (i - p0 + 1) + '. ' + esc(dev_display(d, st)) + '\n';
 	}
 	if (total > DEV_PAGE)
-		out += '\nстраница ' + (page + 1) + ' из ' + ceil(total / DEV_PAGE);
+		out += '\nстраница ' + (page + 1) + ' из ' + (int((total + DEV_PAGE - 1) / DEV_PAGE));
 	return out;
 }
 

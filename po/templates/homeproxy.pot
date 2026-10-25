@@ -5899,3 +5899,15 @@ msgstr ""
 # non-differential deep verdict (ч.117)
 msgid "identical for all"
 msgstr ""
+
+# Telegram bot page: token status + resilient daemon (ч.118)
+msgid "Token"
+msgstr ""
+
+# Telegram bot page: token status + resilient daemon (ч.118)
+msgid "stored"
+msgstr ""
+
+# Telegram bot page: token status + resilient daemon (ч.118)
+msgid "missing"
+msgstr ""
