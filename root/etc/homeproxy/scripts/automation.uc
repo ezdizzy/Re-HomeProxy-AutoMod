@@ -192,6 +192,15 @@ let hot_set = {};
  * (<30 days) makes the next direct probe learn INSTANTLY (the plain answer is
  * an ISP stub, the "site" the direct probe saw was never real). */
 let poisoned_hosts = {};
+/* ч.115 (issue #9): upstream-blocked hosts — the plain-view DNS answered ONLY
+ * blocker-style null IPs (0.0.0.0/::/127.*: AdGuard/Pi-hole/dnsmasq address=
+ * lists). That is the USER's own blocking choice working, not censorship:
+ * such hosts are never learned into the proxy list (tunneling would bypass
+ * the user's blocker) — the honest 'upstream_blocked' verdict is shown
+ * instead. Same module-scope rule as poisoned_hosts (no closures over main()
+ * locals on this ucode build). host → ts of last detection; fresh entries
+ * (<30 days) hold the verdict, the hourly hygiene prunes expired ones. */
+let blocked_hosts = {};
 let last_reeval = 0;
 let last_prune = 0;
 /* Tracks whether WE enabled dnsmasq query logging. The enable/disable pair
@@ -646,10 +655,23 @@ function fingerprint(b) {
  * when MultiDNS is active (mdns_ok), which races RU-facing plain upstreams and
  * returns the fastest valid answer — exactly the same view the user's browser gets.
  * Fallback to direct nslookup to 8.8.8.8/1.1.1.1/77.88.8.8 if mosdns unavailable. */
+/* ч.115: a plain-view answer of 0.0.0.0/127.* is a DNS-blocker verdict
+ * (AdGuard/Pi-hole/dnsmasq address= lists), not a usable address — such
+ * answers are skipped (the next resolver is tried) instead of being pinned
+ * as the direct-probe target. Mirrors the Go-side isNullIP filter. */
+function pv_ip_usable(ip) {
+	return ip !== '0.0.0.0' && substr(ip, 0, 4) !== '127.';
+}
 function resolve_plain_view(host) {
 	let ce = pv_cache[host];
 	if (type(ce) === 'object' && ce.ip && (time() - int(ce.t)) < 600)
 		return ce.ip;
+
+	/* ч.115: a blocker-style answer was seen in this lookup. If NO usable
+	 * public answer appears anywhere (mosdns + public fallbacks), the host
+	 * is recorded as upstream-blocked so classify() never learns it into
+	 * the proxy list — tunneling it would bypass the user's own blocker. */
+	let null_seen = false;
 
 	/* Try the local mosdns plain listener first — it races RU plain upstreams
 	 * and gives the same RU-facing view as the user's browser. Guarded by the
@@ -664,11 +686,12 @@ function resolve_plain_view(host) {
 		let out = capture(`nslookup -port=${mdns_plain_port} ${shellquote(host)} 127.0.0.1 2>/dev/null`);
 		for (let l in split(out, '\n')) {
 			let m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
-			if (m && m[2] !== '127.0.0.1') {
-				pv_cache[host] = { ip: m[2], t: time() };
-				if (length(keys(pv_cache)) > 400) pv_cache = {};
-				return m[2];
-			}
+			if (!m)
+				continue;
+			if (!pv_ip_usable(m[2])) { null_seen = true; continue; }
+			pv_cache[host] = { ip: m[2], t: time() };
+			if (length(keys(pv_cache)) > 400) pv_cache = {};
+			return m[2];
 		}
 	}
 
@@ -681,12 +704,19 @@ function resolve_plain_view(host) {
 	}
 	for (let l in split(out, '\n')) {
 		let m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
-		if (m && m[2] !== '127.0.0.1') {
-			pv_cache[host] = { ip: m[2], t: time() };
-			if (length(keys(pv_cache)) > 400) pv_cache = {};
-			return m[2];
-		}
+		if (!m)
+			continue;
+		if (!pv_ip_usable(m[2])) { null_seen = true; continue; }
+		pv_cache[host] = { ip: m[2], t: time() };
+		if (length(keys(pv_cache)) > 400) pv_cache = {};
+		return m[2];
 	}
+	/* ч.115: every visible answer was a blocker-style null (or nothing
+	 * resolved at all). With a null answer SEEN the plain view is owned by
+	 * the user's DNS blocker — record the host; without one this is just
+	 * unresolvable DNS (no verdict, old behavior). */
+	if (null_seen)
+		blocked_hosts[host] = time();
 	return null;
 }
 
@@ -1786,7 +1816,10 @@ echo done > "$PRE.done"
 		/* Warm the local cache from the echoed plain-view answers. */
 		const rmap = (type(resp.resolve) === 'object') ? resp.resolve : {};
 		for (let h in keys(rmap)) {
-			if (length(rmap[h])) {
+			/* ч.115: never cache/pin a blocker-style null answer (the echo
+			 * only ever carries the request's own pins for null hosts — with
+			 * a stale pre-fix pv_cache entry this guard stops the loop). */
+			if (length(rmap[h]) && pv_ip_usable(rmap[h])) {
 				pv_cache[h] = { ip: rmap[h], t: time() };
 				resolve[h] = rmap[h];
 			}
@@ -1806,6 +1839,21 @@ echo done > "$PRE.done"
  					log('DNS poison detected (plain vs DoH disjoint): ' + ph);
  					eng_event('poison', ph);
  				}
+			}
+		}
+		/* ч.115: harvest upstream-blocked verdicts (direct side only). The Go
+		 * resolver saw ONLY blocker-style null answers (0.0.0.0/127.*) for
+		 * these hosts across every plain resolver — the user's own DNS
+		 * blocker owns the name. Never learn them as censorship; the honest
+		 * 'upstream_blocked' verdict (kind + status) shows in the UI. */
+		if (side === 'direct' && type(resp.blocked) === 'array' && length(resp.blocked)) {
+			for (let bh in resp.blocked) {
+				bh = lc(trim('' + bh));
+				if (length(bh)) {
+					blocked_hosts[bh] = time();
+					log('upstream-blocked (plain view answered only null/blocker IPs): ' + bh);
+					eng_event('ublock', bh);
+				}
 			}
 		}
 		system(`rm -f ${shellquote(PP_IN)} ${shellquote(PP_OUT)} 2>/dev/null`);
@@ -1852,6 +1900,13 @@ echo done > "$PRE.done"
 				if (side === 'direct') {
 					if (is_stub_redirect_host(redir))
 						kind = 'stub';
+					else if (blocked_hosts[rhost] && (time() - blocked_hosts[rhost]) < 2592000)
+						/* ч.115: the plain view of this name is owned by the
+						 * user's DNS blocker (null-only answers) — deliberate
+						 * local blocking, NOT censorship. Deliberately NOT in
+						 * the INSTANT learn set; classify() turns it into the
+						 * honest upstream_blocked verdict. */
+						kind = 'upstream_blocked';
 					else if (poisoned_hosts[rhost] && (time() - poisoned_hosts[rhost]) < 2592000)
 						/* 30-day TTL per the module comment: a one-off DNS-poison
 						 * must not pin dns_poison forever (the map itself is
@@ -2462,6 +2517,22 @@ echo done > "$PRE.done"
 				log(`not learned (WAF/bot-wall on direct, not a block shape): ${dom}`);
 				return;
 			}
+			/* ч.115 upstream-blocked (issue #9): the plain view of this name
+			 * is owned by the USER's own DNS blocker (AdGuard/Pi-hole/dnsmasq
+			 * 0.0.0.0 lists — the Go resolver saw null-only answers, or the
+			 * local resolve saw only nulls). Deliberate local blocking, not
+			 * censorship: learning the host would tunnel ad/track domains
+			 * AROUND the user's blocker. No confirmation ladder applies and
+			 * the honest verdict is shown; removing the blocker re-opens the
+			 * normal direct/probe verdicts (fresh <30-day TTL + pinning to
+			 * the real IP again). */
+			if (!is_ip && blocked_hosts[dom] && (time() - blocked_hosts[dom]) < 2592000) {
+				st.status = 'upstream_blocked';
+				st.confirms = 0;
+				delete st.dconfirms;
+				log(`not learned (upstream-blocked: the user's own DNS blocker answers 0.0.0.0): ${dom}`);
+				return;
+			}
 			/* ч.68 INSTANT LEARN — unambiguous block verdicts. Each of these
 			 * signals proves the direct path is censored while the proxy
 			 * reaches the real page; no confirmation ladder can improve on
@@ -3031,6 +3102,13 @@ echo done > "$PRE.done"
 				if ((now - poisoned_hosts[ph]) > 2592000) { delete poisoned_hosts[ph]; pcut++; }
 			if (pcut > 0)
 				log('pruned ' + pcut + ' expired dns-poison marks');
+			/* ч.115: same lifecycle for the upstream-blocked map (module
+			 * scope, no state record; readers TTL-check, this prunes). */
+			let bcut = 0;
+			for (let bh in keys(blocked_hosts))
+				if ((now - blocked_hosts[bh]) > 2592000) { delete blocked_hosts[bh]; bcut++; }
+			if (bcut > 0)
+				log('pruned ' + bcut + ' expired upstream-blocked marks');
 		}
 
 		/* Persist state ONCE per cycle (not per probe): the file write is atomic but
@@ -3083,7 +3161,8 @@ echo done > "$PRE.done"
 		const now = time();
 		/* Verdict distribution over the live state (in-memory walk, cheap). */
 		let v = { blocked: 0, direct: 0, direct_pending: 0, blocked_no_proxy: 0, geo_blocked: 0, geo: 0,
-			kinds: { tls_dpi: 0, dns_poison: 0, stub: 0, sigpage: 0, hardcode: 0 } };
+			upstream_blocked: 0,
+			kinds: { tls_dpi: 0, dns_poison: 0, stub: 0, sigpage: 0, hardcode: 0, upstream_blocked: 0 } };
 		for (let h in keys(state)) {
 			if (h === '__dns_offset') continue;
 			const st = state[h];

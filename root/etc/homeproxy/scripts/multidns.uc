@@ -85,6 +85,28 @@ let self_mark = 100;         /* core's fwmark; hoisted for the probe table too *
 let http_budget_total = 24;  /* total HTTP-verify checks per cycle, split across pools */
 let autodoh_injected = false;/* last assemble_plain_pool() actually injected AUTO_DOH */
 
+/* DNS-blocker answers (GitHub issue #9): upstreams the user chose to BLOCK
+ * names (AdGuard DNS, Pi-hole, Blocky, dnsmasq address=/0.0.0.0 lists) answer
+ * with a null address instead of a forged IP. That is intended behavior, not
+ * poisoning — such answers must never feed the forged-verdict machinery
+ * (dead-IP blacklist, quarantine, plain-poison flag). Declared before the
+ * first function of the file: this ucode build does NOT hoist declarations
+ * (a forward reference dies with "undeclared variable"). */
+function is_null_ip(ip) {
+	return (ip === '0.0.0.0' || ip === '::' || ip === '::0' || ip === '127.0.0.1');
+}
+
+/* Strip null/blocker-style addresses from a parsed answer list. An empty
+ * result means "the server answered, but only with null addresses" — every
+ * consumer below treats that as NO VERDICT (upstream block, not forgery). */
+function clean_ips(ips) {
+	if (type(ips) !== 'array') return [];
+	let out = [];
+	for (let i = 0; i < length(ips); i = i + 1)
+		if (!is_null_ip(ips[i])) push(out, ips[i]);
+	return out;
+}
+
 /* Loopback host:port of the mdns-proxy-in mixed inbound (generate_client emits
  * it from the SAME option, so the two always agree; default 5338). */
 function mdns_proxy_endpoint() {
@@ -623,6 +645,11 @@ function probe_server(server, group, via_proxy, canary) {
 			if (m) lat = int(m[1]);
 		}
 	}
+	/* Blocker-style null answers are not useful answers (issue #9): a server
+	 * that answered the canary only with 0.0.0.0/127.0.0.1 reads as not
+	 * answering — no HTTP-verify budget spent on null IPs, no dead_this
+	 * bookkeeping for them, and last_ip stays honest (null, not 0.0.0.0). */
+	ips = clean_ips(ips);
 	let ip = (length(ips) > 0) ? ips[0] : null;
 	let live = length(ips) > 0;
 	return { ok: live, ip: ip, ips: ips, live: live, lat: lat };
@@ -766,7 +793,11 @@ function batch_doh_json(items, chunk) {
 							push(ips, ans[k].data);
 				} catch (e) { /* malformed body → no reference */ }
 			}
-			out[it.host + '|' + it.dom] = ips;
+			/* Reference side: scrub null addresses defensively too (a blocking
+			 * DoH reference would otherwise poison the comparison itself;
+			 * public resolvers never answer null for judged names in
+			 * practice — issue #9). */
+			out[it.host + '|' + it.dom] = clean_ips(ips);
 		}
 	}
 	rm_files(allfiles);
@@ -776,7 +807,11 @@ function batch_doh_json(items, chunk) {
 /* Parallel DNS-over-TCP queries — the same wire trick as tcp_dns_query()
  * (2-byte length prefix, stdin held open by the shell so busybox nc does not
  * hang up before the answer arrives). items: [{ server, port, dom }];
- * returns a map keyed dom → array of answer IPv4s (silent listener → []). */
+ * returns a map keyed dom → array of answer IPv4s (silent listener → []).
+ * NOTE: the answers are returned RAW (null addresses included) so the
+ * consumers can tell "listener silent" apart from "listener answered only
+ * with 0.0.0.0/127.0.0.1" (an upstream DNS-blocker, issue #9) — each
+ * consumer scrubs with clean_ips() at its own verdict point. */
 function batch_tcp_dns_query(items, chunk) {
 	let out = {};
 	if (!length(items)) return out;
@@ -1212,7 +1247,13 @@ function pools_sig() {
 function rebuild_if_changed() {
 	let data_changed = ensure_data_files();
 	let fresh = build_mosdns_conf();
-	if (data_changed || !access(CONF) || trim(readfile(CONF)) !== fresh) {
+	/* ⚠️ trim BOTH sides (found live, 2026-10-25): build_mosdns_conf() ends with
+	 * '\n' while trim(readfile(CONF)) strips it, so the raw comparison
+	 * `trim(readfile(CONF)) !== fresh` was ALWAYS true — mosdns was being
+	 * killed+restarted on EVERY 30 s cfg-check (~130 starts/hour, the real
+	 * root of the constant "restarting..." windows ch112 only papered over
+	 * with the marker). Same-form comparison only. */
+	if (data_changed || !access(CONF) || trim(readfile(CONF)) !== trim(fresh)) {
 		atomic_write(CONF, fresh);
 		start_mosdns();
 	}
@@ -1299,13 +1340,21 @@ function analyze() {
 			if (!length(keys(ref))) continue;   /* references unreachable — cannot judge */
 			/* A config-rebuild restart may briefly bounce the listener; retry
 			 * once so a restart window isn't mistaken for a healthy answer. */
-			let ips = gotj[dom] || [];
+			/* Scrub blocker-style answers BEFORE the verdict (issue #9):
+			 * an answer holding only 0.0.0.0/127.0.0.1 is the user's chosen
+			 * upstream blocking, not poisoning — no forged verdict, no
+			 * dead_this entry. */
+			let raw = gotj[dom] || [];
+			let ips = clean_ips(raw);
 			if (!length(ips)) {
 				sleep(2000);
 				let one = batch_tcp_dns_query([ { server: '127.0.0.1', port: '' + plain_port, dom: dom } ], 1);
-				ips = one[dom] || [];
+				ips = clean_ips(one[dom] || []);
 			}
-			if (!length(ips)) continue;         /* listener silent — not evidence of poison */
+			if (!length(ips)) {
+				dbg('gcheck: ' + dom + (length(raw) ? ' null-only answer (upstream blocker?)' : ' listener silent') + ' - no verdict');
+				continue;                           /* not evidence of poison */
+			}
 			gtotal = gtotal + 1;
 			let clean = false;
 			for (let i = 0; i < length(ips); i = i + 1) {
@@ -1381,6 +1430,8 @@ function analyze() {
 			}
 		/* NOTE: quarantined domains are NOT excluded - they must keep being
 		 * sampled (at the usual cadence) or a lifted verdict could never happen. */
+		let null_skips = 0;      /* blocker-style null answers skipped this cycle (issue #9) */
+		let null_list = [];
 		let cands = [];
 		for (let k in keys(st.user_recent)) {
 			if (excl[k]) continue;
@@ -1425,8 +1476,18 @@ function analyze() {
 			let ref = {};
 			for (let x = 0; x < length(r1); x = x + 1) ref[r1[x]] = true;
 			for (let x = 0; x < length(r2); x = x + 1) ref[r2[x]] = true;
-			let got = gotj[dom] || [];
-			if (!length(got)) continue;                     /* listener silent — no verdict */
+			/* Raw vs scrubbed (issue #9): an answer holding ONLY null
+			 * addresses (0.0.0.0/127.0.0.1 — the dnsmasq-blocklist
+			 * convention) is an upstream BLOCK, not a forged answer. No
+			 * verdict: the domain is not penalized (uv_fail), not
+			 * quarantined, its null IP never reaches dead_this — the
+			 * user's blocker keeps working for that name. */
+			let raw = gotj[dom] || [];
+			let got = clean_ips(raw);
+			if (!length(got)) {
+				if (length(raw)) { null_skips++; push(null_list, dom); }
+				continue;                                   /* silent or blocker-only — no verdict */
+			}
 			let clean = false;
 			for (let x = 0; x < length(got); x = x + 1)
 				if (ref[got[x]]) { clean = true; break; }
@@ -1448,6 +1509,12 @@ function analyze() {
 				}
 			}
 		}
+		/* Honest observability (issue #9): a DNS-blocker upstream answering
+		 * 0.0.0.0/127.0.0.1 for a name is a block by design — skipped without
+		 * a forged verdict, listed here once per cycle so the user can see
+		 * why the name stays unquarantined. */
+		if (null_skips > 0)
+			log('null (blocker-style) answers skipped without a forged verdict: ' + join(', ', null_list));
 	}
 
 	/* ── pool probing + HTTPS verification scheduling ─────────────────────
@@ -1572,7 +1639,12 @@ function analyze() {
 			delete st.dead_ips_t[ip];
 		}
 	let blacklist = [];
-	for (let ip in st.dead_ips) if ((st.dead_ips[ip] || 0) >= 2) push(blacklist, ip);
+	/* is_null_ip guard (issue #9): a blocker's 0.0.0.0/127.0.0.1 must never
+	 * reach the live dead-IP blacklist — mosdns would then drop EVERY such
+	 * answer and fall through to secure, silently unblocking the user's
+	 * chosen blocking and wasting race latency. Defense in depth: after the
+	 * scrubbing above nothing should add a null IP to dead_this anymore. */
+	for (let ip in st.dead_ips) if ((st.dead_ips[ip] || 0) >= 2 && !is_null_ip(ip)) push(blacklist, ip);
 	atomic_write(DEAD_IPS_FILE, join('\n', blacklist) + (length(blacklist) ? '\n' : ''));
 
 	/* Record the authoritative current pool membership in the state so the
@@ -1692,7 +1764,10 @@ function main() {
 	 * seconds of SERVFAIL on every service start. Restart only when the running
 	 * instance's config differs from what we would build now (or it is dead). */
 	let conf_fresh = build_mosdns_conf();
-	if (!(mosdns_running() && access(CONF) && trim(readfile(CONF)) === conf_fresh))
+	/* trim BOTH sides — same trailing-newline trap as rebuild_if_changed:
+	 * untrimmed, the adopt check never passed and every daemon start
+	 * pointlessly restarted a healthy mosdns (ch114). */
+	if (!(mosdns_running() && access(CONF) && trim(readfile(CONF)) === trim(conf_fresh)))
 		start_mosdns();
 		/* Run an initial analysis at startup so the monitor shows real pool data
 		 * immediately instead of waiting a full bench_interval. */

@@ -562,6 +562,11 @@ msgstr ""
 msgid "blocked both ways"
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "blocked by your own DNS blocker (0.0.0.0-style answers) — deliberately not learned into the proxy list"
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:401
 msgid "Bootstrap"
 msgstr ""
@@ -5343,6 +5348,16 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
 msgid "updating…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Upstream-blocked"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Upstream-blocked detected"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js

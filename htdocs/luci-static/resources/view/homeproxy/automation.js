@@ -604,6 +604,8 @@ return view.extend({
 				return E('span', { 'class': 'hpbadge hpb-mproxy' }, [ _('Geo (proxied)') ]);
 			if (e.status === 'geo_blocked')
 				return E('span', { 'class': 'hpbadge hpb-noproxy' }, [ _('Geo-blocked (node)') ]);
+			if (e.status === 'upstream_blocked')
+				return E('span', { 'class': 'hpbadge hpb-noproxy' }, [ _('Upstream-blocked') ]);
 			if (e.status === 'blocked')
 				return E('span', { 'class': 'hpbadge hpb-blocked' },
 					[ e.kind === 'dns_poison' ? _('Blocked (DNS)') :
@@ -624,6 +626,8 @@ return view.extend({
 				return _('geo-sensitive service — always routed via proxy');
 			if (e.status === 'geo_blocked')
 				return _('the service refuses the current exit node — switch node and re-test');
+			if (e.status === 'upstream_blocked')
+				return _('blocked by your own DNS blocker (0.0.0.0-style answers) — deliberately not learned into the proxy list');
 			if (e.src !== 'learned')
 				return _('pinned by user');
 			if (e.status === 'blocked') {
@@ -829,6 +833,7 @@ return view.extend({
 			[ 'direct_pending',   _('Direct (pending)') ],
 			[ 'blocked_no_proxy', _('Unreachable') ],
 			[ 'geo_blocked',      _('Geo-blocked (node)') ],
+			[ 'upstream_blocked', _('Upstream-blocked') ],
 			[ 'geo',              _('Geo (proxied)') ]
 		];
 		const EV_LABELS = {
@@ -836,6 +841,7 @@ return view.extend({
 			heal:   _('Self-healed'),
 			reload: _('Applied to core'),
 			poison: _('DNS poison detected'),
+			ublock: _('Upstream-blocked detected'),
 			pause:  _('Learning paused'),
 			resume: _('Learning resumed'),
 			clear:  _('Learned list cleared'),

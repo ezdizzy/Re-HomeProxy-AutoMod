@@ -42,6 +42,13 @@
 // from the raw code + body head, so this binary can never change learning
 // semantics, only make the measuring faster.
 //
+// ч.115 (issue #9): blocker-style null answers (0.0.0.0/::/127.* from
+// AdGuard/Pi-hole/dnsmasq address= lists) are never pinned and never graded
+// as poisoning. Hosts whose plain view answered nulls only are reported in
+// the `blocked` array вЂ” deliberate local blocking by the user's own DNS
+// blocker; the orchestrator shows the honest upstream-blocked verdict and
+// never learns such hosts into the proxy list.
+//
 // Build (see build.sh): CGO_ENABLED=0 GOOS=linux GOARCH=... go build -trimpath -ldflags="-s -w"
 package main
 
@@ -69,7 +76,7 @@ import (
 	"time"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 const (
 	bodyReadLimit  = 64 * 1024 // same cap as the shell worker's curl body capture
@@ -128,6 +135,13 @@ type batchResponse struct {
 	Resolve  map[string]string `json:"resolve,omitempty"`
 	Results  []probeResult     `json:"results"`
 	Poisoned []string          `json:"poisoned,omitempty"` // ч.68: hosts where plain DNS disagrees with DoH
+	// ч.115 (issue #9): hosts whose plain-view DNS answered ONLY blocker-style
+	// null IPs (0.0.0.0 / :: / 127.*). That is the user's OWN DNS blocker
+	// (AdGuard/Pi-hole/Blocky/dnsmasq address= lists) working as chosen — NOT
+	// poisoning. The orchestrator never learns these as censorship blocks
+	// (tunneling would bypass the user's blocker) and shows an honest
+	// upstream-blocked verdict instead.
+	Blocked []string `json:"blocked,omitempty"`
 }
 
 func main() {
@@ -234,6 +248,13 @@ func runBatch(req *batchRequest) batchResponse {
 			resp.Poisoned = append(resp.Poisoned, h)
 		}
 	}
+	// ч.115: attach the upstream-blocked verdicts (null-only plain view).
+	if blk := takeBlocked(); len(blk) > 0 {
+		resp.Blocked = make([]string, 0, len(blk))
+		for h := range blk {
+			resp.Blocked = append(resp.Blocked, h)
+		}
+	}
 	return resp
 }
 
@@ -253,8 +274,9 @@ type resolveEntry struct {
 // resolveHosts fills req.Resolve for every host in req.ResolveHosts that is
 // missing a pinned IP. Answers come from the cache, the resolvers (in order),
 // and are echoed back as the returned map. A host that cannot be resolved
-// simply stays unpinned вЂ” its probe then fails with "000" like the shell
-// worker's unresolvable case.
+// (or that the plain view blocks with nulls only) simply stays unpinned вЂ”
+// its probe then fails with "000" like the shell worker's unresolvable case;
+// null-blocked hosts are additionally reported in the `blocked` array.
 func resolveHosts(req *batchRequest) map[string]string {
 	servers := req.Resolvers
 	if len(servers) == 0 {
@@ -291,6 +313,7 @@ func resolveHosts(req *batchRequest) map[string]string {
 	}
 
 	var mu sync.Mutex
+	plain := map[string]plainView{}
 	var wg sync.WaitGroup
 	for h := range need {
 		wg.Add(1)
@@ -298,9 +321,10 @@ func resolveHosts(req *batchRequest) map[string]string {
 		go func(host string) {
 			defer wg.Done()
 			defer func() { <-resSem }()
-			ip := lookupPlain(host, servers)
+			ip, nullBlocked := lookupPlain(host, servers)
 			mu.Lock()
 			defer mu.Unlock()
+			plain[host] = plainView{ip: ip, nullBlocked: nullBlocked}
 			if ip != "" {
 				req.Resolve[host] = ip
 				resCacheMu.Lock()
@@ -315,6 +339,20 @@ func resolveHosts(req *batchRequest) map[string]string {
 		}(h)
 	}
 	wg.Wait()
+
+	// ч.115: hosts whose plain view answered ONLY blocker-style null IPs.
+	// Reported separately from the probe results so the orchestrator can
+	// show the honest upstream-blocked verdict and never learn the host.
+	blockedMu.Lock()
+	if blockedSet == nil {
+		blockedSet = map[string]bool{}
+	}
+	for h, pv := range plain {
+		if pv.ip == "" && pv.nullBlocked {
+			blockedSet[h] = true
+		}
+	}
+	blockedMu.Unlock()
 
 	// ч.68: DNS-poison cross-check (direct side only). Every freshly
 	// resolved host is asked once more through the DoH resolver (routed
@@ -334,8 +372,14 @@ func resolveHosts(req *batchRequest) map[string]string {
 			go func(host, plainIP string) {
 				defer pwg.Done()
 				defer func() { <-resSem }()
+				// ч.115: a host the plain view blocked with nulls has no
+				// usable plain answer to compare — skip (it is reported in
+				// `blocked`, not graded against the tunnel-side view).
+				if plainIP == "" {
+					return
+				}
 				dohIP := lookupDoH(host, req.DoHResolver)
-				if dohIP == "" || plainIP == "" {
+				if dohIP == "" {
 					return
 				}
 				if !sameIP(plainIP, dohIP) && !sameSubnet24(plainIP, dohIP) {
@@ -348,6 +392,14 @@ func resolveHosts(req *batchRequest) map[string]string {
 		pwg.Wait()
 	}
 	return req.Resolve
+}
+
+// plainView is the per-host outcome of the plain-view lookup: the pinned IP
+// ("" when none) and whether the resolver set answered with nulls only —
+// the blocker-style signature reported as `blocked`.
+type plainView struct {
+	ip          string
+	nullBlocked bool
 }
 
 // poisonSet: hosts whose plain-view answer disagrees with the DoH answer —
@@ -366,6 +418,26 @@ func takePoisoned() map[string]bool {
 	defer poisonMu.Unlock()
 	s := poisonSet
 	poisonSet = nil
+	return s
+}
+
+// blockedSet: hosts whose plain-view answer was ONLY blocker-style null IPs
+// (AdGuard/Pi-hole/dnsmasq address=/0.0.0.0 lists). The user chose to block
+// these names locally — deliberate blocking, not censorship. The orchestrator
+// consumes it per batch, never learns such hosts into the proxy list and
+// shows the honest upstream-blocked verdict (ч.115, issue #9).
+var (
+	blockedMu  sync.Mutex
+	blockedSet map[string]bool
+)
+
+// takeBlocked returns and clears the upstream-blocked set accumulated during
+// the batch (same lifecycle as takePoisoned).
+func takeBlocked() map[string]bool {
+	blockedMu.Lock()
+	defer blockedMu.Unlock()
+	s := blockedSet
+	blockedSet = nil
 	return s
 }
 
@@ -428,7 +500,11 @@ func lookupDoH(host, dohURL string) string {
 	for _, a := range j.Answer {
 		if a.Type == 1 { // A record
 			ip := strings.TrimSpace(a.Data)
-			if net.ParseIP(ip) != nil && !isPrivateIP(ip) {
+			// ч.115: skip blocker-style nulls on the tunnel side too — a
+			// DoH blocker behind the proxy must not grade its own homework
+			// (a null DoH answer would otherwise fabricate a "disjoint"
+			// cross-check against any real plain answer).
+			if net.ParseIP(ip) != nil && !isPrivateIP(ip) && !isNullIP(ip) {
 				return ip
 			}
 		}
@@ -444,11 +520,31 @@ func dohTransport() *http.Transport {
 
 var dohProxyAddr string // set per batch from the request
 
+// isNullIP: blocker-style answers (issue #9 class). AdGuard/Pi-hole/Blocky/
+// dnsmasq address=/…/0.0.0.0 lists answer blocked names with the unspecified
+// address (0.0.0.0 / ::) or loopback. Such an answer is deliberate local
+// blocking — not a usable plain-view IP and not evidence of poisoning.
+func isNullIP(s string) bool {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return false
+	}
+	return ip.IsUnspecified() || ip.IsLoopback()
+}
+
 // lookupPlain queries A records against the servers in order (short per-server
 // timeout) and returns the first public IPv4 answer. This is the same
 // "plain view" the user's browser sees: the local mosdns plain listener races
 // RU-facing upstreams, the public resolvers are the fallback.
-func lookupPlain(host string, servers []string) string {
+//
+// ч.115 (issue #9): blocker-style null answers (0.0.0.0/::/127.*) are SKIPPED —
+// the loop moves on to the next server instead of pinning a dead address. The
+// second return value reports "upstream-blocked": at least one server answered
+// (nulls only) and NO server produced a public address anywhere. That means
+// the user's own DNS blocker owns the name in the plain view — never pinned,
+// never graded against DoH, reported separately instead.
+func lookupPlain(host string, servers []string) (string, bool) {
+	nullSeen := false
 	for _, srv := range servers {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		r := &net.Resolver{
@@ -463,13 +559,17 @@ func lookupPlain(host string, servers []string) string {
 		if err == nil {
 			for _, ip := range ips {
 				s := ip.String()
+				if isNullIP(s) {
+					nullSeen = true
+					continue
+				}
 				if !isPrivateIP(s) {
-					return s
+					return s, false
 				}
 			}
 		}
 	}
-	return ""
+	return "", nullSeen
 }
 
 // serverAddr normalizes "host", "host:port" and "udp://host:port" forms into a
@@ -593,6 +693,16 @@ func executeProbe(req batchRequest, h probeRequest) probeResult {
 			pin = ip
 			res.IP = ip
 		}
+	}
+	// ч.115 defense-in-depth: a pinned blocker-style null IP (a stale
+	// pv_cache entry written before the ucode-side filter) must never become
+	// a dial target — 0.0.0.0 dials fail or hit loopback. Report an honest
+	// DNS-level "no answer" instead of a misleading transport failure.
+	if pin != "" && isNullIP(pin) {
+		res.IP = ""
+		res.Phase = "dns"
+		res.Error = "plain view answered a blocker-style null IP - probe skipped"
+		return res
 	}
 
 	h2 := h.HTTP2 || req.HTTP2
