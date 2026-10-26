@@ -120,13 +120,22 @@ return view.extend({
 			const v = uci.get('homeproxy', 'telegram', opt);
 			return (v != null && String(v).length && String(v) !== '0') ? String(v) : def;
 		};
-		tgEnabled.checked = (tgU('enabled', '0') === '1');
-		tgMute.checked = (tgU('mute', '0') === '1');
-		tgPushHs.checked = (tgU('push_hotswap', '1') === '1');
-		tgPushWd.checked = (tgU('push_watchdog', '1') === '1');
-		tgPushLr.checked = (tgU('push_learn', '1') === '1');
-		tgPushSv.checked = (tgU('push_service', '1') === '1');
-		tgPushCt.checked = (tgU('push_control', '1') === '1');
+		/* ч.119: boolean fields need '0' to mean OFF — tgU() was built for
+		 * text/number fields and mapped an explicit saved '0' back to the
+		 * default, so every push flag saved as disabled re-rendered CHECKED
+		 * («Автоматизация: выученные блокировки» re-appeared after save) and
+		 * the NEXT save silently re-enabled it. */
+		const tgB = (opt, def) => {
+			const v = uci.get('homeproxy', 'telegram', opt);
+			return (v != null && String(v).length) ? (String(v) === '1') : (def === '1');
+		};
+		tgEnabled.checked = tgB('enabled', '0');
+		tgMute.checked = tgB('mute', '0');
+		tgPushHs.checked = tgB('push_hotswap', '1');
+		tgPushWd.checked = tgB('push_watchdog', '1');
+		tgPushLr.checked = tgB('push_learn', '1');
+		tgPushSv.checked = tgB('push_service', '1');
+		tgPushCt.checked = tgB('push_control', '1');
 		tgPoll.value = tgU('poll_timeout', '25');
 		tgPival.value = tgU('push_interval', '2');
 		tgChat.value = tgU('chat_id', '');

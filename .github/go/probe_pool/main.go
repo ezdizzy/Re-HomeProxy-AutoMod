@@ -45,9 +45,20 @@
 // ч.115 (issue #9): blocker-style null answers (0.0.0.0/::/127.* from
 // AdGuard/Pi-hole/dnsmasq address= lists) are never pinned and never graded
 // as poisoning. Hosts whose plain view answered nulls only are reported in
-// the `blocked` array вЂ” deliberate local blocking by the user's own DNS
+// the `blocked` array — deliberate local blocking by the user's own DNS
 // blocker; the orchestrator shows the honest upstream-blocked verdict and
 // never learns such hosts into the proxy list.
+//
+// v1.5.0 (issue #10): the direct side NEVER dials a hostname. An unpinned
+// direct probe used to pass the bare hostname to the core, whose DNS
+// answered A+AAAA and dialed the AAAA — on an IPv4-only router that dial
+// fails with "network is unreachable", the probe reports 000 and the host
+// gets learned as BLOCKED although it works directly. Now: no plain-view
+// answer → honest DNS-phase 000 ("unresolved in plain view"), nothing
+// dialed — the orchestrator drops the candidate for the cycle instead of
+// counting a false block confirmation. The direct TCP side is pinned to the
+// plain-view IPv4 the same way (SNI stays on the hostname); the proxy side
+// keeps socks5h remote resolution.
 //
 // Build (see build.sh): CGO_ENABLED=0 GOOS=linux GOARCH=... go build -trimpath -ldflags="-s -w"
 package main
@@ -76,7 +87,7 @@ import (
 	"time"
 )
 
-const version = "1.4.0"
+const version = "1.5.0"
 
 const (
 	bodyReadLimit  = 64 * 1024 // same cap as the shell worker's curl body capture
@@ -359,7 +370,10 @@ func resolveHosts(req *batchRequest) map[string]string {
 	// through the tunnel via the proxy inbound on the ucode side); if the
 	// two answer sets are DISJOINT, the plain view is poisoned/stubbed —
 	// the orchestrator learns this as an immediate hard block signal.
-	if req.DoHResolver != "" {
+	// issue #10: the TCP side now resolves here too — but its verdicts
+	// never drive the poison classification, so an all-TCP batch skips the
+	// DoH fetches entirely.
+	if req.DoHResolver != "" && batchHasHTTPSide(req) {
 		poisonMu.Lock()
 		if poisonSet == nil {
 			poisonSet = map[string]bool{}
@@ -400,6 +414,18 @@ func resolveHosts(req *batchRequest) map[string]string {
 type plainView struct {
 	ip          string
 	nullBlocked bool
+}
+
+// batchHasHTTPSide reports whether the batch carries any HTTP-side host
+// (direct/proxy) — the only sides whose verdicts feed the DNS-poison
+// cross-check and the learning pipeline.
+func batchHasHTTPSide(req *batchRequest) bool {
+	for _, h := range req.Hosts {
+		if h.Side == "direct" || h.Side == "proxy" || h.Side == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // poisonSet: hosts whose plain-view answer disagrees with the DoH answer —
@@ -689,7 +715,14 @@ func executeProbe(req batchRequest, h probeRequest) probeResult {
 	// CONNECT target; SNI and Host stay on the real hostname (curl --resolve).
 	pin := ""
 	if h.Side == "direct" {
-		if ip, ok := req.Resolve[strings.ToLower(h.Host)]; ok && ip != "" {
+		// Tolerate the raw host form too: the orchestrator usually lowercases
+		// its candidates, but a case flip must degrade to a resolve miss, not
+		// to a different (hostname) dial target.
+		ip, ok := req.Resolve[strings.ToLower(h.Host)]
+		if !ok {
+			ip, ok = req.Resolve[h.Host]
+		}
+		if ok && ip != "" {
 			pin = ip
 			res.IP = ip
 		}
@@ -702,6 +735,22 @@ func executeProbe(req batchRequest, h probeRequest) probeResult {
 		res.IP = ""
 		res.Phase = "dns"
 		res.Error = "plain view answered a blocker-style null IP - probe skipped"
+		return res
+	}
+	// issue #10: an unpinned direct probe used to carry the bare HOSTNAME to
+	// the pinned inbound. The core then resolved the name with its own DNS
+	// (the plain upstreams answer A+AAAA) and dialed the AAAA — on an
+	// IPv4-only router that dial dies with "network is unreachable", the
+	// probe reports 000 and the host is learned as BLOCKED although it works
+	// directly (the ru.wikipedia.org-class overnight false learns). The
+	// direct side must measure the PLAIN VIEW only — the shell worker always
+	// behaved this way (unresolvable → 000, nothing dialed): no plain answer
+	// in this batch → honest DNS-phase 000, no dial, no verdict evidence.
+	// The proxy side keeps socks5h semantics (pin stays empty BY DESIGN —
+	// remote resolution is the point), so the guard is direct-only.
+	if h.Side == "direct" && pin == "" {
+		res.Phase = "dns"
+		res.Error = "unresolved in plain view - probe skipped"
 		return res
 	}
 
@@ -907,8 +956,32 @@ func executeTCPProbe(req batchRequest, h probeRequest, timeout time.Duration) pr
 		proxyAddr = "127.0.0.1:5336"
 	}
 
+	// issue #10: the direct TCP side used to CONNECT the bare hostname; the
+	// core resolved it with its own DNS and preferred the AAAA — on an
+	// IPv4-only router the dial died with "network is unreachable" and the
+	// SNI measurement reported a false transport failure (and earlier, when
+	// it DID resolve, the handshake rode whatever address the core picked —
+	// not the plain view the browser sees). Pin the plain-view IPv4 the same
+	// way the direct HTTP side does; SNI stays on the hostname (this is the
+	// curl --resolve shape). The proxy side (tcpproxy) keeps remote
+	// resolution — that is its point.
+	target := net.JoinHostPort(h.Host, "443")
+	if h.Side == "tcp" {
+		ip, ok := req.Resolve[strings.ToLower(h.Host)]
+		if !ok {
+			ip, ok = req.Resolve[h.Host]
+		}
+		if !ok || ip == "" || isNullIP(ip) {
+			res.Phase = "dns"
+			res.Error = "unresolved in plain view - probe skipped"
+			return res
+		}
+		target = net.JoinHostPort(ip, "443")
+		res.IP = ip
+	}
+
 	start := time.Now()
-	conn, err := socks5Dial(proxyAddr, net.JoinHostPort(h.Host, "443"), timeout)
+	conn, err := socks5Dial(proxyAddr, target, timeout)
 	res.TCPMs = int(time.Since(start).Milliseconds())
 	if err != nil {
 		res.Code = dialErrCode(err)

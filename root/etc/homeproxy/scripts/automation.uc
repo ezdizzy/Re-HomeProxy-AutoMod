@@ -743,7 +743,9 @@ function probe(host, via_proxy, timeout) {
 			}
 		}
 		if (!ip)
-			return { code: '000', ok: false, block: false, fp: '', ip: null };
+			/* ч.119 (issue #10): a plain-view miss is a DNS-phase miss, not a
+			 * transport failure — classify() must not count it as a block. */
+			return { code: '000', ok: false, block: false, fp: '', ip: null, dns_fail: true };
 		pin = ` --resolve ${shellquote(host + ':443:' + ip)}`;
 	}
 	let proxy_arg = via_proxy
@@ -1560,6 +1562,8 @@ function main() {
 	writefile(WORKER, `#!/bin/sh
 # automation.uc probe worker: <host> <direct|proxy|tcp|tcpproxy> <port> <timeout> <prefix> <http2>
 H="$1"; SIDE="$2"; PORT="$3"; TO="$4"; PRE="$5"; HTTP2="$6"
+# ч.119: a reused wave id must not inherit the previous run's phase marker.
+rm -f "$PRE.phase"
 case "$SIDE" in
 	proxy|tcpproxy) PX="-x socks5h://127.0.0.1:$PORT" ;;
 	*)              PX="-x socks5://127.0.0.1:$PORT" ;;
@@ -1567,12 +1571,20 @@ esac
 PIN=""
 IP=""
 if [ "$SIDE" = direct ]; then
-	for R in 8.8.8.8 1.1.1.1 77.88.8.8; do
-		IP=$(nslookup -type=A "$H" "$R" 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
-		[ -n "$IP" ] && break
-		sleep 1
-	done
-	if [ -z "$IP" ]; then printf '000 0' > "$PRE.code"; : > "$PRE.body"; echo done > "$PRE.done"; exit 0; fi
+	# ч.119: literal IPs self-pin (nslookup of an address is unreliable) —
+	# same rule the serial probe() and the native pool follow.
+	case "$H" in
+		*[!0-9.]*) ;;
+		*) IP="$H" ;;
+	esac
+	if [ -z "$IP" ]; then
+		for R in 8.8.8.8 1.1.1.1 77.88.8.8; do
+			IP=$(nslookup -type=A "$H" "$R" 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
+			[ -n "$IP" ] && break
+			sleep 1
+		done
+	fi
+	if [ -z "$IP" ]; then printf '000 0' > "$PRE.code"; : > "$PRE.body"; echo dns > "$PRE.phase"; echo done > "$PRE.done"; exit 0; fi
 	PIN="--resolve $H:443:$IP"
 	printf '%s' "$IP" > "$PRE.ip"
 fi
@@ -1583,7 +1595,11 @@ if [ "$HTTP2" = "1" ] && [ "$SIDE" != "tcp" ] && [ "$SIDE" != "tcpproxy" ]; then
 fi
 if [ "$SIDE" = tcp ] || [ "$SIDE" = tcpproxy ]; then
 	curl -s -o /dev/null -k --connect-timeout "$TO" --max-time "$TO" $PX "https://$H" >/dev/null 2>&1
-	echo $? > "$PRE.code"; : > "$PRE.body"; echo done > "$PRE.done"; exit 0
+	RC=$?
+	echo "$RC" > "$PRE.code"; : > "$PRE.body"
+	# curl exit 6 = local resolution failed — a DNS-phase miss, not transport.
+	[ "$RC" = "6" ] && echo dns > "$PRE.phase"
+	echo done > "$PRE.done"; exit 0
 fi
 curl -sL --max-redirs 3 -o "$PRE.body" -w '%{http_code} %{time_total}' -k --connect-timeout "$TO" --max-time "$TO" $HTTP2_FLAG $PX $PIN "https://$H" > "$PRE.code" 2>/dev/null
 C=$(cat "$PRE.code" 2>/dev/null)
@@ -1745,13 +1761,17 @@ echo done > "$PRE.done"
 		 * without a fresh pv_cache answer ride resolve_hosts, Go resolves
 		 * them concurrently (mosdns plain listener first), pins direct probes
 		 * to the answers and echoes them back for the cache. Unresolvable
-		 * hosts come back as 000 - the shell worker's exact behavior. */
+		 * hosts come back as 000 - the shell worker's exact behavior.
+		 * ч.119 (issue #10): the TCP side rides the same plain-view pins —
+		 * an unpinned tcp probe used to CONNECT the bare hostname, the core
+		 * resolved it and preferred the AAAA, dying with "network is
+		 * unreachable" on IPv4-only routers. */
 		let resolve = {};
 		let resolve_hosts = [];
 		let rh_seen = {};
 		for (let k = 0; k < length(items); k++) {
 			const h = items[k].h;
-			if (side !== 'direct') continue;
+			if (side !== 'direct' && side !== 'tcp') continue;
 			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) { resolve[h] = h; continue; }
 			const ce = pv_cache[h];
 			if (type(ce) === 'object' && ce.ip && (time() - int(ce.t)) < 600) { resolve[h] = ce.ip; continue; }
@@ -1928,7 +1948,12 @@ echo done > "$PRE.done"
 				}
 				out[res.id] = { code: code, ok: (c === 'ok') && !block && !geo, block: block, geo: geo,
 					fp: '' + (res.fp || ''), ip: (side === 'direct' && res.ip) ? res.ip : null,
-					rtt_ms: int(res.rtt_ms) || 0, kind: kind, waf: waf, tls_note: tlsn };
+					rtt_ms: int(res.rtt_ms) || 0, kind: kind, waf: waf, tls_note: tlsn,
+					/* ч.119 (issue #10): phase=dns means the plain view had NO
+					 * answer this cycle — the probe never dialed anything.
+					 * classify() drops such candidates instead of counting a
+					 * false "direct fail" toward a block learn. */
+					dns_fail: (trim('' + (res.phase || '')) === 'dns') };
 			}
 		}
 		/* A missing result for a dispatched host must never be read as success:
@@ -1976,6 +2001,11 @@ echo done > "$PRE.done"
 			let rtt_ms = (cm && cm[3]) ? int(num(cm[3]) * 1000.0) || 0 : 0;
 			let body = readfile(pre + '.body') || '';
 			let ipraw = trim(readfile(pre + '.ip') || '');
+			/* ч.119 (issue #10): the worker marks a DNS-phase miss (.phase=dns,
+			 * direct side unresolvable / tcp curl exit 6) — classify() drops
+			 * such candidates instead of counting a false "direct fail". The
+			 * marker is cleared by the worker itself at every start. */
+			let dnsf = (trim(readfile(pre + '.phase') || '') === 'dns');
 			let res;
 			if (side === 'tcp' || side === 'tcpproxy') {
 				let ok = false;
@@ -2010,10 +2040,10 @@ echo done > "$PRE.done"
 				}
 				res = { code: length(code) ? code : '000', ok: (c === 'ok') && !block && !geo, block: block, geo: geo, fp: fingerprint(body),
 				        ip: (side === 'direct' && length(ipraw)) ? ipraw : null, rtt_ms: rtt_ms,
-				        kind: kind, waf: waf, tls_note: '' };
+				        kind: kind, waf: waf, tls_note: '', dns_fail: dnsf };
 			}
 			out[items[k].i] = res;
-			system(`rm -f ${shellquote(pre)}.code ${shellquote(pre)}.body ${shellquote(pre)}.done ${shellquote(pre)}.ip 2>/dev/null`);
+			system(`rm -f ${shellquote(pre)}.code ${shellquote(pre)}.body ${shellquote(pre)}.done ${shellquote(pre)}.ip ${shellquote(pre)}.phase 2>/dev/null`);
 		}
 		return out;
 	}
@@ -2422,6 +2452,23 @@ echo done > "$PRE.done"
 			st.status = 'direct';
 			st.confirms = 0;
 			delete st.dconfirms;
+			return;
+		}
+
+		/* ── ч.119 (issue #10): DNS-phase misses are NOT block evidence ──
+		 * A direct probe that never dialed anything (plain view had no
+		 * answer this cycle: resolvers blipped, upstream timeouts) used to
+		 * count as "direct fail" toward a BLOCKED learn whenever the proxy
+		 * side answered. The old native path even dialed the unpinned
+		 * HOSTNAME through the core, whose DNS preferred the AAAA and died
+		 * with "network is unreachable" on IPv4-only routers — hosts like
+		 * ru.wikipedia.org / captive.apple.com got learned as blocked
+		 * overnight while working perfectly directly. No measurement → no
+		 * verdict: drop the candidate for this cycle (a recurring host is
+		 * re-probed on a later pass, the 'unknown' rule). */
+		if (d.dns_fail) {
+			delete st.dconfirms;
+			delete state[dom];
 			return;
 		}
 
@@ -3029,7 +3076,10 @@ echo done > "$PRE.done"
  					let d_res = probe(h, false, timeout);
 					if (!st) { state[h] = {}; st = state[h]; }
 					st.last_probe = now;
-					if (d_res.ok) {
+					if (d_res.dns_fail) {
+						/* ч.119 (issue #10): no measurement (plain DNS blip) —
+						 * neither count nor reset the heal streak. */
+					} else if (d_res.ok) {
 						st.heal = (st.heal || 0) + 1;
 						if (st.heal >= HEAL_CONFIRM) {
 							delete lst[h];
