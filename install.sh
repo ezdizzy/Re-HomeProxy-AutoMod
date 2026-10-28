@@ -247,6 +247,12 @@ apply_and_check() {
 
 	status_line() {
 	CORE="нет"; [ -x /usr/bin/hiddify-core ] && CORE=hiddify-core; [ -x /usr/bin/sing-box ] && CORE="$CORE + sing-box"
+	# lite-сборка sing-box (экономит место на флеше): на месте ELF — крошечный sh-враппер (~10 КБ), который exec'ает реальный бинарь из /usr/libexec.
+	if [ -x /usr/bin/sing-box ]; then
+		SZ=$(wc -c < /usr/bin/sing-box 2>/dev/null)
+		case "$SZ" in ''|*[!0-9]*) SZ=999999 ;; esac
+		[ "$SZ" -lt 10000 ] && CORE="$CORE (lite·upx)"
+	fi
 	MOS="нет"; [ -x /usr/bin/mosdns ] && MOS="да"
 	ZAP="нет"; [ -x /opt/zapret2/nfq2/nfqws2 ] && ZAP="да"
 	BYE="нет"; [ -x /usr/bin/ciadpi ] && BYE="да"
@@ -557,17 +563,35 @@ install_core() {
 	warn "  ⚠  Без действующей подписки/конфигурации прокси-часть работать не будет:"
 	warn "     Telegram, WhatsApp, Instagram и другие заблокированные сервисы останутся недоступны."
 	warn "     Интернет при этом останется полностью рабочим (напрямую)."
-	echo "    1) hiddify-core       (по умолчанию; все протоколы приложения + NaïveProxy; на малой флеш-памяти выберет компактную сборку)"
-	echo "    2) sing-box-extended  (более новая база sing-box 1.14: WARP/MASQUE/TrustTunnel в ядре; без NaïveProxy — такие узлы будут пропускаться)"
-	ask "  Выбор [1/2] (по умолчанию 1):"
+	echo "    1) hiddify-core            (по умолчанию; все протоколы приложения + NaïveProxy; на малой флеш-памяти выберет компактную сборку)"
+	echo "    2) sing-box-extended       (более новая база sing-box 1.14: WARP/MASQUE/TrustTunnel в ядре; без NaïveProxy — такие узлы будут пропускаться)"
+	echo "    3) sing-box-extended-lite  (лёгкая сборка sing-box 1.14 для роутеров с малой флеш-памятью: VLESS Reality, Trojan, Shadowsocks,"
+	echo "                               Hysteria2, TUIC, WireGuard/AmneziaWG (стек ядра) и Clash API; БЕЗ NaïveProxy/WARP/MASQUE/Tailscale/gVisor —"
+	echo "                               такие узлы будут пропускаться; обычная сборка ~46 МБ на флеше, компактная UPX ~10 МБ + ~96 МБ свободной ОЗУ)"
+	ask "  Выбор [1/2/3] (по умолчанию 1):"
+	VARIANT=""
 	case "$REPLY" in
 		2) CORE=singbox ;;
+		3)
+			CORE=singbox-lite
+			echo "  Сборка lite:"
+			echo "    1) обычная     (~46 МБ на флеше, ОЗУ не грузит — нужно ~50 МБ свободного места)"
+			echo "    2) компактная  (UPX, ~10 МБ на флеше, распаковывается в ОЗУ при каждом запуске — нужно ~16 МБ места и ~96 МБ ОЗУ)"
+			ask "  Выбор [1/2] (пусто = авто — установщик подберёт по ресурсам роутера):"
+			case "$REPLY" in
+				1) VARIANT=normal ;;
+				2) VARIANT=compressed ;;
+				*) VARIANT=""; info "  сборку выберет установщик по ресурсам роутера." ;;
+			esac ;;
 		*) CORE=hiddify ;;
 	esac
 
-	PREP=$(ucode "$CM" prepare_install "$CORE" 2>/dev/null)
+	PREP=$(ucode "$CM" prepare_install "$CORE" "$VARIANT" 2>/dev/null)
 	jerr "$PREP" && die "  подготовка ядра не удалась: $(jget "$PREP" error)"
-	DLURL=$(jget "$PREP" dl_url); TMP=$(jget "$PREP" tmp_path); PMG=$(jget "$PREP" pkg_manager)
+	DLURL=$(jget "$PREP" dl_url)
+	# lite-ядро ставится собственным install.sh проекта (dl_url нет — есть installer_url)
+	[ -z "$DLURL" ] && DLURL=$(jget "$PREP" installer_url)
+	TMP=$(jget "$PREP" tmp_path); PMG=$(jget "$PREP" pkg_manager)
 	[ -n "$DLURL" ] && [ -n "$TMP" ] && [ -n "$PMG" ] || die "  подготовка ядра не вернула данные для загрузки."
 	info "  скачиваю $CORE..."
 	jtrue "$(ucode "$CM" download_pkg "$DLURL" "$TMP" 2>/dev/null)" || die "  не удалось скачать ядро (попробуйте GH_MIRROR=...)."

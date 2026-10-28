@@ -1960,7 +1960,11 @@ const methods = {
 				return { result: false, error: 'an install is already running' };
 			/* Drop a finished status file so the poller never shows a stale run */
 			system(`rm -f ${shellquote(st)} 2>/dev/null`);
-			const args = (length(variant) && !(variant in ['upx', 'standard']))
+			/* ch.125: EVERY validated variant reaches the runner — the cards
+			 * offer an explicit build choice (standard/upx for hiddify,
+			 * normal/compressed for the lite build) and prepare_install
+			 * honors it; empty = the backend auto-pick as before. */
+			const args = length(variant)
 				? `${shellquote(core)} ${shellquote(variant)}`
 				: shellquote(core);
 			/* 1000>&- — the detached runner must never inherit a procd_lock fd

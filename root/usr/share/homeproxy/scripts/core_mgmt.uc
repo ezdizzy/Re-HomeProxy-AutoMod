@@ -459,10 +459,15 @@ let result;
 			const vm = match(tmp_path, /-(normal|compressed)\.sh$/);
 			const lflag = (vm && vm[1] === 'compressed') ? '--compressed' : '--normal';
 			const logf = '/tmp/sing-box-lite-install.log';
+			/* 900 s: the installer downloads its own tarball INSIDE this call
+			 * (~46 MB for --normal — minutes on a throttled uplink), then
+			 * swaps, restarts the service and runs its health-check. The
+			 * detached runner already caps this stage at 900 s; the inner cap
+			 * matched (300 s before ch.125) and defeated that headroom. */
 			const exit_code = system(
 				`{ sh ${shellquote(tmp_path)} ${lflag}; } >${shellquote(logf)} 2>&1` +
 				`; RC=$?; rm -f ${shellquote(tmp_path)}; exit $RC`,
-				300000
+				900000
 			);
 			/* The installer's own post-start health check polls `pidof sing-box`
 			 * — but the service runs whichever core Preferred core names. On a

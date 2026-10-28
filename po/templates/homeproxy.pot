@@ -458,6 +458,11 @@ msgstr ""
 msgid "Auto"
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1296
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1298
+msgid "Auto (recommended)"
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/automation.js:102
 msgid "Auto blocked-site detection"
 msgstr ""
@@ -826,6 +831,14 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2359
 msgid "Community"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1296
+msgid "Compact build (UPX)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1298
+msgid "Compact build (UPX, ~10 MB)"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:446
@@ -1676,6 +1689,10 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2371
 msgid "Full Combo"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1296
+msgid "Full build"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2866
@@ -2936,6 +2953,10 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/server.js:435
 #: htdocs/luci-static/resources/view/homeproxy/server.js:450
 msgid "None"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1298
+msgid "Normal build (~46 MB)"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:269
@@ -4948,6 +4969,10 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1311
 #: htdocs/luci-static/resources/view/homeproxy/server.js:455
 msgid "WebSocket"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js:1303
+msgid "Which core build to install — Auto picks the one that fits this device"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2180

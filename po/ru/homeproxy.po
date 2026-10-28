@@ -7490,6 +7490,36 @@ msgstr "Лёгкая сборка sing-box 1.14 от MANCrimSon: VLESS Reality, 
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
+msgid "Auto (recommended)"
+msgstr "Авто (рекомендуется)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Full build"
+msgstr "Полная сборка"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Compact build (UPX)"
+msgstr "Компактная сборка (UPX)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Normal build (~46 MB)"
+msgstr "Обычная сборка (~46 МБ)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Compact build (UPX, ~10 MB)"
+msgstr "Компактная сборка (UPX, ~10 МБ)"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
+msgid "Which core build to install — Auto picks the one that fits this device"
+msgstr "Какую сборку ядра устанавливать — «Авто» подберёт подходящую этому устройству"
+
+#: htdocs/luci-static/resources/view/homeproxy/status.js
+
 msgid "Nodes the active core cannot load are skipped automatically (they would crash the core). Switch Preferred core in Client Settings to run them."
 msgstr "Узлы, которые не может загрузить активное ядро, пропускаются автоматически (они уронили бы ядро). Чтобы они работали, смените «Предпочтительное ядро» на странице «Клиент»."
 

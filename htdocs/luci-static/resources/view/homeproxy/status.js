@@ -1287,11 +1287,30 @@ function buildCoreCard(core, coreInfo) {
 		}
 	}, [ _('Check update') ]);
 
-	/* One smart Install: the backend auto-picks the build that fits this device's flash
-	 * (and RAM for the compact one) — the user never sees "UPX" or has to choose.
-	 * The heavy work runs in a detached background runner (prepare → download →
-	 * install → kmods); this card only starts it and polls the stage status, so the
-	 * tab stays responsive and a page reload resumes watching the running install. */
+	/* Build choice (ch.125): the backend's auto-pick stays the DEFAULT, but
+	 * the user can now explicitly choose the build — flash vs RAM trade-off.
+	 * hiddify-core: standard/upx; sing-box-extended-lite: normal (pure ELF
+	 * ~46 MB flash) / compressed (UPX ~10 MB flash, decompresses into RAM at
+	 * every launch). The full sing-box-extended ships one build — no select. */
+	const variants = isHiddify
+		? [ ['', _('Auto (recommended)')], ['standard', _('Full build')], ['upx', _('Compact build (UPX)')] ]
+		: isLite
+		? [ ['', _('Auto (recommended)')], ['normal', _('Normal build (~46 MB)')], ['compressed', _('Compact build (UPX, ~10 MB)')] ]
+		: null;
+	const variantSel = variants ? E('select', {
+		'class': 'cbi-input-select',
+		'style': 'margin-left:4px',
+		'title': _('Which core build to install — Auto picks the one that fits this device')
+	}, variants.map(function(v) {
+		return E('option', { 'value': v[0] }, [ v[1] ]);
+	})) : null;
+
+	/* Install button with a build choice: the select picks the build
+	 * (Auto default = the backend auto-picks the one that fits this device's
+	 * flash and RAM). The heavy work runs in a detached background runner
+	 * (prepare → download → install → kmods); this card only starts it and
+	 * polls the stage status, so the tab stays responsive and a page reload
+	 * resumes watching the running install. */
 	let installWatch = null;
 	function watchInstall() {
 		if (installWatch)
@@ -1328,6 +1347,7 @@ function buildCoreCard(core, coreInfo) {
 			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 			installBtn.textContent = installed ? _('Update') : _('Install');
 			installBtn.disabled = !canInstall || null;
+			if (variantSel) variantSel.disabled = false;
 			removeBtn.disabled  = !installed;
 			if (st.ok) {
 				let msg = st.note ? _('Installed successfully') + ' — ' + st.note : _('Installed successfully');
@@ -1344,14 +1364,16 @@ function buildCoreCard(core, coreInfo) {
 	const doInstall = async () => {
 		installBtn.disabled = true;
 		removeBtn.disabled  = true;
+		if (variantSel) variantSel.disabled = true;
 		statusEl.textContent = _('Installing...');
 		statusEl.style.color = '#9a9a9a';
 		setMsg(_('Starting the install...'), '#9a9a9a');
 
-		const start = await L.resolveDefault(callCoreInstallStart(core, ''), {});
+		const start = await L.resolveDefault(callCoreInstallStart(core, variantSel ? variantSel.value : ''), {});
 		if (!start || start.result === false) {
 			installBtn.disabled = !canInstall || null;
 			removeBtn.disabled  = !installed;
+			if (variantSel) variantSel.disabled = false;
 			statusEl.textContent = installed ? 'v' + (version || '?') + (coreData.lite && coreData.variant === 'compressed' ? ' [lite·upx]' : (coreData.lite ? ' [lite]' : '')) : _('Not installed');
 			statusEl.style.color = installed ? '#3fbf5f' : '#9a9a9a';
 			setMsg((start && start.error) ? start.error : _('Failed to start the install'), '#e05252');
@@ -1368,6 +1390,7 @@ function buildCoreCard(core, coreInfo) {
 		if (st && st.running) {
 			installBtn.disabled = true;
 			removeBtn.disabled  = true;
+			if (variantSel) variantSel.disabled = true;
 			statusEl.textContent = _('Installing...');
 			statusEl.style.color = '#9a9a9a';
 			watchInstall();
@@ -1410,17 +1433,14 @@ function buildCoreCard(core, coreInfo) {
 		}
 	}, [ _('Remove') ]);
 
+	const row = [ E('strong', {}, name), statusEl, checkBtn, remoteEl ];
+	if (variantSel)
+		row.push(variantSel);
+	row.push(installBtn, removeBtn, msgEl);
+
 	return E('div', { 'class': 'hpui-panel' }, [
-		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
-			E('strong', {}, name),
-			statusEl,
-			checkBtn,
-			remoteEl,
-			installBtn,
-			removeBtn,
-			msgEl
-		]),
-		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' }, desc),
+		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, row),
+		E('div', { 'style': 'margin-top:4px; font-size:0.9em; opacity:.85' }, desc),
 		capLine
 	]);
 }
