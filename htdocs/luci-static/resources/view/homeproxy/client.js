@@ -816,10 +816,11 @@ return view.extend({
 		for (let i in hp.dns_strategy)
 			so.value(i, hp.dns_strategy[i]);
 
-		so = ss.option(form.Flag, 'sniff_override', _('Override destination'),
-			_('Override the connection destination address with the sniffed domain.'));
-		so.default = so.enabled;
-		so.rmempty = false;
+		/* The legacy sniff_override flag was removed (ч.129 ан-146): the
+		 * inbound-level sniff_override_destination field no longer exists in
+		 * any supported core (vanilla removed it in 1.13, upstream hiddify
+		 * v5 rejects it outright) — the app's own sniff action rule covers
+		 * domain routing for every core. */
 
 		so = ss.option(form.ListValue, 'default_outbound', _('Default outbound'),
 			_('Default outbound for connections not matched by any routing rules.'));

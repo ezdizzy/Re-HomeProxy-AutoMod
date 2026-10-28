@@ -154,7 +154,7 @@ This mod adds the following on top of the original Re-HomeProxy app:
 - **In-app self-update** — on the **Core & Tools** tab you can check for a new version and update the LuCI app (and the
   Russian translation) in place, without touching the SSH console. See *Updating the app* below.
 - **Fork default** — `install.sh` installs the LuCI app and Russian locale from `ezdizzy/re-homeproxy` by default
-  (cores / ByeDPI / Zapret still come from upstream `1andrevich/*`).
+  (the hiddify-core kernel — now from the ORIGINAL repository `hiddify/hiddify-core` (v5.x, raw tar.gz), the compact UPX build — still the `1andrevich/hiddify-core` fork (v4.x); ByeDPI / Zapret — from upstream `1andrevich/*`).
 - **Interactive installer** — `install.sh` walks you through everything (subscription, Hot Swap, MultiDNS, Automation, Zapret with
   automatic strategy testing, the strategy **auto-pilot** opt-in and ByeDPI) and **never leaves you without internet**:
   with no subscription it switches to direct mode and adds a "YouTube → Zapret" rule. Re-running the script opens a
@@ -303,7 +303,13 @@ above; if you skipped that, add `--allow-untrusted` to `apk add`.
 ```sh
 if [ "$EXT" = apk ]; then apk add kmod-nft-tproxy kmod-tun; else opkg install kmod-nft-tproxy kmod-tun; fi
 
-# hiddify-core (default; for a compact build replace 'latest/download' with 'download/upx')
+# hiddify-core (default — from the ORIGINAL repository, raw tar.gz per Go target;
+# v5.x = hiddify-sing-box 1.15, NaïveProxy included for non-MIPS)
+wget -O /tmp/hiddify-core.tar.gz "https://github.com/hiddify/hiddify-core/releases/latest/download/hiddify-core-linux-arm64-musl.tar.gz"
+mkdir -p /tmp/hid-up && tar -xzf /tmp/hiddify-core.tar.gz -C /tmp/hid-up && mv -f /tmp/hid-up/hiddify-core /usr/bin/hiddify-core && rm -rf /tmp/hid-up
+
+# ...or the 1andrevich fork (signed apk/ipk; v4.x ONLY — releases frozen since June 2026;
+# for a compact UPX build replace 'latest/download' with 'download/upx')
 wget -O /tmp/hiddify-core.$EXT "https://github.com/1andrevich/hiddify-core/releases/latest/download/hiddify-core_${ARCH}.${EXT}"
 if [ "$EXT" = apk ]; then apk add /tmp/hiddify-core.apk; else opkg install --force-reinstall /tmp/hiddify-core.ipk; fi
 

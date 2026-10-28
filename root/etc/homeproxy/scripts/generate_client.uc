@@ -185,6 +185,22 @@ function hp_core_info() {
 
 const hp_core = hp_core_info();
 
+/* ч.129 (ан-146): upstream hiddify-core ≥5 (sing-box 1.15) отвергает legacy
+ * поле `download_detour` у rule_set — «legacy download_detour is deprecated,
+ * FATAL to continuing using this feature» (проверено на устройстве, v5.1.0).
+ * Новый диалект — переопределение `http_client.detour` на самом rule_set.
+ * Гейт по мажорной версии целевого ядра: hiddify ≥5 → http_client; всё
+ * остальное (hiddify 4.x fork / sing-box-extended 1.14 / custom) →
+ * download_detour. Отдельная глобальная секция http_client не нужна:
+ * частичный объект с одним detour валиден сам по себе (остальные поля —
+ * дефолты). */
+const hp_ver_major = (hp_core.version && type(hp_core.version) == 'string')
+	? int(split(hp_core.version, '.')[0]) : 0;
+const hp_rule_http_client = is_hiddify && hp_ver_major >= 5;
+const hp_rs_dl = (detour) => hp_rule_http_client
+	? { http_client: { detour: detour } }
+	: { download_detour: detour };
+
 /* A node type may only be emitted when the running build provides its tag. */
 const HP_TYPE_REQ_TAG = {
 	naive: 'with_naive_outbound',
@@ -312,7 +328,7 @@ const oauth_stability_opt = (uci.get(uciconfig, ucimain, 'oauth_stability') !== 
 const reload_on_wan_opt = (uci.get(uciconfig, ucimain, 'reload_on_wan') === '1');
 
 let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outbound_dns,
-    domain_strategy, sniff_override, dns_server, china_dns_server, iran_dns_server, russia_dns_server,
+    domain_strategy, dns_server, china_dns_server, iran_dns_server, russia_dns_server,
     secure_dns_server, proxy_calls, no_proxy_torrents, show_advanced_rules, dns_default_strategy, dns_default_server, dns_disable_cache,
     dns_disable_cache_expire, dns_independent_cache, dns_client_subnet, cache_file_store_rdrc,
     cache_file_rdrc_timeout, direct_domain_list, proxy_domain_list,
@@ -433,7 +449,10 @@ if (routing_mode !== 'custom') {
 	if (proxy_domain_list)
 		proxy_domain_list = split(proxy_domain_list, /[\r\n]/);
 
-	sniff_override = uci.get(uciconfig, uciinfra, 'sniff_override') || '1';
+	/* ч.129 (ан-146): inbound-уровневые sniff/sniff_override_destination удалены
+	 * из диалекта — поле удалили в vanilla 1.13/1.14 и upstream v5 (decode
+	 * «removed in 1.13.0»); UCI-ключи остаются нетронутыми для совместимости
+	 * (миграция старых установок — в migrate_config.uc). */
 } else {
 	/* DNS settings */
 	dns_default_strategy = uci.get(uciconfig, ucidnssetting, 'default_strategy');
@@ -449,7 +468,6 @@ if (routing_mode !== 'custom') {
 	default_outbound = uci.get(uciconfig, uciroutingsetting, 'default_outbound') || 'nil';
 	default_outbound_dns = uci.get(uciconfig, uciroutingsetting, 'default_outbound_dns') || 'default-dns';
 	domain_strategy = uci.get(uciconfig, uciroutingsetting, 'domain_strategy');
-	sniff_override = uci.get(uciconfig, uciroutingsetting, 'sniff_override');
 }
 
 const proxy_mode = uci.get(uciconfig, ucimain, 'proxy_mode') || 'redirect_tproxy',
@@ -1042,12 +1060,12 @@ config.dns = {
 			tag: 'default-dns',
 			type: 'udp',
 			server: wan_dns,
-			detour: self_mark ? 'direct-out' : null
+			detour: 'direct-out'
 		},
 		{
 			tag: 'system-dns',
 			type: 'local',
-			detour: self_mark ? 'direct-out' : null
+			detour: 'direct-out'
 		}
 	],
 	rules: [],
@@ -1074,7 +1092,7 @@ if (!isEmpty(main_node)) {
 			: parse_dnsserver(russia_dns_server);
 		push(config.dns.servers, {
 			tag: 'russia-dns',
-			detour: self_mark ? 'direct-out' : null,
+			detour: 'direct-out',
 			...ru_dns_target
 		});
 		/* Secure pool: race via the local mosdns listener when MultiDNS is on (DoH/DoT
@@ -1175,7 +1193,7 @@ if (!isEmpty(main_node)) {
 		const region_dns_server = (r === 'cn') ? china_dns_server : iran_dns_server;
 		push(config.dns.servers, {
 			tag: 'region-dns',
-			detour: self_mark ? 'direct-out' : null,
+			detour: 'direct-out',
 			...parse_dnsserver(region_dns_server)
 		});
 		/* Remote/default resolver: DoH through the tunnel, bootstrapped via region-dns.
@@ -1268,8 +1286,12 @@ if (!isEmpty(main_node)) {
 			return;
 
 		let outbound = get_outbound(cfg.outbound);
-		if (outbound === 'direct-out' && isEmpty(self_mark))
-			outbound = null;
+
+		/* ч.129 (ан-146): специальный случай «direct-out → null при пустом self_mark»
+		 * удалён — диалект унифицирован. detour:'direct-out' легален во всех
+		 * версиях (проверка 1.15 отвергает только поле detour НА САМОМ direct
+		 * outbound, а не объекты, детурящие К нему); unmarked direct-out даёт
+		 * тот же проводной результат, что и implied direct (прямой unmarked dial). */
 
 		push(config.dns.servers, {
 			tag: 'cfg-' + cfg['.name'] + '-dns',
@@ -1358,9 +1380,6 @@ push(config.inbounds, {
 	listen: '::',
 	listen_port: int(mixed_port),
 	udp_timeout: strToTime(udp_timeout),
-	sniff: is_hiddify ? true : null,
-	sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
-	set_system_proxy: is_hiddify ? false : null,
 });
 
 /* MultiDNS: the plain (Russia) pool resolves DIRECTLY via mosdns upstreams (no proxy —
@@ -1378,8 +1397,6 @@ if (match(proxy_mode, /redirect/))
 
 		listen: '::',
 		listen_port: int(redirect_port),
-		sniff: is_hiddify ? true : null,
-		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
 	});
 if (match(proxy_mode, /tproxy/))
 	push(config.inbounds, {
@@ -1390,8 +1407,6 @@ if (match(proxy_mode, /tproxy/))
 		listen_port: int(tproxy_port),
 		network: 'udp',
 		udp_timeout: strToTime(udp_timeout),
-		sniff: is_hiddify ? true : null,
-		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
 	});
 if (match(proxy_mode, /tun/))
 	push(config.inbounds, {
@@ -1405,8 +1420,6 @@ if (match(proxy_mode, /tun/))
 		endpoint_independent_nat: strToBool(endpoint_independent_nat),
 		udp_timeout: strToTime(udp_timeout),
 		stack: tcpip_stack,
-		sniff: is_hiddify ? true : null,
-		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
 	});
 
 /* Diagnostic test inbounds: loopback-only mixed inbounds used by the auto-detection
@@ -1423,17 +1436,11 @@ if (!isEmpty(main_node))
 		tag: 'auto-direct-in',
 		listen: '127.0.0.1',
 		listen_port: 5336,
-		sniff: is_hiddify ? true : null,
-		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
-		set_system_proxy: is_hiddify ? false : null,
 	}, {
 		type: 'mixed',
 		tag: 'auto-proxy-in',
 		listen: '127.0.0.1',
 		listen_port: 5337,
-		sniff: is_hiddify ? true : null,
-		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
-		set_system_proxy: is_hiddify ? false : null,
 	});
 
 /* MultiDNS secure-via-proxy inbound: a loopback-only mixed (SOCKS5/HTTP) inbound the
@@ -1447,9 +1454,6 @@ if (mdns_proxy_in)
 		tag: 'mdns-proxy-in',
 		listen: '127.0.0.1',
 		listen_port: mdns_proxy_port,
-		sniff: is_hiddify ? true : null,
-		sniff_override_destination: is_hiddify ? strToBool(sniff_override) : null,
-		set_system_proxy: is_hiddify ? false : null,
 	});
 
 /* Server inbounds */
@@ -1611,7 +1615,14 @@ config.endpoints = [];
 config.outbounds = [
 	{
 		type: 'direct',
-		tag: 'direct-out'
+		tag: 'direct-out',
+		/* ч.129 (ан-146): routing_mark делает direct-out «непустым» outbound —
+		 * sing-box ≥1.12 (и upstream hiddify-core v5) FATAL'ит на detour к
+		 * пустому direct outbound («detour to an empty direct outbound makes
+		 * no sense» — DNS/NTP-серверы детурят в direct-out). Значение ТО ЖЕ,
+		 * что раньше давал route.default_mark на этом dialer'е: проводного
+		 * изменения нет, но detour теперь легален во всех версиях ядер. */
+		routing_mark: strToInt(self_mark)
 	},
 	{
 		type: 'block',
@@ -2808,7 +2819,7 @@ if (!isEmpty(main_node)) {
 						format: 'binary',
 						url: 'https://github.com/1andrevich/Re-filter-lists/releases/latest/download/ruleset-domain-refilter_domains.srs',
 						initial_path: ruleset_initial_path,
-						download_detour: ruleset_detour,
+						...hp_rs_dl(ruleset_detour),
 						update_interval: '1d'
 					});
 				}
@@ -2820,7 +2831,7 @@ if (!isEmpty(main_node)) {
 						format: 'binary',
 						url: 'https://github.com/1andrevich/Re-filter-lists/releases/latest/download/ruleset-ip-refilter_ipsum.srs',
 						initial_path: ruleset_initial_path,
-						download_detour: ruleset_detour,
+						...hp_rs_dl(ruleset_detour),
 						update_interval: '1d'
 					});
 				}
@@ -2855,7 +2866,7 @@ if (!isEmpty(main_node)) {
 						url: SOURCE_URL_MAP[cfg.source] ||
 						     ('https://github.com/itdoginfo/allow-domains/releases/latest/download/' + replace(cfg.source, '-', '_') + '.srs'),
 						initial_path: ruleset_initial_path,
-						download_detour: ruleset_detour,
+						...hp_rs_dl(ruleset_detour),
 						update_interval: '1d'
 					});
 				}
@@ -2867,7 +2878,7 @@ if (!isEmpty(main_node)) {
 						format: 'binary',
 						url: SOURCE_IP_MAP[cfg.source],
 						initial_path: ruleset_initial_path,
-						download_detour: ruleset_detour,
+						...hp_rs_dl(ruleset_detour),
 						update_interval: '1d'
 					});
 				}
@@ -2996,7 +3007,7 @@ if (!isEmpty(main_node)) {
 			format: 'binary',
 			url: region.geoip,
 			initial_path: ruleset_initial_path,
-			download_detour: 'direct-out',
+			...hp_rs_dl('direct-out'),
 			update_interval: '1d'
 		});
 		push(config.route.rule_set, {
@@ -3005,7 +3016,7 @@ if (!isEmpty(main_node)) {
 			format: 'binary',
 			url: region.geosite,
 			initial_path: ruleset_initial_path,
-			download_detour: 'direct-out',
+			...hp_rs_dl('direct-out'),
 			update_interval: '1d'
 		});
 		if (region.guard)
@@ -3015,7 +3026,7 @@ if (!isEmpty(main_node)) {
 				format: 'binary',
 				url: region.geosite_non,
 				initial_path: ruleset_initial_path,
-				download_detour: 'direct-out',
+				...hp_rs_dl('direct-out'),
 				update_interval: '1d'
 			});
 	}
@@ -3089,7 +3100,7 @@ if (!isEmpty(main_node)) {
 			format: cfg.format,
 			path: cfg.path,
 			url: cfg.url,
-			download_detour: get_outbound(cfg.outbound),
+			...hp_rs_dl(get_outbound(cfg.outbound)),
 			update_interval: cfg.update_interval
 		});
 	});

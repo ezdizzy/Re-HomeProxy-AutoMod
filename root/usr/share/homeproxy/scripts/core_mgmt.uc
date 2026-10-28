@@ -98,6 +98,58 @@ const LITE_WRAPPER_MAX_BYTES  = 10000;   /* the compressed build ships a sh wrap
 const LITE_REPO               = 'https://api.github.com/repos/MANCrimSon/sing-box-extended-lite/releases/latest';
 const LITE_INSTALLER_URL      = 'https://raw.githubusercontent.com/MANCrimSon/sing-box-extended-lite/main/install.sh';
 
+/* hiddify-core upstream (hiddify/hiddify-core) — ОРИГИНАЛЬНЫЙ репозиторий
+ * проекта (ч.129, ан-146). Releases публикуют сырые tar.gz-сборки per Go
+ * target; musl CGO-сборки несут NaïveProxy, статические MIPS-сборки — нет
+ * (cronet без MIPS — у форка то же самое). Пакеты apk/ipk оригинал НЕ
+ * публикует (собирает их CI, но в релиз не выкладывает) — это и было
+ * единственной функцией форка 1andrevich: публикация OpenWrt-пакетов при
+ * НУЛЕВЫХ изменениях Go-кода (13 коммитов форка — только CI). С июня 2026
+ * авто-чекер форка встал (драфт-релизы затеняют новые апстрим-теги), форк
+ * заморожен на v4.1.0 при апстриме v5.x → форк стал РЕЗЕРВНЫМ источником
+ * (компактная UPX-сборка есть только у него). Апстрим-тарбол: ядро
+ * hiddify-core-linux-<target>[-musl]/hiddify-core (+ LICENSE.md). */
+const HIDDIFY_UPSTREAM_DL   = 'https://github.com/hiddify/hiddify-core/releases/latest/download/';
+const HIDDIFY_UPSTREAM_API  = 'https://api.github.com/repos/hiddify/hiddify-core/releases/latest';
+const HIDDIFY_FORK_API      = 'https://api.github.com/repos/1andrevich/hiddify-core/releases/latest';
+/* OpenWrt OPENWRT_ARCH → апстрим-ассет (musl CGO, где cronet существует;
+ * статические для MIPS/старых ARM — они и у форка без NaïveProxy).
+ * Неизвестная архитектура = форк (как раньше). */
+const HIDDIFY_UPSTREAM_ASSET = {
+	'aarch64_cortex-a53':   'hiddify-core-linux-arm64-musl.tar.gz',
+	'aarch64_cortex-a72':   'hiddify-core-linux-arm64-musl.tar.gz',
+	'aarch64_cortex-a76':   'hiddify-core-linux-arm64-musl.tar.gz',
+	'aarch64_generic':      'hiddify-core-linux-arm64-musl.tar.gz',
+	'arm_cortex-a5_vfpv4':  'hiddify-core-linux-armv7-musl.tar.gz',
+	'arm_cortex-a7_neon-vfpv4': 'hiddify-core-linux-armv7-musl.tar.gz',
+	'arm_cortex-a7_vfpv4':  'hiddify-core-linux-armv7-musl.tar.gz',
+	'arm_cortex-a8_vfpv3':  'hiddify-core-linux-armv7-musl.tar.gz',
+	'arm_cortex-a9_neon':   'hiddify-core-linux-armv7-musl.tar.gz',
+	'arm_cortex-a9_vfpv3-d16': 'hiddify-core-linux-armv7-musl.tar.gz',
+	'arm_cortex-a15_neon-vfpv4': 'hiddify-core-linux-armv7-musl.tar.gz',
+	'arm_arm926ej-s':       'hiddify-core-linux-armv5.tar.gz',
+	'arm_arm1176jzf-s_vfp': 'hiddify-core-linux-armv6.tar.gz',
+	'mipsel_24kc':          'hiddify-core-linux-mipsle-softfloat.tar.gz',
+	'mipsel_74kc':          'hiddify-core-linux-mipsle-softfloat.tar.gz',
+	'mipsel_mips32':        'hiddify-core-linux-mipsle-softfloat.tar.gz',
+	'mipsel_24kc_24kf':     'hiddify-core-linux-mipsle.tar.gz',
+	'mips_24kc':            'hiddify-core-linux-mips-softfloat.tar.gz',
+	'mips_4kec':            'hiddify-core-linux-mips-softfloat.tar.gz',
+	'mips_mips32':          'hiddify-core-linux-mips-softfloat.tar.gz',
+	'mips64_mips64r2':      'hiddify-core-linux-mips64-softfloat.tar.gz',
+	'mips64_octeonplus':    'hiddify-core-linux-mips64-softfloat.tar.gz',
+	'x86_64':               'hiddify-core-linux-amd64-musl.tar.gz',
+	'i386_pentium4':        'hiddify-core-linux-386-musl.tar.gz',
+	'i386_pentium-mmx':     'hiddify-core-linux-386-softfloat.tar.gz',
+	'riscv64_generic':      'hiddify-core-linux-riscv64.tar.gz'
+};
+/* Пороги полной апстрим-сборки v5.x (arm64-musl: бинарник ≈101 МиБ, тарбол
+ * ≈35.4 МиБ) — крупнее форковой (Go 1.27 + cronet). Тарбол кладётся в /tmp,
+ * бинарник распаковывается прямо в оверлей (staging) → swap. */
+const UP_FULL_OVERLAY_RAW_KB  = 112640;   /* ~110 MB на несжимающем оверлее */
+const UP_FULL_OVERLAY_COMP_KB = 40960;    /* ~40 MB на сжимающем (jffs2/ubifs) */
+const UP_FULL_TMP_KB          = 46080;    /* тарбол + запас в /tmp */
+
 function bin_bytes(path) {
 	/* 2>/dev/null FIRST: a missing file's "can't open" must stay silent. */
 	const fd = popen(`wc -c 2>/dev/null < ${shellquote(path)}`);
@@ -253,10 +305,36 @@ let result;
 	const core = ARGV[1];
 	if (!(core in ['hiddify', 'singbox', 'singbox-lite'])) {
 		result = { error: 'illegal core' };
+	} else if (core === 'hiddify') {
+		/* ч.129 (ан-146): первичный источник — ОРИГИНАЛЬНЫЙ hiddify/hiddify-core
+		 * (форк заморожен на v4.1.0 с июня 2026), форк — резерв. Если на этой
+		 * архитектуре апстрим-тарбол пригоден (ассет смаплен) И оверлей его
+		 * вместит — сообщаем апстрим; иначе форк (то, что реально поставится). */
+		const gh_latest = (api_url) => {
+			const fd = popen('wget -qO- --timeout=10 ' + shellquote(api_url) + ' 2>/dev/null');
+			if (!fd) return null;
+			const raw = trim(fd.read('all')); fd.close();
+			let data;
+			try { data = json(raw); } catch(e) { data = null; }
+			return (data && data.tag_name) ? { tag: data.tag_name } : null;
+		};
+		const arch = detect_arch();
+		const up_asset = arch ? HIDDIFY_UPSTREAM_ASSET[arch] : null;
+		let overlay_free_kb = free_kb('/overlay');
+		if (!overlay_free_kb) overlay_free_kb = free_kb('/');
+		const up_need = overlay_compresses() ? UP_FULL_OVERLAY_COMP_KB : UP_FULL_OVERLAY_RAW_KB;
+		let data = up_asset && overlay_free_kb >= up_need ? gh_latest(HIDDIFY_UPSTREAM_API) : null;
+		if (data) {
+			result = { tag: data.tag, version: replace(data.tag, /^v/, ''), source: 'upstream' };
+		} else {
+			data = gh_latest(HIDDIFY_FORK_API);
+			if (data)
+				result = { tag: data.tag, version: replace(data.tag, /^v/, ''), source: up_asset ? 'fork' : 'fork' };
+			else
+				result = { error: 'no response from GitHub API' };
+		}
 	} else {
-		const api_url = core === 'hiddify'
-			? 'https://api.github.com/repos/1andrevich/hiddify-core/releases/latest'
-			: core === 'singbox'
+		const api_url = core === 'singbox'
 			? 'https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest'
 			: LITE_REPO;
 
@@ -344,51 +422,75 @@ let result;
 					/* full-binary footprint depends on whether the overlay compresses */
 					const full_need = overlay_compresses() ? FULL_OVERLAY_COMP_KB : FULL_OVERLAY_RAW_KB;
 
-					if (core === 'hiddify') {
-						/* Auto-pick the build from free overlay (+ free RAM for the compact one).
-						 * ARGV[2] ('standard'|'upx') is an advanced override; size-checked either way.
-						 * This is the guardrail for the "full binary truncates on a small overlay →
-						 * SIGBUS" trap: never offer a build the device can't actually hold/run. */
-						let chosen = variant;
-						let note = null;
-						/* UPX-compressed binaries are crash-prone (SIGILL on startup) on these
-						 * soft-float MIPS targets, so never AUTO-pick the compact build there —
-						 * fall back to standard, or error cleanly. An explicit variant='upx'
-						 * override is still honored (advanced users). Non-MIPS arches (incl.
-						 * aarch64 like MT7622) are unaffected. */
-						const mips_no_auto_upx = (arch === 'mipsel_24kc' || arch === 'mips_24kc');
-						if (chosen !== 'standard' && chosen !== 'upx') {
-							if (overlay_free_kb >= full_need)
-								chosen = 'standard';
-							else if (mips_no_auto_upx)
-								chosen = null;   /* don't squeeze a crash-prone compact build onto tight-flash MIPS */
-							else if (overlay_free_kb >= COMPACT_OVERLAY_KB && ram_free_kb >= COMPACT_RAM_KB) {
-								chosen = 'upx';
-								note = 'Limited storage — installing the compact build (decompresses into RAM at launch).';
-							} else
-								chosen = null;
-						}
+				if (core === 'hiddify') {
+					/* ч.129 (ан-146): ПЕРВИЧНЫЙ источник — оригинальный репозиторий
+					 * hiddify/hiddify-core (raw tar.gz per Go target). Форк 1andrevich
+					 * — только резерв: он заморожен на v4.1.0 (июнь 2026) и существует
+					 * лишь ради OpenWrt-пакетов (apk/ipk) и компактной UPX-сборки.
+					 * Апстрим-ветка: musl CGO-тарбол (= NaïveProxy на борту), путь
+					 * download → tar -xzf в staging на оверлее → атомарный swap.
+					 * Форк-ветка (пакет apk/ipk, ниже) остаётся как была: явный
+					 * variant='upx', немапленные архитектуры и устройства, которым
+					 * не хватает места под крупный апстрим-бинарник (~101 МиБ). */
+					const up_asset = HIDDIFY_UPSTREAM_ASSET[arch] || null;
+					const up_need = overlay_compresses() ? UP_FULL_OVERLAY_COMP_KB : UP_FULL_OVERLAY_RAW_KB;
+					const up_fits = up_asset && overlay_free_kb >= up_need && tmp_free_kb >= UP_FULL_TMP_KB;
+					if (variant !== 'upx' && up_fits) {
+						result = {
+							pkg_manager, arch, variant: 'standard', source: 'upstream',
+							note: 'upstream build (hiddify/hiddify-core tar.gz)',
+							dl_url: HIDDIFY_UPSTREAM_DL + up_asset,
+							tmp_path: '/tmp/hiddify-core.tar.gz'
+						};
+					} else {
+					/* Auto-pick the build from free overlay (+ free RAM for the compact one).
+					 * ARGV[2] ('standard'|'upx') is an advanced override; size-checked either way.
+					 * This is the guardrail for the "full binary truncates on a small overlay →
+					 * SIGBUS" trap: never offer a build the device can't actually hold/run. */
+					let chosen = variant;
+					let note = variant === 'upx'
+						? 'compact (UPX) build - fork-only: the original repository publishes no compact builds'
+						: null;
+					/* UPX-compressed binaries are crash-prone (SIGILL on startup) on these
+					 * soft-float MIPS targets, so never AUTO-pick the compact build there —
+					 * fall back to standard, or error cleanly. An explicit variant='upx'
+					 * override is still honored (advanced users). Non-MIPS arches (incl.
+					 * aarch64 like MT7622) are unaffected. */
+					const mips_no_auto_upx = (arch === 'mipsel_24kc' || arch === 'mips_24kc');
+					if (chosen !== 'standard' && chosen !== 'upx') {
+						if (overlay_free_kb >= full_need)
+							chosen = 'standard';
+						else if (mips_no_auto_upx)
+							chosen = null;   /* don't squeeze a crash-prone compact build onto tight-flash MIPS */
+						else if (overlay_free_kb >= COMPACT_OVERLAY_KB && ram_free_kb >= COMPACT_RAM_KB) {
+							chosen = 'upx';
+							note = 'Limited storage — installing the compact build (decompresses into RAM at launch).';
+						} else
+							chosen = null;
+					}
 
-						if (!chosen) {
-							result = mips_no_auto_upx
-								? { error: `Not enough overlay for the full build: ${overlay_free_kb} KB free, need ~${full_need} KB. The compact build is not offered on MIPS (UPX is unreliable there). Free up space, or bake the core into a custom firmware image.` }
-								: (overlay_free_kb >= COMPACT_OVERLAY_KB)
-								? { error: `Device too constrained: ${overlay_free_kb} KB free overlay (full build needs ~${full_need}) and only ${ram_free_kb} KB free RAM (compact build needs ~${COMPACT_RAM_KB}). Use sing-box-extended instead.` }
-								: { error: `Not enough storage: ${overlay_free_kb} KB free overlay, need at least ~${COMPACT_OVERLAY_KB} KB (~25 MB).` };
+					if (!chosen) {
+						result = mips_no_auto_upx
+							? { error: `Not enough overlay for the full build: ${overlay_free_kb} KB free, need ~${full_need} KB. The compact build is not offered on MIPS (UPX is unreliable there). Free up space, or bake the core into a custom firmware image.` }
+							: (overlay_free_kb >= COMPACT_OVERLAY_KB)
+							? { error: `Device too constrained: ${overlay_free_kb} KB free overlay (full build needs ~${full_need}) and only ${ram_free_kb} KB free RAM (compact build needs ~${COMPACT_RAM_KB}). Use sing-box-extended instead.` }
+							: { error: `Not enough storage: ${overlay_free_kb} KB free overlay, need at least ~${COMPACT_OVERLAY_KB} KB (~25 MB).` };
+					} else {
+						const need = (chosen === 'upx') ? COMPACT_OVERLAY_KB : full_need;
+						if (overlay_free_kb < need) {
+							result = { error: `Not enough overlay space for the ${chosen === 'upx' ? 'compact' : 'full'} build: ${overlay_free_kb} KB free, need ~${need} KB.` };
 						} else {
-							const need = (chosen === 'upx') ? COMPACT_OVERLAY_KB : full_need;
-							if (overlay_free_kb < need) {
-								result = { error: `Not enough overlay space for the ${chosen === 'upx' ? 'compact' : 'full'} build: ${overlay_free_kb} KB free, need ~${need} KB.` };
-							} else {
-								const hp_path = (chosen === 'upx') ? 'download/upx' : 'latest/download';
-								result = {
-									pkg_manager, arch, variant: chosen, note,
-									dl_url: `https://github.com/1andrevich/hiddify-core/releases/${hp_path}/hiddify-core_${arch}${ext}`,
-									tmp_path: `/tmp/hiddify-core${ext}`
-								};
-							}
+							const hp_path = (chosen === 'upx') ? 'download/upx' : 'latest/download';
+							result = {
+								pkg_manager, arch, variant: chosen, note,
+								source: 'fork',
+								dl_url: `https://github.com/1andrevich/hiddify-core/releases/${hp_path}/hiddify-core_${arch}${ext}`,
+								tmp_path: `/tmp/hiddify-core${ext}`
+							};
 						}
-					} else if (overlay_free_kb < full_need) {
+					}
+					}
+				} else if (overlay_free_kb < full_need) {
 						result = { error: `Not enough overlay space: ${overlay_free_kb} KB free, sing-box-extended needs ~${full_need} KB.` };
 					} else {
 						const api_fd = popen('wget -qO- --timeout=10 https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest 2>/dev/null');
@@ -496,6 +598,26 @@ let result;
 					: { result: true, warning: `installer finished but sing-box is not running — see ${logf}` };
 			}
 		}
+	} else if (core === 'hiddify' && match(tmp_path, /\.tar\.gz$/)) {
+		/* ч.129 (ан-146): апстрим-тарбол hiddify/hiddify-core. Структура:
+		 * hiddify-core-linux-<target>[-musl]/hiddify-core (+ LICENSE.md).
+		 * Распаковка прямо в staging НА ОВЕРЛЕЕ (не в /tmp — бинарник ~101 МиБ,
+		 * tmpfs его не удержит на малых роутерах), валидный запуск, атомарный
+		 * mv на /usr/bin/hiddify-core, уборка staging+тарбола. mv внутри одного
+		 * оверлея = rename(2) без копирования. */
+		const stage = '/usr/libexec/.hiddify-up';
+		const cmd =
+			`{ rm -rf ${shellquote(stage)}; mkdir -p ${shellquote(stage)}; }` +
+			` && tar -xzf ${shellquote(tmp_path)} -C ${shellquote(stage)}` +
+			` && BIN=$(find ${shellquote(stage)} -type f -name hiddify-core | head -n1)` +
+			` && [ -n "$BIN" ] && [ -s "$BIN" ]` +
+			` && "$BIN" version >/dev/null 2>&1` +
+			` && mv -f "$BIN" /usr/bin/hiddify-core` +
+			` && rm -rf ${shellquote(stage)} ${shellquote(tmp_path)}`;
+		const exit_code = system(cmd, 300000);
+		result = exit_code === 0
+			? { result: true, note: 'upstream tar.gz build installed' }
+			: { result: false, error: 'upstream tarball extraction/validation failed' };
 	} else {
 		let exit_code;
 		if (core === 'hiddify' && pkg_manager === 'apk') {

@@ -156,8 +156,8 @@ Re-HomeProxy — многофункциональная система упра�
   что маршрутизация в режиме Tun работает правильно.
 - **Самообновление приложения** — на вкладке **«Ядро и службы»** можно проверить наличие новой версии и обновить
   LuCI-приложение (и русскую локализацию) на месте, без SSH-консоли. См. раздел *Обновление приложения*.
-- **Форк по умолчанию** — `install.sh` ставит LuCI-приложение и русскую локаль из `ezdizzy/re-homeproxy` по умолчанию
-  (ядра / ByeDPI / Zapret по-прежнему берутся из апстрима `1andrevich/*`).
+- **Форк по умолчанию** — `install.sh` ставит LuCI-приложение и русскую локализацию из `ezdizzy/re-homeproxy` по умолчанию
+  (ядро hiddify-core — теперь из ОРИГИНАЛЬНОГО репозитория `hiddify/hiddify-core` (v5.x, сырые tar.gz), компактная UPX-сборка — по-прежнему форк `1andrevich/hiddify-core` (v4.x); ByeDPI / Zapret — из апстрима `1andrevich/*`).
 - **Интерактивный установщик** — `install.sh` ведёт установку по шагам (подписка, Hot Swap, MultiDNS, Автоматизация, Zapret с
   автотестом стратегий) и **никогда не оставляет пользователя без интернета**: без подписки включается прямой режим и
   автоматически создаётся правило «YouTube → Zapret». Повторный запуск скрипта открывает режим настройки (меню).
@@ -322,7 +322,13 @@ echo "$ARCH / $EXT"
 ```sh
 if [ "$EXT" = apk ]; then apk add kmod-nft-tproxy kmod-tun; else opkg install kmod-nft-tproxy kmod-tun; fi
 
-# hiddify-core (по умолчанию; для компактной сборки замените 'latest/download' на 'download/upx')
+# hiddify-core (по умолчанию — из ОРИГИНАЛЬНОГО репозитория, сырые tar.gz per Go target;
+# v5.x = hiddify-sing-box 1.15, NaïveProxy на месте для не-MIPS)
+wget -O /tmp/hiddify-core.tar.gz "https://github.com/hiddify/hiddify-core/releases/latest/download/hiddify-core-linux-arm64-musl.tar.gz"
+mkdir -p /tmp/hid-up && tar -xzf /tmp/hiddify-core.tar.gz -C /tmp/hid-up && mv -f /tmp/hid-up/hiddify-core /usr/bin/hiddify-core && rm -rf /tmp/hid-up
+
+# ...или форк 1andrevich (apk/ipk с подписью; ТОЛЬКО v4.x — релизы заморожены с июня 2026;
+# для компактной UPX-сборки замените 'latest/download' на 'download/upx')
 wget -O /tmp/hiddify-core.$EXT "https://github.com/1andrevich/hiddify-core/releases/latest/download/hiddify-core_${ARCH}.${EXT}"
 if [ "$EXT" = apk ]; then apk add /tmp/hiddify-core.apk; else opkg install --force-reinstall /tmp/hiddify-core.ipk; fi
 

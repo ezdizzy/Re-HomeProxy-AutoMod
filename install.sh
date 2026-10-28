@@ -563,7 +563,7 @@ install_core() {
 	warn "  ⚠  Без действующей подписки/конфигурации прокси-часть работать не будет:"
 	warn "     Telegram, WhatsApp, Instagram и другие заблокированные сервисы останутся недоступны."
 	warn "     Интернет при этом останется полностью рабочим (напрямую)."
-	echo "    1) hiddify-core            (по умолчанию; все протоколы приложения + NaïveProxy; на малой флеш-памяти выберет компактную сборку)"
+	echo "    1) hiddify-core            (по умолчанию; оригинальные сборки hiddify/hiddify-core, форк — резерв; NaïveProxy на musl-сборках; на малой флеш-памяти выберет компактную сборку форка)"
 	echo "    2) sing-box-extended       (более новая база sing-box 1.14: WARP/MASQUE/TrustTunnel в ядре; без NaïveProxy — такие узлы будут пропускаться)"
 	echo "    3) sing-box-extended-lite  (лёгкая сборка sing-box 1.14 для роутеров с малой флеш-памятью: VLESS Reality, Trojan, Shadowsocks,"
 	echo "                               Hysteria2, TUIC, WireGuard/AmneziaWG (стек ядра) и Clash API; БЕЗ NaïveProxy/WARP/MASQUE/Tailscale/gVisor —"
