@@ -118,6 +118,11 @@ const GO_ASSET_MAP = {
 	'armv8l': 'tg-ws-proxy-openwrt-armv7',
 	'x86_64': 'tg-ws-proxy-openwrt-x86_64'
 };
+/* Init template. Log policy (ч.124): the binary's 5 s stats block goes to
+ * STDOUT with no quiet flag upstream, so procd stdout→syslog is OFF by
+ * default (UCI homeproxy.config.tgws_syslog='1' opts back in) — the feed
+ * evicted the boot log from the 64 KB logd ring within ~30 min (lesson 131).
+ * Deploy to existing installs: runner mode 'go_init' (regenerate + restart). */
 const GO_INIT_BODY = `#!/bin/sh /etc/rc.common
 # tg-ws bridge (SOCKS5, d0mhate/-tg-ws-proxy-Manager-go) — procd instance
 # managed by Re:HomeProxy AutoMod. Loopback-only listener: only the sing-box
@@ -150,7 +155,18 @@ start_service() {
 	# skgid guard — the bridge's egress skips the redirect and dials directly.
 	procd_set_param group "${GO_EGRESS_GROUP}"
 	procd_set_param respawn 3600 5 5
-	procd_set_param stdout 1
+	# The binary has NO quiet flag (--verbose only adds more): it prints a
+	# stats block to STDOUT every 5 s, and procd feeds stdout to syslog at
+	# daemon.info — ~100k lines/day that evict the boot log from the 64 KB
+	# logd ring buffer within ~30 min (lesson 131, ч.120). Default: stdout
+	# stays away from syslog (the service itself is unaffected; Go panic
+	# traces still arrive via stderr). Opt back in with:
+	#   uci set homeproxy.config.tgws_syslog='1'; uci commit homeproxy
+	if [ "$(uci -q get homeproxy.config.tgws_syslog)" = "1" ]; then
+		procd_set_param stdout 1
+	else
+		procd_set_param stdout 0
+	fi
 	procd_set_param stderr 1
 	procd_close_instance
 }
