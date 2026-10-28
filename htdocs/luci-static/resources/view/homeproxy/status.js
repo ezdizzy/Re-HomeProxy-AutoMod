@@ -557,6 +557,22 @@ const callCoreInstallStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Local rule-set fallback (issue #12): status lists the remote rule-sets of
+ * the LIVE config with their local cold-start copies; seed pre-downloads
+ * the missing ones (detached runner, progress in the status reply). */
+const callRulesetsLocalStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_rulesets_local_status',
+	expect: { '': {} }
+});
+
+const callRulesetsLocalSeed = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_rulesets_local_seed',
+	params: [ 'force' ],
+	expect: { '': {} }
+});
+
 function buildByeDPICard(byedpi, isMainNode) {
 	let installed = byedpi?.installed || false;
 	let version   = byedpi?.version   || null;
@@ -1120,6 +1136,103 @@ function buildSnapshotsCard() {
 	]);
 }
 
+/* Local rule-set fallback (issue #12): cold starts with an empty cache.db
+ * download every remote .srs SYNCHRONOUSLY and die FATAL on the first
+ * failure. The generator wires <dir>/<tag>.srs as initial_path when the
+ * folder exists; this card shows what is present and pre-downloads the
+ * missing copies (direct first, then through the main exit). */
+function buildRulesetsCard() {
+	const listEl = E('div', { style: 'font-size:.9em; margin:4px 0' },
+		[ E('em', { style: 'color:#9a9a9a' }, '—') ]);
+	const msgEl = E('span', { style: 'margin-left:8px; font-size:.9em' }, '');
+	const setMsg = (txt, color) => { msgEl.textContent = txt; msgEl.style.color = color || '#9a9a9a'; };
+	let pollTimer = null;
+
+	const fmtSize = (n) => (n != null && n >= 1024) ? (n / 1024).toFixed(0) + ' KB' : (n != null ? n + ' B' : '');
+
+	const render = (r) => {
+		listEl.innerHTML = '';
+		if (!r || r.error) {
+			listEl.appendChild(E('em', { style: 'color:#e05252' }, [ r ? (r.error || _('RPC error')) : _('RPC error') ]));
+			return;
+		}
+		const seed = r.seed || {};
+		const head = E('div', { style: 'margin:2px 0' },
+			[ _('Folder') + ': ', E('span', { style: 'font-family:monospace' },
+				[ r.dir + (r.dir_exists ? '' : ' (' + _('not created yet') + ')') ]),
+			' · ' + _('fallback') + ': ' + (r.enabled ? _('on') : _('off')) ]);
+		listEl.appendChild(head);
+		const sets = r.rulesets || [];
+		if (!sets.length) {
+			listEl.appendChild(E('em', { style: 'color:#9a9a9a' }, [ _('The active config has no remote rule-sets') ]));
+			return;
+		}
+		for (let i in sets) {
+			const s = sets[i];
+			const line = E('div', { style: 'margin:2px 0' }, [
+				E('span', { style: 'color:' + (s.exists ? '#3fbf5f' : '#d99a1b'), 'font-weight': 'bold' },
+					[ s.exists ? '✓' : '○' ]),
+				' ',
+				E('span', { style: 'font-family:monospace' }, [ s.tag ]),
+				' ',
+				E('span', { style: 'opacity:.7' },
+					[ s.exists ? (fmtSize(s.size) + ' · ' + s.tag + '.srs') : _('local copy missing') ])
+			]);
+			line.setAttribute('title', s.url);
+			listEl.appendChild(line);
+		}
+		if (seed && seed.running)
+			listEl.appendChild(E('em', { style: 'color:#d99a1b' },
+				[ _('Downloading: %d of %d…').format(seed.done || 0, seed.total || sets.length) ]));
+	};
+
+	const refresh = () => L.resolveDefault(callRulesetsLocalStatus(), {}).then((r) => { render(r); return r; });
+
+	const seedBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Download missing') ]);
+	seedBtn.onclick = () => {
+		seedBtn.disabled = true;
+		setMsg(_('Starting the download…'), '#9a9a9a');
+		return L.resolveDefault(callRulesetsLocalSeed('0'), {}).then((r) => {
+			seedBtn.disabled = false;
+			if (!r || r.result === false) {
+				setMsg((r && r.error) || _('Failed'), '#e05252');
+				return;
+			}
+			setMsg(_('Downloading in the background…'), '#9a9a9a');
+			if (pollTimer) window.clearInterval(pollTimer);
+			pollTimer = window.setInterval(() => {
+				refresh().then((r) => {
+					const seed = r && r.seed;
+					if (!seed || !seed.running) {
+						window.clearInterval(pollTimer);
+						pollTimer = null;
+						const failed = (seed && seed.failed) || 0;
+						setMsg(failed
+							? _('Finished with %d failure(s) — press again to retry.').format(failed)
+							: _('All local copies are in place'), failed ? '#d99a1b' : '#3fbf5f');
+					}
+				});
+			}, 2000);
+		});
+	};
+
+	const refreshBtn = E('button', { 'class': 'btn cbi-button', 'style': 'margin-left:4px' }, [ _('Refresh') ]);
+	refreshBtn.onclick = () => { setMsg('', null); return refresh(); };
+
+	refresh();
+	return E('div', { 'class': 'hpui-panel' }, [
+		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
+			E('strong', {}, _('Rule-sets (local cold-start copies)')),
+			seedBtn,
+			refreshBtn,
+			msgEl
+		]),
+		E('div', { style: 'margin-top:4px; font-size:.9em; opacity:.85' },
+			_('Local .srs copies of the remote rule lists. The core takes them for the FIRST load when the cache is empty (fresh firmware, wiped cache, no network) instead of dying on a blocked download, then refreshes from the network as usual. Enable the fallback and pick the folder on the Client Settings page; the toggle works for the sing-box family of cores.')),
+		listEl
+	]);
+}
+
 function buildCoreCard(core, coreInfo) {
 	const isHiddify = core === 'hiddify';
 	const isLite = core === 'singbox-lite';
@@ -1476,6 +1589,11 @@ return view.extend({
 		 * installed state from coreInfo.singbox.lite. */
 		o = s.option(form.DummyValue, '_core_singbox_lite');
 		o.default = buildCoreCard('singbox-lite', coreInfo);
+
+		/* Local rule-set fallback (issue #12): pre-seeded .srs copies for the
+		 * core's synchronous first-load on a cold boot. */
+		o = s.option(form.DummyValue, '_rulesets_card');
+		o.default = buildRulesetsCard();
 
 		/* ч.69: snapshots + emergency internet recovery. */
 		o = s.option(form.DummyValue, '_snapshots_card');

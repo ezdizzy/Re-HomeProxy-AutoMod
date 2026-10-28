@@ -11465,3 +11465,71 @@ msgstr "сохранён"
 # Telegram bot page: token status + resilient daemon (ч.118)
 msgid "missing"
 msgstr "отсутствует"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Rule-sets (local cold-start copies)"
+msgstr "Rule-set'ы (локальные копии холодного старта)"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Download missing"
+msgstr "Скачать недостающие"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Refresh"
+msgstr "Обновить"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Folder"
+msgstr "Папка"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "not created yet"
+msgstr "ещё не создана"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "The active config has no remote rule-sets"
+msgstr "В активном конфиге нет remote rule-set'ов"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "local copy missing"
+msgstr "локальная копия отсутствует"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Downloading: %d of %d…"
+msgstr "Скачивание: %d из %d…"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Starting the download…"
+msgstr "Запускаю скачивание…"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Downloading in the background…"
+msgstr "Скачиваю в фоне…"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Finished with %d failure(s) — press again to retry."
+msgstr "Готово, неудач: %d — нажмите ещё раз для повтора."
+
+# Local rule-set fallback (issues #11/#12)
+msgid "All local copies are in place"
+msgstr "Все локальные копии на месте"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Local rule-set fallback"
+msgstr "Локальная страховка rule-set'ов"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Cold-start safety net for the rule lists: when the local folder exists, every remote rule-set also gets a local first-load copy — a cold start without working internet (fresh firmware, wiped cache, DPI-blocked GitHub) no longer kills the core with \"FATAL initialize rule-set\". The lists still refresh from the network daily in the background, and a missing local file falls back to the normal download. Pre-fill the folder from the Rule-sets card on the Core & Tools page."
+msgstr "Страховка холодного старта списков: когда локальная папка существует, каждый remote rule-set получает локальную копию для первой загрузки — холодный старт без работающего интернета (свежая прошивка, очищенный кэш, заблокированный DPI GitHub) больше не убивает ядро с «FATAL initialize rule-set». Списки по-прежнему обновляются из сети раз в сутки в фоне, а отсутствие локального файла — откат к обычному скачиванию. Наполнить папку можно из карточки «Rule-set'ы» на странице «Ядро и службы»."
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Local rule-sets folder"
+msgstr "Папка локальных rule-set'ов"
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Folder with the local .srs copies, one file per rule-set named by its tag (the Rule-sets card on the Core & Tools page lists the exact names and can download them). Only used when the folder exists; absolute path."
+msgstr "Папка с локальными копиями .srs — один файл на rule-set, имя = тег (карточка «Rule-set'ы» на странице «Ядро и службы» показывает точные имена и умеет их скачивать). Используется, только когда папка существует; абсолютный путь."
+
+# Local rule-set fallback (issues #11/#12)
+msgid "Local .srs copies of the remote rule lists. The core takes them for the FIRST load when the cache is empty (fresh firmware, wiped cache, no network) instead of dying on a blocked download, then refreshes from the network as usual. Enable the fallback and pick the folder on the Client Settings page; the toggle works for the sing-box family of cores."
+msgstr "Локальные копии .srs удалённых списков правил. Ядро берёт их для ПЕРВОЙ загрузки, когда кэш пуст (свежая прошивка, очищенный кэш, нет сети), вместо падения на заблокированном скачивании, дальше обновляется из сети как обычно. Включите страховку и выберите папку на странице «Настройки клиента»; работает для семейства ядер sing-box."

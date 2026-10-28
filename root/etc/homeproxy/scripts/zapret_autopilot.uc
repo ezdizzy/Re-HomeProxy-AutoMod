@@ -556,7 +556,10 @@ function wait_core(cap) {
 }
 
 function preset_apply(src, node) {
-	const payload = sprintf('{"source":%.J,"node":%.J,"urltest_nodes":[]}', src, node);
+	/* urltest_nodes crosses as a JSON-encoded STRING (issue #11 — a string
+	 * typehint is the only rpcd args policy that works on old AND strict new
+	 * rpcd stacks). */
+	const payload = sprintf('{"source":%.J,"node":%.J,"urltest_nodes":"[]"}', src, node);
 	const out = popen_read(`ubus call luci.homeproxy wizard_preset_apply ${sq(payload)}`);
 	let pr = null;
 	try { pr = json(out || ''); } catch (e) { pr = null; }
@@ -605,7 +608,10 @@ function ensure_rules(cfg) {
 /* ── apply (through the EXISTING compose RPCs — snapshot/Restore intact) */
 
 function compose_build(profiles) {
-	const payload = sprintf('{"profiles":%.J}', profiles);
+	/* profiles cross as a JSON-encoded STRING (issue #11): %.J of the JSON
+	 * text embeds it as a quoted JSON string. */
+	const pj = sprintf('%.J', profiles);
+	const payload = sprintf('{"profiles":%.J}', pj);
 	const out = popen_read(`ubus call luci.homeproxy wizard_compose_build ${sq(payload)}`);
 	let pr = null;
 	try { pr = json(out || ''); } catch (e) { pr = null; }

@@ -130,6 +130,14 @@ function write_version_cache(cache) {
 	rename(tmp, VERSION_CACHE);
 }
 
+/* Wrapper size via stat(2), not `wc -c` — a popen failure must not make the
+ * lite build invisible in the UI (issue #11/#13 reports from routers where
+ * popen probing flaked). Same LITE_WRAPPER_MAX_BYTES threshold. */
+function bin_size(path) {
+	const st = access(path) ? stat(path) : null;
+	return (st && st.size) ? st.size : 0;
+}
+
 /* Parse a core's version output into display + capability info. Tags are
  * the only reliable capability source: e.g. sing-box-extended ships
  * WITHOUT with_naive_outbound (NaïveProxy dropped), while hiddify-core
@@ -141,7 +149,8 @@ function write_version_cache(cache) {
 function core_features(bin) {
 	let info = {};
 	let probe = bin;
-	if (bin_bytes(bin) > 0 && bin_bytes(bin) < LITE_WRAPPER_MAX_BYTES && access('/usr/libexec/sing-box-core'))
+	const bsize = bin_size(bin);
+	if (bsize > 0 && bsize < LITE_WRAPPER_MAX_BYTES && access('/usr/libexec/sing-box-core'))
 		probe = '/usr/libexec/sing-box-core';
 	const fd = popen(probe + ' version 2>/dev/null');
 	if (!fd) return info;
@@ -232,9 +241,10 @@ let result;
 				lite: sb_f.lite ?? false,
 				wrapper: sb_f.wrapper ?? false,
 				/* variant of the on-disk binary: normal ELF vs the tiny sh
-				 * wrapper of the compressed (UPX) lite build. */
+				 * wrapper of the compressed (UPX) lite build. stat(2) size —
+				 * see bin_size() (popen must not gate the lite detection). */
 				variant: singbox_installed
-					? (bin_bytes('/usr/bin/sing-box') < LITE_WRAPPER_MAX_BYTES ? 'compressed' : 'normal')
+					? (bin_size('/usr/bin/sing-box') < LITE_WRAPPER_MAX_BYTES ? 'compressed' : 'normal')
 					: null
 			}
 		};

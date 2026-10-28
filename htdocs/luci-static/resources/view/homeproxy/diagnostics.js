@@ -406,7 +406,10 @@ function buildConfigSection(view) {
 	function heal(repair) {
 		dom.content(resultsEl, E('em', { 'class': 'diag-gray' },
 			repair ? _('Verifying and repairing configuration…') : _('Verifying configuration…')));
-		return L.resolveDefault(callConfigHeal(repair), { error: _('RPC error') })
+		/* The arg crosses as a '1'/'0' STRING: rpcd's ucode plugin maps a
+		 * string typehint to BLOBMSG_TYPE_STRING, and native-boolean typehints
+		 * crash strict new rpcd at registration (GitHub issue #11). */
+		return L.resolveDefault(callConfigHeal(repair ? '1' : '0'), { error: _('RPC error') })
 			.then(function(ret) {
 				if (!ret || ret.error) {
 					dom.content(resultsEl, E('span', { 'class': 'diag-fail' }, ret ? ret.error : _('RPC error')));

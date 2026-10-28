@@ -1854,11 +1854,34 @@ echo done > "$PRE.done"
 		if (side === 'direct' && type(resp.poisoned) === 'array' && length(resp.poisoned)) {
 			for (let ph in resp.poisoned) {
 				ph = lc(trim('' + ph));
- 				if (length(ph)) {
- 					poisoned_hosts[ph] = time();
- 					log('DNS poison detected (plain vs DoH disjoint): ' + ph);
- 					eng_event('poison', ph);
- 				}
+				if (!length(ph))
+					continue;
+				/* issue #14: geo-DNS/anycast makes a CDN plain answer disjoint
+				 * from the tunnel-side DoH answer BY DESIGN (github.com,
+				 * google.com, dl.google.com...). Only treat the mismatch as
+				 * poison when the plain-view IP is NOT a known CDN/cloud/
+				 * shared/anycast range — a real ISP stub never answers from
+				 * those. The runner's own auto-tagged CDN-IP learning is the
+				 * same trade: an ambiguous verdict must not instant-learn. */
+				let pvpn = (type(rmap[ph]) === 'string') ? rmap[ph] : '';
+				if (!length(pvpn) && pv_cache[ph] && type(pv_cache[ph].ip) === 'string')
+					pvpn = pv_cache[ph].ip;
+				if (!length(pvpn)) {
+					for (let rh in keys(rmap)) {
+						if (lc(rh) === ph && type(rmap[rh]) === 'string') {
+							pvpn = rmap[rh];
+							break;
+						}
+					}
+				}
+				if (length(pvpn) && (is_cdn_ip(pvpn) || is_shared_cdn_ip(pvpn) || is_public_infra_ip(pvpn))) {
+					log('not poison (plain answer is a CDN/anycast range): ' + ph);
+					eng_event('cdnpv', ph);
+					continue;
+				}
+ 				poisoned_hosts[ph] = time();
+ 				log('DNS poison detected (plain vs DoH disjoint): ' + ph);
+ 				eng_event('poison', ph);
 			}
 		}
 		/* ч.115: harvest upstream-blocked verdicts (direct side only). The Go

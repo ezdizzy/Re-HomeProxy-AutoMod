@@ -1388,8 +1388,12 @@ return view.extend({
 						ui.addNotification(null, E('p', {}, _('Pick at least one node for the URLTest pool.')), 'error');
 						return;
 					}
-					applyBtn.disabled = true;
-					callPresetApply(preset.source, String(sel.value || ''), sel.value === 'urltest' ? ids : []).then(function(r) {
+				applyBtn.disabled = true;
+				/* urltest_nodes crosses as a JSON-encoded STRING: rpcd's ucode
+				 * plugin maps a string typehint to BLOBMSG_TYPE_STRING, and
+				 * native array typehints crash strict new rpcd at registration
+				 * (GitHub issue #11). */
+				callPresetApply(preset.source, String(sel.value || ''), JSON.stringify(sel.value === 'urltest' ? ids : [])).then(function(r) {
 						if (!r || r.result === false) {
 						const ERRS = {
 							main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
@@ -2478,7 +2482,8 @@ return view.extend({
 		 * the next dpi poll as a hint. */
 		function saveComposeDraft() {
 			state.compDirty = true;
-			L.resolveDefault(callComposeSave(state.compProfiles), {}).then(function(r) {
+			/* profiles cross as a JSON-encoded STRING (issue #11). */
+			L.resolveDefault(callComposeSave(JSON.stringify(state.compProfiles)), {}).then(function(r) {
 				if (r && r.result === false)
 					state.compSaveError = (r && r.error) || _('rpc error');
 				else
@@ -2516,7 +2521,8 @@ return view.extend({
 			compTestBtn.disabled = true;
 			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 				[ _('Building and testing the composition on the router…') ]));
-			L.resolveDefault(callComposeRun(state.compProfiles), {}).then(function(r) {
+			/* profiles cross as a JSON-encoded STRING (issue #11). */
+			L.resolveDefault(callComposeRun(JSON.stringify(state.compProfiles)), {}).then(function(r) {
 				compTestBtn.disabled = false;
 				if (!r || r.result === false) {
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
@@ -2844,7 +2850,8 @@ return view.extend({
 					ab.disabled = true;
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 						[ _('Applying %s for %s — progress below…').format(s.name || _('custom args'), targetLabel) ]));
-					L.resolveDefault(callAutoPickStart(target, 'quick', true, s.args), {}).then(function(r2) {
+					/* set_rule crosses as a STRING (issue #11). */
+					L.resolveDefault(callAutoPickStart(target, 'quick', '1', s.args), {}).then(function(r2) {
 						ab.disabled = false;
 						if (!r2 || r2.result !== true) {
 							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
@@ -2988,7 +2995,8 @@ return view.extend({
 			autBtn.disabled = true;
 			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 				[ _('Starting the auto-pick…') ]));
-			L.resolveDefault(callAutoPickStart(resource, mode, autSetRule.checked), {}).then(function(r) {
+				/* set_rule crosses as a STRING (issue #11). */
+				L.resolveDefault(callAutoPickStart(resource, mode, autSetRule.checked ? '1' : '0'), {}).then(function(r) {
 				autBtn.disabled = false;
 				if (!r || r.result !== true) {
 					const emsg = (r && r.error === 'rules_mode')
@@ -3332,7 +3340,8 @@ return view.extend({
 			chainBtn.disabled = true;
 			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 				[ _('Applying the rule — the route check follows…') ]));
-			L.resolveDefault(callPresetApply(src, eng, []), {}).then(function(r) {
+					/* set_rule + urltest_nodes cross as STRINGS (issue #11). */
+					L.resolveDefault(callPresetApply(src, eng, '[]'), {}).then(function(r) {
 				chainBtn.disabled = false;
 				if (!r || r.result === false) {
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },

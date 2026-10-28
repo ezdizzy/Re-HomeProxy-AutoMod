@@ -9,7 +9,8 @@ START=99
 STOP=10
 
 # engine_restart: light strategy-apply path (see the function below).
-EXTRA_COMMANDS="engine_restart"
+# rpcd_heal: self-heal for a missing /etc/init.d/rpcd (see the function below).
+EXTRA_COMMANDS="engine_restart rpcd_heal"
 
 CONF="homeproxy"
 PROG_HIDDIFY="/usr/bin/hiddify-core"
@@ -44,8 +45,68 @@ lock() {
 	flock -w 90 1000 || log "Warning: init lock busy >90s (wedged holder?) — proceeding without exclusive lock."
 }
 
+# rpcd_heal: /etc/init.d/rpcd is the ONLY boot-time starter of rpcd (S12) and rpcd owns
+# every LuCI RPC (uci/get, session, file, luci.*). When that init script goes missing,
+# the router boots WITHOUT rpcd and LuCI dies on the first view with
+#   "RPC call to uci/get failed with error -32000: Object not found"
+# (live 2026-10-26, power-cut reboot: a whiteout in the f2fs overlay upperdir shadowed
+# the ROM's /etc/init.d/rpcd after the day's apk transaction; every /etc/config file was
+# intact — the only casualty was the missing rpcd start). Self-heal: restore the
+# canonical script from the embedded copy, re-arm the S12 hook, and start the instance
+# only when rpcd is actually down. A working rpcd is never touched.
+RPCD_INIT="/etc/init.d/rpcd"
+rpcd_heal() {
+	if [ ! -f "$RPCD_INIT" ]; then
+		logger -t homeproxy "rpcd_heal: $RPCD_INIT missing (whiteout/deleted) — restoring embedded copy"
+		cat > "$RPCD_INIT" <<'RPCD_INIT_EOF'
+#!/bin/sh /etc/rc.common
+
+START=12
+USE_PROCD=1
+
+NAME=rpcd
+PROG=/sbin/rpcd
+
+start_service() {
+	local socket timeout
+	config_load rpcd
+	config_get socket rpcd socket "/var/run/ubus/ubus.sock"
+	config_get timeout rpcd timeout 30
+
+	procd_open_instance
+	procd_set_param command "$PROG" -s "$socket" -t "$timeout"
+	procd_set_param respawn
+	procd_close_instance
+}
+
+stop_service() {
+	service_stop "$PROG"
+}
+
+reload_service() {
+	procd_send_signal "$NAME"
+}
+RPCD_INIT_EOF
+		chmod 755 "$RPCD_INIT"
+		"$RPCD_INIT" enable
+		log "rpcd_heal: restored $RPCD_INIT (enable done)."
+	fi
+	# Deadlock-safe: callers inside start_service() must run this in a detached
+	# subshell with fd 1000 closed (ch.109 wedge class) — see start_service().
+	if ! pidof rpcd >/dev/null 2>&1; then
+		"$RPCD_INIT" start
+		log "rpcd_heal: rpcd was down — started under procd (S12 had skipped it)."
+	fi
+}
+
 start_service() {
 	mkdir -p "$RUN_DIR"
+
+	# Self-heal rpcd BEFORE anything else: without it the LuCI/RPC plane is dead
+	# (every view fails on uci/get "Object not found"), even though the proxy itself
+	# is fine. Detached subshell + closed lock fd: the nested rc.common invocation
+	# takes its own procd lock and must not inherit ours (ch.109 wedge class).
+	( rpcd_heal ) 1000>&- &
 
 	# Self-heal a missing/empty config: /etc/config/homeproxy is a conffile, so a manual
 	# delete (or a wiped overlay) leaves the service with nothing and it won't regenerate.

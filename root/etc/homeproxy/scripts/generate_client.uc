@@ -2437,6 +2437,30 @@ if (!isEmpty(main_node)) {
 
 	config.route.final = (routing_mode === 'proxy_banned_ru') ? 'direct-out' : 'main-out';
 
+	/* Local rule-set fallback (issue #12). The core initializes remote
+	 * rule-sets SYNCHRONOUSLY at start; on a cold boot (fresh flash or a
+	 * wiped /var/run — no cache.db yet) the first failing download is FATAL
+	 * and the proxy never comes up ("FATAL start service: initialize
+	 * rule-set"). `initial_path` gives the core a local first-load source:
+	 * when the file exists it is used for the initial load and the network
+	 * fetch runs in the background per update_interval; a MISSING file only
+	 * logs a warn and falls back to the normal fetch (verified against
+	 * sing-box 1.14 route/rule/rule_set_remote.go). {tag} is substituted by
+	 * the core itself. Emitted for the sing-box family only — hiddify-core
+	 * (1.13 dialect) does not know the option and would reject the config.
+	 * Gated on the dir EXISTING so users who never use the feature get
+	 * byte-identical configs (and no per-rule-set warn noise).
+	 * UI: Client Settings → Routing «Local rule-set fallback»; the files are
+	 * pre-seeded by app_rulesets_local_seed (rulesets_seed.uc). */
+	const ruleset_local_dir = (uci.get(uciconfig, ucimain, 'ruleset_local') !== '0')
+		? ('' + (uci.get(uciconfig, ucimain, 'ruleset_local_path') || '/etc/homeproxy/rulesets'))
+		: '';
+	const ruleset_initial_path = (is_singbox && length(ruleset_local_dir) &&
+		substr(ruleset_local_dir, 0, 1) === '/' && index(ruleset_local_dir, '..') < 0 &&
+		access(ruleset_local_dir))
+		? (ruleset_local_dir + '/{tag}.srs')
+		: null;
+
 	/* Rule set */
 	/* Direct list */
 	if (length(direct_domain_list) && routing_mode !== 'proxy_banned_ru')
@@ -2783,6 +2807,7 @@ if (!isEmpty(main_node)) {
 						tag: 'hp-ru-refilter-domain',
 						format: 'binary',
 						url: 'https://github.com/1andrevich/Re-filter-lists/releases/latest/download/ruleset-domain-refilter_domains.srs',
+						initial_path: ruleset_initial_path,
 						download_detour: ruleset_detour,
 						update_interval: '1d'
 					});
@@ -2794,6 +2819,7 @@ if (!isEmpty(main_node)) {
 						tag: 'hp-ru-refilter-ip',
 						format: 'binary',
 						url: 'https://github.com/1andrevich/Re-filter-lists/releases/latest/download/ruleset-ip-refilter_ipsum.srs',
+						initial_path: ruleset_initial_path,
 						download_detour: ruleset_detour,
 						update_interval: '1d'
 					});
@@ -2828,6 +2854,7 @@ if (!isEmpty(main_node)) {
 						format: 'binary',
 						url: SOURCE_URL_MAP[cfg.source] ||
 						     ('https://github.com/itdoginfo/allow-domains/releases/latest/download/' + replace(cfg.source, '-', '_') + '.srs'),
+						initial_path: ruleset_initial_path,
 						download_detour: ruleset_detour,
 						update_interval: '1d'
 					});
@@ -2839,6 +2866,7 @@ if (!isEmpty(main_node)) {
 						tag: 'hp-ru-' + cfg.source + '-ip',
 						format: 'binary',
 						url: SOURCE_IP_MAP[cfg.source],
+						initial_path: ruleset_initial_path,
 						download_detour: ruleset_detour,
 						update_interval: '1d'
 					});
@@ -2967,6 +2995,7 @@ if (!isEmpty(main_node)) {
 			tag: 'geoip-' + r,
 			format: 'binary',
 			url: region.geoip,
+			initial_path: ruleset_initial_path,
 			download_detour: 'direct-out',
 			update_interval: '1d'
 		});
@@ -2975,6 +3004,7 @@ if (!isEmpty(main_node)) {
 			tag: 'geosite-' + r,
 			format: 'binary',
 			url: region.geosite,
+			initial_path: ruleset_initial_path,
 			download_detour: 'direct-out',
 			update_interval: '1d'
 		});
@@ -2984,6 +3014,7 @@ if (!isEmpty(main_node)) {
 				tag: 'geosite-non' + r,
 				format: 'binary',
 				url: region.geosite_non,
+				initial_path: ruleset_initial_path,
 				download_detour: 'direct-out',
 				update_interval: '1d'
 			});

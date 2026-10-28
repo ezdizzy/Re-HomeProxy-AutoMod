@@ -674,6 +674,26 @@ return view.extend({
 		o.rmempty = false;
 		o.retain = true;
 
+		/* Local rule-set fallback (issue #12): a cold start with an empty
+		 * cache.db (fresh flash / wiped /var/run) downloads every remote .srs
+		 * SYNCHRONOUSLY and dies FATAL on the first failure. With initial_path
+		 * the core takes a local copy for the first load and refreshes from
+		 * the network afterwards (sing-box 1.14 semantics; the generator emits
+		 * the option for the sing-box family only). */
+		o = s.taboption('routing', form.Flag, 'ruleset_local', _('Local rule-set fallback'),
+			_('Cold-start safety net for the rule lists: when the local folder exists, every remote rule-set also gets a local first-load copy — a cold start without working internet (fresh firmware, wiped cache, DPI-blocked GitHub) no longer kills the core with "FATAL initialize rule-set". The lists still refresh from the network daily in the background, and a missing local file falls back to the normal download. Pre-fill the folder from the Rule-sets card on the Core & Tools page.'));
+		o.depends({'routing_mode': /^((?!custom).)+$/});
+		o.default = o.enabled;
+		o.rmempty = false;
+		o.retain = true;
+
+		o = s.taboption('routing', form.Value, 'ruleset_local_path', _('Local rule-sets folder'),
+			_('Folder with the local .srs copies, one file per rule-set named by its tag (the Rule-sets card on the Core & Tools page lists the exact names and can download them). Only used when the folder exists; absolute path.'));
+		o.placeholder = '/etc/homeproxy/rulesets';
+		o.rmempty = true;
+		o.retain = true;
+		o.depends('ruleset_local', '1');
+
 		o = s.taboption('routing', form.ListValue, 'routing_mode', _('Routing mode'),
 			_('• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The Automation engine (its own page) keeps these lists current automatically.<br>'
 			+ '• <b>Global</b> — ALL traffic goes through the Main node; per-service rules are not used.<br>'

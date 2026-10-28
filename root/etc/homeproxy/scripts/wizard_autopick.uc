@@ -427,7 +427,11 @@ function main() {
 
 	/* 3. RULE — through the existing preset RPC (single guard set). */
 	if (req.set_rule === true && resource !== 'general') {
-		const payload = sprintf('{"source":%.J,"node":"zapret-out","urltest_nodes":[]}', resource);
+		/* urltest_nodes crosses as a JSON-encoded STRING: a string typehint is
+		 * the only rpcd-args policy that works on old AND strict new rpcd
+		 * (GitHub issue #11 — native [] crashed registration on updated
+		 * 25.12 stacks). */
+		const payload = sprintf('{"source":%.J,"node":"zapret-out","urltest_nodes":"[]"}', resource);
 		const fd = popen(`ubus call luci.homeproxy wizard_preset_apply ${sq(payload)} 2>/dev/null`);
 		let out = '';
 		if (fd) { out = trim(fd.read('all') || ''); fd.close(); }
@@ -515,7 +519,10 @@ function main() {
 			push(profiles, { engine: 'zapret', resource: 'general', strategy: tail });
 		/* max 5 zapret profiles here (target + 3 resources + general tail) —
 		 * under the builder's 8-profile cap by construction. */
-		const payload = sprintf('{"profiles":%.J}', profiles);
+		/* profiles cross as a JSON-encoded STRING (issue #11): %.J of the
+		 * JSON text embeds it as a quoted JSON string. */
+		const pj = sprintf('%.J', profiles);
+		const payload = sprintf('{"profiles":%.J}', pj);
 		const fd = popen(`ubus call luci.homeproxy wizard_compose_build ${sq(payload)} 2>/dev/null`);
 		let cout = '';
 		if (fd) { cout = trim(fd.read('all') || ''); fd.close(); }

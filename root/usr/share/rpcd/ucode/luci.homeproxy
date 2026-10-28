@@ -468,6 +468,68 @@ function proc_running(name) {
 	return length(out) > 0;
 }
 
+/* GitHub issue #13: the compressed lite build runs as sing-box-core — the tiny
+ * /usr/bin/sing-box wrapper execs /usr/libexec/sing-box-core — so `pidof
+ * sing-box` misses the LIVE core and the UI showed «Stopped» while the proxy
+ * worked. Try the bare name first (full builds), then the '-core' runtime
+ * name (init.d's engine_restart already does the same pair). The extra probe
+ * is harmless for names that never have a '-core' twin (hiddify-core, nfqws2…).
+ * Returns the PID string ('' when not running). */
+function core_pidof(name) {
+	let out = '';
+	let fd = popen('pidof ' + shellquote(name) + ' 2>/dev/null');
+	if (fd) { out = trim(fd.read('all')); fd.close(); }
+	if (length(out))
+		return out;
+	fd = popen('pidof ' + shellquote(name + '-core') + ' 2>/dev/null');
+	if (fd) { out = trim(fd.read('all')); fd.close(); }
+	return length(out) ? out : '';
+}
+
+/* issue #11: rpcd's ucode plugin maps a STRING args typehint to
+ * BLOBMSG_TYPE_STRING — the only policy that works on BOTH old and strict new
+ * rpcd/libubox stacks (native true/[] are rejected at REGISTRATION on updated
+ * 25.12 systems → rpcd crash loop). So array/boolean RPC arguments travel as
+ * JSON-encoded strings ('[...]' / '1'/'0'). This parses the string form
+ * defensively; a real array (ubus CLI callers) is accepted as-is. */
+function hp_json_arg(v) {
+	if (type(v) === 'array')
+		return v;
+	if (type(v) !== 'string')
+		return null;
+	let out = null;
+	try { out = json(v); } catch (e) { out = null; }
+	return (type(out) === 'array') ? out : null;
+}
+
+/* ── Local rule-set fallback (issue #12) helpers ──────────────────────────
+ * The generator emits initial_path when the local dir exists (the core uses
+ * the file for the FIRST load, then refreshes from the network; a missing
+ * file only warns and falls back to the normal fetch — sing-box 1.14
+ * rule_set_remote.go). These helpers back the status/seed RPC pair. */
+
+function rulesets_local_dir() {
+	const d = trim('' + (cursor().get('homeproxy', 'config', 'ruleset_local_path') || ''));
+	/* Absolute path only, no traversal — it ends up in shell commands. */
+	if (!length(d) || substr(d, 0, 1) !== '/' || index(d, '..') >= 0)
+		return '/etc/homeproxy/rulesets';
+	return d;
+}
+
+function rulesets_remote_list() {
+	const cfg = RUN_DIR + '/hiddify-c.json';
+	let data = null;
+	try { data = json(readfile(cfg) || ''); } catch (e) { data = null; }
+	const out = [];
+	const rs = (data && data.route && type(data.route.rule_set) === 'array') ? data.route.rule_set : [];
+	for (let r in rs) {
+		if (r.type !== 'remote' || !length('' + (r.tag || '')))
+			continue;
+		push(out, { tag: '' + r.tag, url: '' + (r.url || '') });
+	}
+	return out;
+}
+
 /* route_explain core (ч.69, shared с ч.70): trace WHY a host routes the way it
  * does. Evaluates the route rules of the RUNNING config in order against the
  * given domain/IP, resolving rule_set references to their LOCAL resource
@@ -2465,7 +2527,9 @@ const methods = {
 				core: core ? {
 					type: core.type,
 					version: core_version,
-					running: proc_running(core.proc_name)
+					/* issue #13: also match the lite build's sing-box-core
+					 * runtime name (the wrapper execs it). */
+					running: length(core_pidof(core.proc_name)) > 0
 				} : null,
 				main_node,
 				urltest_mode: (main_node === 'urltest') ? ut_mode : null,
@@ -2591,13 +2655,11 @@ const methods = {
 			let fd = popen(binary + ' version 2>&1');
 			if (fd) { result.version = trim(fd.read('all')); fd.close(); }
 
-			fd = popen('pidof ' + shellquote(proc_name) + ' 2>/dev/null');
-			if (fd) {
-				const pid = trim(fd.read('all'));
-				fd.close();
-				result.running = length(pid) > 0;
-				result.pid = length(pid) > 0 ? pid : null;
-			}
+			/* issue #13: core_pidof also matches the lite UPX build's
+			 * sing-box-core runtime name. */
+			const pid = core_pidof(proc_name);
+			result.running = length(pid) > 0;
+			result.pid = length(pid) > 0 ? pid : null;
 
 			result.listen_ports = hp_listen_ports();
 
@@ -2657,12 +2719,16 @@ const methods = {
 	},
 
 	diag_config_heal: {
-		/* Boolean typehint (rpcd maps it to BLOBMSG_TYPE_INT8); a string
-		 * typehint made ubus reject the JS boolean arg with Invalid argument. */
-		args: { repair: true },
+		/* rpcd's ucode plugin maps a STRING typehint to BLOBMSG_TYPE_STRING
+		 * (native true/[] in args used to map to INT8/ARRAY but a strict
+		 * rpcd/libubox on updated 25.12 stacks rejects them at REGISTRATION —
+		 * "Unable to register ubus object: Invalid argument", rpcd crash
+		 * loop, GitHub issue #11). So booleans cross the wire as '1'/'0'
+		 * strings (the same contract wizard_autopilot_set already uses). */
+		args: { repair: 'repair' },
 		call: function(req) {
-			/* length() on a boolean throws in ucode — compare identity instead. */
-			const mode = (req.args?.repair === true) ? 'repair' : 'check';
+			/* '1'/'0' from the JS view; '' (arg omitted) = check-only. */
+			const mode = (('' + (req.args?.repair || '')) === '1') ? 'repair' : 'check';
 			/* system() + capture-файл вместо popen(): запуск ucode-скрипта из rpcd
 			 * через popen() не сработал (возвращал null), тогда как system() —
 			 * проверенный здесь путь (так же вызывает ru_geo_build.uc). */
@@ -2851,8 +2917,9 @@ const methods = {
 			if (binary) {
 				fd = popen(binary + ' version 2>&1');
 				if (fd) { add(trim(fd.read('all'))); fd.close(); }
-				fd = popen('pidof ' + shellquote(proc_name) + ' 2>/dev/null');
-				if (fd) { const pid = trim(fd.read('all')); fd.close(); add('PID: ' + (length(pid) > 0 ? pid : 'not running')); }
+				/* issue #13: core_pidof matches the lite sing-box-core name too. */
+				const pid = core_pidof(proc_name);
+				add('PID: ' + (length(pid) > 0 ? pid : 'not running'));
 			} else {
 				add('No core binary found');
 			}
@@ -3788,6 +3855,66 @@ const methods = {
 		}
 	},
 
+	/* ── Local rule-set fallback (issue #12) ────────────────────────────────
+	 * Cold start problem: the core initializes remote rule-sets SYNCHRONOUSLY;
+	 * on a fresh flash or wiped /var/run (empty cache.db) the first failing
+	 * download is FATAL and the proxy never comes up. The generator emits
+	 * initial_path when the local dir exists; these RPCs let the UI list the
+	 * remote rule-sets of the LIVE config with their local copies and
+	 * pre-seed the dir (see rulesets_seed.uc). */
+
+	app_rulesets_local_status: {
+		call: function() {
+			const dir = rulesets_local_dir();
+			const enabled = ('' + (cursor().get('homeproxy', 'config', 'ruleset_local') || '')) !== '0';
+			const list = rulesets_remote_list();
+			for (let r in list) {
+				r.local_path = dir + '/' + r.tag + '.srs';
+				r.exists = !!access(r.local_path);
+				if (r.exists) {
+					const st = stat(r.local_path);
+					r.size = st ? st.size : null;
+				}
+			}
+			/* Seed progress (the detached runner rewrites the file atomically
+			 * per file), so the card can watch a running download. */
+			let seed = null;
+			const sf = RUN_DIR + '/rulesets_seed.json';
+			if (access(sf)) {
+				try { seed = json(readfile(sf) || ''); } catch (e) { seed = null; }
+			}
+			return {
+				enabled: enabled,
+				dir: dir,
+				dir_exists: !!access(dir),
+				rulesets: list,
+				found: length(filter(list, (r) => r.exists)),
+				total: length(list),
+				seed: seed
+			};
+		}
+	},
+
+	app_rulesets_local_seed: {
+		args: { force: 'force' },
+		call: function(req) {
+			const st = RUN_DIR + '/rulesets_seed.json';
+			if (access(st)) {
+				let prev = null;
+				try { prev = json(readfile(st) || ''); } catch (e) { prev = null; }
+				if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
+					return { result: false, error: 'a seed run is already in progress' };
+			}
+			const force = (('' + ((req && req.args && req.args.force) || '')) === '1');
+			if (!length(rulesets_remote_list()))
+				return { result: false, error: 'the active config has no remote rule-sets' };
+			/* Detached runner (the core_install_runner pattern): downloads can
+			 * take minutes; the UI polls app_rulesets_local_status. */
+			system(`ucode ${shellquote(HP_DIR + '/scripts/rulesets_seed.uc')}${force ? ' force' : ''} >/dev/null 2>&1 1000>&- &`);
+			return { result: true, started: true };
+		}
+	},
+
 	/* Emergency internet recovery (ч.69): stop the proxy stack and remove the
 	 * DNS / traffic interception so the LAN goes back to a plain direct
 	 * connection. The service configuration is kept — /etc/init.d/homeproxy
@@ -3895,10 +4022,12 @@ const methods = {
 	 * independent of JS memory and survives page reloads. */
 
 	wizard_compose_run: {
-		args: { profiles: [] },
+		/* profiles arrives JSON-encoded as a STRING (issue #11 string-policy
+		 * contract — see hp_json_arg). */
+		args: { profiles: 'profiles' },
 		call: function(req) {
-			const profiles = (req && req.args && req.args.profiles) || [];
-			if (type(profiles) !== 'array' || !length(profiles))
+			const profiles = hp_json_arg(req?.args?.profiles) || [];
+			if (!length(profiles))
 				return { result: false, error: 'no profiles' };
 			if (length(profiles) > 8)
 				return { result: false, error: 'too many profiles (max 8)' };
@@ -4050,10 +4179,10 @@ const methods = {
 	 * read back by wizard_dpi_status, so the builder restores itself after
 	 * any reload. The APPLIED args still live in UCI + the snapshot. */
 	wizard_compose_save: {
-		args: { profiles: [] },
+		args: { profiles: 'profiles' },
 		call: function(req) {
-			const profiles = (req && req.args && req.args.profiles) || [];
-			if (type(profiles) !== 'array' || length(profiles) > 8)
+			const profiles = hp_json_arg(req?.args?.profiles) || [];
+			if (length(profiles) > 8)
 				return { result: false, error: 'invalid profiles' };
 			for (let p in profiles) {
 				if (type(p) !== 'object')
@@ -4184,10 +4313,10 @@ const methods = {
 	 * the isolated composition test. */
 
 	wizard_compose_build: {
-		args: { profiles: [] },
+		args: { profiles: 'profiles' },
 		call: function(req) {
-			const profiles = (req && req.args && req.args.profiles) || [];
-			if (type(profiles) !== 'array' || !length(profiles))
+			const profiles = hp_json_arg(req?.args?.profiles) || [];
+			if (!length(profiles))
 				return { result: false, error: 'no profiles' };
 			if (length(profiles) > 8)
 				return { result: false, error: 'too many profiles (max 8)' };
@@ -4366,20 +4495,20 @@ const methods = {
 	 * pick, so a failed pick never touches routing. */
 
 	wizard_auto_pick_start: {
-		/* set_rule is a BOOLEAN typehint (rpcd maps it to BLOBMSG_TYPE_INT8):
-		 * a string typehint made ubus reject the JS boolean with
-		 * "Invalid argument" (the diag_config_heal lesson). strategy is
-		 * optional: when set, the runner skips fuzz+pick and uses THIS
-		 * strategy (the "apply from the ranking table" flow — the resource
-		 * rule/verify machinery stays the single implementation). */
-		args: { resource: 'resource', mode: 'mode', set_rule: true, strategy: 'strategy' },
+		/* set_rule travels as the STRING '1'/'0' (issue #11 string-policy
+		 * contract; rpcd maps a string typehint to BLOBMSG_TYPE_STRING and the
+		 * strict new stacks reject native boolean typehints at registration).
+		 * strategy is optional: when set, the runner skips fuzz+pick and uses
+		 * THIS strategy (the "apply from the ranking table" flow — the
+		 * resource rule/verify machinery stays the single implementation). */
+		args: { resource: 'resource', mode: 'mode', set_rule: 'set_rule', strategy: 'strategy' },
 		call: function(req) {
 			const a = (req && req.args) || {};
 			const resource = trim('' + (a.resource || ''));
 			if (!(resource in ['youtube', 'discord', 'telegram', 'general']))
 				return { result: false, error: 'invalid resource' };
 			const mode = (a.mode === 'full') ? 'full' : 'quick';
-			const set_rule = (a.set_rule === true);
+			const set_rule = (('' + (a.set_rule || '')) === '1');
 			const strategy = trim('' + (a.strategy || ''));
 			if (length(strategy) > 2000 || (length(strategy) &&
 					(!match(strategy, /^--[a-z]/) || match(strategy, /[`$;&|<>\n]/))))
@@ -5125,7 +5254,9 @@ const methods = {
 	 * pointless (it would egress directly — routing.direct_main_node_rules):
 	 * refuse it with a distinct error the UI can explain. */
 	wizard_preset_apply: {
-		args: { source: 'source', node: 'node', urltest_nodes: [] },
+		/* urltest_nodes arrives JSON-encoded as a STRING (issue #11
+		 * string-policy contract — see hp_json_arg). */
+		args: { source: 'source', node: 'node', urltest_nodes: 'urltest_nodes' },
 		call: function(req) {
 			const src = trim((req && req.args && req.args.source) || '');
 			const node = trim((req && req.args && req.args.node) || '');
@@ -5179,8 +5310,8 @@ const methods = {
 			 * rule section. Validate every id as a real node section. */
 			let pool = [];
 			if (node === 'urltest') {
-				pool = (req && req.args && req.args.urltest_nodes) || [];
-				if (type(pool) !== 'array' || !length(pool))
+				pool = hp_json_arg(req?.args?.urltest_nodes) || [];
+				if (!length(pool))
 					return { result: false, error: 'urltest_pool_empty' };
 				for (let n in pool) {
 					const nc = c.get_all('homeproxy', '' + n);
