@@ -244,6 +244,15 @@ let cdn_ip_count = 0;
 /* Gate read in main(), consumed by the top-level is_excluded() (no closures
  * over main() locals on this ucode build). */
 let asn_enabled = true;
+/* issue #14 second layer: before a plain-vs-DoH disjoint verdict is treated
+ * as DNS poison, the batch's own direct probe of the plain-view IP must NOT
+ * have served a clean site answer (a real stub never does). Read in main(),
+ * consumed by probe_pool_batch (module scope — no main()-local closures). */
+let poison_verify = true;
+/* issue #14 opt-in third layer: Team Cymru origin-ASN check of the plain
+ * answer (TXT over the tunnel-side DoH, cached by prefix). Off by default —
+ * an external lookup only for hosts the first two layers cannot classify. */
+let poison_asn = false;
 /* CPU core count + resource-aware cycle state, measured once at startup. */
 let sys_cores = 1;
 let last_cycle_sleep = 10;
@@ -908,6 +917,141 @@ function is_cdn_ip(ip) {
 		else return true;
 	}
 	return false;
+}
+
+/* ── Team Cymru origin-ASN layer (issue #14, opt-in) ─────────────────────
+ * A TXT query "d.c.b.a.origin.asn.cymru.com" answers
+ * "asn | prefix | cc | rir | date" for the plain-view IP. The query rides
+ * the tunnel-side DoH JSON API (a TLS answer cannot be tampered with on the
+ * way out; a plain UDP query could be poisoned — the reporter's rule).
+ * Results are cached BY PREFIX in RUN_DIR/asn_cache.txt: one Google /15
+ * answer covers 131k addresses, and EVERY answer is cached (not only CDN
+ * ASNs) so ordinary hosts never re-query. Unanswered lookups are never
+ * cached (retried on a later cycle). Only hosts that reached this layer —
+ * i.e. a disjoint plain-vs-DoH verdict the first layers could not classify
+ * — ever hit the network. */
+const ASN_CACHE_FILE = RUN_DIR + '/asn_cache.txt';
+const ASN_CACHE_TTL = 15552000;   /* 180 days */
+/* Anycast/geo-DNS networks whose plain answers legitimately diverge from a
+ * tunnel-side DoH answer (issue #14). Extensible by the user: one ASN per
+ * line in resources/cdn_asn.txt. */
+const CDN_ASN = {
+	'15169': 'Google', '13335': 'Cloudflare', '8075': 'Microsoft',
+	'16509': 'Amazon', '20940': 'Akamai', '16625': 'Akamai',
+	'54113': 'Fastly', '13238': 'Yandex Cloud'
+};
+let cdn_asn_user = null;   /* lazy-loaded RES + '/cdn_asn.txt' lines */
+let asn_cache = null;      /* lazy: [ { p: '<cidr>', plen, asn: '<str>', t } ] */
+
+function asn_ip_int(ip) {
+	const m = match(ip, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (!m) return -1;
+	const a = int(m[1]), b = int(m[2]), c = int(m[3]), d = int(m[4]);
+	if (a > 255 || b > 255 || c > 255 || d > 255) return -1;
+	return a * 16777216 + b * 65536 + c * 256 + d;
+}
+
+function asn_cache_load() {
+	asn_cache = [];
+	const raw = readfile(ASN_CACHE_FILE);
+	if (!raw) return;
+	for (let l in split(raw, '\n')) {
+		l = trim(l);
+		if (!length(l)) continue;
+		const f = split(l, /[ \t]+/);
+		if (length(f) !== 3) continue;          /* torn tail line: skipped */
+		const pm = match(f[0], /^(\d{1,3}(\.\d{1,3}){3})\/(\d{1,2})$/);
+		if (!pm) continue;
+		const base = asn_ip_int(pm[1]);
+		const plen = int(pm[3]);
+		const t = int(f[2]) || 0;
+		if (base < 0 || plen < 0 || plen > 32 || t <= 0 || !length(f[1])) continue;
+		push(asn_cache, { p: pm[1] + '/' + pm[3], plen: plen, base: base, asn: '' + f[1], t: t });
+	}
+}
+
+function asn_cache_save() {
+	if (asn_cache === null) return;
+	let lines = [];
+	for (let e in asn_cache)
+		push(lines, e.p + ' ' + e.asn + ' ' + e.t);
+	const tmp = ASN_CACHE_FILE + '.tmp';
+	writefile(tmp, join('\n', lines) + '\n');
+	system(`mv -f ${shellquote(tmp)} ${shellquote(ASN_CACHE_FILE)} 2>/dev/null`);
+}
+
+/* Longest-prefix match over the cache; stale entries read as a miss (they
+ * are replaced by the fresh answer when the re-query lands). */
+function asn_cache_lookup(ip) {
+	const ipn = asn_ip_int(ip);
+	if (ipn < 0) return null;
+	let best = null;
+	for (let e in asn_cache) {
+		if ((time() - e.t) > ASN_CACHE_TTL) continue;
+		const shift = (e.plen === 0) ? 32 : (32 - e.plen);
+		const mask = (0xFFFFFFFF << shift) & 0xFFFFFFFF;
+		if ((ipn & mask) !== (e.base & mask)) continue;
+		if (best === null || e.plen > best.plen) best = e;
+	}
+	return best;
+}
+
+function asn_user_set() {
+	if (cdn_asn_user !== null) return cdn_asn_user;
+	cdn_asn_user = {};
+	for (let l in read_lines(RES + '/cdn_asn.txt')) {
+		l = trim(l);
+		if (match(l, /^\d{1,10}$/)) cdn_asn_user[l] = true;
+	}
+	return cdn_asn_user;
+}
+
+/* TXT through the tunnel-side DoH JSON API (curl over the forced-main socks
+ * inbound — the same channel the poison cross-check uses). Returns
+ * { asn, prefix } or null (Cymru silent → no verdict, nothing cached). */
+function asn_cymru_lookup(ip) {
+	const o = split(ip, '.');
+	if (length(o) !== 4) return null;
+	const qname = o[3] + '.' + o[2] + '.' + o[1] + '.' + o[0] + '.origin.asn.cymru.com';
+	const of = RUN_DIR + '/asn_query.json';
+	const qurl = 'https://cloudflare-dns.com/dns-query?name=' + qname + '&type=TXT';
+	system(`curl -s --socks5-hostname 127.0.0.1:${AUTO_PROXY_PORT} --max-time 8 -H 'accept: application/dns-json' ${shellquote(qurl)} -o ${shellquote(of)} 2>/dev/null`, 12000);
+	let ans = '';
+	try {
+		const j = json(readfile(of) || '');
+		if (type(j) === 'object' && j.Status === 0 && type(j.Answer) === 'array' && length(j.Answer))
+			ans = trim('' + j.Answer[0].data);
+	} catch (e) { ans = ''; }
+	system(`rm -f ${shellquote(of)} 2>/dev/null`);
+	if (substr(ans, 0, 1) === '"')
+		ans = trim(substr(ans, 1, length(ans) - 2));
+	const f = split(ans, '|');
+	if (length(f) < 2) return null;
+	const asn = trim(f[0]);
+	const prefix = trim(f[1]);
+	if (!match(asn, /^\d{1,10}$/) || !match(prefix, /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/)) return null;
+	return { asn: asn, prefix: prefix };
+}
+
+/* True when the plain answer belongs to a CDN/anycast origin network. */
+function asn_is_cdn(ip) {
+	if (!length(ip) || asn_ip_int(ip) < 0) return false;
+	if (asn_cache === null) asn_cache_load();
+	let hit = asn_cache_lookup(ip);
+	if (hit === null) {
+		const r = asn_cymru_lookup(ip);
+		if (r === null) return false;
+		const pm = match(r.prefix, /^(\d{1,3}(\.\d{1,3}){3})\/(\d{1,2})$/);
+		if (!pm) return false;
+		const base = asn_ip_int(pm[1]);
+		const plen = int(pm[3]);
+		if (base < 0 || plen < 0 || plen > 32) return false;
+		hit = { p: r.prefix, plen: plen, base: base, asn: r.asn, t: time() };
+		push(asn_cache, hit);
+		asn_cache_save();
+		log('asn cache: ' + r.prefix + ' AS' + r.asn + ' (' + (CDN_ASN[r.asn] || asn_user_set()[r.asn] || 'other') + ')');
+	}
+	return (type(CDN_ASN[hit.asn]) === 'string') || (asn_user_set()[hit.asn] === true);
 }
 
 /* Bare IPs bypass every domain-side TLD guard: rDNS the candidate and refuse to
@@ -1845,6 +1989,42 @@ echo done > "$PRE.done"
 			}
 		}
 		if (length(keys(pv_cache)) > 400) pv_cache = {};
+		/* issue #14 second layer — plain-answer verification. The direct probe
+		 * of THIS batch dialed exactly the plain-view IP the DoH answer
+		 * disagreed with (both sides read the same pin map). A clean, real
+		 * answer from that IP (2xx/3xx, no block/stub page, no TLS anomaly)
+		 * proves the plain view serves the site — a disjoint DoH answer is
+		 * then anycast/geo divergence, not poison. Fail-safe: no clean answer
+		 * (probe failed or was skipped) → the poison verdict stands, because
+		 * a real ISP stub never answers cleanly. */
+		let pv_served = {};
+		if (side === 'direct') {
+			for (let res in resp.results) {
+				if (!res || type(res) !== 'object' || !exists(res, 'id')) continue;
+				let hh = '';
+				for (let k = 0; k < length(items); k++)
+					if ('' + items[k].i === '' + res.id) { hh = lc(trim('' + items[k].h)); break; }
+				if (!length(hh)) continue;
+				const hcode = '' + (res.code || '000');
+				const hbody = '' + (res.body_head || '');
+				const hblen = int(res.body_len) || length(hbody);
+				const hc = classify_code(hcode);
+				let hblock = (hc === 'block');
+				if (hc === 'ok' && hblen < 32768 && body_blocked(hbody))
+					hblock = true;
+				/* A cross-host redirect is the ISP-stub signature itself (the
+				 * Go side reports only targets outside the probed site) — the
+				 * plain answer must also NOT have bounced somewhere else.
+				 * A WAF/challenge page IS the real edge answering (the site's
+				 * own CDN terminated TLS and refused the client) — the plain
+				 * view is real there too, the service just flagged the client. */
+				const hredir = trim('' + (res.redir_host || ''));
+				const hwaf = (hblen < 32768 && waf_page(hbody, hcode));
+				if ((hc === 'ok' && !hblock && !length(hredir) &&
+				     !length(trim('' + (res.tls_note || '')))) || hwaf)
+					pv_served[hh] = true;
+			}
+		}
 		/* ч.68: harvest the DNS-poison cross-check verdicts (direct side only).
 		 * A host in resp.poisoned resolved to two DISJOINT address sets —
 		 * plain (RU-facing) vs DoH (tunnel): the plain answer is the ISP stub
@@ -1877,6 +2057,21 @@ echo done > "$PRE.done"
 				if (length(pvpn) && (is_cdn_ip(pvpn) || is_shared_cdn_ip(pvpn) || is_public_infra_ip(pvpn))) {
 					log('not poison (plain answer is a CDN/anycast range): ' + ph);
 					eng_event('cdnpv', ph);
+					continue;
+				}
+				/* issue #14: batch verification — the plain IP served the site
+				 * cleanly, so the disjoint DoH answer is anycast/geo, not poison. */
+				if (poison_verify && pv_served[ph]) {
+					log('not poison (plain view served the site): ' + ph);
+					eng_event('cdnok', ph);
+					continue;
+				}
+				/* issue #14: opt-in Cymru origin-ASN layer — classify the plain
+				 * answer by owning ASN when the static databases and the probe
+				 * could not. Never a network call for hosts outside this path. */
+				if (poison_asn && length(pvpn) && asn_is_cdn(pvpn)) {
+					log('not poison (plain answer is a CDN origin-ASN): ' + ph);
+					eng_event('cdnasn', ph);
 					continue;
 				}
  				poisoned_hosts[ph] = time();
@@ -2167,6 +2362,13 @@ echo done > "$PRE.done"
 	/* ч.69: CDN/cloud ASN exclusion is always on (it protects against shared-fate
 	 * false learns; there was no sane reason to disable it). */
 	asn_enabled = true;
+	/* issue #14: poison-verdict hardening. Verification is on by default (an
+	 * absent UCI key = on, covering every pre-existing config); the Cymru
+	 * origin-ASN layer is strictly opt-in. */
+	poison_verify = (uci.get('homeproxy', 'automation', 'poison_verify') || '1') !== '0';
+	poison_asn = (uci.get('homeproxy', 'automation', 'poison_asn_check') || '0') === '1';
+	log('poison verdicts: plain-probe verification ' + (poison_verify ? 'on' : 'off') +
+	    (poison_asn ? ', Cymru origin-ASN layer on' : ', Cymru origin-ASN layer off'));
 	/* Exclude list: newline- or comma-separated; '#' starts a comment (to end of
 	 * line) so users can annotate/organize entries. Blank pieces are dropped.
 	 * Legacy safety: very old builds could store this option as a UCI LIST —

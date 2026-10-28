@@ -5682,6 +5682,26 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
+msgid "Verify DNS-poison verdicts by the plain answer"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Cymru origin-ASN check (second layer)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Before a plain-vs-DoH mismatch is treated as DNS poisoning, the direct probe answer from the plain-view IP must be a real site response (no block/stub page, no TLS anomaly, no cross-host redirect). Anycast/geo divergence on CDN hosts (github.com, google.com, dl.google.com…) then no longer produces false “Blocked (DNS)” verdicts, while a real ISP stub — which never answers cleanly — is still learned instantly. Applied after Restart service."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "For mismatches the first layers cannot classify: the plain-view IP is looked up via Team Cymru origin ASN (TXT over DoH through the tunnel) and cached by network prefix — one answer covers the whole range. If the ASN belongs to a CDN/anycast network (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), the mismatch is not poisoning. Adds an external lookup only for candidates that stayed ambiguous; extend the list via /etc/homeproxy/resources/cdn_asn.txt (one ASN number per line). Applied after Restart service."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
 msgid "eco: serial probing for weak routers (still uses the native probe_pool batch when the helper is installed, capped at 8 concurrent probes). perf: up to 64 domains / 32 IPs per pass in parallel batches (16 at once) — for multi-core routers (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
 msgstr ""
 

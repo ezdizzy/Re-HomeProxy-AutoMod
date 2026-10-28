@@ -289,6 +289,15 @@ return view.extend({
 			_('Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps.'));
 		o.default = o.disabled;
 
+		o = s.option(form.Flag, 'poison_verify', _('Verify DNS-poison verdicts by the plain answer'),
+			_('Before a plain-vs-DoH mismatch is treated as DNS poisoning, the direct probe answer from the plain-view IP must be a real site response (no block/stub page, no TLS anomaly, no cross-host redirect). Anycast/geo divergence on CDN hosts (github.com, google.com, dl.google.com…) then no longer produces false “Blocked (DNS)” verdicts, while a real ISP stub — which never answers cleanly — is still learned instantly. Applied after Restart service.'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		o = s.option(form.Flag, 'poison_asn_check', _('Cymru origin-ASN check (second layer)'),
+			_('For mismatches the first layers cannot classify: the plain-view IP is looked up via Team Cymru origin ASN (TXT over DoH through the tunnel) and cached by network prefix — one answer covers the whole range. If the ASN belongs to a CDN/anycast network (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), the mismatch is not poisoning. Adds an external lookup only for candidates that stayed ambiguous; extend the list via /etc/homeproxy/resources/cdn_asn.txt (one ASN number per line). Applied after Restart service.'));
+		o.default = o.disabled;
+
 		o = s.option(form.Flag, 'geo_protect', _('RU-protect: Russian internet never via proxy'),
 			_('Hard guard: traffic matching the RU-geo databases (networks + domains, see the “RU-geo databases” tab) and .ru/.su/.рф domains is always routed DIRECT, even if it matches a learned or static proxy list entry. RU services (banks, marketplaces, delivery) flag VPN exits — this keeps them off the tunnel.'));
 		o.default = o.enabled;

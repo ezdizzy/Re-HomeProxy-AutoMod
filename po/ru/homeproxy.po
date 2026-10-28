@@ -6736,6 +6736,26 @@ msgstr "Основной сервер (режим Global)"
 msgid "Learn IP destinations"
 msgstr "Изучать IP-назначения"
 
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Verify DNS-poison verdicts by the plain answer"
+msgstr "Проверять вердикты DNS-подмены по ответу самого сайта"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Before a plain-vs-DoH mismatch is treated as DNS poisoning, the direct probe answer from the plain-view IP must be a real site response (no block/stub page, no TLS anomaly, no cross-host redirect). Anycast/geo divergence on CDN hosts (github.com, google.com, dl.google.com…) then no longer produces false “Blocked (DNS)” verdicts, while a real ISP stub — which never answers cleanly — is still learned instantly. Applied after Restart service."
+msgstr "Прежде чем расхождение plain- и DoH-ответов считать DNS-подменой, прямая проба этого же IP должна получить честный ответ сайта (без страницы-заглушки, без TLS-аномалий, без редиректа на чужой хост). Anycast/гео-расхождение на CDN-хостах (github.com, google.com, dl.google.com…) больше не даёт ложных вердиктов «Заблокирован (DNS)», а настоящая заглушка провайдера — она никогда не отвечает честно — по-прежнему выучивается мгновенно. Применяется после «Перезапустить службу»."
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "Cymru origin-ASN check (second layer)"
+msgstr "Проверка origin-ASN через Team Cymru (второй слой)"
+
+#: htdocs/luci-static/resources/view/homeproxy/automation.js
+
+msgid "For mismatches the first layers cannot classify: the plain-view IP is looked up via Team Cymru origin ASN (TXT over DoH through the tunnel) and cached by network prefix — one answer covers the whole range. If the ASN belongs to a CDN/anycast network (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), the mismatch is not poisoning. Adds an external lookup only for candidates that stayed ambiguous; extend the list via /etc/homeproxy/resources/cdn_asn.txt (one ASN number per line). Applied after Restart service."
+msgstr "Для расхождений, которые не классифицировали первые слои: IP из plain-ответа проверяется запросом origin-ASN в Team Cymru (TXT через DoH поверх туннеля) и кэшируется по подсети — один ответ покрывает весь диапазон. Если ASN принадлежит CDN/anycast-сети (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), расхождение — не подмена. Внешний запрос выполняется только для неоднозначных кандидатов; список расширяется файлом /etc/homeproxy/resources/cdn_asn.txt (по одному номеру ASN в строке). Применяется после «Перезапустить службу»."
+
 #: htdocs/luci-static/resources/view/homeproxy/dns.js
 msgid "Single DNS & reserve"
 msgstr "Одиночный DNS и резерв"
