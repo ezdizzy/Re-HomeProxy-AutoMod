@@ -96,7 +96,7 @@ const MANUAL_FILE = RUN_DIR + '/zapret_autopilot_manual.json';
 
 const TICK = 60;                /* main loop step, s                     */
 const FUZZ_FRESH = 6 * 3600;    /* reuse a ranking younger than 6 h      */
-const FUZZ_WAIT_MAX = 2700;     /* cap for a full fuzz (~45 min)         */
+const FUZZ_WAIT_MAX = 2700;     /* floor for a full fuzz wait (~45 min)  */
 const FUZZ_DEAD = 900;          /* running:true with a stale ts = dead   */
 const CORE_WAIT_MAX = 90;       /* cap for the service restart           */
 const VERIFY_TMO = 9;           /* live-path probe --max-time            */
@@ -376,9 +376,29 @@ function wait_fuzz(deadline) {
 	return null;
 }
 
+/* Rough seconds-to-finish estimate from a live fuzz status (the same
+ * formula the one-shot auto-pick uses): resolve+baseline + unmeasured
+ * strategies × rounds × ~55 s + the deep-battery tail. ч.123: a full sweep
+ * honestly takes up to a few hours — the daemon POSTPONES its cycle instead
+ * of blocking the health checks for that long. */
+function fuzz_remaining_est(st) {
+	if (st == null || int(st.total || 0) <= 0)
+		return 0;
+	const done = int(st.done || 0);
+	const rem = int(st.total) - done;
+	if (rem <= 0)
+		return 700;   /* the deep battery tail */
+	return 60 + rem * int(st.rounds || 2) * 55 + 600;
+}
+
 /* Reuse a fresh ranking / wait for a running sweep / spawn one (setsid
- * when available, so a daemon respawn cannot take the sweep down). */
+ * when available, so a daemon respawn cannot take the sweep down).
+ * ч.123: when the running sweep needs more than the wait floor, the cycle
+ * is POSTPONED (ENSURE_POSTPONED) instead of blocking — the sweep keeps
+ * running and a later tick re-evaluates; health probes stay on schedule. */
+let ENSURE_POSTPONED = false;
 function ensure_ranking(cfg) {
+	ENSURE_POSTPONED = false;
 	let fz = read_json(FUZZ_RESULT);
 	const fresh = (fz && fz.strategies && length(fz.strategies) &&
 		(fz.ts && (time() - int(fz.ts)) < FUZZ_FRESH));
@@ -387,8 +407,16 @@ function ensure_ranking(cfg) {
 		return fz;
 	}
 	if (fuzz_running()) {
-		log_once('fuzzwait', 'a fuzz run is in progress — waiting for the fresh ranking…');
-		return wait_fuzz(time() + FUZZ_WAIT_MAX);
+		const rem = fuzz_remaining_est(read_json(FUZZ_STATUS));
+		if (rem > FUZZ_WAIT_MAX) {
+			ENSURE_POSTPONED = true;
+			log_once('fuzzskip', 'a long sweep is running (~' + int(rem / 60) +
+				' min left) — the re-rank resumes after it; health probes keep running');
+			return null;
+		}
+		log_once('fuzzwait', 'a fuzz run is in progress — waiting for the fresh ranking (~' +
+			int(rem / 60) + ' min left)…');
+		return wait_fuzz(time() + rem + 300);
 	}
 	const setsid = (access('/usr/bin/setsid') || access('/bin/setsid')) ? 'setsid ' : '';
 	stage('fuzz', 'starting a ' + cfg.fuzz_mode + ' fuzz…');
@@ -397,7 +425,13 @@ function ensure_ranking(cfg) {
 	system(`${setsid}sh /etc/homeproxy/scripts/zapret_fuzz.sh ${cfg.fuzz_mode} 2 >/dev/null 2>&1 &`);
 	if (!wait_fuzz_owner(t0))
 		return null;
-	return wait_fuzz(time() + FUZZ_WAIT_MAX);
+	const rem = fuzz_remaining_est(read_json(FUZZ_STATUS));
+	if (rem > FUZZ_WAIT_MAX) {
+		ENSURE_POSTPONED = true;
+		log('the sweep needs ~' + int(rem / 60) + ' min — the daemon resumes the cycle after it (the sweep keeps running)');
+		return null;
+	}
+	return wait_fuzz(time() + rem + 300);
 }
 
 /* ── pick ───────────────────────────────────────────────────────────── */
@@ -818,6 +852,15 @@ function apply_target(cfg, target) {
 function cycle(cfg) {
 	const fz = ensure_ranking(cfg);
 	if (fz == null) {
+		if (ENSURE_POSTPONED) {
+			/* ч.123: a long sweep is running — re-evaluate on the next tick
+			 * instead of blocking (and instead of a false "error" stage). */
+			stage('watch', 'waiting for the running fuzz (~' +
+				int(fuzz_remaining_est(read_json(FUZZ_STATUS)) / 60) + ' min left)');
+			S.next_cycle_ts = time() + 900;
+			wstat();
+			return;
+		}
 		stage('error', 'the fuzz did not finish in time');
 		log('the fuzz did not finish — retrying in 30 min');
 		S.next_cycle_ts = time() + 1800;
@@ -914,6 +957,14 @@ function repair(cfg, res) {
 	stage('fuzz', 'repairing ' + res + '…');
 	const fz = ensure_ranking(cfg);
 	if (fz == null) {
+		if (ENSURE_POSTPONED) {
+			/* ч.123: a long sweep is running — the repair retries after it
+			 * (probes stay honest: the fuzz holds the CPU either way). */
+			stage('watch', 'waiting for the running fuzz before the repair');
+			S.next_check_ts = time() + 600;
+			wstat();
+			return;
+		}
 		stage('error', 'the fuzz did not finish in time (repair)');
 		S.next_check_ts = time() + 600;
 		wstat();

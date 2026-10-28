@@ -21,6 +21,9 @@ MODE="${1:-quick}"
 ROUNDS="${2:-2}"
 case "$ROUNDS" in 1|2|3) ;; *) ROUNDS=2 ;; esac
 MAJ=$(( ROUNDS / 2 + 1 ))
+# ч.123: the currently applied strategy joins the deep battery (measured
+# verdict for what actually serves the user right now).
+CURRENT_OPTS=$(uci -q get homeproxy.config.zapret_cmd_opts 2>/dev/null)
 RUN=/var/run/homeproxy
 STATUS="$RUN/zapret_fuzz.json"
 RESULT="$RUN/zapret_fuzz_result.json"
@@ -61,6 +64,14 @@ fi
 
 mkdir -p "$TMP"
 printf '%s\n' "$PAIRS" > "$TMP/pairs.tsv"
+# ч.123: the CURRENT strategy crosses to the rank pass THROUGH A FILE — a
+# shell-injected string (the old `"'$CURRENT_OPTS'"` form) breaks the ucode
+# quoting the moment a strategy carries a `"`/`'`/`$` (the sweep would die
+# with an obscure ucode error instead of ranking). The UCI value is stored
+# in SHELL-QUOTED form (`'arg1' 'arg2' ...` — init.d eval-splits it), so the
+# literal quotes are stripped HERE (tr), before any ucode comparison/regex
+# (`^--[a-z]` never matches a string starting with a quote).
+printf '%s' "$CURRENT_OPTS" | tr -d "'" > "$TMP/current_opts.txt"
 
 # One BASELINE pass (no desync): hosts that pass without a strategy are not
 # DPI-blocked and cannot credit any strategy. "" = no strategy needed there.
@@ -91,6 +102,9 @@ echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage"
 ucode -e '
 import {readfile, writefile, access} from "fs";
 const TMP = "'$TMP'", ROUNDS = int('$ROUNDS'), MAJ = int('$MAJ'), TOTAL = int('$TOTAL');
+/* ч.123: the CURRENT strategy comes from the file the shell wrote — with
+ * the shell-quoting already stripped there (see the tr above). */
+const CURRENT_OPTS = trim(readfile(TMP + "/current_opts.txt") || "");
 const now = time();
 
 /* corpus order: name \t args per line */
@@ -176,7 +190,78 @@ for (let n = 0; n < length(pairs); n++) {
 }
 sort(strategies, (a, b) => b.score - a.score);
 writefile(TMP + "/rank.json", sprintf("%.J\n", { strategies: strategies, ts: now }));
-/* top-5 for the deep content battery */
+/* ч.123: the deep battery is NOT just the handshake top-5 anymore — a
+ * fast handshake does not predict a fast flow (the ч.116 live fact), so
+ * the strategies worth MEASURING are chosen beyond the handshake order:
+ *   1. the top-5 by score (as before);
+ *   2. up to 2 more representatives of DISTINCT technique families
+ *      (syndata/multisplit/hostfakesplit/fakesplit/disorder/seg2split/
+ *      fake/oob — the first unrepresented strategy per family in rank
+ *      order), so a flow-fast/slow-handshake strategy is measured too;
+ *   3. the CURRENTLY APPLIED strategy (single-block only) if not already
+ *      listed — the user must always see its measured verdict.
+ * The list keeps the INDEX into rank.json strategies: the pass-2 merge
+ * maps d<i>.json back through it. */
+let covered = [];
+for (let i = 0; i < length(strategies) && i < 5; i++)
+	push(covered, i + 1);
+const FAM = [
+	[ "syndata", /--syndata/ ],
+	[ "multisplit", /--multisplit/ ],
+	[ "hostfakesplit", /--hostfakesplit/ ],
+	[ "fakesplit", /--fakesplit/ ],
+	[ "disorder", /--disorder/ ],
+	[ "seg2split", /--seg2split/ ],
+	[ "fake", /--fake/ ],
+	[ "oob", /--oob/ ]
+];
+const fam_of = (args) => {
+	for (let f in FAM)
+		if (match(args, f[1]))
+			return f[0];
+	return null;
+};
+const fams_seen = {};
+let extra_fam = 0;
+for (let i = 0; i < length(strategies) && extra_fam < 2; i++) {
+	const idx = i + 1;
+	if (index(covered, idx) >= 0) {
+		const f0 = fam_of(strategies[i].args || "");
+		if (f0 != null) fams_seen[f0] = true;
+		continue;
+	}
+	const f = fam_of(strategies[i].args || "");
+	if (f == null || fams_seen[f])
+		continue;
+	fams_seen[f] = true;
+	push(covered, idx);
+	extra_fam++;
+}
+const cur_args = trim(CURRENT_OPTS);
+if (length(cur_args) > 3 && index(cur_args, "--new") < 0 &&
+	match(cur_args, /^--[a-z]/)) {
+	let dup = false;
+	for (let i = 0; i < length(strategies); i++)
+		if (strategies[i].args === cur_args) {
+			if (index(covered, i + 1) < 0)
+				push(covered, i + 1);
+			dup = true;
+			break;
+		}
+	if (!dup) {
+		/* the live strategy is not in this corpus — measure it as an extra
+		 * run beyond the ranked list (idx 0 = "not a rank.json entry") */
+		push(strategies, { name: "current (applied)", args: cur_args,
+			ok: 0, total: 0, dist_ok: 0, dist_total: 0, avg_tls_ms: 0,
+			score: 0, hosts: [] });
+		push(covered, length(strategies));
+	}
+}
+const deep_list = [];
+for (let i in covered)
+	push(deep_list, { idx: covered[i], args: strategies[covered[i] - 1].args });
+writefile(TMP + "/deep_list.json", sprintf("%.J\n", { list: deep_list }));
+/* top-5 for the deep content battery — kept for compatibility readers */
 let top5 = [];
 for (let i = 0; i < length(strategies) && i < 5; i++)
 	push(top5, { idx: i + 1, args: strategies[i].args });
@@ -189,15 +274,11 @@ if [ ! -s "$TMP/rank.json" ]; then
 	exit 0
 fi
 
-# Deep content battery on the top-5 (one pass each, same isolated queue).
-# ч.116: the battery carries the SUSTAINED-FLOW throughput probe (ytv — 24
-# real thumbnails over ONE keep-alive TLS flow to i.ytimg.com, Σbytes/Σtime)
-# and, when yt_stream_probe.uc hands out a live videoplayback URL (often
-# bot-gated), ALSO yts — a ranged 4 MB download of the REAL video stream.
-# A handshake and tiny fetches cannot see TSPU throttling of the flow,
-# which is exactly what the user complains about («страница открывается,
-# а превью/видео грузятся вечность»).
-TOPN=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/top5.json")); print(length((j && j.list) || 0));' 2>/dev/null)
+# Deep content battery (one pass each, same isolated queue). ч.123: the
+# battery list is deep_list.json — the handshake top-5 PLUS up to 2
+# representatives of distinct technique families PLUS the currently applied
+# strategy (see the rank pass above). d<i>.json maps back through the list.
+TOPN=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); print(length((j && j.list) || 0));' 2>/dev/null)
 YTV_URL=$(ucode /etc/homeproxy/scripts/yt_stream_probe.uc get 2>/dev/null | ucode -e '
 import {readfile} from "fs";
 let j = null;
@@ -212,11 +293,26 @@ fi
 i=0
 while [ "$i" -lt "$TOPN" ]; do
 	i=$((i + 1))
-	ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/top5.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
+	ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 	[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
 	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"'"}' > "$STATUS"
 	YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i.json"
 done
+
+# ч.123: the sweep-level QUIC (UDP/443) verdict — a Version-Negotiation
+# probe through the same path (probe_pool ≥ 1.6.0). Strategy-independent
+# (it is stored ONCE for the sweep, not per strategy): vn = the UDP path
+# carries 443 end-to-end (a real QUIC server answered), icmp = an on-path
+# rejection, silence = no answer (typically a silent TSPU cut). The UI uses
+# it to explain QUIC-vs-TCP YouTube behavior honestly.
+QIP=$(printf '%s\n' "$IPS" | tr ' ' '\n' | sed -n 's/^yt=//p' | head -n 1)
+if [ -n "$QIP" ] && [ -x /usr/bin/probe_pool ]; then
+	# ч.123: the probe answer crosses to the merge pass THROUGH A FILE (the
+	# JSON carries double quotes — a shell-injected string would break the
+	# ucode quoting of the merge pass).
+	/usr/bin/probe_pool -quic-check "$QIP" -quic-host redirector.googlevideo.com 2>/dev/null | head -n 1 > "$TMP/quic_probe.json"
+	grep -q '^{"ok"' "$TMP/quic_probe.json" 2>/dev/null || rm -f "$TMP/quic_probe.json"
+fi
 
 ucode -e '
 import {readfile, writefile, access} from "fs";
@@ -239,14 +335,31 @@ const parse = (path) => {
  * and ranks by the differential-only deep ratio. */
 const rank = parse(TMP + "/rank.json") || { strategies: [] };
 const strategies = rank.strategies || [];
+/* ч.123: d<i>.json maps through deep_list.json (idx into rank.json), NOT
+ * positionally — the battery now covers the top-5 + family reps + the
+ * current strategy. */
+const dlist = parse(TMP + "/deep_list.json");
+const dlist_items = (dlist && type(dlist.list) === "array") ? dlist.list : [];
 let deepN = 0;
 const drawn = [];
-for (let i = 1; i <= 5; i++) {
+for (let i = 1; i <= length(dlist_items); i++) {
 	const d = parse(TMP + "/d" + i + ".json");
-	if (!d || type(d.results) != "array") continue;
-	if (!strategies[i - 1]) continue;
-	push(drawn, { s: strategies[i - 1], results: d.results });
+	const ent = dlist_items[i - 1];
+	if (!d || type(d.results) != "array" || !ent)
+		continue;
+	const s = (ent.idx > 0) ? strategies[ent.idx - 1] : null;
+	if (!s) continue;
+	push(drawn, { s: s, results: d.results });
 	deepN++;
+}
+/* ч.123: the sweep-level QUIC verdict (probe_pool -quic-check, yt edge),
+ * read from the FILE the shell wrote (never shell-injected — the JSON
+ * carries double quotes). */
+let quic = null;
+if (access(TMP + "/quic_probe.json")) {
+	try { quic = json(readfile(TMP + "/quic_probe.json") || ""); } catch (e) { quic = null; }
+	if (quic != null && (type(quic) !== "object" || quic.verdict == null))
+		quic = null;
 }
 const probe_cnt = {};
 for (let r in drawn)
@@ -330,7 +443,7 @@ if (bj && type(bj.results) == "array")
 writefile(RESULT, sprintf("%.J\n", {
 	running: false, done: length(final), total: length(final),
 	rounds: ROUNDS, majority: MAJ, ts: now, baseline: bnote, strategies: final,
-	deep_count: deepN, deep_skipped: skipped_ids,
+	deep_count: deepN, deep_skipped: skipped_ids, quic: quic,
 	deep_note: "top " + deepN + " deep-checked: page/CDN/media-edge fetches + the real video-stream throughput probe (ytv); probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank"
 }));
 

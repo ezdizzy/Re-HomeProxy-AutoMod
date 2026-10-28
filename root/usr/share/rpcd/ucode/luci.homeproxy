@@ -5799,6 +5799,85 @@ const methods = {
 		}
 	},
 
+	/* ч.123: LOCAL strategy import (an export from another router of the
+	 * same user, a shared file). `candidates` crosses as a JSON-encoded
+	 * STRING (issue #11 string-policy): [ { name, args, group? }, … ] or a
+	 * full export document { candidates: [...] }. Merge rules are the same
+	 * as wizard_strategy_apply: same args under another name → skip (no
+	 * duplicate strategies, D7); same name → replace; else append. The args
+	 * are validated against the same shape the runner enforces. The corpus
+	 * file is a package file; the /etc overlay persists the merge. Cap 240
+	 * entries — the sweep time scales with the corpus. */
+	wizard_corpus_import: {
+		/* candidates crosses as a JSON-encoded STRING — the string typehint
+		 * is the only rpcd-args policy that works on old AND strict new
+		 * rpcd (issue #11). */
+		args: { candidates: 'candidates' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const raw = '' + (a.candidates || '');
+			if (!length(raw) || length(raw) > 400000)
+				return { result: false, error: 'no or oversized candidates payload' };
+			let doc = (type(a.candidates) === 'array') ? a.candidates : null;
+			if (doc == null) {
+				try { doc = json(raw); } catch (e) { doc = null; }
+			}
+			let list = null;
+			if (doc == null)
+				list = null;
+			else if (type(doc) === 'array')
+				list = doc;
+			else if (type(doc) === 'object' && type(doc.candidates) === 'array')
+				list = doc.candidates;
+			if (list == null)
+				return { result: false, error: 'candidates must be an array' };
+			const corpus = hp_corpus_read();
+			const cands = corpus.candidates;
+			let added = 0, skipped = 0, bad = 0;
+			for (let p in list) {
+				if (type(p) !== 'object' || !length(p.name) || !length(p.args)) {
+					bad++;
+					continue;
+				}
+				const nm = '' + p.name, ar = '' + p.args;
+				if (length(ar) > 2000 || !match(ar, /^--[a-z]/) ||
+					match(ar, /[;&|<>`]/)) {
+					bad++;
+					continue;
+				}
+				/* Same args under the same name → a true duplicate → skip.
+				 * Same args under another name follows the catalog rule
+				 * (wizard_strategy_apply): upsert by name. */
+				let dup = false;
+				for (let x in cands)
+					if (type(x) === 'object' && x.args === ar) {
+						dup = (x.name === nm);
+						break;
+					}
+				if (dup) {
+					skipped++;
+					continue;
+				}
+				for (let i, x in cands)
+					if (type(x) === 'object' && x.name === nm) {
+						splice(cands, i, 1);
+						break;
+					}
+				push(cands, { name: nm, args: ar, group: p.group || 'imported' });
+				added++;
+			}
+			if (length(cands) > 240) {
+				const kept = [];
+				for (let i = 0; i < 240 && i < length(cands); i++)
+					push(kept, cands[i]);
+				corpus.candidates = kept;
+			}
+			hp_corpus_write(corpus);
+			return { result: true, added: added, updated: 0, skipped: skipped,
+				bad: bad, total: length(corpus.candidates) };
+		}
+	},
+
 	/* Strategy generator (D7 "if nothing works"): derive mutation candidates
 	 * from the best strategies of the last fuzz (or the recommended corpus
 	 * when nothing was fuzzed yet), smoke-test them, replace the previous

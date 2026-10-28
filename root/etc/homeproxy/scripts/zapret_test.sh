@@ -122,13 +122,13 @@ fail() { echo "{\"ok\":0,\"total\":0,\"error\":\"$1\"}"; exit 0; }
 command -v curl >/dev/null 2>&1 || fail "curl missing"
 mkdir -p "$TMP" 2>/dev/null
 
-# Watchdog: guarantee teardown within 50s even if curl/nslookup wedges, so the
+# Watchdog: guarantee teardown within 70s even if curl/nslookup wedges, so the
 # live firewall is never left modified (busybox has no `timeout` applet).
-# 50 s (ч.116): the deep battery grew a 9 s stream download on top of the
-# 25 s handshake poll — 35 s could tear down mid-deep and drop results.
-# Redirect its fds to /dev/null: otherwise the backgrounded `sleep` keeps the
-# caller's stdout pipe open and rpcd/popen blocks on read() for the full span.
-( sleep 50; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
+# 70 s (ч.123): the deep battery's ytv probe now runs TWO windows (~20 s) on
+# top of the 25 s handshake poll — 50 s could tear down mid-deep and drop
+# results. Redirect its fds to /dev/null: otherwise the backgrounded `sleep`
+# keeps the caller's stdout pipe open and rpcd/popen blocks on read().
+( sleep 70; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
 WATCH_PID=$!
 
 # 1. Test-host IPs — BEFORE touching the firewall, so a slow resolver never runs
@@ -271,14 +271,39 @@ if [ "$DEEP" = "1" ]; then
 			# honest per-flow bytes/s; ≥8 successful transfers = code 200.
 			# One -o per URL: with a single -o curl discards only the FIRST
 			# body and dumps the rest to stdout (caught live ч.116).
+			# ч.123: TWO windows, one keep-alive flow each, ~1 s apart — the
+			# mean (Σbytes/Σtime of both) no longer hinges on one lucky or one
+			# unlucky window (TSPU throttling is bursty); a window that stalls
+			# entirely is dropped, both stalled = honest fail.
 			CURL_ARGS=""
 			for yu in $YTV_URLS; do
 				CURL_ARGS="$CURL_ARGS -o /dev/null $yu"
 			done
+			cat > "$TMP/ytv_flow.sh" <<'YTVFLOW'
+#!/bin/sh
+# two sustained-flow windows → "code secs bytes speed fetched"
+pin="$1"; shift
+w1=$(curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++} END {if (t<0.1) t=0.1; c=0; if (n>=8) c=200; print c, t, s, o}')
+sleep 1
+w2=$(curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++} END {if (t<0.1) t=0.1; c=0; if (n>=8) c=200; print c, t, s, o}')
+printf '%s\n%s\n' "$w1" "$w2" | awk '
+{ c[NR]=$1; t[NR]=$2; s[NR]=$3; o[NR]=$4 }
+END {
+	if (NR == 1) {
+		tt = t[1]; if (tt < 0.1) tt = 0.1
+		print c[1], tt, s[1] + 0, int((s[1] + 0) / tt), o[1] + 0
+		exit
+	}
+	code = 0; if (c[1] == 200 && c[2] == 200) code = 200
+	tt = t[1] + t[2]; ss = s[1] + s[2]; if (tt < 0.1) tt = 0.1
+	print code, tt, ss, int(ss / tt), o[1] + o[2]
+}'
+YTVFLOW
+			chmod 755 "$TMP/ytv_flow.sh"
 			if [ -n "$PROBE_UID" ]; then
-				su -s /bin/sh daemon -c "out=\$(curl -sL --max-redirs 2 --resolve '${dhost}:443:${dip}' -w '%{http_code} %{time_total} %{size_download}\n' --connect-timeout 4 --max-time 9 -k ${CURL_ARGS} 2>/dev/null | awk '{s+=\$3; t+=\$2; o++; if (\$1==200 || \$1==206) n++;} END {if (t<0.1) t=0.1; code=0; if (n>=8) code=200; print code, t, s, int(s/t), o}'); echo \"\$out\" > '${TMP}/d_${did}'" >/dev/null 2>&1 &
+				su -s /bin/sh daemon -c "sh '${TMP}/ytv_flow.sh' '${dhost}:443:${dip}' ${CURL_ARGS} > '${TMP}/d_${did}'" >/dev/null 2>&1 &
 			else
-				( out=$(curl -sL --max-redirs 2 --resolve "${dhost}:443:${dip}" -w '%{http_code} %{time_total} %{size_download}\n' --connect-timeout 4 --max-time 9 -k ${CURL_ARGS} 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++;} END {if (t<0.1) t=0.1; code=0; if (n>=8) code=200; print code, t, s, int(s/t), o}'); echo "$out" > "$TMP/d_ytv" ) >/dev/null 2>&1 &
+				sh "$TMP/ytv_flow.sh" "${dhost}:443:${dip}" $CURL_ARGS > "$TMP/d_$did" 2>/dev/null &
 			fi
 			continue
 		fi
@@ -289,7 +314,7 @@ if [ "$DEEP" = "1" ]; then
 		fi
 	done
 	dn=0
-	while [ "$dn" -lt 14 ]; do
+	while [ "$dn" -lt 26 ]; do
 		all=1
 		for dp in $DEEP_PROBES; do
 			did=${dp%%|*}

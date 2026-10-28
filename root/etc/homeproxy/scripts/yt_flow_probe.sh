@@ -30,9 +30,26 @@ for u in $URLS; do
 	CURL_ARGS="$CURL_ARGS -o /dev/null $u"
 done
 
-out=$(curl -sL --max-redirs 2 -w '%{http_code} %{time_total} %{size_download}\n' \
-	--connect-timeout 4 --max-time 9 $CURL_ARGS 2>/dev/null | \
-	awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++;} END {if (t<0.1) t=0.1; code=0; if (n>=8) code=200; print code, t, s+0, int((s+0)/t), o+0}')
+window() {
+	curl -sL --max-redirs 2 -w '%{http_code} %{time_total} %{size_download}\n' \
+		--connect-timeout 4 --max-time 9 $CURL_ARGS 2>/dev/null | \
+		awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++;} END {if (t<0.1) t=0.1; code=0; if (n>=8) code=200; print code, t, s+0, o+0}'
+}
+# ч.123: TWO windows ~1 s apart — TSPU throttling is bursty; the mean
+# (Σbytes/Σtime of both windows) stops the verdict from hinging on one lucky
+# or one unlucky window. A window that stalls entirely is dropped; if both
+# stall, the honest fail stands.
+W1=$(window)
+sleep 1
+W2=$(window)
+out=$(printf '%s\n%s\n' "$W1" "$W2" | awk '
+{ c[NR]=$1; t[NR]=$2; s[NR]=$3; o[NR]=$4 }
+END {
+	if (NR == 1) { tt=t[1]; if (tt<0.1) tt=0.1; print c[1], tt, s[1]+0, int((s[1]+0)/tt), o[1]+0; exit }
+	code=0; if (c[1]==200 && c[2]==200) code=200
+	tt=t[1]+t[2]; ss=s[1]+s[2]; if (tt<0.1) tt=0.1
+	print code, tt, ss, int(ss/tt), o[1]+o[2]
+}')
 # out = "code secs bytes speed fetched"
 set -- $(printf '%s' "$out")
 CODE=$1; SECS=$2; BYTES=$3; SPEED=$4; FETCHED=$5

@@ -5909,11 +5909,11 @@ msgid "The global \"Apply strategy\" serves EVERY flow routed to Zapret (one eng
 msgstr ""
 
 # DPI video-stream probe (ч.116)
-msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the ByeDPI card above."
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the Manual strategies sub-tab."
 msgstr ""
 
 # DPI video-stream probe (ч.116) + non-differential deep verdict (ч.117)
-msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the top five with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes."
+msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the handshake top-5, representatives of every technique family and your CURRENT strategy with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it)."
 msgstr ""
 
 # non-differential deep verdict (ч.117)
@@ -5930,4 +5930,100 @@ msgstr ""
 
 # Telegram bot page: token status + resilient daemon (ч.118)
 msgid "missing"
+msgstr ""
+
+msgid "Thorough (full corpus, ~%d min)"
+msgstr ""
+
+msgid "Auto-pick the best strategy for %s? This may first run the FULL fuzz (~%d min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live."
+msgstr ""
+
+msgid "Auto-pilot"
+msgstr ""
+
+msgid "Manual strategies"
+msgstr ""
+
+msgid "What runs now: engines, what serves every resource, and the measured quality of the desync path. Actions live on the other sub-tabs; the results area follows you to every tab."
+msgstr ""
+
+msgid "The automatic side: the scheduled auto-pilot keeps the strategies working without attention, and the one-click pick applies the best strategy for one resource. Both apply with a server snapshot (Restore stays available) and verify the resource live."
+msgstr ""
+
+msgid "Measure, don't guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the leaders (and your current strategy) with real content — page, thumbnails, the video stream in KB/s — and ranks honestly. Apply any row per resource, generate mutations, import or share catalogs."
+msgstr ""
+
+msgid "The manual side: a global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource Composition of both engines, and the service→engine chain. Automatic selection lives on the Auto-pilot sub-tab."
+msgstr ""
+
+msgid "QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — the browser may pick QUIC for some flows; strategies without fake-QUIC leave those attempts unserved."
+msgstr ""
+
+msgid "QUIC (UDP 443) to the YouTube video edge is REJECTED (measured) — the browser falls back to TCP quickly; TCP-only strategies serve the whole resource."
+msgstr ""
+
+msgid "QUIC (UDP 443) to the YouTube video edge gets NO answer (measured) — typically a silent provider cut; the browser falls back to TCP, TCP-only strategies serve the whole resource."
+msgstr ""
+
+msgid "QUIC: open"
+msgstr ""
+
+msgid "QUIC: %s"
+msgstr ""
+
+msgid "This sweep: %d strategies — the deep battery measured %d of them (the handshake top-5, distinct technique families and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus."
+msgstr ""
+
+msgid "Flow, KB/s"
+msgstr ""
+
+msgid "The sustained video-flow speed measured in the deep battery (KB/s through the configured path) — a fast handshake does not predict a fast flow."
+msgstr ""
+
+msgid "↑ +%d KB/s vs current"
+msgstr ""
+
+msgid "Video flow (24 thumbnails, one TLS flow):"
+msgstr ""
+
+msgid "not measured yet"
+msgstr ""
+
+msgid "QUIC (UDP 443) to the video edge:"
+msgstr ""
+
+msgid "Applied Zapret strategy:"
+msgstr ""
+
+msgid "Last fuzz winner: %s (flow %s)."
+msgstr ""
+
+msgid "Every number here was measured through your real path. The flow speed refreshes on every auto-pilot health check; without the auto-pilot it comes from the last fuzz ranking."
+msgstr ""
+
+msgid "Export strategies"
+msgstr ""
+
+msgid "Import strategies"
+msgstr ""
+
+msgid "Nothing to export — the corpus is empty."
+msgstr ""
+
+msgid "Strategies are ISP-specific: the RANKING does not transfer between providers — import and re-run the fuzz."
+msgstr ""
+
+msgid "Not a valid strategies JSON file."
+msgstr ""
+
+msgid "Importing %d strategies…"
+msgstr ""
+
+msgid "Import failed: "
+msgstr ""
+
+msgid "Corpus updated: +%d imported, %d already present, %d invalid — %d strategies total. Run a fuzz to rank the new entries."
+msgstr ""
+
+msgid "Quality now"
 msgstr ""

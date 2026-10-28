@@ -101,7 +101,8 @@ const YT_STREAM_MIN_SPEED = 131072;   /* 128 KB/s — below this «кружок�
 const YT_STREAM_MIN_BYTES = 524288;   /* a 4 MB ranged window sanity floor */
 const YT_STREAM_TTL = 1800;           /* the helper's own cache TTL        */
 const FUZZ_FRESH = 6 * 3600;      /* reuse a ranking younger than 6 h       */
-const FUZZ_WAIT_MAX = 2700;       /* cap for waiting a full fuzz (~45 min)  */
+const FUZZ_WAIT_MAX = 2700;       /* floor for waiting a full fuzz (~45 min)*/
+const FUZZ_DEAD = 900;            /* running:true with a stale ts = dead    */
 const CORE_WAIT_MAX = 90;         /* cap for the service restart            */
 const VERIFY_TMO = 9;             /* live-path probe --max-time             */
 
@@ -170,35 +171,68 @@ function probe_live(url, host) {
 	return { code: code, tsec: tsec, rc: rc, ok: ok, host: host };
 }
 
+/* Rough seconds-to-finish estimate from a live fuzz status: resolve+baseline
+ * (~60 s) + unmeasured strategies × rounds × ~55 s (the 70 s per-pass
+ * watchdog is the worst case, typical passes are faster) + the deep battery
+ * tail (~8 runs × 75 s worst case). ч.123: the pick no longer caps at a
+ * fixed 45 min — a full sweep honestly takes up to a few hours, so the wait
+ * extends to the sweep's own estimate while it keeps making progress. */
+function fuzz_remaining_est(st) {
+	if (st == null || int(st.total || 0) <= 0)
+		return 0;
+	const done = int(st.done || 0);
+	const rem = int(st.total) - done;
+	if (rem <= 0)
+		return 700;   /* the deep battery tail */
+	return 60 + rem * int(st.rounds || 2) * 55 + 600;
+}
+
 /* Wait until the fuzz is no longer running (status file says so); the
- * result file is written just before the status flips to false. */
+ * result file is written just before the status flips to false.
+ * ч.123: returns a VERDICT object instead of a bare result:
+ *   { fz: result }                     — the sweep finished, ranking ready;
+ *   { fail: 'stale'|'empty'|'timeout', error: <honest message> }.
+ * A stale running:true (the writer died) breaks out after FUZZ_DEAD instead
+ * of hanging to the cap; the wait extends past the 45-min floor to the
+ * sweep's own remaining estimate (a full sweep takes hours). */
 function wait_fuzz(deadline) {
+	let sized = false;
 	while (time() < deadline) {
 		const st = read_json(FUZZ_STATUS);
+		if (st && st.running && (time() - int(st.ts || 0)) > FUZZ_DEAD)
+			return { fail: 'stale', error: 'the fuzz writer died mid-sweep (no status updates for 15+ min) — start it again from the Strategy Lab' };
 		if (st == null || !st.running) {
 			const r = read_json(FUZZ_RESULT);
 			if (r && r.strategies && length(r.strategies))
-				return r;
-			/* status not running yet no result → the sweep just started;
-			 * keep waiting until the status file exists at all. */
+				return { fz: r };
 			if (st == null) {
 				sleep(2000);
 				continue;
 			}
-			return null;
+			if (st.error != null && length('' + st.error))
+				return { fail: 'empty', error: 'the fuzz failed: ' + st.error };
+			return { fail: 'empty', error: 'the fuzz ended without a result (and without an error) — start it again from the Strategy Lab' };
+		}
+		if (!sized && int(st.total || 0) > 0) {
+			sized = true;
+			const rem = fuzz_remaining_est(st) + 300;
+			if (rem > (deadline - time()))
+				deadline = time() + rem;
 		}
 		sleep(10000);
 	}
-	return null;
+	let prog = '';
+	const stx = read_json(FUZZ_STATUS);
+	if (stx && stx.current)
+		prog = ' (' + stx.current + ')';
+	return { fail: 'timeout',
+		error: 'the fuzz is still running' + prog + ' — the pick stopped waiting; the ranking appears in the Strategy Lab when the sweep finishes' };
 }
 
-function fuzz_fail(res) {
-	const stx = read_json(FUZZ_STATUS);
+function fuzz_fail(res, msg) {
 	res.running = false;
 	res.stage = 'error';
-	res.error = (stx && stx.error)
-		? ('the fuzz failed: ' + stx.error)
-		: 'the fuzz did not finish in time';
+	res.error = msg || 'the fuzz did not finish in time';
 	wstat(res);
 }
 
@@ -258,25 +292,27 @@ function main() {
 		if (running) {
 			note(res, 'A fuzz run is already in progress — waiting for it to finish…');
 			wstat(res);
-			fz = wait_fuzz(time() + FUZZ_WAIT_MAX);
-			if (fz == null) {
-				fuzz_fail(res);
+			const w = wait_fuzz(time() + FUZZ_WAIT_MAX);
+			if (w.fz == null) {
+				fuzz_fail(res, w.error);
 				return;
 			}
+			fz = w.fz;
 		} else if (!fresh) {
 			note(res, 'Starting a ' + mode + ' fuzz (the previous ranking is missing or older than 6 h)…');
 			wstat(res);
 			const t0 = time();
 			system(`sh /etc/homeproxy/scripts/zapret_fuzz.sh ${mode} 2 >/dev/null 2>&1 &`);
 			if (!wait_fuzz_owner(t0)) {
-				fuzz_fail(res);
+				fuzz_fail(res, 'the fuzz did not start in time — check the Strategy Lab status');
 				return;
 			}
-			fz = wait_fuzz(time() + FUZZ_WAIT_MAX);
-			if (fz == null) {
-				fuzz_fail(res);
+			const w = wait_fuzz(time() + FUZZ_WAIT_MAX);
+			if (w.fz == null) {
+				fuzz_fail(res, w.error);
 				return;
 			}
+			fz = w.fz;
 		} else {
 			note(res, 'Reusing the existing fuzz ranking (younger than 6 h).');
 		}
@@ -377,11 +413,22 @@ function main() {
 		 * resource's probes), not the global mix across all resources. */
 		if (chosen_deep_total != null && int(chosen_deep_total) > 0)
 			res.chosen.deep = { ok: int(chosen_deep_pass || 0), total: int(chosen_deep_total) };
-		/* QUIC honesty (ч.116): a TCP-only strategy never touches the
-		 * browser's QUIC/UDP path to YouTube — if video still stalls with a
-		 * passing stream probe, the QUIC route is the next suspect. */
-		if (meta.tag === 'yt' && !match('' + (chosen.args || ''), /--filter-udp=443/))
-			note(res, 'This strategy handles TCP only (no QUIC/UDP block) — if the video still stalls while the checks pass, try a strategy with a QUIC block (fake QUIC) or keep UDP 443 off for YouTube.');
+		/* QUIC honesty (ч.123, measured): the sweep-level probe_pool
+		 * -quic-check verdict says whether UDP/443 passes the provider AT
+		 * ALL. A TCP-only strategy never touches the browser's QUIC
+		 * attempts: an OPEN path leaves them riding raw (the browser may
+		 * pick QUIC for some videos and TCP for others — the per-video
+		 * variance the user reported); a CUT path makes the fallback quick,
+		 * so a TCP-only strategy is fine there. */
+		if (meta.tag === 'yt' && !match('' + (chosen.args || ''), /--filter-udp=443/)) {
+			const qv = (fz != null && fz.quic != null) ? ('' + (fz.quic.verdict || '')) : '';
+			if (qv === 'vn')
+				note(res, 'QUIC (UDP 443) to YouTube is OPEN through the provider (measured this sweep) — this strategy handles TCP only, so the browser\'s QUIC attempts ride raw without desync. If some videos load slowly while others fly, pick a strategy with fake QUIC (the Lab marks them QUIC).');
+			else if (qv === 'silence' || qv === 'icmp')
+				note(res, 'QUIC (UDP 443) to YouTube is cut through the provider (measured this sweep: ' + qv + ') — the browser falls back to TCP quickly, so a TCP-only strategy serves the whole resource.');
+			else
+				note(res, 'This strategy handles TCP only (no QUIC/UDP block) — if the video still stalls while the checks pass, try a strategy with a QUIC block (fake QUIC) or keep UDP 443 off for YouTube.');
+		}
 	} else {
 		/* ч.109: explicit strategy from the ranking table — resolve its
 		 * catalog name for the report, then apply as usual. */

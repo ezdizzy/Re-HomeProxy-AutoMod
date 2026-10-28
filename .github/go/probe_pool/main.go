@@ -60,11 +60,24 @@
 // plain-view IPv4 the same way (SNI stays on the hostname); the proxy side
 // keeps socks5h remote resolution.
 //
+// v1.6.0 (DPI redesign): the one-shot `-quic-check <ip>` mode — a QUIC
+// (UDP/443) reachability probe via Version Negotiation. A long-header packet
+// with a forged unsupported version forces any RFC 9000 server to answer
+// with a Version Negotiation datagram (version 0x00000000) — no crypto, no
+// QUIC stack. Verdicts: "vn" (the UDP path carries 443 end-to-end and a real
+// QUIC server answered), "icmp" (on-path/port rejection surfaced as
+// ECONNREFUSED on the connected socket), "silence" (no answer — typically a
+// silent TSPU QUIC cut; honestly labeled as "likely cut", not a proof). The
+// fuzzer stores this once per sweep; the UI uses it to explain QUIC-vs-TCP
+// YouTube behavior (a TCP-only strategy never touches the browser's QUIC
+// attempts).
+//
 // Build (see build.sh): CGO_ENABLED=0 GOOS=linux GOARCH=... go build -trimpath -ldflags="-s -w"
 package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -87,7 +100,7 @@ import (
 	"time"
 )
 
-const version = "1.5.0"
+const version = "1.6.0"
 
 const (
 	bodyReadLimit  = 64 * 1024 // same cap as the shell worker's curl body capture
@@ -160,11 +173,17 @@ func main() {
 	out := flag.String("out", "", "path to write the JSON response (one-shot mode)")
 	daemon := flag.Bool("daemon", false, "run in resident mode")
 	dir := flag.String("dir", "", "working directory for the resident mode (pp.in.json / pp.out.json)")
+	quicCheck := flag.String("quic-check", "", "QUIC UDP/443 reachability check against <ip> (one-shot, one JSON line on stdout)")
+	quicHost := flag.String("quic-host", "", "hostname to echo in the -quic-check report")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println("probe_pool", version)
+		return
+	}
+	if *quicCheck != "" {
+		runQUICCheck(*quicCheck, *quicHost)
 		return
 	}
 	if *daemon {
@@ -197,6 +216,103 @@ func main() {
 		fmt.Fprintf(os.Stderr, "probe_pool: write response: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runQUICCheck probes QUIC (UDP/443) reachability with a Version-Negotiation
+// handshake. A long-header packet carrying an UNSUPPORTED version forces any
+// RFC 9000 server to answer with a Version Negotiation datagram (long header,
+// version 0x00000000) — no crypto, no QUIC stack, ~70 lines of net/UDP.
+// Verdicts:
+//   vn      — the UDP datagram made it through AND a real QUIC server answered:
+//             the path carries UDP/443 end-to-end;
+//   icmp    — the connected UDP socket surfaced an ICMP unreachable
+//             (ECONNREFUSED on write/read): port closed or a rejecting block;
+//   silence — no answer within the window: typically a silent on-path drop
+//             (the TSPU QUIC cut shape) — honestly reported as "likely cut",
+//             NOT a proof (a server may also ignore the probe).
+// The probe measures PASSABILITY, not sustained throughput: TSPU throttling
+// that hits only long QUIC streams is invisible here, and the UI copy says so.
+func runQUICCheck(ip, host string) {
+	type qcResp struct {
+		OK      bool   `json:"ok"`
+		Verdict string `json:"verdict"`
+		Host    string `json:"host,omitempty"`
+		IP      string `json:"ip"`
+		Note    string `json:"note,omitempty"`
+	}
+	ans := func(verdict, note string) {
+		enc, _ := json.Marshal(qcResp{OK: verdict == "vn", Verdict: verdict,
+			Host: host, IP: ip, Note: note})
+		fmt.Println(string(enc))
+	}
+	if net.ParseIP(ip) == nil {
+		ans("", "not an IP address: " + ip)
+		os.Exit(2)
+	}
+	conn, err := net.DialTimeout("udp4", net.JoinHostPort(ip, "443"), 3*time.Second)
+	if err != nil {
+		ans("silence", "dial failed: "+err.Error())
+		return
+	}
+	defer conn.Close()
+
+	pkt := make([]byte, 1200)
+	if _, err := rand.Read(pkt); err != nil {
+		ans("silence", "entropy: "+err.Error())
+		return
+	}
+	// Long header, fixed bit, packet type Initial (0b00), PN length 4 bytes:
+	pkt[0] = 0xC3
+	// Forged version — unsupported on purpose, forces Version Negotiation.
+	pkt[1], pkt[2], pkt[3], pkt[4] = 0x1a, 0x2a, 0x3a, 0x4a
+	pkt[5] = 0x08           // DCID length
+	// pkt[6:14] random DCID (already random)
+	pkt[14] = 0x08          // SCID length: RFC 9000 — a client Initial MUST
+	// pkt[15:23] random SCID (already random)   carry ≥ 4 bytes of SCID
+	pkt[23] = 0x00          // token length (varint)
+	// Length varint (2-byte form) over the remainder: 1200-26 = 1174.
+	pkt[24] = 0x40 | 0x04   // 0x44: two-byte varint, high bits of 0x496
+	pkt[25] = 0x96          // low byte of 0x496
+
+	readVerdict := func(deadline time.Duration) (string, string) {
+		buf := make([]byte, 1500)
+		conn.SetReadDeadline(time.Now().Add(deadline))
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				if errors.Is(err, syscall.ECONNREFUSED) {
+					return "icmp", "ICMP unreachable surfaced on the connected socket"
+				}
+				return "", err.Error() // timeout or another transient error
+			}
+			// A Version Negotiation packet: long header, version 0, and at
+			// least one supported-version entry past the echoed CIDs.
+			if n >= 25 && buf[0]&0x80 != 0 && buf[1] == 0 && buf[2] == 0 &&
+				buf[3] == 0 && buf[4] == 0 {
+				return "vn", ""
+			}
+			// Anything else is garbage (e.g. a stray datagram) — keep reading
+			// until the deadline.
+		}
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := conn.Write(pkt); err != nil {
+			if errors.Is(err, syscall.ECONNREFUSED) {
+				ans("icmp", "ICMP unreachable surfaced on write")
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		v, note := readVerdict(1500 * time.Millisecond)
+		if v != "" {
+			ans(v, note)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	ans("silence", "no answer in 3 s — likely a silent UDP/443 drop (or a server ignoring the probe)")
 }
 
 // runBatch executes a whole request (resolve + concurrent probes). Shared by

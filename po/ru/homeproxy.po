@@ -10024,8 +10024,8 @@ msgstr "Также поставить правило на Zapret (стратег
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Thorough (full corpus, up to ~15 min)"
-msgstr "Тщательно (весь корпус, до ~15 мин)"
+msgid "Thorough (full corpus, ~%d min)"
+msgstr "Тщательно (полный корпус, ~%d мин)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -10036,8 +10036,8 @@ msgstr "Общий (лучшая в целом)"
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
-msgid "Auto-pick the best strategy for %s? This may first run the FULL fuzz (up to ~15 min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live."
-msgstr "Подобрать лучшую стратегию для «%s»? Сначала может быть запущен ПОЛНЫЙ фаззинг (до ~15 мин), затем победитель применяется с серверным снапшотом (кнопка возврата остаётся доступной), после чего ресурс проверяется живьём."
+msgid "Auto-pick the best strategy for %s? This may first run the FULL fuzz (~%d min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live."
+msgstr "Подобрать лучшую стратегию для %s? Сначала может пойти ПОЛНЫЙ фаззинг (~%d мин), затем победитель применяется с серверным снапшотом (Restore доступен) и ресурс проверяется живьём."
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -10412,9 +10412,6 @@ msgstr "ByeDPI не включён — сначала включите его н
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 msgid "Zapret is not enabled — enable it on the Client Settings page first."
 msgstr "Zapret не включён — сначала включите его на странице «Клиент»."
-#: htdocs/luci-static/resources/view/homeproxy/wizard.js
-msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied with a server snapshot, and the resource is then checked through the configured path (code + seconds). Zapret only — ByeDPI strategies are configured in the ByeDPI card above."
-msgstr "Один клик: фаззер ранжирует корпус (переиспользуется, если свежий), лучшая стратегия для ресурса применяется с серверным снапшотом, затем ресурс проверяется через настроенный путь (код + секунды). Только Zapret — стратегии ByeDPI настраиваются в карточке ByeDPI выше."
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 msgid "Enable Zapret or ByeDPI on the Client Settings page first."
 msgstr "Сначала включите Zapret или ByeDPI на странице «Клиент»."
@@ -11463,12 +11460,12 @@ msgid "The global \"Apply strategy\" serves EVERY flow routed to Zapret (one eng
 msgstr "Глобальное «Применить стратегию» обслуживает ВЕСЬ трафик, направленный на Zapret (одна стратегия на движок, без hostlist'ов — трафик выбирают правила маршрутизации). Применение для конкретного ресурса (строки Лаборатории, автоподбор) собирает СКОПИРОВАННЫЙ профиль — остальные управляемые ресурсы сохраняют свои стратегии; «Композиция» ниже правит те же блоки вручную. Применение также включает Zapret и перезапускает службу; проверка гоняет стратегию на изолированной очереди по 4 тест-сайтам (YouTube, Telegram, Discord, Speedtest)."
 
 # DPI video-stream probe (ч.116)
-msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the ByeDPI card above."
-msgstr "Один клик: фаззер ранжирует корпус (свежий переиспользуется), лучшая стратегия для ресурса применяется как скопированный профиль со снимком сервера, затем ресурс проверяется через настроенный путь (страница, CDN, РЕАЛЬНЫЙ видеопоток в КБ/с). Только Zapret — стратегии ByeDPI настраиваются в карточке ByeDPI выше."
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the Manual strategies sub-tab."
+msgstr "Один клик: фаззер ранжирует корпус (свежий переиспользуется), лучшая стратегия для ресурса применяется как скопированный профиль со снимком сервера, затем ресурс проверяется через настроенный путь (страница, CDN, РЕАЛЬНЫЙ видеопоток в КБ/с). Только Zapret — стратегии ByeDPI настраиваются на под-вкладке «Ручные стратегии»."
 
 # DPI video-stream probe (ч.116) + non-differential deep verdict (ч.117)
-msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the top five with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes."
-msgstr "Фаззер прогоняет каждую стратегию каталога на изолированной NFQUEUE (TLS-хендшейки YouTube / Telegram / Discord / Speedtest), затем глубоко проверяет пятёрку лидеров РЕАЛЬНЫМИ контентными загрузками — включая сам видеопоток с замером в КБ/с (хендшейк не видит ТСПУ-троттлинг видео). Пробы, которые все глубоко-проверенные стратегии проходят или валят одинаково, не ранжируют (не различают): колонка «Ресурс грузится» показывает тогда ≈ со счётом сырых проб — равно у всех, не ранжирует. Baseline без дезинка помечает хосты, которые ваш провайдер не режет; каждый хост должен пройти большинство раундов. Живой трафик не затрагивается. Полный прогон занимает до ~15 минут."
+msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the handshake top-5, representatives of every technique family and your CURRENT strategy with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it)."
+msgstr "Фаззер прогоняет каждую стратегию каталога на изолированной NFQUEUE (TLS-хендшейки YouTube / Telegram / Discord / Speedtest), затем глубоко проверяет РЕАЛЬНЫМИ контентными загрузками топ-5 по хендшейку, представителей каждого семейства техник и ВАШУ ТЕКУЩУЮ стратегию — включая сам видеопоток с замером в КБ/с (хендшейк не видит ТСПУ-троттлинг видео). Пробы, которые все глубоко-проверенные стратегии проходят или валят одинаково, не ранжируют (не различают): колонка «Ресурс грузится» показывает тогда ≈ со счётом сырых проб — равно у всех, не ранжирует. Baseline без дезинка помечает хосты, которые ваш провайдер не режет; каждый хост должен пройти большинство раундов. Живой трафик не затрагивается. Быстрый прогон ~15–30 минут; полный масштабируется с корпусом (подпись выше считает честно)."
 
 # non-differential deep verdict (ч.117)
 msgid "identical for all"
@@ -11553,3 +11550,123 @@ msgstr "Папка с локальными копиями .srs — один фа
 # Local rule-set fallback (issues #11/#12)
 msgid "Local .srs copies of the remote rule lists. The core takes them for the FIRST load when the cache is empty (fresh firmware, wiped cache, no network) instead of dying on a blocked download, then refreshes from the network as usual. Enable the fallback and pick the folder on the Client Settings page; the toggle works for the sing-box family of cores."
 msgstr "Локальные копии .srs удалённых списков правил. Ядро берёт их для ПЕРВОЙ загрузки, когда кэш пуст (свежая прошивка, очищенный кэш, нет сети), вместо падения на заблокированном скачивании, дальше обновляется из сети как обычно. Включите страховку и выберите папку на странице «Настройки клиента»; работает для семейства ядер sing-box."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Auto-pilot"
+msgstr "Автопилот"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Manual strategies"
+msgstr "Ручные стратегии"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "What runs now: engines, what serves every resource, and the measured quality of the desync path. Actions live on the other sub-tabs; the results area follows you to every tab."
+msgstr "Что работает сейчас: движки, чем обслуживается каждый ресурс и измеренное качество пути обхода. Действия — на других под-вкладках; область результатов следует за вами на каждой вкладке."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "The automatic side: the scheduled auto-pilot keeps the strategies working without attention, and the one-click pick applies the best strategy for one resource. Both apply with a server snapshot (Restore stays available) and verify the resource live."
+msgstr "Автоматика: автопилот по расписанию держит стратегии рабочими без вашего участия, а подбор одной кнопкой применяет лучшую стратегию для одного ресурса. Оба применяют изменения с серверным снапшотом (Restore всегда доступен) и проверяют ресурс живьём."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Measure, don't guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the leaders (and your current strategy) with real content — page, thumbnails, the video stream in KB/s — and ranks honestly. Apply any row per resource, generate mutations, import or share catalogs."
+msgstr "Измеряй, а не угадывай: фаззер прогоняет каталог на изолированной очереди, глубоко проверяет лидеров (и вашу текущую стратегию) реальным контентом — страница, превью, видеопоток в КБ/с — и ранжирует честно. Применяйте любую строку для ресурса, генерируйте мутации, импортируйте и делитесь каталогами."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "The manual side: a global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource Composition of both engines, and the service→engine chain. Automatic selection lives on the Auto-pilot sub-tab."
+msgstr "Ручное: глобальная стратегия Zapret, карточка ByeDPI с пресетами и флагами, покомпонентная «Композиция» обоих движков и цепочка «сервис → движок». Автоматический подбор — на под-вкладке «Автопилот»."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — the browser may pick QUIC for some flows; strategies without fake-QUIC leave those attempts unserved."
+msgstr "QUIC (UDP 443) до видео-края YouTube ОТКРЫТ (замер) — браузер может выбирать QUIC для части потоков; стратегии без fake-QUIC оставляют эти попытки без дезинка."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "QUIC (UDP 443) to the YouTube video edge is REJECTED (measured) — the browser falls back to TCP quickly; TCP-only strategies serve the whole resource."
+msgstr "QUIC (UDP 443) до видео-края YouTube ОТВЕРГАЕТСЯ (замер) — браузер быстро падает на TCP; TCP-only стратегии обслуживают весь ресурс."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "QUIC (UDP 443) to the YouTube video edge gets NO answer (measured) — typically a silent provider cut; the browser falls back to TCP, TCP-only strategies serve the whole resource."
+msgstr "QUIC (UDP 443) до видео-края YouTube НЕ ОТВЕЧАЕТ (замер) — как правило, тихая обрезка провайдером; браузер падает на TCP, TCP-only стратегии обслуживают весь ресурс."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "QUIC: open"
+msgstr "QUIC: открыт"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "QUIC: %s"
+msgstr "QUIC: %s"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "This sweep: %d strategies — the deep battery measured %d of them (the handshake top-5, distinct technique families and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus."
+msgstr "Этот прогон: %d стратегий — deep-батарея измерила %d из них (топ-5 по хендшейку, представители семейств техник и ваша текущая стратегия). Быстрый прогон ~%d мин, полный ~%d мин на этом корпусе."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Flow, KB/s"
+msgstr "Поток, КБ/с"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "The sustained video-flow speed measured in the deep battery (KB/s through the configured path) — a fast handshake does not predict a fast flow."
+msgstr "Измеренная в deep-батарее скорость sustained-видеопотока (КБ/с через настроенный путь) — быстрый хендшейк не предсказывает быстрый поток."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "↑ +%d KB/s vs current"
+msgstr "↑ +%d КБ/с к текущей"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Video flow (24 thumbnails, one TLS flow):"
+msgstr "Видеопоток (24 превью, одно TLS-соединение): "
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "not measured yet"
+msgstr "ещё не измерялось"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "QUIC (UDP 443) to the video edge:"
+msgstr "QUIC (UDP 443) до видео-края: "
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Applied Zapret strategy:"
+msgstr "Применённая стратегия Zapret: "
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Last fuzz winner: %s (flow %s)."
+msgstr "Победитель последнего фаззинга: %s (поток %s)."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Every number here was measured through your real path. The flow speed refreshes on every auto-pilot health check; without the auto-pilot it comes from the last fuzz ranking."
+msgstr "Каждое число здесь измерено через ваш реальный путь. Скорость потока обновляется при каждой health-проверке автопилота; без автопилота — из последнего рейтинга фаззинга."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Export strategies"
+msgstr "Экспорт стратегий"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Import strategies"
+msgstr "Импорт стратегий"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Nothing to export — the corpus is empty."
+msgstr "Экспортировать нечего — корпус пуст."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Strategies are ISP-specific: the RANKING does not transfer between providers — import and re-run the fuzz."
+msgstr "Стратегии специфичны для провайдера: РЕЙТИНГ не переносится между провайдерами — после импорта заново запустите фаззинг."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Not a valid strategies JSON file."
+msgstr "Некорректный JSON-файл стратегий."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Importing %d strategies…"
+msgstr "Импортирую %d стратегий…"
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Import failed: "
+msgstr "Импорт не удался: "
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Corpus updated: +%d imported, %d already present, %d invalid — %d strategies total. Run a fuzz to rank the new entries."
+msgstr "Корпус обновлён: +%d импортировано, %d уже было, %d некорректных — всего %d стратегий. Запустите фаззинг, чтобы ранжировать новые записи."
+
+# DPI sub-tabs + measured quality (ч.123)
+msgid "Quality now"
+msgstr "Качество сейчас"

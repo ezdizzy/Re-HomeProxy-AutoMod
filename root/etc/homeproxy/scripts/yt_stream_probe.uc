@@ -35,7 +35,11 @@ const RUN_DIR = '/var/run/homeproxy';
 const CACHE = RUN_DIR + '/yt_stream.json';
 const OK_TTL = 1800;     /* reuse a stream URL for 30 min (valid ~6 h)  */
 const FAIL_TTL = 600;    /* a failure is cached for 10 min              */
-const VIDEO_ID = 'jNQXAC9IVRw';
+/* ч.123: several tiny stable public videos — the innertube bot-gate is
+ * per-request/per-video; rotating (client × video) triples the chance a
+ * plain streaming URL is handed out (the yts probe is honest-absent without
+ * one, and the real-stream speed is the metric the user actually feels). */
+const VIDEO_IDS = [ 'jNQXAC9IVRw', 'dQw4w9WgXcQ', '9bZkp7q19f0' ];
 const TMO = 20;          /* per-request curl --max-time                 */
 
 /* Public innertube clients that return PLAIN stream URLs (no cipher).
@@ -140,23 +144,28 @@ function main() {
 	}
 	let last_note = 'no answer';
 	for (let cl in CLIENTS) {
-		const bf = '/tmp/yt_body.' + cl.name + '.json';
-		writefile(bf, sprintf("%.J", cl.body));
-		const j = player_request(cl, bf);
-		const st = extract_stream(j);
-		if (st != null && length(st.url) && index(st.url, "'") < 0 &&
-			length(st.host)) {
-			const out = { ok: true, url: st.url, host: st.host,
-				note: cl.name };
-			wcache(out);
-			emit(out, false);
-			return;
+		for (let vid in VIDEO_IDS) {
+			const bf = '/tmp/yt_body.json';
+			const body = cl.body;
+			body.videoId = vid;
+			writefile(bf, sprintf("%.J", body));
+			const j = player_request(cl, bf);
+			const st = extract_stream(j);
+			if (st != null && length(st.url) && index(st.url, "'") < 0 &&
+				length(st.host)) {
+				const out = { ok: true, url: st.url, host: st.host,
+					note: cl.name + '/' + vid };
+				wcache(out);
+				emit(out, false);
+				return;
+			}
+			if (j != null && type(j) === 'object' &&
+				j.playabilityStatus != null)
+				last_note = cl.name + '/' + vid + ': ' +
+					('' + (j.playabilityStatus.status || 'no status'));
+			else
+				last_note = cl.name + '/' + vid + ': no/bad player response';
 		}
-		if (j != null && type(j) === 'object' &&
-			j.playabilityStatus != null)
-			last_note = cl.name + ': ' + ('' + (j.playabilityStatus.status || 'no status'));
-		else
-			last_note = cl.name + ': no/bad player response';
 	}
 	const out = { ok: false, url: '', host: '', note: last_note };
 	wcache(out);

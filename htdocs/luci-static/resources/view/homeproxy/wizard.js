@@ -143,6 +143,15 @@ const callFuzzGenerate = rpc.declare({
 	expect: { '': {} }
 });
 
+/* ч.123: local strategies import (share the corpus between routers). The
+ * payload crosses as a JSON-encoded STRING (issue #11 string-policy). */
+const callCorpusImport = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_corpus_import',
+	params: [ 'candidates' ],
+	expect: { '': {} }
+});
+
 /* The Strategy Lab backend RPCs are UNCHANGED (ч.69/70) — the panel moved
  * here from node.js, the server side did not. */
 const callZapretTest = rpc.declare({
@@ -644,32 +653,90 @@ return view.extend({
 		panes.services.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Check results') ]));
 		panes.services.appendChild(checkResult);
 
-		/* ── DPI pane ──────────────────────────────────────────────────── */
+		/* ── DPI pane — ч.123: FOUR sub-tabs (the flat pane was overloaded:
+		 * pickers, the fuzzer, the auto-pilot and manual strategies all in
+		 * one scroll). Overview = what runs now + measured quality;
+		 * Auto-pilot = the automatic side; Strategy Lab = the fuzzer and
+		 * the catalogs; Manual strategies = the hand-applied side. The
+		 * result area is ONE shared node that moves under the active
+		 * sub-tab — results stay in one place, replacing the previous. */
 		const dpiBanner = E('div', {});
 		const dpiCards = E('div', { 'class': 'hpui-cards' });
 		/* ч.109: the Serving map — what actually serves each resource right
 		 * now (rule → engine → strategy → last check), the user complaint
 		 * «не видно какие реально сейчас используются стратегии». */
 		const dpiMap = E('div', {});
+		const dpiQuality = E('div', {});
 		const dpiStrategy = E('div', {});
 		const dpiLab = E('div', {});
 		const dpiCorpus = E('div', {});
 		const dpiResult = E('div', {});
+		const DPI_TABS = [
+			[ 'dpiOv',  _('Overview') ],
+			[ 'dpiAp',  _('Auto-pilot') ],
+			[ 'dpiLab', _('Strategy Lab') ],
+			[ 'dpiMan', _('Manual strategies') ]
+		];
+		const dpiPanes = {};
+		for (let t in DPI_TABS)
+			dpiPanes[DPI_TABS[t][0]] = E('div', { 'class': 'hpui-pane' });
+		const dpiTabBar = E('div', { 'class': 'hpui-tabs', style: 'margin:8px 0 10px 0' });
+		const dpiResultRow = E('div', {}, [
+			E('h4', { style: 'margin-top:14px' }, [ _('Results') ]),
+			dpiResult
+		]);
+		for (let i in DPI_TABS) {
+			const idx = parseInt(i, 10);
+			const key = DPI_TABS[i][0];
+			const b = E('button', {
+				'class': 'hpui-tab' + (idx === 0 ? ' active' : ''),
+				type: 'button'
+			}, [ DPI_TABS[i][1] ]);
+			b.addEventListener('click', function() {
+				for (let k in dpiPanes)
+					dpiPanes[k].classList.toggle('active', k === key);
+				for (let j = 0; j < dpiTabBar.children.length; j++)
+					dpiTabBar.children[j].classList.toggle('active', j === idx);
+				/* the ONE result area follows the user — always visible at
+				 * the bottom of the active sub-tab */
+				dpiPanes[key].appendChild(dpiResultRow);
+			});
+			dpiTabBar.appendChild(b);
+		}
+		dpiPanes.dpiOv.classList.add('active');
 
-		panes.dpi.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Zapret (nfqws2) and ByeDPI fragment or fake the traffic of the services routed to them — pick a strategy, test it against your ISP in the Strategy Lab, then send a service through the engine and verify live. Everything here runs on the router; results appear below, in one place.') ]));
-		panes.dpi.appendChild(dpiBanner);
-		panes.dpi.appendChild(dpiCards);
-		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('What serves what right now') ]));
-		panes.dpi.appendChild(dpiMap);
-		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy') ]));
-		panes.dpi.appendChild(dpiStrategy);
-		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy Lab') ]));
-		panes.dpi.appendChild(dpiLab);
-		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy catalog') ]));
-		panes.dpi.appendChild(dpiCorpus);
-		panes.dpi.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Results') ]));
-		panes.dpi.appendChild(dpiResult);
+		/* Overview sub-tab — the honest state, no actions here. */
+		dpiPanes.dpiOv.appendChild(E('p', { 'class': 'hpui-hint' },
+			[ _('What runs now: engines, what serves every resource, and the measured quality of the desync path. Actions live on the other sub-tabs; the results area follows you to every tab.') ]));
+		dpiPanes.dpiOv.appendChild(dpiBanner);
+		dpiPanes.dpiOv.appendChild(dpiCards);
+		dpiPanes.dpiOv.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('What serves what right now') ]));
+		dpiPanes.dpiOv.appendChild(dpiMap);
+		dpiPanes.dpiOv.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Quality now') ]));
+		dpiPanes.dpiOv.appendChild(dpiQuality);
+
+		/* Auto-pilot sub-tab — the automatic side (settings + one-click). */
+		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'hpui-hint' },
+			[ _('The automatic side: the scheduled auto-pilot keeps the strategies working without attention, and the one-click pick applies the best strategy for one resource. Both apply with a server snapshot (Restore stays available) and verify the resource live.') ]));
+
+		/* Strategy Lab sub-tab — measure, then decide. */
+		dpiPanes.dpiLab.appendChild(E('p', { 'class': 'hpui-hint' },
+			[ _('Measure, don\'t guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the leaders (and your current strategy) with real content — page, thumbnails, the video stream in KB/s — and ranks honestly. Apply any row per resource, generate mutations, import or share catalogs.') ]));
+		dpiPanes.dpiLab.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy Lab') ]));
+		dpiPanes.dpiLab.appendChild(dpiLab);
+		dpiPanes.dpiLab.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy catalog') ]));
+		dpiPanes.dpiLab.appendChild(dpiCorpus);
+
+		/* Manual strategies sub-tab — everything applied by hand. */
+		dpiPanes.dpiMan.appendChild(E('p', { 'class': 'hpui-hint' },
+			[ _('The manual side: a global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource Composition of both engines, and the service→engine chain. Automatic selection lives on the Auto-pilot sub-tab.') ]));
+		dpiPanes.dpiMan.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy') ]));
+		dpiPanes.dpiMan.appendChild(dpiStrategy);
+
+		dpiPanes.dpiOv.appendChild(dpiResultRow);
+		panes.dpi.appendChild(dpiTabBar);
+		for (let t in DPI_TABS)
+			panes.dpi.appendChild(dpiPanes[DPI_TABS[t][0]]);
 
 		/* ── Advanced pane (plan 15): the Telegram bot settings block moved
 		 * to the dedicated "Telegram Bot" main-menu page. ─────────────── */
@@ -1899,6 +1966,74 @@ return view.extend({
 			}
 		}
 
+		/* ── ч.123: Quality now — the MEASURED state of the desync path in
+		 * one panel: the last video-flow speed (the auto-pilot's health
+		 * journal, or the last fuzz winner when the daemon is off), the
+		 * sweep-level QUIC verdict, the applied strategy and the last fuzz
+		 * winner. Nothing here is assumed — every number came from a probe
+		 * through the configured path. */
+		function renderDpiQuality(dpiSt, apSt, fz) {
+			const res = (fz && fz.result) || null;
+			const sig = JSON.stringify([
+				apSt && apSt.status, (res ? res.ts : null),
+				dpiSt && dpiSt.zapret ? dpiSt.zapret.strategy : null
+			]);
+			if (sig === state.dpiqSig)
+				return;
+			state.dpiqSig = sig;
+			dpiQuality.innerHTML = '';
+			const aps = (apSt && apSt.status && apSt.status.resources &&
+				apSt.status.resources.youtube) || null;
+			let flow = 0, flowWhen = '';
+			if (aps && aps.probe && Number(aps.probe.speed || 0) > 0) {
+				flow = Number(aps.probe.speed);
+				flowWhen = aps.probe.ts
+					? new Date(Number(aps.probe.ts) * 1000).toLocaleString() : '';
+			} else if (res && res.strategies && res.strategies.length &&
+				Number(res.strategies[0].stream || 0) > 0) {
+				flow = Number(res.strategies[0].stream);
+				flowWhen = res.ts
+					? new Date(Number(res.ts) * 1000).toLocaleString() : '';
+			}
+			const flowLine = E('div', { 'class': 'wiz-note' },
+				[ _('Video flow (24 thumbnails, one TLS flow):') ]);
+			if (flow > 0)
+				flowLine.appendChild(badge('hpui-b-green', Math.round(flow / 1024) + ' KB/s'));
+			else
+				flowLine.appendChild(E('span', { style: 'opacity:.5' },
+					[ _('not measured yet') ]));
+			if (flowWhen)
+				flowLine.appendChild(document.createTextNode(' · ' + flowWhen));
+			dpiQuality.appendChild(flowLine);
+			if (res && res.quic && res.quic.verdict != null) {
+				const qv = '' + res.quic.verdict;
+				dpiQuality.appendChild(E('div', { 'class': 'wiz-note' }, [
+					_('QUIC (UDP 443) to the video edge:'),
+					(qv === 'vn')
+						? badge('hpui-b-green', 'open')
+						: badge('hpui-b-red', (qv === 'icmp') ? 'rejected' : 'no answer')
+				]));
+			}
+			const z = (dpiSt && dpiSt.zapret) || {};
+			if (z.strategy)
+				dpiQuality.appendChild(E('div', { 'class': 'wiz-note' }, [
+					_('Applied Zapret strategy:'),
+					E('span', { title: z.strategy },
+						[ (z.strategy_name || shortStrategy(z.strategy, 70)) ])
+				]));
+			if (res && res.strategies && res.strategies.length &&
+				Number(res.strategies[0].ok || 0) > 0) {
+				const b = res.strategies[0];
+				dpiQuality.appendChild(E('div', { 'class': 'wiz-note' }, [
+					_('Last fuzz winner: %s (flow %s).').format(b.name || _('custom args'),
+						(Number(b.stream || 0) > 0)
+							? (Math.round(b.stream / 1024) + ' KB/s') : _('n/a'))
+				]));
+			}
+			dpiQuality.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:2px 0 0 0; opacity:.8' },
+				[ _('Every number here was measured through your real path. The flow speed refreshes on every auto-pilot health check; without the auto-pilot it comes from the last fuzz ranking.') ]));
+		}
+
 		/* Strategy row — persistent elements, options rebuilt on corpus change. */
 		const stratSel = E('select', { 'class': 'cbi-input-select wiz-select' });
 		const stratInput = E('input', { type: 'text', 'class': 'cbi-input-text wiz-strat',
@@ -1919,6 +2054,9 @@ return view.extend({
 		function renderStrategySel(cands) {
 			state.cands = cands || [];
 			const sig = JSON.stringify((cands || []).map(function(c) { return c.name; }));
+			/* ч.123: the honest FULL-sweep duration follows the corpus size. */
+			if (autFullTxt)
+				autFullTxt.textContent = _('Thorough (full corpus, ~%d min)').format(fuzzEtaMin(state.cands.length || 13));
 			if (sig !== state.stratSig) {
 				/* Corpus changed (first poll included): rebuild the composition
 				 * rows so their catalog selects pick up the candidates. */
@@ -2738,7 +2876,7 @@ return view.extend({
 		dpiLab.appendChild(labBest);
 		dpiLab.appendChild(labHist);
 		dpiLab.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the top five with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A full sweep takes up to ~15 minutes.') ]));
+			[ _('The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the handshake top-5, representatives of every technique family and your CURRENT strategy with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it).') ]));
 
 		let labPollId = null;
 		function labStopPoll() { if (labPollId) { window.clearInterval(labPollId); labPollId = null; } }
@@ -2753,7 +2891,7 @@ return view.extend({
 			}, 5000);
 		}
 
-		function renderLab(r) {
+		function renderLab(r, dpiSt) {
 			const st = (r && r.status) || {};
 			const res = (r && r.result) || null;
 			const hist = (r && r.history && r.history.runs) || [];
@@ -2802,14 +2940,41 @@ return view.extend({
 			else
 				box.appendChild(E('div', { 'class': 'wiz-note', style: 'font-weight:600' },
 					[ _('No strategy passes the distinguishing hosts — try the full fuzz, the strategy generator, or check your ISP blocking.') ]));
+			/* ч.123: the sweep-level QUIC verdict — measured UDP/443
+			 * passability to the YouTube video edge, once per sweep. */
+			if (res.quic && res.quic.verdict != null) {
+				const qv = '' + res.quic.verdict;
+				const qtxt = (qv === 'vn')
+					? _('QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — the browser may pick QUIC for some flows; strategies without fake-QUIC leave those attempts unserved.')
+					: (qv === 'icmp')
+						? _('QUIC (UDP 443) to the YouTube video edge is REJECTED (measured) — the browser falls back to TCP quickly; TCP-only strategies serve the whole resource.')
+						: _('QUIC (UDP 443) to the YouTube video edge gets NO answer (measured) — typically a silent provider cut; the browser falls back to TCP, TCP-only strategies serve the whole resource.');
+				box.appendChild(E('div', { 'class': 'wiz-note', title: 'probe_pool -quic-check (Version Negotiation, UDP/443)' },
+					[ (qv === 'vn')
+						? badge('hpui-b-green', 'QUIC: open')
+						: badge('hpui-b-red', 'QUIC: ' + qv),
+					  ' ' + qtxt ]));
+			}
+			/* ч.123: the honest duration line — the corpus size decides. */
+			box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' },
+				[ _('This sweep: %d strategies — the deep battery measured %d of them (the handshake top-5, distinct technique families and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus.').format(
+					res.total || res.strategies.length, res.deep_count || 0,
+					fuzzEtaMin(13), fuzzEtaMin(res.total || res.strategies.length)) ]));
 			const thead = E('thead', {}, E('tr', {}, [
 				E('th', {}, [ '#' ]),
 				E('th', {}, [ _('Strategy') ]),
 				E('th', {}, [ _('Passed') ]),
 				E('th', {}, [ _('Avg TLS, ms') ]),
+				E('th', { title: _('The sustained video-flow speed measured in the deep battery (KB/s through the configured path) — a fast handshake does not predict a fast flow.') },
+					[ _('Flow, KB/s') ]),
 				E('th', {}, [ _('Resource loads') ]),
 				E('th', {}, [ _('Apply for') ])
 			]));
+			/* ч.123: the current strategy's OWN measured flow — the honest
+			 * comparison point for the «быстрее текущей» hint. */
+			const curArgs = dpiSt && dpiSt.zapret ? ('' + (dpiSt.zapret.strategy || '')) : '';
+			const curRow = (curArgs && res.strategies.filter(function(x) { return x.args === curArgs; })[0]) || null;
+			const curStream = (curRow && Number(curRow.stream || 0)) || 0;
 			const tbody = E('tbody', {});
 			res.strategies.slice(0, 15).forEach(function(s, i) {
 				const hostsTip = (s.hosts || []).map(function(h) {
@@ -2906,12 +3071,33 @@ return view.extend({
 				}
 				else
 					deepTd = E('td', { style: 'opacity:.5' }, [ '—' ]);
+				/* ч.123: QUIC badge (TCP-only vs QUIC-capable) + the MEASURED
+				 * flow column — the metric the user actually feels (a fast
+				 * handshake does not predict a fast flow, ч.116). A row whose
+				 * flow beats the currently applied strategy by >25% is marked
+				 * honestly (the auto-pilot uses the same margin). */
+				const quicCapable = /--filter-udp=443/.test(s.args || '');
+				const flowKb = Math.round((s.stream || 0) / 1024);
+				const flowParts = [];
+				if (flowKb > 0) {
+					flowParts.push(flowKb + ' KB/s');
+					const curKb = Math.round(curStream / 1024);
+					if (curKb > 0 && s.args !== curArgs && flowKb > Math.round(curKb * 1.25))
+						flowParts.push(_('↑ +%d KB/s vs current').format(flowKb - curKb));
+				}
+				const flowTd = E('td', { style: 'white-space:nowrap' }, (flowParts.length)
+					? [ E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ flowParts.join(' ') ]) ]
+					: [ E('span', { style: 'opacity:.35' }, [ '—' ]) ]);
 				const row = E('tr', { 'data-fuzz-args': s.args }, [
 					E('td', { style: 'opacity:.7' }, [ String(i + 1) ]),
-					E('td', { style: 'font-size:.85em; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap', title: (s.args + ' — ' + hostsTip) },
-						[ s.name || s.args ]),
+					E('td', { style: 'font-size:.85em; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap', title: (s.args + ' — ' + hostsTip) },
+						[ s.name || s.args, ' ',
+						  quicCapable
+							? badge('hpui-b-green', 'QUIC')
+							: E('span', { 'class': 'hpui-badge', style: 'opacity:.7' }, [ 'TCP' ]) ]),
 					E('td', { style: 'white-space:nowrap' }, [ '%d / %d'.format(s.ok || 0, s.total || 0) ]),
 					E('td', {}, [ String(s.avg_tls_ms || 0) ]),
+					flowTd,
 					deepTd,
 					E('td', { style: 'white-space:nowrap' }, [ resSel, ' ', ab ])
 				]);
@@ -2968,27 +3154,36 @@ return view.extend({
 		  ['telegram', _('Telegram')], ['general', _('General (best overall)')] ]
 			.forEach(function(o) { autSel.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
 		const autFull = E('input', { type: 'checkbox' });
+		/* ч.123: honest sweep duration — computed from the corpus size
+		 * (resolve+baseline + strategies×rounds×~55 s + the deep tail), the
+		 * old «up to ~15 min» hid how long a FULL sweep really takes. */
+		function fuzzEtaMin(total) {
+			return Math.max(5, Math.ceil((60 + total * 2 * 55 + 600) / 60));
+		}
+		const autFullTxt = E('span', {}, [ '' ]);
+		autFullTxt.textContent = _('Thorough (full corpus, ~%d min)').format(fuzzEtaMin(13));
 		const autSetRule = E('input', { type: 'checkbox', checked: '' });
 		const autSetRuleWrap = E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
 			[ autSetRule, ' ' + _('Also set the rule to Zapret (the strategy serves the resource through its rule)') ]);
 		const autFullWrap = E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
-			[ autFull, ' ' + _('Thorough (full corpus, up to ~15 min)') ]);
+			[ autFull, ' ', autFullTxt ]);
 		const autStatus = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
 		const autBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
 			[ _('Auto-pick strategy') ]);
 		const autRow = E('div', { 'class': 'wiz-row' },
 			[ autBtn, autSel, autFullWrap, autSetRuleWrap, autStatus ]);
-		dpiLab.appendChild(autRow);
-		dpiLab.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the ByeDPI card above.') ]));
+		dpiPanes.dpiAp.appendChild(autRow);
+		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'wiz-note' },
+			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the Manual strategies sub-tab.') ]));
 		autSel.addEventListener('change', function() {
 			autSetRuleWrap.style.display = (autSel.value === 'general') ? 'none' : '';
 		});
 		autBtn.addEventListener('click', function() {
 			const resource = autSel.value;
 			const mode = autFull.checked ? 'full' : 'quick';
+			const eta = fuzzEtaMin(state.cands && state.cands.length ? state.cands.length : 87);
 			const what = (mode === 'full')
-				? _('Auto-pick the best strategy for %s? This may first run the FULL fuzz (up to ~15 min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live.')
+				? _('Auto-pick the best strategy for %s? This may first run the FULL fuzz (~%d min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live.').format(autSel.options[autSel.selectedIndex].text, eta)
 				: _('Auto-pick the best strategy for %s? It uses the recent fuzz ranking (or runs a quick fuzz first), applies the winner with a server snapshot (Restore stays available) and checks the resource live.');
 			if (!window.confirm(what.format(autSel.options[autSel.selectedIndex].text)))
 				return;
@@ -3063,7 +3258,7 @@ return view.extend({
 			  apCheck, E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ 'min' ]),
 			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('apply in window') ]),
 			  apWin ]);
-		dpiLab.appendChild(E('div', { style: 'margin-top:14px; border-top:1px solid rgba(127,127,127,.25); padding-top:8px' },
+		dpiPanes.dpiAp.appendChild(E('div', { style: 'margin-top:14px; border-top:1px solid rgba(127,127,127,.25); padding-top:8px' },
 			[ apHead, apRow1, apResWrap, apRow3, E('p', { 'class': 'wiz-note' },
 				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
 		let apDirty = false;
@@ -3392,6 +3587,67 @@ return view.extend({
 		const genBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Generate mutations') ]);
 		corpusBtns.appendChild(updBtn);
 		corpusBtns.appendChild(genBtn);
+		/* ч.123: share strategies between routers (the same user runs TWO
+		 * with different ISPs): export the corpus as JSON, import a file with
+		 * the same merge rules as the catalog (no duplicate args, cap 240).
+		 * The RANKING itself is ISP-specific and is never exported — the note
+		 * says so explicitly. */
+		const expBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Export strategies') ]);
+		const impBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Import strategies') ]);
+		const impFile = E('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
+		expBtn.addEventListener('click', function() {
+			const cands = (state.cands || []).map(function(c) {
+				return { name: c.name, args: c.args, group: c.group || 'imported' };
+			});
+			if (!cands.length) {
+				ui.addNotification(null, E('p', {}, _('Nothing to export — the corpus is empty.')), 'error');
+				return;
+			}
+			const doc = { format: 're-homeproxy-strategies', version: 1,
+				exported: new Date().toISOString(),
+				note: _('Strategies are ISP-specific: the RANKING does not transfer between providers — import and re-run the fuzz.'),
+				candidates: cands };
+			const blob = new Blob([ JSON.stringify(doc, null, 2) ], { type: 'application/json' });
+			const a = E('a', { href: URL.createObjectURL(blob), download: 'homeproxy-zapret-strategies.json' });
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+		});
+		impBtn.addEventListener('click', function() { impFile.click(); });
+		impFile.addEventListener('change', function() {
+			const f = impFile.files && impFile.files[0];
+			impFile.value = '';
+			if (!f)
+				return;
+			const rd = new FileReader();
+			rd.onload = function() {
+				let doc = null;
+				try { doc = JSON.parse('' + rd.result); } catch (e) {
+					ui.addNotification(null, E('p', {}, _('Not a valid strategies JSON file.')), 'error');
+					return;
+				}
+				const list = (doc && doc.candidates) ? doc.candidates : (Array.isArray(doc) ? doc : null);
+				if (!list) {
+					ui.addNotification(null, E('p', {}, _('Not a valid strategies JSON file.')), 'error');
+					return;
+				}
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Importing %d strategies…').format(list.length) ]));
+				L.resolveDefault(callCorpusImport(JSON.stringify(list)), {}).then(function(r) {
+					if (!r || r.result === false) {
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Import failed: ') + ((r && r.error) || _('rpc error')) ]));
+						return;
+					}
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Corpus updated: +%d imported, %d already present, %d invalid — %d strategies total. Run a fuzz to rank the new entries.').format(r.added || 0, r.skipped || 0, r.bad || 0, r.total || 0) ]));
+					refresh();
+				});
+			};
+			rd.readAsText(f);
+		});
+		corpusBtns.appendChild(expBtn);
+		corpusBtns.appendChild(impBtn);
 		corpusBtns.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0', id: 'wiz-corpus-status' }, [ '' ]));
 		const prevBox = E('div', {});
 		dpiCorpus.appendChild(corpusLine);
@@ -3525,7 +3781,7 @@ return view.extend({
 				seedCompProfiles((data[2] || {}).comp_profiles);
 				renderStrategySel((data[3] && data[3].candidates) || []);
 				renderCorpus(data[2] ? (data[2].corpus || {}) : {}, data[4] || {});
-				renderLab(data[5] || {});
+				renderLab(data[5] || {}, data[2] || {});
 				renderTgwsp(data[6] || {});
 				/* Ф8-F4: compose test progress/result + the server-snapshot
 				 * Restore row (covers composition AND plain strategy applies). */
@@ -3536,6 +3792,8 @@ return view.extend({
 				renderAutoPilot(data[9] || {});
 				/* ч.109: the Serving map (rule → engine → strategy → check). */
 				renderServingMap(data[2] || {}, (data[1] && data[1].rules) ? data[1] : null, data[9] || {});
+				/* ч.123: the Overview «Quality now» panel. */
+				renderDpiQuality(data[2] || {}, data[9] || {}, data[5] || {});
 				renderRollback((data[2] && data[2].rollback) || null);
 
 				/* Deferred live check: fire once the core is running again
