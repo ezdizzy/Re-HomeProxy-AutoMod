@@ -1929,15 +1929,25 @@ if (!isEmpty(main_node)) {
 				}
 				/* Sticky: resume on the daemon's last active pick after a restart
 				 * (it may be a direct node the daemon failed over to); a dead-
-				 * marked pick is never fronted. Otherwise the group. */
+				 * marked pick is never fronted. "prefer" is EXEMPT: the exit must
+				 * return to the GROUP on every regen+restart — the group fronts
+				 * the preferred node (top-level [preferred, alt] + urltest_sticky
+				 * + PREFER_HOLD_TOLERANCE), and resuming the daemon's last
+				 * concrete pick here re-pinned a stale node forever: the daemon
+				 * adopts the selector pick as its antiflap pin at startup, and
+				 * prefer mode never migrates the pin back (sustained-better is
+				 * exempt), so changing the preferred node had no effect until
+				 * the stale pick actually died. Otherwise the group. */
 				let hs_default = null;
-				try {
-					const hs_prev = json(readfile(RUN_DIR + '/hotswap_state.json') || '');
-					if (hs_prev && type(hs_prev.active) === 'string' &&
-					    index(hs_members, hs_prev.active) >= 0 &&
-					    urltest_dead[hs_prev.active] == null)
-						hs_default = hs_prev.active;
-				} catch (e) { hs_default = null; }
+				if (main_urltest_mode !== 'prefer') {
+					try {
+						const hs_prev = json(readfile(RUN_DIR + '/hotswap_state.json') || '');
+						if (hs_prev && type(hs_prev.active) === 'string' &&
+						    index(hs_members, hs_prev.active) >= 0 &&
+						    urltest_dead[hs_prev.active] == null)
+							hs_default = hs_prev.active;
+					} catch (e) { hs_default = null; }
+				}
 				if (isEmpty(hs_default))
 					hs_default = hs_group;
 				push(config.outbounds, {

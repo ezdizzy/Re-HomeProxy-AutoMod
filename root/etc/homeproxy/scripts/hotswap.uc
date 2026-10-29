@@ -414,13 +414,26 @@ while (true) {
 		if (pinned == null) {
 			/* Seed: respect a concrete selector pick (sticky default from the
 			 * generator or a manual pick); otherwise pin the group's current
-			 * pick so the exit stops following the kernel's noisy re-ranks. */
-			let seed = pinnable(active) ? active : null;
-			if (seed == null && hs.mode === 'urltest') {
-				const gsel = proxies[hs.primary];
-				const gpick = (gsel && type(gsel) === 'object') ? gsel.now : null;
-				if (pinnable(gpick))
-					seed = gpick;
+			 * pick so the exit stops following the kernel's noisy re-ranks.
+			 * "prefer" seeds ONLY from the group's pick: the group front IS the
+			 * preferred node there, while the selector's concrete pick may be
+			 * a stale resume (an older generator/daemon state) — adopting it
+			 * pinned a wrong node forever, because prefer mode never migrates
+			 * the pin back (sustained-better is exempt by design). */
+			let seed = null;
+			if (hs.pool_mode === 'prefer') {
+				const psel = proxies[hs.primary];
+				const ppick = (psel && type(psel) === 'object') ? psel.now : null;
+				if (pinnable(ppick))
+					seed = ppick;
+			} else {
+				seed = pinnable(active) ? active : null;
+				if (seed == null && hs.mode === 'urltest') {
+					const gsel = proxies[hs.primary];
+					const gpick = (gsel && type(gsel) === 'object') ? gsel.now : null;
+					if (pinnable(gpick))
+						seed = gpick;
+				}
 			}
 			if (seed != null) {
 				if (active === seed) {
