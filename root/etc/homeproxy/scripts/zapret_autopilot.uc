@@ -15,7 +15,7 @@
  *                         to zapret-out: a strategy serves a resource ONLY
  *                         through its rule. Telegram is skipped while the
  *                         tg-ws bridge owns that rule.
- *   interval_h 1..24    — scheduled re-rank interval (default 6)
+ *   interval_h 1..168   — scheduled re-rank interval (default 6)
  *   check_min 5..180    — health probe interval (default 15)
  *   window ''|'HH:MM-HH:MM' — scheduled re-ranks only inside the window
  *                         (the "night pick" idea). HEALTH re-picks happen
@@ -242,7 +242,7 @@ function window_active(cfg) {
 		return true;
 	const cur = now_hm();
 	if (cur < 0) {
-		log_once('windate', 'the local time is unreadable — the window is treated as inactive');
+		log_once('windate', 'локальное время нечитаемо — окно считается неактивным');
 		return true;
 	}
 	const a = cfg.window.from, b = cfg.window.to;
@@ -288,7 +288,7 @@ function cfg_read() {
 		enabled: (get('enabled', '0') === '1'),
 		resources: resources,
 		set_rules: (get('set_rules', '1') === '1'),
-		interval_h: (ih >= 1 && ih <= 24) ? ih : 6,
+		interval_h: (ih >= 1 && ih <= 168) ? ih : 6,
 		check_min: (cm >= 5 && cm <= 180) ? cm : 15,
 		fail_strikes: (fs_ >= 1 && fs_ <= 5) ? fs_ : 2,
 		fuzz_mode: (get('fuzz_mode', 'quick') === 'full') ? 'full' : 'quick',
@@ -379,12 +379,12 @@ function probe_live(url) {
 	const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
 	const eff = (length(parts) > 2) ? ('' + parts[2]) : '';
 	let dead = (code === '000');
-	let note = dead ? 'no HTTP answer' : '';
+	let note = dead ? 'нет HTTP-ответа' : '';
 	if (!dead && length(eff)) {
 		const oh = url_host(url), eh = url_host(eff);
 		if (length(oh) && length(eh) && oh !== eh && is_stub_host(eh)) {
 			dead = true;
-			note = 'operator stub redirect (' + eh + ')';
+			note = 'редирект на заглушку оператора (' + eh + ')';
 		}
 	}
 	if (!dead && code === '200') {
@@ -394,7 +394,7 @@ function probe_live(url) {
 			for (let sig in BLOCK_SIGS) {
 				if (index(lb, sig) >= 0) {
 					dead = true;
-					note = 'block page signature ("' + sig + '")';
+					note = 'подпись блок-страницы («' + sig + '»)';
 					break;
 				}
 			}
@@ -492,24 +492,25 @@ function ensure_ranking(cfg) {
 	const fresh = (fz && fz.strategies && length(fz.strategies) &&
 		(fz.ts && (time() - int(fz.ts)) < FUZZ_FRESH));
 	if (fresh) {
-		log_once('fuzzreuse', 'reusing the existing fuzz ranking (younger than 6 h)');
+		log_once('fuzzreuse', 'использую существующий рейтинг фаззинга (моложе 6 ч)');
 		return fz;
 	}
 	if (fuzz_running()) {
 		const rem = fuzz_remaining_est(read_json(FUZZ_STATUS));
 		if (rem > FUZZ_WAIT_MAX) {
 			ENSURE_POSTPONED = true;
-			log_once('fuzzskip', 'a long sweep is running (~' + int(rem / 60) +
-				' min left) — the re-rank resumes after it; health probes keep running');
+			log_once('fuzzskip', 'идёт долгий прогон (~' + int(rem / 60) +
+				' мин до конца) — переразметка продолжится после него; проверки здоровья идут');
 			return null;
 		}
-		log_once('fuzzwait', 'a fuzz run is in progress — waiting for the fresh ranking (~' +
-			int(rem / 60) + ' min left)…');
+		log_once('fuzzwait', 'идёт прогон фаззинга — жду свежий рейтинг (~' +
+			int(rem / 60) + ' мин до конца)…');
 		return wait_fuzz(time() + rem + 300);
 	}
 	const setsid = (access('/usr/bin/setsid') || access('/bin/setsid')) ? 'setsid ' : '';
-	stage('fuzz', 'starting a ' + cfg.fuzz_mode + ' fuzz…');
-	log('the ranking is missing or older than 6 h — starting a ' + cfg.fuzz_mode + ' fuzz');
+	stage('fuzz', 'запускаю ' + ((cfg.fuzz_mode === 'full') ? 'полный' : 'быстрый') + ' фаззинг…');
+	log('рейтинга нет или он старше 6 ч — запускаю ' +
+		((cfg.fuzz_mode === 'full') ? 'полный' : 'быстрый') + ' фаззинг');
 	const t0 = time();
 	system(`${setsid}sh /etc/homeproxy/scripts/zapret_fuzz.sh ${cfg.fuzz_mode} 2 >/dev/null 2>&1 &`);
 	if (!wait_fuzz_owner(t0))
@@ -517,7 +518,7 @@ function ensure_ranking(cfg) {
 	const rem = fuzz_remaining_est(read_json(FUZZ_STATUS));
 	if (rem > FUZZ_WAIT_MAX) {
 		ENSURE_POSTPONED = true;
-		log('the sweep needs ~' + int(rem / 60) + ' min — the daemon resumes the cycle after it (the sweep keeps running)');
+		log('прогону нужно ~' + int(rem / 60) + ' мин — демон продолжит цикл после него (прогон не прерывается)');
 		return null;
 	}
 	return wait_fuzz(time() + rem + 300);
@@ -646,7 +647,7 @@ function pick_resource(fz, res, exclude_args) {
 	const runners = [];
 	for (let i = 1; i < length(elig) && i <= 3; i++)
 		push(runners, { name: elig[i].s.name, ms: elig[i].ms });
-	return { name: '' + (elig[0].s.name || 'custom args'), args: '' + elig[0].s.args,
+	return { name: '' + (elig[0].s.name || 'кастомные аргументы'), args: '' + elig[0].s.args,
 		tls_ms: elig[0].ms, deep: elig[0].deep,
 		deep_pass: elig[0].deep_pass, deep_total: elig[0].deep_total,
 		stream: int(elig[0].stream || 0), start_ms: int(elig[0].start || 0),
@@ -662,7 +663,7 @@ function pick_general(fz, exclude_args) {
 		const args = '' + (s.args || '');
 		if (!shape_ok(args) || args == exclude_args || tried_has('general', args))
 			continue;
-		return { name: '' + (s.name || 'custom args'), args: args,
+		return { name: '' + (s.name || 'кастомные аргументы'), args: args,
 			tls_ms: int(s.avg_tls_ms) || 0, score: int(s.score) || 0, runners: [] };
 	}
 	return null;
@@ -675,7 +676,7 @@ function tail_for(cfg, fz) {
 		return null;
 	const cur = '' + (cursor().get('homeproxy', 'config', 'zapret_cmd_opts') || '');
 	if (length(cur) && shape_ok(cur) && index(cur, '--new') < 0)
-		return { name: 'current (adopted)', args: cur, tls_ms: 0, score: 0, runners: [] };
+		return { name: 'текущая (принята)', args: cur, tls_ms: 0, score: 0, runners: [] };
 	return fz ? pick_general(fz, null) : null;
 }
 
@@ -715,7 +716,7 @@ function preset_apply(src, node) {
 function ensure_rules(cfg) {
 	const rm = routing_mode();
 	if (rm !== 'proxy_banned_ru') {
-		log_once('rulesmode', 'routing rules apply only in the "Bypass blocking" mode — set_rules is paused (' + rm + ')');
+		log_once('rulesmode', 'правила маршрутизации работают только в режиме «Обход блокировок» — держать правила приостановлено (' + rm + ')');
 		return;
 	}
 	once_clear('rulesmode');
@@ -723,7 +724,7 @@ function ensure_rules(cfg) {
 		if (res === 'general')
 			continue;
 		if (res === 'telegram' && S.tgws) {
-			log_once('tgrule', 'telegram is served by the tg-ws bridge — its rule is not touched');
+			log_once('tgrule', 'Telegram обслуживает мост tg-ws — его правило не трогаем');
 			continue;
 		}
 		const node = rule_node_of(res);
@@ -731,17 +732,17 @@ function ensure_rules(cfg) {
 		if (node === 'zapret-out')
 			continue;
 		S.pending = { kind: 'rule', ts: time(), src: res };
-		stage('rule', 'setting the ' + res + ' rule → Zapret (the service reloads)…');
-		log('the ' + res + ' rule does not lead to Zapret (' + (node || 'no rule') + ') — setting it → Zapret');
+		stage('rule', 'ставлю правило ' + res + ' → Zapret (служба перезагружается)…');
+		log('правило ' + res + ' не ведёт на Zapret (' + (node || 'правила нет') + ') — ставлю → Zapret');
 		const ok = preset_apply(res, 'zapret-out');
 		if (ok) {
 			wait_core(45);
 			S.resources[res].rule_node = 'zapret-out';
 			S.resources[res].note = '';
-			log('the ' + res + ' rule now leads to Zapret');
+			log('правило ' + res + ' теперь ведёт на Zapret');
 		} else {
-			S.resources[res].note = 'the rule was NOT changed (preset apply failed)';
-			log('the ' + res + ' rule was NOT changed (preset apply failed)');
+			S.resources[res].note = 'правило НЕ изменено (применение пресета не удалось)';
+			log('правило ' + res + ' НЕ изменено (применение пресета не удалось)');
 		}
 		S.pending = null;
 		wstat();
@@ -800,7 +801,7 @@ function resume() {
 		return;
 	if ((time() - int(p.ts || 0)) > PENDING_TTL) {
 		S.pending = null;
-		log('an orphaned pending record was dropped');
+		log('осиротевшая pending-запись отброшена');
 		wstat();
 		return;
 	}
@@ -810,12 +811,12 @@ function resume() {
 			S.resources[p.src].rule_node = 'zapret-out';
 		S.pending = null;
 		stage('watch', '');
-		log('resumed after the rule change');
+		log('продолжено после смены правила');
 		wstat();
 		return;
 	}
 	/* kind === 'compose' */
-	stage('verify', 'waiting for the core, then the post-apply check…');
+	stage('verify', 'жду ядро, затем проверка после применения…');
 	if (!wait_core(CORE_WAIT_MAX)) {
 		/* Keep the pending — the verify continues on the next tick. */
 		wstat();
@@ -827,7 +828,7 @@ function resume() {
 		/* The apply never landed — nothing to verify; the next cycle decides. */
 		S.pending = null;
 		stage('watch', '');
-		log('the apply did not land — the next cycle decides again');
+		log('применение не доехало — следующий цикл решит заново');
 		S.next_cycle_ts = time() + 120;
 		wstat();
 		return;
@@ -844,7 +845,7 @@ function resume() {
 			push(regressed, res);
 	}
 	if (length(regressed)) {
-		log('post-apply check FAILED for: ' + join(', ', regressed) + ' — rolling back (the Restore snapshot)');
+		log('проверка после применения ПРОВАЛЕНА для: ' + join(', ', regressed) + ' — откатываю (снапшот Restore)');
 		compose_rollback();
 		wait_core(CORE_WAIT_MAX);
 		for (let res in regressed) {
@@ -875,7 +876,7 @@ function resume() {
 			push(names, res + ' → ' + (winners[res] ? winners[res].name : '?'));
 		if (p.general_winner)
 			push(names, 'general → ' + p.general_winner.name);
-		log('applied: ' + join(' · ', names));
+		log('применено: ' + join(' · ', names));
 	}
 	S.pending = null;
 	S.next_cycle_ts = time() + ((S.config && S.config.interval_h) ? S.config.interval_h : 6) * 3600;
@@ -901,17 +902,17 @@ function apply_target(cfg, target) {
 	if (target.general && target.general.args)
 		push(profiles, { engine: 'zapret', resource: 'general', strategy: target.general.args });
 	if (!length(profiles)) {
-		log('the target composition is empty — nothing to apply');
+		log('целевая композиция пуста — применять нечего');
 		return false;
 	}
 	const built = compose_build(profiles);
 	if (built.error) {
-		log('compose build failed: ' + built.error);
+		log('сборка композиции не удалась: ' + built.error);
 		return false;
 	}
 	const cur = '' + (cursor().get('homeproxy', 'config', 'zapret_cmd_opts') || '');
 	if (built.zapret == cur) {
-		log_once('uptodate', 'the composition is already up to date');
+		log_once('uptodate', 'композиция уже актуальна');
 		S.next_cycle_ts = time() + cfg.interval_h * 3600;
 		return false;
 	}
@@ -946,10 +947,10 @@ function apply_target(cfg, target) {
 		was_ok: was_ok,
 		notes: built.notes
 	};
-	stage('apply', 'applying the composition — the service restarts…');
-	log('applying: ' + join(' · ', target_names));
+	stage('apply', 'применяю композицию — служба перезапускается…');
+	log('применяю: ' + join(' · ', target_names));
 	if (length(built.notes))
-		log('builder notes: ' + join(' | ', built.notes));
+		log('заметки конструктора: ' + join(' | ', built.notes));
 	compose_apply(built.zapret);
 	/* If the restart kill is slow, finish the verify inline; otherwise the
 	 * respawned daemon resumes from the pending journal. */
@@ -964,14 +965,14 @@ function cycle(cfg) {
 		if (ENSURE_POSTPONED) {
 			/* ч.123: a long sweep is running — re-evaluate on the next tick
 			 * instead of blocking (and instead of a false "error" stage). */
-			stage('watch', 'waiting for the running fuzz (~' +
-				int(fuzz_remaining_est(read_json(FUZZ_STATUS)) / 60) + ' min left)');
+			stage('watch', 'жду идущий фаззинг (~' +
+				int(fuzz_remaining_est(read_json(FUZZ_STATUS)) / 60) + ' мин до конца)');
 			S.next_cycle_ts = time() + 900;
 			wstat();
 			return;
 		}
-		stage('error', 'the fuzz did not finish in time');
-		log('the fuzz did not finish — retrying in 30 min');
+		stage('error', 'фаззинг не успел завершиться вовремя');
+		log('фаззинг не завершился — повтор через 30 мин');
 		S.next_cycle_ts = time() + 1800;
 		wstat();
 		return;
@@ -986,7 +987,7 @@ function cycle(cfg) {
 				use = null;
 			else if (cur && cand && (S.general.strikes == 0) &&
 				(cand.score < cur.score + GENERAL_SCORE_STEP)) {
-				log_once('genhold', 'general: the current strategy stays the best within the score margin');
+				log_once('genhold', 'general: текущая стратегия остаётся лучшей в пределах запаса по score');
 				use = null;
 			}
 			if (use)
@@ -996,7 +997,7 @@ function cycle(cfg) {
 		/* A resource whose rule does not lead to Zapret is never served by
 		 * the engine — a scoped block for it would be dead weight. */
 		if (!S.resources[res].mgmt) {
-			log_once('nomgmt_' + res, res + ': the rule does not lead to Zapret — skipped in the composition (repoint the rule or enable "Keep the rules")');
+			log_once('nomgmt_' + res, res + ': правило не ведёт на Zapret — в композицию не входит (перенаправьте правило или включите «Держать правила на Zapret»)');
 			continue;
 		}
 		const cur = S.resources[res].winner;
@@ -1042,10 +1043,10 @@ function cycle(cfg) {
 			else if (cb == 1)
 				switch_ok = tls_better;
 			if (!switch_ok) {
-				log_once('hold_' + res, res + ': the current strategy stays best within the margin (deep ' +
-					((cud >= 0) ? '' + cud : 'n/a') + ' vs ' + ((cd >= 0) ? '' + cd : 'n/a') +
-					', start ' + ust + ' vs ' + cst + ' ms, flow ' + uspd + ' vs ' + cspd +
-					' B/s, TLS ' + cand.tls_ms + ' vs ' + cur.tls_ms + ' ms)');
+				log_once('hold_' + res, res + ': текущая стратегия остаётся лучшей в пределах запаса (deep ' +
+					((cud >= 0) ? '' + cud : 'n/a') + ' против ' + ((cd >= 0) ? '' + cd : 'n/a') +
+					', старт ' + ust + ' против ' + cst + ' мс, поток ' + uspd + ' против ' + cspd +
+					' Б/с, TLS ' + cand.tls_ms + ' против ' + cur.tls_ms + ' мс)');
 				use = null;
 			}
 		}
@@ -1054,7 +1055,7 @@ function cycle(cfg) {
 		else if (cur)
 			target.resources[res] = cur;   /* re-emit the unchanged winner */
 		else
-			log_once('nopick_' + res, res + ': nothing passed the ranking — it rides the general tail');
+			log_once('nopick_' + res, res + ': в рейтинге ничего не прошло — обслуживает общий хвост');
 	}
 	/* Unchanged general winner re-emit + the tail when not managed. */
 	if (target.general == null && has_res(cfg.resources, 'general') && S.general.winner)
@@ -1071,18 +1072,18 @@ function cycle(cfg) {
  * the next alternative NOW (the window does not gate a broken resource). */
 function repair(cfg, res) {
 	const cur = (res === 'general') ? S.general.winner : S.resources[res].winner;
-	stage('fuzz', 'repairing ' + res + '…');
+	stage('fuzz', 'ремонт ' + res + '…');
 	const fz = ensure_ranking(cfg);
 	if (fz == null) {
 		if (ENSURE_POSTPONED) {
 			/* ч.123: a long sweep is running — the repair retries after it
 			 * (probes stay honest: the fuzz holds the CPU either way). */
-			stage('watch', 'waiting for the running fuzz before the repair');
+			stage('watch', 'жду идущий фаззинг перед ремонтом');
 			S.next_check_ts = time() + 600;
 			wstat();
 			return;
 		}
-		stage('error', 'the fuzz did not finish in time (repair)');
+		stage('error', 'фаззинг не успел завершиться вовремя (ремонт)');
 		S.next_check_ts = time() + 600;
 		wstat();
 		return;
@@ -1090,7 +1091,7 @@ function repair(cfg, res) {
 	const alt = (res === 'general') ? pick_general(fz, cur ? cur.args : null)
 		: pick_resource(fz, res, cur ? cur.args : null);
 	if (!alt) {
-		log_once('repair_' + res, res + ': no alternative in the ranking — keeping the current strategy');
+		log_once('repair_' + res, res + ': в рейтинге нет альтернативы — держу текущую стратегию');
 		S.next_check_ts = time() + cfg.check_min * 60;
 		stage('watch', '');
 		wstat();
@@ -1098,8 +1099,8 @@ function repair(cfg, res) {
 	}
 	if (cur)
 		tried_add(res, cur.args);
-	log(res + ': the strategy stopped working (' + ((res === 'general') ? S.general.strikes : S.resources[res].strikes) +
-		' failed checks in a row) — switching to ' + alt.name);
+	log(res + ': стратегия перестала работать (' + ((res === 'general') ? S.general.strikes : S.resources[res].strikes) +
+		' неудачных проверок подряд) — переключаюсь на ' + alt.name);
 	const target = { resources: {}, general: null };
 	for (let rr in cfg.resources) {
 		if (rr === 'general') {
@@ -1123,12 +1124,12 @@ function health(cfg) {
 	if (access(RELOAD_MARK))
 		return;
 	if (!core_up()) {
-		log_once('core', 'the core is down — probes are paused');
+		log_once('core', 'ядро лежит — пробы приостановлены');
 		return;
 	}
 	once_clear('core');
 	if (fuzz_running()) {
-		log_once('probehold', 'probes are paused while the fuzz occupies the CPU (false failures avoided)');
+		log_once('probehold', 'пробы приостановлены, пока фаззинг занимает CPU (чтобы не было ложных отказов)');
 		return;
 	}
 	once_clear('probehold');
@@ -1176,7 +1177,7 @@ function health(cfg) {
 						dead_hit = true;
 					else
 						slow_hit = true;
-					fail_note = 'media host fails (' + dpr.code +
+					fail_note = 'медиа-хост не отвечает (' + dpr.code +
 						(dpr.note ? (' — ' + dpr.note) : '') + '): ' + du;
 				}
 			}
@@ -1184,7 +1185,7 @@ function health(cfg) {
 		if (res === 'youtube') {
 			const fp = probe_flow();
 			if (fp == null)
-				log_once('ytflow', 'the sustained-flow probe did not run (no ids file)');
+				log_once('ytflow', 'проба sustained-потока не выполнялась (нет файла с id)');
 			else {
 				once_clear('ytflow');
 				pr.speed = fp.speed;
@@ -1194,14 +1195,14 @@ function health(cfg) {
 				if (ok_all && fdead) {
 					ok_all = false;
 					dead_hit = true;
-					fail_note = 'the video flow is dead (code ' + (fp.code || '0') + ', ' +
-						int((fp.bytes || 0) / 1024) + ' KB in ' + ((fp.secs != null) ? fp.secs : '?') + ' s)';
+					fail_note = 'видео-поток мёртв (код ' + (fp.code || '0') + ', ' +
+						int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') + ' с)';
 				} else if (ok_all && !fp.ok) {
 					ok_all = false;
 					slow_hit = true;
-					fail_note = 'the video flow is slow (' + int((fp.speed || 0) / 1024) + ' KB/s, ' +
-						int((fp.bytes || 0) / 1024) + ' KB in ' + ((fp.secs != null) ? fp.secs : '?') +
-						' s) — degraded, not dead';
+					fail_note = 'видео-поток медленный (' + int((fp.speed || 0) / 1024) + ' КБ/с, ' +
+						int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') +
+						' с) — деградация, не смерть';
 				}
 			}
 		}
@@ -1214,7 +1215,7 @@ function health(cfg) {
 		st.probe = pr;
 		if (pr.ok) {
 			if (int(st.strikes || 0) > 0)
-				log(res + ': back to normal (' + pr.code + ')');
+				log(res + ': снова в норме (' + pr.code + ')');
 			st.strikes = 0;
 			st.slow = false;
 			st.note = '';
@@ -1225,8 +1226,8 @@ function health(cfg) {
 			st.strikes = (int(st.strikes || 0) < cfg.fail_strikes)
 				? int(st.strikes || 0) + 1 : cfg.fail_strikes;
 			st.slow = false;
-			st.note = 'failed ' + st.strikes + ' check(s) in a row (' + pr.code + ')';
-			log_once('fail_' + res, res + ': the live check FAILED (' + pr.code +
+			st.note = 'неудачных проверок подряд: ' + st.strikes + ' (' + pr.code + ')';
+			log_once('fail_' + res, res + ': живая проверка ПРОВАЛЕНА (' + pr.code +
 				((pr.note) ? (' — ' + pr.note) : '') + ') — ' + st.strikes + '/' + cfg.fail_strikes);
 		} else {
 			/* degraded: alive but slow — never a strike, never a repair-swap
@@ -1234,9 +1235,9 @@ function health(cfg) {
 			 * comes closer (min 30 min) and re-decides through the normal
 			 * anti-flap margins. */
 			st.slow = true;
-			st.note = 'degraded: ' + fail_note;
-			log_once('degraded_' + res, res + ': degraded but ALIVE — ' + fail_note +
-				' (no switch: the strategy works, the re-rank re-evaluates sooner)');
+			st.note = 'деградация: ' + fail_note;
+			log_once('degraded_' + res, res + ': деградация, но ЖИВОЙ — ' + fail_note +
+				' (без смены: стратегия работает, переразметка придёт раньше)');
 			if (S.next_cycle_ts == 0 || S.next_cycle_ts > time() + 1800)
 				S.next_cycle_ts = time() + 1800;
 		}
@@ -1269,12 +1270,12 @@ function adopt_manual() {
 		const w = m.resources[res];
 		if (RESOURCES[res] == null || type(w) !== 'object' || !length('' + (w.args || '')))
 			continue;
-		S.resources[res].winner = { name: '' + (w.name || 'manual pick'),
+		S.resources[res].winner = { name: '' + (w.name || 'ручной выбор'),
 			args: '' + w.args, tls_ms: 0, deep: null,
 			stream: int(w.stream || 0), start_ms: int(w.start_ms || 0), score: 0,
 			manual: true, runners: [] };
 		S.resources[res].strikes = 0;
-		log('the manual pick from the Strategy Lab is adopted for ' + res + ': ' + (w.name || 'custom args'));
+		log('ручной выбор из Лаборатории стратегий принят для ' + res + ': ' + (w.name || 'кастомные аргументы'));
 		any = true;
 	}
 	if (any)
@@ -1296,8 +1297,8 @@ function tick() {
 	if (!cfg.enabled) {
 		S.pending = null;
 		if (S.stage != 'idle') {
-			stage('idle', 'disabled');
-			log('the auto-pilot is disabled');
+			stage('idle', 'выключен');
+			log('автопилот выключен');
 		} else {
 			wstat();
 		}
@@ -1309,7 +1310,7 @@ function tick() {
 		S.next_cycle_ts = time() + 90;
 
 	if (!access(NFQWS) || !S.zapret_enabled) {
-		stage('idle', 'Zapret is not installed or is disabled in Node Settings');
+		stage('idle', 'Zapret не установлен или выключен в настройках узлов');
 		wstat();
 		return;
 	}
@@ -1320,7 +1321,7 @@ function tick() {
 		return;
 	}
 	if (others_busy()) {
-		log_once('busy', 'a one-click auto-pick or a composition test is running — postponed');
+		log_once('busy', 'идёт автоподбор в один клик или тест композиции — отложено');
 		wstat();
 		return;
 	}
@@ -1343,9 +1344,9 @@ function tick() {
 		S.resources[res].rule_node = node;
 		S.resources[res].mgmt = (node === 'zapret-out');
 		if (node !== 'zapret-out' && !cfg.set_rules)
-			log_once('mgmt_' + res, res + ': the rule does not lead to Zapret — strategy management is off for it (enable "set rules")');
+			log_once('mgmt_' + res, res + ': правило не ведёт на Zapret — управление стратегией для него выключено (включите «Держать правила на Zapret»)');
 		if (res === 'telegram' && S.tgws)
-			log_once('tgrule', 'telegram is served by the tg-ws bridge — its rule is not touched');
+			log_once('tgrule', 'Telegram обслуживает мост tg-ws — его правило не трогаем');
 	}
 
 	adopt_manual();
@@ -1366,7 +1367,7 @@ function tick() {
 			cycle(cfg);   /* arms next_cycle itself (apply may kill us) */
 			return;
 		}
-		log_once('window', 'outside the maintenance window — the scheduled re-rank waits');
+		log_once('window', 'вне окна обслуживания — плановая переразметка ждёт');
 	}
 	wstat();
 }
@@ -1379,9 +1380,9 @@ function main() {
 	S.alive = true;
 	S.error = '';
 	wstat();
-	log('the auto-pilot daemon started');
+	log('демон автопилота запущен');
 	if (S.pending) {
-		stage('resume', 'resuming the interrupted action…');
+		stage('resume', 'продолжаю прерванное действие…');
 		resume();
 	}
 	while (true) {
@@ -1389,8 +1390,8 @@ function main() {
 			tick();
 		} catch (e) {
 			S.error = '' + e;
-			stage('error', 'internal error: ' + S.error);
-			log('internal error: ' + S.error);
+			stage('error', 'внутренняя ошибка: ' + S.error);
+			log('внутренняя ошибка: ' + S.error);
 		}
 		sleep(TICK * 1000);
 	}

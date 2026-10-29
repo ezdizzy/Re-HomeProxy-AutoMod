@@ -3246,7 +3246,7 @@ return view.extend({
 		const apMode = E('select', { 'class': 'cbi-input-select', style: 'width:auto' });
 		[ ['quick', _('Quick fuzz')], ['full', _('Full fuzz')] ]
 			.forEach(function(o) { apMode.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
-		const apInterval = E('input', { type: 'number', min: '1', max: '24', 'class': 'cbi-input-text', style: 'width:70px', value: '6' });
+		const apInterval = E('input', { type: 'number', min: '1', max: '168', 'class': 'cbi-input-text', style: 'width:70px', value: '6' });
 		const apCheck = E('input', { type: 'number', min: '5', max: '180', 'class': 'cbi-input-text', style: 'width:70px', value: '15' });
 		const apWin = E('input', { type: 'text', 'class': 'cbi-input-text', style: 'width:150px',
 			placeholder: _('empty — any time') });
@@ -3286,7 +3286,7 @@ return view.extend({
 			  apWin ]);
 		dpiPanes.dpiAp.appendChild(E('div', { style: 'margin-top:14px; border-top:1px solid rgba(127,127,127,.25); padding-top:8px' },
 			[ apHead, apRow1, apResWrap, apRow3, E('p', { 'class': 'wiz-note' },
-				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
+				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The "apply in window" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
 		let apDirty = false;
 		let apSig = null;
 		for (let k in apRes)

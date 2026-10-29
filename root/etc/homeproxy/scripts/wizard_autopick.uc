@@ -200,7 +200,7 @@ function wait_fuzz(deadline) {
 	while (time() < deadline) {
 		const st = read_json(FUZZ_STATUS);
 		if (st && st.running && (time() - int(st.ts || 0)) > FUZZ_DEAD)
-			return { fail: 'stale', error: 'the fuzz writer died mid-sweep (no status updates for 15+ min) — start it again from the Strategy Lab' };
+			return { fail: 'stale', error: 'процесс фаззинга умер посреди прогона (нет обновлений статуса 15+ мин) — запустите его снова из Лаборатории стратегий' };
 		if (st == null || !st.running) {
 			const r = read_json(FUZZ_RESULT);
 			if (r && r.strategies && length(r.strategies))
@@ -210,8 +210,8 @@ function wait_fuzz(deadline) {
 				continue;
 			}
 			if (st.error != null && length('' + st.error))
-				return { fail: 'empty', error: 'the fuzz failed: ' + st.error };
-			return { fail: 'empty', error: 'the fuzz ended without a result (and without an error) — start it again from the Strategy Lab' };
+				return { fail: 'empty', error: 'фаззинг завершился с ошибкой: ' + st.error };
+			return { fail: 'empty', error: 'фаззинг завершился без результата (и без ошибки) — запустите его снова из Лаборатории стратегий' };
 		}
 		if (!sized && int(st.total || 0) > 0) {
 			sized = true;
@@ -226,13 +226,13 @@ function wait_fuzz(deadline) {
 	if (stx && stx.current)
 		prog = ' (' + stx.current + ')';
 	return { fail: 'timeout',
-		error: 'the fuzz is still running' + prog + ' — the pick stopped waiting; the ranking appears in the Strategy Lab when the sweep finishes' };
+		error: 'фаззинг всё ещё идёт' + prog + ' — подбор перестал ждать; рейтинг появится в Лаборатории стратегий, когда прогон завершится' };
 }
 
 function fuzz_fail(res, msg) {
 	res.running = false;
 	res.stage = 'error';
-	res.error = msg || 'the fuzz did not finish in time';
+	res.error = msg || 'фаззинг не успел завершиться вовремя';
 	wstat(res);
 }
 
@@ -257,7 +257,7 @@ function main() {
 	const req = read_json(REQ);
 	const meta = RESOURCES[req && req.resource];
 	if (meta == null) {
-		wstat({ running: false, stage: 'error', error: 'invalid resource' });
+		wstat({ running: false, stage: 'error', error: 'неизвестный ресурс' });
 		return;
 	}
 	const resource = req.resource;
@@ -270,7 +270,7 @@ function main() {
 
 	if (!access(NFQWS)) {
 		res.running = false; res.stage = 'error';
-		res.error = 'zapret2 is not installed';
+		res.error = 'zapret2 не установлен';
 		wstat(res);
 		return;
 	}
@@ -290,7 +290,7 @@ function main() {
 			(fz.ts && (time() - int(fz.ts)) < FUZZ_FRESH));
 		const running = (st && st.running);
 		if (running) {
-			note(res, 'A fuzz run is already in progress — waiting for it to finish…');
+			note(res, 'Прогон фаззинга уже идёт — жду его завершения…');
 			wstat(res);
 			const w = wait_fuzz(time() + FUZZ_WAIT_MAX);
 			if (w.fz == null) {
@@ -299,12 +299,13 @@ function main() {
 			}
 			fz = w.fz;
 		} else if (!fresh) {
-			note(res, 'Starting a ' + mode + ' fuzz (the previous ranking is missing or older than 6 h)…');
+			note(res, 'Запускаю ' + ((mode === 'full') ? 'полный' : 'быстрый') +
+				' фаззинг (прошлого рейтинга нет или он старше 6 ч)…');
 			wstat(res);
 			const t0 = time();
 			system(`sh /etc/homeproxy/scripts/zapret_fuzz.sh ${mode} 2 >/dev/null 2>&1 &`);
 			if (!wait_fuzz_owner(t0)) {
-				fuzz_fail(res, 'the fuzz did not start in time — check the Strategy Lab status');
+				fuzz_fail(res, 'фаззинг не стартовал вовремя — проверьте статус в Лаборатории стратегий');
 				return;
 			}
 			const w = wait_fuzz(time() + FUZZ_WAIT_MAX);
@@ -314,7 +315,7 @@ function main() {
 			}
 			fz = w.fz;
 		} else {
-			note(res, 'Reusing the existing fuzz ranking (younger than 6 h).');
+			note(res, 'Использую существующий рейтинг фаззинга (моложе 6 ч).');
 		}
 
 		/* 2. PICK — resource-tag ranking (majority pass, non-free-pass host). */
@@ -412,14 +413,14 @@ function main() {
 		if (chosen == null) {
 			res.running = false; res.stage = 'error';
 			res.error = (meta.tag == null)
-				? 'no strategy passed any distinguishing host'
-				: 'no corpus strategy passed the resource probe — try the full fuzz or the strategy generator';
+				? 'ни одна стратегия не прошла различающие хосты'
+				: 'ни одна стратегия корпуса не прошла проверку ресурса — попробуйте полный фаззинг или генератор стратегий';
 			wstat(res);
 			return;
 		}
 		if (chosen.args && (match(chosen.args, /[`$;&|<>\n]/) || !match(chosen.args, /^--[a-z]/))) {
 			res.running = false; res.stage = 'error';
-			res.error = 'the winning strategy has an unexpected shape — refused for safety';
+			res.error = 'у стратегии-победителя неожиданный формат — по соображениям безопасности отказано';
 			wstat(res);
 			return;
 		}
@@ -443,11 +444,11 @@ function main() {
 		if (meta.tag === 'yt' && !match('' + (chosen.args || ''), /--filter-udp=443/)) {
 			const qv = (fz != null && fz.quic != null) ? ('' + (fz.quic.verdict || '')) : '';
 			if (qv === 'vn')
-				note(res, 'QUIC (UDP 443) to YouTube is OPEN through the provider (measured this sweep) — this strategy handles TCP only, so the browser\'s QUIC attempts ride raw without desync. If some videos load slowly while others fly, pick a strategy with fake QUIC (the Lab marks them QUIC).');
+				note(res, 'QUIC (UDP 443) до YouTube у провайдера ОТКРЫТ (измерено в этом прогоне) — стратегия работает только с TCP, поэтому QUIC-попытки браузера идут без дезинка. Если часть видео грузится медленно, а часть летает, возьмите стратегию с fake QUIC (в Лаборатории они помечены QUIC).');
 			else if (qv === 'silence' || qv === 'icmp')
-				note(res, 'QUIC (UDP 443) to YouTube is cut through the provider (measured this sweep: ' + qv + ') — the browser falls back to TCP quickly, so a TCP-only strategy serves the whole resource.');
+				note(res, 'QUIC (UDP 443) до YouTube у провайдера отрезан (измерено в этом прогоне: ' + qv + ') — браузер быстро падает на TCP, поэтому TCP-стратегия обслуживает весь ресурс.');
 			else
-				note(res, 'This strategy handles TCP only (no QUIC/UDP block) — if the video still stalls while the checks pass, try a strategy with a QUIC block (fake QUIC) or keep UDP 443 off for YouTube.');
+				note(res, 'Стратегия работает только с TCP (без блока QUIC/UDP) — если видео всё же тормозит при проходящих проверках, попробуйте стратегию с блоком QUIC (fake QUIC) или не отключайте UDP 443 для YouTube.');
 		}
 	} else {
 		/* ч.109: explicit strategy from the ranking table — resolve its
@@ -455,7 +456,7 @@ function main() {
 		const args = trim('' + req.strategy);
 		if (match(args, /[`$;&|<>\n]/) || !match(args, /^--[a-z]/)) {
 			res.running = false; res.stage = 'error';
-			res.error = 'the strategy has an unexpected shape — refused for safety';
+			res.error = 'у стратегии неожиданный формат — по соображениям безопасности отказано';
 			wstat(res);
 			return;
 		}
@@ -483,19 +484,19 @@ function main() {
 						}
 	}
 	if (!fixed) {
-		note(res, 'Picked: ' + (res.chosen.name || 'custom args') +
-			((res.chosen.avg_tls_ms > 0) ? (' · avg TLS ' + res.chosen.avg_tls_ms + ' ms') : '') +
+		note(res, 'Выбрана: ' + (res.chosen.name || 'кастомные аргументы') +
+			((res.chosen.avg_tls_ms > 0) ? (' · средний TLS ' + res.chosen.avg_tls_ms + ' мс') : '') +
 			((res.chosen.deep && res.chosen.deep.total)
 				? (' · deep ' + res.chosen.deep.ok + '/' + res.chosen.deep.total)
 				: '') +
 			((int(res.chosen.stream || 0) > 0)
-				? (' · video flow ' + int(res.chosen.stream / 1024) + ' KB/s')
+				? (' · видео-поток ' + int(res.chosen.stream / 1024) + ' КБ/с')
 				: '') +
 			((int(res.chosen.start_ms || 0) > 0)
-				? (' · start ' + int(res.chosen.start_ms) + ' ms')
+				? (' · старт ' + int(res.chosen.start_ms) + ' мс')
 				: ''));
 	} else {
-		note(res, 'Applying the strategy you picked: ' + (res.chosen.name || 'custom args') + '.');
+		note(res, 'Применяю выбранную вами стратегию: ' + (res.chosen.name || 'кастомные аргументы') + '.');
 	}
 
 	/* 3. RULE — through the existing preset RPC (single guard set). */
@@ -512,10 +513,10 @@ function main() {
 		try { pr = json(out || ''); } catch (e) { pr = null; }
 		if (pr && pr.result) {
 			res.rule = { source: resource, node: 'zapret-out' };
-			note(res, 'Rule set: ' + resource + ' → Zapret.');
+			note(res, 'Правило установлено: ' + resource + ' → Zapret.');
 		} else {
-			note(res, 'The rule was NOT changed: ' + ((pr && pr.error) || 'preset apply failed') +
-				' — the strategy still applies (it may not serve the resource without its rule).');
+			note(res, 'Правило НЕ изменено: ' + ((pr && pr.error) || 'применение пресета не удалось') +
+				' — стратегия всё равно применяется (без своего правила она может не обслуживать ресурс).');
 		}
 	}
 
@@ -583,7 +584,7 @@ function main() {
 			tail = trim(parts_[length(parts_) - 1] || '');
 		}
 		if (length(tail) > 2000) {
-			note(res, 'The general tail was dropped (longer than the per-profile cap) — traffic outside the scoped resources passes without desync.');
+			note(res, 'Общий хвост отброшен (длиннее лимита профиля) — трафик вне сценарных ресурсов идёт без дезинка.');
 			tail = '';
 		}
 		for (let rk in keys(others))
@@ -604,13 +605,13 @@ function main() {
 		if (pr && pr.result && length('' + (pr.zapret || ''))) {
 			final_args = '' + pr.zapret;
 			for (let n in (pr.notes || []))
-				note(res, 'Builder: ' + n);
-			note(res, 'The strategy is applied as a SCOPED profile for ' + resource +
-				' (other managed resources keep their strategies; the general profile serves the rest).');
+				note(res, 'Конструктор: ' + n);
+			note(res, 'Стратегия применена как СЦЕНАРНЫЙ профиль для ' + resource +
+				' (другие управляемые ресурсы сохраняют свои стратегии; общий профиль обслуживает остальное).');
 		} else {
 			res.running = false; res.stage = 'error';
-			res.error = 'the scoped composition failed to build: ' +
-				((pr && pr.error) || 'compose build failed');
+			res.error = 'не удалось собрать сценарную композицию: ' +
+				((pr && pr.error) || 'сборка композиции не удалась');
 			wstat(res);
 			return;
 		}
@@ -641,10 +642,10 @@ function main() {
 	const z_alive = system(`ps w | grep '[n]fqws2' | grep -q "qnum=${zq}"`) === 0;
 	if (z_alive) {
 		system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
-		note(res, 'Strategy applied with a light engine restart (the core stays up).');
+		note(res, 'Стратегия применена с лёгким рестартом движка (ядро не перезапускается).');
 	} else {
 		system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-		note(res, 'Strategy applied — the service restarts.');
+		note(res, 'Стратегия применена — служба перезапускается.');
 	}
 
 	/* 5. VERIFY — wait for the core, then the configured-path probe. */
@@ -666,7 +667,7 @@ function main() {
 			}
 		}
 		if (seen < 2)
-			note(res, 'The core did not come back within 90 s — check it on the Overview page.');
+			note(res, 'Ядро не вернулось за 90 с — проверьте его на странице Обзора.');
 		sleep(3000);
 	} else {
 		/* Light path: the core never went away — give the engine respawn (~1 s)
@@ -709,12 +710,12 @@ function main() {
 		system(`rm -f ${sq(ff)} 2>/dev/null`);
 		if (fj != null && type(fj) === 'object' && fj.code != null) {
 			const fok = (fj.ok == 1);
-			push(res.verify_multi, { url: '(sustained video flow)', host: 'sustained video flow (24 thumbnails / one TLS flow)',
+			push(res.verify_multi, { url: '(поток видео)', host: 'поток видео (24 миниатюры / один TLS-поток)',
 				code: '' + (fj.code || '0'), tsec: (fj.secs != null) ? ('' + fj.secs) : null,
 				bytes: int(fj.bytes || 0), speed: int(fj.speed || 0), ok: fok });
 			if (fok) deep_ok++;
 		} else {
-			note(res, 'The sustained-flow probe did not run (no ids file).');
+			note(res, 'Проба sustained-потока не выполнялась (нет файла с id).');
 		}
 		/* the REAL video stream when the upstream hands out a URL (often
 		 * bot-gated — then honestly absent). */
@@ -739,7 +740,7 @@ function main() {
 			const speed = (length(parts) > 3) ? int(parts[3]) : 0;
 			const sok = (rc === 0 && (code === '200' || code === '206') &&
 				speed >= YT_STREAM_MIN_SPEED && bytes >= YT_STREAM_MIN_BYTES);
-			push(res.verify_multi, { url: '(real video stream)', host: 'real video stream (googlevideo)',
+			push(res.verify_multi, { url: '(реальный видеопоток)', host: 'реальный видеопоток (googlevideo)',
 				code: code, tsec: tsec, bytes: bytes, speed: speed, ok: sok });
 			if (sok) deep_ok++;
 		}
@@ -747,16 +748,16 @@ function main() {
 	res.verify.deep_ok = deep_ok;
 	res.verify.deep_total = length(res.verify_multi);
 	if (res.verify.ok && deep_ok == length(res.verify_multi))
-		note(res, 'Live check: ' + res.verify.host + ' → ' + res.verify.code +
-			((res.verify.tsec != null) ? (' in ' + res.verify.tsec + ' s') : '') +
-			' — all ' + length(res.verify_multi) + ' resource hosts answer' +
-			((resource === 'youtube') ? ' (incl. the real video stream)' : '') + '.');
+		note(res, 'Живая проверка: ' + res.verify.host + ' → ' + res.verify.code +
+			((res.verify.tsec != null) ? (' за ' + res.verify.tsec + ' с') : '') +
+			' — отвечают все ' + length(res.verify_multi) + ' хостов ресурса' +
+			((resource === 'youtube') ? ' (включая реальный видеопоток)' : '') + '.');
 	else if (res.verify.ok)
-		note(res, 'Live check: the main host answers (' + res.verify.code + '), but ' +
-			(length(res.verify_multi) - deep_ok) + ' of ' + length(res.verify_multi) +
-			' resource hosts FAIL — the resource does NOT work entirely (media/CDN stuck, or the video stream is throttled). Try another strategy or the full fuzz.');
+		note(res, 'Живая проверка: главный хост отвечает (' + res.verify.code + '), но ' +
+			(length(res.verify_multi) - deep_ok) + ' из ' + length(res.verify_multi) +
+			' хостов ресурса НЕ отвечают — ресурс НЕ работает целиком (застряли медиа/CDN или видеопоток режется). Возьмите другую стратегию или полный фаззинг.');
 	else
-		note(res, 'Live check FAILED (' + res.verify.code + ') — the rule/mode may not route the resource through Zapret, or this strategy does not hold under real traffic. Restore stays available.');
+		note(res, 'Живая проверка ПРОВАЛЕНА (' + res.verify.code + ') — правило/режим может не вести ресурс через Zapret, либо стратегия не держит реальный трафик. Возврат остаётся доступен.');
 
 	res.running = false;
 	res.stage = 'done';

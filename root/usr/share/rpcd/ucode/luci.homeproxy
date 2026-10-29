@@ -1128,24 +1128,24 @@ function hp_compose_build(profiles) {
 	for (let i = 0; i < length(profiles); i++) {
 		const p = profiles[i];
 		if (type(p) !== 'object')
-			return { error: 'bad profile #' + (i + 1) };
+			return { error: 'плохой профиль #' + (i + 1) };
 		const engine = trim('' + (p.engine || 'zapret'));
 		if (engine !== 'zapret' && engine !== 'byedpi')
-			return { error: 'unknown engine: ' + engine };
+			return { error: 'неизвестный движок: ' + engine };
 		const res = trim('' + (p.resource || 'general'));
 		if (res !== 'youtube' && res !== 'discord' && res !== 'telegram' &&
 		    res !== 'general' && res !== 'custom')
-			return { error: 'unknown resource: ' + res };
+			return { error: 'неизвестный ресурс: ' + res };
 		const args = hp_comp_resolve(p.strategy, corpus);
 		if (args == null)
-			return { error: 'unknown or empty strategy: ' + trim('' + (p.strategy || '')) };
+			return { error: 'неизвестная или пустая стратегия: ' + trim('' + (p.strategy || '')) };
 		if (length(args) > 2000)
-			return { error: 'strategy longer than 2000 chars' };
+			return { error: 'стратегия длиннее 2000 символов' };
 		const doms = hp_comp_domains({ resource: res, domains: p.domains });
 		if (res === 'custom' && doms == null)
-			return { error: 'the custom profile has no valid domains' };
+			return { error: 'у пользовательского профиля нет валидных доменов' };
 		if (res !== 'general' && res !== 'custom' && doms == null)
-			return { error: 'hostlist missing for resource: ' + res };
+			return { error: 'нет hostlist для ресурса: ' + res };
 		if (engine === 'zapret') {
 			n_z++;
 			/* A strategy that ships its own hostlist already scopes itself;
@@ -1162,7 +1162,7 @@ function hp_compose_build(profiles) {
 					blk += ' --hostlist-domains=' + join(',', doms);
 				if (has_own_hl && doms != null && !z_hl_note) {
 					z_hl_note = true;
-					push(notes, 'Zapret: a strategy carries its own hostlist — the resource scoping was NOT applied to it.');
+					push(notes, 'Zapret: стратегия несёт свой hostlist — привязка к ресурсу к ней НЕ применялась.');
 				}
 				blk = trim(blk);
 				if (length(blk))
@@ -1172,10 +1172,10 @@ function hp_compose_build(profiles) {
 			n_b++;
 			const bad = hp_comp_ciadpi_struct(args);
 			if (bad)
-				return { error: 'ByeDPI args contain a builder-only option: ' + bad };
+				return { error: 'аргументы ByeDPI содержат служебную опцию конструктора: ' + bad };
 			if (res === 'telegram' && doms != null && !b_tg_note) {
 				b_tg_note = true;
-				push(notes, 'Telegram: only the TLS web paths are domain-scoped; MTProto UDP traffic is not.');
+				push(notes, 'Telegram: к доменам привязаны только TLS веб-пути; MTProto UDP-трафик — нет.');
 			}
 			if (doms != null)
 				push(b_scoped, '-H :' + join(',', doms) + ' -K t ' + args);
@@ -1207,11 +1207,11 @@ function hp_compose_build(profiles) {
 		 * plus per-profile hostlists) — the composed cap is larger than the
 		 * per-profile 2000; UCI holds it and init.d re-parses via eval. */
 		if (length(zapret) > 8000)
-			return { error: 'composed Zapret strategy longer than 8000 chars' };
+			return { error: 'собранная стратегия Zapret длиннее 8000 символов' };
 		if (length(z_scoped) && length(z_general))
-			push(notes, 'Zapret: resource profiles run first, the general profile stays last (first match wins).');
+			push(notes, 'Zapret: профили ресурсов идут первыми, общий профиль — последним (первое совпадение срабатывает).');
 		else if (length(z_scoped) && !length(z_general))
-			push(notes, 'Zapret: no general profile — traffic outside the scoped resources passes without desync (nfqws2 leaves unmatched packets untouched).');
+			push(notes, 'Zapret: общего профиля нет — трафик вне сценарных ресурсов идёт без дезинка (nfqws2 не трогает нераспознанные пакеты).');
 	}
 	/* ciadpi: groups through -A n, the last group without -H. */
 	let byedpi = '';
@@ -1221,12 +1221,12 @@ function hp_compose_build(profiles) {
 			byedpi = (length(byedpi) ? byedpi + ' -A n ' : '') + b_fallback;
 		else if (length(b_scoped)) {
 			byedpi += ' -A n';
-			push(notes, 'ByeDPI: no general profile — an explicit empty fallback group was added; domains outside the scopes pass without desync.');
+			push(notes, 'ByeDPI: общего профиля нет — добавлена явная пустая резервная группа; домены вне сценариев идут без дезинка.');
 		}
 		if (length(byedpi) > 8000)
-			return { error: 'composed ByeDPI strategy longer than 8000 chars' };
+			return { error: 'собранная стратегия ByeDPI длиннее 8000 символов' };
 		if (length(b_scoped))
-			push(notes, 'ByeDPI: scoped groups are TCP-only (-K t) with exact domains; QUIC/UDP traffic is not domain-scoped and uses the fallback group.');
+			push(notes, 'ByeDPI: сценарные группы только TCP (-K t) с точными доменами; QUIC/UDP-трафик к доменам не привязывается и идёт через резервную группу.');
 	}
 	return { zapret: zapret, byedpi: byedpi, notes: notes };
 }
@@ -4347,10 +4347,10 @@ const methods = {
 			};
 			const enabled = flag(a.enabled);
 			if (enabled == null)
-				return { result: false, error: 'bad enabled' };
+				return { result: false, error: 'некорректный enabled' };
 			const set_rules = flag(a.set_rules);
 			if (set_rules == null)
-				return { result: false, error: 'bad set_rules' };
+				return { result: false, error: 'некорректный set_rules' };
 			const RES = { youtube: 1, discord: 1, telegram: 1, general: 1 };
 			const resources = [];
 			const seen = {};
@@ -4362,23 +4362,23 @@ const methods = {
 				push(resources, x);
 			}
 			if (enabled === '1' && !length(resources))
-				return { result: false, error: 'no resources selected' };
+				return { result: false, error: 'не выбран ни один ресурс' };
 			const interval_h = int(trim('' + (a.interval_h || '6')));
-			if (!interval_h || interval_h < 1 || interval_h > 24)
-				return { result: false, error: 'bad interval_h' };
+			if (!interval_h || interval_h < 1 || interval_h > 168)
+				return { result: false, error: 'некорректный interval_h (1..168)' };
 			const check_min = int(trim('' + (a.check_min || '15')));
 			if (!check_min || check_min < 5 || check_min > 180)
-				return { result: false, error: 'bad check_min' };
+				return { result: false, error: 'некорректный check_min (5..180)' };
 			const fail_strikes = int(trim('' + (a.fail_strikes || '2')));
 			if (!fail_strikes || fail_strikes < 1 || fail_strikes > 5)
-				return { result: false, error: 'bad fail_strikes' };
+				return { result: false, error: 'некорректный fail_strikes' };
 			const fuzz_mode = (trim('' + (a.fuzz_mode || 'quick')) === 'full') ? 'full' : 'quick';
 			const win = trim('' + (a.window || ''));
 			const wm = (length(win)) ? match(win, /^([0-9]{1,2}):([0-9]{2})-([0-9]{1,2}):([0-9]{2})$/) : null;
 			if (length(win) &&
 			    !(wm && int(wm[1]) < 24 && int(wm[3]) < 24 && int(wm[2]) < 60 && int(wm[4]) < 60 &&
 			      (int(wm[1]) * 60 + int(wm[2])) != (int(wm[3]) * 60 + int(wm[4]))))
-				return { result: false, error: 'bad window (use HH:MM-HH:MM or empty)' };
+				return { result: false, error: 'некорректное окно (формат HH:MM-HH:MM или пусто)' };
 			const c = cursor();
 			if (!c.get_all('homeproxy', 'autopilot'))
 				c.set('homeproxy', 'autopilot', 'homeproxy');
