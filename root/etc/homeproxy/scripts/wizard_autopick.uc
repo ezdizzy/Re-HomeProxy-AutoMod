@@ -325,6 +325,7 @@ function main() {
 		let chosen_deep_pass = null;
 		let chosen_deep_total = null;
 		let chosen_stream = 0;
+		let chosen_start = 0;
 		const runners = [];
 		if (meta.tag == null) {
 			/* general: the global ranking head (score order already encodes
@@ -340,7 +341,7 @@ function main() {
 				if (x.tag === meta.tag) { h = x; break; }
 			if (h && h.ok && h.dist) {
 				const dr = deep_ratio_of(s, meta.tag);
-				let dp = null, dt = null, stm = 0;
+				let dp = null, dt = null, stm = 0, stms = 0;
 				if (s.deep && type(s.deep.hosts) === 'array')
 					for (let dh in s.deep.hosts)
 						if (type(dh) === 'object' && dh.tag === meta.tag) {
@@ -349,9 +350,10 @@ function main() {
 								dt = int(dh.deep_total);
 							}
 							stm = int(dh.stream || 0);
+							stms = int(dh.start_ms || 0);
 						}
 				push(elig, { s: s, ms: int(h.tls_ms) || 0, deep: dr,
-					deep_pass: dp, deep_total: dt, stream: stm });
+					deep_pass: dp, deep_total: dt, stream: stm, start: stms });
 			}
 		}
 		/* ч.116 ranking: a MEASURED strategy ranks first — the resource's own
@@ -362,7 +364,11 @@ function main() {
 		 * differential deep totals zero out (every probe identical across
 		 * the deep-tested strategies — the ч.110 live fact), the stream
 		 * measurement still separates the tested strategies from the
-		 * untested ones. */
+		 * untested ones.
+		 * ч.127: flow speeds within 10% of each other are a tie for how the
+		 * resource FEELS — the fresh-connection START latency (the
+		 * hover-preview metric, «навожу на карточку — превью не стартует»)
+		 * decides first; a measured stream beats an untested one. */
 		const band = (e) => (((e.deep != null) && (e.deep > 0)) ||
 			((e.deep == null) && (int(e.stream || 0) > 0))) ? 0
 			: (((e.deep != null) && (e.deep == 0)) ? 2 : 1);
@@ -375,7 +381,16 @@ function main() {
 			if (da != db_)
 				return db_ - da;
 			const sa = int(a.stream || 0), sb = int(b.stream || 0);
-			if (sa > 0 && sb > 0 && sa != sb)
+			if (sa > 0 && sb > 0 && sa != sb) {
+				const hi = (sa > sb) ? sa : sb, lo = (sa > sb) ? sb : sa;
+				if (hi - lo <= int(hi / 10)) {
+					const ta = int(a.start || 0), tb = int(b.start || 0);
+					if (ta > 0 && tb > 0 && ta != tb)
+						return ta - tb;
+				}
+				return sb - sa;
+			}
+			if ((sa > 0 || sb > 0) && sa != sb)
 				return sb - sa;
 			return (a.ms - b.ms) || (b.s.score - a.s.score);
 		});
@@ -385,6 +400,7 @@ function main() {
 			chosen_deep_pass = elig[0].deep_pass;
 			chosen_deep_total = elig[0].deep_total;
 			chosen_stream = elig[0].stream;
+			chosen_start = elig[0].start;
 			for (let i = 1; i < length(elig) && i <= 3; i++)
 				push(runners, elig[i].s.name + ' (' + elig[i].ms + ' ms)');
 		}
@@ -406,7 +422,7 @@ function main() {
 		res.chosen = {
 			name: chosen.name || '', args: chosen.args || '',
 			score: int(chosen.score) || 0, avg_tls_ms: int(chosen.avg_tls_ms) || 0,
-			stream: int(chosen_stream || 0),
+			stream: int(chosen_stream || 0), start_ms: int(chosen_start || 0),
 			runners: runners
 		};
 		/* ч.116: the resource's own deep verdict (pass/total of THIS
@@ -439,7 +455,7 @@ function main() {
 			wstat(res);
 			return;
 		}
-		res.chosen = { name: '', args: args, score: 0, avg_tls_ms: 0, stream: 0, runners: [] };
+		res.chosen = { name: '', args: args, score: 0, avg_tls_ms: 0, stream: 0, start_ms: 0, runners: [] };
 		const corpus = read_json('/etc/homeproxy/zapret_candidates.json');
 		if (corpus && type(corpus.candidates) == 'array') {
 			for (let c in corpus.candidates)
@@ -449,15 +465,18 @@ function main() {
 				}
 		}
 		/* ч.116: carry the ranking's measured sustained-flow speed into the
-		 * manual pick (the daemon margin and the honest report use it). */
+		 * manual pick (the daemon margin and the honest report use it).
+		 * ч.127: the START latency (the hover-preview metric) rides along. */
 		const fzr = read_json(FUZZ_RESULT);
 		if (fzr != null && type(fzr.strategies) === 'array')
 			for (let s in fzr.strategies)
 				if (type(s) === 'object' && s.args === args &&
 					type(s.deep) === 'object' && type(s.deep.hosts) === 'array')
 					for (let dh in s.deep.hosts)
-						if (type(dh) === 'object' && dh.tag === RESOURCES[resource].tag)
+						if (type(dh) === 'object' && dh.tag === RESOURCES[resource].tag) {
 							res.chosen.stream = int(dh.stream || 0);
+							res.chosen.start_ms = int(dh.start_ms || 0);
+						}
 	}
 	if (!fixed) {
 		note(res, 'Picked: ' + (res.chosen.name || 'custom args') +
@@ -467,6 +486,9 @@ function main() {
 				: '') +
 			((int(res.chosen.stream || 0) > 0)
 				? (' · video flow ' + int(res.chosen.stream / 1024) + ' KB/s')
+				: '') +
+			((int(res.chosen.start_ms || 0) > 0)
+				? (' · start ' + int(res.chosen.start_ms) + ' ms')
 				: ''));
 	} else {
 		note(res, 'Applying the strategy you picked: ' + (res.chosen.name || 'custom args') + '.');
@@ -600,7 +622,7 @@ function main() {
 		(c.get('homeproxy', 'autopilot', 'enabled') === '1')) {
 		const man = { ts: time(), resources: {} };
 		man.resources[resource] = { name: res.chosen.name, args: res.chosen.args,
-			stream: int(res.chosen.stream || 0) };
+			stream: int(res.chosen.stream || 0), start_ms: int(res.chosen.start_ms || 0) };
 		const manp = RUN_DIR + '/zapret_autopilot_manual.json';
 		writefile(manp + '.tmp', sprintf("%.J\n", man));
 		system(`mv -f ${sq(manp + '.tmp')} ${sq(manp)}`);

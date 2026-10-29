@@ -11700,3 +11700,10 @@ msgstr "Корпус обновлён: +%d импортировано, %d уже
 # DPI sub-tabs + measured quality (ч.123)
 msgid "Quality now"
 msgstr "Качество сейчас"
+
+# ч.127: honest three-state health + the fresh-connection START metric
+msgid "start ~%d ms"
+msgstr "старт ~%d мс"
+
+msgid "fresh-connection start ~%d ms (hover-preview latency)"
+msgstr "старт на новом соединении ~%d мс (задержка превью при наведении)"

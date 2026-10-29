@@ -6052,3 +6052,9 @@ msgstr ""
 
 msgid "Quality now"
 msgstr ""
+
+msgid "start ~%d ms"
+msgstr ""
+
+msgid "fresh-connection start ~%d ms (hover-preview latency)"
+msgstr ""

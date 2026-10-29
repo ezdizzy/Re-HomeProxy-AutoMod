@@ -42,11 +42,19 @@
  *     the Restore button keeps working) → post-verify. A resource that was
  *     OK before and fails after the apply → automatic rollback and the
  *     winner goes into the tried-failed list (24 h TTL).
- *   - health re-pick: fail_strikes failed probes in a row → the next
+ *   - health re-pick: fail_strikes DEAD probes in a row → the next
  *     alternative (excluding tried-failed and the current one) applies NOW.
  *     ч.116: a probe covers the WHOLE resource — for YouTube that includes
  *     the media hosts and the REAL video-stream throughput (a page probe
  *     alone passes while TSPU throttles the video, the user's complaint).
+ *     ч.127: the probe verdict is THREE-STATE — dead (no HTTP / operator
+ *     stub / block page / a fully dead flow) strikes; degraded-but-alive
+ *     (HTTP answers, the flow transfers under the bar) NEVER strikes and
+ *     NEVER swaps the strategy the user can see working — it logs an honest
+ *     note and pulls the scheduled re-rank closer (min 30 min), where the
+ *     anti-flap margins decide. The fresh-connection START latency
+ *     (time-to-first-byte of each flow window — the hover-preview
+ *     experience) ranks strategies and enters the switch margins at 25%.
  *   - manual picks: the Strategy Lab's scoped apply hands the chosen
  *     strategy over through zapret_autopilot_manual.json; the daemon
  *     adopts it as the winner on its next tick (the user's explicit
@@ -99,12 +107,36 @@ const FUZZ_FRESH = 6 * 3600;    /* reuse a ranking younger than 6 h      */
 const FUZZ_WAIT_MAX = 2700;     /* floor for a full fuzz wait (~45 min)  */
 const FUZZ_DEAD = 900;          /* running:true with a stale ts = dead   */
 const CORE_WAIT_MAX = 90;       /* cap for the service restart           */
-const VERIFY_TMO = 9;           /* live-path probe --max-time            */
+const VERIFY_TMO = 15;          /* live-path probe --max-time (was 9: a
+                                 * slow provider path answered — the old
+                                 * cap graded «slow but working» as down) */
+const SLOW_T = 6;               /* s: an HTTP-ok probe slower than this is
+                                 * degraded (no strike), not dead         */
 const PENDING_TTL = 600;        /* an unclaimed pending older than this is
                                  * orphaned (the restart must be over)   */
 const TRIED_TTL = 24 * 3600;    /* tried-and-failed memory               */
 const MARGIN_PCT = 10;          /* anti-flap: a switch needs a >10% win  */
+const START_MARGIN_PCT = 25;    /* anti-flap: START-latency switch needs a
+                                 * bigger win (fresh-connection TTFB is
+                                 * bursty; a persistent slow start is what
+                                 * the user feels, a single burst is not) */
 const GENERAL_SCORE_STEP = 100; /* general: +1 distinguishing host       */
+
+/* ч.127 honesty: TSPU/operator verdicts the old probe missed. A cross-host
+ * redirect to a known stub host or a SMALL 200 body carrying a refusal
+ * signature is a blocked resource (strike-worthy); the strongest hosts of
+ * automation.uc's STUB_REDIRECT_HOSTS and BLOCK_SIGNATURES lists. The size
+ * gate (a real YouTube page is huge, a stub is tiny) keeps the signature
+ * scan from ever inventing a false failure on a real page. */
+const STUB_HOSTS = [
+	'warning.rt.ru', 'blocked.mts.ru', 'blocked.beeline.ru', 'stop.deti.mail.ru',
+	'warningrt.ru', 'rkn.gov.ru', 'blocklist.rkn.gov.ru', 'eais.rkn.gov.ru',
+	'blocked.tele2.ru', 'blocked.megafon.ru', 'block.domru.ru', 'warning.ttk.ru'
+];
+const BLOCK_SIGS = [
+	'access denied', 'доступ ограничен', 'доступ запрещен', 'заблокир',
+	'blocked by', 'the site is blocked', 'сайт заблокирован', 'err_blocked'
+];
 
 /* ── module state (persisted through wstat) ─────────────────────────── */
 let S = {
@@ -305,26 +337,82 @@ function rule_node_of(src) {
 }
 
 /* ── probe (the runner's live-probe method: router-originated HTTPS over
- * the app's own output interception = exactly how LAN clients are served) */
+ * the app's own output interception = exactly how LAN clients are served)
+ *
+ * ч.127: the verdict is THREE-STATE. A resource that answers HTTP (2xx/3xx)
+ * is ALIVE even when the router-side curl hit the transfer cap mid-body —
+ * the browser user sees the same slow-but-working page; grading that as
+ * «unavailable» switched away strategies the user could see working.
+ *   dead = no HTTP answer (000), an operator stub redirect, or a small
+ *          block-page body (strike-worthy — the resource is really gone);
+ *   slow = alive but degraded (tsec ≥ SLOW_T or the transfer did not
+ *          finish — honest note, NO strike, an earlier re-rank instead);
+ *   ok   = everything else. */
+function url_host(u) {
+	const m = match('' + u, /^[a-zA-Z]+:\/\/([^\/]+)/);
+	return (m && m[1]) ? m[1] : '';
+}
+
+function is_stub_host(h) {
+	h = lc(trim('' + h));
+	if (!length(h))
+		return false;
+	for (let s in STUB_HOSTS) {
+		if (h === s)
+			return true;
+		const n = length(h) - length(s) - 1;
+		if (n > 0 && substr(h, n) === '.' + s)
+			return true;
+	}
+	return false;
+}
 
 function probe_live(url) {
 	const bf = RUN_DIR + '/wiz_probe.body';
 	const cf = RUN_DIR + '/wiz_probe.code';
 	system(`rm -f ${sq(bf)} ${sq(cf)} 2>/dev/null`);
-	const cmd = `curl -sL --max-redirs 3 -o ${sq(bf)} -w '%{http_code} %{time_total}' -k ` +
-		`--connect-timeout 4 --max-time ${VERIFY_TMO} ${sq(url)} > ${sq(cf)} 2>/dev/null`;
+	const cmd = `curl -sL --max-redirs 3 -o ${sq(bf)} -w '%{http_code} %{time_total} %{url_effective}' -k ` +
+		`--connect-timeout 6 --max-time ${VERIFY_TMO} ${sq(url)} > ${sq(cf)} 2>/dev/null`;
 	const rc = system(cmd, VERIFY_TMO * 1000 + 3000);
 	const parts = split(trim(readfile(cf) || ''), /[[:space:]]+/);
 	const code = (length(parts) && match(parts[0], /^[0-9]{3}$/)) ? parts[0] : '000';
 	const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
-	return { code: code, tsec: tsec, ok: (rc === 0 && int(code) >= 200 && int(code) < 400), ts: time() };
+	const eff = (length(parts) > 2) ? ('' + parts[2]) : '';
+	let dead = (code === '000');
+	let note = dead ? 'no HTTP answer' : '';
+	if (!dead && length(eff)) {
+		const oh = url_host(url), eh = url_host(eff);
+		if (length(oh) && length(eh) && oh !== eh && is_stub_host(eh)) {
+			dead = true;
+			note = 'operator stub redirect (' + eh + ')';
+		}
+	}
+	if (!dead && code === '200') {
+		const body = readfile(bf) || '';
+		if (length(body) > 0 && length(body) < 65536) {
+			const lb = lc(body);
+			for (let sig in BLOCK_SIGS) {
+				if (index(lb, sig) >= 0) {
+					dead = true;
+					note = 'block page signature ("' + sig + '")';
+					break;
+				}
+			}
+		}
+	}
+	const ok = (!dead && int(code) >= 200 && int(code) < 400);
+	const slow = (ok && (((tsec != null) && (tsec + 0) >= SLOW_T) || rc != 0));
+	return { code: code, tsec: tsec, ok: ok, dead: dead, slow: slow, note: note, ts: time() };
 }
 
 /* ч.116: the SUSTAINED-FLOW throughput probe (the LIVE path, the shared
  * yt_flow_probe.sh — 24 real thumbnails over ONE keep-alive TLS flow to
  * i.ytimg.com, Σbytes/Σtime). TSPU lets the handshake through and throttles
  * the flow — a page probe cannot see it, this can. null = the probe did not
- * run (no ids file); ok:false = throttled (honest). */
+ * run (no ids file); ok:false = throttled (honest). ч.127: the answer also
+ * carries start_ms — the time-to-first-byte of each window's FIRST transfer
+ * (a fresh connection: TCP+TLS+request+first byte) — the hover-preview
+ * latency the user pointed at. */
 function probe_flow() {
 	const of = RUN_DIR + '/autopilot_flow.json';
 	system(`sh /etc/homeproxy/scripts/yt_flow_probe.sh > ${sq(of)} 2>/dev/null`, 30000);
@@ -333,7 +421,8 @@ function probe_flow() {
 	if (j == null || type(j) !== 'object')
 		return null;
 	return { ok: (j.ok == 1), code: '' + (j.code || '0'), speed: int(j.speed || 0),
-		bytes: int(j.bytes || 0), secs: j.secs, fetched: int(j.fetched || 0) };
+		bytes: int(j.bytes || 0), secs: j.secs, fetched: int(j.fetched || 0),
+		start_ms: int(j.start_ms || 0) };
 }
 
 /* ── fuzz ───────────────────────────────────────────────────────────── */
@@ -494,7 +583,7 @@ function pick_resource(fz, res, exclude_args) {
 			if (x.tag === tag) { h = x; break; }
 		if (h && h.ok && h.dist) {
 			const dr = deep_ratio_of(s, tag);
-			let dp = null, dt = null, stm = 0;
+			let dp = null, dt = null, stm = 0, stms = 0;
 			if (s.deep && type(s.deep.hosts) === 'array')
 				for (let dh in s.deep.hosts)
 					if (type(dh) === 'object' && dh.tag === tag) {
@@ -503,9 +592,10 @@ function pick_resource(fz, res, exclude_args) {
 							dt = int(dh.deep_total);
 						}
 						stm = int(dh.stream || 0);
+						stms = int(dh.start_ms || 0);
 					}
 			push(elig, { s: s, ms: int(h.tls_ms) || 0, deep: dr,
-				deep_pass: dp, deep_total: dt, stream: stm });
+				deep_pass: dp, deep_total: dt, stream: stm, start: stms });
 		}
 	}
 	/* ч.116 ranking: a MEASURED strategy ranks first — the resource's own
@@ -515,7 +605,11 @@ function pick_resource(fz, res, exclude_args) {
 	 * difference). deep-failed ranks last. When the differential deep
 	 * totals zero out (every probe identical across the deep-tested
 	 * strategies), the stream measurement still separates the tested
-	 * strategies from the untested ones. */
+	 * strategies from the untested ones.
+	 * ч.127: flow speeds within 10% of each other are a tie for how the
+	 * resource FEELS — the fresh-connection START latency (the hover-
+	 * preview metric, the user's «превью не стартуют» complaint) decides
+	 * first; a measured stream beats an untested one. */
 	const band = (e) => (((e.deep != null) && (e.deep > 0)) ||
 		((e.deep == null) && (int(e.stream || 0) > 0))) ? 0
 		: (((e.deep != null) && (e.deep == 0)) ? 2 : 1);
@@ -528,7 +622,16 @@ function pick_resource(fz, res, exclude_args) {
 		if (da != db_)
 			return db_ - da;
 		const sa = int(a.stream || 0), sb = int(b.stream || 0);
-		if (sa > 0 && sb > 0 && sa != sb)
+		if (sa > 0 && sb > 0 && sa != sb) {
+			const hi = (sa > sb) ? sa : sb, lo = (sa > sb) ? sb : sa;
+			if (hi - lo <= int(hi / 10)) {
+				const ta = int(a.start || 0), tb = int(b.start || 0);
+				if (ta > 0 && tb > 0 && ta != tb)
+					return ta - tb;
+			}
+			return sb - sa;
+		}
+		if ((sa > 0 || sb > 0) && sa != sb)
 			return sb - sa;
 		return (a.ms - b.ms) || (b.s.score - a.s.score);
 	});
@@ -540,7 +643,7 @@ function pick_resource(fz, res, exclude_args) {
 	return { name: '' + (elig[0].s.name || 'custom args'), args: '' + elig[0].s.args,
 		tls_ms: elig[0].ms, deep: elig[0].deep,
 		deep_pass: elig[0].deep_pass, deep_total: elig[0].deep_total,
-		stream: int(elig[0].stream || 0),
+		stream: int(elig[0].stream || 0), start_ms: int(elig[0].start || 0),
 		score: int(elig[0].s.score) || 0, runners: runners };
 }
 
@@ -909,11 +1012,18 @@ function cycle(cfg) {
 			const cd = (cand.deep == null) ? -1 : cand.deep;
 			const cud = (cur.deep == null) ? -1 : cur.deep;
 			const cspd = int(cand.stream || 0), uspd = int(cur.stream || 0);
+			const cst = int(cand.start_ms || 0), ust = int(cur.start_ms || 0);
 			const cb = band(cand), ub = band(cur);
 			const tls_better = cand.tls_ms > 0 && cur.tls_ms > 0 &&
 				cand.tls_ms < int(cur.tls_ms * (100 - MARGIN_PCT) / 100);
 			const stream_better = (uspd > 0) &&
 				(cspd > int(uspd * (100 + MARGIN_PCT) / 100));
+			/* ч.127: the START latency (fresh-connection TTFB — the hover-
+			 * preview experience) replaces the current one only at a clear
+			 * 25% win: single bursts are normal TSPU behaviour, a persistent
+			 * slow start is what the user actually feels. */
+			const start_better = (ust > 0) && (cst > 0) &&
+				(cst < int(ust * (100 - START_MARGIN_PCT) / 100));
 			let switch_ok = false;
 			if (cb > ub)
 				switch_ok = false;
@@ -922,13 +1032,14 @@ function cycle(cfg) {
 			else if (cd >= cud + 0.25)
 				switch_ok = true;
 			else if (cb == 0)
-				switch_ok = stream_better || (tls_better && cspd >= uspd);
+				switch_ok = stream_better || start_better || (tls_better && cspd >= uspd);
 			else if (cb == 1)
 				switch_ok = tls_better;
 			if (!switch_ok) {
 				log_once('hold_' + res, res + ': the current strategy stays best within the margin (deep ' +
 					((cud >= 0) ? '' + cud : 'n/a') + ' vs ' + ((cd >= 0) ? '' + cd : 'n/a') +
-					', flow ' + uspd + ' vs ' + cspd + ' B/s, TLS ' + cand.tls_ms + ' vs ' + cur.tls_ms + ' ms)');
+					', flow ' + uspd + ' vs ' + cspd + ' B/s, start ' + ust + ' vs ' + cst +
+					' ms, TLS ' + cand.tls_ms + ' vs ' + cur.tls_ms + ' ms)');
 				use = null;
 			}
 		}
@@ -1030,23 +1141,37 @@ function health(cfg) {
 		 * passes while the media hosts fail or the video stream is
 		 * throttled — the honest «ресурс работает» verdict needs them all;
 		 * otherwise the auto-pilot never re-picks a throttling strategy
-		 * (the user's exact complaint). */
+		 * (the user's exact complaint).
+		 * ч.127: the verdicts stay THREE-STATE to the very end — only a
+		 * DEAD resource (no HTTP / stub / block page / a fully dead flow)
+		 * earns a strike; a slow-but-alive one (page slow, flow under the
+		 * bar but transferring) is DEGRADED: it works, the user can see
+		 * it — the old code counted it as unavailable and switched away
+		 * strategies that were visibly working. A degraded resource pulls
+		 * the scheduled re-rank closer instead (the anti-flap margins
+		 * still keep the switch honest). */
 		let ok_all = pr.ok;
-		let fail_note = '';
+		let dead_hit = pr.dead;
+		let slow_hit = pr.slow;
+		let fail_note = pr.note || '';
 		if (meta.deep != null && length(meta.deep)) {
 			for (let du in meta.deep) {
 				const dpr = probe_live(du);
 				/* the video-stream edge legitimately answers 404 on its root —
 				 * ANY HTTP answer there means the DPI let the host through
 				 * (caught live ч.116: the honest 404 failed the check and
-				 * churned repairs; probe_live carries no rc — decide by the
-				 * code alone). */
+				 * churned repairs; decide by the code alone). */
 				const d_ok = (index(du, 'redirector.googlevideo.com') >= 0)
-					? (dpr.code != '000' && length('' + dpr.code) === 3)
+					? !dpr.dead
 					: dpr.ok;
 				if (ok_all && !d_ok) {
 					ok_all = false;
-					fail_note = 'media host fails (' + dpr.code + '): ' + du;
+					if (dpr.dead)
+						dead_hit = true;
+					else
+						slow_hit = true;
+					fail_note = 'media host fails (' + dpr.code +
+						(dpr.note ? (' — ' + dpr.note) : '') + '): ' + du;
 				}
 			}
 		}
@@ -1057,14 +1182,26 @@ function health(cfg) {
 			else {
 				once_clear('ytflow');
 				pr.speed = fp.speed;
-				if (ok_all && !fp.ok) {
+				pr.start_ms = fp.start_ms;
+				const fdead = (int(fp.code || 0) === 0 || int(fp.bytes || 0) === 0 ||
+					int(fp.fetched || 0) === 0);
+				if (ok_all && fdead) {
 					ok_all = false;
-					fail_note = 'the video flow is throttled (' + int((fp.speed || 0) / 1024) + ' KB/s, ' +
+					dead_hit = true;
+					fail_note = 'the video flow is dead (code ' + (fp.code || '0') + ', ' +
 						int((fp.bytes || 0) / 1024) + ' KB in ' + ((fp.secs != null) ? fp.secs : '?') + ' s)';
+				} else if (ok_all && !fp.ok) {
+					ok_all = false;
+					slow_hit = true;
+					fail_note = 'the video flow is slow (' + int((fp.speed || 0) / 1024) + ' KB/s, ' +
+						int((fp.bytes || 0) / 1024) + ' KB in ' + ((fp.secs != null) ? fp.secs : '?') +
+						' s) — degraded, not dead';
 				}
 			}
 		}
 		pr.ok = ok_all;
+		pr.dead = dead_hit;
+		pr.slow = (!dead_hit && slow_hit);
 		if (length(fail_note))
 			pr.note = fail_note;
 		const st = (res === 'general') ? S.general : S.resources[res];
@@ -1073,15 +1210,29 @@ function health(cfg) {
 			if (int(st.strikes || 0) > 0)
 				log(res + ': back to normal (' + pr.code + ')');
 			st.strikes = 0;
+			st.slow = false;
 			st.note = '';
-		} else {
+		} else if (dead_hit) {
 			/* Cap at the strike threshold: the repair keeps retriggering on
 			 * >= while the resource stays broken, the counter must not run
 			 * away (an unmanaged resource never repairs at all). */
 			st.strikes = (int(st.strikes || 0) < cfg.fail_strikes)
 				? int(st.strikes || 0) + 1 : cfg.fail_strikes;
+			st.slow = false;
 			st.note = 'failed ' + st.strikes + ' check(s) in a row (' + pr.code + ')';
-			log_once('fail_' + res, res + ': the live check failed (' + pr.code + ') — ' + st.strikes + '/' + cfg.fail_strikes);
+			log_once('fail_' + res, res + ': the live check FAILED (' + pr.code +
+				((pr.note) ? (' — ' + pr.note) : '') + ') — ' + st.strikes + '/' + cfg.fail_strikes);
+		} else {
+			/* degraded: alive but slow — never a strike, never a repair-swap
+			 * (the user watches the resource work). The scheduled re-rank
+			 * comes closer (min 30 min) and re-decides through the normal
+			 * anti-flap margins. */
+			st.slow = true;
+			st.note = 'degraded: ' + fail_note;
+			log_once('degraded_' + res, res + ': degraded but ALIVE — ' + fail_note +
+				' (no switch: the strategy works, the re-rank re-evaluates sooner)');
+			if (S.next_cycle_ts == 0 || S.next_cycle_ts > time() + 1800)
+				S.next_cycle_ts = time() + 1800;
 		}
 	}
 	S.next_check_ts = time() + cfg.check_min * 60;
@@ -1114,7 +1265,7 @@ function adopt_manual() {
 			continue;
 		S.resources[res].winner = { name: '' + (w.name || 'manual pick'),
 			args: '' + w.args, tls_ms: 0, deep: null,
-			stream: int(w.stream || 0), score: 0,
+			stream: int(w.stream || 0), start_ms: int(w.start_ms || 0), score: 0,
 			manual: true, runners: [] };
 		S.resources[res].strikes = 0;
 		log('the manual pick from the Strategy Lab is adopted for ' + res + ': ' + (w.name || 'custom args'));
@@ -1193,7 +1344,15 @@ function tick() {
 
 	adopt_manual();
 
-	health(cfg);
+	/* ч.127 ROOT FIX: health() was called on EVERY tick (60 s) — the
+	 * check_min interval (the UI's honest «next check: HH:MM») was written
+	 * but never used as a gate. The result: 5 probes a minute against the
+	 * strategy, fail_strikes=2 = a service-reloading strategy swap within
+	 * ~2 minutes of ONE transient failure episode (the user's report:
+	 * «переключения происходят очень часто, не может стратегия перестать
+	 * работать в течение часа»). The gate restores the promised cadence. */
+	if (time() >= S.next_check_ts)
+		health(cfg);
 
 	if (time() >= S.next_cycle_ts) {
 		if (window_active(cfg)) {

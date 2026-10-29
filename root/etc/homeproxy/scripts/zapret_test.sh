@@ -281,22 +281,29 @@ if [ "$DEEP" = "1" ]; then
 			done
 			cat > "$TMP/ytv_flow.sh" <<'YTVFLOW'
 #!/bin/sh
-# two sustained-flow windows → "code secs bytes speed fetched"
+# two sustained-flow windows → "code secs bytes speed fetched start"
+# (ч.127: start = the averaged time_starttransfer of each window's FIRST
+# transfer — every window opens a fresh connection, so the first transfer
+# carries the whole TCP+TLS+request path to the first byte: the
+# hover-preview latency the user described)
 pin="$1"; shift
-w1=$(curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++} END {if (t<0.1) t=0.1; c=0; if (n>=8) c=200; print c, t, s, o}')
+w1=$(curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download} %{time_starttransfer}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++; if (NR==1) tf=$4} END {if (t<0.1) t=0.1; c=0; if (n>=8) c=200; print c, t, s, o, tf+0}')
 sleep 1
-w2=$(curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++} END {if (t<0.1) t=0.1; c=0; if (n>=8) c=200; print c, t, s, o}')
+w2=$(curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download} %{time_starttransfer}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++; if (NR==1) tf=$4} END {if (t<0.1) t=0.1; c=0; if (n>=8) c=200; print c, t, s, o, tf+0}')
 printf '%s\n%s\n' "$w1" "$w2" | awk '
-{ c[NR]=$1; t[NR]=$2; s[NR]=$3; o[NR]=$4 }
+{ c[NR]=$1; t[NR]=$2; s[NR]=$3; o[NR]=$4; tf[NR]=$5 }
 END {
 	if (NR == 1) {
 		tt = t[1]; if (tt < 0.1) tt = 0.1
-		print c[1], tt, s[1] + 0, int((s[1] + 0) / tt), o[1] + 0
+		print c[1], tt, s[1] + 0, int((s[1] + 0) / tt), o[1] + 0, tf[1] + 0
 		exit
 	}
 	code = 0; if (c[1] == 200 && c[2] == 200) code = 200
 	tt = t[1] + t[2]; ss = s[1] + s[2]; if (tt < 0.1) tt = 0.1
-	print code, tt, ss, int(ss / tt), o[1] + o[2]
+	ns = 0; ts = 0
+	for (i = 1; i <= NR; i++) if (tf[i] > 0) { ts += tf[i]; ns++ }
+	st = (ns > 0) ? ts/ns : 0
+	print code, tt, ss, int(ss / tt), o[1] + o[2], st
 }'
 YTVFLOW
 			chmod 755 "$TMP/ytv_flow.sh"
@@ -350,6 +357,15 @@ YTVFLOW
 			# test needs an integer: truncate at the decimal point.
 			dspeed=${dspeed%%.*}
 			drc=$(printf '%s' "$raw" | awk '{print $5}')
+			# ч.127: the ytv batch adds a 6th field — the averaged
+			# time_starttransfer of each window's FIRST transfer (a fresh
+			# connection each) in seconds; the deep item carries it as
+			# "ttfb" milliseconds — the hover-preview START metric.
+			dtfbms=0
+			if [ "$did" = "ytv" ]; then
+				dtfbms=$(printf '%s' "$raw" | awk '{printf "%d", ($6+0)*1000}')
+				[ -n "$dtfbms" ] || dtfbms=0
+			fi
 			DTOT=$((DTOT+1))
 			case "$dcode" in ''|000|0) dok=0;; *)
 			dok=1
@@ -374,7 +390,12 @@ YTVFLOW
 			;; esac
 			[ "$dok" = 1 ] && DOK=$((DOK+1))
 			[ -n "$DJSON" ] && DJSON="$DJSON,"
-			DJSON="$DJSON{\"id\":\"$did\",\"code\":\"$dcode\",\"sec\":\"$dsec\",\"bytes\":$dbytes,\"speed\":$dspeed,\"ok\":$dok}"
+			# ч.127: ytv carries "ttfb" (ms) — the rest keep the old shape.
+			if [ "$did" = "ytv" ]; then
+				DJSON="$DJSON{\"id\":\"$did\",\"code\":\"$dcode\",\"sec\":\"$dsec\",\"bytes\":$dbytes,\"speed\":$dspeed,\"ttfb\":$dtfbms,\"ok\":$dok}"
+			else
+				DJSON="$DJSON{\"id\":\"$did\",\"code\":\"$dcode\",\"sec\":\"$dsec\",\"bytes\":$dbytes,\"speed\":$dspeed,\"ok\":$dok}"
+			fi
 		done
 		eval "D_${tag}_OK=$DOK"
 		eval "D_${tag}_TOT=$DTOT"

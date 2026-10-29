@@ -386,7 +386,7 @@ for (let r in drawn) {
 	let dok = 0, dtot = 0, hosts = [];
 	for (let res in r.results) {
 		if (type(res) != "object" || res.tag == null) continue;
-		let hdok = 0, dtot_h = 0, stream = 0;
+		let hdok = 0, dtot_h = 0, stream = 0, start_ms = 0;
 		for (let it in (res.deep || [])) {
 			if (type(it) != "object" || it.id == null) continue;
 			/* the sustained-flow speed (ytv batch / yts real stream) — the
@@ -396,6 +396,12 @@ for (let r in drawn) {
 			 * comparison the user reported). */
 			if ((it.id == "ytv" || it.id == "yts") && int(it.speed || 0) > stream)
 				stream = int(it.speed || 0);
+			/* ч.127: the ytv batch START — the averaged time_starttransfer
+			 * of the FIRST transfer of each window (a fresh connection each)
+			 * in ms: the hover-preview latency («навожу на карточку — превью
+			 * не стартует») the user pinpointed. */
+			if (it.id == "ytv" && int(it.ttfb || 0) > start_ms)
+				start_ms = int(it.ttfb || 0);
 			if (!diff_ids[it.id]) continue;
 			dtot_h++;
 			if (it.ok == 1) hdok++;
@@ -406,9 +412,11 @@ for (let r in drawn) {
 			deep_ok: (dtot_h > 0 && hdok == dtot_h),
 			deep_pass: hdok, deep_total: dtot_h,
 			deep_total_raw: int(res.deep_total) || 0,
-			stream: stream, items: res.deep || [] });
-		if (res.tag == "yt")
+			stream: stream, start_ms: start_ms, items: res.deep || [] });
+		if (res.tag == "yt") {
 			s.stream = stream;
+			s.start_ms = start_ms;
+		}
 	}
 	s.deep = { ok: dok, total: dtot, hosts: hosts };
 }
@@ -423,9 +431,21 @@ sort(tested, (a, b) => {
 	if (ra != rb)
 		return rb - ra;
 	/* ч.116: equal deep verdicts → the faster sustained video flow wins
-	 * (the TLS handshake time does not predict the throttled flow). */
+	 * (the TLS handshake time does not predict the throttled flow).
+	 * ч.127: flows within 10% of each other are a tie for how the resource
+	 * FEELS — the fresh-connection START latency (the hover-preview metric)
+	 * decides first; the raw flow difference decides the rest. */
 	const sa = int(a.stream || 0), sb = int(b.stream || 0);
-	if (sa > 0 && sb > 0 && sa != sb)
+	if (sa > 0 && sb > 0 && sa != sb) {
+		const hi = (sa > sb) ? sa : sb, lo = (sa > sb) ? sb : sa;
+		if (hi - lo <= int(hi / 10)) {
+			const ta = int(a.start_ms || 0), tb = int(b.start_ms || 0);
+			if (ta > 0 && tb > 0 && ta != tb)
+				return ta - tb;
+		}
+		return sb - sa;
+	}
+	if ((sa > 0 || sb > 0) && sa != sb)
 		return sb - sa;
 	return b.score - a.score;
 });

@@ -1984,14 +1984,16 @@ return view.extend({
 			dpiQuality.innerHTML = '';
 			const aps = (apSt && apSt.status && apSt.status.resources &&
 				apSt.status.resources.youtube) || null;
-			let flow = 0, flowWhen = '';
+			let flow = 0, flowWhen = '', flowStart = 0;
 			if (aps && aps.probe && Number(aps.probe.speed || 0) > 0) {
 				flow = Number(aps.probe.speed);
+				flowStart = Number(aps.probe.start_ms || 0);
 				flowWhen = aps.probe.ts
 					? new Date(Number(aps.probe.ts) * 1000).toLocaleString() : '';
 			} else if (res && res.strategies && res.strategies.length &&
 				Number(res.strategies[0].stream || 0) > 0) {
 				flow = Number(res.strategies[0].stream);
+				flowStart = Number(res.strategies[0].start_ms || 0);
 				flowWhen = res.ts
 					? new Date(Number(res.ts) * 1000).toLocaleString() : '';
 			}
@@ -2002,6 +2004,10 @@ return view.extend({
 			else
 				flowLine.appendChild(E('span', { style: 'opacity:.5' },
 					[ _('not measured yet') ]));
+			/* ч.127: the fresh-connection START — the hover-preview latency. */
+			if (flowStart > 0)
+				flowLine.appendChild(E('span', { title: _('fresh-connection start ~%d ms (hover-preview latency)').format(flowStart) },
+					[ ' · ' + _('start ~%d ms').format(flowStart) ]));
 			if (flowWhen)
 				flowLine.appendChild(document.createTextNode(' · ' + flowWhen));
 			dpiQuality.appendChild(flowLine);
@@ -3085,7 +3091,13 @@ return view.extend({
 					if (curKb > 0 && s.args !== curArgs && flowKb > Math.round(curKb * 1.25))
 						flowParts.push(_('↑ +%d KB/s vs current').format(flowKb - curKb));
 				}
-				const flowTd = E('td', { style: 'white-space:nowrap' }, (flowParts.length)
+				/* ч.127: the fresh-connection START latency rides in the
+				 * tooltip — the hover-preview experience the user pointed at. */
+				const startMs = Number(s.start_ms || 0);
+				const flowTd = E('td', {
+					style: 'white-space:nowrap',
+					title: (startMs > 0) ? _('fresh-connection start ~%d ms (hover-preview latency)').format(startMs) : ''
+				}, (flowParts.length)
 					? [ E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ flowParts.join(' ') ]) ]
 					: [ E('span', { style: 'opacity:.35' }, [ '—' ]) ]);
 				const row = E('tr', { 'data-fuzz-args': s.args }, [
@@ -3355,14 +3367,22 @@ return view.extend({
 					if (w.name)
 						line.appendChild(document.createTextNode(
 							(w.tls_ms > 0 ? ' · ' + _('~%d ms TLS').format(w.tls_ms) : '') +
-							(w.stream > 0 ? ' · ' + Math.round(w.stream / 1024) + ' KB/s' : '')));
+							(w.stream > 0 ? ' · ' + Math.round(w.stream / 1024) + ' KB/s' : '') +
+							(w.start_ms > 0 ? ' · ' + _('start ~%d ms').format(w.start_ms) : '')));
 					const p = r.probe || {};
 					if (p && p.ts)
 						line.appendChild(document.createTextNode(' '));
-					if (p && p.ts)
+					if (p && p.ts) {
+						/* ч.127 three-state: green = alive, amber = degraded
+						 * (slow but working — NO switch happens), red = dead.
+						 * The raw note carries the measured detail. */
 						line.appendChild(p.ok
 							? badge('hpui-b-green', '✓ ' + (p.code || '') + ((p.tsec != null) ? (' · ' + p.tsec + ' s') : ''))
-							: badge('hpui-b-red', '✗ ' + (p.code || '000')));
+							: (p.slow
+								? E('span', { 'class': 'hpui-badge hpui-b-amber', title: (p.note || '') },
+									[ '⚠ ' + (p.code || '') + ((p.tsec != null) ? (' · ' + p.tsec + ' s') : '') + (p.speed > 0 ? (' · ' + Math.round(p.speed / 1024) + ' KB/s') : '') ])
+								: badge('hpui-b-red', '✗ ' + (p.code || '000'))));
+					}
 					if (r.strikes > 0)
 						line.appendChild(badge('hpui-b-red', '⚠ ' + _('%d failed check(s)').format(r.strikes)));
 					if (r.rule_node != null && rk !== 'general')
