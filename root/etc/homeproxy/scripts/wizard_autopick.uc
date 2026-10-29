@@ -365,10 +365,11 @@ function main() {
 		 * the deep-tested strategies — the ч.110 live fact), the stream
 		 * measurement still separates the tested strategies from the
 		 * untested ones.
-		 * ч.127: flow speeds within 10% of each other are a tie for how the
-		 * resource FEELS — the fresh-connection START latency (the
-		 * hover-preview metric, «навожу на карточку — превью не стартует»)
-		 * decides first; a measured stream beats an untested one. */
+		 * ч.129: the fresh-connection START latency (the hover-preview
+		 * metric, «навожу на карточку — превью не стартует») is what the
+		 * user FEELS first — a >25% better START wins outright; a smaller
+		 * gap is bursty TSPU noise (tie). The sustained flow decides next
+		 * at a >10% gap, then the handshake. */
 		const band = (e) => (((e.deep != null) && (e.deep > 0)) ||
 			((e.deep == null) && (int(e.stream || 0) > 0))) ? 0
 			: (((e.deep != null) && (e.deep == 0)) ? 2 : 1);
@@ -380,18 +381,21 @@ function main() {
 			const db_ = (b.deep == null) ? -1 : b.deep;
 			if (da != db_)
 				return db_ - da;
-			const sa = int(a.stream || 0), sb = int(b.stream || 0);
-			if (sa > 0 && sb > 0 && sa != sb) {
-				const hi = (sa > sb) ? sa : sb, lo = (sa > sb) ? sb : sa;
-				if (hi - lo <= int(hi / 10)) {
-					const ta = int(a.start || 0), tb = int(b.start || 0);
-					if (ta > 0 && tb > 0 && ta != tb)
-						return ta - tb;
-				}
-				return sb - sa;
+			const ta = int(a.start || 0), tb = int(b.start || 0);
+			if (ta > 0 && tb > 0 && ta != tb) {
+				const hi = (ta > tb) ? ta : tb, lo = (ta > tb) ? tb : ta;
+				if (hi - lo > int(hi / 4))
+					return ta - tb;
 			}
-			if ((sa > 0 || sb > 0) && sa != sb)
-				return sb - sa;
+			const sa = int(a.stream || 0), sb = int(b.stream || 0);
+			if (sa != sb) {
+				if (sa > 0 && sb > 0) {
+					const hi = (sa > sb) ? sa : sb, lo = (sa > sb) ? sb : sa;
+					if (hi - lo > int(hi / 10))
+						return sb - sa;
+				} else if (sa > 0 || sb > 0)
+					return sb - sa;
+			}
 			return (a.ms - b.ms) || (b.s.score - a.s.score);
 		});
 		if (length(elig)) {

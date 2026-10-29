@@ -5937,8 +5937,8 @@ msgstr ""
 msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the Manual strategies sub-tab."
 msgstr ""
 
-# DPI video-stream probe (ч.116) + non-differential deep verdict (ч.117)
-msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the handshake top-5, representatives of every technique family and your CURRENT strategy with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it)."
+# DPI video-stream probe (ч.116) + non-differential deep verdict (ч.117) + family-diverse battery (ч.129)
+msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the best strategy of EVERY technique family (multisplit, disorder, hostfakesplit, fakesplit, syndata, …), the best imported/generated strategies and your CURRENT strategy with REAL content fetches — measuring the fresh-connection start (the hover-preview latency, median of several fresh connections) and the sustained video flow in KB/s (a handshake cannot see TSPU throttling). The ranking: a >25% better start wins first, then a >10% better flow, then the handshake — a fast bulk with a slow start loses. Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it)."
 msgstr ""
 
 # non-differential deep verdict (ч.117)
@@ -5975,7 +5975,7 @@ msgstr ""
 msgid "The automatic side: the scheduled auto-pilot keeps the strategies working without attention, and the one-click pick applies the best strategy for one resource. Both apply with a server snapshot (Restore stays available) and verify the resource live."
 msgstr ""
 
-msgid "Measure, don't guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the leaders (and your current strategy) with real content — page, thumbnails, the video stream in KB/s — and ranks honestly. Apply any row per resource, generate mutations, import or share catalogs."
+msgid "Measure, don't guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the best strategy of every technique family, the best imported/generated ones (and your current strategy) with real content — the fresh-connection start, thumbnails, the video stream in KB/s — and ranks honestly: start first, then the flow. Apply any row per resource, generate mutations, import or share catalogs."
 msgstr ""
 
 msgid "The manual side: a global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource Composition of both engines, and the service→engine chain. Automatic selection lives on the Auto-pilot sub-tab."
@@ -5996,7 +5996,16 @@ msgstr ""
 msgid "QUIC: %s"
 msgstr ""
 
-msgid "This sweep: %d strategies — the deep battery measured %d of them (the handshake top-5, distinct technique families and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus."
+msgid "This sweep: %d strategies — the deep battery measured %d of %d selected (family-diverse leaders, the best imported/generated strategies and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus."
+msgstr ""
+
+msgid "Deep check failed (retried once, no verdict): %s — these strategies rank as untested."
+msgstr ""
+
+msgid "Start, ms"
+msgstr ""
+
+msgid "The fresh-connection START latency (the hover-preview experience): the median time-to-first-byte of fresh connections measured in the deep battery. A >25% better start outranks a better bulk flow."
 msgstr ""
 
 msgid "Flow, KB/s"

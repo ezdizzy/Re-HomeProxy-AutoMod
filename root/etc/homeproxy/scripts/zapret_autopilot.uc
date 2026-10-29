@@ -606,10 +606,13 @@ function pick_resource(fz, res, exclude_args) {
 	 * totals zero out (every probe identical across the deep-tested
 	 * strategies), the stream measurement still separates the tested
 	 * strategies from the untested ones.
-	 * ч.127: flow speeds within 10% of each other are a tie for how the
-	 * resource FEELS — the fresh-connection START latency (the hover-
-	 * preview metric, the user's «превью не стартуют» complaint) decides
-	 * first; a measured stream beats an untested one. */
+	 * ч.129: the fresh-connection START latency (the hover-preview metric,
+	 * «навожу на карточку — превью не стартует») is what the user FEELS
+	 * first — a >25% better START wins outright; a smaller gap is bursty
+	 * TSPU noise (tie). The sustained flow decides next at a >10% gap,
+	 * then the handshake. The old order (flow first, START only inside a
+	 * 10% flow tie) kept a fast-bulk/slow-start strategy on top — exactly
+	 * the user's complaint; a measured stream still beats an untested one. */
 	const band = (e) => (((e.deep != null) && (e.deep > 0)) ||
 		((e.deep == null) && (int(e.stream || 0) > 0))) ? 0
 		: (((e.deep != null) && (e.deep == 0)) ? 2 : 1);
@@ -621,18 +624,21 @@ function pick_resource(fz, res, exclude_args) {
 		const db_ = (b.deep == null) ? -1 : b.deep;
 		if (da != db_)
 			return db_ - da;
-		const sa = int(a.stream || 0), sb = int(b.stream || 0);
-		if (sa > 0 && sb > 0 && sa != sb) {
-			const hi = (sa > sb) ? sa : sb, lo = (sa > sb) ? sb : sa;
-			if (hi - lo <= int(hi / 10)) {
-				const ta = int(a.start || 0), tb = int(b.start || 0);
-				if (ta > 0 && tb > 0 && ta != tb)
-					return ta - tb;
-			}
-			return sb - sa;
+		const ta = int(a.start || 0), tb = int(b.start || 0);
+		if (ta > 0 && tb > 0 && ta != tb) {
+			const hi = (ta > tb) ? ta : tb, lo = (ta > tb) ? tb : ta;
+			if (hi - lo > int(hi / 4))
+				return ta - tb;
 		}
-		if ((sa > 0 || sb > 0) && sa != sb)
-			return sb - sa;
+		const sa = int(a.stream || 0), sb = int(b.stream || 0);
+		if (sa != sb) {
+			if (sa > 0 && sb > 0) {
+				const hi = (sa > sb) ? sa : sb, lo = (sa > sb) ? sb : sa;
+				if (hi - lo > int(hi / 10))
+					return sb - sa;
+			} else if (sa > 0 || sb > 0)
+				return sb - sa;
+		}
 		return (a.ms - b.ms) || (b.s.score - a.s.score);
 	});
 	if (!length(elig))
@@ -1038,8 +1044,8 @@ function cycle(cfg) {
 			if (!switch_ok) {
 				log_once('hold_' + res, res + ': the current strategy stays best within the margin (deep ' +
 					((cud >= 0) ? '' + cud : 'n/a') + ' vs ' + ((cd >= 0) ? '' + cd : 'n/a') +
-					', flow ' + uspd + ' vs ' + cspd + ' B/s, start ' + ust + ' vs ' + cst +
-					' ms, TLS ' + cand.tls_ms + ' vs ' + cur.tls_ms + ' ms)');
+					', start ' + ust + ' vs ' + cst + ' ms, flow ' + uspd + ' vs ' + cspd +
+					' B/s, TLS ' + cand.tls_ms + ' vs ' + cur.tls_ms + ' ms)');
 				use = null;
 			}
 		}

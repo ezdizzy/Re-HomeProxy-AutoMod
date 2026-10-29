@@ -122,13 +122,15 @@ fail() { echo "{\"ok\":0,\"total\":0,\"error\":\"$1\"}"; exit 0; }
 command -v curl >/dev/null 2>&1 || fail "curl missing"
 mkdir -p "$TMP" 2>/dev/null
 
-# Watchdog: guarantee teardown within 70s even if curl/nslookup wedges, so the
+# Watchdog: guarantee teardown within 100s even if curl/nslookup wedges, so the
 # live firewall is never left modified (busybox has no `timeout` applet).
-# 70 s (ч.123): the deep battery's ytv probe now runs TWO windows (~20 s) on
-# top of the 25 s handshake poll — 50 s could tear down mid-deep and drop
-# results. Redirect its fds to /dev/null: otherwise the backgrounded `sleep`
-# keeps the caller's stdout pipe open and rpcd/popen blocks on read().
-( sleep 70; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
+# 100 s (ч.129): the deep battery's ytv probe now runs THREE windows + the
+# fresh-connection START phase (~38 s worst case) on top of the 25 s handshake
+# poll and the 45 s deep collection — 70 s could tear down mid-deep and drop
+# results (the live ч.129 fact: deep_count 4 of 7 selected). Redirect its fds
+# to /dev/null: otherwise the backgrounded `sleep` keeps the caller's stdout
+# pipe open and rpcd/popen blocks on read().
+( sleep 100; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
 WATCH_PID=$!
 
 # 1. Test-host IPs — BEFORE touching the firewall, so a slow resolver never runs
@@ -265,46 +267,77 @@ if [ "$DEEP" = "1" ]; then
 		DRANGE=""
 		[ "$did" = "yts" ] && DRANGE="-r 0-4194303"
 		if [ "$did" = "ytv" ]; then
-			# SUSTAINED-FLOW throughput: 24 real thumbnails over ONE keep-alive
-			# flow (--max-time caps the WHOLE run; curl exits 28 on a throttled
-			# link — the completed transfers still report). Σbytes/Σtime = the
-			# honest per-flow bytes/s; ≥8 successful transfers = code 200.
+			# SUSTAINED-FLOW throughput: real thumbnails over keep-alive
+			# flows (--max-time caps EACH window; curl exits 28 on a
+			# throttled link — the completed transfers still report).
 			# One -o per URL: with a single -o curl discards only the FIRST
 			# body and dumps the rest to stdout (caught live ч.116).
-			# ч.123: TWO windows, one keep-alive flow each, ~1 s apart — the
-			# mean (Σbytes/Σtime of both) no longer hinges on one lucky or one
-			# unlucky window (TSPU throttling is bursty); a window that stalls
-			# entirely is dropped, both stalled = honest fail.
+			# ч.123: TWO windows, one keep-alive flow each — the mean no
+			# longer hinges on one lucky or one unlucky window.
+			# ч.129: THREE windows, and the verdict metric is the MEDIAN of
+			# the per-window speeds (Σbytes/Σtime of each window) — the live
+			# A/B run showed a ~2x swing of the pooled single-pair number
+			# (the same strategy measured 525 KB/s in one sweep and 242 KB/s
+			# minutes later); a median of three windows tames the burst.
+			# A window that stalls entirely is dropped; a majority of OK
+			# windows (≥2 of 3) is the 200 verdict, both stalled = honest
+			# fail. Plus the ч.127 START phase, hardened: THREE DEDICATED
+			# fresh single-fetch connections (parallel, one small thumbnail
+			# each) join each window's first-transfer time_starttransfer —
+			# the verdict START is the lower-median of up to 6 fresh-
+			# connection samples (the hover-preview latency must not hinge
+			# on one bursty sample).
 			CURL_ARGS=""
 			for yu in $YTV_URLS; do
 				CURL_ARGS="$CURL_ARGS -o /dev/null $yu"
 			done
 			cat > "$TMP/ytv_flow.sh" <<'YTVFLOW'
 #!/bin/sh
-# two sustained-flow windows → "code secs bytes speed fetched start"
-# (ч.127: start = the averaged time_starttransfer of each window's FIRST
-# transfer — every window opens a fresh connection, so the first transfer
-# carries the whole TCP+TLS+request path to the first byte: the
-# hover-preview latency the user described)
+# three sustained-flow windows + a fresh-connection START phase →
+# "code secs bytes speed fetched start"
 pin="$1"; shift
-w1=$(curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download} %{time_starttransfer}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++; if (NR==1) tf=$4} END {if (t<0.1) t=0.1; c=0; if (n>=8) c=200; print c, t, s, o, tf+0}')
+w() {
+	curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download} %{time_starttransfer}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++; if (NR==1) tf=$4} END {if (t<0.1) t=0.1; print ((n>=8)?200:0), t, s+0, o+0, (s/t)+0, tf+0}'
+}
+W1=$(w "$@")
 sleep 1
-w2=$(curl -sL --max-redirs 2 --resolve "$pin" -w '%{http_code} %{time_total} %{size_download} %{time_starttransfer}\n' --connect-timeout 4 --max-time 9 -k "$@" 2>/dev/null | awk '{s+=$3; t+=$2; o++; if ($1==200 || $1==206) n++; if (NR==1) tf=$4} END {if (t<0.1) t=0.1; c=0; if (n>=8) c=200; print c, t, s, o, tf+0}')
-printf '%s\n%s\n' "$w1" "$w2" | awk '
-{ c[NR]=$1; t[NR]=$2; s[NR]=$3; o[NR]=$4; tf[NR]=$5 }
+W2=$(w "$@")
+sleep 1
+W3=$(w "$@")
+# START phase: three parallel fresh connections, one small fetch each
+u="$1"
+d=$(dirname "$0")
+fr() {
+	curl -sL --max-redirs 2 --resolve "$pin" -o /dev/null -w '%{http_code} %{time_starttransfer}\n' --connect-timeout 4 --max-time 9 -k "$u" 2>/dev/null
+}
+fr > "$d/f1.$$" & fr > "$d/f2.$$" & fr > "$d/f3.$$" &
+wait
+{
+	printf '%s\n' "$W1" "$W2" "$W3"
+	cat "$d/f1.$$" "$d/f2.$$" "$d/f3.$$" 2>/dev/null
+} | awk '
+NF >= 6 { nw++; c[nw]=$1; t[nw]=$2; s[nw]=$3; o[nw]=$4; sp[nw]=$5; tfw[nw]=$6; next }
+NF >= 2 && ($1 == 200 || $1 == 206) { nf++; tff[nf]=$2+0; next }
 END {
-	if (NR == 1) {
-		tt = t[1]; if (tt < 0.1) tt = 0.1
-		print c[1], tt, s[1] + 0, int((s[1] + 0) / tt), o[1] + 0, tf[1] + 0
-		exit
-	}
-	code = 0; if (c[1] == 200 && c[2] == 200) code = 200
-	tt = t[1] + t[2]; ss = s[1] + s[2]; if (tt < 0.1) tt = 0.1
-	ns = 0; ts = 0
-	for (i = 1; i <= NR; i++) if (tf[i] > 0) { ts += tf[i]; ns++ }
-	st = (ns > 0) ? ts/ns : 0
-	print code, tt, ss, int(ss / tt), o[1] + o[2], st
+	if (nw < 1) { print 0, 0.1, 0, 0, 0, 0; exit }
+	okw = 0; tt = 0; ss = 0; oo = 0
+	for (i = 1; i <= nw; i++) { if (c[i] == 200) okw++; tt += t[i]; ss += s[i]; oo += o[i] }
+	code = (okw >= 2) ? 200 : 0
+	if (tt < 0.1) tt = 0.1
+	# median of the per-window speeds (lower-median)
+	sn = 0
+	for (i = 1; i <= nw; i++) if (sp[i] > 0) { sn++; v[sn] = sp[i] }
+	for (i = 1; i <= sn; i++) for (j = i + 1; j <= sn; j++) if (v[j] < v[i]) { tmpv = v[i]; v[i] = v[j]; v[j] = tmpv }
+	spd = (sn > 0) ? v[int((sn + 1) / 2)] : 0
+	# lower-median of the fresh-connection START samples (windows firsts + fresh probes)
+	tn = 0
+	for (i = 1; i <= nw; i++) if (tfw[i] > 0) { tn++; q[tn] = tfw[i] }
+	for (i = 1; i <= nf; i++) if (tff[i] > 0) { tn++; q[tn] = tff[i] }
+	for (i = 1; i <= tn; i++) for (j = i + 1; j <= tn; j++) if (q[j] < q[i]) { tmpq = q[i]; q[i] = q[j]; q[j] = tmpq }
+	st = (tn > 0) ? q[int((tn + 1) / 2)] : 0
+	print code, tt, ss, int(spd), oo, st
 }'
+	rm -f "$d/f1.$$" "$d/f2.$$" "$d/f3.$$" 2>/dev/null
 YTVFLOW
 			chmod 755 "$TMP/ytv_flow.sh"
 			if [ -n "$PROBE_UID" ]; then
@@ -321,7 +354,7 @@ YTVFLOW
 		fi
 	done
 	dn=0
-	while [ "$dn" -lt 26 ]; do
+	while [ "$dn" -lt 45 ]; do
 		all=1
 		for dp in $DEEP_PROBES; do
 			did=${dp%%|*}
@@ -353,6 +386,14 @@ YTVFLOW
 			dsec=$(printf '%s' "$raw" | awk '{print $2}')
 			dbytes=$(printf '%s' "$raw" | awk '{print $3}')
 			dspeed=$(printf '%s' "$raw" | awk '{print $4}')
+			# ч.129 hardening: a truncated curl line must never render as an
+			# EMPTY JSON number ("bytes":, breaks the fuzzer's json() parse
+			# and silently drops the whole deep verdict — the live deep_count
+			# 4-of-7 fact). Missing fields default to honest zeros.
+			[ -n "$dcode" ] || dcode="000"
+			case "$dsec" in ''|*[!0-9.]*) dsec="0" ;; esac
+			case "$dbytes" in ''|*[!0-9]*) dbytes="0" ;; esac
+			case "$dspeed" in ''|*[!0-9.]*) dspeed="0" ;; esac
 			# curl prints speed_download as a double ("9563726.000") — busybox
 			# test needs an integer: truncate at the decimal point.
 			dspeed=${dspeed%%.*}

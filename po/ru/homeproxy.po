@@ -11494,8 +11494,8 @@ msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best stra
 msgstr "Один клик: фаззер ранжирует корпус (свежий переиспользуется), лучшая стратегия для ресурса применяется как скопированный профиль со снимком сервера, затем ресурс проверяется через настроенный путь (страница, CDN, РЕАЛЬНЫЙ видеопоток в КБ/с). Только Zapret — стратегии ByeDPI настраиваются на под-вкладке «Ручные стратегии»."
 
 # DPI video-stream probe (ч.116) + non-differential deep verdict (ч.117)
-msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the handshake top-5, representatives of every technique family and your CURRENT strategy with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it)."
-msgstr "Фаззер прогоняет каждую стратегию каталога на изолированной NFQUEUE (TLS-хендшейки YouTube / Telegram / Discord / Speedtest), затем глубоко проверяет РЕАЛЬНЫМИ контентными загрузками топ-5 по хендшейку, представителей каждого семейства техник и ВАШУ ТЕКУЩУЮ стратегию — включая сам видеопоток с замером в КБ/с (хендшейк не видит ТСПУ-троттлинг видео). Пробы, которые все глубоко-проверенные стратегии проходят или валят одинаково, не ранжируют (не различают): колонка «Ресурс грузится» показывает тогда ≈ со счётом сырых проб — равно у всех, не ранжирует. Baseline без дезинка помечает хосты, которые ваш провайдер не режет; каждый хост должен пройти большинство раундов. Живой трафик не затрагивается. Быстрый прогон ~15–30 минут; полный масштабируется с корпусом (подпись выше считает честно)."
+msgid "The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the best strategy of EVERY technique family (multisplit, disorder, hostfakesplit, fakesplit, syndata, …), the best imported/generated strategies and your CURRENT strategy with REAL content fetches — measuring the fresh-connection start (the hover-preview latency, median of several fresh connections) and the sustained video flow in KB/s (a handshake cannot see TSPU throttling). The ranking: a >25% better start wins first, then a >10% better flow, then the handshake — a fast bulk with a slow start loses. Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it)."
+msgstr "Фаззер прогоняет каждую стратегию каталога на изолированной NFQUEUE (TLS-хендшейки YouTube / Telegram / Discord / Speedtest), затем глубоко проверяет РЕАЛЬНЫМИ контентными загрузками лучшую стратегию КАЖДОГО семейства техник (multisplit, disorder, hostfakesplit, fakesplit, syndata, …), лучшие импортированные/сгенерированные и ВАШУ ТЕКУЩУЮ стратегию — измеряя старт свежего соединения (задержку превью, медиана нескольких свежих соединений) и sustained-видеопоток в КБ/с (хендшейк не видит ТСПУ-троттлинг). Ранжирование: старт лучше >25% выигрывает первым, затем поток лучше >10%, затем хендшейк — быстрый «кубок» с медленным стартом проигрывает. Пробы, которые все глубоко-проверенные стратегии проходят или валят одинаково, не ранжируют (не различают): колонка «Ресурс грузится» показывает тогда ≈ со счётом сырых проб. Baseline без дезинка помечает хосты, которые ваш провайдер не режет; каждый хост должен пройти большинство раундов. Живой трафик не затрагивается. Быстрый прогон ~15–30 минут; полный масштабируется с корпусом (подпись выше считает честно)."
 
 # non-differential deep verdict (ч.117)
 msgid "identical for all"
@@ -11598,8 +11598,8 @@ msgid "The automatic side: the scheduled auto-pilot keeps the strategies working
 msgstr "Автоматика: автопилот по расписанию держит стратегии рабочими без вашего участия, а подбор одной кнопкой применяет лучшую стратегию для одного ресурса. Оба применяют изменения с серверным снапшотом (Restore всегда доступен) и проверяют ресурс живьём."
 
 # DPI sub-tabs + measured quality (ч.123)
-msgid "Measure, don't guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the leaders (and your current strategy) with real content — page, thumbnails, the video stream in KB/s — and ranks honestly. Apply any row per resource, generate mutations, import or share catalogs."
-msgstr "Измеряй, а не угадывай: фаззер прогоняет каталог на изолированной очереди, глубоко проверяет лидеров (и вашу текущую стратегию) реальным контентом — страница, превью, видеопоток в КБ/с — и ранжирует честно. Применяйте любую строку для ресурса, генерируйте мутации, импортируйте и делитесь каталогами."
+msgid "Measure, don't guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the best strategy of every technique family, the best imported/generated ones (and your current strategy) with real content — the fresh-connection start, thumbnails, the video stream in KB/s — and ranks honestly: start first, then the flow. Apply any row per resource, generate mutations, import or share catalogs."
+msgstr "Измеряй, а не угадывай: фаззер прогоняет каталог на изолированной очереди, глубоко проверяет лучшую стратегию каждого семейства техник, лучшие импортированные/сгенерированные (и вашу текущую) реальным контентом — старт свежего соединения, превью, видеопоток в КБ/с — и ранжирует честно: сначала старт, затем поток. Применяйте любую строку для ресурса, генерируйте мутации, импортируйте и делитесь каталогами."
 
 # DPI sub-tabs + measured quality (ч.123)
 msgid "The manual side: a global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource Composition of both engines, and the service→engine chain. Automatic selection lives on the Auto-pilot sub-tab."
@@ -11625,9 +11625,21 @@ msgstr "QUIC: открыт"
 msgid "QUIC: %s"
 msgstr "QUIC: %s"
 
-# DPI sub-tabs + measured quality (ч.123)
-msgid "This sweep: %d strategies — the deep battery measured %d of them (the handshake top-5, distinct technique families and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus."
-msgstr "Этот прогон: %d стратегий — deep-батарея измерила %d из них (топ-5 по хендшейку, представители семейств техник и ваша текущая стратегия). Быстрый прогон ~%d мин, полный ~%d мин на этом корпусе."
+# DPI sub-tabs + measured quality (ч.123, ч.129)
+msgid "This sweep: %d strategies — the deep battery measured %d of %d selected (family-diverse leaders, the best imported/generated strategies and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus."
+msgstr "Этот прогон: %d стратегий — deep-батарея измерила %d из %d выбранных (лидеры по одному из каждого семейства, лучшие импортированных/сгенерированных и ваша текущая стратегия). Быстрый прогон ~%d мин, полный ~%d мин на этом корпусе."
+
+# DPI sub-tabs + measured quality (ч.129)
+msgid "Deep check failed (retried once, no verdict): %s — these strategies rank as untested."
+msgstr "Deep-проверка не удалась (повторена один раз, вердикта нет): %s — эти стратегии ранжируются как непроверенные."
+
+# DPI sub-tabs + measured quality (ч.129)
+msgid "Start, ms"
+msgstr "Старт, мс"
+
+# DPI sub-tabs + measured quality (ч.129)
+msgid "The fresh-connection START latency (the hover-preview experience): the median time-to-first-byte of fresh connections measured in the deep battery. A >25% better start outranks a better bulk flow."
+msgstr "Задержка СТАРТА свежего соединения (опыт «навёл на карточку — превью»): медиана времени до первого байта свежих соединений из deep-батареи. Старт лучше >25% важнее большего «кубка» потока."
 
 # DPI sub-tabs + measured quality (ч.123)
 msgid "Flow, KB/s"

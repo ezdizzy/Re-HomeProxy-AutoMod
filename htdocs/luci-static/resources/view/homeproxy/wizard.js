@@ -721,7 +721,7 @@ return view.extend({
 
 		/* Strategy Lab sub-tab — measure, then decide. */
 		dpiPanes.dpiLab.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Measure, don\'t guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the leaders (and your current strategy) with real content — page, thumbnails, the video stream in KB/s — and ranks honestly. Apply any row per resource, generate mutations, import or share catalogs.') ]));
+			[ _('Measure, don\'t guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the best strategy of every technique family, the best imported/generated ones (and your current strategy) with real content — the fresh-connection start, thumbnails, the video stream in KB/s — and ranks honestly: start first, then the flow. Apply any row per resource, generate mutations, import or share catalogs.') ]));
 		dpiPanes.dpiLab.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy Lab') ]));
 		dpiPanes.dpiLab.appendChild(dpiLab);
 		dpiPanes.dpiLab.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy catalog') ]));
@@ -2882,7 +2882,7 @@ return view.extend({
 		dpiLab.appendChild(labBest);
 		dpiLab.appendChild(labHist);
 		dpiLab.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the handshake top-5, representatives of every technique family and your CURRENT strategy with REAL content fetches — including the actual video stream measured in KB/s (a handshake cannot see TSPU throttling of the video). Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count — identical for everyone, not ranked. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it).') ]));
+			[ _('The fuzzer batch-tests every strategy from the catalog on an isolated NFQUEUE (YouTube / Telegram / Discord / Speedtest TLS handshakes), then deep-checks the best strategy of EVERY technique family (multisplit, disorder, hostfakesplit, fakesplit, syndata, …), the best imported/generated strategies and your CURRENT strategy with REAL content fetches — measuring the fresh-connection start (the hover-preview latency, median of several fresh connections) and the sustained video flow in KB/s (a handshake cannot see TSPU throttling). The ranking: a >25% better start wins first, then a >10% better flow, then the handshake — a fast bulk with a slow start loses. Probes that all deep-tested strategies pass or fail identically do not rank (non-differential): the Resource loads column then shows ≈ with the raw pass count. A no-desync baseline marks hosts your ISP does not block; each host must pass the majority of rounds. Live traffic is untouched. A quick sweep takes ~15–30 minutes; a full one scales with the corpus (the label above computes it).') ]));
 
 		let labPollId = null;
 		function labStopPoll() { if (labPollId) { window.clearInterval(labPollId); labPollId = null; } }
@@ -2963,9 +2963,13 @@ return view.extend({
 			}
 			/* ч.123: the honest duration line — the corpus size decides. */
 			box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' },
-				[ _('This sweep: %d strategies — the deep battery measured %d of them (the handshake top-5, distinct technique families and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus.').format(
+				[ _('This sweep: %d strategies — the deep battery measured %d of %d selected (family-diverse leaders, the best imported/generated strategies and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus.').format(
 					res.total || res.strategies.length, res.deep_count || 0,
+					res.deep_selected || res.deep_count || 0,
 					fuzzEtaMin(13), fuzzEtaMin(res.total || res.strategies.length)) ]));
+			if (res.deep_failed && res.deep_failed.length)
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.75' },
+					[ _('Deep check failed (retried once, no verdict): %s — these strategies rank as untested.').format(res.deep_failed.join(', ')) ]));
 			const thead = E('thead', {}, E('tr', {}, [
 				E('th', {}, [ '#' ]),
 				E('th', {}, [ _('Strategy') ]),
@@ -2973,6 +2977,8 @@ return view.extend({
 				E('th', {}, [ _('Avg TLS, ms') ]),
 				E('th', { title: _('The sustained video-flow speed measured in the deep battery (KB/s through the configured path) — a fast handshake does not predict a fast flow.') },
 					[ _('Flow, KB/s') ]),
+				E('th', { title: _('The fresh-connection START latency (the hover-preview experience): the median time-to-first-byte of fresh connections measured in the deep battery. A >25% better start outranks a better bulk flow.') },
+					[ _('Start, ms') ]),
 				E('th', {}, [ _('Resource loads') ]),
 				E('th', {}, [ _('Apply for') ])
 			]));
@@ -3091,9 +3097,16 @@ return view.extend({
 					if (curKb > 0 && s.args !== curArgs && flowKb > Math.round(curKb * 1.25))
 						flowParts.push(_('↑ +%d KB/s vs current').format(flowKb - curKb));
 				}
-				/* ч.127: the fresh-connection START latency rides in the
-				 * tooltip — the hover-preview experience the user pointed at. */
+				/* ч.127: the fresh-connection START latency — the hover-preview
+				 * experience the user pointed at. ч.129: a FIRST-CLASS column
+				 * (the ranking: START >25% decides first, then the flow). */
 				const startMs = Number(s.start_ms || 0);
+				const startTd = E('td', { style: 'white-space:nowrap' },
+					(startMs > 0)
+						? [ E('span', { style: 'color:#3fbf5f; font-weight:600',
+							title: _('fresh-connection start ~%d ms (hover-preview latency)').format(startMs) },
+							[ String(startMs) ]) ]
+						: [ E('span', { style: 'opacity:.35' }, [ '—' ]) ]);
 				const flowTd = E('td', {
 					style: 'white-space:nowrap',
 					title: (startMs > 0) ? _('fresh-connection start ~%d ms (hover-preview latency)').format(startMs) : ''
@@ -3110,6 +3123,7 @@ return view.extend({
 					E('td', { style: 'white-space:nowrap' }, [ '%d / %d'.format(s.ok || 0, s.total || 0) ]),
 					E('td', {}, [ String(s.avg_tls_ms || 0) ]),
 					flowTd,
+					startTd,
 					deepTd,
 					E('td', { style: 'white-space:nowrap' }, [ resSel, ' ', ab ])
 				]);
