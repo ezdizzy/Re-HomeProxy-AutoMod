@@ -172,18 +172,27 @@ function hp_core_features_cached(bin) {
 	return info;
 }
 
-/* Latest Re:HomeProxy AutoMod release (from the app's own fork repo). Honors the
- * optional GitHub token (higher rate limit). Returns the parsed JSON, or null on failure. */
+/* Latest Ravnex release (the app's own repo). Honors the optional GitHub token
+ * (higher rate limit). Rebrand fallback: the primary repo is ezdizzy/ravnex; the
+ * legacy name is tried second, so the check works both BEFORE and AFTER the GitHub
+ * repository rename (404 body has no tag_name -> fall through). Returns the parsed
+ * JSON with tag_name, or null on failure. */
 function app_github_release() {
 	const token_fd = popen('uci -q get homeproxy.config.github_token 2>/dev/null');
 	let token = null;
 	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
 	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
-	const fd = popen(`wget -qO- --timeout=10 ${auth} "https://api.github.com/repos/ezdizzy/re-homeproxy/releases/latest" 2>/dev/null`);
-	if (!fd) return null;
-	const raw = fd.read('all');
-	fd.close();
-	try { return json(raw); } catch(e) { return null; }
+	const repos = ['ezdizzy/ravnex', 'ezdizzy/re-homeproxy'];
+	for (let i = 0; i < length(repos); i++) {
+		const fd = popen(`wget -qO- --timeout=10 ${auth} "https://api.github.com/repos/${repos[i]}/releases/latest" 2>/dev/null`);
+		if (!fd) continue;
+		const raw = fd.read('all');
+		fd.close();
+		let rel = null;
+		try { rel = json(raw); } catch(e) { rel = null; }
+		if (rel && length(rel.tag_name)) return rel;
+	}
+	return null;
 }
 
 /* Semantic version compare: -1 if a<b, 0 if equal, 1 if a>b.
@@ -6186,7 +6195,7 @@ const methods = {
 			if (match(chat_raw, /^-?[0-9]+$/) == null)
 				return { result: false, bot_username: bot_username, error: 'bad chat_id' };
 			const body = sprintf('{"chat_id":%s,"text":"%s","parse_mode":"HTML"}',
-				chat_raw, 'Тестовое сообщение Re:HomeProxy — связь с ботом работает.');
+				chat_raw, 'Тестовое сообщение Ravnex — связь с ботом работает.');
 			system('rm -f ' + shellquote(f));
 			system('curl -s --max-time 10 -o ' + shellquote(f) + ' -X POST -H \'Content-Type: application/json\' -d ' +
 				shellquote(body) + ' ' +

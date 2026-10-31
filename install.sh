@@ -1,5 +1,5 @@
 #!/bin/sh
-# Установщик и интерактивный конфигуратор Re:HomeProxy AutoMod для OpenWrt (apk / opkg)
+# Установщик и интерактивный конфигуратор Ravnex для OpenWrt (apk / opkg)
 # https://github.com/ezdizzy/re-homeproxy
 #
 # Вручную ставится только LuCI-приложение + ключ подписи, а ядро, ByeDPI и Zapret
@@ -271,7 +271,7 @@ apply_and_check() {
 
 # ---------------------------------------------------------------- 0. окружение
 echo
-ok "===== Re:HomeProxy AutoMod — установка и настройка ====="
+ok "===== Ravnex — установка и настройка ====="
 
 [ "$(id -u)" = 0 ] || die "Запустите от root."
 [ -r /etc/openwrt_release ] || die "Это не OpenWrt (нет /etc/openwrt_release)."
@@ -363,9 +363,9 @@ FOREIGN_REMOVED=0
 if [ "$APP_INSTALLED" = 0 ] && [ -n "$FOREIGN_PKG" ]; then
 	warn "════════════════════════════════════════════════════════════"
 	warn "  Обнаружена ЧУЖАЯ (оригинальная) версия homeproxy: пакет"
-	warn "  '$FOREIGN_PKG' установлен. Она конфликтует с Re:HomeProxy AutoMod"
+	warn "  '$FOREIGN_PKG' установлен. Она конфликтует с Ravnex"
 	warn "  (те же конфиги и rpcd-объекты) — поверх ставить нельзя."
-	ask "$FOREIGN_PKG будет удалён, Re:HomeProxy AutoMod установлен. Продолжить? [Д/н]:"
+	ask "$FOREIGN_PKG будет удалён, Ravnex установлен. Продолжить? [Д/н]:"
 	if ! is_yes "$REPLY"; then
 		die "Установка отменена. Сначала удалите '$FOREIGN_PKG': $( [ "$PM" = apk ] && echo "apk del $FOREIGN_PKG" || echo "opkg remove $FOREIGN_PKG" )."
 	fi
@@ -387,13 +387,13 @@ if [ "$APP_INSTALLED" = 0 ] && [ -n "$FOREIGN_PKG" ]; then
 	[ -z "$(foreign_homeproxy_pkg)" ] || die "Не удалось удалить '$FOREIGN_PKG' — установите его удаление вручную и повторите."
 fi
 if [ "$APP_INSTALLED" = 1 ] && [ -n "$FOREIGN_PKG" ]; then
-	warn "  ⚠ ВАЖНО: одновременно установлены и Re:HomeProxy AutoMod, и '$FOREIGN_PKG'."
+	warn "  ⚠ ВАЖНО: одновременно установлены и Ravnex, и '$FOREIGN_PKG'."
 	warn "    Они конфликтуют (общие файлы: конфиг, rpcd-объект, скрипты)."
 	# GL.iNet-прошивки (4.8+) несут свой 'luci-app-homeproxy-hiddify' из каталога
 	# плагинов — на таком роутере предупреждение появляется даже у того, кто ставил
 	# только наш пакет: чужой был в прошивке. Поэтому не только предупреждаем, но и
 	# предлагаем удалить сразу (конфиг НЕ трогаем — он общий и наш).
-	ask "  Удалить '$FOREIGN_PKG' сейчас и переустановить Re:HomeProxy AutoMod? [Д/н]:"
+	ask "  Удалить '$FOREIGN_PKG' сейчас и переустановить Ravnex? [Д/н]:"
 	if is_yes "$REPLY"; then
 		info "  останавливаю службу и удаляю '$FOREIGN_PKG'..."
 		/etc/init.d/homeproxy stop >/dev/null 2>&1
@@ -538,7 +538,7 @@ heal_configs() {
 
 # ------------------------------------------------- 1. LuCI-приложение + ключ
 install_app() {
-	ok "[1/10] Устанавливаю LuCI-приложение Re:HomeProxy AutoMod..."
+	ok "[1/10] Устанавливаю LuCI-приложение Ravnex..."
 	ensure_key
 	app_install_pkgs || die "Установка приложения завершилась ошибкой."
 	ok "  приложение установлено."
@@ -1107,7 +1107,7 @@ ask_telegram_control() {
 menu() {
 	while true; do
 		echo
-		info "===== Настройка Re:HomeProxy AutoMod ====="
+		info "===== Настройка Ravnex ====="
 		status_line
 		echo "  1) Добавить подписку (URL)"
 		echo "  2) Добавить узел (строка подключения)"
@@ -1201,7 +1201,7 @@ menu() {
 					ok "  готово: узлов $(count_nodes)."
 					apply_and_check
 				fi ;;
-			0|"") info "  Готово. Откройте LuCI → Services → Re:HomeProxy AutoMod."; break ;;
+			0|"") info "  Готово. Откройте LuCI → Services → Ravnex."; break ;;
 			10) app_reinstall ;;
 			11) heal_configs ;;
 			12)
@@ -1233,7 +1233,7 @@ summary() {
 	echo
 	ok "===== Готово ====="
 	status_line
-	info "Откройте Re:HomeProxy AutoMod в браузере:"
+	info "Откройте Ravnex в браузере:"
 	URL="http://$LANIP/cgi-bin/luci/admin/services/homeproxy"
 	printf '\033[0;36m  \033]8;;%s\033\\%s\033]8;;\033\\\033[0m\n' "$URL" "$URL"
 	info "Проверка прокси и выбор стратегий: Диагностика / Мастер → Обход DPI (Strategy Lab)."

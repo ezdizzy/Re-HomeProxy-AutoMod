@@ -3490,21 +3490,21 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/client.js:113
 #: htdocs/luci-static/resources/view/homeproxy/client.js:158
 #: htdocs/luci-static/resources/view/homeproxy/status.js:1095
-msgid "Re:HomeProxy AutoMod"
+msgid "Ravnex"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:486
-msgid "Re:HomeProxy AutoMod chains"
+msgid "Ravnex chains"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:618
-msgid "Re:HomeProxy AutoMod Diagnostics"
+msgid "Ravnex Diagnostics"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js:133
 #: htdocs/luci-static/resources/view/homeproxy/server.js:62
 #: htdocs/luci-static/resources/view/homeproxy/server.js:64
-msgid "Re:HomeProxy AutoMod Server"
+msgid "Ravnex Server"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:478

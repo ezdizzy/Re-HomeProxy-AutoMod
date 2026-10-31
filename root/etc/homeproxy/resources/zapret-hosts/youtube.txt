@@ -1,4 +1,4 @@
-# Re:HomeProxy AutoMod — nfqws2 hostlist: YouTube (suffix match covers subdomains)
+# Ravnex — nfqws2 hostlist: YouTube (suffix match covers subdomains)
 # Sources: Ф3 baseline + IndeecFOX/zapret4rocket lists/russia-youtube.txt (pin ce62f12, 2026-10-20)
 youtube.com
 www.youtube.com

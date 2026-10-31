@@ -122,7 +122,7 @@ add_group_and_user
 	apk mkpkg \
 		--info "name:$PKG_NAME" \
 		--info "version:$PKG_VERSION" \
-		--info "description:Re:HomeProxy AutoMod - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy" \
+		--info "description:Ravnex - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy" \
 		--info "arch:noarch" \
 		--info "origin:$PKG_NAME" \
 		--info "url:https://github.com/ezdizzy/re-homeproxy" \
@@ -167,7 +167,7 @@ else
 		Maintainer: 1andrevich <1andrevich.recede274@passmail.net>
 		Architecture: all
 		Installed-Size: TO-BE-FILLED-BY-IPKG-BUILD
-		Description:  Re:HomeProxy AutoMod - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy
+		Description:  Ravnex - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy
 	EOF
 	chmod 0644 "$TEMP_PKG_DIR/CONTROL/control"
 

@@ -5,7 +5,7 @@
 
 include $(TOPDIR)/rules.mk
 
-LUCI_TITLE:=Re:HomeProxy AutoMod - multi-core proxy platform (fork of ImmortalWrt HomeProxy)
+LUCI_TITLE:=Ravnex - multi-core proxy platform (DPI bypass, automation; successor of Re:HomeProxy AutoMod)
 LUCI_PKGARCH:=all
 # NOTE: MultiDNS uses mosdns (not smartdns) as its per-query DNS racing engine.
 # mosdns is NOT shipped in the standard OpenWrt feed, so it is fetched at runtime
@@ -17,7 +17,7 @@ LUCI_DEPENDS:= \
 	+ucode-mod-digest
 
 PKG_NAME:=luci-app-re-homeproxy
-# Semantic version (X.Y.Z). This value IS the public version of Re:HomeProxy AutoMod:
+# Semantic version (X.Y.Z). This value IS the public version of Ravnex:
 # the GitHub release tag is "v${PKG_VERSION}" and the in-app self-update compares the
 # locally installed version against the latest release tag. Bump it ONLY when cutting a
 # release (see LOCAL_DOCS/LOCAL_CHANGELOG.md / README "Releases" section). Do NOT use a date/timestamp.

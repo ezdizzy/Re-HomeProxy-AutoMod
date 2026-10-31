@@ -911,7 +911,7 @@ function buildAppCard(appStatus) {
 
 	const statusEl = E('strong', {
 		style: installed ? 'color:#3fbf5f' : 'color:#9a9a9a'
-	}, installed ? (version ? 'Re:HomeProxy AutoMod v' + version : _('Installed')) : _('Not installed'));
+	}, installed ? (version ? 'Ravnex v' + version : _('Installed')) : _('Not installed'));
 
 	const remoteEl = E('span', { style: 'font-size:0.9em; color:#9a9a9a' }, '');
 	const msgEl = E('span', { style: 'margin-left:8px; font-size:0.9em' }, '');
@@ -959,7 +959,7 @@ function buildAppCard(appStatus) {
 
 			const prep = await L.resolveDefault(callAppPrepareInstall(), {});
 			if (prep.error) {
-				statusEl.textContent = version ? 'Re:HomeProxy AutoMod v' + version : _('Installed');
+				statusEl.textContent = version ? 'Ravnex v' + version : _('Installed');
 				statusEl.style.color = '#3fbf5f';
 				updateBtn.disabled = false;
 				checkBtn.disabled = false;
@@ -1000,7 +1000,7 @@ function buildAppCard(appStatus) {
 
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
-			E('strong', {}, 'Re:HomeProxy AutoMod'),
+			E('strong', {}, 'Ravnex'),
 			statusEl,
 			checkBtn,
 			remoteEl,
@@ -1645,7 +1645,7 @@ return view.extend({
 		s.anonymous = true;
 
 		o = s.option(form.DummyValue, '_homeproxy_logview');
-		o.render = L.bind(getRuntimeLog, this, o, _('Re:HomeProxy AutoMod'));
+		o.render = L.bind(getRuntimeLog, this, o, _('Ravnex'));
 
 		o = s.option(form.DummyValue, '_hiddify-c_logview');
 		o.render = L.bind(getRuntimeLog, this, o, _('core client'));

@@ -4749,24 +4749,24 @@ msgstr "Отчёт"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
-msgid "Re:HomeProxy AutoMod Diagnostics"
-msgstr "Диагностика Re:HomeProxy AutoMod"
+msgid "Ravnex Diagnostics"
+msgstr "Диагностика Ravnex"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Re:HomeProxy AutoMod"
-msgstr "Re:HomeProxy AutoMod"
+msgid "Ravnex"
+msgstr "Ravnex"
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js
 
-msgid "Re:HomeProxy AutoMod Server"
-msgstr "Сервер Re:HomeProxy AutoMod"
+msgid "Ravnex Server"
+msgstr "Сервер Ravnex"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
-msgid "Re:HomeProxy AutoMod chains"
-msgstr "Цепочки Re:HomeProxy AutoMod"
+msgid "Ravnex chains"
+msgstr "Цепочки Ravnex"
 
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json
 

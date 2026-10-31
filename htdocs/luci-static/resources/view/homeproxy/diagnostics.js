@@ -596,7 +596,7 @@ function buildNftSection(view) {
 			}
 
 			dom.content(resultsEl, [
-				row(_('Re:HomeProxy AutoMod chains'), statusBadge(ret.nft_present,
+				row(_('Ravnex chains'), statusBadge(ret.nft_present,
 				    ret.nft_present ? _('found') : _('not found — firewall rules may be missing'))),
 				ret.nft_rules ? E('div', {}, [
 					E('div', { 'class': 'diag-label' }, _('Matched lines in fw4')),
@@ -770,7 +770,7 @@ return view.extend({
 		panes.report.appendChild(report.el);
 
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, _('Re:HomeProxy AutoMod Diagnostics')),
+			E('h2', {}, _('Ravnex Diagnostics')),
 			E('div', { 'class': 'cbi-section', 'style': 'padding-bottom:.5em' }, [
 				E('button', {
 					'class': 'btn cbi-button cbi-button-action important',
