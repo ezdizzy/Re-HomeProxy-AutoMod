@@ -86,7 +86,7 @@ return view.extend({
 	handleReset: null,
 
 	render(data) {
-		hp.uiStyle();
+		hp.uiShell();
 
 		const st0 = data[0] || {};
 

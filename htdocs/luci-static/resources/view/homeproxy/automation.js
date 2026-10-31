@@ -226,6 +226,9 @@ return view.extend({
 	},
 
 	render: function(data) {
+		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
+		hp.uiShell();
+
 		const m = new form.Map('homeproxy', _('Automation'));
 		const s = m.section(form.NamedSection, 'automation', 'homeproxy', _('Auto blocked-site detection'));
 

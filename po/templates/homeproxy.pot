@@ -6067,3 +6067,34 @@ msgstr ""
 
 msgid "fresh-connection start ~%d ms (hover-preview latency)"
 msgstr ""
+
+# ч.134: Р3 v2 app shell — sidebar sections, theme toggle, sidebar status
+msgid "Devices & network"
+msgstr ""
+
+msgid "Core & nodes"
+msgstr ""
+
+msgid "Service tools"
+msgstr ""
+
+msgid "Switch color theme"
+msgstr ""
+
+msgid "Collapse sidebar"
+msgstr ""
+
+msgid "Expand sidebar"
+msgstr ""
+
+msgid "Menu"
+msgstr ""
+
+msgid "System is running"
+msgstr ""
+
+msgid "Core is not responding"
+msgstr ""
+
+msgid "scale 0-100%"
+msgstr ""

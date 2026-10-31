@@ -706,8 +706,8 @@ return view.extend({
 	render: function(data) {
 		const features = (data && data[0]) || {};
 
-		/* Shared design system (Automation look) + page-specific tweaks. */
-		hp.uiStyle();
+		/* App shell (R3 v2) + page-specific tweaks. */
+		hp.uiShell();
 		document.head.appendChild(E('style', {}, [ css ]));
 
 		const core   = buildCoreSection(this);

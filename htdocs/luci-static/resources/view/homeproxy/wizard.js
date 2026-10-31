@@ -386,7 +386,7 @@ return view.extend({
 	},
 
 	render: function() {
-		hp.uiStyle();
+		hp.uiShell();
 
 		/* Service presets — service presets over the itdoginfo/allow-domains
 		 * sources the generator already consumes (no new hardcode).

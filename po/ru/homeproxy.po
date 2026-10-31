@@ -11719,3 +11719,34 @@ msgstr "старт ~%d мс"
 
 msgid "fresh-connection start ~%d ms (hover-preview latency)"
 msgstr "старт на новом соединении ~%d мс (задержка превью при наведении)"
+
+# ч.134: Р3 v2 app shell — sidebar sections, theme toggle, sidebar status
+msgid "Devices & network"
+msgstr "Устройства и сеть"
+
+msgid "Core & nodes"
+msgstr "Ядро и узлы"
+
+msgid "Service tools"
+msgstr "Сервис"
+
+msgid "Switch color theme"
+msgstr "Переключить цветовую тему"
+
+msgid "Collapse sidebar"
+msgstr "Свернуть панель"
+
+msgid "Expand sidebar"
+msgstr "Развернуть панель"
+
+msgid "Menu"
+msgstr "Меню"
+
+msgid "System is running"
+msgstr "Система работает"
+
+msgid "Core is not responding"
+msgstr "Ядро не отвечает"
+
+msgid "scale 0-100%"
+msgstr "шкала 0–100 %"

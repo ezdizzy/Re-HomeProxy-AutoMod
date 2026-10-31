@@ -3,18 +3,17 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Ravnex — Overview (Главная) tab (Ф4, ч.76; Р3: бренд-блок + статус-лента).
+ * Ravnex — Overview (Главная) tab (Ф4, ч.76; Р3: бренд-блок + статус-лента;
+ * Р3 v2: app shell (hp.uiShell) + headline metric cards with sparklines).
  *
  * One page answering "what state is everything in, right now":
- *   - status cards: core (+version, running), active node (+delay),
- *     routing mode, Zapret / ByeDPI engines (+strategy, NFQUEUE counters),
- *     MultiDNS, Automation (+learned records), Telegram bot;
- *   - charts: inline SVG built on the CLIENT from the metrics ring the
- *     always-on `metrics` procd instance collects (overview_metrics RPC,
- *     ≤120 points ≈ 10 min of history) — CPU %, RAM %, temperature,
- *     connections, active-node delay, learned-records growth. NO external
- *     libraries: on the router there is no CDN, and the D5 hard condition
- *     requires everything to work locally on the device;
+ *   - subsystem status ribbon (8 chips: icon + ok/bad/warn/off dot) fed by
+ *     the same render pass as the metrics;
+ *   - headline metric cards (tachyon-style): core, RAM, active node,
+ *     connections, VPN speed — each with a mini sparkline from the metrics
+ *     ring (overview_metrics RPC, ≤120 points ≈ 10 min of history);
+ *   - secondary charts (temperature, learned records, direct/bypass speed)
+ *     built as inline SVG on the CLIENT — NO external libraries (D5);
  *   - system parameters: uptime, load, flash (/) and /tmp usage, app
  *     version (update availability stays ON DEMAND — D6);
  *   - quick actions: Restart service, Snapshot, Restore internet — the
@@ -174,7 +173,7 @@ return view.extend({
 
 	render: function(data) {
 		const features = data[1] || {};
-		hp.uiStyle();
+		hp.uiShell();
 
 		const OV_CSS = `
 .ov-charts { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
@@ -186,7 +185,6 @@ return view.extend({
 .ov-chart-cap { display: flex; justify-content: space-between; font-size: .78em; opacity: .65; margin: 2px 0 0 0; }
 .ov-chart-max { font-size: .74em; opacity: .6; text-align: right; margin: 0; }
 .ov-note { font-size: .88em; opacity: .8; margin: 2px 0 0 0; }
-.ov-num { font-size: 1.22em; line-height: 1.3; word-break: break-word; }
 .ov-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ov-result { margin-top: 8px; }
 .ov-strat { font-family: var(--hp-font-mono); font-size: .8em; opacity: .85; word-break: break-all; }
@@ -197,7 +195,7 @@ return view.extend({
 .hpui-cap .hpui-ic { margin-right: 5px; opacity: .9; }
 /* Brand block (Р3): raven icon + wordmark/slogan + subsystem status ribbon. */
 .hpui-brand { display: flex; align-items: center; gap: 14px; padding: 12px 16px; margin: 2px 0 12px; border: 1px solid var(--hp-panel-line); border-left: 4px solid var(--hp-accent); border-radius: var(--hp-radius-lg); background: linear-gradient(90deg, var(--hp-accent-soft), transparent 55%), var(--hp-panel-bg); box-shadow: var(--hp-shadow); }
-.hpui-brand-ic { width: 48px; height: 48px; border-radius: 10px; flex: none; box-shadow: 0 2px 8px rgba(0,0,0,.28); }
+.hpui-brand-ic { width: 52px; height: 52px; border-radius: 12px; flex: none; box-shadow: 0 2px 8px rgba(0,0,0,.28); }
 .hpui-brand-name { font-size: 1.45em; font-weight: 800; line-height: 1.25; display: flex; align-items: baseline; gap: 8px; }
 .hpui-brand-slogan { color: var(--hp-accent-strong); font-weight: 700; font-size: .58em; letter-spacing: .06em; white-space: nowrap; }
 .hpui-brand-ver { margin-left: auto; align-self: flex-start; font-size: .84em; opacity: .85; border: 1px solid var(--hp-panel-line); border-radius: 999px; padding: 2px 10px; background: var(--hp-panel-bg-2); white-space: nowrap; }
@@ -210,6 +208,24 @@ return view.extend({
 .hpui-dot.ok { background: var(--hp-accent); box-shadow: 0 0 4px var(--hp-accent-glow); }
 .hpui-dot.bad { background: var(--hp-red); box-shadow: 0 0 4px var(--hp-red-line); }
 .hpui-dot.warn { background: var(--hp-amber); box-shadow: 0 0 4px rgba(217,154,27,.5); }
+/* Metric cards with sparklines (Р3 v2, reference: the tachyon dashboard):
+ * caption + big number + note + a mini chart of the same series. */
+.hpui-mcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 10px; margin: 10px 0; }
+.hpui-mcard { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); box-shadow: var(--hp-shadow); padding: 10px 12px 8px; min-width: 0; }
+.hpui-mcap { display: flex; align-items: center; gap: 6px; font-size: .76em; letter-spacing: .04em; opacity: .72; }
+.hpui-mcap .hpui-ic { width: 1.05em; height: 1.05em; }
+.hpui-mbody { display: flex; gap: 8px; margin-top: 3px; }
+.hpui-mtxt { flex: 1 1 auto; min-width: 0; }
+.hpui-mnum { font-size: 1.28em; font-weight: 700; line-height: 1.3; word-break: break-word; }
+.hpui-mnote { font-size: .78em; opacity: .7; margin-top: 1px; }
+.hpui-mnote:empty { display: none; }
+.hpui-mspark-slot { flex: none; align-self: flex-end; }
+.hpui-mspark { width: 82px; height: 34px; display: block; }
+/* Two-column layout: charts on the left, system + actions on the right. */
+.ov-grid { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin: 0; }
+.ov-col { display: flex; flex-direction: column; min-width: 0; }
+.ov-col > .hpui-panel { margin: 0 0 12px 0; }
+@media (max-width: 1150px) { .ov-grid { grid-template-columns: 1fr; } }
 `;
 
 		const st = document.getElementById('hp-ov-style');
@@ -249,7 +265,7 @@ return view.extend({
 
 		const brandVer = E('span', { 'class': 'hpui-brand-ver' }, [ '—' ]);
 		const brandEl = E('div', { 'class': 'hpui-brand' }, [
-			E('img', { 'class': 'hpui-brand-ic', 'src': L.resource('ravnex-icon-128.png'), 'alt': 'Ravnex' }),
+			E('img', { 'class': 'hpui-brand-ic', 'src': L.resource('ravnex-raven-192.png'), 'alt': 'Ravnex' }),
 			E('div', {}, [
 				E('div', { 'class': 'hpui-brand-name' }, [
 					E('span', {}, [ 'Ravnex' ]),
@@ -269,55 +285,63 @@ return view.extend({
 			r.state.setAttribute('title', title || text);
 		}
 
-		/* ── Cards frame (built once, texts replaced on poll) ──────────── */
+		/* ── Metric cards (Р3 v2, tachyon-style): caption + big number +
+		 * note + a mini sparkline of the same series. The 8 subsystem
+		 * states live in the ribbon above; these cards carry the LIVE
+		 * metrics only. Sparklines render from the same ring as the
+		 * charts (one render pass, anti-flicker). ───────────────────── */
 
-		const CARD_DEFS = [
-			[ 'core',      'cpu',     _('Core') ],
-			[ 'node',      'server',  _('Active node') ],
-			[ 'mode',      'shuffle', _('Routing mode') ],
-			[ 'zapret',    'shield',  'Zapret (nfqws2)' ],
-			[ 'byedpi',    'zap',     'ByeDPI (ciadpi)' ],
-			[ 'multidns',  'globe',   'MultiDNS' ],
-			[ 'automation', 'refresh', _('Automation') ],
-			[ 'telegram',  'send',    _('Telegram bot') ]
+		const MCARD_DEFS = [
+			[ 'core',  'cpu',      _('Core'),           'cpu',    { max: 100, color: hp.PALETTE.blue, fill: hp.PALETTE.blueFill } ],
+			[ 'ram',   'activity', _('RAM'),            'ram',    { max: 100, color: hp.PALETTE.blue, fill: hp.PALETTE.blueFill } ],
+			[ 'node',  'server',   _('Active node'),    'delay',  { color: hp.PALETTE.accent, fill: hp.PALETTE.accentFill } ],
+			[ 'conns', 'shuffle',  _('Connections'),    'conns',  { color: hp.PALETTE.accent, fill: hp.PALETTE.accentFill } ],
+			[ 'vpn',   'trend',    _('VPN speed'),      'vpn_b',  { color: hp.PALETTE.accent, fill: hp.PALETTE.accentFill } ]
 		];
-		const cards = {};
-		const cardsEl = E('div', { 'class': 'hpui-cards' });
-		for (let c in CARD_DEFS) {
-			const cap = E('div', { 'class': 'hpui-cap' });
-			const capIc = hp.icon(CARD_DEFS[c][1]);
-			if (capIc)
-				cap.appendChild(capIc);
-			cap.appendChild(document.createTextNode(CARD_DEFS[c][2]));
-			const el = E('div', { 'class': 'hpui-card' }, [
-				cap,
-				E('div', { 'class': 'hpui-num ov-num' }, [ '—' ]),
-				E('div', { 'class': 'ov-note' }, [ '' ])
+		const mcards = {};
+		const mcardsEl = E('div', { 'class': 'hpui-mcards' });
+		for (let c in MCARD_DEFS) {
+			const cap = E('div', { 'class': 'hpui-mcap' }, [
+				hp.icon(MCARD_DEFS[c][1]),
+				E('span', {}, [ MCARD_DEFS[c][2] ])
 			]);
-			cards[CARD_DEFS[c][0]] = { num: el.children[1], note: el.children[2] };
-			cardsEl.appendChild(el);
+			const sparkSlot = E('div', { 'class': 'hpui-mspark-slot' });
+			const el = E('div', { 'class': 'hpui-mcard' }, [
+				cap,
+				E('div', { 'class': 'hpui-mbody' }, [
+					E('div', { 'class': 'hpui-mtxt' }, [
+						E('div', { 'class': 'hpui-mnum' }, [ '—' ]),
+						E('div', { 'class': 'hpui-mnote' }, [ '' ])
+					]),
+					sparkSlot
+				])
+			]);
+			mcards[MCARD_DEFS[c][0]] = {
+				num: el.children[1].children[0].children[0],
+				note: el.children[1].children[0].children[1],
+				slot: sparkSlot,
+				key: MCARD_DEFS[c][3],
+				sopts: MCARD_DEFS[c][4]
+			};
+			mcardsEl.appendChild(el);
 		}
 
-		function cardNum(card, text, cls) {
+		function mcardNum(card, text, cls) {
 			card.num.textContent = text;
-			card.num.className = 'hpui-num ov-num' + (cls ? ' ' + cls : '');
+			card.num.className = 'hpui-mnum' + (cls ? ' ' + cls : '');
 		}
 
-		/* ── Charts frame ───────────────────────────────────────────────── */
+		/* ── Charts frame (secondary series; the five headline metrics live
+		 * in the metric cards above as sparklines) ─────────────────────── */
 
 		const CHART_DEFS = [
-			[ 'cpu',     _('CPU'),             { max: 100, fmt: (v) => v + '%', color: hp.PALETTE.blue, fill: hp.PALETTE.blueFill } ],
-			[ 'ram',     _('RAM'),             { max: 100, fmt: (v) => v + '%', color: hp.PALETTE.blue, fill: hp.PALETTE.blueFill } ],
 			[ 'temp',    _('Temperature'),     { fmt: (v) => v + ' °C', color: hp.PALETTE.amberHot, fill: hp.PALETTE.amberFill } ],
-			[ 'conns',   _('Connections'),     { fmt: (v) => String(Math.floor(v) || 0), color: hp.PALETTE.accent, fill: hp.PALETTE.accentFill } ],
-			[ 'delay',   _('Node delay'),      { fmt: (v) => v + ' ms', color: hp.PALETTE.accent, fill: hp.PALETTE.accentFill } ],
 			[ 'learned', _('Learned records'), { fmt: (v) => String(Math.floor(v) || 0), color: hp.PALETTE.accent, fill: hp.PALETTE.accentFill } ],
 			/* Per-exit traffic speed (Ф8-F7 T2): B/s deltas from the
 			 * /connections sampler. byp = Zapret + ByeDPI + tg-ws.
-			 * Keys match the sampler point fields (vpn_b/dir_b/byp_b).
-			 * Colors are semantic (Р3): VPN = brand green, direct = grey,
-			 * bypass engines = amber. */
-			[ 'vpn_b',   _('VPN speed'),       { fmt: (v) => fmtBps(v), color: hp.PALETTE.accent, fill: hp.PALETTE.accentFill } ],
+			 * Keys match the sampler point fields (dir_b/byp_b).
+			 * Colors are semantic (Р3): direct = grey, bypass engines =
+			 * amber; VPN speed is a headline metric (metric card). */
 			[ 'dir_b',   _('Direct speed'),    { fmt: (v) => fmtBps(v), color: hp.PALETTE.grey, fill: hp.PALETTE.greyFill } ],
 			[ 'byp_b',   _('Bypass speed'),    { fmt: (v) => fmtBps(v), color: hp.PALETTE.amberHot, fill: hp.PALETTE.amberFill } ]
 		];
@@ -495,68 +519,69 @@ return view.extend({
 			const cfgMainNode = uci.get('homeproxy', 'config', 'main_node') || '';
 			const last = (metrics.points.length) ? metrics.points[metrics.points.length - 1] : null;
 
-			/* Core */
+			/* Core (ribbon + metric card) */
 			const coreType = features.core_type || null;
 			const coreName = coreType === 'hiddify' ? 'hiddify-core' :
 				coreType === 'singbox' ? 'sing-box-extended' : _('not installed');
 			const coreVer = features.version ? 'v' + features.version : '';
-			cardNum(cards.core, coreName, sys.clash_ok ? '' : (coreType ? 'hpui-c-red' : ''));
-			cards.core.note.textContent = (coreVer ? coreVer : '') +
+			mcardNum(mcards.core, coreName, sys.clash_ok ? '' : (coreType ? 'hpui-c-red' : ''));
+			mcards.core.note.textContent = (coreVer ? coreVer : '') +
 				(sys.clash_ok ? ' · ' + _('running') : (coreType ? ' · ' + _('not responding') : ''));
 			rib('core', coreType ? (sys.clash_ok ? 'ok' : 'bad') : '',
 				coreType ? (sys.clash_ok ? _('running') : _('not responding')) : _('not installed'));
 
-			/* Active node */
+			/* RAM metric card (the spark scale is fixed 0-100%). */
+			mcardNum(mcards.ram, (last && last.ram != null) ? (last.ram + '%') : '—', '');
+			mcards.ram.note.textContent = (last && last.ram != null) ? _('scale 0-100%') : '';
+
+			/* Active node (ribbon + metric card) */
 			if (node && node.node) {
 				const special = { 'main-out': _('Main node'), 'zapret-out': 'Zapret',
 					'byedpi-out': 'ByeDPI', 'direct-out': _('Direct'), 'block-out': _('Block') };
 				const shown = special[node.node] || resolveTag(node.node);
-				cardNum(cards.node, shown, node.delay ? 'hpui-c-green' : '');
-				cards.node.note.textContent = (node.delay != null) ? (node.delay + ' ms') : '—';
+				mcardNum(mcards.node, shown, node.delay ? 'hpui-c-green' : '');
+				mcards.node.note.textContent = (node.delay != null) ? (node.delay + ' ms') : '—';
 				rib('node', node.delay ? 'ok' : '', shown,
 					(node.delay != null) ? (shown + ' · ' + node.delay + ' ms') : shown);
 			} else {
-				cardNum(cards.node, '—', 'hpui-c-grey');
-				cards.node.note.textContent = (cfgMode === 'custom' || cfgMode === 'custom_json')
+				mcardNum(mcards.node, '—', 'hpui-c-grey');
+				mcards.node.note.textContent = (cfgMode === 'custom' || cfgMode === 'custom_json')
 					? _('Custom routing — no main node')
 					: (cfgMainNode === 'direct-out' ? _('Direct') : _('no node'));
-				rib('node', '', cards.node.note.textContent);
+				rib('node', '', mcards.node.note.textContent);
 			}
 
-			/* Routing mode */
-			cardNum(cards.mode, routingModeLabel(cfgMode), '');
+			/* Connections + VPN speed metric cards (sparkline series). */
+			mcardNum(mcards.conns, (last && last.conns != null) ? String(Math.floor(last.conns)) : '—', '');
+			mcardNum(mcards.vpn, (last && last.vpn_b != null) ? fmtBps(last.vpn_b) : '—',
+				(last && last.vpn_b > 0) ? 'hpui-c-green' : '');
+
+			/* Routing mode (ribbon only). */
 			const proxyMode = uci.get('homeproxy', 'config', 'proxy_mode') || '';
 			const pmLabels = { redirect: _('Redirect TCP'), redirect_tproxy: _('Redirect TCP + TProxy UDP'),
 				redirect_tun: _('Redirect TCP + Tun UDP'), tun: _('Tun TCP/UDP') };
-			cards.mode.note.textContent = pmLabels[proxyMode] || proxyMode;
-			rib('mode', '', routingModeLabel(cfgMode), cards.mode.note.textContent);
+			rib('mode', '', routingModeLabel(cfgMode), pmLabels[proxyMode] || proxyMode);
 
 			/* Zapret / ByeDPI (engines, strategy, NFQUEUE counters). The raw
-			 * strategy args are a dump nobody should read in a tile (Ф7):
+			 * strategy args are a dump nobody should read in a chip (Ф7):
 			 * show the corpus NAME when known ("StressOzz Yv09"), a short
 			 * "custom options" marker otherwise, and keep the full args in
 			 * the tooltip. */
 			const zState = (!z.installed) ? _('not installed') : (!z.enabled) ? _('disabled')
 				: (z.running ? _('running') : _('enabled, not running'));
-			cardNum(cards.zapret, zState, (z.installed && z.enabled) ? (z.running ? 'hpui-c-green' : 'hpui-c-red') : '');
 			const zq = z.nfqueue || {};
 			const zName = z.strategy_name ? String(z.strategy_name) :
 				z.strategy ? _('custom options') : null;
-			cards.zapret.note.textContent = (z.enabled && z.running)
+			const zNote = (z.enabled && z.running)
 				? ((zName ? zName + ' · ' : '') + 'NFQUEUE: ' + (zq.packets || 0) + ' pkts')
 				: (z.enabled && zName ? zName : '—');
-			cards.zapret.note.setAttribute('title',
-				(z.strategy ? String(z.strategy) + (zq.bytes ? (' · ' + (zq.bytes / 1024).toFixed(0) + ' KB') : '') : ''));
 			rib('zapret', (z.installed && z.enabled) ? (z.running ? 'ok' : 'bad') : '',
-				zState, cards.zapret.note.textContent);
+				zState, zNote);
 
 			const bState = (!b.installed) ? _('not installed') : (!b.enabled) ? _('disabled')
 				: (b.running ? _('running') : _('enabled, not running'));
-			cardNum(cards.byedpi, bState, (b.installed && b.enabled) ? (b.running ? 'hpui-c-green' : 'hpui-c-red') : '');
-			cards.byedpi.note.textContent = (b.enabled && b.opts) ? _('custom options') : '—';
-			cards.byedpi.note.setAttribute('title', (b.enabled && b.opts) ? String(b.opts) : '');
 			rib('byedpi', (b.installed && b.enabled) ? (b.running ? 'ok' : 'bad') : '',
-				bState, cards.byedpi.note.textContent);
+				bState, (b.enabled && b.opts) ? _('custom options') : '—');
 
 			/* MultiDNS. "restarting..." is the routine quality-cycle rebuild
 			 * window (the daemon rebuilds mosdns.yaml and bounces the instance,
@@ -565,37 +590,26 @@ return view.extend({
 			const mdEnabled = (mdns && mdns.enabled === '1') || (uci.get('homeproxy', 'multidns', 'enabled') === '1');
 			const mdRunning = !!(mdEnabled && mdns && mdns.mosdns);
 			const mdRestart = !!(mdEnabled && !mdRunning && mdns && mdns.restarting);
-			cardNum(cards.multidns,
-				mdEnabled ? (mdRunning ? _('running') : (mdRestart ? _('restarting...') : _('enabled, not running'))) : _('disabled'),
-				mdEnabled ? (mdRunning ? 'hpui-c-green' : (mdRestart ? 'hpui-c-grey' : 'hpui-c-red')) : '');
 			const mdRu = (mdEnabled && mdns && mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
 			const mdSec = (mdEnabled && mdns && mdns.active && mdns.active.secure) ? mdns.active.secure.length : 0;
-			cards.multidns.note.textContent = mdEnabled
-				? _('RU: %d · Secure: %d').format(mdRu, mdSec)
-				: '—';
+			const mdNote = mdEnabled ? _('RU: %d · Secure: %d').format(mdRu, mdSec) : '—';
 			rib('multidns', mdEnabled ? (mdRunning ? 'ok' : (mdRestart ? 'warn' : 'bad')) : '',
 				mdEnabled ? (mdRunning ? _('running') : (mdRestart ? _('restarting...') : _('enabled, not running'))) : _('disabled'),
-				cards.multidns.note.textContent);
+				mdNote);
 
 			/* Automation */
 			const auEnabled = (uci.get('homeproxy', 'automation', 'enabled') === '1');
 			const auRunning = !!sys.automation_running;
-			cardNum(cards.automation, auEnabled ? (auRunning ? _('running') : _('enabled, not running')) : _('disabled'),
-				auEnabled ? (auRunning ? 'hpui-c-green' : 'hpui-c-red') : '');
-			cards.automation.note.textContent = (last && last.learned != null)
-				? _('Learned records: %d').format(last.learned)
-				: '—';
 			rib('automation', auEnabled ? (auRunning ? 'ok' : 'bad') : '',
-				auEnabled ? (auRunning ? _('running') : _('enabled, not running')) : _('disabled'));
+				auEnabled ? (auRunning ? _('running') : _('enabled, not running')) : _('disabled'),
+				(last && last.learned != null) ? _('Learned records: %d').format(last.learned) : '—');
 
 			/* Telegram */
 			const tgEnabled = !!(sys.telegram && sys.telegram.enabled === true);
 			const tgRunning = !!(sys.telegram && sys.telegram.running);
-			cardNum(cards.telegram, tgEnabled ? (tgRunning ? _('running') : _('enabled, not running')) : _('disabled'),
-				tgEnabled ? (tgRunning ? 'hpui-c-green' : 'hpui-c-red') : '');
-			cards.telegram.note.textContent = tgEnabled ? (tgRunning ? _('long-poll getUpdates') : _('daemon not alive')) : '—';
 			rib('telegram', tgEnabled ? (tgRunning ? 'ok' : 'bad') : '',
-				tgEnabled ? (tgRunning ? _('running') : _('enabled, not running')) : _('disabled'));
+				tgEnabled ? (tgRunning ? _('running') : _('enabled, not running')) : _('disabled'),
+				tgEnabled ? (tgRunning ? _('long-poll getUpdates') : _('daemon not alive')) : '—');
 		}
 
 		function renderCharts() {
@@ -631,6 +645,12 @@ return view.extend({
 					}
 				});
 				block.replaceChild(hp.chartSvg(points, def[0], opts), block.children[1]);
+			}
+			/* Metric card sparklines — same ring, same signature guard. */
+			for (let k in mcards) {
+				const c = mcards[k];
+				c.slot.replaceChildren(hp.chartSvg(points, c.key,
+					Object.assign({ className: 'hpui-mspark' }, c.sopts)));
 			}
 			const span = points.length ? points.length * (metrics.interval || 5) : 0;
 			const upd = metrics.updated ? new Date(metrics.updated * 1000) : null;
@@ -680,17 +700,23 @@ return view.extend({
 		poll.add(refresh, 4);
 		refresh();
 
+		/* Р3 v2 layout: brand + subsystem ribbon → headline metric cards →
+		 * two-column grid (charts | system + quick actions) → traffic by
+		 * exit → ONE result area at the bottom. */
 		return E('div', {}, [
 			brandEl,
-			cardsEl,
-			E('div', { 'class': 'hpui-panel' }, [
-				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Performance') ]),
-				chartsEl,
-				chartsCap
+			mcardsEl,
+			E('div', { 'class': 'ov-grid' }, [
+				E('div', { 'class': 'ov-col' }, [
+					E('div', { 'class': 'hpui-panel' }, [
+						E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Performance') ]),
+						chartsEl,
+						chartsCap
+					])
+				]),
+				E('div', { 'class': 'ov-col' }, [ sysEl, actionsEl ])
 			]),
 			trafficEl,
-			sysEl,
-			actionsEl,
 			resultEl
 		]);
 	}

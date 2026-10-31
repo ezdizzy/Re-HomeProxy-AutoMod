@@ -133,8 +133,8 @@ return view.extend({
 	render(data) {
 		let m, s, o, ss, so;
 
-		/* Shared design system (Automation look) for the standard tab bars. */
-		hp.uiStyle();
+		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
+		hp.uiShell();
 
 		let features = data[2],
 		    hosts = data[3]?.hosts;

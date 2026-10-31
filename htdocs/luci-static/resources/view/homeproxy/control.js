@@ -428,7 +428,7 @@ return view.extend({
 	handleReset: null,
 
 	render(data) {
-		hp.uiStyle();
+		hp.uiShell();
 
 		const st = document.getElementById('hp-ctrl-style');
 		if (!st)

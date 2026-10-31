@@ -130,8 +130,8 @@ return view.extend({
 		let m, s, o;
 		let features = data[1];
 
-		/* Shared design system (Automation look) for the standard tab bars. */
-		hp.uiStyle();
+		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
+		hp.uiShell();
 
 		m = new form.Map('homeproxy', _('Ravnex Server'),
 			_('The modern multi-core proxy platform. Fork of ImmortalWrt.'));

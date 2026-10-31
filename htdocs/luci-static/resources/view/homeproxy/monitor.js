@@ -126,8 +126,8 @@ return view.extend({
 	},
 
 	render: function() {
-		/* Shared design system (Automation look): cards, table, palette. */
-		hp.uiStyle();
+		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
+		hp.uiShell();
 
 		const coreBody = E('div', {}, [ '—' ]);
 		const activeBody = E('div', {}, [ '—' ]);

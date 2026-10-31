@@ -42,8 +42,8 @@ let stubValidator = {
 
 return view.extend({
 	render: function() {
-		/* Shared design system (Automation look) for the quality monitor. */
-		hp.uiStyle();
+		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
+		hp.uiShell();
 
 		const m = new form.Map('homeproxy', _('DNS Settings'));
 

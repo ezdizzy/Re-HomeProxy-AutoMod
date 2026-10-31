@@ -1464,8 +1464,8 @@ return view.extend({
 	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus, mdnsStatus, mosdnsStatus, coreSkipped]) {
 		let m, s, o;
 
-		/* Shared design system (Automation look): translucent panels, palette. */
-		hp.uiStyle();
+		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
+		hp.uiShell();
 
 		m = new form.Map('homeproxy');
 

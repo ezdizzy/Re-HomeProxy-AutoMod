@@ -8,9 +8,24 @@
 'require baseclass';
 'require form';
 'require fs';
+'require poll';
 'require rpc';
 'require uci';
 'require ui';
+
+/* R3 v2 theme pre-paint: apply the saved (or system) color scheme to <html>
+ * as soon as this module loads and BEFORE the shell builds — no flash of the
+ * unthemed page. This resource loads only on the app's pages, so the
+ * attribute never leaks to other LuCI views. */
+(function() {
+	try {
+		let t = null;
+		try { t = window.localStorage.getItem('hp-theme'); } catch (e) {}
+		if (t !== 'dark' && t !== 'light')
+			t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+		document.documentElement.setAttribute('data-hp-theme', t);
+	} catch (e) {}
+})();
 
 return baseclass.extend({
 	dns_strategy: {
@@ -232,7 +247,13 @@ return baseclass.extend({
 		check: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
 		alert: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 		database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
-		trend: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>'
+		trend: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+		/* Shell chrome icons (R3 v2). */
+		sun: '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+		moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+		'chev-left': '<polyline points="15 18 9 12 15 6"/>',
+		'chev-right': '<polyline points="9 18 15 12 9 6"/>',
+		menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>'
 	},
 
 	icon(name, cls) {
@@ -288,7 +309,24 @@ return baseclass.extend({
 	--hp-shadow: 0 1px 2px rgba(0,0,0,.08), 0 2px 10px rgba(0,0,0,.06);
 	--hp-console-bg: #1e1e1e; --hp-console-line: #333; --hp-console-fg: #ddd;
 	--hp-table-head: #757575;
+	--hp-table-head-fg: #f5f5f5;
 	--hp-font-mono: ui-monospace, 'Cascadia Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+	/* Shell (R3 v2): light defaults — the data-hp-theme blocks below override
+	 * them as soon as the pre-paint sets the attribute (always does on app
+	 * pages). */
+	--hp-shell-bg: #f2f4f8;
+	--hp-shell-bg-2: #ffffff;
+	--hp-shell-bg-3: #e9edf3;
+	--hp-fg: #1b2431;
+	--hp-fg-dim: rgba(27,36,49,.64);
+	--hp-fg-faint: rgba(27,36,49,.45);
+	--hp-hover: rgba(27,36,49,.05);
+	--hp-hover-2: rgba(27,36,49,.09);
+	--hp-input-bg: #ffffff;
+	--hp-input-line: rgba(27,36,49,.25);
+	--hp-sb-w: 236px;
+	--hp-sb-w-collapsed: 64px;
+	--hp-topbar-h: 52px;
 }
 .hpui-cards { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
 .hpui-card { flex: 1 1 140px; min-width: 130px; padding: 10px 14px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); box-shadow: var(--hp-shadow); }
@@ -312,7 +350,7 @@ return baseclass.extend({
 .hpui-banner-ok { border-color: var(--hp-accent-line); background: var(--hp-accent-soft); }
 .hpui-wrap { max-height: 62vh; overflow: auto; border: 1px solid var(--hp-panel-line-strong); border-radius: var(--hp-radius-sm); margin-top: 6px; }
 table.hpui-table { border-collapse: separate; border-spacing: 0; width: 100%; }
-table.hpui-table thead th { position: sticky; top: 0; z-index: 2; background: var(--hp-table-head); color: #f5f5f5; text-align: left; font-weight: 600; padding: 8px 10px; white-space: nowrap; border-bottom: 1px solid rgba(0,0,0,.35); }
+table.hpui-table thead th { position: sticky; top: 0; z-index: 2; background: var(--hp-table-head); color: var(--hp-table-head-fg, #f5f5f5); text-align: left; font-weight: 600; padding: 8px 10px; white-space: nowrap; border-bottom: 1px solid rgba(0,0,0,.35); }
 table.hpui-table tbody td { padding: 6px 10px; border-bottom: 1px solid rgba(128,128,128,.18); vertical-align: middle; }
 table.hpui-table tbody tr:hover td { background: rgba(128,128,128,.13); }
 .hpui-badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: .82em; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
@@ -379,6 +417,425 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 
 		document.head.appendChild(E('style', { id: 'hp-ui-style' }, [ css ]));
 	},
+
+	/* ── R3 v2: the app shell («tachyon» layout) ───────────────────────────
+	 * Full-page chrome for the 13 app tabs: a left sidebar (brand, grouped
+	 * navigation built from the LuCI menu tree, live status line), a top bar
+	 * (page title + color-theme toggle) and a re-skinned content area. The
+	 * LuCI chrome (header/footer/tab strip) is hidden via body.hp-shell —
+	 * page navigation is a full load, so other LuCI apps and the user's
+	 * chosen LuCI theme stay untouched.
+	 *
+	 * Dual theme lives on html[data-hp-theme="dark|light"]: the pre-paint
+	 * block at the top of this file sets it from localStorage('hp-theme')
+	 * (default = prefers-color-scheme) before anything renders, and the
+	 * data-hp-theme blocks below re-tune every --hp-* surface token, so the
+	 * existing hpui-* components of all tabs adapt automatically. */
+	SHELL_ACTIVE: false,
+
+	NAV_SECTIONS: [
+		{ pages: [ 'overview' ], cap: null },
+		{ pages: [ 'client', 'dns', 'wizard', 'node' ], cap: 'Connection' },
+		{ pages: [ 'access', 'control', 'telegram' ], cap: 'Devices & network' },
+		{ pages: [ 'status', 'monitor', 'server' ], cap: 'Core & nodes' },
+		{ pages: [ 'diagnostics', 'automation' ], cap: 'Service tools' }
+	],
+
+	NAV_ICONS: {
+		overview: 'activity', client: 'layers', dns: 'globe', wizard: 'crosshair',
+		node: 'server', access: 'monitor', control: 'tool', telegram: 'send',
+		status: 'cpu', monitor: 'trend', server: 'hardrive',
+		diagnostics: 'sensors', automation: 'refresh'
+	},
+
+	themeGet() {
+		let t = null;
+		try { t = window.localStorage.getItem('hp-theme'); } catch (e) {}
+		if (t !== 'dark' && t !== 'light')
+			t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+		return t;
+	},
+
+	themeSet(t) {
+		if (t !== 'dark' && t !== 'light')
+			t = 'dark';
+		document.documentElement.setAttribute('data-hp-theme', t);
+		try { window.localStorage.setItem('hp-theme', t); } catch (e) {}
+		const btn = document.getElementById('hp-theme-btn');
+		if (btn) {
+			btn.replaceChildren(this.icon(t === 'dark' ? 'sun' : 'moon'));
+			btn.setAttribute('title', _('Switch color theme'));
+		}
+	},
+
+	uiShell() {
+		if (this.SHELL_ACTIVE)
+			return;
+		this.SHELL_ACTIVE = true;
+
+		this.uiStyle();
+
+		const t = this.themeGet();
+		document.documentElement.setAttribute('data-hp-theme', t);
+
+		document.body.classList.add('hp-shell');
+		let collapsed = false;
+		try { collapsed = window.localStorage.getItem('hp-shell-collapsed') === '1'; } catch (e) {}
+		if (collapsed)
+			document.body.classList.add('hp-shell-collapsed');
+
+		document.head.appendChild(E('style', { id: 'hp-shell-style' }, [ this.SHELL_CSS ]));
+
+		/* Sidebar */
+		const collapseBtn = E('button', {
+			'class': 'hp-sb-collapse', 'type': 'button',
+			'title': collapsed ? _('Expand sidebar') : _('Collapse sidebar')
+		}, [ this.icon(collapsed ? 'chev-right' : 'chev-left') ]);
+		collapseBtn.addEventListener('click', () => {
+			const on = document.body.classList.toggle('hp-shell-collapsed');
+			collapseBtn.replaceChildren(this.icon(on ? 'chev-right' : 'chev-left'));
+			collapseBtn.setAttribute('title', on ? _('Expand sidebar') : _('Collapse sidebar'));
+			try { window.localStorage.setItem('hp-shell-collapsed', on ? '1' : '0'); } catch (e) {}
+		});
+
+		const brandEl = E('div', { 'class': 'hp-sb-brand' }, [
+			E('img', { 'class': 'hp-sb-logo', 'src': L.resource('ravnex-raven-192.png'), 'alt': 'Ravnex' }),
+			E('div', { 'class': 'hp-sb-brand-txt' }, [
+				E('div', { 'class': 'hp-sb-name' }, [ 'Ravnex' ]),
+				E('div', { 'class': 'hp-sb-slogan' }, [ 'Own the Route.' ])
+			]),
+			collapseBtn
+		]);
+
+		const navEl = E('div', { 'class': 'hp-sb-nav', 'id': 'hp-sb-nav' });
+
+		const sbDot = E('span', { 'class': 'hpui-dot', 'id': 'hp-sb-dot' });
+		const sbText = E('div', { 'class': 'hp-sb-status-t' }, [ '…' ]);
+		const sbSub = E('div', { 'class': 'hp-sb-status-s' }, [ '' ]);
+		const statusEl = E('div', { 'class': 'hp-sb-status' }, [
+			sbDot,
+			E('div', { 'class': 'hp-sb-status-txt' }, [ sbText, sbSub ])
+		]);
+
+		document.body.appendChild(E('nav', { 'id': 'hp-sidebar' }, [ brandEl, navEl, statusEl ]));
+
+		/* Top bar */
+		const burgerBtn = E('button', {
+			'class': 'hp-top-btn hp-top-burger', 'type': 'button', 'title': _('Menu')
+		}, [ this.icon('menu') ]);
+		burgerBtn.addEventListener('click', () => {
+			document.body.classList.toggle('hp-shell-sb-open');
+		});
+
+		const titleRaw = (document.title || '').split('|');
+		const pageTitle = (titleRaw.length > 1 ? titleRaw[titleRaw.length - 1] : titleRaw[0]).trim() || 'Ravnex';
+
+		const themeBtn = E('button', {
+			'class': 'hp-top-btn', 'type': 'button', 'id': 'hp-theme-btn',
+			'title': _('Switch color theme')
+		}, [ this.icon(t === 'dark' ? 'sun' : 'moon') ]);
+		themeBtn.addEventListener('click', () => {
+			this.themeSet(this.themeGet() === 'dark' ? 'light' : 'dark');
+		});
+
+		document.body.appendChild(E('header', { 'id': 'hp-topbar' }, [
+			burgerBtn,
+			E('div', { 'class': 'hp-top-title' }, [ pageTitle ]),
+			E('div', { 'class': 'hp-top-spacer' }),
+			themeBtn
+		]));
+
+		this.shellNav();
+		this.shellStatus(sbDot, sbText, sbSub);
+	},
+
+	/* Navigation is built from the LuCI menu tree (ui.menu.load()) — the same
+	 * names, order and ACL the tab strip used; only the presentation is ours.
+	 * Captions group the pages without reordering them. */
+	shellNav() {
+		ui.menu.load().then(L.bind(function(tree) {
+			try {
+				const hpNode = tree && tree.children && tree.children.admin &&
+					tree.children.admin.children && tree.children.admin.children.services &&
+					tree.children.admin.children.services.children &&
+					tree.children.admin.children.services.children.homeproxy;
+				if (!hpNode)
+					return;
+				const kids = ui.menu.getChildren(hpNode);
+				if (!kids || !kids.length)
+					return;
+				const cur = (L.env.dispatchpath || [])[3] || null;
+				const base = L.url('admin/services/homeproxy');
+				const byName = {};
+				for (let i = 0; i < kids.length; i++)
+					byName[kids[i].name] = kids[i];
+				const used = {};
+				const nav = document.getElementById('hp-sb-nav');
+				if (!nav)
+					return;
+				for (let s = 0; s < this.NAV_SECTIONS.length; s++) {
+					const sec = this.NAV_SECTIONS[s];
+					const secEl = E('div', { 'class': 'hp-sb-section' });
+					if (sec.cap)
+						secEl.appendChild(E('div', { 'class': 'hp-sb-cap' }, [ _(sec.cap) ]));
+					for (let p = 0; p < sec.pages.length; p++) {
+						const kid = byName[sec.pages[p]];
+						if (!kid)
+							continue;
+						used[sec.pages[p]] = true;
+						secEl.appendChild(E('a', {
+							'class': 'hp-sb-item' + (sec.pages[p] === cur ? ' active' : ''),
+							'href': L.url(base, sec.pages[p])
+						}, [
+							this.icon(this.NAV_ICONS[sec.pages[p]] || 'compass'),
+							E('span', { 'class': 'hp-sb-item-t' }, [ _(kid.title) ])
+						]));
+					}
+					if (secEl.children.length > (sec.cap ? 1 : 0))
+						nav.appendChild(secEl);
+				}
+				/* Pages present in the tree but not covered by NAV_SECTIONS
+				 * (future tabs) still get an entry — nothing may be lost. */
+				const extra = E('div', { 'class': 'hp-sb-section' });
+				for (let i = 0; i < kids.length; i++) {
+					if (used[kids[i].name])
+						continue;
+					extra.appendChild(E('a', {
+						'class': 'hp-sb-item' + (kids[i].name === cur ? ' active' : ''),
+						'href': L.url(base, kids[i].name)
+					}, [
+						this.icon(this.NAV_ICONS[kids[i].name] || 'compass'),
+						E('span', { 'class': 'hp-sb-item-t' }, [ _(kids[i].title) ])
+					]));
+				}
+				if (extra.children.length)
+					nav.appendChild(extra);
+			} catch (e) { /* nav is cosmetic — never break the page */ }
+		}, this));
+	},
+
+	/* Sidebar status line: one cheap overview_sys poll every 10 s (the
+	 * Overview tab polls the same RPC every 4 s anyway; ubus calls are
+	 * trivial). */
+	shellStatus(dotEl, textEl, subEl) {
+		const callShellSys = rpc.declare({
+			object: 'luci.homeproxy',
+			method: 'overview_sys',
+			expect: { '': {} }
+		});
+		poll.add(L.bind(function() {
+			return L.resolveDefault(callShellSys(), {}).then((sys) => {
+				const ok = !!(sys && sys.clash_ok);
+				const seen = !!(sys && sys.app_version);
+				dotEl.className = 'hpui-dot' + (seen ? (ok ? ' ok' : ' bad') : '');
+				textEl.textContent = ok ? _('System is running') : _('Core is not responding');
+				subEl.textContent = (sys && sys.app_version) ? 'Ravnex v' + sys.app_version : '';
+			});
+		}, this), 10);
+	},
+
+	SHELL_CSS: `
+/* ═══ R3 v2 dual theme: token re-tune per color scheme ═══ */
+:root[data-hp-theme="dark"] {
+	--hp-shell-bg: #0c1117;
+	--hp-shell-bg-2: #10161e;
+	--hp-shell-bg-3: #17202b;
+	--hp-fg: #e2e8f0;
+	--hp-fg-dim: rgba(226,232,240,.62);
+	--hp-fg-faint: rgba(226,232,240,.40);
+	--hp-panel-bg: rgba(255,255,255,.045);
+	--hp-panel-bg-2: rgba(255,255,255,.028);
+	--hp-panel-line: rgba(255,255,255,.10);
+	--hp-panel-line-strong: rgba(255,255,255,.16);
+	--hp-table-head: #1b2431;
+	--hp-table-head-fg: #c9d3e0;
+	--hp-console-bg: #0f151d;
+	--hp-console-line: #253040;
+	--hp-console-fg: #c7d1de;
+	--hp-input-bg: #121a24;
+	--hp-input-line: rgba(255,255,255,.16);
+	--hp-hover: rgba(255,255,255,.06);
+	--hp-hover-2: rgba(255,255,255,.10);
+	--hp-shadow: 0 1px 2px rgba(0,0,0,.45), 0 4px 14px rgba(0,0,0,.35);
+}
+:root[data-hp-theme="light"] {
+	--hp-shell-bg: #f2f4f8;
+	--hp-shell-bg-2: #ffffff;
+	--hp-shell-bg-3: #e9edf3;
+	--hp-fg: #1b2431;
+	--hp-fg-dim: rgba(27,36,49,.64);
+	--hp-fg-faint: rgba(27,36,49,.45);
+	--hp-panel-bg: #ffffff;
+	--hp-panel-bg-2: rgba(27,36,49,.03);
+	--hp-panel-line: rgba(27,36,49,.10);
+	--hp-panel-line-strong: rgba(27,36,49,.16);
+	--hp-table-head: #dfe5ee;
+	--hp-table-head-fg: #38455a;
+	--hp-console-bg: #f6f8fb;
+	--hp-console-line: #d6dde7;
+	--hp-console-fg: #2a3442;
+	--hp-input-bg: #ffffff;
+	--hp-input-line: rgba(27,36,49,.25);
+	--hp-hover: rgba(27,36,49,.05);
+	--hp-hover-2: rgba(27,36,49,.09);
+	--hp-shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 14px rgba(16,24,40,.07);
+}
+/* ═══ Page takeover (app pages only — body.hp-shell) ═══ */
+body.hp-shell {
+	background: var(--hp-shell-bg) !important;
+	color: var(--hp-fg);
+}
+body.hp-shell > header:not(#hp-topbar) { display: none !important; }
+body.hp-shell > footer { display: none !important; }
+body.hp-shell #tabmenu { display: none !important; }
+body.hp-shell #maincontent {
+	max-width: none;
+	width: auto; /* bootstrap .container sets width:100% — with our left margin that would overflow horizontally */
+	margin: 0 0 0 var(--hp-sb-w);
+	padding: calc(var(--hp-topbar-h) + 14px) 22px 30px;
+	box-sizing: border-box;
+	transition: margin-left .18s ease;
+	min-height: 100vh;
+	overflow-x: hidden;
+}
+body.hp-shell.hp-shell-collapsed #maincontent { margin-left: var(--hp-sb-w-collapsed); }
+/* ═══ Sidebar ═══ */
+#hp-sidebar {
+	position: fixed; z-index: 600; top: 0; left: 0; bottom: 0;
+	width: var(--hp-sb-w);
+	background: var(--hp-shell-bg-2);
+	border-right: 1px solid var(--hp-panel-line);
+	display: flex; flex-direction: column;
+	overflow: hidden;
+	transition: width .18s ease;
+}
+body.hp-shell-collapsed #hp-sidebar { width: var(--hp-sb-w-collapsed); }
+.hp-sb-brand { display: flex; align-items: center; gap: 10px; padding: 14px 12px; flex: none; }
+.hp-sb-logo { width: 40px; height: 40px; border-radius: 10px; flex: none; }
+.hp-sb-brand-txt { min-width: 0; }
+.hp-sb-name { font-weight: 800; font-size: 1.12em; line-height: 1.2; white-space: nowrap; }
+.hp-sb-slogan { font-size: .66em; color: var(--hp-accent-strong); font-weight: 700; letter-spacing: .05em; white-space: nowrap; }
+.hp-sb-collapse { margin-left: auto; flex: none; appearance: none; border: 1px solid var(--hp-panel-line); background: var(--hp-panel-bg-2); color: var(--hp-fg-dim); width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.hp-sb-collapse:hover { color: var(--hp-accent-strong); border-color: var(--hp-accent-line); background: var(--hp-accent-soft); }
+.hp-sb-nav { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 2px 10px 10px; scrollbar-width: thin; }
+.hp-sb-cap { font-size: .68em; text-transform: uppercase; letter-spacing: .09em; color: var(--hp-fg-faint); margin: 13px 8px 4px; white-space: nowrap; font-weight: 700; }
+.hp-sb-section { margin-bottom: 2px; }
+.hp-sb-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin: 1px 0; border-radius: 8px; color: var(--hp-fg-dim); text-decoration: none; font-size: .93em; white-space: nowrap; border: 1px solid transparent; }
+.hp-sb-item:hover { background: var(--hp-hover); color: var(--hp-fg); text-decoration: none; }
+.hp-sb-item.active { background: var(--hp-accent-soft); border-color: var(--hp-accent-line); color: var(--hp-accent-strong); font-weight: 600; }
+.hp-sb-item .hpui-ic { width: 1.2em; height: 1.2em; flex: none; }
+.hp-sb-item-t { overflow: hidden; text-overflow: ellipsis; }
+.hp-sb-status { border-top: 1px solid var(--hp-panel-line); padding: 10px 12px; display: flex; gap: 10px; align-items: center; flex: none; }
+.hp-sb-status-txt { min-width: 0; }
+.hp-sb-status-t { font-size: .88em; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hp-sb-status-s { font-size: .76em; color: var(--hp-fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Collapsed: icons only */
+body.hp-shell-collapsed .hp-sb-brand-txt, body.hp-shell-collapsed .hp-sb-cap,
+body.hp-shell-collapsed .hp-sb-item-t, body.hp-shell-collapsed .hp-sb-status-txt { display: none; }
+body.hp-shell-collapsed .hp-sb-brand { justify-content: center; padding: 14px 8px; flex-wrap: wrap; gap: 8px; }
+body.hp-shell-collapsed .hp-sb-item { justify-content: center; padding: 9px 0; }
+body.hp-shell-collapsed .hp-sb-status { justify-content: center; }
+/* ═══ Top bar ═══ */
+#hp-topbar {
+	position: fixed; z-index: 590; top: 0; right: 0; left: var(--hp-sb-w);
+	height: var(--hp-topbar-h);
+	display: flex; align-items: center; gap: 12px;
+	padding: 0 20px;
+	background: var(--hp-shell-bg-2);
+	border-bottom: 1px solid var(--hp-panel-line);
+	transition: left .18s ease;
+}
+body.hp-shell-collapsed #hp-topbar { left: var(--hp-sb-w-collapsed); }
+.hp-top-title { font-size: 1.1em; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hp-top-spacer { flex: 1; }
+.hp-top-btn { appearance: none; border: 1px solid var(--hp-panel-line); background: var(--hp-panel-bg-2); color: var(--hp-fg-dim); width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex: none; }
+.hp-top-btn:hover { color: var(--hp-accent-strong); border-color: var(--hp-accent-line); background: var(--hp-accent-soft); }
+.hp-top-burger { display: none; }
+/* ═══ Widget re-skins on shell pages (theme-owned colors; background
+ * SHORTHAND everywhere — the LuCI theme paints gradients via
+ * background-image that would sit on top of background-color) ═══ */
+body.hp-shell .cbi-button, body.hp-shell .btn {
+	background: var(--hp-shell-bg-3) !important;
+	border: 1px solid var(--hp-input-line) !important;
+	color: var(--hp-fg) !important;
+	text-shadow: none !important;
+}
+body.hp-shell .cbi-button:hover, body.hp-shell .btn:hover { border-color: var(--hp-accent-line) !important; }
+body.hp-shell .cbi-button-action, body.hp-shell .btn.cbi-button-action,
+body.hp-shell .cbi-button-positive, body.hp-shell .cbi-button-apply, body.hp-shell .cbi-button-reload {
+	background: var(--hp-accent-strong) !important;
+	border-color: var(--hp-accent-strong) !important;
+	color: #fff !important;
+}
+body.hp-shell .cbi-button-action:hover, body.hp-shell .btn.cbi-button-action:hover,
+body.hp-shell .cbi-button-positive:hover, body.hp-shell .cbi-button-apply:hover, body.hp-shell .cbi-button-reload:hover,
+body.hp-shell .cbi-button-action:focus, body.hp-shell .btn.cbi-button-action:focus {
+	background: var(--hp-accent-strong-hover) !important;
+	border-color: var(--hp-accent-strong-hover) !important;
+	color: #fff !important;
+}
+body.hp-shell .cbi-button-negative, body.hp-shell .btn.cbi-button-negative,
+body.hp-shell .cbi-button-remove, body.hp-shell .cbi-button-reset {
+	background: var(--hp-red-soft) !important;
+	border-color: var(--hp-red-line) !important;
+	color: var(--hp-ink-red) !important;
+}
+body.hp-shell input[type=text], body.hp-shell input[type=password],
+body.hp-shell input[type=number], body.hp-shell input[type=file],
+body.hp-shell select, body.hp-shell textarea, body.hp-shell .cbi-dropdown {
+	background: var(--hp-input-bg);
+	color: var(--hp-fg);
+	border: 1px solid var(--hp-input-line);
+}
+/* Headings and option labels: the theme paints them with fixed dark greys
+ * that vanish on the dark shell. */
+body.hp-shell h1, body.hp-shell h2, body.hp-shell h3, body.hp-shell h4,
+body.hp-shell h5, body.hp-shell .cbi-value-title, body.hp-shell legend {
+	color: var(--hp-fg);
+}
+body.hp-shell .cbi-map-descr, body.hp-shell .cbi-section-descr,
+body.hp-shell .cbi-value-description, body.hp-shell .cbi-tab-descr {
+	color: var(--hp-fg-dim);
+}
+/* LuCI save footer (Применить/Сохранить/Сброс): the theme paints it with a
+ * light grey slab — on the shell it blends into the content instead. */
+body.hp-shell .cbi-page-actions {
+	background: transparent !important;
+	background-image: none !important;
+	border: none !important;
+	box-shadow: none !important;
+	margin: 14px 0 0;
+	padding: 0;
+}
+body.hp-shell .cbi-dropdown > ul.dropdown { background: var(--hp-shell-bg-2); color: var(--hp-fg); border: 1px solid var(--hp-panel-line-strong); }
+body.hp-shell .alert-message {
+	background: var(--hp-panel-bg) !important;
+	border: 1px solid var(--hp-panel-line) !important;
+	color: var(--hp-fg) !important;
+	box-shadow: var(--hp-shadow);
+}
+body.hp-shell #modal_overlay .modal {
+	background: var(--hp-shell-bg-2) !important;
+	color: var(--hp-fg);
+	border: 1px solid var(--hp-panel-line-strong);
+	box-shadow: 0 12px 48px rgba(0,0,0,.5);
+}
+body.hp-shell .cbi-tooltip {
+	background: var(--hp-shell-bg-3);
+	color: var(--hp-fg);
+	border: 1px solid var(--hp-panel-line-strong);
+}
+/* ═══ Mobile: off-canvas sidebar ═══ */
+@media (max-width: 920px) {
+	#hp-sidebar { transform: translateX(-100%); transition: transform .18s ease; width: var(--hp-sb-w) !important; }
+	body.hp-shell-sb-open #hp-sidebar { transform: none; box-shadow: 0 0 60px rgba(0,0,0,.5); }
+	#hp-topbar { left: 0 !important; }
+	body.hp-shell #maincontent { margin-left: 0 !important; }
+	body.hp-shell.hp-shell-collapsed #maincontent { margin-left: 0 !important; }
+	.hp-top-burger { display: inline-flex; }
+	.hp-sb-collapse { display: none; }
+}
+`,
 
 	/* Inline SVG line chart shared by the Overview and Automation tabs
 	 * (Ф8-F5: one helper instead of the chartSvg/chartSvgEng duplicates).

@@ -2051,8 +2051,8 @@ return view.extend({
 		let routing_mode = uci.get(data[0], 'config', 'routing_mode');
 		let features = data[1];
 
-		/* Shared design system (Automation look) for the standard tab bars. */
-		hp.uiStyle();
+		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
+		hp.uiShell();
 
 		/* Cache subscription information, it will be called multiple times.
 		 * Hash with the SAME FNV-1a the subscription daemon uses (grouphash on

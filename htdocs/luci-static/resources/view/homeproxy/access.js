@@ -35,7 +35,7 @@ return view.extend({
 	render(data) {
 		let s, so;
 
-		hp.uiStyle();
+		hp.uiShell();
 
 		const hosts = data[3]?.hosts;
 
