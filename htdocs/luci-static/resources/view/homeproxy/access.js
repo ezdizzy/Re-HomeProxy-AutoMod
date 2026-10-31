@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2022-2025 ImmortalWrt.org
  *
- * Re:HomeProxy AutoMod — Device policy (Ф7, D6 reorganization).
+ * Ravnex — Device policy (Ф7, D6 reorganization).
  *
  * The former "Access Control" tab inside Client Settings — moved to its own
  * menu page and renamed to what it actually is: WHICH devices, IPs and

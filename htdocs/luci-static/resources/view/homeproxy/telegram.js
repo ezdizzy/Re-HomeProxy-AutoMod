@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Re:HomeProxy AutoMod — страница «Telegram-бот» (plan 15): all bot settings
+ * Ravnex — страница «Telegram-бот» (plan 15): all bot settings
  * moved OUT of the Wizard's "Дополнительно" pane into their own main-menu
  * page — the bot keeps growing (router control, parental-control pushes,
  * inline menus) and no longer fits a wizard sub-tab. Same RPC surface as
@@ -48,7 +48,7 @@ const callTelegramTest = rpc.declare({
 });
 
 const CSS = `
-	.tg-card { border: 1px solid rgba(128,128,128,.3); border-radius: 10px; padding: 14px 16px; background: rgba(127,127,127,.04); margin-top: 14px; }
+	.tg-card { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-lg); padding: 14px 16px; background: var(--hp-panel-bg-2); margin-top: 14px; box-shadow: var(--hp-shadow); }
 	.tg-card-title { font-weight: 700; font-size: 1.02em; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 	.tg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px 18px; margin-top: 6px; }
 	.tg-field { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }

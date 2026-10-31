@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Re:HomeProxy AutoMod — вкладка «Контроль» (HomeControl integration,
+ * Ravnex — вкладка «Контроль» (HomeControl integration,
  * plan 14): advanced parental control for the LAN — client blocks with
  * DHCP-change tracking (identity = MAC, the current IP is resolved from
  * the lease file at apply time), site rules (domains/IPs, whole network
@@ -282,15 +282,15 @@ const DAYS = [ 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun' ];
 
 const CSS = `
 	.ct-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin-top: 10px; }
-	.ct-card { border: 1px solid rgba(128,128,128,.3); border-radius: 10px; padding: 12px 14px; background: rgba(127,127,127,.04); }
-	.ct-card.ct-blocked { border-left: 5px solid #e05252; }
-	.ct-card.ct-allowed { border-left: 5px solid #3fbf5f; }
+	.ct-card { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-lg); padding: 12px 14px; background: var(--hp-panel-bg-2); box-shadow: var(--hp-shadow); }
+	.ct-card.ct-blocked { border-left: 5px solid var(--hp-red); }
+	.ct-card.ct-allowed { border-left: 5px solid var(--hp-accent-strong); }
 	.ct-card.ct-offline { opacity: .68; }
 	.ct-name { font-weight: 600; font-size: 1.05em; margin-bottom: 2px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 	.ct-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
-	.ct-dot.on { background: #3fbf5f; box-shadow: 0 0 4px #3fbf5f; }
-	.ct-dot.off { background: #999; }
-	.ct-meta { color: #888; font-size: .85em; margin-bottom: 10px; word-break: break-all; }
+	.ct-dot.on { background: var(--hp-accent); box-shadow: 0 0 4px var(--hp-accent-glow); }
+	.ct-dot.off { background: var(--hp-grey); }
+	.ct-meta { color: var(--hp-grey); font-size: .85em; margin-bottom: 10px; word-break: break-all; }
 	.ct-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 	.ct-actions .btn { flex: none; }
 	.ct-field { display: flex; flex-direction: column; gap: 4px; min-width: 160px; flex: 1 1 160px; }
@@ -299,15 +299,15 @@ const CSS = `
 	.ct-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
 	.ct-form .ct-wide { flex: 3 1 320px; }
 	.ct-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-	.ct-chip { appearance: none; cursor: pointer; border: 1px solid rgba(128,128,128,.4); border-radius: 12px; background: rgba(128,128,128,.10); color: inherit; padding: 3px 10px; font-size: .85em; }
+	.ct-chip { appearance: none; cursor: pointer; border: 1px solid var(--hp-panel-line-strong); border-radius: 12px; background: var(--hp-panel-bg-2); color: inherit; padding: 3px 10px; font-size: .85em; }
 	.ct-chip:hover { background: rgba(128,128,128,.22); }
 	.ct-days { display: flex; gap: 10px; flex-wrap: wrap; }
 	.ct-days label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 	.ct-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 	.ct-targets-row { margin-top: 8px; }
-	.ct-targets { width: 100%; min-height: 120px; max-height: 460px; resize: vertical; box-sizing: border-box; display: block; background: rgba(127,127,127,.05); border: 1px solid rgba(128,128,128,.4); border-radius: 8px; color: inherit; padding: 8px 10px; font-size: .95em; line-height: 1.45; }
-	.ct-targets:focus { outline: none; border-color: rgba(63,191,95,.6); }
-	.ct-catalog { max-height: 320px; overflow-y: auto; border: 1px solid rgba(128,128,128,.25); border-radius: 10px; padding: 6px 12px 10px; background: rgba(127,127,127,.04); }
+	.ct-targets { width: 100%; min-height: 120px; max-height: 460px; resize: vertical; box-sizing: border-box; display: block; background: var(--hp-panel-bg-2); border: 1px solid var(--hp-panel-line-strong); border-radius: var(--hp-radius); color: inherit; padding: 8px 10px; font-size: .95em; line-height: 1.45; }
+	.ct-targets:focus { outline: none; border-color: var(--hp-accent-line); }
+	.ct-catalog { max-height: 320px; overflow-y: auto; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-lg); padding: 6px 12px 10px; background: var(--hp-panel-bg-2); }
 	.ct-cat-head { font-weight: 600; font-size: .78em; text-transform: uppercase; letter-spacing: .05em; opacity: .6; margin: 10px 0 4px; }
 	.ct-search { width: 100%; box-sizing: border-box; margin: 8px 0 2px; }
 	.ct-badge-wifi { margin-left: 6px; }

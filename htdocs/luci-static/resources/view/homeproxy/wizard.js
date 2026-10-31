@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Re:HomeProxy AutoMod — Routing Wizard (Ф2 MVP + Ф3 DPI section).
+ * Ravnex — Routing Wizard (Ф2 MVP + Ф3 DPI section).
  *
  * Three sections:
  *   «Диагностика провайдера» — a background probe matrix (wizard_scan.uc via
@@ -457,7 +457,7 @@ return view.extend({
 .wiz-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
 .wiz-toolbar input[type="text"] { flex: 1 1 260px; min-width: 200px; }
 .wiz-progress { margin: 6px 0; }
-.wiz-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid rgba(128,128,128,.3); border-radius: 8px; background: rgba(128,128,128,.07); margin: 6px 0; }
+.wiz-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; }
 .wiz-title { flex: 1 1 220px; font-weight: 600; }
 .wiz-state { flex: 1 1 240px; font-size: .88em; }
 .wiz-select { min-width: 190px; max-width: 320px; }
@@ -470,7 +470,7 @@ return view.extend({
  * button. The button GROUP wraps as a fallback: the shortened RU label
  * («Применить» + «Проверить») fits the 210px track on one line, but an
  * overflowing locale must stay INSIDE the card, not spill out of it. */
-.wiz-svc { border: 1px solid rgba(128,128,128,.3); border-radius: 8px; background: rgba(128,128,128,.07); margin: 6px 0; padding: 8px 10px; }
+.wiz-svc { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; padding: 8px 10px; }
 .wiz-svc-grid { display: grid; grid-template-columns: minmax(140px, 230px) minmax(180px, 1fr) minmax(190px, 300px) 210px; align-items: center; gap: 6px 10px; }
 .wiz-svc-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .wiz-svc-grid > .wiz-title, .wiz-svc-grid > .wiz-state { flex: none; }
@@ -485,11 +485,11 @@ return view.extend({
 	.wiz-svc-grid > .wiz-select { width: auto; }
 }
 .wiz-note { font-size: .88em; opacity: .8; margin: 8px 0; }
-.wiz-hosts { color: #999; font-size: .82em; }
+.wiz-hosts { color: var(--hp-grey); font-size: .82em; }
 .wiz-strat { flex: 1 1 380px; min-width: 260px; font-family: monospace; font-size: .82em; }
-.wiz-pool { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; margin: 4px 0 0 0; font-size: .88em; border: 1px dashed rgba(128,128,128,.4); border-radius: 8px; }
+.wiz-pool { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; margin: 4px 0 0 0; font-size: .88em; border: 1px dashed var(--hp-panel-line-strong); border-radius: var(--hp-radius); }
 .wiz-pool label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.wiz-group { flex-basis: 100%; font-weight: 600; font-size: .95em; margin: 14px 0 2px 0; padding-top: 10px; border-top: 1px solid rgba(128,128,128,.25); }
+.wiz-group { flex-basis: 100%; font-weight: 600; font-size: .95em; margin: 14px 0 2px 0; padding-top: 10px; border-top: 1px solid var(--hp-panel-line); }
 .wiz-group:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
 .wiz-full { flex-basis: 100%; }
 `;
@@ -2149,7 +2149,7 @@ return view.extend({
 					(data.results || []).forEach(function(r2, i) {
 						if (i) row.appendChild(document.createTextNode(' · '));
 						row.appendChild(E('span', {
-							style: 'font-weight:600;color:' + (r2.ok ? '#3fbf5f' : '#e05252')
+							style: 'font-weight:600;color:' + (r2.ok ? 'var(--hp-accent-strong)' : 'var(--hp-red)')
 						}, [ (r2.label || r2.tag) + (r2.ok ? ' ✓ ' + r2.tls + 's' : ' ✗ ' + (r2.reason || 'fail')) ]));
 					});
 					row.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
@@ -2332,7 +2332,7 @@ return view.extend({
 				(r.results || []).forEach(function(t, i) {
 					if (i) row.appendChild(document.createTextNode(' · '));
 					row.appendChild(E('span', {
-						style: 'font-weight:600;color:' + (t.ok ? '#3fbf5f' : '#e05252'),
+						style: 'font-weight:600;color:' + (t.ok ? 'var(--hp-accent-strong)' : 'var(--hp-red)'),
 						title: t.host + ' → ' + (t.ok ? t.code : (t.reason || 'fail'))
 					}, [ (t.label || t.tag) + (t.ok ? ' ✓' : ' ✗') ]));
 				});
@@ -2401,7 +2401,7 @@ return view.extend({
 						if (r && r.results && r.results.length) {
 							r.results.forEach(function(t) {
 								dots.appendChild(E('span', {
-									style: 'font-weight:600; margin-right:3px; color:' + (t.ok ? '#3fbf5f' : '#e05252'),
+									style: 'font-weight:600; margin-right:3px; color:' + (t.ok ? 'var(--hp-accent-strong)' : 'var(--hp-red)'),
 									title: (t.label || t.tag) + ' (' + t.host + ') → ' + (t.ok ? t.code : (t.reason || 'fail'))
 								}, [ t.ok ? '●' : '○' ]));
 							});
@@ -2772,7 +2772,7 @@ return view.extend({
 					(t.results || []).forEach(function(r2, i) {
 						if (i) row.appendChild(document.createTextNode(' · '));
 						row.appendChild(E('span', {
-							style: 'font-weight:600;color:' + (r2.ok ? '#3fbf5f' : '#e05252')
+							style: 'font-weight:600;color:' + (r2.ok ? 'var(--hp-accent-strong)' : 'var(--hp-red)')
 						}, [ (r2.label || r2.tag) + (r2.ok ? ' ✓ ' + r2.tls + 's' : ' ✗ ' + (r2.reason || 'fail')) ]));
 					});
 					row.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
@@ -2793,7 +2793,7 @@ return view.extend({
 					(t.results || []).forEach(function(r2, i) {
 						if (i) row.appendChild(document.createTextNode(' · '));
 						row.appendChild(E('span', {
-							style: 'font-weight:600;color:' + (r2.ok ? '#3fbf5f' : '#e05252')
+							style: 'font-weight:600;color:' + (r2.ok ? 'var(--hp-accent-strong)' : 'var(--hp-red)')
 						}, [ (r2.label || r2.tag) + (r2.ok ? ' ✓ ' + (r2.tls || '') + 's' : ' ✗ ' + (r2.reason || 'fail')) ]));
 					});
 					row.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
@@ -3073,12 +3073,12 @@ return view.extend({
 						}).join(' · ') },
 						[ (s.deep.total > 0)
 							? (((s.deep.ok === s.deep.total) && s.deep.total > 0)
-								? E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ '✓ ' + s.deep.ok + '/' + s.deep.total ])
-								: E('span', { style: 'color:#e05252; font-weight:600' }, [ '△ ' + s.deep.ok + '/' + s.deep.total ]))
+								? E('span', { style: 'color:var(--hp-accent-strong); font-weight:600' }, [ '✓ ' + s.deep.ok + '/' + s.deep.total ])
+								: E('span', { style: 'color:var(--hp-red); font-weight:600' }, [ '△ ' + s.deep.ok + '/' + s.deep.total ]))
 							: ((rawTot > 0)
 								? ((rawOk === rawTot)
-									? E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ '≈ ' + rawOk + '/' + rawTot ])
-									: E('span', { style: 'color:#888; font-weight:600' }, [ '≈ ' + rawOk + '/' + rawTot ]))
+									? E('span', { style: 'color:var(--hp-accent-strong); font-weight:600' }, [ '≈ ' + rawOk + '/' + rawTot ])
+									: E('span', { style: 'color:var(--hp-grey); font-weight:600' }, [ '≈ ' + rawOk + '/' + rawTot ]))
 								: E('span', { style: 'opacity:.5' }, [ '—' ])) ]);
 				}
 				else
@@ -3103,7 +3103,7 @@ return view.extend({
 				const startMs = Number(s.start_ms || 0);
 				const startTd = E('td', { style: 'white-space:nowrap' },
 					(startMs > 0)
-						? [ E('span', { style: 'color:#3fbf5f; font-weight:600',
+						? [ E('span', { style: 'color:var(--hp-accent-strong); font-weight:600',
 							title: _('fresh-connection start ~%d ms (hover-preview latency)').format(startMs) },
 							[ String(startMs) ]) ]
 						: [ E('span', { style: 'opacity:.35' }, [ '—' ]) ]);
@@ -3111,7 +3111,7 @@ return view.extend({
 					style: 'white-space:nowrap',
 					title: (startMs > 0) ? _('fresh-connection start ~%d ms (hover-preview latency)').format(startMs) : ''
 				}, (flowParts.length)
-					? [ E('span', { style: 'color:#3fbf5f; font-weight:600' }, [ flowParts.join(' ') ]) ]
+					? [ E('span', { style: 'color:var(--hp-accent-strong); font-weight:600' }, [ flowParts.join(' ') ]) ]
 					: [ E('span', { style: 'opacity:.35' }, [ '—' ]) ]);
 				const row = E('tr', { 'data-fuzz-args': s.args }, [
 					E('td', { style: 'opacity:.7' }, [ String(i + 1) ]),
@@ -3284,7 +3284,7 @@ return view.extend({
 			  apCheck, E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ 'min' ]),
 			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('apply in window') ]),
 			  apWin ]);
-		dpiPanes.dpiAp.appendChild(E('div', { style: 'margin-top:14px; border-top:1px solid rgba(127,127,127,.25); padding-top:8px' },
+		dpiPanes.dpiAp.appendChild(E('div', { style: 'margin-top:14px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
 			[ apHead, apRow1, apResWrap, apRow3, E('p', { 'class': 'wiz-note' },
 				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The "apply in window" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
 		let apDirty = false;

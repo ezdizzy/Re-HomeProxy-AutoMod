@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-only
  *
- * Re:HomeProxy AutoMod — DNS Settings page.
+ * Ravnex — DNS Settings page.
  *
  * Layout mirrors the actual engine semantics:
  *   Tab "DNS servers"       — the two POOLS used by Russia/bypass split routing
