@@ -491,7 +491,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 		 * the tab closes. One-time flush per IA version: every tab refreshes
 		 * its tree once, then the cache works as before. */
 		try {
-			const MV = 'r3v3a1';
+			const MV = 'r3v3b1';
 			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
 				ui.menu.flushCache();
 				window.localStorage.setItem('hp-menu-ver', MV);
@@ -583,7 +583,10 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 				if (!kids || !kids.length)
 					return;
 				const cur = (L.env.dispatchpath || [])[3] || null;
-				const base = L.url('admin/services/homeproxy');
+				/* 🔴 L.url() accepts RELATIVE parts only (LuCI path() silently
+				 * DROPS any part starting with '/'). Nesting L.url(L.url(base), p)
+				 * therefore produced /cgi-bin/luci/<page> → 404 on every item
+				 * (found live ч.137). Always pass both parts relatively. */
 				const byName = {};
 				for (let i = 0; i < kids.length; i++)
 					byName[kids[i].name] = kids[i];
@@ -603,7 +606,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 						used[sec.pages[p]] = true;
 						secEl.appendChild(E('a', {
 							'class': 'hp-sb-item' + (sec.pages[p] === cur ? ' active' : ''),
-							'href': L.url(base, sec.pages[p])
+							'href': L.url('admin/services/homeproxy', sec.pages[p])
 						}, [
 							this.icon(this.NAV_ICONS[sec.pages[p]] || 'compass'),
 							E('span', { 'class': 'hp-sb-item-t' }, [ _(kid.title) ])
@@ -623,7 +626,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 						continue;
 					extra.appendChild(E('a', {
 						'class': 'hp-sb-item' + (kids[i].name === cur ? ' active' : ''),
-						'href': L.url(base, kids[i].name)
+						'href': L.url('admin/services/homeproxy', kids[i].name)
 					}, [
 						this.icon(this.NAV_ICONS[kids[i].name] || 'compass'),
 						E('span', { 'class': 'hp-sb-item-t' }, [ _(kids[i].title) ])

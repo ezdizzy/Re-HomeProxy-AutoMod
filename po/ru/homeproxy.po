@@ -11768,6 +11768,12 @@ msgstr "Родительский контроль"
 msgid "Phone control"
 msgstr "Управление с телефона"
 
+msgid "One click runs the health checks and repairs the routing."
+msgstr "Один клик запускает проверки исправности и чинит маршрутизацию."
+
+msgid "Core version, snapshots, update checks and service management."
+msgstr "Версия ядра, снапшоты, проверка обновлений и управление службами."
+
 msgid "Maintenance"
 msgstr "Обслуживание"
 
@@ -11777,8 +11783,11 @@ msgstr "Мониторинг"
 msgid "Check & repair"
 msgstr "Проверка и ремонт"
 
-msgid "External access"
-msgstr "Доступ извне"
+msgid "Server mode"
+msgstr "Режим сервера"
+
+msgid "DNS settings"
+msgstr "Настройки DNS"
 
 msgid "Blocking bypass"
 msgstr "Обход блокировок"

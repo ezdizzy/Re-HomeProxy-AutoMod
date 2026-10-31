@@ -27,7 +27,7 @@
 		}
 	},
 	"admin/services/homeproxy/dns": {
-		"title": "DNS",
+		"title": "DNS settings",
 		"order": 12,
 		"action": {
 			"type": "view",
@@ -91,7 +91,7 @@
 		}
 	},
 	"admin/services/homeproxy/server": {
-		"title": "External access",
+		"title": "Server mode",
 		"order": 46,
 		"action": {
 			"type": "view",

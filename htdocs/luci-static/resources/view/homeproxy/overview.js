@@ -255,7 +255,7 @@ return view.extend({
 .hpui-mnote:empty { display: none; }
 .hpui-mspark-slot { flex: none; align-self: flex-end; }
 .hpui-mspark { width: 82px; height: 34px; display: block; }
-/* Two-column layout: charts on the left, system + actions on the right. */
+		/* Two-column system band at the bottom (utilities, not headline). */
 .ov-grid { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin: 0; }
 .ov-col { display: flex; flex-direction: column; min-width: 0; }
 .ov-col > .hpui-panel { margin: 0 0 12px 0; }
@@ -331,7 +331,13 @@ return view.extend({
 				_('Configure'), 'admin/services/homeproxy/control' ],
 			[ 'phone',  'send',     _('Phone control'),
 				_('Status, server switching and control — right from Telegram.'),
-				_('Connect'), 'admin/services/homeproxy/telegram' ]
+				_('Connect'), 'admin/services/homeproxy/telegram' ],
+			[ 'diag',   'sensors',  _('Check & repair'),
+				_('One click runs the health checks and repairs the routing.'),
+				_('Check now'), 'admin/services/homeproxy/diagnostics' ],
+			[ 'maint',  'cpu',      _('Maintenance'),
+				_('Core version, snapshots, update checks and service management.'),
+				_('Open'), 'admin/services/homeproxy/status' ]
 		];
 		const hub = {};
 		const hubEl = E('div', { 'class': 'hpui-hub' });
@@ -745,6 +751,18 @@ return view.extend({
 			hub.phone.state.textContent = tgEnabled
 				? (tgRunning ? _('running') : _('enabled, not running')) : _('disabled');
 
+			/* Check & repair + Maintenance (concern cards 7-8): the health
+			 * verdict repeats the fact the hero states; the version rides
+			 * the same poll — no extra RPC. */
+			const diagOk = !!sys.clash_ok;
+			const diagSeen = !!sys.app_version;
+			hub.diag.dot.className = 'hpui-dot' + (diagSeen ? (diagOk ? ' ok' : ' bad') : '');
+			hub.diag.state.textContent = !diagSeen ? _('not installed')
+				: (diagOk ? _('Everything is running') : _('Core is not responding'));
+			hub.maint.dot.className = 'hpui-dot' + (diagSeen ? (diagOk ? ' ok' : ' bad') : '');
+			hub.maint.state.textContent = diagSeen
+				? 'Ravnex v' + sys.app_version : _('not installed');
+
 			/* Quick setup strip: visible until servers + main node exist. */
 			let nodeCount = 0;
 			uci.sections('homeproxy', 'node', function() { nodeCount++; });
@@ -858,17 +876,19 @@ return view.extend({
 			qsEl,
 			hubEl,
 			mcardsEl,
-			E('div', { 'class': 'ov-grid' }, [
-				E('div', { 'class': 'ov-col' }, [
-					E('div', { 'class': 'hpui-panel' }, [
-						E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Performance') ]),
-						chartsEl,
-						chartsCap
-					])
-				]),
-				E('div', { 'class': 'ov-col' }, [ sysEl, actionsEl ])
+			E('div', { 'class': 'hpui-panel' }, [
+				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Performance') ]),
+				chartsEl,
+				chartsCap
 			]),
 			trafficEl,
+			/* System band: utilities live at the BOTTOM of the hub — a
+			 * right-hand column stole attention from the concern cards
+			 * (user note ч.137). */
+			E('div', { 'class': 'ov-grid' }, [
+				E('div', { 'class': 'ov-col' }, [ sysEl ]),
+				E('div', { 'class': 'ov-col' }, [ actionsEl ])
+			]),
 			resultEl
 		]);
 	}

@@ -6116,6 +6116,12 @@ msgstr ""
 msgid "Phone control"
 msgstr ""
 
+msgid "One click runs the health checks and repairs the routing."
+msgstr ""
+
+msgid "Core version, snapshots, update checks and service management."
+msgstr ""
+
 msgid "Maintenance"
 msgstr ""
 
@@ -6125,7 +6131,10 @@ msgstr ""
 msgid "Check & repair"
 msgstr ""
 
-msgid "External access"
+msgid "Server mode"
+msgstr ""
+
+msgid "DNS settings"
 msgstr ""
 
 msgid "Blocking bypass"
