@@ -650,7 +650,7 @@ return view.extend({
 
 		o = s.taboption('routing', form.Flag, 'show_advanced_rules',
 			_('Advanced custom rules') + ' 👨‍💻',
-			_('Show the advanced editing tabs: Custom Rules (raw sing-box rules), Routing Nodes and Routing Rules (multi-exit per service). The Routing Wizard covers the everyday service→exit editing; these tabs are for shapes the Wizard does not build.'));
+			_('Show the advanced editing tabs: Custom Rules (raw sing-box rules) and Routing Nodes. The everyday service→exit editing lives on the Service rules page; these tabs are for shapes it does not build.'));
 		o.depends({'routing_mode': 'proxy_banned_ru'});
 		o.default = o.disabled;
 		o.rmempty = false;
@@ -1047,195 +1047,17 @@ return view.extend({
 		 * "Advanced custom rules" flag) for shapes the Wizard does not build,
 		 * e.g. the same source through two different exits. */
 		if (modeNow === 'proxy_banned_ru' && advOn) {
+		/* R3 v3b: the Routing Rules grid moved to the dedicated Service
+		 * rules page (presets + the manual editor + domain lists in one
+		 * place). This tab keeps only a link so old bookmarks still land. */
 		s.tab('ru_rules', _('Routing Rules'));
-		o = s.taboption('ru_rules', form.SectionValue, '_ru_rules', form.TypedSection, 'proxy_ru_rule');
-		o.depends({'routing_mode': 'proxy_banned_ru'});
-		o.depends({'routing_mode': 'proxy_banned_ru', 'show_advanced_rules': '1'});
-
-		ss = o.subsection;
-		ss.addremove = true;
-		ss.anonymous = true;
-		ss.sortable = true;
-		ss.nodescriptions = true;
-		ss.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a "YouTube → Zapret" rule here automatically. Combining engines works by rules: "YouTube → Zapret" + everything else on the Main node, or Main node = Direct with only some services via an engine.</em>');
-		/* Honest-state hint: with Main node = Direct every "Same as main node"
-		 * rule still matches but egresses directly — say so, hide the pointless
-		 * option for NEW rules, and point at the engines. */
-		if (uci.get('homeproxy', 'config', 'main_node') === 'direct-out')
-			ss.description += '<br><b>' + _('Main node is Direct: rules pointing at "Same as main node" currently egress directly (no tunnel). Switch them to Zapret/ByeDPI, or choose a real main node / URLTest.') + '</b>';
-
-		/* Per-rule Delete placement: LuCI renders each remove button on its own
-		 * line ABOVE the rule block — visually detached from the rule it removes.
-		 * Relocate it into the rule's first option row, right next to the
-		 * "Enable" checkbox, so the association is obvious. Pure DOM reshuffle:
-		 * the button (with its LuCI click handler) is moved as-is and the
-		 * now-empty .cbi-section-remove wrapper is dropped; the stock layout is
-		 * kept as fallback if the expected nodes are not found. */
-		const origRenderContents = ss.renderContents;
-		ss.renderContents = function(cfgsections, nodes) {
-			const relocate = function(sectionEl) {
-				for (const sid of cfgsections) {
-					const btn = sectionEl.querySelector('.cbi-section-remove button[data-section-id="%s"]'.format(sid));
-					if (!btn)
-						continue;
-					const wrap = btn.closest('.cbi-section-remove');
-					const nodeEl = sectionEl.querySelector('.cbi-section-node[data-section-id="%s"]'.format(sid));
-					const field = nodeEl ? nodeEl.querySelector('.cbi-value-field') : null;
-					if (!field)
-						continue;
-					btn.classList.add('hp-rule-delete');
-					field.appendChild(btn);
-					wrap.parentNode.removeChild(wrap);
-				}
-				return sectionEl;
-			};
-			const res = origRenderContents.apply(this, arguments);
-			return (res && typeof res.then === 'function') ? res.then(relocate) : relocate(res);
+		o = s.taboption('ru_rules', form.DummyValue, '_ru_rules_link');
+		o.rawhtml = true;
+		o.cfgvalue = function() {
+			return '<a class="btn cbi-button cbi-button-action" href="' +
+				L.url('admin/services/homeproxy', 'rules') + '">' +
+				_('Open Service rules') + '</a>';
 		};
-
-		so = ss.option(form.Flag, 'enabled', _('Enable'));
-		so.default = so.enabled;
-		so.rmempty = false;
-		so.editable = true;
-
-		so = ss.option(form.ListValue, 'source', _('Source') + ' ⤵️');
-		/* Russia bulk lists are RU-forward only; CN/IR get geosite/geoip baked into the
-		 * engine baseline, so here they only need per-service overrides. Built in
-		 * .load() so a mode switch (silent-save + re-render) refreshes the list
-		 * IMMEDIATELY — reading persisted UCI at view-render time left Re-filter
-		 * missing until the user manually reloaded the page. */
-		so.load = function(section_id) {
-			delete this.keylist;
-			delete this.vallist;
-			if (uci.get(data[0], 'config', 'routing_mode') === 'proxy_banned_ru') {
-				this.value('refilter', _('Re-filter (Russia blocklist: 60000+ banned domains + 25000+ IPs)'));
-				this.value('russia-inside', _('itdoginfo/allow-domains - Russia Inside (1000+ entries)'));
-			}
-			this.value('block', _('Block (core RKN-blocked resources)'));
-			this.value('russia-outside', _('Russia Outside (RU-only services — for use abroad)'));
-			this.value('ukraine-inside', _('Ukraine Inside (resources blocked in UA)'));
-			this.value('youtube', _('YouTube'));
-			this.value('twitter', _('Twitter/X'));
-			this.value('tiktok', _('TikTok'));
-			this.value('telegram', _('Telegram'));
-			this.value('roblox', _('Roblox'));
-			this.value('porn', _('Adult content'));
-			this.value('ovh', _('OVH (France cloud hosting)'));
-			this.value('news', _('International news sites'));
-			this.value('meta', _('Meta (Facebook, Instagram)'));
-			this.value('hodca', _('HODCA'));
-			this.value('hetzner', _('Hetzner (Germany cloud hosting)'));
-			this.value('hdrezka', _('HDRezka'));
-			this.value('google_ai', _('Google AI services'));
-			this.value('google-meet', _('Google Meet'));
-			this.value('google_play', _('Google Play'));
-			this.value('geoblock', _('GeoBlock services'));
-			this.value('anime', _('Anime streaming'));
-			this.value('cloudflare', _('Cloudflare CDN'));
-			this.value('cloudfront', _('CloudFront CDN'));
-			this.value('discord', _('Discord'));
-			this.value('digitalocean', _('DigitalOcean cloud hosting'));
-			/* W4: MetaCubeX geosite sources + b4geoip gaming IP sets (the
-			 * generator's SOURCE_URL_MAP / SOURCE_IP_MAP consume these). */
-			this.value('openai', _('OpenAI (ChatGPT)'));
-			this.value('anthropic', _('Claude / Anthropic'));
-			this.value('whatsapp', _('WhatsApp'));
-			this.value('twitch', _('Twitch'));
-			this.value('valve', _('Valve / Steam'));
-			this.value('epicgames', _('Epic Games'));
-			this.value('riot', _('Riot Games'));
-			this.value('sony', _('Sony / PlayStation'));
-			this.value('electronicarts', _('EA / Electronic Arts'));
-			this.value('ubisoft', _('Ubisoft'));
-			this.value('blizzard', _('Blizzard'));
-			this.value('nintendo', _('Nintendo'));
-			this.value('wargaming', _('Wargaming'));
-			this.value('xbox', _('Xbox'));
-			return this.super('load', section_id);
-		};
-		so.rmempty = false;
-		so.editable = true;
-		/* The source validator needs the sibling `node` option; it is assigned right
-		 * after the node option is created below. */
-		let ruleNodeOption = null;
-		const validateSourceUnique = function(section_id, value) {
-			for (const sid of this.section.cfgsections()) {
-				if (sid === section_id) continue;
-				/* Compare against PENDING form values first: two freshly added
-				 * duplicates must be caught before save, not after. Only an
-				 * identical (source, node) PAIR is a real duplicate — the same
-				 * source via different outbounds (e.g. YouTube via Zapret AND
-				 * YouTube via the VPN) is a legitimate combination. */
-				let other;
-				try { other = this.formvalue(sid); } catch(e) {}
-				if (other == null)
-					other = this.cfgvalue(sid);
-				if (other !== value)
-					continue;
-				if (!ruleNodeOption)
-					return _('Duplicate rule — a rule with the same service and target already exists');
-				let otherNode, myNode;
-				try { otherNode = ruleNodeOption.formvalue(sid); } catch(e) {}
-				if (otherNode == null) otherNode = ruleNodeOption.cfgvalue(sid);
-				try { myNode = ruleNodeOption.formvalue(section_id); } catch(e) {}
-				if (myNode == null) myNode = ruleNodeOption.cfgvalue(section_id);
-				if (otherNode === myNode || otherNode == null || myNode == null)
-					return _('Duplicate rule — a rule with the same service and target already exists');
-			}
-			return true;
-		};
-		so.validate = validateSourceUnique;
-
-		so = ss.option(form.ListValue, 'node', _('Node') + ' 🔗');
-		/* Dynamic for the same reason as `source`: silent-saved main node / engine
-		 * toggles must reflect here without a manual page reload. "Same as main
-		 * node" is hidden while the main node is Direct — it would just egress
-		 * directly; engines appear only while enabled. */
-		so.load = function(section_id) {
-			delete this.keylist;
-			delete this.vallist;
-			if (uci.get(data[0], 'config', 'main_node') !== 'direct-out')
-				this.value('main-out', _('Same as main node'));
-			else if (section_id && uci.get(data[0], section_id, 'node') === 'main-out')
-				/* Direct mode: keep main-out selectable ONLY for rules that already
-				 * store it — hiding it entirely made those rules render a blank
-				 * selection while UCI still said main-out. */
-				this.value('main-out', _('Same as main node'));
-			this.value('urltest', _('Separate URLTest'));
-			for (let i in proxy_nodes)
-				this.value(i, proxy_nodes[i]);
-			if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
-				this.value('byedpi-out', _('ByeDPI'));
-			if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
-				this.value('zapret-out', _('Zapret'));
-			return this.super('load', section_id);
-		};
-		ruleNodeOption = so;
-		so.rmempty = false;
-		so.editable = true;
-
-		so = ss.option(hp.CBIStaticList, 'urltest_nodes', _('URLTest nodes'),
-			_('List of nodes to test.'));
-		for (let i in proxy_nodes)
-			so.value(i, proxy_nodes[i]);
-		so.depends('node', 'urltest');
-		so.rmempty = false;
-		so.modalonly = true;
-
-		so = ss.option(form.Value, 'urltest_interval', _('Test interval'),
-			_('The test interval in seconds.'));
-		so.datatype = 'uinteger';
-		so.placeholder = '180';
-		so.depends('node', 'urltest');
-		so.modalonly = true;
-
-		so = ss.option(form.Value, 'urltest_tolerance', _('Test tolerance'),
-			_('The test tolerance in milliseconds.'));
-		so.datatype = 'uinteger';
-		so.placeholder = '150';
-		so.depends('node', 'urltest');
-		so.modalonly = true;
-		/* RU Proxy Rules end */
 		}
 
 		/* Routing nodes start */

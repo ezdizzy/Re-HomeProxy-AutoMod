@@ -42,6 +42,14 @@
 			"path": "homeproxy/node"
 		}
 	},
+	"admin/services/homeproxy/rules": {
+		"title": "Service rules",
+		"order": 18,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/rules"
+		}
+	},
 	"admin/services/homeproxy/automation": {
 		"title": "Auto-bypass",
 		"order": 20,

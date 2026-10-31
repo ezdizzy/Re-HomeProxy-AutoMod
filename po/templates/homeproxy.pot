@@ -6226,3 +6226,81 @@ msgstr ""
 
 msgid "Update availability is checked on demand — the Home page never queries external resources on its own."
 msgstr ""
+
+msgid "Show the advanced editing tabs: Custom Rules (raw sing-box rules) and Routing Nodes. The everyday service→exit editing lives on the Service rules page; these tabs are for shapes it does not build."
+msgstr ""
+
+msgid "Open Service rules"
+msgstr ""
+
+msgid "Wi-Fi"
+msgstr ""
+
+msgid "MAC"
+msgstr ""
+
+msgid "Create a rule on the Service rules page"
+msgstr ""
+
+msgid "The service refuses this exit region — switch to another node (full check: the Service rules page, the Google AI row)"
+msgstr ""
+
+msgid "Pages open, but the model request can still be refused by the exit region/IP — run the full check with the \"Check\" button on the Google AI row (Service rules)."
+msgstr ""
+
+msgid "The page opens; the model goes through the configured node (→ %s). If the model refuses — check other nodes (the button in the Google AI check result on the Service rules page)."
+msgstr ""
+
+msgid "The page opens; the model goes through the configured routing. If the model refuses — check other nodes or run the full check on the Service rules page."
+msgstr ""
+
+msgid "The probe checks the WEB version through the configured path; the tg-ws bridge carries the Telegram apps (MTProto) only — the web check may time out while the group sits on the bridge, messaging clients are unaffected. Bridge status and check: the Phone control page."
+msgstr ""
+
+msgid "Provider"
+msgstr ""
+
+msgid "ByeDPI is not enabled — enable it on the Connection page first."
+msgstr ""
+
+msgid "Zapret is not enabled — enable it on the Connection page first."
+msgstr ""
+
+msgid "The tg-ws bridge is not running — install/start it on the Phone control page first."
+msgstr ""
+
+msgid "To switch the exit: pick the node in the service row above and press Apply."
+msgstr ""
+
+msgid "Full reachability probing lives on the \"Provider\" tab of Check & repair."
+msgstr ""
+
+msgid "Rule applied. Run the \"Provider\" check to verify reachability."
+msgstr ""
+
+msgid "Advanced: manual rules and domain lists"
+msgstr ""
+
+msgid "The manual editor works with the same rules as the presets above (one page, one store). Use it for shapes the presets do not build — e.g. the same service through two different exits, or custom port/process matches."
+msgstr ""
+
+msgid "The editor reads the rules when the page opens — after applying presets reload the page so it shows the fresh list."
+msgstr ""
+
+msgid "Service rules"
+msgstr ""
+
+msgid "Which service exits through what: pick an exit for each known service — YouTube, Discord, Telegram, AI, games and the mass lists — and check the live route right here. Routing applies in \"Bypass blocking\" mode; everything unmatched goes directly."
+msgstr ""
+
+msgid "fallback"
+msgstr ""
+
+msgid "fill a preset into the input and press \"Save ByeDPI\""
+msgstr ""
+
+msgid "Router settings"
+msgstr ""
+
+msgid "Log out"
+msgstr ""

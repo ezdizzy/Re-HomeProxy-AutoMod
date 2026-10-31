@@ -11878,3 +11878,81 @@ msgstr "Перезапуск службы перемаршрутизирует �
 
 msgid "Update availability is checked on demand — the Home page never queries external resources on its own."
 msgstr "Наличие обновления проверяется по требованию — страница «Главная» сама никогда не обращается к внешним ресурсам."
+
+msgid "Show the advanced editing tabs: Custom Rules (raw sing-box rules) and Routing Nodes. The everyday service→exit editing lives on the Service rules page; these tabs are for shapes it does not build."
+msgstr "Показать расширенные вкладки: Custom Rules (сырые правила sing-box) и Routing Nodes. Повседневная настройка «сервис → выход» живёт на странице «Правила для сервисов»; эти вкладки — для конфигураций, которые она не собирает."
+
+msgid "Open Service rules"
+msgstr "Открыть «Правила для сервисов»"
+
+msgid "Wi-Fi"
+msgstr "Wi-Fi"
+
+msgid "MAC"
+msgstr "MAC"
+
+msgid "Create a rule on the Service rules page"
+msgstr "Создайте правило на странице «Правила для сервисов»"
+
+msgid "The service refuses this exit region — switch to another node (full check: the Service rules page, the Google AI row)"
+msgstr "Сервис отвергает регион выхода — смените узел (полная проверка: страница «Правила для сервисов», строка Google AI)"
+
+msgid "Pages open, but the model request can still be refused by the exit region/IP — run the full check with the \"Check\" button on the Google AI row (Service rules)."
+msgstr "Страницы открываются, но запрос к модели всё же может быть отклонён по региону/IP выхода — запустите полную проверку кнопкой «Проверить» в строке Google AI («Правила для сервисов»)."
+
+msgid "The page opens; the model goes through the configured node (→ %s). If the model refuses — check other nodes (the button in the Google AI check result on the Service rules page)."
+msgstr "Страница открывается; модель идёт через настроенный узел (→ %s). Если модель отказывает — проверьте другие узлы (кнопка в результате проверки Google AI на странице «Правила для сервисов»)."
+
+msgid "The page opens; the model goes through the configured routing. If the model refuses — check other nodes or run the full check on the Service rules page."
+msgstr "Страница открывается; модель идёт через настроенную маршрутизацию. Если модель отказывает — проверьте другие узлы или запустите полную проверку на странице «Правила для сервисов»."
+
+msgid "The probe checks the WEB version through the configured path; the tg-ws bridge carries the Telegram apps (MTProto) only — the web check may time out while the group sits on the bridge, messaging clients are unaffected. Bridge status and check: the Phone control page."
+msgstr "Проверка идёт по ВЕБ-версии через настроенный путь; мост tg-ws переносит только приложения Telegram (MTProto) — веб-проверка может не отвечать, пока группа стоит на мосту, мессенджеры это не затрагивает. Статус и проверка моста: страница «Управление с телефона»."
+
+msgid "Provider"
+msgstr "Провайдер"
+
+msgid "ByeDPI is not enabled — enable it on the Connection page first."
+msgstr "ByeDPI не включён — сначала включите его на странице «Подключение»."
+
+msgid "Zapret is not enabled — enable it on the Connection page first."
+msgstr "Zapret не включён — сначала включите его на странице «Подключение»."
+
+msgid "The tg-ws bridge is not running — install/start it on the Phone control page first."
+msgstr "Мост tg-ws не запущен — сначала установите/запустите его на странице «Управление с телефона»."
+
+msgid "To switch the exit: pick the node in the service row above and press Apply."
+msgstr "Чтобы сменить выход: выберите узел в строке сервиса выше и нажмите «Применить»."
+
+msgid "Full reachability probing lives on the \"Provider\" tab of Check & repair."
+msgstr "Полная проверка доступности — на вкладке «Провайдер» страницы «Проверка и ремонт»."
+
+msgid "Rule applied. Run the \"Provider\" check to verify reachability."
+msgstr "Правило применено. Запустите проверку «Провайдер», чтобы убедиться в доступности."
+
+msgid "Advanced: manual rules and domain lists"
+msgstr "Дополнительно: ручные правила и доменные списки"
+
+msgid "The manual editor works with the same rules as the presets above (one page, one store). Use it for shapes the presets do not build — e.g. the same service through two different exits, or custom port/process matches."
+msgstr "Ручной редактор работает с теми же правилами, что и пресеты выше (одна страница, одно хранилище). Нужен для конфигураций, которые пресеты не собирают, — например, один сервис через два разных выхода или свои порты/процессы."
+
+msgid "The editor reads the rules when the page opens — after applying presets reload the page so it shows the fresh list."
+msgstr "Редактор читает правила при открытии страницы — после применения пресетов обновите страницу, чтобы увидеть свежий список."
+
+msgid "Service rules"
+msgstr "Правила для сервисов"
+
+msgid "Which service exits through what: pick an exit for each known service — YouTube, Discord, Telegram, AI, games and the mass lists — and check the live route right here. Routing applies in \"Bypass blocking\" mode; everything unmatched goes directly."
+msgstr "Что через какой выход ходит: выберите выход для каждого известного сервиса — YouTube, Discord, Telegram, ИИ, игры и масс-списки — и проверьте живой маршрут прямо здесь. Маршрутизация работает в режиме «Обход блокировок»; всё, что не попало в правила, идёт напрямую."
+
+msgid "fallback"
+msgstr "fallback"
+
+msgid "fill a preset into the input and press \"Save ByeDPI\""
+msgstr "выберите пресет в поле ввода и нажмите «Сохранить ByeDPI»"
+
+msgid "Router settings"
+msgstr "Настройки роутера"
+
+msgid "Log out"
+msgstr "Выход"

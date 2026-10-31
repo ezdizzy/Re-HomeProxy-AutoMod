@@ -229,6 +229,8 @@ return baseclass.extend({
 		layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
 		shuffle: '<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/>',
 		shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+		router: '<rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="18" r="1"/><circle cx="10" cy="18" r="1"/><path d="M16 18h4"/><path d="M17.5 6.5a5 5 0 0 0-7 0"/><path d="M14.8 9.2a2 2 0 0 0-3.6 0"/>',
+		logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
 		zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
 		globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
 		refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
@@ -440,14 +442,14 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 	NAV_SECTIONS: [
 		{ pages: [ 'overview' ], cap: null },
 		{ pages: [ 'client', 'dns', 'node' ], cap: 'Connection' },
-		{ pages: [ 'automation' ], cap: 'Blocking bypass' },
+		{ pages: [ 'rules', 'automation' ], cap: 'Blocking bypass' },
 		{ pages: [ 'control', 'telegram' ], cap: 'Home' },
 		{ pages: [ 'status', 'monitor', 'diagnostics', 'server' ], cap: 'System section' }
 	],
 
 	NAV_ICONS: {
 		overview: 'activity', client: 'layers', dns: 'globe',
-		node: 'server', automation: 'refresh', control: 'tool',
+		node: 'server', rules: 'crosshair', automation: 'refresh', control: 'tool',
 		telegram: 'send', status: 'cpu', monitor: 'trend',
 		diagnostics: 'sensors', server: 'hardrive'
 	},
@@ -491,7 +493,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 		 * the tab closes. One-time flush per IA version: every tab refreshes
 		 * its tree once, then the cache works as before. */
 		try {
-			const MV = 'r3v3b1';
+			const MV = 'r3v3b2';
 			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
 				ui.menu.flushCache();
 				window.localStorage.setItem('hp-menu-ver', MV);
@@ -527,6 +529,22 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 
 		const navEl = E('div', { 'class': 'hp-sb-nav', 'id': 'hp-sb-nav' });
 
+		/* Escape hatches: the shell hides the LuCI chrome on app pages by
+		 * design (option B, сеанс 54) — but the user must always have a
+		 * VISIBLE way back to the router settings and a way to log out
+		 * (user request 2026-10-31, ч.138). Full page loads, own pages
+		 * stay unaffected. */
+		const escEl = E('div', { 'class': 'hp-sb-esc' }, [
+			E('a', { 'class': 'hp-sb-item', 'href': L.url('admin/status/overview') }, [
+				this.icon('router'),
+				E('span', { 'class': 'hp-sb-item-t' }, [ _('Router settings') ])
+			]),
+			E('a', { 'class': 'hp-sb-item', 'href': L.url('admin/logout') }, [
+				this.icon('logout'),
+				E('span', { 'class': 'hp-sb-item-t' }, [ _('Log out') ])
+			])
+		]);
+
 		const sbDot = E('span', { 'class': 'hpui-dot', 'id': 'hp-sb-dot' });
 		const sbText = E('div', { 'class': 'hp-sb-status-t' }, [ '…' ]);
 		const sbSub = E('div', { 'class': 'hp-sb-status-s' }, [ '' ]);
@@ -535,7 +553,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 			E('div', { 'class': 'hp-sb-status-txt' }, [ sbText, sbSub ])
 		]);
 
-		document.body.appendChild(E('nav', { 'id': 'hp-sidebar' }, [ brandEl, navEl, statusEl ]));
+		document.body.appendChild(E('nav', { 'id': 'hp-sidebar' }, [ brandEl, navEl, escEl, statusEl ]));
 
 		/* Top bar */
 		const burgerBtn = E('button', {
@@ -741,7 +759,10 @@ body.hp-shell-collapsed #hp-sidebar { width: var(--hp-sb-w-collapsed); }
 .hp-sb-slogan { font-size: .66em; color: var(--hp-accent-strong); font-weight: 700; letter-spacing: .05em; white-space: nowrap; }
 .hp-sb-collapse { margin-left: auto; flex: none; appearance: none; border: 1px solid var(--hp-panel-line); background: var(--hp-panel-bg-2); color: var(--hp-fg-dim); width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
 .hp-sb-collapse:hover { color: var(--hp-accent-strong); border-color: var(--hp-accent-line); background: var(--hp-accent-soft); }
-.hp-sb-nav { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 2px 10px 10px; scrollbar-width: thin; }
+	.hp-sb-esc { flex: none; border-top: 1px solid var(--hp-panel-line); margin: 2px 10px 6px; padding-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+	.hp-sb-esc .hp-sb-item { opacity: .8; }
+	.hp-sb-esc .hp-sb-item:hover { opacity: 1; }
+	.hp-sb-nav { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 2px 10px 10px; scrollbar-width: thin; }
 .hp-sb-cap { font-size: .68em; text-transform: uppercase; letter-spacing: .09em; color: var(--hp-fg-faint); margin: 13px 8px 4px; white-space: nowrap; font-weight: 700; }
 .hp-sb-section { margin-bottom: 2px; }
 .hp-sb-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin: 1px 0; border-radius: 8px; color: var(--hp-fg-dim); text-decoration: none; font-size: .93em; white-space: nowrap; border: 1px solid transparent; }
