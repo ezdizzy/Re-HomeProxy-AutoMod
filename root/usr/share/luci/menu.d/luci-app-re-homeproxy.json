@@ -42,6 +42,14 @@
 			"path": "homeproxy/node"
 		}
 	},
+	"admin/services/homeproxy/bypass": {
+		"title": "Blocking bypass",
+		"order": 17,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/bypass"
+		}
+	},
 	"admin/services/homeproxy/rules": {
 		"title": "Service rules",
 		"order": 18,
@@ -104,14 +112,6 @@
 		"action": {
 			"type": "view",
 			"path": "homeproxy/server"
-		}
-	},
-	"admin/services/homeproxy/wizard": {
-		"title": "Routing Wizard",
-		"order": 60,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/wizard"
 		}
 	},
 	"admin/services/homeproxy/access": {

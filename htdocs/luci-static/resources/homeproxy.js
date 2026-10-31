@@ -435,26 +435,27 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 	 * existing hpui-* components of all tabs adapt automatically. */
 	SHELL_ACTIVE: false,
 
-	/* Р3 v3 IA (19-UX_REDESIGN §4): five human sections. "wizard" (Routing
-	 * Wizard) and "access" (device proxy policy) are intentionally NOT in
-	 * the sidebar — their content moves to dedicated pages in v3b/v3c/v3d
-	 * (the pages themselves stay reachable by URL). */
+	/* Р3 v3 IA (19-UX_REDESIGN §4): five human sections. "access" (device
+	 * proxy policy) is intentionally NOT in the sidebar — its content moves
+	 * to the unified Devices page in v3d (the page itself stays reachable
+	 * by URL). The wizard was fully abolished in v3c (its zones moved to
+	 * the bypass page); access follows in v3d. */
 	NAV_SECTIONS: [
 		{ pages: [ 'overview' ], cap: null },
 		{ pages: [ 'client', 'dns', 'node' ], cap: 'Connection' },
-		{ pages: [ 'rules', 'automation' ], cap: 'Blocking bypass' },
+		{ pages: [ 'bypass', 'rules', 'automation' ], cap: 'Blocking bypass' },
 		{ pages: [ 'control', 'telegram' ], cap: 'Home' },
 		{ pages: [ 'status', 'monitor', 'diagnostics', 'server' ], cap: 'System section' }
 	],
 
 	NAV_ICONS: {
 		overview: 'activity', client: 'layers', dns: 'globe',
-		node: 'server', rules: 'crosshair', automation: 'refresh', control: 'tool',
-		telegram: 'send', status: 'cpu', monitor: 'trend',
+		node: 'server', bypass: 'shield', rules: 'crosshair', automation: 'refresh',
+		control: 'tool', telegram: 'send', status: 'cpu', monitor: 'trend',
 		diagnostics: 'sensors', server: 'hardrive'
 	},
 
-	NAV_HIDDEN: { wizard: true, access: true },
+	NAV_HIDDEN: { access: true },
 
 	themeGet() {
 		let t = null;
@@ -493,7 +494,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 		 * the tab closes. One-time flush per IA version: every tab refreshes
 		 * its tree once, then the cache works as before. */
 		try {
-			const MV = 'r3v3b2';
+			const MV = 'r3v3c1';
 			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
 				ui.menu.flushCache();
 				window.localStorage.setItem('hp-menu-ver', MV);
@@ -636,8 +637,8 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 				/* Pages present in the tree but not covered by NAV_SECTIONS
 				 * (future tabs) still get an entry — nothing may be lost,
 				 * EXCEPT the NAV_HIDDEN pages whose content is being moved
-				 * to dedicated pages (wizard → v3b/v3c, access → v3d); they
-				 * stay reachable by URL but are not shown. */
+				 * to dedicated pages (access → v3d); they stay reachable
+				 * by URL but are not shown. */
 				const extra = E('div', { 'class': 'hp-sb-section' });
 				for (let i = 0; i < kids.length; i++) {
 					if (used[kids[i].name] || this.NAV_HIDDEN[kids[i].name])

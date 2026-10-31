@@ -682,7 +682,7 @@ function buildByeDPICard(byedpi, isMainNode) {
 			/* innerHTML: the description contains HTML links E() would escape */
 			el.innerHTML = _('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea</a>. ' +
 			'Packages by <a href="https://github.com/1andrevich/ByeDPI-OpenWrt" target="_blank">1andrevich/ByeDPI-OpenWrt</a>. ' +
-			'Enable on the Client Settings page; strategies are configured in the Routing Wizard (DPI bypass).');
+			'Enable on the Connection page; strategies are configured on the Blocking bypass page.');
 			return el;
 		})()
 	]);
@@ -792,15 +792,13 @@ function buildZapretCard(zapret, isMainNode) {
 
 	/* ── Strategy Lab link (C4, Ф8-F5) ────────────────────────────────── */
 	/* The DPI Strategy Fuzzer first moved to the (now removed) Node
-	 * Settings → Zapret tab (ч.70) and then — with the whole strategy
-	 * workflow (current-strategy test, baseline-aware background fuzzing,
-	 * history, compositions, ByeDPI presets) — into the Routing Wizard DPI
-	 * pane (Ф3; the node.js tabs moved there for good in сеанс 24). The
-	 * wizard page is the single place for all strategy work now; this card
-	 * keeps only a shortcut there. */
+	 * Settings → Zapret tab (ч.70), then into the Routing Wizard DPI pane
+	 * (Ф3; the node.js tabs moved there for good in сеанс 24), and since
+	 * R3 v3c lives on the Blocking bypass page («Strategy Lab» zone) —
+	 * the wizard is abolished. This card keeps only a shortcut there. */
 	const labBtn = E('button', { 'class': 'btn cbi-button', 'style': 'margin-left:4px' },
-		[ _('Strategy Lab (Wizard)') ]);
-	labBtn.onclick = () => { location.href = L.url('admin/services/homeproxy/wizard'); };
+		[ _('Strategy Lab') ]);
+	labBtn.onclick = () => { location.href = L.url('admin/services/homeproxy/bypass'); };
 
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
@@ -818,11 +816,11 @@ function buildZapretCard(zapret, isMainNode) {
 			/* innerHTML: the description contains HTML links E() would escape */
 			el.innerHTML = _('Packet-level (NFQUEUE) DPI bypass by <a href="https://github.com/bol-van/zapret2" target="_blank">bol-van</a> (nfqws2). ' +
 			  'Packages by <a href="https://github.com/1andrevich/zapret2-openwrt" target="_blank">1andrevich/zapret2-openwrt</a>. ' +
-			  'Configure in the Routing Wizard (DPI bypass).');
+			  'Configure on the Blocking bypass page.');
 			return el;
 		})(),
 		E('div', { style: 'margin-top:8px; border-top:1px solid rgba(128,128,128,.25); padding-top:6px; font-size:.9em; opacity:.9' }, [
-			E('span', {}, _('Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives in the Wizard → DPI — "Strategy Lab".')),
+			E('span', {}, _('Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives on the Blocking bypass page — "Strategy Lab".')),
 			labBtn
 		])
 	]);
@@ -900,7 +898,7 @@ function buildCurlCard(curl) {
 			msgEl
 		]),
 		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' },
-			_('Enables real HTTP-based ByeDPI strategy testing. Required for the "Test" and "Test all presets" buttons in the Wizard → DPI bypass.'))
+			_('Enables real HTTP-based ByeDPI strategy testing. Required for the "Test" and "Test all presets" buttons on the Blocking bypass page.'))
 	]);
 }
 

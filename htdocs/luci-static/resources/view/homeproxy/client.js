@@ -869,7 +869,7 @@ return view.extend({
 		o = s.taboption('routing', form.Flag, 'byedpi_enabled', _('Enable ByeDPI'),
 			_('A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. ' +
 			  'Works by confusing your ISP\'s traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. ' +
-			  'Results depend on your ISP and may require trying different strategies in the Routing Wizard (DPI bypass). ' +
+			  'Results depend on your ISP and may require trying different strategies on the Blocking bypass page. ' +
 			  'ByeDPI will be installed automatically on first enable.'));
 		o.default = o.disabled;
 		o.rmempty = false;

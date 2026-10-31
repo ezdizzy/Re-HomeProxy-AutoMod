@@ -3,35 +3,31 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Ravnex — Routing Wizard (Ф2 MVP + Ф3 DPI section).
+ * Ravnex — Blocking bypass page (R3 v3c, 19-UX_REDESIGN стр. 4).
  *
- * Three sections:
- *   «Диагностика провайдера» — a background probe matrix (wizard_scan.uc via
- *   wizard_provider_scan) answers "what is blocked for me": direct path
- *   (pinned auto-direct-in :5336, plain-resolver DNS view), main path
- *   (auto-proxy-in :5337 → main-out), DNS view comparison, per-host verdict
- *   and recommendation.
- *   «Сервисы → выходы» — per-service presets that write ONLY regular
- *   proxy_ru_rule sections (the same UCI the manual editor uses), one rule
- *   per source; every apply is followed by an automatic live check
- *   (wizard_service_check for Google AI / OpenAI, route_explain for the
- *   rest) rendered in ONE result area. URLTest pool exit creates a
- *   dedicated per-source urltest group (urltest_nodes on the rule).
- *   «Обход DPI» (Ф3) — engine statuses (wizard_dpi_status), the Strategy
- *   Lab panel moved here from node.js (the zapret_fuzz_* / zapret_strategy_
- *   test RPCs are UNCHANGED), the external strategy catalog importer
- *   (wizard_strategy_update/status/apply via wizard_strategies.uc) and the
- *   mutation generator (wizard_fuzz_generate), plus the
- *   «apply strategy → service rule → live check» chain.
- *   «Дополнительно» (plan 15) — the TG WS Proxy card: READ-ONLY detection
- *   of the third-party tg-ws-proxy-rs bridge (and the d0mhate Go variant),
- *   its --check self-diagnostics, the official installer (digests verified
- *   by the installer from the GitHub release API) and the tg:// link.
- *   The Telegram bot settings (Ф6) moved to the dedicated "Telegram Bot"
- *   main-menu page (telegram.js) — the bot outgrew a wizard sub-tab.
+ * ONE page for the whole «how do the blocked sites open» concern. The four
+ * zones moved here 1:1 from the Routing Wizard DPI section (the wizard is
+ * abolished — its presets went to Service rules in v3b, provider
+ * diagnostics to Check & repair, the tg-ws bridge to Phone control; the
+ * wizard_* ubus method names are KEPT — lesson 149):
+ *   «Working right now» — engine cards (wizard_dpi_status), the Serving map
+ *   (rule → engine → strategy → last check, ч.109) and the measured quality
+ *   panel (ч.123). No actions here — the honest state only.
+ *   «Auto-pilot» — the one-click per-resource pick (wizard_auto_pick_start)
+ *   and the scheduled auto-pilot (wizard_autopilot_set/status, ч.97).
+ *   «Strategy Lab» — the fuzzer (zapret_fuzz_*), deep battery, the ranking
+ *   table, the external catalog importer (wizard_strategy_update/status/
+ *   apply via wizard_strategies.uc) and the mutation generator
+ *   (wizard_fuzz_generate).
+ *   «Manual & compositions» — the global Zapret strategy, the ByeDPI card
+ *   with its presets and flags (wizard_byedpi_set), the per-resource
+ *   Composition of both engines (wizard_compose_*) and the
+ *   «apply strategy → service rule → live check» chain (wizard_preset_apply).
  *
- * Checks are on-demand (D6 pattern): nothing monitors permanently here —
- * the user runs the diagnostics when they need an answer.
+ * The result area is ONE shared node that follows the active zone — results
+ * stay in one place, replacing the previous (ui.action_buttons_result_
+ * placement). Checks are on-demand (D6 pattern): nothing monitors
+ * permanently here except the poll-driven state panels.
  */
 
 'use strict';
@@ -290,10 +286,11 @@ return view.extend({
 	render: function() {
 		hp.uiShell();
 
-		/* Service presets — service presets over the itdoginfo/allow-domains
-		 * sources the generator already consumes (no new hardcode).
-		 * `check` selects the RPC-backed live check; `hosts` are the
-		 * route_explain targets for the rest. */
+		/* The chain's source list («send a service through the engine»):
+		 * the same sources the Service rules presets write (no new
+		 * hardcode); `hosts` are the route_explain targets of the
+		 * follow-up live check. The full preset editor lives on the
+		 * Service rules page (v3b). */
 		const PRESETS = [
 			{ source: 'google_ai', title: _('Google AI (Gemini, AI Studio)'), check: 'google_ai',
 				hosts: [ 'gemini.google.com', 'generativelanguage.googleapis.com' ] },
@@ -316,104 +313,26 @@ return view.extend({
 			{ source: 'google-meet', title: _('Google Meet'), hosts: [] }
 		];
 
-		/* A1: every rpcd SOURCE becomes an editable row, grouped. The mass
-		 * lists use the same select/Apply path as presets — the RPC accepts
-		 * any source. Titles reuse the manual editor wording (client.js). */
-		const BULK_PRESETS = [
-			{ source: 'russia-inside', title: _('itdoginfo/allow-domains - Russia Inside (1000+ entries)') },
-			{ source: 'refilter', title: _('Re-filter (Russia blocklist: 60000+ banned domains + 25000+ IPs)') },
-			{ source: 'block', title: _('Block (core RKN-blocked resources)') },
-			{ source: 'russia-outside', title: _('Russia Outside (RU-only services — for use abroad)') },
-			{ source: 'ukraine-inside', title: _('Ukraine Inside (resources blocked in UA)') }
-		];
-		const CDN_PRESETS = [
-			{ source: 'cloudflare', title: _('Cloudflare CDN') },
-			{ source: 'cloudfront', title: _('CloudFront CDN') },
-			{ source: 'digitalocean', title: _('DigitalOcean cloud hosting') },
-			{ source: 'hetzner', title: _('Hetzner (Germany cloud hosting)') },
-			{ source: 'ovh', title: _('OVH (France cloud hosting)') },
-			{ source: 'hodca', title: _('HODCA') }
-		];
-		const MISC_PRESETS = [
-			{ source: 'news', title: _('International news sites') },
-			{ source: 'porn', title: _('Adult content') },
-			{ source: 'anime', title: _('Anime streaming') },
-			{ source: 'geoblock', title: _('Geo-blocked services') },
-			{ source: 'hdrezka', title: _('HDRezka') }
-		];
-		/* W4: b4geoip gaming IP sets — IP-only, no domains. */
-		const GAMING_PRESETS = [
-			{ source: 'valve', title: _('Valve / Steam') },
-			{ source: 'epicgames', title: _('Epic Games') },
-			{ source: 'riot', title: _('Riot Games') },
-			{ source: 'sony', title: _('Sony / PlayStation') },
-			{ source: 'electronicarts', title: _('EA / Electronic Arts') },
-			{ source: 'ubisoft', title: _('Ubisoft') },
-			{ source: 'blizzard', title: _('Blizzard') },
-			{ source: 'nintendo', title: _('Nintendo') },
-			{ source: 'wargaming', title: _('Wargaming') },
-			{ source: 'xbox', title: _('Xbox') }
-		];
-
 		const WIZ_CSS = `
 .wiz-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
 .wiz-toolbar input[type="text"] { flex: 1 1 260px; min-width: 200px; }
-.wiz-progress { margin: 6px 0; }
 .wiz-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; }
 .wiz-title { flex: 1 1 220px; font-weight: 600; }
-.wiz-state { flex: 1 1 240px; font-size: .88em; }
 .wiz-select { min-width: 190px; max-width: 320px; }
-/* Ф8-F5 (D.2): service rows use a FIXED grid — name | state | select |
- * buttons on one line, hints/pool on sub-rows below the card — so the
- * control columns line up across all 26 rows regardless of hint length
- * (the old flex rows had drifting columns and uneven heights). The button
- * column is a FIXED width: every row is its own grid, so an auto-sized last
- * column would shift the select column on rows that carry the extra Check
- * button. The button GROUP wraps as a fallback: the shortened RU label
- * («Применить» + «Проверить») fits the 210px track on one line, but an
- * overflowing locale must stay INSIDE the card, not spill out of it. */
-.wiz-svc { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; padding: 8px 10px; }
-.wiz-svc-grid { display: grid; grid-template-columns: minmax(140px, 230px) minmax(180px, 1fr) minmax(190px, 300px) 210px; align-items: center; gap: 6px 10px; }
-.wiz-svc-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
-.wiz-svc-grid > .wiz-title, .wiz-svc-grid > .wiz-state { flex: none; }
-.wiz-svc-grid > .wiz-select { width: 100%; }
-.wiz-svc .wiz-pool { margin: 6px 0 0 0; }
-.wiz-svc .wiz-note { margin: 6px 0 0 0; }
-@media (max-width: 900px) {
-	/* Narrow screens fall back to the old wrapping flex row. */
-	.wiz-svc-grid { display: flex; flex-wrap: wrap; }
-	.wiz-svc-grid > .wiz-title { flex: 1 1 220px; }
-	.wiz-svc-grid > .wiz-state { flex: 1 1 240px; }
-	.wiz-svc-grid > .wiz-select { width: auto; }
-}
 .wiz-note { font-size: .88em; opacity: .8; margin: 8px 0; }
-.wiz-hosts { color: var(--hp-grey); font-size: .82em; }
 .wiz-strat { flex: 1 1 380px; min-width: 260px; font-family: monospace; font-size: .82em; }
-.wiz-pool { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; margin: 4px 0 0 0; font-size: .88em; border: 1px dashed var(--hp-panel-line-strong); border-radius: var(--hp-radius); }
-.wiz-pool label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.wiz-group { flex-basis: 100%; font-weight: 600; font-size: .95em; margin: 14px 0 2px 0; padding-top: 10px; border-top: 1px solid var(--hp-panel-line); }
-.wiz-group:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
-.wiz-full { flex-basis: 100%; }
 `;
 
-		const st = document.getElementById('hp-wiz-style');
+		const st = document.getElementById('hp-byp-style');
 		if (!st)
-			document.head.appendChild(E('style', { id: 'hp-wiz-style' }, [ WIZ_CSS ]));
+			document.head.appendChild(E('style', { id: 'hp-byp-style' }, [ WIZ_CSS ]));
 
-		/* ── Tab frame ─────────────────────────────────────────────────── */
-		/* R3 v3b: the wizard is DPI-only now — service presets moved to the
-		 * Service rules page, provider diagnostics to Check & repair, the
-		 * tg-ws bridges to Phone control. The pane below hosts the four
-		 * DPI sub-tabs. */
-		const panes = { dpi: E('div', { 'class': 'hpui-pane active' }) };
-
-		/* ── DPI pane — ч.123: FOUR sub-tabs (the flat pane was overloaded:
-		 * pickers, the fuzzer, the auto-pilot and manual strategies all in
-		 * one scroll). Overview = what runs now + measured quality;
-		 * Auto-pilot = the automatic side; Strategy Lab = the fuzzer and
-		 * the catalogs; Manual strategies = the hand-applied side. The
-		 * result area is ONE shared node that moves under the active
-		 * sub-tab — results stay in one place, replacing the previous. */
+		/* ── Zone frame (R3 v3c) ───────────────────────────────────────── */
+		/* The wizard DPI section moved here as FOUR human zones
+		 * (19-UX_REDESIGN стр. 4): what works now, the automatic side, the
+		 * Lab, and everything applied by hand. The result area is ONE
+		 * shared node that moves under the active zone — results stay in
+		 * one place, replacing the previous. */
 		const dpiBanner = E('div', {});
 		const dpiCards = E('div', { 'class': 'hpui-cards' });
 		/* ч.109: the Serving map — what actually serves each resource right
@@ -426,10 +345,10 @@ return view.extend({
 		const dpiCorpus = E('div', {});
 		const dpiResult = E('div', {});
 		const DPI_TABS = [
-			[ 'dpiOv',  _('Overview') ],
+			[ 'dpiOv',  _('Working right now') ],
 			[ 'dpiAp',  _('Auto-pilot') ],
 			[ 'dpiLab', _('Strategy Lab') ],
-			[ 'dpiMan', _('Manual strategies') ]
+			[ 'dpiMan', _('Manual & compositions') ]
 		];
 		const dpiPanes = {};
 		for (let t in DPI_TABS)
@@ -452,16 +371,16 @@ return view.extend({
 				for (let j = 0; j < dpiTabBar.children.length; j++)
 					dpiTabBar.children[j].classList.toggle('active', j === idx);
 				/* the ONE result area follows the user — always visible at
-				 * the bottom of the active sub-tab */
+				 * the bottom of the active zone */
 				dpiPanes[key].appendChild(dpiResultRow);
 			});
 			dpiTabBar.appendChild(b);
 		}
 		dpiPanes.dpiOv.classList.add('active');
 
-		/* Overview sub-tab — the honest state, no actions here. */
+		/* «Working right now» zone — the honest state, no actions here. */
 		dpiPanes.dpiOv.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('What runs now: engines, what serves every resource, and the measured quality of the desync path. Actions live on the other sub-tabs; the results area follows you to every tab.') ]));
+			[ _('The live state of the bypass: which engines are running, which strategy serves each resource right now, and the measured quality of the desync path. Actions live on the other tabs; the results area follows you to every tab.') ]));
 		dpiPanes.dpiOv.appendChild(dpiBanner);
 		dpiPanes.dpiOv.appendChild(dpiCards);
 		dpiPanes.dpiOv.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('What serves what right now') ]));
@@ -469,28 +388,28 @@ return view.extend({
 		dpiPanes.dpiOv.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Quality now') ]));
 		dpiPanes.dpiOv.appendChild(dpiQuality);
 
-		/* Auto-pilot sub-tab — the automatic side (settings + one-click). */
+		/* «Auto-pilot» zone — the automatic side (settings + one-click). */
 		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('The automatic side: the scheduled auto-pilot keeps the strategies working without attention, and the one-click pick applies the best strategy for one resource. Both apply with a server snapshot (Restore stays available) and verify the resource live.') ]));
+			[ _('The bypass maintains itself: the scheduled auto-pilot re-ranks the strategies and applies the best one without attention, and immediately picks an alternative when a resource stops working. One click picks the best strategy for a single resource. Every apply takes a server snapshot (Restore stays available) and verifies the resource live.') ]));
 
-		/* Strategy Lab sub-tab — measure, then decide. */
+		/* «Strategy Lab» zone — measure, then decide. */
 		dpiPanes.dpiLab.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Measure, don\'t guess: the fuzzer batch-tests the catalog on an isolated queue, deep-checks the best strategy of every technique family, the best imported/generated ones (and your current strategy) with real content — the fresh-connection start, thumbnails, the video stream in KB/s — and ranks honestly: start first, then the flow. Apply any row per resource, generate mutations, import or share catalogs.') ]));
-		dpiPanes.dpiLab.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy Lab') ]));
+			[ _('Measure, not guesswork: the Lab tests the strategy catalog against your provider and ranks honestly — the fresh-connection start first, then the video flow. Apply a winner for one resource right from the table, generate mutations, or import and share catalogs.') ]));
 		dpiPanes.dpiLab.appendChild(dpiLab);
 		dpiPanes.dpiLab.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy catalog') ]));
 		dpiPanes.dpiLab.appendChild(dpiCorpus);
 
-		/* Manual strategies sub-tab — everything applied by hand. */
+		/* «Manual & compositions» zone — everything applied by hand. */
 		dpiPanes.dpiMan.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('The manual side: a global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource Composition of both engines, and the service→engine chain. Automatic selection lives on the Auto-pilot sub-tab.') ]));
+			[ _('Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the "send a service through the engine" chain. Automatic selection lives on the Auto-pilot tab.') ]));
 		dpiPanes.dpiMan.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy') ]));
 		dpiPanes.dpiMan.appendChild(dpiStrategy);
 
 		dpiPanes.dpiOv.appendChild(dpiResultRow);
-		panes.dpi.appendChild(dpiTabBar);
+		const bypRoot = E('div', {});
+		bypRoot.appendChild(dpiTabBar);
 		for (let t in DPI_TABS)
-			panes.dpi.appendChild(dpiPanes[DPI_TABS[t][0]]);
+			bypRoot.appendChild(dpiPanes[DPI_TABS[t][0]]);
 		/* Badge / text helpers ─────────────────────────────────────────── */
 		const badge = (cls, text) => E('span', { 'class': 'hpui-badge ' + cls }, [ text ]);
 
@@ -1116,7 +1035,7 @@ return view.extend({
 			  bFlag(bQuic, _('Block QUIC (UDP port 443)') + ' ⚠️'),
 			  bFlag(bVoice, _('Discord calls via Zapret')) ]));
 		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Client Settings page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled).') ]));
+			[ _('The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled).') ]));
 		const bDesc = E('p', { 'class': 'wiz-note' });
 		/* innerHTML: the description contains HTML links E() would escape */
 		bDesc.innerHTML = _('Grouped by technique. Based on <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> and community testing. See also <a href="https://github.com/fatyzzz/Byedpi-Setup" target="_blank">fatyzzz/Byedpi-Setup</a>.');
@@ -2026,7 +1945,7 @@ return view.extend({
 			[ autBtn, autSel, autFullWrap, autSetRuleWrap, autStatus ]);
 		dpiPanes.dpiAp.appendChild(autRow);
 		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured in the Manual strategies sub-tab.') ]));
+			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured on the Manual & compositions tab.') ]));
 		autSel.addEventListener('change', function() {
 			autSetRuleWrap.style.display = (autSel.value === 'general') ? 'none' : '';
 		});
@@ -2389,7 +2308,7 @@ return view.extend({
 			const src = chainSel.value;
 			const eng = chainEngine.value;
 			if (!src || !eng) {
-				ui.addNotification(null, E('p', {}, _('Enable Zapret or ByeDPI on the Client Settings page first.')), 'error');
+				ui.addNotification(null, E('p', {}, _('Enable Zapret or ByeDPI on the Connection page first.')), 'error');
 				return;
 			}
 			chainBtn.disabled = true;
@@ -2617,11 +2536,10 @@ return view.extend({
 		});
 
 		/* ── Poll ──────────────────────────────────────────────────────── */
-		/* ── Poll ──────────────────────────────────────────────────────── */
-		/* R3 v3b: presets moved to Service rules, provider diagnostics to
-		 * Check & repair, tg-ws to Phone control — the wizard polls only
-		 * the DPI engine state + the preset LIST (rules are the serving
-		 * map's source of truth; env feeds the chain row). */
+		/* v3b/v3c history: presets moved to Service rules, provider
+		 * diagnostics to Check & repair, tg-ws to Phone control — this
+		 * page polls the DPI engine state + the preset LIST (rules are
+		 * the serving map's source of truth; env feeds the chain row). */
 		function refresh() {
 			return Promise.all([
 				L.resolveDefault(callPresetList(), {}),
@@ -2678,6 +2596,6 @@ return view.extend({
 		poll.add(refresh, 4);
 		refresh();
 
-		return E('div', {}, [ panes.dpi ]);
+		return bypRoot;
 	}
 });

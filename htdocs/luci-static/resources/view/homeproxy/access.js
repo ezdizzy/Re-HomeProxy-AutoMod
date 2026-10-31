@@ -40,7 +40,7 @@ return view.extend({
 		const hosts = data[3]?.hosts;
 
 		const m = new form.Map('homeproxy', _('Ravnex'),
-			_('Which devices, addresses and interfaces the proxy serves: per-device policy for the LAN, upstream IP policy for the WAN, and interface binding. This page does not change WHAT is proxied — the service rules and lists live in the Routing Wizard.'));
+			_('Which devices, addresses and interfaces the proxy serves: per-device policy for the LAN, upstream IP policy for the WAN, and interface binding. This page does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages.'));
 
 		s = m.section(form.NamedSection, 'control', 'homeproxy');
 

@@ -319,7 +319,7 @@ return view.extend({
 				_('Change server'), 'admin/services/homeproxy/client' ],
 			[ 'bypass', 'shield',   _('Blocking bypass'),
 				_('Zapret and ByeDPI open blocked sites without a VPN subscription.'),
-				_('Configure'), 'admin/services/homeproxy/wizard' ],
+				_('Configure'), 'admin/services/homeproxy/bypass' ],
 			[ 'learn',  'refresh',  _('Auto-bypass'),
 				_('The engine finds blocked sites itself and sends them around the block.'),
 				_('Open'), 'admin/services/homeproxy/automation' ],
@@ -365,7 +365,7 @@ return view.extend({
 		const qsSteps = [
 			[ 'nodes', '1', _('Add servers'), 'admin/services/homeproxy/node', _('Import a subscription or paste a share link.') ],
 			[ 'main',  '2', _('Choose the main node'), 'admin/services/homeproxy/client', null ],
-			[ 'byp',   '3', _('Turn on the bypass'), 'admin/services/homeproxy/wizard', null ],
+			[ 'byp',   '3', _('Turn on the bypass'), 'admin/services/homeproxy/bypass', null ],
 			[ 'net',   '4', _('Check the internet'), 'admin/services/homeproxy/diagnostics', null ]
 		];
 		const qsEls = {};

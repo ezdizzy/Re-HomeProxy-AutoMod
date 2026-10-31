@@ -17,9 +17,6 @@ msgstr "Работают: %d, не отвечают: %d, всего: %d"
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
-msgid "Active node"
-msgstr "Активный узел"
-
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
 msgid "Alive"
@@ -98,18 +95,9 @@ msgstr "Не в конфигурации"
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
-msgid "Rule"
-msgstr "Правило"
-
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
-msgid "Running"
-msgstr "Работает"
-
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
-
-msgid "Timeout"
-msgstr "Таймаут"
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
@@ -302,7 +290,6 @@ msgstr "Допустимый размер полезной нагрузки ук
 msgid "Active Node"
 msgstr "Активный узел"
 
-
 msgid "Active UDP Node"
 msgstr "Активный UDP-узел"
 
@@ -346,7 +333,6 @@ msgstr "Ошибка при обновлении подписок: %s"
 
 msgid "Fetching nodes, please wait..."
 msgstr "Загрузка узлов, пожалуйста подождите..."
-
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
@@ -561,22 +547,17 @@ msgstr "Само приложение LuCI. «Проверить обновле�
 msgid "China DNS server"
 msgstr "DNS-сервер для Китая"
 
-
 msgid "Iran DNS server"
 msgstr "DNS-сервер для Ирана"
-
 
 msgid "The Domain Name Server for resolving Iran Domestic domains only. Your Internet Provider sees these queries in plain text."
 msgstr "DNS-сервер только для резолвинга внутренних иранских доменов. Ваш интернет-провайдер видит эти запросы в открытом виде."
 
-
 msgid "China"
 msgstr "Китай"
 
-
 msgid "Iran"
 msgstr "Иран"
-
 
 msgid ""
 "Default route is through the proxy. %s domains and IPs (geosite + geoip) "
@@ -695,13 +676,7 @@ msgstr "DNS-правила"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:924
 
-msgid "DNS Servers"
-msgstr "DNS-серверы"
-
 #: htdocs/luci-static/resources/view/homeproxy/client.js:872
-
-msgid "DNS Settings"
-msgstr "DNS"
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js:639
 
@@ -743,9 +718,6 @@ msgstr "Отладка"
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1083
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1381
 #: htdocs/luci-static/resources/view/homeproxy/node.js:710
-
-msgid "Default"
-msgstr "По умолчанию"
 
 msgid "default"
 msgstr "По умолчанию"
@@ -806,9 +778,6 @@ msgstr "Имя сервера по умолчанию"
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1033
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1382
 #: htdocs/luci-static/resources/view/homeproxy/node.js:428
-
-msgid "Direct"
-msgstr "Напрямую"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1514
 
@@ -1158,9 +1127,6 @@ msgid "Encrypt method"
 msgstr "Метод шифрования"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js:139
-
-msgid "Error"
-msgstr "Ошибка"
 
 #: htdocs/luci-static/resources/homeproxy.js:237
 #: htdocs/luci-static/resources/homeproxy.js:271
@@ -1637,7 +1603,6 @@ msgstr "Импорт"
 
 msgid "Import share links"
 msgstr "Импортировать ссылку-конфигурацию для подключения"
-
 
 msgid "Support Amnezia (vpn://), Hysteria, Mieru, NaïveProxy (naive://), Shadowsocks (ss://), SSH, Trojan, v2rayN (VMess), WireGuard, and VLESS (vless://) online configuration delivery standard."
 msgstr "Поддерживает Amnezia (vpn://), Hysteria, Mieru, NaïveProxy (naive://), Shadowsocks (ss://), SSH, Trojan, v2rayN (VMess), WireGuard и VLESS (vless://)."
@@ -2148,9 +2113,6 @@ msgstr "Протокол мультиплексирования."
 #: htdocs/luci-static/resources/view/homeproxy/client.js:57
 #: htdocs/luci-static/resources/view/homeproxy/server.js:60
 
-msgid "NOT RUNNING"
-msgstr "НЕ ЗАПУЩЕН"
-
 #: htdocs/luci-static/resources/view/homeproxy/node.js:1395
 
 msgid "NOTE: Save current settings before updating subscriptions."
@@ -2230,9 +2192,6 @@ msgstr "Узлы"
 #: htdocs/luci-static/resources/view/homeproxy/node.js:775
 #: htdocs/luci-static/resources/view/homeproxy/server.js:386
 #: htdocs/luci-static/resources/view/homeproxy/server.js:401
-
-msgid "None"
-msgstr "Нет"
 
 msgid "none"
 msgstr "Нет"
@@ -2450,9 +2409,6 @@ msgstr "Предпочтительное ядро"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:678
 #: htdocs/luci-static/resources/view/homeproxy/node.js:903
-
-msgid "Private key"
-msgstr "Приватный ключ"
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js
 
@@ -2678,9 +2634,6 @@ msgstr "Короткий ID REALITY"
 #: htdocs/luci-static/resources/view/homeproxy/client.js:55
 #: htdocs/luci-static/resources/view/homeproxy/server.js:58
 
-msgid "RUNNING"
-msgstr "РАБОТАЕТ"
-
 #: htdocs/luci-static/resources/view/homeproxy/node.js:665
 
 msgid "Random version will be used if empty."
@@ -2809,12 +2762,6 @@ msgstr "не обнаружен"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Not installed"
-msgstr "Не установлено"
-
-msgid "Installed"
-msgstr "Установлен"
-
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
 msgid "Latest"
@@ -2886,9 +2833,6 @@ msgid "Installation failed"
 msgstr "Ошибка установки"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
-
-msgid "Unknown"
-msgstr "Неизвестно"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 #: htdocs/luci-static/resources/view/homeproxy/server.js
@@ -3054,9 +2998,6 @@ msgid "Server"
 msgstr "Сервер"
 
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json:38
-
-msgid "Server Settings"
-msgstr "Сервер"
 
 #: root/usr/share/luci/menu.d/luci-app-re-homeproxy.json:62
 
@@ -3586,7 +3527,6 @@ msgstr "Минимальная допустимая версия TLS."
 msgid "The modern ImmortalWrt proxy platform for ARM64/AMD64."
 msgstr "Современная прокси-платформа ImmortalWrt для ARM64/AMD64."
 
-
 msgid "The modern multi-core proxy platform. Fork of ImmortalWrt."
 msgstr "Современная многоядерная прокси-платформа. Форк ImmortalWrt."
 
@@ -4059,9 +3999,6 @@ msgstr "подключить UDP-соединения"
 #: htdocs/luci-static/resources/view/homeproxy/server.js:572
 #: htdocs/luci-static/resources/view/homeproxy/server.js:580
 
-msgid "failed"
-msgstr "не выполнено"
-
 #: htdocs/luci-static/resources/view/homeproxy/node.js:776
 #: htdocs/luci-static/resources/view/homeproxy/server.js:402
 
@@ -4105,9 +4042,6 @@ msgid "packet addr (v2ray-core v5+)"
 msgstr "packet addr (v2ray-core v5+)"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js:50
-
-msgid "passed"
-msgstr "пройдено"
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js:791
 
@@ -4216,7 +4150,6 @@ msgstr "корректное значение порта"
 msgid "valid uuid"
 msgstr "корректный uuid"
 
-
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
 msgid "Binded interface"
@@ -4233,9 +4166,6 @@ msgid "Proxy IP"
 msgstr "IP прокси"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
-
-msgid "No data"
-msgstr "Нет данных"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -4497,7 +4427,6 @@ msgstr "Не проксировать торренты"
 msgid "Force torrent traffic (BitTorrent protocol + common ports) to bypass the proxy."
 msgstr "Направить торрент-трафик (протокол BitTorrent и стандартные порты) в обход прокси."
 
-
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
 msgid "HomeProxy Diagnostics"
@@ -4524,9 +4453,6 @@ msgid "Checking core…"
 msgstr "Проверка ядра…"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
-
-msgid "RPC error"
-msgstr "Ошибка RPC"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
@@ -4647,7 +4573,6 @@ msgstr "Тест DNS применяется только в режиме мар�
 
 msgid "Russia DNS"
 msgstr "Российский DNS"
-
 
 msgid "DNS (direct)"
 msgstr "DNS (прямой)"
@@ -4815,9 +4740,6 @@ msgstr "Остановка…"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
-msgid "Stopped"
-msgstr "Остановлено"
-
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
 msgid "work on all sites"
@@ -4840,13 +4762,7 @@ msgstr "частично"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
-msgid "Click Generate to collect diagnostics…"
-msgstr "Нажмите «Сформировать» для сбора диагностики…"
-
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
-
-msgid "Collecting diagnostics — this may take a few seconds…"
-msgstr "Сбор диагностики — это может занять несколько секунд…"
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
@@ -4903,10 +4819,8 @@ msgstr "Версия"
 msgid "sing-box"
 msgstr "sing-box"
 
-
 msgid "hiddify-core with sing-box syntax compatibility. Supports Hiddify App protocols and advanced features. Best compatibility with Hiddify Manager protocols. Does not support AmneziaWG."
 msgstr "hiddify-core с совместимостью синтаксиса sing-box. Поддерживает протоколы Hiddify App и расширенные функции. Наилучшая совместимость с протоколами Hiddify Manager. Не поддерживает AmneziaWG."
-
 
 msgid "Extended sing-box with additional protocols including AmneziaWG and TrustTunnel support. Created by shtorm-7."
 msgstr "Расширенный sing-box с поддержкой дополнительных протоколов, включая AmneziaWG и TrustTunnel. Создан shtorm-7."
@@ -4960,7 +4874,6 @@ msgstr "Используется всегда, пока отвечает — н�
 
 msgid "Direct (no proxy)"
 msgstr "Напрямую (без прокси)"
-
 
 msgid "Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values. In \"Preferred node + auto\" mode it applies to the fallback pool only (the preferred node is never replaced by a faster one)."
 msgstr "Минимальная разница задержек (мс) для переключения на более быстрый узел — предотвращает постоянное переключение между узлами с близкой задержкой. В режиме «Приоритетный узел + авто» действует только для запасного пула (приоритетный узел никогда не заменяется более быстрым)."
@@ -5106,9 +5019,6 @@ msgid "Preparing..."
 msgstr "Подготовка..."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
-
-msgid "Done"
-msgstr "Готово"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -5256,109 +5166,80 @@ msgstr "таймаут"
 
 # --- Zapret strategy UI (added manually; re-verify on next xgettext rescan) ---
 
-
 msgid "Default (fake + multidisorder)"
 msgstr "По умолчанию (fake + multidisorder)"
-
 
 msgid "Fake only"
 msgstr "Только fake"
 
-
 msgid "Recommended"
 msgstr "Рекомендуемые"
-
 
 msgid "Full-test pool"
 msgstr "Полный набор для проверки"
 
-
 msgid "Fills the strategy below. Use the tester to find one that works on your ISP. Based on <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2/blockcheck2) and <a href=\"https://github.com/flowseal/zapret-discord-youtube\" target=\"_blank\">flowseal/zapret-discord-youtube</a> (MIT). Packages by <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>."
 msgstr "Заполняет поле стратегии ниже. Используйте тест, чтобы найти рабочую для вашего провайдера. На основе <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2/blockcheck2) и <a href=\"https://github.com/flowseal/zapret-discord-youtube\" target=\"_blank\">flowseal/zapret-discord-youtube</a> (MIT). Пакеты: <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>."
-
 
 msgid "Runs the current strategy on a temporary NFQUEUE scoped to 4 test sites — <b>YouTube</b>, <b>Telegram</b>, <b>Discord</b>, <b>Speedtest.net</b> — and checks whether each TLS handshake completes. Does not touch your live connection. A site that fails here means the strategy breaks it."
 msgstr "Запускает текущую стратегию на временной очереди NFQUEUE для 4 тестовых сайтов — <b>YouTube</b>, <b>Telegram</b>, <b>Discord</b>, <b>Speedtest.net</b> — и проверяет, проходит ли TLS-рукопожатие. Ваше соединение не затрагивается. Если сайт здесь не проходит, стратегия его ломает."
 
-
 msgid "Full strategy test"
 msgstr "Полная проверка стратегий"
-
 
 msgid "Tries every strategy in the list one by one on a temporary NFQUEUE — your live connection is untouched — and shows which pass. Stay on this page while it runs; leaving stops it. Press <b>Apply</b> on any passing strategy to select it, then Save &amp; Apply."
 msgstr "Проверяет каждую стратегию из списка по очереди на временной очереди NFQUEUE — ваше соединение не затрагивается — и показывает, какие проходят. Оставайтесь на этой странице во время проверки; уход со страницы прерывает её. Нажмите <b>Применить</b> у любой работающей стратегии, чтобы выбрать её, затем «Сохранить и применить»."
 
-
 msgid "Run full test"
 msgstr "Запустить полную проверку"
-
 
 msgid "Applied: %s — now Save & Apply"
 msgstr "Применено: %s — теперь «Сохранить и применить»"
 
-
 msgid "Testing %d/%d: %s"
 msgstr "Проверка %d/%d: %s"
-
 
 msgid "%d/%d passed"
 msgstr "%d/%d пройдено"
 
-
 msgid "Discord calls via Zapret"
 msgstr "Звонки Discord через Zapret"
-
-
 
 msgid "Enable Zapret"
 msgstr "Включить Zapret"
 
-
 msgid "An alternative to ByeDPI: another free way to unblock throttled or blocked sites (YouTube, Discord…) without a VPN subscription. Practical difference from ByeDPI: Zapret can work with the QUIC protocol. Finding a working strategy is individual and depends on your ISP's restrictions. Installed automatically on first enable."
 msgstr "Альтернатива ByeDPI: ещё один бесплатный способ разблокировать замедлённые или заблокированные сайты (YouTube, Discord…) без VPN-подписки. Практическое отличие от ByeDPI: Zapret умеет работать с протоколом QUIC. Подбор рабочей стратегии индивидуален и зависит от ограничений провайдера. Устанавливается автоматически при первом включении."
-
 
 msgid "No package manager found. Install zapret2 manually on the \"Core & Tools\" page."
 msgstr "Менеджер пакетов не найден. Установите zapret2 вручную на странице «Ядро»."
 
-
 msgid "Install Zapret"
 msgstr "Установить Zapret"
-
 
 msgid "Zapret (zapret2/nfqws2) is not installed. Install it now?"
 msgstr "Zapret (zapret2/nfqws2) не установлен. Установить сейчас?"
 
 # --- Zapret strategy UI (added manually; re-verify on next xgettext rescan) ---
 
-
 # --- ByeDPI strings (filling pre-existing gaps; survive xgettext rescan) ---
-
 
 msgid "Install ByeDPI"
 msgstr "Установить ByeDPI"
 
-
 msgid "ByeDPI running"
 msgstr "ByeDPI работает"
-
-
-
-
 
 msgid "✓ ByeDPI started (install curl for full test)"
 msgstr "✓ ByeDPI запущен (установите curl для полной проверки)"
 
 # --- Zapret diagnostics (Network Intercept card) ---
 
-
 msgid "Zapret (nfqws2)"
 msgstr "Zapret (nfqws2)"
 
-
 msgid "enabled, but nfqws2 not running"
 msgstr "включён, но nfqws2 не запущен"
-
 
 msgid "Zapret NFQUEUE counters (mark 110 → queue)"
 msgstr "Счётчики NFQUEUE Zapret (метка 110 → очередь)"
@@ -5373,14 +5254,11 @@ msgstr "Zapret установлен, но отсутствует модуль я
 msgid "Zapret 2 running"
 msgstr "Zapret 2 работает"
 
-
 msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Packages by <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Configure in the Routing Wizard (DPI bypass)."
 msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Пакеты: <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Настраивается в Мастере (обход DPI)."
 
-
 msgid "Installed, but kmod-nft-queue is missing — Zapret cannot intercept traffic without it."
 msgstr "Установлено, но отсутствует kmod-nft-queue — без него Zapret не сможет перехватывать трафик."
-
 
 msgid "Warning: kmod-nft-queue is not installed — Zapret cannot intercept traffic without it."
 msgstr "Внимание: kmod-nft-queue не установлен — без него Zapret не сможет перехватывать трафик."
@@ -5596,9 +5474,6 @@ msgid "Nothing learned yet. Browse the web or press “Test now”."
 msgstr "Пока ничего не изучено. Откройте сайты или нажмите «Проверить сейчас»."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Enabled"
-msgstr "Включено"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -5852,9 +5727,6 @@ msgstr "Россия"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Disabled"
-msgstr "Отключён"
-
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
 msgid "MultiDNS DNS Tests"
@@ -5978,9 +5850,6 @@ msgstr "Сайт"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "active"
-msgstr "активен"
-
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
 msgid "direct ✗ / proxy ✓"
@@ -6005,7 +5874,6 @@ msgstr "неопределённо"
 
 msgid "Redundant with MultiDNS: when MultiDNS is enabled it already races every server in each pool and returns the fastest live answer, so a single failed primary is bypassed automatically. Reserve DNS is therefore ignored while MultiDNS is on — use one or the other."
 msgstr "Дублирует MultiDNS: при включённом MultiDNS он уже опрашивает все серверы каждого пула и возвращает самый быстрый живой ответ, поэтому отказ одного основного сервера обходится автоматически. Резервный DNS игнорируется, пока включён MultiDNS, — используйте что-то одно."
-
 
 #: htdocs/luci-static/resources/view/homeproxy/server.js
 
@@ -6449,9 +6317,6 @@ msgstr "Движок per-query гонки DNS для MultiDNS: параллел�
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Removed successfully — MultiDNS disabled"
-msgstr "Удалено — MultiDNS отключён"
-
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js
 
 msgid "mosdns running"
@@ -6473,9 +6338,6 @@ msgid "No answer — mosdns may be down"
 msgstr "Нет ответа — возможно, mosdns не запущен"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
-
-msgid "no core installed"
-msgstr "ядро не установлено"
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
@@ -6891,7 +6753,6 @@ msgid ""
 msgstr ""
 "Резолвит российские домены напрямую, без прокси. Можно добавить несколько — MultiDNS опрашивает их все, без него используется первая запись. Голый IP опрашивается по UDP с фолбэком на TCP; в записях можно явно задать транспорт: tcp://IP или шифрованный прямой DoH-адрес вида https://1.1.1.1/dns-query (проксируется никогда)."
 
-
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Resource"
 msgstr "Ресурс"
@@ -6946,7 +6807,6 @@ msgstr "Обнаружена блокировка вашим DNS"
 msgid "blocked by your own DNS blocker (0.0.0.0-style answers) — deliberately not learned into the proxy list"
 msgstr "домен заблокирован вашим собственным DNS-блокировщиком (ответы вида 0.0.0.0) — в прокси-список сознательно не вносится"
 
-
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 msgid "Delete ALL learned sites? The engine will re-learn them from scratch."
 msgstr "Удалить ВСЕ изученные сайты? Движок будет изучать их заново с нуля."
@@ -6961,12 +6821,6 @@ msgstr "Свои правила"
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Show the Custom Rules and Routing Nodes tabs for additional custom rules."
 msgstr "Показать вкладки «Свои правила» и «Узлы маршрутизации» для дополнительных пользовательских правил."
-
-#: htdocs/luci-static/resources/view/homeproxy/dns.js
-msgid "Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used."
-msgstr "Разрешает заблокированные домены через прокси — провайдер не видит, какие сайты вы запрашиваете. Использует шифрованный DNS (DoH/DoT). Можно добавить несколько — MultiDNS опрашивает их все, без него используется первая запись."
-
-
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -7251,7 +7105,6 @@ msgstr "Вес источника: TLS SNI"
 msgid "Weight of a TLS ClientHello (SNI) sighting. Catches DoH clients and hardcoded-IP apps."
 msgstr "Вес вхождения из TLS ClientHello (SNI). Ловит DoH-клиенты и приложения с жёсткими IP."
 
-
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
 msgid "RU-protect"
@@ -7299,9 +7152,6 @@ msgstr "Демон движка ежечасно проверяет возрас
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Unreachable"
-msgstr "Недоступен"
-
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
 msgid "Update failed to start: "
@@ -7338,7 +7188,6 @@ msgid "updating…"
 msgstr "обновляется…"
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-
 
 msgid "Auto mode: entry status is determined automatically"
 msgstr "Авто: статус записи определяется автоматически"
@@ -7914,9 +7763,6 @@ msgstr "Прямой интернет возвращён — «Запуск сл
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with \"Service start\" or a router reboot."
-msgstr "Остановить прокси-стек и вернуть ПРЯМОЙ интернет? Перехват DNS снимается; прокси вернётся через «Запуск службы» или перезагрузку роутера."
-
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
 msgid "Point-in-time copies of the app configuration and routing lists. Restore returns both and restarts the service; \"Restore internet\" is the emergency switch that stops the proxy and DNS interception for a plain direct connection."
@@ -7989,9 +7835,6 @@ msgstr "Пакетно проверяет каждую стратегию вст
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
-msgid "Telegram bot"
-msgstr "Telegram-бот"
-
 #: htdocs/luci-static/resources/view/homeproxy/status.js
 
 msgid "Enable Telegram bot"
@@ -8000,7 +7843,7 @@ msgstr "Включить Telegram-бота"
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
 msgid "Strategy Lab"
-msgstr "Лаборатория стратегий"
+msgstr "Лаборатория"
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js
 
@@ -9030,18 +8873,12 @@ msgstr "Наличие обновления проверяется по треб
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 
-msgid "Checking the latest release…"
-msgstr "Проверяю последний релиз…"
-
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 
 msgid "Update check failed: %s"
 msgstr "Проверка обновления не удалась: %s"
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
-
-msgid "Update available: %s → %s (install it on the \"Core & Tools\" page)."
-msgstr "Доступно обновление: %s → %s (установите на странице «Ядро»)."
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 
@@ -9064,9 +8901,6 @@ msgid "Snapshot"
 msgstr "Снапшот"
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
-
-msgid "Creating a snapshot…"
-msgstr "Создаю снапшот…"
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 
@@ -9149,9 +8983,6 @@ msgid "%d m"
 msgstr "%d мин"
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
-
-msgid "%d points · ~%d min"
-msgstr "%d точек · ~%d мин"
 
 #: htdocs/luci-static/resources/view/homeproxy/overview.js
 
@@ -9297,9 +9128,6 @@ msgstr "Предупреждение"
 
 msgid "no events yet"
 msgstr "событий пока нет"
-
-
-
 
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 
@@ -10427,10 +10255,6 @@ msgstr "Проверить все предустановки ByeDPI? Кажда�
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
 msgid "Preparing…"
 msgstr "Подготовка…"
-#: htdocs/luci-static/resources/view/homeproxy/wizard.js
-msgid "fill a preset into the input and press \"Save ByeDPI\""
-msgstr "подставьте предустановку в поле и нажмите «Сохранить ByeDPI»"
-#: htdocs/luci-static/resources/view/homeproxy/wizard.js
 msgid "Preset filled into the strategy input — press \"Save ByeDPI\" to apply it."
 msgstr "Предустановка подставлена в поле стратегии — нажмите «Сохранить ByeDPI», чтобы применить."
 #: htdocs/luci-static/resources/view/homeproxy/wizard.js
@@ -10521,10 +10345,6 @@ msgstr "Тег другого сервера для резолва домена 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 msgid "Match IP CIDR with query response. Current rule will be skipped if not match."
 msgstr "Сопоставляет IP CIDR с ответом на запрос; при несовпадении правило пропускается."
-
-#: htdocs/luci-static/resources/view/homeproxy/dns.js
-msgid "Resolves Russian domains directly, without going through the proxy. You may add several — MultiDNS races all of them, without it the first entry is used. A bare IP is queried over UDP with TCP fallback; entries may force a transport: tcp://IP, or an encrypted direct DoH URL like https://1.1.1.1/dns-query (never proxied)."
-msgstr "Разрешает российские домены напрямую, без прокси. Можно добавить несколько — MultiDNS гоняет их все, без него используется первая запись. Голый IP опрашивается по UDP с фолбэком на TCP; записи могут задавать транспорт: tcp://IP или прямую зашифрованную DoH-ссылку вида https://1.1.1.1/dns-query (никогда не через прокси)."
 
 #: htdocs/luci-static/resources/view/homeproxy/dns.js
 msgid "Automatically detect the DNS servers your provider assigns on the WAN interface and race them together with the \"Russia DNS server\" list above. No manual setup on any router or ISP: MultiDNS measures quality continuously and prunes this server automatically if it is dead, slow or returns forged answers."
@@ -11043,9 +10863,6 @@ msgstr "Пауза правила"
 
 msgid "Rule paused"
 msgstr "Правило на паузе"
-
-msgid "On"
-msgstr "Вкл"
 
 msgid "Rule disabled"
 msgstr "Правило выключено"
@@ -11948,11 +11765,56 @@ msgstr "Что через какой выход ходит: выберите в�
 msgid "fallback"
 msgstr "fallback"
 
-msgid "fill a preset into the input and press \"Save ByeDPI\""
-msgstr "выберите пресет в поле ввода и нажмите «Сохранить ByeDPI»"
-
 msgid "Router settings"
 msgstr "Настройки роутера"
 
 msgid "Log out"
 msgstr "Выход"
+
+msgid "Which devices, addresses and interfaces the proxy serves: per-device policy for the LAN, upstream IP policy for the WAN, and interface binding. This page does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages."
+msgstr "Какие устройства, адреса и интерфейсы обслуживает прокси: политика для устройств LAN, политика IP для WAN и привязка к интерфейсам. Страница не меняет ЧТО проксируется — правила сервисов и списки живут на страницах «Правила для сервисов» и «Обход блокировок»."
+
+msgid "Working right now"
+msgstr "Сейчас работает"
+
+msgid "Manual & compositions"
+msgstr "Ручное и композиции"
+
+msgid "The live state of the bypass: which engines are running, which strategy serves each resource right now, and the measured quality of the desync path. Actions live on the other tabs; the results area follows you to every tab."
+msgstr "Живое состояние обхода: какие движки работают, какая стратегия обслуживает каждый ресурс и измеренное качество обхода. Действия — на других вкладках; результат-область следует за вами на каждой вкладке."
+
+msgid "The bypass maintains itself: the scheduled auto-pilot re-ranks the strategies and applies the best one without attention, and immediately picks an alternative when a resource stops working. One click picks the best strategy for a single resource. Every apply takes a server snapshot (Restore stays available) and verifies the resource live."
+msgstr "Обход обслуживает себя сам: автопилот по расписанию заново ранжирует стратегии и применяет лучшую без вашего участия, а когда ресурс перестаёт работать — сразу подбирает замену. Одна кнопка подбирает лучшую стратегию для одного ресурса. Каждое применение делает серверный снимок — «Восстановить» всегда доступно — и живо проверяет ресурс."
+
+msgid "Measure, not guesswork: the Lab tests the strategy catalog against your provider and ranks honestly — the fresh-connection start first, then the video flow. Apply a winner for one resource right from the table, generate mutations, or import and share catalogs."
+msgstr "Измерение вместо догадок: лаборатория проверяет каталог стратегий на вашем провайдере и честно ранжирует — сначала старт нового соединения, затем видеопоток. Победителя можно применить к одному ресурсу прямо из таблицы, сгенерировать мутации, импортировать каталог или поделиться им."
+
+msgid "Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the \"send a service through the engine\" chain. Automatic selection lives on the Auto-pilot tab."
+msgstr "Всё, что применяется вручную: глобальная стратегия Zapret, карточка ByeDPI с пресетами и флагами, композиция обоих движков по ресурсам и цепочка «отправить сервис через движок». Автоматический подбор — на вкладке «Автопилот»."
+
+msgid "The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled)."
+msgstr "Стратегия обслуживает трафик, направленный в ByeDPI (главный узел = ByeDPI, правила сервисов или профили Композиции ниже). «Сохранить» записывает стратегию и флаги и перезапускает сервис; сам ByeDPI включается на странице «Подключение». «UDP поверх TCP» оборачивает UDP-трафик в TCP-поток ByeDPI; «Блокировать QUIC» режет исходящий UDP 443, заставляя браузеры возвращаться на TCP, где стратегия работает; «Звонки Discord через Zapret» направляет голосовые UDP-порты Discord в Zapret (требуется включённый Zapret)."
+
+msgid "fill a preset into the input and press \"Save ByeDPI\""
+msgstr "выберите пресет в поле ввода и нажмите «Сохранить ByeDPI»"
+
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured on the Manual & compositions tab."
+msgstr "Один клик: фаззер ранжирует каталог (свежий ранжинг используется повторно), лучшая стратегия ресурса применяется как отдельный профиль с серверным снимком, затем ресурс проверяется через настроенный путь (страница, CDN, НАСТОЯЩИЙ видеопоток в KB/s). Только Zapret — стратегии ByeDPI настраиваются на вкладке «Ручное и композиции»."
+
+msgid "Enable Zapret or ByeDPI on the Connection page first."
+msgstr "Сначала включите Zapret или ByeDPI на странице «Подключение»."
+
+msgid "Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives on the Blocking bypass page — \"Strategy Lab\"."
+msgstr "Проверка стратегий (текущая стратегия, пакетный фаззинг с baseline и историей, применение) живёт на странице «Обход блокировок» — «Лаборатория»."
+
+msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test\" and \"Test all presets\" buttons on the Blocking bypass page."
+msgstr "Включает полноценное HTTP-тестирование стратегий ByeDPI. Необходим для кнопок «Проверить» и «Проверить все предустановки» на странице «Обход блокировок»."
+
+msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Enable on the Connection page; strategies are configured on the Blocking bypass page."
+msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Пакеты: <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Включение: на странице «Подключение»; стратегии настраиваются на странице «Обход блокировок»."
+
+msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Packages by <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Configure on the Blocking bypass page."
+msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Пакеты: <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Настраивается на странице «Обход блокировок»."
+
+msgid "A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. Works by confusing your ISP's traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. Results depend on your ISP and may require trying different strategies on the Blocking bypass page. ByeDPI will be installed automatically on first enable."
+msgstr "Бесплатный способ разблокировать замедлённые сайты (например, YouTube) без VPN-подписки. Работает, сбивая систему анализа трафика провайдера — трафик НЕ шифруется и НЕ скрывается, провайдер по-прежнему видит, какие сайты вы посещаете. Результат зависит от провайдера и может потребовать подбора стратегии на странице «Обход блокировок». При первом включении ByeDPI установится автоматически."

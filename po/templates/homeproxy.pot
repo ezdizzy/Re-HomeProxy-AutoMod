@@ -18,9 +18,6 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
-msgid "Active node"
-msgstr ""
-
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
 msgid "Alive"
@@ -99,13 +96,7 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
-msgid "Running"
-msgstr ""
-
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
-
-msgid "Timeout"
-msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
@@ -194,10 +185,6 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1271
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1769
 msgid "Action"
-msgstr ""
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js:2078
-msgid "active"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:276
@@ -758,11 +745,6 @@ msgstr ""
 msgid "click Apply next to a strategy (prefer all-green)"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:529
-#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:546
-msgid "Click Generate to collect diagnostics…"
-msgstr ""
-
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1208
 msgid "Client"
 msgstr ""
@@ -815,10 +797,6 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/server.js:146
 #: htdocs/luci-static/resources/view/homeproxy/status.js:186
 msgid "Collecting data..."
-msgstr ""
-
-#: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:533
-msgid "Collecting diagnostics — this may take a few seconds…"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/node.js:2455
@@ -1184,10 +1162,6 @@ msgstr ""
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1547
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:336
 msgid "DNS Servers"
-msgstr ""
-
-#: htdocs/luci-static/resources/view/homeproxy/client.js:1487
-msgid "DNS Settings"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/diagnostics.js:362
@@ -5177,9 +5151,6 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
-msgid "Domain-name sources to watch for candidates. Raw-IP destinations are a separate switch below (“Learn IP destinations”)."
-msgstr ""
-
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
 msgid "eco: classic serial probing for weak routers. perf: up to 64 domains / 32 IPs per pass probed in parallel batches (16 at once) — needs a multi-core router with 1 GB RAM (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory."
@@ -5386,9 +5357,6 @@ msgid "Upstream-blocked detected"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
-
-msgid "Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps."
-msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -6296,11 +6264,56 @@ msgstr ""
 msgid "fallback"
 msgstr ""
 
-msgid "fill a preset into the input and press \"Save ByeDPI\""
-msgstr ""
-
 msgid "Router settings"
 msgstr ""
 
 msgid "Log out"
+msgstr ""
+
+msgid "Which devices, addresses and interfaces the proxy serves: per-device policy for the LAN, upstream IP policy for the WAN, and interface binding. This page does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages."
+msgstr ""
+
+msgid "Working right now"
+msgstr ""
+
+msgid "Manual & compositions"
+msgstr ""
+
+msgid "The live state of the bypass: which engines are running, which strategy serves each resource right now, and the measured quality of the desync path. Actions live on the other tabs; the results area follows you to every tab."
+msgstr ""
+
+msgid "The bypass maintains itself: the scheduled auto-pilot re-ranks the strategies and applies the best one without attention, and immediately picks an alternative when a resource stops working. One click picks the best strategy for a single resource. Every apply takes a server snapshot (Restore stays available) and verifies the resource live."
+msgstr ""
+
+msgid "Measure, not guesswork: the Lab tests the strategy catalog against your provider and ranks honestly — the fresh-connection start first, then the video flow. Apply a winner for one resource right from the table, generate mutations, or import and share catalogs."
+msgstr ""
+
+msgid "Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the \"send a service through the engine\" chain. Automatic selection lives on the Auto-pilot tab."
+msgstr ""
+
+msgid "The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled)."
+msgstr ""
+
+msgid "fill a preset into the input and press \"Save ByeDPI\""
+msgstr ""
+
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured on the Manual & compositions tab."
+msgstr ""
+
+msgid "Enable Zapret or ByeDPI on the Connection page first."
+msgstr ""
+
+msgid "Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives on the Blocking bypass page — \"Strategy Lab\"."
+msgstr ""
+
+msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test\" and \"Test all presets\" buttons on the Blocking bypass page."
+msgstr ""
+
+msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea</a>. Packages by <a href=\"https://github.com/1andrevich/ByeDPI-OpenWrt\" target=\"_blank\">1andrevich/ByeDPI-OpenWrt</a>. Enable on the Connection page; strategies are configured on the Blocking bypass page."
+msgstr ""
+
+msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van</a> (nfqws2). Packages by <a href=\"https://github.com/1andrevich/zapret2-openwrt\" target=\"_blank\">1andrevich/zapret2-openwrt</a>. Configure on the Blocking bypass page."
+msgstr ""
+
+msgid "A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. Works by confusing your ISP's traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. Results depend on your ISP and may require trying different strategies on the Blocking bypass page. ByeDPI will be installed automatically on first enable."
 msgstr ""
