@@ -325,7 +325,7 @@ return view.extend({
 				_('Open'), 'admin/services/homeproxy/automation' ],
 			[ 'home',   'monitor',  _('Devices at home'),
 				_('Who is connected to the router and what they can open.'),
-				_('Open'), 'admin/services/homeproxy/control' ],
+				_('Open'), 'admin/services/homeproxy/devices' ],
 			[ 'family', 'shield',   _('Parental control'),
 				_('Site rules, schedules and Wi-Fi limits for children\'s devices.'),
 				_('Configure'), 'admin/services/homeproxy/control' ],

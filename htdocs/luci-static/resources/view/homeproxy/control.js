@@ -32,12 +32,6 @@ const callStatus = rpc.declare({
 	expect: { '': {} }
 });
 
-const callDevices = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'control_devices',
-	expect: { '': {} }
-});
-
 const callSet = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'control_set',
@@ -52,27 +46,6 @@ const callSetPaused = rpc.declare({
 	expect: { '': {} }
 });
 
-const callClientAdd = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'control_client_add',
-	params: [ 'name', 'mac', 'ip' ],
-	expect: { '': {} }
-});
-
-const callClientDelete = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'control_client_delete',
-	params: [ 'id' ],
-	expect: { '': {} }
-});
-
-const callClientRename = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'control_client_rename',
-	params: [ 'id', 'name' ],
-	expect: { '': {} }
-});
-
 const callClientBlock = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'control_client_block',
@@ -84,13 +57,6 @@ const callClientTempBlock = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'control_client_temp_block',
 	params: [ 'id', 'minutes' ],
-	expect: { '': {} }
-});
-
-const callClientTempUnblock = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'control_client_temp_unblock',
-	params: [ 'id' ],
 	expect: { '': {} }
 });
 
@@ -415,7 +381,6 @@ return view.extend({
 	load() {
 		return Promise.all([
 			L.resolveDefault(callStatus(), null),
-			L.resolveDefault(callDevices(), null),
 			L.resolveDefault(callWifiStatus(), null)
 		]);
 	},
@@ -437,8 +402,7 @@ return view.extend({
 		/* Shared live state (updated by the 4 s poll). */
 		const S = {
 			status: data[0] || { result: false, clients: [], schedules: [], rules: [], stats: {}, dns_filters: {}, wifi_temps: {} },
-			devices: (data[1] && data[1].devices) || [],
-			wifi: data[2] || { radios: [], temps: {} }
+			wifi: data[1] || { radios: [], temps: {} }
 		};
 
 		/* ── Tab frame (wizard pattern) ─────────────────────────────── */
@@ -486,7 +450,6 @@ return view.extend({
 		}
 
 		const dashResult = E('div', {});
-		const devResult = E('div', {});
 		const ruleResult = E('div', {});
 		const schedResult = E('div', {});
 		const wifiResult = E('div', {});
@@ -597,7 +560,7 @@ return view.extend({
 			const clients = s.clients || [];
 			if (!clients.length) {
 				dom.content(dashGrid, E('p', { 'class': 'hpui-hint' }, [
-					_('No managed clients yet — add devices on the Devices pane (they can also be picked from the live network list).')
+					_('No managed clients yet — add devices on the Devices page (they can also be picked from the live network list).')
 				]));
 				return;
 			}
@@ -666,175 +629,15 @@ return view.extend({
 			_('The same actions are available from the Telegram bot: /menu (all in buttons), /devices, /blocksite, /pause, /resume, /wifi. Blocks follow DHCP address changes — devices are tracked by MAC.')
 		]));
 
-		/* ── DEVICES ────────────────────────────────────────────────── */
-
-		const devPicker = E('select', { 'class': 'cbi-input-select', 'style': 'min-width:260px' }, [
-			E('option', { 'value': '' }, [ '— ' + _('Pick a device from the network') + ' —' ])
-		]);
-		const devName = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'placeholder': _('Alias (e.g. Kid tablet)') });
-		const devMac = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'placeholder': 'AA:BB:CC:DD:EE:FF' });
-		const devIp = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'placeholder': '192.168.1.0 (optional)' });
-		const devTable = E('table', { 'class': 'hpui-table' });
-
-		devPicker.addEventListener('change', function() {
-			const val = devPicker.value;
-			if (!val)
-				return;
-			for (let i = 0; i < S.devices.length; i++) {
-				const d = S.devices[i];
-				if ((d.mac || d.ip) !== val)
-					continue;
-				/* alias never overwrites what the user already typed */
-				if (!devName.value)
-					devName.value = d.alias || d.hostname || '';
-				devMac.value = d.mac || '';
-				devIp.value = d.ip || '';
-				break;
-			}
-		});
-
-		function rebuildPicker() {
-			const cur = devPicker.value;
-			dom.content(devPicker, [
-				E('option', { 'value': '' }, [ '— ' + _('Pick a device from the network') + ' —' ])
-			]);
-			for (let i = 0; i < S.devices.length; i++) {
-				const d = S.devices[i];
-				const base = d.alias || d.hostname || d.ip || d.mac;
-				const label = base + (d.ip && base !== d.ip ? ' (' + d.ip + ')' : '') + (d.configured ? ' ✓' : '');
-				devPicker.appendChild(E('option', { 'value': d.mac || d.ip || '' }, [ label ]));
-			}
-			devPicker.value = (devPicker.querySelector('option[value="' + cur.replace(/"/g, '\\"') + '"]')) ? cur : '';
-		}
-
-		const devAddBtn = E('button', { 'class': 'btn cbi-button cbi-button-important', type: 'button' }, [ _('Add device') ]);
-		devAddBtn.addEventListener('click', function() {
-			const mac = String(devMac.value || '').trim();
-			const ip = String(devIp.value || '').trim();
-			const name = String(devName.value || '').trim();
-			if (!mac && !ip) {
-				note(devResult, false, _('MAC or IP is required'));
-				return;
-			}
-			act(devResult, callClientAdd(name, mac, ip), _('Device added'));
-			devName.value = ''; devMac.value = ''; devIp.value = ''; devPicker.value = '';
-		});
-
-		function renderDevices() {
-			rebuildPicker();
-			const clients = (S.status && S.status.clients) || [];
-			const head = [ _('Device'), _('MAC'), _('IP'), _('State'), _('Online'), _('Actions') ];
-			const thead = E('thead', {}, [ E('tr', {}, head.map(function(h) { return E('th', {}, [ h ]); })) ]);
-			const tbody = E('tbody', {});
-			if (!clients.length) {
-				tbody.appendChild(E('tr', {}, [ E('td', { 'colspan': '6' }, [ _('No managed devices yet.') ]) ]));
-			}
-			for (let i = 0; i < clients.length; i++) {
-				const c = clients[i];
-				const tdActions = E('td');
-				const wrap = E('div', { 'class': 'ct-actions' });
-				const blk = E('button', { 'class': 'btn cbi-button-' + (c.blocked ? 'positive' : 'negative'), type: 'button',
-					title: c.blocked ? _('Allow internet access again') : _('Full internet block for this device (firewall drop)') },
-					[ c.blocked ? _('Allow') : _('Block') ]);
-				blk.addEventListener('click', function() {
-					act(devResult, callClientBlock(c.id, c.blocked ? '0' : '1'),
-						c.blocked ? _('Allowed') : _('Blocked'));
-				});
-				wrap.appendChild(blk);
-				const tmp = E('button', { 'class': 'btn cbi-button', type: 'button', title: _('Temporary block') }, [ '⏱' ]);
-				tmp.addEventListener('click', function() {
-					customTimeModal(_('Temporary block') + ' — ' + clientName(c), 60, function(mins) {
-						act(devResult, callClientTempBlock(c.id, String(mins)), _('Temporary block set'));
-					});
-				});
-				wrap.appendChild(tmp);
-				if (c.reason === 'temp') {
-					const un = E('button', { 'class': 'btn cbi-button-positive', type: 'button', title: _('Remove temporary block') }, [ '↩' ]);
-					un.addEventListener('click', function() {
-						act(devResult, callClientTempUnblock(c.id), _('Temporary block removed'));
-					});
-					wrap.appendChild(un);
-				}
-				const tal = E('button', { 'class': 'btn cbi-button', type: 'button', title: _('Temporary allow (pokes a hole in the schedule)') }, [ '✅' ]);
-				tal.addEventListener('click', function() {
-					customTimeModal(_('Temporary allow') + ' — ' + clientName(c), 60, function(mins) {
-						act(devResult, callClientTempAllow(c.id, String(mins)), _('Temporarily allowed'));
-					});
-				});
-				wrap.appendChild(tal);
-				if (c.mac) {
-					const wfb = E('button', {
-						'class': 'btn cbi-button' + (c.wifi_blocked ? ' cbi-button-negative' : ''),
-						type: 'button',
-						title: c.wifi_blocked ? _('Wi-Fi block is on — click to allow') : _('Block Wi-Fi for this device (wired stays online)')
-					}, [ '📶' ]);
-					wfb.addEventListener('click', function() {
-						act(devResult, callClientWifiBlock(c.id, c.wifi_blocked ? '0' : '1'),
-							c.wifi_blocked ? _('Wi-Fi block removed') : _('Wi-Fi blocked for this device'));
-					});
-					wrap.appendChild(wfb);
-				}
-				const ren = E('button', { 'class': 'btn cbi-button', type: 'button', title: _('Rename') }, [ '✎' ]);
-				ren.addEventListener('click', function() {
-					const inp = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': c.name || '' });
-					const go = function() {
-						const v = String(inp.value || '').trim();
-						if (!v) {
-							ui.addNotification('error', _('Enter a name'));
-							return;
-						}
-						ui.hideModal();
-						act(devResult, callClientRename(c.id, v), _('Renamed'));
-					};
-					inp.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') go(); });
-					ui.showModal(_('Rename device') + ' — ' + clientName(c), [
-						inp,
-						E('div', { 'class': 'right', 'style': 'margin-top:14px' }, [
-							E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
-							E('button', { 'class': 'btn cbi-button-positive important', 'click': go }, [ _('Apply') ])
-						])
-					]);
-				});
-				wrap.appendChild(ren);
-				const del = E('button', { 'class': 'btn cbi-button-remove', type: 'button', title: _('Remove') }, [ '✖' ]);
-				del.addEventListener('click', function() {
-					ui.showModal(_('Remove device'), [
-						E('p', {}, [ _('Remove') + ' «' + clientName(c) + '» ' + _('from control?') ]),
-						E('div', { 'class': 'right', 'style': 'margin-top:14px' }, [
-							E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
-							E('button', { 'class': 'btn cbi-button-negative important', 'click': function() { ui.hideModal(); act(devResult, callClientDelete(c.id), _('Device removed')); } }, [ _('Remove') ])
-						])
-					]);
-				});
-				wrap.appendChild(del);
-				tdActions.appendChild(wrap);
-
-				tbody.appendChild(E('tr', {}, [
-					E('td', {}, [ String(clientName(c)) + (c.hostname && c.name && c.hostname !== c.name ? ' (' + c.hostname + ')' : '') ]),
-					E('td', {}, [ c.mac || '—' ]),
-					E('td', {}, [ c.ip || '—' ]),
-					E('td', {}, [ stateBadge(c), ' ', stateText(c),
-						c.wifi_blocked ? E('span', { 'class': 'hpui-badge hpui-b-amber ct-badge-wifi' }, [ '📶 ' + _('Wi-Fi off') ]) : '' ]),
-					E('td', {}, [ c.online ? '🟢' : '—' ]),
-					tdActions
-				]));
-			}
-			dom.content(devTable, [ thead, tbody ]);
-		}
+		/* ── DEVICES (moved to the dedicated page in v3d) ──────── */
 
 		panes.devices.appendChild(E('p', { 'class': 'hpui-hint' }, [
-			_('Devices are identified by MAC: when the DHCP address changes the block follows the device automatically. The current IP is resolved from the DHCP lease file at every apply.')
+			_('The device registry moved to the dedicated Devices page: the list, the blocking actions and the Proxy policy live there now.')
 		]));
-		panes.devices.appendChild(E('div', { 'class': 'ct-form' }, [
-			E('div', { 'class': 'ct-field ct-wide' }, [ E('label', {}, [ _('From the network') ]), devPicker ]),
-			E('div', { 'class': 'ct-field' }, [ E('label', {}, [ _('Alias') ]), devName ]),
-			E('div', { 'class': 'ct-field' }, [ E('label', {}, [ _('MAC') ]), devMac ]),
-			E('div', { 'class': 'ct-field' }, [ E('label', {}, [ _('IP (static, optional)') ]), devIp ]),
-			E('div', { 'class': 'ct-field', 'style': 'flex:0 0 auto' }, [ E('label', {}, [ ' ' ]), devAddBtn ])
-		]));
-		panes.devices.appendChild(E('h4', {}, [ _('Managed devices') ]));
-		panes.devices.appendChild(E('div', { 'class': 'hpui-wrap' }, [ devTable ]));
-		panes.devices.appendChild(resultBlock(devResult));
+		panes.devices.appendChild(E('a', {
+			'class': 'btn cbi-button cbi-button-action',
+			'href': L.url('admin/services/homeproxy', 'devices')
+		}, [ _('Open Devices') ]));
 
 		/* ── SITE RULES ─────────────────────────────────────────────── */
 
@@ -1446,17 +1249,11 @@ return view.extend({
 		/* ── poll ───────────────────────────────────────────────────── */
 
 		function refreshStatus() {
-			return Promise.all([
-				L.resolveDefault(callStatus(), null),
-				L.resolveDefault(callDevices(), null)
-			]).then(function(d) {
-				if (d[0])
-					S.status = d[0];
-				if (d[1] && d[1].devices)
-					S.devices = d[1].devices;
+			return L.resolveDefault(callStatus(), null).then(function(st) {
+				if (st)
+					S.status = st;
 				setEnableBtn.textContent = (S.status && S.status.enabled) ? _('Disable control') : _('Enable control');
 				renderDash();
-				renderDevices();
 				renderRules();
 				renderSchedules();
 			});

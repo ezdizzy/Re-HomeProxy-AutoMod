@@ -232,6 +232,7 @@ return baseclass.extend({
 		router: '<rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="18" r="1"/><circle cx="10" cy="18" r="1"/><path d="M16 18h4"/><path d="M17.5 6.5a5 5 0 0 0-7 0"/><path d="M14.8 9.2a2 2 0 0 0-3.6 0"/>',
 		logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
 		zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+		devices: '<rect x="2" y="4" width="14" height="10" rx="2"/><line x1="6" y1="18" x2="12" y2="18"/><line x1="9" y1="14" x2="9" y2="18"/><rect x="16.5" y="9" width="5.5" height="11" rx="1.5"/>',
 		globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
 		refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
 		send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
@@ -435,27 +436,27 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 	 * existing hpui-* components of all tabs adapt automatically. */
 	SHELL_ACTIVE: false,
 
-	/* Р3 v3 IA (19-UX_REDESIGN §4): five human sections. "access" (device
-	 * proxy policy) is intentionally NOT in the sidebar — its content moves
-	 * to the unified Devices page in v3d (the page itself stays reachable
-	 * by URL). The wizard was fully abolished in v3c (its zones moved to
-	 * the bypass page); access follows in v3d. */
+	/* Р3 v3 IA (19-UX_REDESIGN §4): five human sections. The wizard was
+	 * fully abolished in v3c (its zones moved to the bypass page); access
+	 * was dissolved into the unified Devices page in v3d (registry +
+	 * proxy policy) — its URL is gone, nothing is hidden from the
+	 * sidebar anymore, so NAV_HIDDEN is kept as an empty escape hatch. */
 	NAV_SECTIONS: [
 		{ pages: [ 'overview' ], cap: null },
 		{ pages: [ 'client', 'dns', 'node' ], cap: 'Connection' },
 		{ pages: [ 'bypass', 'rules', 'automation' ], cap: 'Blocking bypass' },
-		{ pages: [ 'control', 'telegram' ], cap: 'Home' },
+		{ pages: [ 'devices', 'control', 'telegram' ], cap: 'Home' },
 		{ pages: [ 'status', 'monitor', 'diagnostics', 'server' ], cap: 'System section' }
 	],
 
 	NAV_ICONS: {
 		overview: 'activity', client: 'layers', dns: 'globe',
 		node: 'server', bypass: 'shield', rules: 'crosshair', automation: 'refresh',
-		control: 'tool', telegram: 'send', status: 'cpu', monitor: 'trend',
+		devices: 'devices', control: 'tool', telegram: 'send', status: 'cpu', monitor: 'trend',
 		diagnostics: 'sensors', server: 'hardrive'
 	},
 
-	NAV_HIDDEN: { access: true },
+	NAV_HIDDEN: {},
 
 	themeGet() {
 		let t = null;
@@ -494,7 +495,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 		 * the tab closes. One-time flush per IA version: every tab refreshes
 		 * its tree once, then the cache works as before. */
 		try {
-			const MV = 'r3v3c1';
+			const MV = 'r3v3d1';
 			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
 				ui.menu.flushCache();
 				window.localStorage.setItem('hp-menu-ver', MV);
@@ -636,9 +637,9 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 				}
 				/* Pages present in the tree but not covered by NAV_SECTIONS
 				 * (future tabs) still get an entry — nothing may be lost,
-				 * EXCEPT the NAV_HIDDEN pages whose content is being moved
-				 * to dedicated pages (access → v3d); they stay reachable
-				 * by URL but are not shown. */
+				 * EXCEPT the NAV_HIDDEN pages (currently empty; used to
+				 * keep wizard/access reachable by URL until their content
+				 * moved to dedicated pages). */
 				const extra = E('div', { 'class': 'hp-sb-section' });
 				for (let i = 0; i < kids.length; i++) {
 					if (used[kids[i].name] || this.NAV_HIDDEN[kids[i].name])

@@ -6317,3 +6317,51 @@ msgstr ""
 
 msgid "A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. Works by confusing your ISP's traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. Results depend on your ISP and may require trying different strategies on the Blocking bypass page. ByeDPI will be installed automatically on first enable."
 msgstr ""
+
+msgid "No managed clients yet — add devices on the Devices page (they can also be picked from the live network list)."
+msgstr ""
+
+msgid "The device registry moved to the dedicated Devices page: the list, the blocking actions and the Proxy policy live there now."
+msgstr ""
+
+msgid "Open Devices"
+msgstr ""
+
+msgid "Global proxy"
+msgstr ""
+
+msgid "Gaming mode (TCP only)"
+msgstr ""
+
+msgid "No proxy"
+msgstr ""
+
+msgid "Proxied"
+msgstr ""
+
+msgid "Managed"
+msgstr ""
+
+msgid "Proxied now"
+msgstr ""
+
+msgid "Internet"
+msgstr ""
+
+msgid "Proxy"
+msgstr ""
+
+msgid "No managed devices yet — add one from the network above."
+msgstr ""
+
+msgid "Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Parental control and the Telegram bot); the Proxy policy at the bottom decides how the traffic of each device is served."
+msgstr ""
+
+msgid "Registry"
+msgstr ""
+
+msgid "Proxy policy"
+msgstr ""
+
+msgid "Per-device policy for the LAN, upstream IP policy for the WAN and interface binding. This does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages. The Apply button at the bottom of the page saves these settings."
+msgstr ""

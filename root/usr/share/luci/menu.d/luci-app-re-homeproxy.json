@@ -66,6 +66,14 @@
 			"path": "homeproxy/automation"
 		}
 	},
+	"admin/services/homeproxy/devices": {
+		"title": "Devices",
+		"order": 28,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/devices"
+		}
+	},
 	"admin/services/homeproxy/control": {
 		"title": "Parental control",
 		"order": 30,
@@ -112,14 +120,6 @@
 		"action": {
 			"type": "view",
 			"path": "homeproxy/server"
-		}
-	},
-	"admin/services/homeproxy/access": {
-		"title": "Devices & interfaces",
-		"order": 62,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/access"
 		}
 	}
 }

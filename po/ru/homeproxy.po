@@ -11818,3 +11818,51 @@ msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\
 
 msgid "A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. Works by confusing your ISP's traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. Results depend on your ISP and may require trying different strategies on the Blocking bypass page. ByeDPI will be installed automatically on first enable."
 msgstr "Бесплатный способ разблокировать замедлённые сайты (например, YouTube) без VPN-подписки. Работает, сбивая систему анализа трафика провайдера — трафик НЕ шифруется и НЕ скрывается, провайдер по-прежнему видит, какие сайты вы посещаете. Результат зависит от провайдера и может потребовать подбора стратегии на странице «Обход блокировок». При первом включении ByeDPI установится автоматически."
+
+msgid "No managed clients yet — add devices on the Devices page (they can also be picked from the live network list)."
+msgstr "Управляемых устройств пока нет — добавьте их на странице «Устройства» (можно выбрать из живого списка сети)."
+
+msgid "The device registry moved to the dedicated Devices page: the list, the blocking actions and the Proxy policy live there now."
+msgstr "Реестр устройств переехал на отдельную страницу «Устройства»: список, блокировки и прокси-политика теперь живут там."
+
+msgid "Open Devices"
+msgstr "Открыть «Устройства»"
+
+msgid "Global proxy"
+msgstr "Глобальный прокси"
+
+msgid "Gaming mode (TCP only)"
+msgstr "Игровой режим (только TCP)"
+
+msgid "No proxy"
+msgstr "Без прокси"
+
+msgid "Proxied"
+msgstr "Через прокси"
+
+msgid "Managed"
+msgstr "В реестре"
+
+msgid "Proxied now"
+msgstr "Сейчас через прокси"
+
+msgid "Internet"
+msgstr "Интернет"
+
+msgid "Proxy"
+msgstr "Прокси"
+
+msgid "No managed devices yet — add one from the network above."
+msgstr "Устройств в реестре пока нет — добавьте из сети выше."
+
+msgid "Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Parental control and the Telegram bot); the Proxy policy at the bottom decides how the traffic of each device is served."
+msgstr "Кто подключён к роутеру, у кого сейчас есть интернет и как прокси обслуживает их трафик. Добавляйте устройства в реестр (он общий с «Родительским контролем» и Telegram-ботом); прокси-политика внизу решает, как обслуживается трафик каждого устройства."
+
+msgid "Registry"
+msgstr "Реестр"
+
+msgid "Proxy policy"
+msgstr "Прокси-политика"
+
+msgid "Per-device policy for the LAN, upstream IP policy for the WAN and interface binding. This does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages. The Apply button at the bottom of the page saves these settings."
+msgstr "Политика для устройств LAN, политика IP для WAN и привязка к интерфейсам. Это не меняет ЧТО проксируется — правила сервисов и списки живут на страницах «Правила для сервисов» и «Обход блокировок». Кнопка «Применить» внизу страницы сохраняет эти настройки."
