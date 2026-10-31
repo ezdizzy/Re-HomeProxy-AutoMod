@@ -6098,3 +6098,122 @@ msgstr ""
 
 msgid "scale 0-100%"
 msgstr ""
+
+# ─── Р3 v3 (19-UX_REDESIGN): menu + Home hub ───
+
+msgid "Home page"
+msgstr ""
+
+msgid "Servers"
+msgstr ""
+
+msgid "Auto-bypass"
+msgstr ""
+
+msgid "Parental control"
+msgstr ""
+
+msgid "Phone control"
+msgstr ""
+
+msgid "Maintenance"
+msgstr ""
+
+msgid "Monitoring"
+msgstr ""
+
+msgid "Check & repair"
+msgstr ""
+
+msgid "External access"
+msgstr ""
+
+msgid "Blocking bypass"
+msgstr ""
+
+msgid "Home"
+msgstr ""
+
+msgid "System section"
+msgstr ""
+
+msgid "Everything is running"
+msgstr ""
+
+msgid "Core is not installed"
+msgstr ""
+
+msgid "Proxy is not configured"
+msgstr ""
+
+msgid "Where your traffic goes"
+msgstr ""
+
+msgid "Change server"
+msgstr ""
+
+msgid "The server your devices use to reach the internet right now."
+msgstr ""
+
+msgid "Zapret and ByeDPI open blocked sites without a VPN subscription."
+msgstr ""
+
+msgid "The engine finds blocked sites itself and sends them around the block."
+msgstr ""
+
+msgid "Devices at home"
+msgstr ""
+
+msgid "Who is connected to the router and what they can open."
+msgstr ""
+
+msgid "Site rules, schedules and Wi-Fi limits for children's devices."
+msgstr ""
+
+msgid "Status, server switching and control — right from Telegram."
+msgstr ""
+
+msgid "Configure"
+msgstr ""
+
+msgid "Open"
+msgstr ""
+
+msgid "Connect"
+msgstr ""
+
+msgid "Learned sites: %d"
+msgstr ""
+
+msgid "In network: %d"
+msgstr ""
+
+msgid "Quick setup"
+msgstr ""
+
+msgid "Three steps and Ravnex starts routing your traffic."
+msgstr ""
+
+msgid "Add servers"
+msgstr ""
+
+msgid "Choose the main node"
+msgstr ""
+
+msgid "Turn on the bypass"
+msgstr ""
+
+msgid "Check the internet"
+msgstr ""
+
+msgid "Import a subscription or paste a share link."
+msgstr ""
+
+msgid "Update available: %s → %s (install it on the \"Maintenance\" page)."
+msgstr ""
+
+msgid "The service restart re-routes every connection (\"Maintenance\" carries start/stop); a snapshot copies the app configuration and the routing lists; \"Restore internet\" is the emergency switch for a plain direct connection."
+msgstr ""
+
+msgid "Update availability is checked on demand — the Home page never queries external resources on its own."
+msgstr ""

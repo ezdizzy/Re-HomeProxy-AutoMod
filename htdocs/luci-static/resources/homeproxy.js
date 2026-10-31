@@ -433,20 +433,26 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 	 * existing hpui-* components of all tabs adapt automatically. */
 	SHELL_ACTIVE: false,
 
+	/* Р3 v3 IA (19-UX_REDESIGN §4): five human sections. "wizard" (Routing
+	 * Wizard) and "access" (device proxy policy) are intentionally NOT in
+	 * the sidebar — their content moves to dedicated pages in v3b/v3c/v3d
+	 * (the pages themselves stay reachable by URL). */
 	NAV_SECTIONS: [
 		{ pages: [ 'overview' ], cap: null },
-		{ pages: [ 'client', 'dns', 'wizard', 'node' ], cap: 'Connection' },
-		{ pages: [ 'access', 'control', 'telegram' ], cap: 'Devices & network' },
-		{ pages: [ 'status', 'monitor', 'server' ], cap: 'Core & nodes' },
-		{ pages: [ 'diagnostics', 'automation' ], cap: 'Service tools' }
+		{ pages: [ 'client', 'dns', 'node' ], cap: 'Connection' },
+		{ pages: [ 'automation' ], cap: 'Blocking bypass' },
+		{ pages: [ 'control', 'telegram' ], cap: 'Home' },
+		{ pages: [ 'status', 'monitor', 'diagnostics', 'server' ], cap: 'System section' }
 	],
 
 	NAV_ICONS: {
-		overview: 'activity', client: 'layers', dns: 'globe', wizard: 'crosshair',
-		node: 'server', access: 'monitor', control: 'tool', telegram: 'send',
-		status: 'cpu', monitor: 'trend', server: 'hardrive',
-		diagnostics: 'sensors', automation: 'refresh'
+		overview: 'activity', client: 'layers', dns: 'globe',
+		node: 'server', automation: 'refresh', control: 'tool',
+		telegram: 'send', status: 'cpu', monitor: 'trend',
+		diagnostics: 'sensors', server: 'hardrive'
 	},
+
+	NAV_HIDDEN: { wizard: true, access: true },
 
 	themeGet() {
 		let t = null;
@@ -479,6 +485,18 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 		document.documentElement.setAttribute('data-hp-theme', t);
 
 		document.body.classList.add('hp-shell');
+
+		/* The LuCI menu tree is cached in the tab's sessionStorage — after a
+		 * package update users would keep seeing the OLD page names until
+		 * the tab closes. One-time flush per IA version: every tab refreshes
+		 * its tree once, then the cache works as before. */
+		try {
+			const MV = 'r3v3a1';
+			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
+				ui.menu.flushCache();
+				window.localStorage.setItem('hp-menu-ver', MV);
+			}
+		} catch (e) {}
 		let collapsed = false;
 		try { collapsed = window.localStorage.getItem('hp-shell-collapsed') === '1'; } catch (e) {}
 		if (collapsed)
@@ -595,10 +613,13 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 						nav.appendChild(secEl);
 				}
 				/* Pages present in the tree but not covered by NAV_SECTIONS
-				 * (future tabs) still get an entry — nothing may be lost. */
+				 * (future tabs) still get an entry — nothing may be lost,
+				 * EXCEPT the NAV_HIDDEN pages whose content is being moved
+				 * to dedicated pages (wizard → v3b/v3c, access → v3d); they
+				 * stay reachable by URL but are not shown. */
 				const extra = E('div', { 'class': 'hp-sb-section' });
 				for (let i = 0; i < kids.length; i++) {
-					if (used[kids[i].name])
+					if (used[kids[i].name] || this.NAV_HIDDEN[kids[i].name])
 						continue;
 					extra.appendChild(E('a', {
 						'class': 'hp-sb-item' + (kids[i].name === cur ? ' active' : ''),

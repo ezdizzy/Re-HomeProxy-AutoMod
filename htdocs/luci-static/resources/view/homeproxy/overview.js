@@ -3,22 +3,24 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Ravnex — Overview (Главная) tab (Ф4, ч.76; Р3: бренд-блок + статус-лента;
- * Р3 v2: app shell (hp.uiShell) + headline metric cards with sparklines).
+ * Ravnex — Home (Главная) tab (Ф4, ч.76; Р3: бренд-блок + метрик-карточки;
+ * Р3 v2: app shell + sparklines; Р3 v3: the HUB — hero status + concern
+ * cards with transitions + quick setup, per 19-UX_REDESIGN §6).
  *
- * One page answering "what state is everything in, right now":
- *   - subsystem status ribbon (8 chips: icon + ok/bad/warn/off dot) fed by
- *     the same render pass as the metrics;
- *   - headline metric cards (tachyon-style): core, RAM, active node,
- *     connections, VPN speed — each with a mini sparkline from the metrics
- *     ring (overview_metrics RPC, ≤120 points ≈ 10 min of history);
- *   - secondary charts (temperature, learned records, direct/bypass speed)
- *     built as inline SVG on the CLIENT — NO external libraries (D5);
- *   - system parameters: uptime, load, flash (/) and /tmp usage, app
- *     version (update availability stays ON DEMAND — D6);
- *   - quick actions: Restart service, Snapshot, Restore internet — the
- *     existing RPCs. Every result is rendered in ONE result area at the
- *     bottom (ui.action_buttons_result_placement).
+ * The page answers, top to bottom:
+ *   - "Is everything working?" — the hero: big human status + a
+ *     "Check now" jump to Check & repair; routing mode and MultiDNS
+ *     chips keep the two technical facts visible;
+ *   - "What do I want to do?" — six concern cards (traffic exit, blocking
+ *     bypass, auto-bypass sites, home devices, parental control, phone
+ *     control), each = the question + live state + one-line description
+ *     + a jump button; statuses come from the SAME poll data as the
+ *     metric cards (one render pass, no extra RPC storm);
+ *   - "Am I set up yet?" — the quick setup strip appears until the main
+ *     servers are configured (4 steps with done-states);
+ *   - metric cards with sparklines, performance charts, system
+ *     parameters, quick actions (results in ONE area, D6 on-demand
+ *     update check) — unchanged from Р3 v2.
  *
  * D5 hard conditions honored: everything local on the device, UI polling
  * every 4 s (≤5 s), static SVG renders with NO animations, and no
@@ -66,6 +68,15 @@ const callDpiStatus = rpc.declare({
 const callMultidnsStatus = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'multidns_status',
+	expect: { '': {} }
+});
+
+/* The hub "Home devices" / "Parental control" cards need the Control
+ * engine summary (enabled/paused/device counts) — the same RPC the
+ * control.js page polls every 4 s; here it rides the shared poll. */
+const callControlStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'control_status',
 	expect: { '': {} }
 });
 
@@ -193,13 +204,18 @@ return view.extend({
 .ov-pairs .k { opacity: .75; font-size: .92em; }
 .ov-pairs .v { font-weight: 600; }
 .hpui-cap .hpui-ic { margin-right: 5px; opacity: .9; }
-/* Brand block (Р3): raven icon + wordmark/slogan + subsystem status ribbon. */
+/* Brand block (Р3): raven icon + wordmark/slogan. */
 .hpui-brand { display: flex; align-items: center; gap: 14px; padding: 12px 16px; margin: 2px 0 12px; border: 1px solid var(--hp-panel-line); border-left: 4px solid var(--hp-accent); border-radius: var(--hp-radius-lg); background: linear-gradient(90deg, var(--hp-accent-soft), transparent 55%), var(--hp-panel-bg); box-shadow: var(--hp-shadow); }
 .hpui-brand-ic { width: 52px; height: 52px; border-radius: 12px; flex: none; box-shadow: 0 2px 8px rgba(0,0,0,.28); }
 .hpui-brand-name { font-size: 1.45em; font-weight: 800; line-height: 1.25; display: flex; align-items: baseline; gap: 8px; }
 .hpui-brand-slogan { color: var(--hp-accent-strong); font-weight: 700; font-size: .58em; letter-spacing: .06em; white-space: nowrap; }
 .hpui-brand-ver { margin-left: auto; align-self: flex-start; font-size: .84em; opacity: .85; border: 1px solid var(--hp-panel-line); border-radius: 999px; padding: 2px 10px; background: var(--hp-panel-bg-2); white-space: nowrap; }
-.hpui-brand-ribbon { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+/* Р3 v3 hub: hero status on the right side of the brand block. */
+.hpui-hero-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; padding-left: 14px; }
+.hpui-hero-status { font-size: 1.08em; font-weight: 800; white-space: nowrap; }
+.hpui-hero-status.ok { color: var(--hp-accent-strong); }
+.hpui-hero-status.bad { color: var(--hp-red); }
+.hpui-brand-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .hpui-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hp-panel-line); background: var(--hp-panel-bg-2); border-radius: 999px; padding: 2px 10px 2px 9px; font-size: .84em; line-height: 1.55; max-width: 100%; }
 .hpui-chip .hpui-ic { width: 1.05em; height: 1.05em; opacity: .8; }
 .hpui-chip-name { font-weight: 600; white-space: nowrap; }
@@ -208,6 +224,24 @@ return view.extend({
 .hpui-dot.ok { background: var(--hp-accent); box-shadow: 0 0 4px var(--hp-accent-glow); }
 .hpui-dot.bad { background: var(--hp-red); box-shadow: 0 0 4px var(--hp-red-line); }
 .hpui-dot.warn { background: var(--hp-amber); box-shadow: 0 0 4px rgba(217,154,27,.5); }
+/* Concern cards (Р3 v3 §6): question + live state + description + jump. */
+.hpui-hub { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 10px; margin: 0 0 12px; }
+.hpui-hub-card { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-lg); background: var(--hp-panel-bg); box-shadow: var(--hp-shadow); padding: 12px 14px; min-width: 0; }
+.hpui-hub-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.0em; }
+.hpui-hub-title .hpui-ic { color: var(--hp-accent-strong); width: 1.15em; height: 1.15em; }
+.hpui-hub-state { font-size: .93em; font-weight: 600; display: flex; align-items: center; gap: 7px; min-height: 1.45em; overflow: hidden; }
+.hpui-hub-state .hpui-dot { flex: none; }
+.hpui-hub-state span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hpui-hub-desc { font-size: .8em; opacity: .72; line-height: 1.45; flex: 1 1 auto; }
+.hpui-hub-card .btn, .hpui-hub-card .cbi-button { align-self: flex-start; margin-top: 2px; }
+/* Quick setup strip (Р3 v3 §6): visible until the main path is set up. */
+.hpui-qs { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; border: 1px solid var(--hp-accent-line); background: var(--hp-accent-soft); border-radius: var(--hp-radius-lg); padding: 12px 16px; margin: 0 0 12px; box-shadow: var(--hp-shadow); }
+.hpui-qs-t { font-weight: 800; width: 100%; }
+.hpui-qs-hint { width: 100%; font-size: .84em; opacity: .8; margin: -4px 0 0; }
+.hpui-qs-step { display: inline-flex; align-items: center; gap: 8px; font-size: .92em; font-weight: 600; }
+.hpui-qs-num { width: 22px; height: 22px; border-radius: 50%; background: var(--hp-panel-bg-2); border: 1px solid var(--hp-panel-line-strong); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: .82em; flex: none; }
+.hpui-qs-step.done { opacity: .78; font-weight: 500; }
+.hpui-qs-step.done .hpui-qs-num { background: var(--hp-accent-strong); border-color: var(--hp-accent-strong); color: #fff; }
 /* Metric cards with sparklines (Р3 v2, reference: the tachyon dashboard):
  * caption + big number + note + a mini chart of the same series. */
 .hpui-mcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 10px; margin: 10px 0; }
@@ -235,34 +269,27 @@ return view.extend({
 		let metrics = { interval: 5, updated: 0, points: [] };
 		const state = { chartSig: null };
 
-		/* ── Brand block (Р3): raven icon + wordmark/slogan + subsystem
-		 * status ribbon. The ribbon mirrors the card states (same renderCards
-		 * pass — one source of truth); chips update text/dot only (anti-
-		 * flicker, same rule as the cards). Brand name/slogan are NOT
-		 * translated (brand line, same as the menu title). */
-		const RIBBON_DEFS = [
-			[ 'core',       'cpu',     _('Core') ],
-			[ 'node',       'server',  _('Active node') ],
-			[ 'mode',       'shuffle', _('Routing mode') ],
-			[ 'zapret',     'shield',  'Zapret' ],
-			[ 'byedpi',     'zap',     'ByeDPI' ],
-			[ 'multidns',   'globe',   'MultiDNS' ],
-			[ 'automation', 'refresh', _('Automation') ],
-			[ 'telegram',   'send',    _('Telegram bot') ]
-		];
-		const ribbon = {};
-		const ribbonEl = E('div', { 'class': 'hpui-brand-ribbon' });
-		for (let r in RIBBON_DEFS) {
-			const chip = E('span', { 'class': 'hpui-chip' }, [
-				hp.icon(RIBBON_DEFS[r][1]),
-				E('span', { 'class': 'hpui-chip-name' }, [ RIBBON_DEFS[r][2] ]),
-				E('span', { 'class': 'hpui-dot' }),
-				E('span', { 'class': 'hpui-chip-state' }, [ '—' ])
-			]);
-			ribbon[RIBBON_DEFS[r][0]] = { dot: chip.children[2], state: chip.children[3] };
-			ribbonEl.appendChild(chip);
-		}
-
+		/* ── Hero (Р3 v3 §6): brand on the left; on the right the big human
+		 * status ("Everything is running" / the problem) + a "Check now"
+		 * jump to Check & repair. Two technical chips (routing mode,
+		 * MultiDNS) stay visible under the wordmark — they were ribbon
+		 * members whose state is not covered by the concern cards. */
+		const heroStatus = E('div', { 'class': 'hpui-hero-status' }, [ '…' ]);
+		const heroBtn = E('button', { 'class': 'btn cbi-button' }, [ _('Check now') ]);
+		const modeChipState = E('span', { 'class': 'hpui-chip-state' }, [ '—' ]);
+		const dnsChipState = E('span', { 'class': 'hpui-chip-state' }, [ '—' ]);
+		const heroChips = E('div', { 'class': 'hpui-brand-chips' }, [
+			E('span', { 'class': 'hpui-chip', 'id': 'hp-hero-mode' }, [
+				hp.icon('shuffle'),
+				E('span', { 'class': 'hpui-chip-name' }, [ _('Routing mode') ]),
+				modeChipState
+			]),
+			E('span', { 'class': 'hpui-chip', 'id': 'hp-hero-dns' }, [
+				hp.icon('globe'),
+				E('span', { 'class': 'hpui-chip-name' }, [ 'MultiDNS' ]),
+				dnsChipState
+			])
+		]);
 		const brandVer = E('span', { 'class': 'hpui-brand-ver' }, [ '—' ]);
 		const brandEl = E('div', { 'class': 'hpui-brand' }, [
 			E('img', { 'class': 'hpui-brand-ic', 'src': L.resource('ravnex-raven-192.png'), 'alt': 'Ravnex' }),
@@ -271,18 +298,102 @@ return view.extend({
 					E('span', {}, [ 'Ravnex' ]),
 					E('span', { 'class': 'hpui-brand-slogan' }, [ '· Own the Route.' ])
 				]),
-				ribbonEl
+				heroChips
 			]),
+			E('div', { 'class': 'hpui-hero-right' }, [ heroStatus, heroBtn ]),
 			brandVer
 		]);
 
-		function rib(key, dot, text, title) {
-			const r = ribbon[key];
-			if (!r)
+		heroBtn.addEventListener('click', function() {
+			window.location = L.url('admin/services/homeproxy/diagnostics');
+		});
+
+		/* ── Concern cards (Р3 v3 §6): the six human questions. Every card
+		 * = title (the question) + live state (from the shared poll data)
+		 * + one-line "how it works" description + a jump button. No action
+		 * is duplicated here — the buttons NAVIGATE, the target page owns
+		 * the functionality. */
+		const HUB_DEFS = [
+			[ 'exit',   'shuffle', _('Where your traffic goes'),
+				_('The server your devices use to reach the internet right now.'),
+				_('Change server'), 'admin/services/homeproxy/client' ],
+			[ 'bypass', 'shield',   _('Blocking bypass'),
+				_('Zapret and ByeDPI open blocked sites without a VPN subscription.'),
+				_('Configure'), 'admin/services/homeproxy/wizard' ],
+			[ 'learn',  'refresh',  _('Auto-bypass'),
+				_('The engine finds blocked sites itself and sends them around the block.'),
+				_('Open'), 'admin/services/homeproxy/automation' ],
+			[ 'home',   'monitor',  _('Devices at home'),
+				_('Who is connected to the router and what they can open.'),
+				_('Open'), 'admin/services/homeproxy/control' ],
+			[ 'family', 'shield',   _('Parental control'),
+				_('Site rules, schedules and Wi-Fi limits for children\'s devices.'),
+				_('Configure'), 'admin/services/homeproxy/control' ],
+			[ 'phone',  'send',     _('Phone control'),
+				_('Status, server switching and control — right from Telegram.'),
+				_('Connect'), 'admin/services/homeproxy/telegram' ]
+		];
+		const hub = {};
+		const hubEl = E('div', { 'class': 'hpui-hub' });
+		for (let h in HUB_DEFS) {
+			const dot = E('span', { 'class': 'hpui-dot' });
+			const state = E('span', {}, [ '…' ]);
+			const btn = E('a', { 'class': 'btn cbi-button hpui-hub-btn',
+				'href': L.url(HUB_DEFS[h][5]) }, [ HUB_DEFS[h][4] ]);
+			const el = E('div', { 'class': 'hpui-hub-card' }, [
+				E('div', { 'class': 'hpui-hub-title' }, [ hp.icon(HUB_DEFS[h][1]), HUB_DEFS[h][2] ]),
+				E('div', { 'class': 'hpui-hub-state' }, [ dot, state ]),
+				E('div', { 'class': 'hpui-hub-desc' }, [ HUB_DEFS[h][3] ]),
+				btn
+			]);
+			hub[HUB_DEFS[h][0]] = { dot: dot, state: state };
+			hubEl.appendChild(el);
+		}
+
+		/* ── Quick setup strip (Р3 v3 §6): four steps with done-states,
+		 * visible until the main path is configured (servers + main node).
+		 * Buttons navigate to the owning page; no logic is duplicated. */
+		function qsBtn(url, label) {
+			return E('a', { 'class': 'btn cbi-button', 'href': L.url(url) }, [ label ]);
+		}
+		const qsSteps = [
+			[ 'nodes', '1', _('Add servers'), 'admin/services/homeproxy/node', _('Import a subscription or paste a share link.') ],
+			[ 'main',  '2', _('Choose the main node'), 'admin/services/homeproxy/client', null ],
+			[ 'byp',   '3', _('Turn on the bypass'), 'admin/services/homeproxy/wizard', null ],
+			[ 'net',   '4', _('Check the internet'), 'admin/services/homeproxy/diagnostics', null ]
+		];
+		const qsEls = {};
+		const qsEl = E('div', { 'class': 'hpui-qs' }, [
+			E('div', { 'class': 'hpui-qs-t' }, [ _('Quick setup') ]),
+			E('div', { 'class': 'hpui-qs-hint' },
+				[ _('Three steps and Ravnex starts routing your traffic.') ])
+		]);
+		for (let s in qsSteps) {
+			const num = E('span', { 'class': 'hpui-qs-num' }, [ qsSteps[s][1] ]);
+			const lbl = E('span', { 'class': 'hpui-qs-lbl' }, [ qsSteps[s][2] ]);
+			const btn = qsBtn(qsSteps[s][3], qsSteps[s][2]);
+			btn.style.display = 'none';
+			const el = E('span', { 'class': 'hpui-qs-step', 'title': qsSteps[s][4] || '' }, [ num, lbl, btn ]);
+			qsEls[qsSteps[s][0]] = { el: el, num: num, lbl: lbl, btn: btn,
+				num0: qsSteps[s][1], lbl0: qsSteps[s][2] };
+			qsEl.appendChild(el);
+		}
+
+		function setQs(key, done) {
+			const q = qsEls[key];
+			if (!q)
 				return;
-			r.dot.className = 'hpui-dot' + (dot ? ' ' + dot : '');
-			r.state.textContent = text;
-			r.state.setAttribute('title', title || text);
+			q.el.classList.toggle('done', !!done);
+			if (done) {
+				q.num.textContent = '✓';
+				q.lbl.textContent = _('Done');
+				q.btn.style.display = 'none';
+			} else {
+				q.num.textContent = q.num0;
+				q.lbl.textContent = q.lbl0;
+				q.btn.textContent = q.lbl0;
+				q.btn.style.display = '';
+			}
 		}
 
 		/* ── Metric cards (Р3 v2, tachyon-style): caption + big number +
@@ -437,7 +548,7 @@ return view.extend({
 				updateBtn
 			]),
 			E('p', { 'class': 'hpui-hint' },
-				[ _('Update availability is checked on demand — the Overview page never queries external resources on its own.') ])
+				[ _('Update availability is checked on demand — the Home page never queries external resources on its own.') ])
 		]);
 
 		/* ── Quick actions panel ───────────────────────────────────────── */
@@ -451,7 +562,7 @@ return view.extend({
 			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('tool'), _('Quick actions') ]),
 			E('div', { 'class': 'ov-actions' }, [ restartBtn, snapshotBtn, restoreBtn ]),
 			E('p', { 'class': 'hpui-hint' },
-				[ _('The service restart re-routes every connection ("Core & Tools" carries start/stop); a snapshot copies the app configuration and the routing lists; "Restore internet" is the emergency switch for a plain direct connection.') ])
+				[ _('The service restart re-routes every connection ("Maintenance" carries start/stop); a snapshot copies the app configuration and the routing lists; "Restore internet" is the emergency switch for a plain direct connection.') ])
 		]);
 
 		/* ONE result area at the bottom for ALL button results. */
@@ -506,20 +617,20 @@ return view.extend({
 				if (!r || r.error)
 					return noteResult(_('Update check failed: %s').format((r && r.error) || _('rpc error')), false);
 				noteResult(r.update_available
-					? _('Update available: %s → %s (install it on the "Core & Tools" page).').format(r.installed_version, r.latest_version)
+					? _('Update available: %s → %s (install it on the "Maintenance" page).').format(r.installed_version, r.latest_version)
 					: _('The installed version %s is the latest.').format(r.installed_version || _('unknown')), true);
 			});
 		});
 
 		/* ── Live render helpers ───────────────────────────────────────── */
 
-		function renderCards(sys, node, dpi, mdns) {
+		function renderCards(sys, node, dpi, mdns, ctl) {
 			const z = (dpi && dpi.zapret) || {}, b = (dpi && dpi.byedpi) || {};
 			const cfgMode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 			const cfgMainNode = uci.get('homeproxy', 'config', 'main_node') || '';
 			const last = (metrics.points.length) ? metrics.points[metrics.points.length - 1] : null;
 
-			/* Core (ribbon + metric card) */
+			/* Core (hero + metric card). */
 			const coreType = features.core_type || null;
 			const coreName = coreType === 'hiddify' ? 'hiddify-core' :
 				coreType === 'singbox' ? 'sing-box-extended' : _('not installed');
@@ -527,89 +638,125 @@ return view.extend({
 			mcardNum(mcards.core, coreName, sys.clash_ok ? '' : (coreType ? 'hpui-c-red' : ''));
 			mcards.core.note.textContent = (coreVer ? coreVer : '') +
 				(sys.clash_ok ? ' · ' + _('running') : (coreType ? ' · ' + _('not responding') : ''));
-			rib('core', coreType ? (sys.clash_ok ? 'ok' : 'bad') : '',
-				coreType ? (sys.clash_ok ? _('running') : _('not responding')) : _('not installed'));
+			if (!coreType) {
+				heroStatus.className = 'hpui-hero-status bad';
+				heroStatus.textContent = _('Core is not installed');
+			} else if (!sys.clash_ok) {
+				heroStatus.className = 'hpui-hero-status bad';
+				heroStatus.textContent = _('Core is not responding');
+			} else {
+				heroStatus.className = 'hpui-hero-status ok';
+				heroStatus.textContent = _('Everything is running');
+			}
 
 			/* RAM metric card (the spark scale is fixed 0-100%). */
 			mcardNum(mcards.ram, (last && last.ram != null) ? (last.ram + '%') : '—', '');
 			mcards.ram.note.textContent = (last && last.ram != null) ? _('scale 0-100%') : '';
 
-			/* Active node (ribbon + metric card) */
+			/* Active node (concern card 1 + metric card). */
+			let exitText = '—', exitDot = '';
 			if (node && node.node) {
 				const special = { 'main-out': _('Main node'), 'zapret-out': 'Zapret',
 					'byedpi-out': 'ByeDPI', 'direct-out': _('Direct'), 'block-out': _('Block') };
 				const shown = special[node.node] || resolveTag(node.node);
 				mcardNum(mcards.node, shown, node.delay ? 'hpui-c-green' : '');
 				mcards.node.note.textContent = (node.delay != null) ? (node.delay + ' ms') : '—';
-				rib('node', node.delay ? 'ok' : '', shown,
-					(node.delay != null) ? (shown + ' · ' + node.delay + ' ms') : shown);
+				exitText = shown + ((node.delay != null) ? (' · ' + node.delay + ' ms') : '');
+				exitDot = node.delay ? 'ok' : '';
 			} else {
 				mcardNum(mcards.node, '—', 'hpui-c-grey');
 				mcards.node.note.textContent = (cfgMode === 'custom' || cfgMode === 'custom_json')
 					? _('Custom routing — no main node')
 					: (cfgMainNode === 'direct-out' ? _('Direct') : _('no node'));
-				rib('node', '', mcards.node.note.textContent);
+				exitText = (cfgMode === 'custom' || cfgMode === 'custom_json')
+					? _('Custom routing — no main node')
+					: (cfgMainNode === 'direct-out' ? _('Direct') : _('Proxy is not configured'));
+				exitDot = (cfgMainNode === 'direct-out') ? 'warn' : '';
 			}
+			hub.exit.dot.className = 'hpui-dot' + (exitDot ? ' ' + exitDot : '');
+			hub.exit.state.textContent = exitText;
 
 			/* Connections + VPN speed metric cards (sparkline series). */
 			mcardNum(mcards.conns, (last && last.conns != null) ? String(Math.floor(last.conns)) : '—', '');
 			mcardNum(mcards.vpn, (last && last.vpn_b != null) ? fmtBps(last.vpn_b) : '—',
 				(last && last.vpn_b > 0) ? 'hpui-c-green' : '');
 
-			/* Routing mode (ribbon only). */
+			/* Routing mode chip (hero). */
 			const proxyMode = uci.get('homeproxy', 'config', 'proxy_mode') || '';
 			const pmLabels = { redirect: _('Redirect TCP'), redirect_tproxy: _('Redirect TCP + TProxy UDP'),
 				redirect_tun: _('Redirect TCP + Tun UDP'), tun: _('Tun TCP/UDP') };
-			rib('mode', '', routingModeLabel(cfgMode), pmLabels[proxyMode] || proxyMode);
+			modeChipState.textContent = routingModeLabel(cfgMode);
+			modeChipState.setAttribute('title', pmLabels[proxyMode] || proxyMode);
 
-			/* Zapret / ByeDPI (engines, strategy, NFQUEUE counters). The raw
-			 * strategy args are a dump nobody should read in a chip (Ф7):
-			 * show the corpus NAME when known ("StressOzz Yv09"), a short
-			 * "custom options" marker otherwise, and keep the full args in
-			 * the tooltip. */
+			/* Zapret / ByeDPI (concern card 2). The corpus NAME (when known)
+			 * rides in the tooltip, not in the state line. */
 			const zState = (!z.installed) ? _('not installed') : (!z.enabled) ? _('disabled')
 				: (z.running ? _('running') : _('enabled, not running'));
-			const zq = z.nfqueue || {};
-			const zName = z.strategy_name ? String(z.strategy_name) :
-				z.strategy ? _('custom options') : null;
-			const zNote = (z.enabled && z.running)
-				? ((zName ? zName + ' · ' : '') + 'NFQUEUE: ' + (zq.packets || 0) + ' pkts')
-				: (z.enabled && zName ? zName : '—');
-			rib('zapret', (z.installed && z.enabled) ? (z.running ? 'ok' : 'bad') : '',
-				zState, zNote);
-
 			const bState = (!b.installed) ? _('not installed') : (!b.enabled) ? _('disabled')
 				: (b.running ? _('running') : _('enabled, not running'));
-			rib('byedpi', (b.installed && b.enabled) ? (b.running ? 'ok' : 'bad') : '',
-				bState, (b.enabled && b.opts) ? _('custom options') : '—');
+			const zName = z.strategy_name ? String(z.strategy_name) :
+				z.strategy ? _('custom options') : null;
+			const zq = z.nfqueue || {};
+			hub.bypass.dot.className = 'hpui-dot' +
+				((z.enabled && z.running) || (b.enabled && b.running) ? ' ok'
+					: (z.enabled || b.enabled) ? ' bad' : '');
+			hub.bypass.state.textContent = 'Zapret: ' + zState + ' · ByeDPI: ' + bState;
+			hub.bypass.state.setAttribute('title', (zName ? 'Zapret: ' + zName + ' · NFQUEUE: ' + (zq.packets || 0) + ' pkts' : ''));
 
-			/* MultiDNS. "restarting..." is the routine quality-cycle rebuild
-			 * window (the daemon rebuilds mosdns.yaml and bounces the instance,
-			 * ~1-4 s): neutral grey, NOT the alarming red "enabled, not
-			 * running" which is reserved for a genuinely dead resolver. */
+			/* MultiDNS chip (hero). "restarting..." is the routine quality-
+			 * cycle rebuild window — neutral, NOT the alarming red. */
 			const mdEnabled = (mdns && mdns.enabled === '1') || (uci.get('homeproxy', 'multidns', 'enabled') === '1');
 			const mdRunning = !!(mdEnabled && mdns && mdns.mosdns);
 			const mdRestart = !!(mdEnabled && !mdRunning && mdns && mdns.restarting);
 			const mdRu = (mdEnabled && mdns && mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
 			const mdSec = (mdEnabled && mdns && mdns.active && mdns.active.secure) ? mdns.active.secure.length : 0;
-			const mdNote = mdEnabled ? _('RU: %d · Secure: %d').format(mdRu, mdSec) : '—';
-			rib('multidns', mdEnabled ? (mdRunning ? 'ok' : (mdRestart ? 'warn' : 'bad')) : '',
-				mdEnabled ? (mdRunning ? _('running') : (mdRestart ? _('restarting...') : _('enabled, not running'))) : _('disabled'),
-				mdNote);
+			dnsChipState.textContent = mdEnabled
+				? ((mdRunning ? _('running') : (mdRestart ? _('restarting...') : _('enabled, not running')))
+					+ ' · ' + _('RU: %d · Secure: %d').format(mdRu, mdSec))
+				: _('disabled');
+			dnsChipState.setAttribute('title', mdEnabled ? _('RU: %d · Secure: %d').format(mdRu, mdSec) : '—');
 
-			/* Automation */
+			/* Auto-bypass (concern card 3). */
 			const auEnabled = (uci.get('homeproxy', 'automation', 'enabled') === '1');
 			const auRunning = !!sys.automation_running;
-			rib('automation', auEnabled ? (auRunning ? 'ok' : 'bad') : '',
-				auEnabled ? (auRunning ? _('running') : _('enabled, not running')) : _('disabled'),
-				(last && last.learned != null) ? _('Learned records: %d').format(last.learned) : '—');
+			const learned = (last && last.learned != null) ? Math.floor(last.learned) : null;
+			hub.learn.dot.className = 'hpui-dot' + (auEnabled ? (auRunning ? ' ok' : ' bad') : '');
+			hub.learn.state.textContent = auEnabled
+				? ((auRunning ? _('running') : _('enabled, not running'))
+					+ ((learned != null) ? (' · ' + _('Learned sites: %d').format(learned)) : ''))
+				: _('disabled');
 
-			/* Telegram */
+			/* Home devices + Parental control (concern cards 4-5, Control
+			 * engine summary). */
+			const ctlS = (ctl && ctl.stats) || {};
+			const ctlEnabled = !!(ctl && ctl.enabled === true);
+			const ctlPaused = !!(ctl && ctl.paused === true);
+			hub.home.dot.className = 'hpui-dot' + (ctlEnabled ? ' ok' : '');
+			hub.home.state.textContent = (ctlS.devices_total != null)
+				? _('In network: %d').format(ctlS.devices_total) : '—';
+			hub.family.dot.className = 'hpui-dot' + (ctlEnabled ? (ctlPaused ? 'warn' : 'ok') : '');
+			hub.family.state.textContent = ctlEnabled
+				? (ctlPaused ? _('Paused') : _('Active')) : _('Off');
+
+			/* Phone control (concern card 6). */
 			const tgEnabled = !!(sys.telegram && sys.telegram.enabled === true);
 			const tgRunning = !!(sys.telegram && sys.telegram.running);
-			rib('telegram', tgEnabled ? (tgRunning ? 'ok' : 'bad') : '',
-				tgEnabled ? (tgRunning ? _('running') : _('enabled, not running')) : _('disabled'),
-				tgEnabled ? (tgRunning ? _('long-poll getUpdates') : _('daemon not alive')) : '—');
+			hub.phone.dot.className = 'hpui-dot' + (tgEnabled ? (tgRunning ? ' ok' : ' bad') : '');
+			hub.phone.state.textContent = tgEnabled
+				? (tgRunning ? _('running') : _('enabled, not running')) : _('disabled');
+
+			/* Quick setup strip: visible until servers + main node exist. */
+			let nodeCount = 0;
+			uci.sections('homeproxy', 'node', function() { nodeCount++; });
+			const doneNodes = nodeCount > 0;
+			const doneMain = !!cfgMainNode;
+			const doneByp = (z.enabled === true) || (b.enabled === true) || auEnabled;
+			const doneNet = !!sys.clash_ok;
+			setQs('nodes', doneNodes);
+			setQs('main', doneMain);
+			setQs('byp', doneByp);
+			setQs('net', doneNet);
+			qsEl.style.display = (doneNodes && doneMain) ? 'none' : '';
 		}
 
 		function renderCharts() {
@@ -682,7 +829,8 @@ return view.extend({
 				L.resolveDefault(callSys(), {}),
 				L.resolveDefault(callActiveNode('main-out'), {}),
 				L.resolveDefault(callDpiStatus(), {}),
-				L.resolveDefault(callMultidnsStatus(), {})
+				L.resolveDefault(callMultidnsStatus(), {}),
+				L.resolveDefault(callControlStatus(), {})
 			]).then(function(data) {
 				metrics = (data[0] && typeof data[0] === 'object' && data[0].points)
 					? data[0] : { interval: 5, updated: 0, points: [] };
@@ -690,8 +838,9 @@ return view.extend({
 				const node = (data[2] && data[2].node) ? data[2] : null;
 				const dpi = data[3] || {};
 				const mdns = data[4] || {};
+				const ctl = (data[5] && data[5].result !== false) ? data[5] : {};
 			renderSys(sys);
-			renderCards(sys, node, dpi, mdns);
+			renderCards(sys, node, dpi, mdns, ctl);
 			renderCharts();
 			renderTraffic(metrics.totals);
 			});
@@ -700,11 +849,14 @@ return view.extend({
 		poll.add(refresh, 4);
 		refresh();
 
-		/* Р3 v2 layout: brand + subsystem ribbon → headline metric cards →
-		 * two-column grid (charts | system + quick actions) → traffic by
-		 * exit → ONE result area at the bottom. */
+		/* Р3 v3 hub layout: hero (brand + status) → quick setup (until set
+		 * up) → concern cards → headline metric cards → two-column grid
+		 * (charts | system + quick actions) → traffic by exit → ONE result
+		 * area at the bottom. */
 		return E('div', {}, [
 			brandEl,
+			qsEl,
+			hubEl,
 			mcardsEl,
 			E('div', { 'class': 'ov-grid' }, [
 				E('div', { 'class': 'ov-col' }, [

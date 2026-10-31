@@ -11750,3 +11750,122 @@ msgstr "Ядро не отвечает"
 
 msgid "scale 0-100%"
 msgstr "шкала 0–100 %"
+
+# ─── Р3 v3 (19-UX_REDESIGN): меню и Главная-хаб ───
+
+msgid "Home page"
+msgstr "Главная"
+
+msgid "Servers"
+msgstr "Серверы"
+
+msgid "Auto-bypass"
+msgstr "Автообход сайтов"
+
+msgid "Parental control"
+msgstr "Родительский контроль"
+
+msgid "Phone control"
+msgstr "Управление с телефона"
+
+msgid "Maintenance"
+msgstr "Обслуживание"
+
+msgid "Monitoring"
+msgstr "Мониторинг"
+
+msgid "Check & repair"
+msgstr "Проверка и ремонт"
+
+msgid "External access"
+msgstr "Доступ извне"
+
+msgid "Blocking bypass"
+msgstr "Обход блокировок"
+
+msgid "Home"
+msgstr "Дом"
+
+msgid "System section"
+msgstr "Система"
+
+msgid "Everything is running"
+msgstr "Всё работает"
+
+msgid "Core is not installed"
+msgstr "Ядро не установлено"
+
+msgid "Proxy is not configured"
+msgstr "Прокси не настроен"
+
+msgid "Where your traffic goes"
+msgstr "Куда идёт трафик"
+
+msgid "Change server"
+msgstr "Сменить сервер"
+
+msgid "The server your devices use to reach the internet right now."
+msgstr "Сервер, через который ваши устройства выходят в интернет."
+
+msgid "Zapret and ByeDPI open blocked sites without a VPN subscription."
+msgstr "Движки Zapret и ByeDPI открывают заблокированные сайты."
+
+msgid "The engine finds blocked sites itself and sends them around the block."
+msgstr "Движок сам находит заблокированные сайты и направляет их в обход."
+
+msgid "Devices at home"
+msgstr "Устройства дома"
+
+msgid "Who is connected to the router and what they can open."
+msgstr "Кто подключён к роутеру и что можно открывать."
+
+msgid "Site rules, schedules and Wi-Fi limits for children's devices."
+msgstr "Правила сайтов, расписания и Wi-Fi-ограничения."
+
+msgid "Status, server switching and control — right from Telegram."
+msgstr "Статус, смена сервера и контроль — прямо из Telegram."
+
+msgid "Configure"
+msgstr "Настроить"
+
+msgid "Open"
+msgstr "Открыть"
+
+msgid "Connect"
+msgstr "Подключить"
+
+msgid "Learned sites: %d"
+msgstr "Выучено сайтов: %d"
+
+msgid "In network: %d"
+msgstr "В сети: %d"
+
+msgid "Quick setup"
+msgstr "Быстрая настройка"
+
+msgid "Three steps and Ravnex starts routing your traffic."
+msgstr "Три шага — и Ravnex начнёт маршрутизировать ваш трафик."
+
+msgid "Add servers"
+msgstr "Добавьте серверы"
+
+msgid "Choose the main node"
+msgstr "Выберите главный сервер"
+
+msgid "Turn on the bypass"
+msgstr "Включите обход"
+
+msgid "Check the internet"
+msgstr "Проверьте интернет"
+
+msgid "Import a subscription or paste a share link."
+msgstr "Импортируйте подписку или вставьте ссылку."
+
+msgid "Update available: %s → %s (install it on the \"Maintenance\" page)."
+msgstr "Доступно обновление: %s → %s (установите на странице «Обслуживание»)."
+
+msgid "The service restart re-routes every connection (\"Maintenance\" carries start/stop); a snapshot copies the app configuration and the routing lists; \"Restore internet\" is the emergency switch for a plain direct connection."
+msgstr "Перезапуск службы перемаршрутизирует все соединения (запуск/остановка — на странице «Обслуживание»); снимок копирует конфигурацию приложения и списки маршрутизации; «Восстановить интернет» — аварийный переключатель на прямое соединение."
+
+msgid "Update availability is checked on demand — the Home page never queries external resources on its own."
+msgstr "Наличие обновления проверяется по требованию — страница «Главная» сама никогда не обращается к внешним ресурсам."

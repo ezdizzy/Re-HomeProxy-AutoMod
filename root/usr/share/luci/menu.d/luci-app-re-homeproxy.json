@@ -11,7 +11,7 @@
 		}
 	},
 	"admin/services/homeproxy/overview": {
-		"title": "Overview",
+		"title": "Home page",
 		"order": 5,
 		"action": {
 			"type": "view",
@@ -19,7 +19,7 @@
 		}
 	},
 	"admin/services/homeproxy/client": {
-		"title": "Client Settings",
+		"title": "Connection",
 		"order": 10,
 		"action": {
 			"type": "view",
@@ -27,7 +27,7 @@
 		}
 	},
 	"admin/services/homeproxy/dns": {
-		"title": "DNS Settings",
+		"title": "DNS",
 		"order": 12,
 		"action": {
 			"type": "view",
@@ -35,16 +35,72 @@
 		}
 	},
 	"admin/services/homeproxy/node": {
-		"title": "Node Settings",
+		"title": "Servers",
 		"order": 16,
 		"action": {
 			"type": "view",
 			"path": "homeproxy/node"
 		}
 	},
+	"admin/services/homeproxy/automation": {
+		"title": "Auto-bypass",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/automation"
+		}
+	},
+	"admin/services/homeproxy/control": {
+		"title": "Parental control",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/control"
+		}
+	},
+	"admin/services/homeproxy/telegram": {
+		"title": "Phone control",
+		"order": 32,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/telegram"
+		}
+	},
+	"admin/services/homeproxy/status": {
+		"title": "Maintenance",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/status"
+		}
+	},
+	"admin/services/homeproxy/monitor": {
+		"title": "Monitoring",
+		"order": 42,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/monitor"
+		}
+	},
+	"admin/services/homeproxy/diagnostics": {
+		"title": "Check & repair",
+		"order": 44,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/diagnostics"
+		}
+	},
+	"admin/services/homeproxy/server": {
+		"title": "External access",
+		"order": 46,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/server"
+		}
+	},
 	"admin/services/homeproxy/wizard": {
 		"title": "Routing Wizard",
-		"order": 15,
+		"order": 60,
 		"action": {
 			"type": "view",
 			"path": "homeproxy/wizard"
@@ -52,66 +108,10 @@
 	},
 	"admin/services/homeproxy/access": {
 		"title": "Devices & interfaces",
-		"order": 17,
+		"order": 62,
 		"action": {
 			"type": "view",
 			"path": "homeproxy/access"
-		}
-	},
-	"admin/services/homeproxy/control": {
-		"title": "Control",
-		"order": 18,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/control"
-		}
-	},
-	"admin/services/homeproxy/telegram": {
-		"title": "Telegram Bot",
-		"order": 19,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/telegram"
-		}
-	},
-	"admin/services/homeproxy/server": {
-		"title": "Server Settings",
-		"order": 30,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/server"
-		}
-	},
-	"admin/services/homeproxy/status": {
-		"title": "Core & Tools",
-		"order": 20,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/status"
-		}
-	},
-	"admin/services/homeproxy/monitor": {
-		"title": "Node Monitoring",
-		"order": 25,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/monitor"
-		}
-	},
-	"admin/services/homeproxy/diagnostics": {
-		"title": "Diagnostics",
-		"order": 40,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/diagnostics"
-		}
-	},
-	"admin/services/homeproxy/automation": {
-		"title": "Automation",
-		"order": 50,
-		"action": {
-			"type": "view",
-			"path": "homeproxy/automation"
 		}
 	}
 }
