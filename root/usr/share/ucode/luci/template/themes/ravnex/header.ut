@@ -19,6 +19,21 @@
 	<head>
 		<meta charset="utf-8">
 		<title>{{ striptags(`${boardinfo.hostname ?? '?'}${dispatched?.title ? ` | ${_(dispatched.title)}` : ''}`) }}</title>
+		<script>
+			/* R3 v3e: set the APP color theme BEFORE the first paint. The
+			 * manual topbar choice (localStorage 'hp-theme') wins; otherwise
+			 * the system preference. The Ravnex cascade.css keys its classic
+			 * variable blocks and the pre-paint body background off
+			 * html[data-hp-theme], so a manual light theme repaints even on
+			 * a dark-preference browser (the ч.135 unreadable-header defect). */
+			try {
+				var hpt = null;
+				try { hpt = window.localStorage.getItem('hp-theme'); } catch (e) {}
+				if (hpt !== 'dark' && hpt !== 'light')
+					hpt = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+				document.documentElement.setAttribute('data-hp-theme', hpt);
+			} catch (e) {}
+		</script>
 		{% if (!darkpref): %}
 			<script>
 				var mediaQuery = window.matchMedia('(prefers-color-scheme: dark)'),
@@ -31,7 +46,7 @@
 		{% endif %}
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 		<meta name="darkreader-lock">
-		<link rel="stylesheet" href="{{ media }}/cascade.css?v=26.180.75667~128a781">
+		<link rel="stylesheet" href="{{ media }}/cascade.css?v=26.181.20000~r3v3e1">
 		<link rel="stylesheet" media="only screen and (max-device-width: 854px)" href="{{ media }}/mobile.css?v=26.180.75667~128a781" />
 		<link rel="icon" href="{{ media }}/logo_48.png" sizes="48x48">
 		<link rel="icon" href="{{ media }}/logo.svg" sizes="any">

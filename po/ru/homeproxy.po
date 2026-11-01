@@ -11866,3 +11866,123 @@ msgstr "Прокси-политика"
 
 msgid "Per-device policy for the LAN, upstream IP policy for the WAN and interface binding. This does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages. The Apply button at the bottom of the page saves these settings."
 msgstr "Политика для устройств LAN, политика IP для WAN и привязка к интерфейсам. Это не меняет ЧТО проксируется — правила сервисов и списки живут на страницах «Правила для сервисов» и «Обход блокировок». Кнопка «Применить» внизу страницы сохраняет эти настройки."
+
+msgid "Delete all"
+msgstr "Удалить всё"
+
+msgid "Delete"
+msgstr "Удалить"
+
+msgid "The engine learns which sites your provider blocks and sends them around the block automatically: traffic that fails directly but works through the proxy is added to the lists. The Overview tab shows what it does, the Sites tab is the result, the Settings tab tunes how aggressively it learns."
+msgstr "Движок сам учится, какие сайты блокирует ваш провайдер, и автоматически отправляет их в обход: трафик, который напрямую не проходит, но проходит через прокси, добавляется в списки. Вкладка «Обзор» показывает, что он делает, «Сайты» — результат, «Настройки» — насколько агрессивно он учится."
+
+msgid "Start"
+msgstr "Запустить"
+
+msgid "Full sweep"
+msgstr "Полный прогон"
+
+msgid "Enable auto-pilot"
+msgstr "Включить автопилот"
+
+msgid "The main connection: the main server, the routing mode, and what keeps the connection alive when a server dies (URLTest groups, Hot Swap). New servers are added on the Servers page."
+msgstr "Главное подключение: главный сервер, режим маршрутизации и то, что удерживает связь при отказе сервера (группы URLTest, Hot Swap). Новые серверы добавляются на странице «Серверы»."
+
+msgid "The everyday service→exit rules moved to the Service rules page."
+msgstr "Повседневные правила «сервис → выход» переехали на страницу «Правила для сервисов»."
+
+msgid "Advanced: group servers into routing groups and point rules at them."
+msgstr "Дополнительно: собирайте серверы в группы маршрутизации и направляйте на них правила."
+
+msgid "Advanced: raw sing-box routing rules, for shapes the Service rules page does not build."
+msgstr "Дополнительно: «сырые» правила sing-box — для конфигураций, которые страница «Правила для сервисов» не собирает."
+
+msgid "Custom-mode DNS: the default strategy, which server resolves what, and per-domain DNS rules."
+msgstr "DNS пользовательского режима: стратегия по умолчанию, какой сервер отвечает за что и правила по доменам."
+
+msgid "Define your own DNS servers for the custom DNS scheme."
+msgstr "Свои DNS-серверы для пользовательской DNS-схемы."
+
+msgid "Route domain name resolution: which DNS server answers which domain in the custom scheme."
+msgstr "Маршрутизация разрешения имён: какой DNS-сервер отвечает за какой домен в пользовательской схеме."
+
+msgid "Remote rule sets (geosite/geoip) the custom routing scheme can match against."
+msgstr "Удалённые наборы правил (geosite/geoip), с которыми сверяется пользовательская схема маршрутизации."
+
+msgid "How the traffic leaves your home: which server is the main one, how the routing mode decides what goes through the proxy, and what keeps the connection alive when a server dies. Everyday service→exit rules live on the Service rules page; DNS pools common to all modes — on the DNS settings page."
+msgstr "Как трафик покидает ваш дом: какой сервер главный, как режим маршрутизации решает, что идёт через прокси, и что удерживает связь при отказе сервера. Повседневные правила «сервис → выход» — на странице «Правила для сервисов»; DNS-пулы, общие для всех режимов, — на странице «Настройки DNS»."
+
+msgid "Rules for the people at home: which sites a child can open, when the internet turns off in the evening, and Wi-Fi cut-off at night. The devices themselves live on the Devices page — the rules below apply to them by name."
+msgstr "Правила для домашних: какие сайты открывает ребёнок, во сколько выключается интернет вечером и когда гаснет Wi-Fi на ночь. Сами устройства живут на странице «Устройства» — правила ниже применяются к ним по имени."
+
+msgid "When something does not work: this page runs the actual probes — the core, the config, DNS, the network, and what exactly the provider blocks — and reports the findings. Start with Run All Tests, then read the tab the problem points to."
+msgstr "Когда что-то не работает: страница запускает реальные проверки — ядро, конфигурацию, DNS, сеть и что именно блокирует провайдер — и сообщает результаты. Начните с «Запустить все тесты», затем читайте вкладку, на которую указывает проблема."
+
+msgid "Two pools: the plain one resolves Russian sites directly, the encrypted one resolves blocked domains through the proxy. MultiDNS races every server in both pools."
+msgstr "Два пула: простой разрешает российские сайты напрямую, шифрованный разрешает заблокированные домены через прокси. MultiDNS гоняет все серверы обоих пулов."
+
+msgid "Failover for setups WITHOUT MultiDNS: watches the first server of each pool and rotates a healthy one up when it dies. Ignored while MultiDNS is enabled."
+msgstr "Фолбэк для схем БЕЗ MultiDNS: следит за первым сервером каждого пула и поднимает живой наверх, когда тот умирает. Пока включён MultiDNS — игнорируется."
+
+msgid "The racing engine: every lookup queries all servers of both pools at once and the fastest valid answer wins; a quality daemon continuously scores and prunes servers."
+msgstr "Гоночный движок: каждый запрос опрашивает все серверы обоих пулов сразу, побеждает самый быстрый живой ответ; демон качества непрерывно оценивает и вычищает серверы."
+
+msgid "The router asks DNS servers for site addresses: the plain pool resolves Russian sites directly, the encrypted pool resolves blocked domains through the proxy, and MultiDNS races every server so each lookup gets the fastest healthy answer. If sites open slowly — start with the pools; the rest is tuning."
+msgstr "Роутер спрашивает у DNS-серверов адреса сайтов: простой пул разрешает российские сайты напрямую, шифрованный — заблокированные через прокси, а MultiDNS гоняет серверы так, что каждый запрос получает самый быстрый живой ответ. Если сайты открываются медленно — начните с пулов; остальное — тонкая настройка."
+
+msgid "How healthy the servers are right now: the live delay of every node the core measures, the running engine and core, and the active connections with their speed. Read-only — the changes happen on the Servers and Blocking bypass pages."
+msgstr "Как чувствуют себя серверы прямо сейчас: живая задержка каждого узла по измерениям ядра, работающий движок и ядро, активные соединения со скоростями. Страница только для чтения — изменения делаются на «Серверах» и в «Обходе блокировок»."
+
+msgid "In pool"
+msgstr "В пуле"
+
+msgid "Live status"
+msgstr "Живой статус"
+
+msgid "Your own servers: import share links (ss://, vmess://, vless://, hysteria2://, vpn:// …), a WireGuard .conf file, or add a node manually. Click a row to edit it."
+msgstr "Свои серверы: импорт share-ссылок (ss://, vmess://, vless://, hysteria2://, vpn:// …), WireGuard-.conf-файла или добавление вручную. Нажмите на строку, чтобы редактировать."
+
+msgid "Pull node lists from subscription URL-s automatically: every day at the set hour (optionally through the proxy) and filtered by your keywords. The results land in their own \"Sub (…)\" tabs."
+msgstr "Автоматически тянет списки узлов из подписок: ежедневно в назначенный час (опционально через прокси) и с фильтрацией по вашим ключевым словам. Результаты попадают в свои вкладки «Sub (…)»."
+
+msgid "The servers the connection runs through: add your own (share link, .conf file or by hand) or pull a provider subscription. The Live status column shows what the running core currently measures for every node. Which server is used as the main one — on the Connection page."
+msgstr "Серверы, через которые идёт подключение: добавьте свои (share-ссылка, .conf-файл или вручную) или подпишитесь на обновления провайдера. Колонка «Живой статус» показывает, что ядро прямо сейчас измеряет по каждому узлу. Какой сервер главный — на странице «Подключение»."
+
+msgid "Restore internet"
+msgstr "Вернуть интернет"
+
+msgid "Stop proxy"
+msgstr "Остановить прокси"
+
+msgid "The main switch: whether Ravnex accepts incoming connections at all. Each server below is one endpoint other devices connect to — your own phone away from home, a friend, or a second router."
+msgstr "Главный выключатель: принимает ли Ravnex входящие подключения вообще. Каждый сервер ниже — одна точка подключения для других устройств: ваш телефон вне дома, друг или второй роутер."
+
+msgid "Open the port in the firewall so this server is reachable from the internet. Enable only for servers you actually use — each open port is visible to scanners."
+msgstr "Открывает порт в файрволе, чтобы сервер был доступен из интернета. Включайте только для серверов, которыми реально пользуетесь, — каждый открытый порт виден сканерам."
+
+msgid "Let OTHER devices connect to THIS router from the internet — your own phone away from home, a friend, or a second router. Each row below is one server endpoint; the Firewall flag decides whether it is reachable from outside."
+msgstr "Пусть ДРУГИЕ устройства подключаются к ЭТОМУ роутеру из интернета — ваш телефон вне дома, друг или второй роутер. Каждая строка ниже — один сервер; флаг «Firewall» решает, доступен ли он снаружи."
+
+msgid "Restore snapshot"
+msgstr "Восстановить снимок"
+
+msgid "What runs on the router right now: the active core and its version. The rest of the page installs and updates the moving parts."
+msgstr "Что сейчас работает на роутере: активное ядро и его версия. Остальное на странице — установка и обновление подвижных частей."
+
+msgid "The app itself: check for updates, install or reinstall the package."
+msgstr "Само приложение: проверить обновления, установить или переустановить пакет."
+
+msgid "The cores that run the proxy (only one is active at a time), rule-set seeds for a cold boot, configuration snapshots and the emergency internet recovery."
+msgstr "Ядра, на которых работает прокси (активно одно за раз), наборы правил для холодного старта, снимки конфигурации и аварийное восстановление интернета."
+
+msgid "Install, update and manage the two bypass engines — ByeDPI and Zapret. Which one actually serves the traffic is configured on the Blocking bypass page."
+msgstr "Установка, обновление и управление двумя движками обхода — ByeDPI и Zapret. Какой из них реально обслуживает трафик, настраивается на странице «Обход блокировок»."
+
+msgid "Install, update and manage the engines behind MultiDNS — the racing DNS resolver."
+msgstr "Установка, обновление и управление движками для MultiDNS — гоночного DNS-резолвера."
+
+msgid "Installation and updates: the app itself, the cores, the bypass engines and MultiDNS — each in its own card. Also configuration snapshots, emergency internet recovery and the running logs. You need this page rarely: after an update or when something must be reinstalled."
+msgstr "Установка и обновления: само приложение, ядра, движки обхода и MultiDNS — каждый своей карточкой. Также снимки конфигурации, аварийное восстановление интернета и рабочие журналы. Страница нужна редко: после обновления или когда что-то надо переустановить."
+
+msgid "Install tg-ws"
+msgstr "Установить tg-ws"

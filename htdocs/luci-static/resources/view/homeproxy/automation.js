@@ -229,7 +229,7 @@ return view.extend({
 		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
 		hp.uiShell();
 
-		const m = new form.Map('homeproxy', _('Automation'));
+		const m = new form.Map('homeproxy');
 		const s = m.section(form.NamedSection, 'automation', 'homeproxy', _('Auto blocked-site detection'));
 
 		let o = s.option(form.Flag, 'enabled', _('Enable automation'),
@@ -572,9 +572,9 @@ return view.extend({
 			}),
 			btn(_('Restore list'), function() { fileInput.click(); }),
 			btn(_('Clear learned'), function() {
-				if (!window.confirm(_('Delete ALL learned sites? The engine will re-learn them from scratch.')))
-					return Promise.resolve();
-				return callClear().then(refresh);
+				return hp.confirmModal(_('Clear learned'),
+					_('Delete ALL learned sites? The engine will re-learn them from scratch.'), _('Delete all'))
+					.then(function(ok) { return ok ? callClear().then(refresh) : null; });
 			})
 		]));
 		panes.list.appendChild(fileInput);
@@ -756,11 +756,13 @@ return view.extend({
 				const tr = E('tr', { 'class': rowCls });
 				const delBtn = E('button', { 'class': 'hpdel', type: 'button', title: _('Delete entry') }, [ '✕' ]);
 				delBtn.addEventListener('click', function() {
-					if (!window.confirm(_('Delete entry %s?').format(e.host)))
-						return;
 					delBtn.disabled = true;
-					callEntryDelete(e.host).then(function() { return refresh(); })
-						.finally(function() { delBtn.disabled = false; });
+					hp.confirmModal(_('Delete entry'), _('Delete entry %s?').format(e.host), _('Delete'))
+						.then(function(ok) {
+							if (!ok) { delBtn.disabled = false; return; }
+							callEntryDelete(e.host).then(function() { return refresh(); })
+								.finally(function() { delBtn.disabled = false; });
+						});
 				});
 				const cells = [
 					E('span', { style: 'font-weight:600' }, [ String(e.host || '') ]),
@@ -1089,7 +1091,11 @@ return view.extend({
 			const ps = nodes[1];
 			/* The UCI form lives on its own tab. */
 			ps.settings.appendChild(mapNode);
-			return E('div', {}, [ tabBar, ps.overview, ps.list, ps.geo, ps.settings, ps.log ]);
+			return E('div', {}, [
+				hp.pageIntro(_('Auto-bypass'),
+					_('The engine learns which sites your provider blocks and sends them around the block automatically: traffic that fails directly but works through the proxy is added to the lists. The Overview tab shows what it does, the Sites tab is the result, the Settings tab tunes how aggressively it learns.')),
+				tabBar, ps.overview, ps.list, ps.geo, ps.settings, ps.log
+			]);
 		});
 	}
 });

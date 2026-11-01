@@ -604,15 +604,19 @@ return view.extend({
 		});
 
 		restoreBtn.addEventListener('click', function() {
-			if (!window.confirm(_('Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with "Service start" or a router reboot.')))
-				return;
-			restoreBtn.disabled = true;
-			noteResult(_('Stopping the proxy stack…'), null);
-			L.resolveDefault(callRestoreInternet(), {}).then(function(r) {
-				restoreBtn.disabled = false;
-				noteResult(r.result ? _('Direct internet restored — run "Service start" to bring the proxy back.')
-					: ((r && r.error) || _('Failed')), !!r.result);
-			});
+			hp.confirmModal(_('Restore internet'),
+				_('Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with "Service start" or a router reboot.'), _('Stop proxy'))
+				.then(function(ok) {
+					if (!ok)
+						return;
+					restoreBtn.disabled = true;
+					noteResult(_('Stopping the proxy stack…'), null);
+					L.resolveDefault(callRestoreInternet(), {}).then(function(r) {
+						restoreBtn.disabled = false;
+						noteResult(r.result ? _('Direct internet restored — run "Service start" to bring the proxy back.')
+							: ((r && r.error) || _('Failed')), !!r.result);
+					});
+				});
 		});
 
 		updateBtn.addEventListener('click', function() {

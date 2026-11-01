@@ -5,8 +5,10 @@
  */
 
 'use strict';
+'require dom';
 'require form';
 'require fs';
+'require poll';
 'require rpc';
 'require uci';
 'require ui';
@@ -16,8 +18,12 @@
 'require tools.widgets as widgets';
 
 function allowInsecureConfirm(ev, _section_id, value) {
-	if (value === '1' && !confirm(_('Are you sure to allow insecure?')))
-		ev.target.firstElementChild.checked = null;
+	if (value !== '1')
+		return;
+	hp.confirmModal(_('Allow insecure'), _('Are you sure to allow insecure?'), _('Allow')).then(function(ok) {
+		if (!ok)
+			ev.target.firstElementChild.checked = null;
+	});
 }
 
 async function parseVpnLink(uri) {
@@ -900,6 +906,51 @@ function parseShareLink(uri, features) {
 	return config;
 }
 
+/* ── Live node statuses (R3 v3e «Серверы») ──────────────────────────────
+ * The grid shows what the RUNNING CORE currently thinks of every node:
+ * measured delay / timeout / not in the generated config / unsupported by
+ * the core (+ In pool / Active chips). ONE status source — the same
+ * monitor_nodes RPC the Monitoring page uses, no new computation
+ * (19-UX_REDESIGN §7). The poll re-renders the cells in place via the
+ * tr[data-sid] attribute every grid row carries. */
+const callMonitorNodes = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'monitor_nodes',
+	expect: { '': {} }
+});
+
+let NODE_STATUS = {};
+
+function renderNodeLive(sid) {
+	const n = NODE_STATUS[sid];
+	const parts = [];
+	if (!n)
+		parts.push(E('span', { 'class': 'hpui-badge hpui-b-grey' }, [ '…' ]));
+	else if (n.status === 'not_in_config')
+		parts.push(E('span', { 'class': 'hpui-badge hpui-b-grey' }, [ _('Not in config') ]));
+	else if (n.status === 'unsupported')
+		parts.push(E('span', { 'class': 'hpui-badge hpui-b-amber' }, [ _('Unsupported by core') ]));
+	else
+		parts.push(hp.delayBadge(n.delay));
+	if (n && n.in_pool)
+		parts.push(E('span', { 'class': 'hpui-badge hpui-b-blue', 'style': 'margin-left:4px' }, [ _('In pool') ]));
+	if (n && n.selected)
+		parts.push(E('span', { 'class': 'hpui-badge hpui-b-green', 'style': 'margin-left:4px' }, [ _('Active') ]));
+	return E('span', { 'style': 'white-space:nowrap' }, parts);
+}
+
+function refreshNodeStatuses() {
+	return L.resolveDefault(callMonitorNodes(), null).then(function(res) {
+		NODE_STATUS = {};
+		(res && res.nodes ? res.nodes : []).forEach(function(n) { NODE_STATUS[n.sid] = n; });
+		document.querySelectorAll('tr.cbi-section-table-row[data-sid]').forEach(function(tr) {
+			const td = tr.querySelector('td[data-name="_hp_live"]');
+			if (td)
+				dom.content(td, renderNodeLive(tr.getAttribute('data-sid')));
+		});
+	});
+}
+
 function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	let s = section, o;
 	s.rowcolors = true;
@@ -985,6 +1036,18 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 				return (p ? p + ' ' : '') + '(' + ranges + ')';
 		}
 		return (p != null && p !== '') ? '' + p : null;
+	};
+
+	/* Live status column (R3 v3e): what the running core currently measures
+	 * for this node, updated by the 5 s monitor_nodes poll in render(). The
+	 * same chip renders inside the edit modal (renderWidget), so the user
+	 * sees the live state while editing the node. */
+	o = s.option(form.DummyValue, '_hp_live', _('Live status'));
+	o.textvalue = function(section_id) {
+		return renderNodeLive(section_id);
+	};
+	o.renderWidget = function(section_id) {
+		return renderNodeLive(section_id);
 	};
 
 	o = s.option(form.Value, 'username', _('Username'));
@@ -2066,13 +2129,14 @@ return view.extend({
 			subinfo.push({ 'hash': urlhash, 'title': title });
 		}
 
-		m = new form.Map('homeproxy', _('Edit nodes'));
+		m = new form.Map('homeproxy');
 
 		s = m.section(form.NamedSection, 'subscription', 'homeproxy');
 
 		/* Node settings start */
 		/* User nodes start */
-		s.tab('node', _('Nodes'));
+		s.tab('node', _('Nodes'),
+			_('Your own servers: import share links (ss://, vmess://, vless://, hysteria2://, vpn:// …), a WireGuard .conf file, or add a node manually. Click a row to edit it.'));
 		o = s.taboption('node', form.SectionValue, '_node', form.GridSection, 'node');
 		ss = renderNodeSettings(o.subsection, data, features, main_node, routing_mode);
 		ss.addremove = true;
@@ -2255,7 +2319,8 @@ return view.extend({
 		/* Node settings end */
 
 		/* Subscriptions settings start */
-		s.tab('subscription', _('Subscriptions'));
+		s.tab('subscription', _('Subscriptions'),
+			_('Pull node lists from subscription URL-s automatically: every day at the set hour (optionally through the proxy) and filtered by your keywords. The results land in their own "Sub (…)" tabs.'));
 
 		o = s.taboption('subscription', form.Flag, 'auto_update', _('Auto update'),
 			_('Auto update subscriptions and geodata.'));
@@ -2392,6 +2457,17 @@ return view.extend({
 
 		/* ByeDPI/Zapret settings moved to the Routing Wizard (DPI bypass) — user wish, session 24 */
 
-		return m.render();
+		/* Live statuses: one immediate refresh, then every 5 s (same RPC as
+		 * the Monitoring page — one status source for the whole app). */
+		poll.add(refreshNodeStatuses, 5);
+		refreshNodeStatuses();
+
+		return m.render().then(function(node) {
+			return E('div', {}, [
+				hp.pageIntro(_('Servers'),
+					_('The servers the connection runs through: add your own (share link, .conf file or by hand) or pull a provider subscription. The Live status column shows what the running core currently measures for every node. Which server is used as the main one — on the Connection page.')),
+				node
+			]);
+		});
 	}
 });

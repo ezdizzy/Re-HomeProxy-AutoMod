@@ -45,16 +45,20 @@ return view.extend({
 		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
 		hp.uiShell();
 
-		const m = new form.Map('homeproxy', _('DNS Settings'));
+		const m = new form.Map('homeproxy');
 
 		const mdDisable = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_disable', expect: { '': {} } });
 
 		const s = m.section(form.NamedSection, 'config', 'homeproxy', null);
 		s.addremove = false;
 
-		s.tab('pools', _('DNS servers'));
-		s.tab('reserve', _('Reserve DNS'));
-		s.tab('multidns', _('MultiDNS'));
+		s.tab('pools', _('DNS servers'),
+			_('Two pools: the plain one resolves Russian sites directly, the encrypted one resolves blocked domains through the proxy. MultiDNS races every server in both pools.'));
+		s.tab('reserve', _('Reserve DNS'),
+			_('Failover for setups WITHOUT MultiDNS: watches the first server of each pool and rotates a healthy one up when it dies. Ignored while MultiDNS is enabled.'));
+		s.tab('multidns', _('MultiDNS'),
+			_('The racing engine: every lookup queries all servers of both pools at once and the fastest valid answer wins; a quality daemon continuously scores and prunes servers.'));
+
 		let o;
 
 		/* ── Tab: DNS servers (the split-routing pools) ─────────────────── */
@@ -187,9 +191,16 @@ return view.extend({
 		 * accidental toggle must be revertible. */
 		so.onchange = function(ev, section_id, value) {
 			if (!value || value === '0') {
-				if (!window.confirm(_('Disable MultiDNS? The racing resolver will be stopped immediately.')))
-					return false;
-				mdDisable().catch(function() {});
+				/* The themed modal (one modal pattern) replaces the native
+				 * confirm. Cancel re-renders the map from data — the flag
+				 * flips back to enabled (nothing was saved). */
+				hp.confirmModal(_('MultiDNS'),
+					_('Disable MultiDNS? The racing resolver will be stopped immediately.'), _('Disable')).then(function(ok) {
+					if (ok)
+						mdDisable().catch(function() {});
+					else
+						this.map.reset();
+				}.bind(this));
 			}
 		};
 
@@ -345,7 +356,11 @@ return view.extend({
 		mdRefresh();
 
 		return m.render().then(function(node) {
-			return node;
+			return E('div', {}, [
+				hp.pageIntro(_('DNS settings'),
+					_('The router asks DNS servers for site addresses: the plain pool resolves Russian sites directly, the encrypted pool resolves blocked domains through the proxy, and MultiDNS races every server so each lookup gets the fastest healthy answer. If sites open slowly — start with the pools; the rest is tuning.')),
+				node
+			]);
 		});
 	}
 });

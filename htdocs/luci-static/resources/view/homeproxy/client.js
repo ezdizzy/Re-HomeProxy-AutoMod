@@ -158,8 +158,7 @@ return view.extend({
 					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport));
 		});
 
-		m = new form.Map('homeproxy', _('Ravnex'),
-			_('The modern multi-core proxy platform. Fork of ImmortalWrt.'));
+		m = new form.Map('homeproxy');
 
 		s = m.section(form.TypedSection);
 		s.render = function () {
@@ -177,7 +176,8 @@ return view.extend({
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy');
 
-		s.tab('routing', _('Routing Settings'));
+		s.tab('routing', _('Routing Settings'),
+			_('The main connection: the main server, the routing mode, and what keeps the connection alive when a server dies (URLTest groups, Hot Swap). New servers are added on the Servers page.'));
 
 		if (features.available_cores && features.available_cores.length > 1) {
 			o = s.taboption('routing', form.ListValue, 'preferred_core', _('Preferred core'),
@@ -1050,7 +1050,8 @@ return view.extend({
 		/* R3 v3b: the Routing Rules grid moved to the dedicated Service
 		 * rules page (presets + the manual editor + domain lists in one
 		 * place). This tab keeps only a link so old bookmarks still land. */
-		s.tab('ru_rules', _('Routing Rules'));
+		s.tab('ru_rules', _('Routing Rules'),
+			_('The everyday service→exit rules moved to the Service rules page.'));
 		o = s.taboption('ru_rules', form.DummyValue, '_ru_rules_link');
 		o.rawhtml = true;
 		o.cfgvalue = function() {
@@ -1062,7 +1063,8 @@ return view.extend({
 
 		/* Routing nodes start */
 		if (modeNow === 'custom' || (modeNow === 'proxy_banned_ru' && advOn)) {
-		s.tab('routing_node', _('Routing Nodes'));
+		s.tab('routing_node', _('Routing Nodes'),
+			_('Advanced: group servers into routing groups and point rules at them.'));
 		o = s.taboption('routing_node', form.SectionValue, '_routing_node', form.GridSection, 'routing_node');
 		o.depends('routing_mode', 'custom');
 		o.depends({'routing_mode': 'proxy_banned_ru', 'show_advanced_rules': '1'});
@@ -1258,7 +1260,8 @@ return view.extend({
 
 		/* Routing rules start */
 		if (modeNow === 'custom' || (modeNow === 'proxy_banned_ru' && advOn)) {
-		s.tab('routing_rule', _('Custom Rules'));
+		s.tab('routing_rule', _('Custom Rules'),
+			_('Advanced: raw sing-box routing rules, for shapes the Service rules page does not build.'));
 		o = s.taboption('routing_rule', form.SectionValue, '_routing_rule', form.GridSection, 'routing_rule');
 		o.depends('routing_mode', 'custom');
 		o.depends({'routing_mode': 'proxy_banned_ru', 'show_advanced_rules': '1'});
@@ -1600,7 +1603,8 @@ return view.extend({
 
 		/* DNS settings start */
 		if (modeNow === 'custom') {
-		s.tab('dns', _('DNS Settings'));
+		s.tab('dns', _('DNS Settings'),
+			_('Custom-mode DNS: the default strategy, which server resolves what, and per-domain DNS rules.'));
 		o = s.taboption('dns', form.SectionValue, '_dns', form.NamedSection, 'dns', 'homeproxy');
 		o.depends('routing_mode', 'custom');
 
@@ -1660,7 +1664,8 @@ return view.extend({
 
 		/* DNS servers start */
 		if (modeNow === 'custom') {
-		s.tab('dns_server', _('DNS Servers'));
+		s.tab('dns_server', _('DNS Servers'),
+			_('Define your own DNS servers for the custom DNS scheme.'));
 		o = s.taboption('dns_server', form.SectionValue, '_dns_server', form.GridSection, 'dns_server');
 		o.depends('routing_mode', 'custom');
 
@@ -1785,7 +1790,8 @@ return view.extend({
 
 		/* DNS rules start */
 		if (modeNow === 'custom') {
-		s.tab('dns_rule', _('DNS Rules'));
+		s.tab('dns_rule', _('DNS Rules'),
+			_('Route domain name resolution: which DNS server answers which domain in the custom scheme.'));
 		o = s.taboption('dns_rule', form.SectionValue, '_dns_rule', form.GridSection, 'dns_rule');
 		o.depends('routing_mode', 'custom');
 
@@ -2057,7 +2063,8 @@ return view.extend({
 
 		/* Rule set settings start */
 		if (modeNow === 'custom') {
-		s.tab('ruleset', _('Rule set'));
+		s.tab('ruleset', _('Rule set'),
+			_('Remote rule sets (geosite/geoip) the custom routing scheme can match against.'));
 		o = s.taboption('ruleset', form.SectionValue, '_ruleset', form.GridSection, 'ruleset');
 		o.depends('routing_mode', 'custom');
 
@@ -2151,7 +2158,11 @@ return view.extend({
 		 * both are routing inputs, and the Wizard is their single editor. */
 
 		return m.render().then(function(node) {
-			return node;
+			return E('div', {}, [
+				hp.pageIntro(_('Connection'),
+					_('How the traffic leaves your home: which server is the main one, how the routing mode decides what goes through the proxy, and what keeps the connection alive when a server dies. Everyday service→exit rules live on the Service rules page; DNS pools common to all modes — on the DNS settings page.')),
+				node
+			]);
 		});
 	}
 

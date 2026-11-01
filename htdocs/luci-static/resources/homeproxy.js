@@ -272,6 +272,49 @@ return baseclass.extend({
 		return svg;
 	},
 
+	/* R3 v3e "one page pattern" (19-UX_REDESIGN §7): every page starts with a
+	 * 1-2 sentence human explanation of what the page is for and when to
+	 * touch it. Pages embed this at the very top of their render output. */
+	pageIntro(title, text) {
+		return E('div', { 'class': 'hpui-intro' }, [
+			E('h2', {}, [ title ]),
+			E('p', { 'class': 'hpui-hint', 'style': 'margin-top:2px' }, [ text ])
+		]);
+	},
+
+	/* R3 v3e "one modal pattern": all confirmations across the app use the
+	 * themed LuCI modal (ui.showModal) instead of the native window.confirm
+	 * dialog, which ignores the shell look. Resolves true/false; a dismiss
+	 * via overlay/Escape simply never resolves (no action taken). */
+	confirmModal(title, msg, okLabel) {
+		return new Promise((resolve) => {
+			ui.showModal(title, [
+				E('p', { 'style': 'white-space:pre-wrap; margin:0 0 12px 0' }, [ msg ]),
+				E('div', { 'class': 'right' }, [
+					E('button', {
+						'class': 'btn',
+						'click': () => { ui.hideModal(); resolve(false); }
+					}, [ _('Cancel') ]),
+					' ',
+					E('button', {
+						'class': 'btn cbi-button-action important',
+						'click': () => { ui.hideModal(); resolve(true); }
+					}, [ okLabel || _('OK') ])
+				])
+			]);
+		});
+	},
+
+	/* Shared delay→badge mapping (Monitoring page and the Servers grid):
+	 * red = 65535 timeout sentinel, amber = slow (>=3000 ms), green healthy,
+	 * grey = unmeasured. One source, so both pages speak the same language. */
+	delayBadge(delay) {
+		const cls = (delay === 65535) ? 'hpui-b-red' : (delay == null) ? 'hpui-b-grey' :
+			(delay >= 3000) ? 'hpui-b-amber' : 'hpui-b-green';
+		const txt = (delay === 65535) ? _('Timeout') : (delay == null) ? '—' : delay + ' ms';
+		return E('span', { 'class': 'hpui-badge ' + cls }, [ txt ]);
+	},
+
 	/* Shared visual language (reference: the Automation tab): theme-agnostic
 	 * translucent panels/cards/badges, dark console blocks, tab bar with hover
 	 * highlight. Injected once per page load; pages opt in by calling this.
@@ -287,6 +330,16 @@ return baseclass.extend({
 			return;
 
 		const css = `
+/* Bundled UI font (R3 v3e, D5 amendment 2026-10-31: static assets are allowed
+ * inside the package — nothing is fetched at runtime). Inter variable covers
+ * latin + cyrillic in one file; system families stay the fallback. */
+@font-face {
+	font-family: 'Inter Ravnex';
+	src: url('${L.resource('fonts/InterVariable.woff2')}') format('woff2-variations');
+	font-weight: 100 900;
+	font-style: normal;
+	font-display: swap;
+}
 :root {
 	/* Ravnex brand accent (the raven logo green). */
 	--hp-accent: #22c55e;
@@ -313,6 +366,7 @@ return baseclass.extend({
 	--hp-console-bg: #1e1e1e; --hp-console-line: #333; --hp-console-fg: #ddd;
 	--hp-table-head: #757575;
 	--hp-table-head-fg: #f5f5f5;
+	--hp-font-sans: 'Inter Ravnex', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
 	--hp-font-mono: ui-monospace, 'Cascadia Mono', Consolas, 'Liberation Mono', Menlo, monospace;
 	/* Shell (R3 v2): light defaults — the data-hp-theme blocks below override
 	 * them as soon as the pre-paint sets the attribute (always does on app
@@ -365,6 +419,20 @@ table.hpui-table tbody tr:hover td { background: rgba(128,128,128,.13); }
 .hpui-log { max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; padding: 8px; background: var(--hp-console-bg); color: var(--hp-console-fg); border: 1px solid var(--hp-console-line); border-radius: var(--hp-radius-sm); font-size: 0.85em; font-family: var(--hp-font-mono); }
 .hpui-pre { font-family: var(--hp-font-mono); font-size: .82em; background: var(--hp-console-bg); color: var(--hp-console-fg); border: 1px solid var(--hp-console-line); padding: .5em .8em; white-space: pre-wrap; word-break: break-all; border-radius: var(--hp-radius-sm); margin: .3em 0 0; max-height: 14em; overflow-y: auto; }
 .hpui-hint { font-size: .88em; opacity: .8; margin: 8px 0; }
+/* Page header-explanation block (R3 v3e, one page pattern). */
+.hpui-intro h2 { margin: 0; }
+.hpui-intro .hpui-hint { margin: 2px 0 10px; }
+/* LuCI grid tables (Servers / Routing grids / Rule sets): re-key the classic
+ * row + header backgrounds onto the hp tokens. The classic bootstrap vars
+ * flip by the SYSTEM dark preference (data-darkmode), which disagrees with
+ * the app's MANUAL hp theme — the 'light header unreadable in dark' defect
+ * found in ч.135. The tokens follow hp-theme, so header/rows/cells stay
+ * readable in every combination of system preference and manual theme. */
+body.hp-shell table.table tr.cbi-section-table-titles { background: var(--hp-table-head); }
+body.hp-shell table.table tr.cbi-section-table-titles th { color: var(--hp-table-head-fg); text-shadow: none; }
+body.hp-shell table.table td { color: var(--hp-fg); }
+body.hp-shell .cbi-rowstyle-2 { background: var(--hp-panel-bg-2); }
+body.hp-shell table.table tr.cbi-section-table-row:hover td { background: var(--hp-hover); }
 /* LuCI standard tab bars (Client/DNS/Node/Server settings, grid modals) get the
  * same look as the hpui-tabs above. Scoped to pages calling uiStyle(); LuCI
  * navigation is a full page load, so other apps are never affected.
@@ -728,6 +796,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 body.hp-shell {
 	background: var(--hp-shell-bg) !important;
 	color: var(--hp-fg);
+	font-family: var(--hp-font-sans);
 }
 body.hp-shell > header:not(#hp-topbar) { display: none !important; }
 body.hp-shell > footer { display: none !important; }

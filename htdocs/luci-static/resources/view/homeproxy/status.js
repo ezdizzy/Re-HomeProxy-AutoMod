@@ -1086,13 +1086,17 @@ function buildSnapshotsCard() {
 					[ _('Restore') ])
 			]);
 			rowEl.lastChild.onclick = () => {
-				if (!window.confirm(_('Restore configuration snapshot %s? The service restarts.').format(name)))
-					return;
-				setMsg(_('Restoring...'), '#9a9a9a');
-				return L.resolveDefault(callSnapshotRestore(name), {}).then((r) => {
-					setMsg(r.result ? _('Restored: %s').format(name) : (r.error || _('Restore failed')),
-						r.result ? '#3fbf5f' : '#e05252');
-				});
+				hp.confirmModal(_('Restore snapshot'),
+					_('Restore configuration snapshot %s? The service restarts.').format(name), _('Restore'))
+					.then((ok) => {
+						if (!ok)
+							return;
+						setMsg(_('Restoring...'), '#9a9a9a');
+						return L.resolveDefault(callSnapshotRestore(name), {}).then((r) => {
+							setMsg(r.result ? _('Restored: %s').format(name) : (r.error || _('Restore failed')),
+								r.result ? '#3fbf5f' : '#e05252');
+						});
+					});
 			};
 			listEl.appendChild(rowEl);
 		}
@@ -1111,13 +1115,17 @@ function buildSnapshotsCard() {
 	const restoreBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', 'style': 'margin-left:4px' },
 		[ _('Restore internet (direct)') ]);
 	restoreBtn.onclick = () => {
-		if (!window.confirm(_('Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with "Service start" or a router reboot.')))
-			return;
-		setMsg(_('Stopping...'), '#9a9a9a');
-		return L.resolveDefault(callRestoreInternet(), {}).then((r) => {
-			setMsg(r.result ? _('Direct internet restored — run "Service start" to bring the proxy back.')
-				: (r.error || _('Failed')), r.result ? '#d99a1b' : '#e05252');
-		});
+		hp.confirmModal(_('Restore internet'),
+			_('Stop the proxy stack and restore DIRECT internet? DNS interception is removed; the proxy comes back with "Service start" or a router reboot.'), _('Stop proxy'))
+			.then((ok) => {
+				if (!ok)
+					return;
+				setMsg(_('Stopping...'), '#9a9a9a');
+				return L.resolveDefault(callRestoreInternet(), {}).then((r) => {
+					setMsg(r.result ? _('Direct internet restored — run "Service start" to bring the proxy back.')
+						: (r.error || _('Failed')), r.result ? '#d99a1b' : '#e05252');
+				});
+			});
 	};
 
 	refreshList();
@@ -1469,6 +1477,7 @@ return view.extend({
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Resources management'));
 		s.anonymous = true;
+		s.description = _('What runs on the router right now: the active core and its version. The rest of the page installs and updates the moving parts.');
 
 		o = s.option(form.DummyValue, '_active_core', _('Active core'));
 		const coreName = features.core_type === 'hiddify' ? 'hiddify-core' :
@@ -1568,12 +1577,14 @@ return view.extend({
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Application'));
 		s.anonymous = true;
+		s.description = _('The app itself: check for updates, install or reinstall the package.');
 
 		o = s.option(form.DummyValue, '_app_card');
 		o.default = buildAppCard(appStatus);
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Core management'));
 		s.anonymous = true;
+		s.description = _('The cores that run the proxy (only one is active at a time), rule-set seeds for a cold boot, configuration snapshots and the emergency internet recovery.');
 
 		o = s.option(form.DummyValue, '_core_env');
 		const tmpMB     = coreInfo.tmp_free_kb     != null ? Math.round(coreInfo.tmp_free_kb     / 1024) : '?';
@@ -1623,6 +1634,7 @@ return view.extend({
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('AntiDPI'));
 		s.anonymous = true;
+		s.description = _('Install, update and manage the two bypass engines — ByeDPI and Zapret. Which one actually serves the traffic is configured on the Blocking bypass page.');
 
 		o = s.option(form.DummyValue, '_byedpi_card');
 		o.default = buildByeDPICard(byedpiStatus, uci.get('homeproxy', 'config', 'main_node') === 'byedpi-out');
@@ -1635,6 +1647,7 @@ return view.extend({
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('MultiDNS / mosdns'));
 		s.anonymous = true;
+		s.description = _('Install, update and manage the engines behind MultiDNS — the racing DNS resolver.');
 
 		o = s.option(form.DummyValue, '_multidns_card');
 		o.default = buildMosdnsCard(mdnsStatus, mosdnsStatus);
@@ -1648,7 +1661,13 @@ return view.extend({
 		o = s.option(form.DummyValue, '_hiddify-c_logview');
 		o.render = L.bind(getRuntimeLog, this, o, _('core client'));
 
-		return m.render();
+		return m.render().then(function(node) {
+			return E('div', {}, [
+				hp.pageIntro(_('Maintenance'),
+					_('Installation and updates: the app itself, the cores, the bypass engines and MultiDNS — each in its own card. Also configuration snapshots, emergency internet recovery and the running logs. You need this page rarely: after an update or when something must be reinstalled.')),
+				node
+			]);
+		});
 	},
 
 	handleSaveApply: null,

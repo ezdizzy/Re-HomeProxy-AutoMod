@@ -1138,6 +1138,8 @@ return view.extend({
 
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('Ravnex Diagnostics')),
+			E('p', { 'class': 'hpui-hint', 'style': 'margin-top:2px' },
+				_('When something does not work: this page runs the actual probes — the core, the config, DNS, the network, and what exactly the provider blocks — and reports the findings. Start with Run All Tests, then read the tab the problem points to.')),
 			E('div', { 'class': 'cbi-section', 'style': 'padding-bottom:.5em' }, [
 				E('button', {
 					'class': 'btn cbi-button cbi-button-action important',

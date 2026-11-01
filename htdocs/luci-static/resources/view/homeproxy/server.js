@@ -133,8 +133,7 @@ return view.extend({
 		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
 		hp.uiShell();
 
-		m = new form.Map('homeproxy', _('Ravnex Server'),
-			_('The modern multi-core proxy platform. Fork of ImmortalWrt.'));
+		m = new form.Map('homeproxy');
 
 		s = m.section(form.TypedSection);
 		s.render = function() {
@@ -151,6 +150,7 @@ return view.extend({
 		}
 
 		s = m.section(form.NamedSection, 'server', 'homeproxy', _('Global settings'));
+		s.description = _('The main switch: whether Ravnex accepts incoming connections at all. Each server below is one endpoint other devices connect to — your own phone away from home, a friend, or a second router.');
 
 		o = s.option(form.Flag, 'enabled', _('Enable'));
 		o.rmempty = false;
@@ -176,7 +176,7 @@ return view.extend({
 		o.editable = true;
 
 		o = s.option(form.Flag, 'firewall', _('Firewall'),
-			_('Allow access from the Internet.'));
+			_('Open the port in the firewall so this server is reachable from the internet. Enable only for servers you actually use — each open port is visible to scanners.'));
 		o.editable = true;
 
 		o = s.option(form.ListValue, 'type', _('Type'));
@@ -934,6 +934,12 @@ return view.extend({
 		o.modalonly = true;
 		/* Extra settings end */
 
-		return m.render();
+		return m.render().then(function(node) {
+			return E('div', {}, [
+				hp.pageIntro(_('Server mode'),
+					_('Let OTHER devices connect to THIS router from the internet — your own phone away from home, a friend, or a second router. Each row below is one server endpoint; the Firewall flag decides whether it is reachable from outside.')),
+				node
+			]);
+		});
 	}
 });

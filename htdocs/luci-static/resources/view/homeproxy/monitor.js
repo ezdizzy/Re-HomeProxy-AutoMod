@@ -484,6 +484,9 @@ return view.extend({
 		refreshConnections();
 		refreshHotswap();
 
-		return E('div', {}, [ panelNodes, panelConn ]);
+		return E('div', {}, [
+			hp.pageIntro(_('Monitoring'),
+				_('How healthy the servers are right now: the live delay of every node the core measures, the running engine and core, and the active connections with their speed. Read-only — the changes happen on the Servers and Blocking bypass pages.')),
+			panelNodes, panelConn ]);
 	}
 });

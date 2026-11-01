@@ -1098,9 +1098,12 @@ return view.extend({
 		 * preset is probed on a temporary port, the table renders in dpiResult
 		 * (ONE place); a row's button fills the strategy input (Save applies). */
 		bTestAll.addEventListener('click', function() {
-			if (!window.confirm(_('Test all ByeDPI presets? Each is probed against 4 sites (~12 min total). LAN clients are not affected. You can stop it at any point.')))
-				return;
-			bTestAll.disabled = true;
+			hp.confirmModal(_('Test all presets'),
+				_('Test all ByeDPI presets? Each is probed against 4 sites (~12 min total). LAN clients are not affected. You can stop it at any point.'), _('Start'))
+				.then(function(ok) {
+					if (!ok)
+						return;
+					bTestAll.disabled = true;
 			const stop = { on: false };
 			const stopBtn = E('button', { 'class': 'btn cbi-button', type: 'button', style: 'margin-left:6px' }, [ _('Stop') ]);
 			stopBtn.addEventListener('click', function() { stop.on = true; stopBtn.disabled = true; });
@@ -1168,6 +1171,7 @@ return view.extend({
 					: _('Done') + ': ' + fullPass + ' / ' + BYEDPI_PRESETS.length + ' ' + _('work on all sites') +
 						(((fullPass + partial) > 0) ? (' — ' + _('fill a preset into the input and press "Save ByeDPI"')) : '');
 			});
+				});
 		});
 
 		/* ── W3 v2 (Ф8-F4): Composition Builder — per-resource profiles of
@@ -1755,33 +1759,41 @@ return view.extend({
 					const target = resSel.value;
 					const targetLabel = resSel.options[resSel.selectedIndex].text;
 					if (!target) {
-						if (!window.confirm(_('Apply this Zapret strategy globally (every flow routed to Zapret) and restart the service?')))
-							return;
-						ab.disabled = true;
-						L.resolveDefault(callFuzzApply(s.args), {}).then(function(r2) {
-							ab.disabled = false;
-							ab.textContent = (r2 && r2.result) ? '✓' : '✗';
-							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ r2 && r2.result
-								? _('Strategy applied — the service restarts; run "Test strategy" in ~30 s to confirm.')
-								: ((r2 && r2.error) || _('Apply failed')) ]));
-						});
+						hp.confirmModal(_('Apply strategy'),
+							_('Apply this Zapret strategy globally (every flow routed to Zapret) and restart the service?'), _('Apply'))
+							.then(function(ok) {
+								if (!ok)
+									return;
+								ab.disabled = true;
+								L.resolveDefault(callFuzzApply(s.args), {}).then(function(r2) {
+									ab.disabled = false;
+									ab.textContent = (r2 && r2.result) ? '✓' : '✗';
+									dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ r2 && r2.result
+										? _('Strategy applied — the service restarts; run "Test strategy" in ~30 s to confirm.')
+										: ((r2 && r2.error) || _('Apply failed')) ]));
+								});
+							});
 						return;
 					}
-					if (!window.confirm(_('Apply this strategy for %s: a SCOPED profile is built (other managed resources keep their strategies), the rule goes to Zapret, then the resource is checked live — page, CDN and the REAL video stream. Continue?').format(targetLabel)))
-						return;
-					ab.disabled = true;
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Applying %s for %s — progress below…').format(s.name || _('custom args'), targetLabel) ]));
-					/* set_rule crosses as a STRING (issue #11). */
-					L.resolveDefault(callAutoPickStart(target, 'quick', '1', s.args), {}).then(function(r2) {
-						ab.disabled = false;
-						if (!r2 || r2.result !== true) {
+					hp.confirmModal(_('Apply strategy'),
+						_('Apply this strategy for %s: a SCOPED profile is built (other managed resources keep their strategies), the rule goes to Zapret, then the resource is checked live — page, CDN and the REAL video stream. Continue?').format(targetLabel), _('Apply'))
+						.then(function(ok) {
+							if (!ok)
+								return;
+							ab.disabled = true;
 							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-								[ _('Auto-pick failed to start: %s').format((r2 && r2.error) || _('rpc error')) ]));
-							return;
-						}
-						refresh();
-					});
+								[ _('Applying %s for %s — progress below…').format(s.name || _('custom args'), targetLabel) ]));
+							/* set_rule crosses as a STRING (issue #11). */
+							L.resolveDefault(callAutoPickStart(target, 'quick', '1', s.args), {}).then(function(r2) {
+								ab.disabled = false;
+								if (!r2 || r2.result !== true) {
+									dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+										[ _('Auto-pick failed to start: %s').format((r2 && r2.error) || _('rpc error')) ]));
+									return;
+								}
+								refresh();
+							});
+						});
 				});
 				/* ч.109: the deep verdict — did the resource LOAD (page/CDN/
 				 * media fetches), not only the handshake. ч.117: a fully
@@ -1911,9 +1923,9 @@ return view.extend({
 		};
 		labQuick.addEventListener('click', function() { labStart('quick'); });
 		labFull.addEventListener('click', function() {
-			if (!window.confirm(_('Run the FULL strategy sweep? Every candidate is measured in turn (temp NFQUEUE, live traffic untouched) — this takes up to ~15 minutes.')))
-				return;
-			labStart('full');
+			hp.confirmModal(_('Full sweep'),
+				_('Run the FULL strategy sweep? Every candidate is measured in turn (temp NFQUEUE, live traffic untouched) — this takes up to ~15 minutes.'), _('Start'))
+				.then(function(ok) { if (ok) labStart('full'); });
 		});
 
 		/* Auto-tune (Ф8-F7 T3): ONE click — fuzz (reused when fresh) → best
@@ -1956,25 +1968,28 @@ return view.extend({
 			const what = (mode === 'full')
 				? _('Auto-pick the best strategy for %s? This may first run the FULL fuzz (~%d min), then applies the winner with a server snapshot (Restore stays available) and checks the resource live.').format(autSel.options[autSel.selectedIndex].text, eta)
 				: _('Auto-pick the best strategy for %s? It uses the recent fuzz ranking (or runs a quick fuzz first), applies the winner with a server snapshot (Restore stays available) and checks the resource live.');
-			if (!window.confirm(what.format(autSel.options[autSel.selectedIndex].text)))
-				return;
-			autBtn.disabled = true;
-			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-				[ _('Starting the auto-pick…') ]));
-				/* set_rule crosses as a STRING (issue #11). */
-				L.resolveDefault(callAutoPickStart(resource, mode, autSetRule.checked ? '1' : '0'), {}).then(function(r) {
-				autBtn.disabled = false;
-				if (!r || r.result !== true) {
-					const emsg = (r && r.error === 'rules_mode')
-						? _('Routing rules apply ONLY in "Bypass blocking" mode — the rule cannot be set here.')
-						: ((r && r.error) || _('rpc error'));
+			hp.confirmModal(_('Auto-pick strategy'), what.format(autSel.options[autSel.selectedIndex].text), _('Start'))
+				.then(function(ok) {
+					if (!ok)
+						return;
+					autBtn.disabled = true;
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Auto-pick failed to start: %s').format(emsg) ]));
-					return;
-				}
-				autStatus.textContent = _('Auto-pick started — the progress shows up in one place below.');
-				refresh();
-			});
+						[ _('Starting the auto-pick…') ]));
+						/* set_rule crosses as a STRING (issue #11). */
+						L.resolveDefault(callAutoPickStart(resource, mode, autSetRule.checked ? '1' : '0'), {}).then(function(r) {
+						autBtn.disabled = false;
+						if (!r || r.result !== true) {
+							const emsg = (r && r.error === 'rules_mode')
+								? _('Routing rules apply ONLY in "Bypass blocking" mode — the rule cannot be set here.')
+								: ((r && r.error) || _('rpc error'));
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Auto-pick failed to start: %s').format(emsg) ]));
+							return;
+						}
+						autStatus.textContent = _('Auto-pick started — the progress shows up in one place below.');
+						refresh();
+					});
+				});
 		});
 
 		/* ── ч.97: strategy auto-pilot (scheduled) — the keeper mode ─────
@@ -2052,30 +2067,37 @@ return view.extend({
 				return;
 			}
 			const turningOn = apEnabled.checked;
-			if (turningOn && !window.confirm(_('Enable the strategy auto-pilot? It will manage the Zapret strategies of the selected resources automatically (scheduled re-ranks, immediate re-picks on failures) and — with the rules option — keep their rules on Zapret.')))
-				return;
-			apSave.disabled = true;
-			L.resolveDefault(callAutoPilotSet(
-				apEnabled.checked ? '1' : '0', res.join(' '),
-				apRules.checked ? '1' : '0',
-				String(parseInt(apInterval.value, 10) || 6),
-				String(parseInt(apCheck.value, 10) || 15),
-				apWin.value || '', apMode.value || 'quick',
-				'2'), {}).then(function(r) {
-				apSave.disabled = false;
-				if (!r || r.result !== true) {
+			const doSave = function() {
+				apSave.disabled = true;
+				L.resolveDefault(callAutoPilotSet(
+					apEnabled.checked ? '1' : '0', res.join(' '),
+					apRules.checked ? '1' : '0',
+					String(parseInt(apInterval.value, 10) || 6),
+					String(parseInt(apCheck.value, 10) || 15),
+					apWin.value || '', apMode.value || 'quick',
+					'2'), {}).then(function(r) {
+					apSave.disabled = false;
+					if (!r || r.result !== true) {
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Auto-pilot save failed: %s').format((r && r.error) || _('rpc error')) ]));
+						return;
+					}
+					apDirty = false;
+					apSig = null;   /* refill from the saved config */
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Auto-pilot save failed: %s').format((r && r.error) || _('rpc error')) ]));
-					return;
-				}
-				apDirty = false;
-				apSig = null;   /* refill from the saved config */
-				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-					[ (turningOn)
-						? _('Auto-pilot enabled — the daemon picks it up within a minute (first re-rank right away).')
-						: _('Auto-pilot settings saved — the daemon reads them on its next tick.') ]));
-				refresh();
-			});
+						[ (turningOn)
+							? _('Auto-pilot enabled — the daemon picks it up within a minute (first re-rank right away).')
+							: _('Auto-pilot settings saved — the daemon reads them on its next tick.') ]));
+					refresh();
+				});
+			};
+			if (turningOn) {
+				hp.confirmModal(_('Enable auto-pilot'),
+					_('Enable the strategy auto-pilot? It will manage the Zapret strategies of the selected resources automatically (scheduled re-ranks, immediate re-picks on failures) and — with the rules option — keep their rules on Zapret.'), _('Enable'))
+					.then(function(ok) { if (ok) doSave(); });
+				return;
+			}
+			doSave();
 		});
 
 		function renderAutoPilot(data) {

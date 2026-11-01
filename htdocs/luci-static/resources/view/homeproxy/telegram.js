@@ -545,36 +545,40 @@ return view.extend({
 			const warn = twRsPresent
 				? _('Run the OFFICIAL tg-ws-proxy-rs installer again? It upgrades the third-party component (SHA-256 digests are verified from the GitHub release API).')
 				: _('Install the THIRD-PARTY component tg-ws-proxy-rs (valnesfjord, MIT)? The official installer downloads the release binary and its LuCI page and verifies digests from the GitHub release API. Nothing is packed into this app; the configuration stays on the component\'s own page. LAN-only — no WAN port is opened.');
-			if (!window.confirm(warn))
-				return;
-			twInstallBtn.disabled = true;
-			twState.insSig = null;
-			twState.manual = false;
-			dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Downloading and running the official installer…') ]));
-			L.resolveDefault(callTgwspInstall(), {}).then(function(r) {
-				if (!r || r.result === false)
-					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Installation failed to start: ') + ((r && r.error) || _('rpc error')) ]));
-				return pollTgws();
-			}).finally(function() { twInstallBtn.disabled = false; });
+			hp.confirmModal(_('Install tg-ws'), warn, _('Install')).then(function(ok) {
+				if (!ok)
+					return;
+				twInstallBtn.disabled = true;
+				twState.insSig = null;
+				twState.manual = false;
+				dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Downloading and running the official installer…') ]));
+				L.resolveDefault(callTgwspInstall(), {}).then(function(r) {
+					if (!r || r.result === false)
+						dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Installation failed to start: ') + ((r && r.error) || _('rpc error')) ]));
+					return pollTgws();
+				}).finally(function() { twInstallBtn.disabled = false; });
+			});
 		});
 
 		twGoInstallBtn.addEventListener('click', function() {
 			const warn = twGoManaged
 				? _('Re-run the tg-ws bridge installer? It re-downloads the release binary (SHA-256 verified from the GitHub release API) and restarts the local instance.')
 				: _('Install the THIRD-PARTY tg-ws bridge (tg-ws-proxy-go, d0mhate, MIT)? It downloads the release binary (SHA-256 verified from the GitHub release API), installs a local procd instance listening on 127.0.0.1 only, and enables the "tg-ws (transparent)" exit for the Telegram preset. Voice calls (UDP) are not carried by the bridge.');
-			if (!window.confirm(warn))
-				return;
-			twGoInstallBtn.disabled = true;
-			twState.goSig = null;
-			twState.manual = false;
-			dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Downloading and installing the bridge…') ]));
-			L.resolveDefault(callTgwsInstall(), {}).then(function(r) {
-				if (!r || r.result === false)
-					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Bridge installation failed to start: ') + ((r && r.error) || _('rpc error')) ]));
-				return pollTgws();
-			}).finally(function() { twGoInstallBtn.disabled = false; });
+			hp.confirmModal(_('Install tg-ws bridge'), warn, _('Install')).then(function(ok) {
+				if (!ok)
+					return;
+				twGoInstallBtn.disabled = true;
+				twState.goSig = null;
+				twState.manual = false;
+				dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Downloading and installing the bridge…') ]));
+				L.resolveDefault(callTgwsInstall(), {}).then(function(r) {
+					if (!r || r.result === false)
+						dom.content(twResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Bridge installation failed to start: ') + ((r && r.error) || _('rpc error')) ]));
+					return pollTgws();
+				}).finally(function() { twGoInstallBtn.disabled = false; });
+			});
 		});
 
 		function pollTgws() {

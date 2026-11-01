@@ -6365,3 +6365,123 @@ msgstr ""
 
 msgid "Per-device policy for the LAN, upstream IP policy for the WAN and interface binding. This does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages. The Apply button at the bottom of the page saves these settings."
 msgstr ""
+
+msgid "Delete all"
+msgstr ""
+
+msgid "Delete"
+msgstr ""
+
+msgid "The engine learns which sites your provider blocks and sends them around the block automatically: traffic that fails directly but works through the proxy is added to the lists. The Overview tab shows what it does, the Sites tab is the result, the Settings tab tunes how aggressively it learns."
+msgstr ""
+
+msgid "Start"
+msgstr ""
+
+msgid "Full sweep"
+msgstr ""
+
+msgid "Enable auto-pilot"
+msgstr ""
+
+msgid "The main connection: the main server, the routing mode, and what keeps the connection alive when a server dies (URLTest groups, Hot Swap). New servers are added on the Servers page."
+msgstr ""
+
+msgid "The everyday service→exit rules moved to the Service rules page."
+msgstr ""
+
+msgid "Advanced: group servers into routing groups and point rules at them."
+msgstr ""
+
+msgid "Advanced: raw sing-box routing rules, for shapes the Service rules page does not build."
+msgstr ""
+
+msgid "Custom-mode DNS: the default strategy, which server resolves what, and per-domain DNS rules."
+msgstr ""
+
+msgid "Define your own DNS servers for the custom DNS scheme."
+msgstr ""
+
+msgid "Route domain name resolution: which DNS server answers which domain in the custom scheme."
+msgstr ""
+
+msgid "Remote rule sets (geosite/geoip) the custom routing scheme can match against."
+msgstr ""
+
+msgid "How the traffic leaves your home: which server is the main one, how the routing mode decides what goes through the proxy, and what keeps the connection alive when a server dies. Everyday service→exit rules live on the Service rules page; DNS pools common to all modes — on the DNS settings page."
+msgstr ""
+
+msgid "Rules for the people at home: which sites a child can open, when the internet turns off in the evening, and Wi-Fi cut-off at night. The devices themselves live on the Devices page — the rules below apply to them by name."
+msgstr ""
+
+msgid "When something does not work: this page runs the actual probes — the core, the config, DNS, the network, and what exactly the provider blocks — and reports the findings. Start with Run All Tests, then read the tab the problem points to."
+msgstr ""
+
+msgid "Two pools: the plain one resolves Russian sites directly, the encrypted one resolves blocked domains through the proxy. MultiDNS races every server in both pools."
+msgstr ""
+
+msgid "Failover for setups WITHOUT MultiDNS: watches the first server of each pool and rotates a healthy one up when it dies. Ignored while MultiDNS is enabled."
+msgstr ""
+
+msgid "The racing engine: every lookup queries all servers of both pools at once and the fastest valid answer wins; a quality daemon continuously scores and prunes servers."
+msgstr ""
+
+msgid "The router asks DNS servers for site addresses: the plain pool resolves Russian sites directly, the encrypted pool resolves blocked domains through the proxy, and MultiDNS races every server so each lookup gets the fastest healthy answer. If sites open slowly — start with the pools; the rest is tuning."
+msgstr ""
+
+msgid "How healthy the servers are right now: the live delay of every node the core measures, the running engine and core, and the active connections with their speed. Read-only — the changes happen on the Servers and Blocking bypass pages."
+msgstr ""
+
+msgid "In pool"
+msgstr ""
+
+msgid "Live status"
+msgstr ""
+
+msgid "Your own servers: import share links (ss://, vmess://, vless://, hysteria2://, vpn:// …), a WireGuard .conf file, or add a node manually. Click a row to edit it."
+msgstr ""
+
+msgid "Pull node lists from subscription URL-s automatically: every day at the set hour (optionally through the proxy) and filtered by your keywords. The results land in their own \"Sub (…)\" tabs."
+msgstr ""
+
+msgid "The servers the connection runs through: add your own (share link, .conf file or by hand) or pull a provider subscription. The Live status column shows what the running core currently measures for every node. Which server is used as the main one — on the Connection page."
+msgstr ""
+
+msgid "Restore internet"
+msgstr ""
+
+msgid "Stop proxy"
+msgstr ""
+
+msgid "The main switch: whether Ravnex accepts incoming connections at all. Each server below is one endpoint other devices connect to — your own phone away from home, a friend, or a second router."
+msgstr ""
+
+msgid "Open the port in the firewall so this server is reachable from the internet. Enable only for servers you actually use — each open port is visible to scanners."
+msgstr ""
+
+msgid "Let OTHER devices connect to THIS router from the internet — your own phone away from home, a friend, or a second router. Each row below is one server endpoint; the Firewall flag decides whether it is reachable from outside."
+msgstr ""
+
+msgid "Restore snapshot"
+msgstr ""
+
+msgid "What runs on the router right now: the active core and its version. The rest of the page installs and updates the moving parts."
+msgstr ""
+
+msgid "The app itself: check for updates, install or reinstall the package."
+msgstr ""
+
+msgid "The cores that run the proxy (only one is active at a time), rule-set seeds for a cold boot, configuration snapshots and the emergency internet recovery."
+msgstr ""
+
+msgid "Install, update and manage the two bypass engines — ByeDPI and Zapret. Which one actually serves the traffic is configured on the Blocking bypass page."
+msgstr ""
+
+msgid "Install, update and manage the engines behind MultiDNS — the racing DNS resolver."
+msgstr ""
+
+msgid "Installation and updates: the app itself, the cores, the bypass engines and MultiDNS — each in its own card. Also configuration snapshots, emergency internet recovery and the running logs. You need this page rarely: after an update or when something must be reinstalled."
+msgstr ""
+
+msgid "Install tg-ws"
+msgstr ""
