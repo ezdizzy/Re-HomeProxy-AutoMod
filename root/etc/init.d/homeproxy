@@ -386,6 +386,46 @@ start_service() {
 			config_get mdns_fb_port "multidns" "plain_port" "5453"
 			echo "server=127.0.0.1#${mdns_fb_port}" >> "$DNSMASQ_DIR/redirect-dns.conf"
 		fi
+
+		# Emergency DNS floor (Ф1.3, audits 45/49): freeze the WAN resolvers as
+		# the LAST server. dnsmasq reaches it only when :5333 (core) AND :5453
+		# (MultiDNS, if wired) both timeout — e.g. a dead core after a crash —
+		# so LAN DNS and the always-RU-internet invariant survive a full chain
+		# death. Two details make the floor REAL:
+		#   - the snapshot is FROZEN per service start (a flapping WAN cannot
+		#     churn dnsmasq config) and kept as last-known-good when
+		#     resolv.conf.auto is unusable at start (WAN down at boot);
+		#   - dnsmasq's own egress escapes the interception via the skuid rule
+		#     in firewall_post.ut — otherwise a dead core would intercept the
+		#     fallback queries too and the floor would die with the chain.
+		# Tradeoff (same class as the ч.59 fallback): a query the core answers
+		# too slowly can leak to the direct WAN resolver; as the LAST entry it
+		# is reachable only when the earlier resolvers timed out.
+		local wan_resolv dns_fb dns_fb_cand dns_fb_n ns
+		wan_resolv="/tmp/resolv.conf.d/resolv.conf.auto"
+		dns_fb="$DNSMASQ_DIR/redirect-dns-fallback.conf"
+		dns_fb_cand="$DNSMASQ_DIR/redirect-dns-fallback.cand"
+		dns_fb_n=0
+		rm -f "$dns_fb_cand"
+		if [ -r "$wan_resolv" ]; then
+			for ns in $(sed -n 's/^nameserver \([0-9a-fA-F.:]*\)$/\1/p' "$wan_resolv"); do
+				case "$ns" in 127.*|0.0.0.0|::1|::) continue ;; esac
+				echo "server=$ns" >> "$dns_fb_cand"
+				dns_fb_n=$((dns_fb_n + 1))
+			done
+		fi
+		if [ "$dns_fb_n" -gt 0 ]; then
+			mv -f "$dns_fb_cand" "$dns_fb"
+			printf '{"frozen":1,"servers":%d,"ts":%s}\n' "$dns_fb_n" "$(date +%s)" > "$RUN_DIR/dns_fallback.json.tmp" &&
+				mv -f "$RUN_DIR/dns_fallback.json.tmp" "$RUN_DIR/dns_fallback.json"
+		else
+			rm -f "$dns_fb_cand"
+			# resolv.conf.auto unusable at start — the previous frozen snapshot
+			# stays: it is the last-known-good emergency list.
+		fi
+		if [ -s "$dns_fb" ]; then
+			log "DNS emergency fallback frozen: $(grep -c '^server=' "$dns_fb") WAN resolver(s)."
+		fi
 		;;
 	esac
 	/etc/init.d/dnsmasq restart >"/dev/null" 2>&1
@@ -540,8 +580,20 @@ start_service() {
 		# group, so its egress can be excluded from the proxy redirect by socket group (skgid).
 		# ciadpi has no fwmark option, and without this exclusion its outbound connections
 		# loop back through sing-box (conntrack table full / packet flood).
+		# GID mismatch fix (Ф1.3, audit B9): infra.byedpi_gid is the SINGLE source of
+		# truth — the nft skgid rules read the same UCI option. The /etc/group entry
+		# (procd's `group` param takes the gid from there) is now synced to it, not
+		# just created once: a changed UCI gid previously left ciadpi running under
+		# the old gid while nft matched the new one.
 		if ! grep -q "^byedpi:" /etc/group; then
 			echo "byedpi:x:${byedpi_gid}:" >> /etc/group
+		else
+			local cur_gid
+			cur_gid="$(sed -n 's/^byedpi:x:\([0-9][0-9]*\):.*/\1/p' /etc/group)"
+			if [ -n "$cur_gid" ] && [ "$cur_gid" != "$byedpi_gid" ]; then
+				sed -i "s/^byedpi:x:${cur_gid}:/byedpi:x:${byedpi_gid}:/" /etc/group
+				log "byedpi group gid synced ${cur_gid} -> ${byedpi_gid} (infra.byedpi_gid)."
+			fi
 		fi
 
 		# The instance command is the LAUNCHER (dpi_engine.sh), not ciadpi itself:
@@ -556,12 +608,12 @@ start_service() {
 		procd_set_param respawn 3600 1 5
 		procd_close_instance
 
-		config_get_bool byedpi_block_quic "config" "byedpi_block_quic" "0"
-		if [ "$byedpi_block_quic" = "1" ]; then
-			nft 'add chain inet fw4 homeproxy_quic { type filter hook prerouting priority -150; policy accept; }' 2>/dev/null || true
-			nft 'add rule inet fw4 homeproxy_quic ip daddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return' 2>/dev/null || true
-			nft 'add rule inet fw4 homeproxy_quic udp dport 443 drop' 2>/dev/null || true
-		fi
+		# byedpi_block_quic: the QUIC hard-block chain moved INTO the rendered
+		# fw4_post include (firewall_post.ut, Ф1.3 audit B9): the raw `nft add
+		# chain` it used to be was added once at start and silently vanished on
+		# any full firewall restart (LuCI firewall apply / netifd reload) while
+		# the service kept running — QUIC unblocked without a trace. The include
+		# survives every reload and is nft-validated with the rest of the render.
 	fi
 
 	# Zapret (nfqws2): HomeProxy runs its OWN nfqws2 on a dedicated NFQUEUE. Which flows
@@ -771,6 +823,14 @@ stop_service() {
 		ip route del 0.0.0.0/0 dev "$tun_name" table "$tun_table" 2>"/dev/null"
 		ip -6 rule del fwmark "$tun_mark" table "$tun_table" 2>"/dev/null"
 		ip -6 route del ::/0 dev "$tun_name" table "$tun_table" 2>"/dev/null"
+		# Ф1.3 fail-closed floor (tun_route_watch.sh installs it): remove it
+		# together with the policy route. The rule deletion above already stops
+		# lookups of the table, but the floor must not outlive the service —
+		# a leftover unreachable route with a re-added rule (e.g. another tool
+		# re-using the fwmark) would black-hole traffic with the service off.
+		# Metric must match the watcher's FLOOR_METRIC exactly.
+		ip route del unreachable default metric 42780 table "$tun_table" 2>"/dev/null"
+		ip -6 route del unreachable default metric 42780 table "$tun_table" 2>"/dev/null"
 	fi
 
 	# Nftables rules
@@ -862,6 +922,11 @@ service_stopped() {
 
 	ip link set "$tun_name" down 2>"/dev/null"
 	ip tuntap del mode tun name "$tun_name" 2>"/dev/null"
+
+	# Ф1.3 state files: cleaned HERE (not in stop_service) — procd kills the
+	# instances only after stop_service returns, so the tun watcher could still
+	# rewrite its state file in its last tick and a stale json would survive.
+	rm -f "$RUN_DIR/tun_state.json" "$RUN_DIR/dns_fallback.json" 2>"/dev/null"
 }
 
 reload_service() {

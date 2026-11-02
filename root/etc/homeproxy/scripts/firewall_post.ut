@@ -106,9 +106,38 @@ let self_mark, redirect_port,
 
 /* ByeDPI runs as root (needed for TCP_MD5SIG etc.) but under a dedicated group, so its
  * egress can be excluded from the redirect by socket group (skgid) to break the proxy
- * loop — ciadpi has no fwmark option, and root traffic can't be told apart by skuid. */
+ * loop — ciadpi has no fwmark option, and root traffic can't be told apart by skuid.
+ * infra.byedpi_gid is the SINGLE source of truth: init.d syncs the /etc/group entry
+ * to it (audit B9 — previously the group file and the nft rule could disagree). */
 const byedpi_enabled = uci.get(cfgname, 'config', 'byedpi_enabled') || '0';
 const byedpi_gid = uci.get(cfgname, 'infra', 'byedpi_gid') || '8181';
+/* QUIC hard-block (ByeDPI option): moved from a raw `nft add chain` in init.d into
+ * this include (Ф1.3, audit B9 — fail-open of the full reload): a raw chain added
+ * once at start vanished on ANY full firewall restart (LuCI firewall apply, netifd
+ * reload) and was never re-added while the service kept running. As part of the
+ * rendered fragment it survives every reload and is re-validated with the rest. */
+const byedpi_block_quic = uci.get(cfgname, 'config', 'byedpi_block_quic') || '0';
+
+/* dnsmasq's own egress must escape the interception (Ф1.3, audits 45/49): dnsmasq
+ * normally talks to the core DNS over loopback (already exempt via the local-addr
+ * set), but its EMERGENCY upstream — the frozen WAN-DNS fallback written by init.d —
+ * is a real WAN address. Without an skuid escape a dead core would intercept dnsmasq's
+ * fallback queries too and kill the one resolver that keeps LAN DNS (and the
+ * always-RU-internet invariant) alive. Numeric uid parsed from /etc/passwd: a literal
+ * `skuid dnsmasq` is resolved by nft at parse time and a missing user would fail the
+ * WHOLE ruleset (lesson 96/97 — an nft error in an include drops every homeproxy
+ * chain). No user → no rule, the fallback just rides the interception as before. */
+const dnsmasq_uid = (() => {
+	const passwd = readfile('/etc/passwd');
+	if (passwd == null)
+		return null;
+	for (let line in split(passwd, '\n')) {
+		const m = match(line, /^dnsmasq:x:(\d+):/);
+		if (m)
+			return m[1];
+	}
+	return null;
+})();
 
 /* zapret: sing-box's `zapret-out` direct outbound stamps egress with zapret_mark (a
  * routing_mark that OVERRIDES default_mark). That mark must (a) escape the redirect loop
@@ -315,6 +344,9 @@ chain homeproxy_redirect_lanac {
 }
 
 chain homeproxy_redirect {
+	{% if (dnsmasq_uid): %}
+	meta skuid {{ dnsmasq_uid }} counter return
+	{% endif %}
 	meta mark {{ self_mark }} counter return
 	{% if (zapret_enabled === '1'): %}
 	meta mark {{ zapret_mark }} counter return
@@ -384,6 +416,17 @@ chain homeproxy_zapret_queue {
 	type filter hook postrouting priority mangle; policy accept;
 	meta mark {{ zapret_mark }} meta l4proto tcp ct original packets 1-12 counter queue num {{ zapret_qnum }} bypass
 	meta mark {{ zapret_mark }} meta l4proto udp ct original packets 1-12 counter queue num {{ zapret_qnum }} bypass
+}
+{% endif %}
+
+{# QUIC hard-block (ByeDPI option): part of the include now — survives any full
+   fw4 reload (the raw `nft add chain` it used to be was lost on every firewall
+   restart while the service kept running). Same semantics as the old raw rules. #}
+{% if (byedpi_enabled === '1' && byedpi_block_quic === '1'): %}
+chain homeproxy_quic {
+	type filter hook prerouting priority -150; policy accept;
+	ip daddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } counter return
+	udp dport 443 counter drop
 }
 {% endif %}
 
@@ -487,6 +530,9 @@ chain homeproxy_mangle_prerouting {
 }
 
 chain homeproxy_mangle_output {
+	{% if (dnsmasq_uid): %}
+	meta skuid {{ dnsmasq_uid }} counter return
+	{% endif %}
 	{% if (byedpi_enabled === '1'): %}
 	meta skgid {{ byedpi_gid }} counter return
 	{% endif %}
@@ -578,6 +624,15 @@ chain homeproxy_mangle_tun_mark {
 
 chain homeproxy_mangle_tun {
 	iifname {{ tun_name }} counter return
+	{% if (dnsmasq_uid): %}
+	meta skuid {{ dnsmasq_uid }} counter return
+	{% endif %}
+	{% if (byedpi_enabled === '1'): %}
+	{# Audit 21 (P1): the same skgid escape the REDIRECT and TPROXY output chains
+	   already have — without it ciadpi's egress is re-marked tun_mark, routed into
+	   the tun device and loops (sing-box → local ByeDPI → ciadpi → tun → ...). #}
+	meta skgid {{ byedpi_gid }} counter return
+	{% endif %}
 	{# Loop guard: same as homeproxy_mangle_lanac — never re-mark the core's own egress. #}
 	meta mark {{ self_mark }} counter return
 	{% if (zapret_enabled === '1'): %}

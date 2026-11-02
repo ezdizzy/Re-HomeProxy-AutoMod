@@ -67,14 +67,21 @@ if (server_enabled === '1') {
 	});
 }
 
-/* Validate + promote one fragment. Empty rules = untouched live file (the
- * original behaviour — an empty fragment must not delete a still-referenced
- * include). */
+/* Validate + promote one fragment. Ф1.3 (audit B-series "stale fw4 fragments"):
+ * "empty rules = untouched live file" used to keep STALE accepts behind — a
+ * disabled server port stayed open in input, a tun accept survived a proxy-mode
+ * switch (until the next full restart rewrote it). An empty file is a proven-safe
+ * state on this system (stop_service truncates the same files) and fw4 includes
+ * it cleanly; the atomic mv keeps the file present (a missing include file is
+ * only a warning, but an always-present file costs nothing). */
 const promote = (name, rules) => {
-	if (isEmpty(rules))
-		return;
 	const live = RUN_DIR + '/' + name;
 	const cand = live + '.candidate';
+	if (isEmpty(rules)) {
+		writefile(cand, '');
+		system(`mv -f ${shellq(cand)} ${shellq(live)}`);
+		return;
+	}
 	const wrap = '/tmp/hp_fw4_chk.nft';
 	writefile(cand, join('\n', rules) + '\n');
 	writefile(wrap, 'table inet hp_lkgchk {\n\tchain chk {\n'
