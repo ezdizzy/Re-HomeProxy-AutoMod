@@ -1,0 +1,70 @@
+name: Bug report
+description: Что-то не работает — зависание, ошибка, неожиданное поведение
+labels: [ bug ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что сообщаете о проблеме Ravnex!
+        **Самое полезное вложение — отчёт для поддержки**: «Проверка и ремонт» → вкладка «Отчёт» →
+        «Отчёт для поддержки» → «Собрать полный отчёт» → скачать архив. Секреты (пароли, ключи,
+        токены, ссылки подписок) вычищаются автоматически, архив проходит самопроверку перед выдачей.
+        Альтернатива из Telegram-бота: команда `/logs`.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Что произошло?
+      description: Опишите словами — что ожидали, что вышло, когда это началось.
+      placeholder: Например — LuCI открывается, но вкладка Серверы крутится и не загружается.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: |
+        1. Открыл …
+        2. Нажал …
+        3. …
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Версия Ravnex
+      description: Видна в «Обслуживание» или «Главная» (например, 3.0.0).
+      placeholder: "3.0.0"
+    validations:
+      required: true
+  - type: input
+    id: router
+    attributes:
+      label: Модель роутера и версия OpenWrt
+      description: Например, Keenetic Peak, OpenWrt 25.12.5 (из /etc/openwrt_release).
+      placeholder: Keenetic Peak, OpenWrt 25.12.5
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Затронутая область
+      options:
+        - Прокси (ядро, узлы, переключение)
+        - Обход блокировок (Zapret/ByeDPI)
+        - DNS / MultiDNS
+        - Веб-интерфейс (LuCI)
+        - Telegram-бот
+        - Автоматизация / Автопилот
+        - Установка / обновление
+        - Другое
+    validations:
+      required: true
+  - type: checkboxes
+    id: bundle
+    attributes:
+      label: Отчёт для поддержки
+      options:
+        - label: Я прикладываю архив отчёта для поддержки (или отправил его через /logs и упомянул это)
+        - label: Я не могу приложить отчёт (объясню почему в описании)
+    validations:
+      required: true

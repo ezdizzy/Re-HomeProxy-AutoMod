@@ -6485,3 +6485,84 @@ msgstr ""
 
 msgid "Install tg-ws"
 msgstr ""
+
+msgid "Collect full report"
+msgstr ""
+
+msgid "Text report"
+msgstr ""
+
+msgid "Empty bundle — collect again"
+msgstr ""
+
+msgid "The archive is larger than 8 MB — use the text report or Telegram /logs"
+msgstr ""
+
+msgid "Downloading… %s%"
+msgstr ""
+
+msgid "Download failed: "
+msgstr ""
+
+msgid "Download archive"
+msgstr ""
+
+msgid "Report ready: %s files, self-check %s/%s passed, %s KB, %s s"
+msgstr ""
+
+msgid "Collection failed: %s"
+msgstr ""
+
+msgid "The archive expired (router rebooted) — collect it again"
+msgstr ""
+
+msgid "Failed to start: "
+msgstr ""
+
+msgid "Empty report"
+msgstr ""
+
+msgid "Download .txt"
+msgstr ""
+
+msgid "Support report"
+msgstr ""
+
+msgid "A privacy-safe diagnostics archive for an issue or Telegram: service states, redacted configs, network, logs and checksums — everything needed to see WHAT hangs, without SSH. Secrets are redacted and a built-in self-check verifies tokens and passwords are absent before the archive is produced."
+msgstr ""
+
+msgid "What never enters the report: node passwords and keys, tokens, subscription URLs, Wi-Fi passwords, chat ids. Everything else (network addresses, DNS, configs with secrets masked) stays — it is needed to diagnose."
+msgstr ""
+
+msgid "active"
+msgstr ""
+
+msgid "DNS Settings"
+msgstr ""
+
+msgid "On"
+msgstr ""
+
+msgid "Stopped"
+msgstr ""
+
+msgid "Running"
+msgstr ""
+
+msgid "Collecting…"
+msgstr ""
+
+msgid "Failed: %s"
+msgstr ""
+
+msgid "Timeout"
+msgstr ""
+
+msgid "Active node"
+msgstr ""
+
+msgid "Installed"
+msgstr ""
+
+msgid "off"
+msgstr ""

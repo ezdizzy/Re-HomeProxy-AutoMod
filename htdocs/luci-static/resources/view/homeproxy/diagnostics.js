@@ -27,9 +27,8 @@ const css = '\
 .diag-btn { margin-right:.4em; }\
 .wiz-note { font-size:.88em; opacity:.8; margin:.3em 0; }\
 .diag-row .cbi-input-text { flex:1 1 260px; }\
-#diag-report-area { width:100%; height:22em; font-family:monospace; font-size:.8em;\
-  white-space:pre; overflow:auto; background:#1e1e1e; color:#ddd; border:1px solid #333;\
-  border-radius:6px; padding:.5em; }\
+#diag-bundle-text { width:100%; max-height:22em; overflow:auto; white-space:pre;\
+  font-family:monospace; font-size:.8em; }\
 ';
 
 /* ── RPC declarations ─────────────────────────────────────────────────── */
@@ -72,15 +71,35 @@ const callNftables = rpc.declare({
 });
 
 
-const callReport = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'diag_report',
-	expect: { '': {} }
-});
-
 const callServiceRestart = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'diag_service_restart',
+	expect: { '': {} }
+});
+
+/* Support Bundle (Р4): сбор приватно-безопасного отчёта. */
+const callBundleStart = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_support_bundle_start',
+	expect: { '': {} }
+});
+
+const callBundleStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_support_bundle_status',
+	expect: { '': {} }
+});
+
+const callBundleChunk = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_support_bundle_chunk',
+	params: [ 'offset' ],
+	expect: { '': {} }
+});
+
+const callBundleText = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_support_bundle_text',
 	expect: { '': {} }
 });
 
@@ -999,61 +1018,191 @@ function buildNftSection(view) {
 }
 
 
-function buildReportSection(view) {
-	const textArea = E('textarea', {
-		'id': 'diag-report-area',
-		'readonly': true,
-		'placeholder': _('Click Generate to collect diagnostics…')
-	});
+function saveBlob(blob, name) {
+	const url  = URL.createObjectURL(blob);
+	const a    = E('a', { href: url, download: name });
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	URL.revokeObjectURL(url);
+}
 
-	function run() {
-		textArea.value = _('Collecting diagnostics — this may take a few seconds…');
-		return L.resolveDefault(callReport(), {}).then(function(ret) {
-			textArea.value = ret.report || _('(empty)');
+function fileStamp() {
+	const now = new Date();
+	const pad = (n) => String(n).padStart(2, '0');
+	return now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) +
+		'_' + pad(now.getHours()) + '-' + pad(now.getMinutes()) + '-' + pad(now.getSeconds());
+}
+
+/* ── Support Bundle (Р4): сбор → прогресс → скачивание; текст-отчёт.
+ * Единая результат-область карточки — все действия пишут в один place. ── */
+
+function buildSupportSection(view) {
+	const resultEl = E('div', {});
+	const state = { sig: null, busy: false };
+
+	const startBtn = E('button', {
+		'class': 'btn cbi-button cbi-button-action diag-btn', type: 'button'
+	}, [ _('Collect full report') ]);
+
+	const textBtn = E('button', {
+		'class': 'btn cbi-button diag-btn', type: 'button'
+	}, [ _('Text report') ]);
+
+	function busy(on) {
+		state.busy = on;
+		startBtn.disabled = on;
+		textBtn.disabled = on;
+	}
+
+	function failedChecksLine(selftest) {
+		const bad = (selftest || []).filter(function(c) { return c.ok === false; });
+		if (!bad.length) return null;
+		return bad.map(function(c) { return c.check + ((c.detail) ? (' — ' + c.detail) : ''); }).join('; ');
+	}
+
+	/* Скачивание base64-чанками в Blob (cap ~8 МБ — ubus-чанки по 32 КиБ). */
+	function downloadBundle(meta, progressEl) {
+		const MAX = 8 * 1024 * 1024;
+		const size = Number(meta.size || 0);
+		if (!size) { ui.addNotification(null, E('p', {}, _('Empty bundle — collect again')), 'error'); return; }
+		if (size > MAX) {
+			ui.addNotification(null, E('p', {}, _('The archive is larger than 8 MB — use the text report or Telegram /logs')), 'error');
+			return;
+		}
+		const parts = [];
+		let off = 0;
+		function next() {
+			return L.resolveDefault(callBundleChunk(String(off)), {}).then(function(r) {
+				if (!r || r.error) throw new Error((r && r.error) || 'rpc error');
+				if (r.b64) {
+					const bin = atob(r.b64);
+					const u8 = new Uint8Array(bin.length);
+					for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+					parts.push(u8);
+					off = Number(r.next || off);
+					if (progressEl)
+						progressEl.textContent = _('Downloading… %s%').format(String(Math.min(99, Math.floor(off * 100 / size))));
+				}
+				if (r.done) {
+					if (progressEl) progressEl.textContent = '';
+					saveBlob(new Blob(parts, { type: 'application/gzip' }),
+						meta.name || ('ravnex-bundle-' + fileStamp() + '.tar.gz'));
+					return;
+				}
+				return next();
+			});
+		}
+		next().catch(function(e) {
+			if (progressEl) progressEl.textContent = '';
+			ui.addNotification(null, E('p', {}, _('Download failed: ') + e.message), 'error');
 		});
 	}
 
-	function copy() {
-		textArea.select();
-		document.execCommand('copy');
+	function renderReady(meta) {
+		resultEl.innerHTML = '';
+		const dlBtn = E('button', {
+			'class': 'btn cbi-button cbi-button-positive diag-btn', type: 'button'
+		}, [ _('Download archive') ]);
+		const prog = E('span', { 'class': 'diag-gray', 'style': 'font-size:.85em; margin-left:.6em' });
+		dlBtn.addEventListener('click', ui.createHandlerFn(view, function() {
+			dlBtn.disabled = true;
+			downloadBundle(meta, prog);
+		}));
+		const st = (meta.selftest || []);
+		const stOk = st.filter(function(c) { return c.ok !== false; }).length;
+		const sizeKb = meta.size ? Math.ceil(meta.size / 1024) : null;
+		resultEl.appendChild(E('div', { 'class': 'diag-ok' },
+			[ _('Report ready: %s files, self-check %s/%s passed, %s KB, %s s').format(
+				String(meta.files || 0), String(stOk), String(st.length),
+				String(sizeKb != null ? sizeKb : '?'), String(meta.took_s != null ? meta.took_s : '?')) ]));
+		resultEl.appendChild(E('div', { 'class': 'diag-row' }, [ dlBtn, prog ]));
 	}
 
-	function download() {
-		const text = textArea.value;
-		if (!text || text === _('Click Generate to collect diagnostics…')) return;
-		const now = new Date();
-		const pad = (n) => String(n).padStart(2, '0');
-		const stamp = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) +
-		              '_' + pad(now.getHours()) + '-' + pad(now.getMinutes()) + '-' + pad(now.getSeconds());
-		const blob = new Blob([text], { type: 'text/plain' });
-		const url  = URL.createObjectURL(blob);
-		const a    = E('a', { href: url, download: 'homeproxy-diagnostics-' + stamp + '.txt' });
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
-		URL.revokeObjectURL(url);
+	function renderFailed(meta) {
+		resultEl.innerHTML = '';
+		resultEl.appendChild(E('div', { 'class': 'diag-fail' },
+			[ _('Collection failed: %s').format(meta.error || '?') ]));
+		const line = failedChecksLine(meta.selftest);
+		if (line)
+			resultEl.appendChild(E('div', { 'class': 'wiz-note' }, [ line ]));
 	}
+
+	/* Poll: беглый статус сборки; перерисовка только на смену сигнатуры. */
+	function pollBundle() {
+		if (state.busy) return;
+		return L.resolveDefault(callBundleStatus(), {}).then(function(meta) {
+			if (!meta || meta.exists === false)
+				return;
+			if (meta.running) {
+				const sig = 'run';
+				if (sig === state.sig) return;
+				state.sig = sig;
+				resultEl.innerHTML = '';
+				resultEl.appendChild(E('em', { 'class': 'diag-gray' }, [ _('Collecting…') ]));
+				return;
+			}
+			const sig = 'done:' + (meta.ts || 0) + ':' + (meta.ok ? 1 : 0);
+			if (sig === state.sig) return;
+			state.sig = sig;
+			if (meta.gone) {
+				resultEl.innerHTML = '';
+				resultEl.appendChild(E('span', { 'class': 'diag-gray' },
+					[ _('The archive expired (router rebooted) — collect it again') ]));
+				return;
+			}
+			if (meta.ok === false) { renderFailed(meta); return; }
+			if (meta.path) { renderReady(meta); return; }
+		});
+	}
+
+	startBtn.addEventListener('click', ui.createHandlerFn(view, function() {
+		busy(true);
+		resultEl.innerHTML = '';
+		resultEl.appendChild(E('em', { 'class': 'diag-gray' }, [ _('Collecting…') ]));
+		return L.resolveDefault(callBundleStart(), {}).then(function(r) {
+			if (!r || r.result === false)
+				ui.addNotification(null, E('p', {}, _('Failed to start: ') + ((r && r.error) || '')), 'error');
+			/* Сбор занимает секунды — дождаться завершения и показать карточку. */
+			return poll.add(pollBundle, 2);
+		}).finally(function() { busy(false); });
+	}));
+
+	textBtn.addEventListener('click', ui.createHandlerFn(view, function() {
+		busy(true);
+		resultEl.innerHTML = '';
+		resultEl.appendChild(E('em', { 'class': 'diag-gray' }, [ _('Collecting…') ]));
+		return L.resolveDefault(callBundleText(), {}).then(function(r) {
+			resultEl.innerHTML = '';
+			if (!r || r.error || !r.text) {
+				resultEl.appendChild(E('span', { 'class': 'diag-fail' },
+					(r && r.error) ? _('Failed: %s').format(r.error) : _('Empty report')));
+				return;
+			}
+			const pre = E('pre', { 'id': 'diag-bundle-text' }, [ r.text ]);
+			resultEl.appendChild(pre);
+			const dl = E('button', { 'class': 'btn cbi-button diag-btn', type: 'button' },
+				[ _('Download .txt') ]);
+			dl.addEventListener('click', function() {
+				saveBlob(new Blob([ r.text ], { type: 'text/plain' }),
+					'ravnex-report-' + fileStamp() + '.txt');
+			});
+			resultEl.appendChild(E('div', { 'class': 'diag-row' }, [ dl ]));
+		}).finally(function() { busy(false); });
+	}));
+
+	poll.add(pollBundle, 4);
 
 	return {
-		el: sectionCard(_('Diagnostics Report'), 'diag-report', [
-			E('div', { 'class': 'diag-row' }, [
-				E('button', {
-					'class': 'btn cbi-button cbi-button-action diag-btn',
-					'click': ui.createHandlerFn(view, run)
-				}, _('Generate')),
-				E('button', {
-					'class': 'btn cbi-button diag-btn',
-					'click': ui.createHandlerFn(view, copy)
-				}, _('Copy')),
-				E('button', {
-					'class': 'btn cbi-button diag-btn',
-					'click': ui.createHandlerFn(view, download)
-				}, _('Download')),
-				E('em', { 'class': 'diag-gray', 'style': 'font-size:.85em' },
-					_('Sensitive values (passwords, keys, UUIDs) are redacted.'))
-			]),
-			textArea
-		])
+		el: sectionCard(_('Support report'), 'diag-support', [
+			E('p', { 'class': 'hpui-hint' },
+				[ _('A privacy-safe diagnostics archive for an issue or Telegram: service states, redacted configs, network, logs and checksums — everything needed to see WHAT hangs, without SSH. Secrets are redacted and a built-in self-check verifies tokens and passwords are absent before the archive is produced.') ]),
+			E('div', { 'class': 'diag-row' }, [ startBtn, textBtn ]),
+			E('p', { 'class': 'wiz-note', 'style': 'margin:.2em 0 .4em' },
+				[ _('What never enters the report: node passwords and keys, tokens, subscription URLs, Wi-Fi passwords, chat ids. Everything else (network addresses, DNS, configs with secrets masked) stays — it is needed to diagnose.') ]),
+			resultEl
+		]),
+		run: function() { return pollBundle(); }
 	};
 }
 
@@ -1080,7 +1229,7 @@ return view.extend({
 		const mdns   = buildMultidnsDnsSection(this);
 		const nft    = buildNftSection(this);
 		const conn   = buildConnectivitySection(this, features.core_type || null);
-		const report = buildReportSection(this);
+		const report = buildSupportSection(this);
 		const prov   = buildProviderSection();
 
 		dns.run();

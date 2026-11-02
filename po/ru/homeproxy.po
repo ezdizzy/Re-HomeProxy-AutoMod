@@ -11986,3 +11986,144 @@ msgstr "Установка и обновления: само приложени�
 
 msgid "Install tg-ws"
 msgstr "Установить tg-ws"
+
+msgid "Collect full report"
+msgstr "Собрать полный отчёт"
+
+msgid "Text report"
+msgstr "Текст-отчёт"
+
+msgid "Empty bundle — collect again"
+msgstr "Пустой архив — соберите снова"
+
+msgid "The archive is larger than 8 MB — use the text report or Telegram /logs"
+msgstr "Архив больше 8 МБ — используйте текст-отчёт или Telegram /logs"
+
+msgid "Downloading… %s%"
+msgstr "Скачивание… %s%"
+
+msgid "Download failed: "
+msgstr "Ошибка скачивания: "
+
+msgid "Download archive"
+msgstr "Скачать архив"
+
+msgid "Report ready: %s files, self-check %s/%s passed, %s KB, %s s"
+msgstr "Готово: файлов %s, самопроверка %s/%s пройдена, %s КБ, %s с"
+
+msgid "Collection failed: %s"
+msgstr "Сбор не удался: %s"
+
+msgid "The archive expired (router rebooted) — collect it again"
+msgstr "Архив истёк (роутер перезагружался) — соберите снова"
+
+msgid "Failed to start: "
+msgstr "Не удалось запустить: "
+
+msgid "Empty report"
+msgstr "Пустой отчёт"
+
+msgid "Download .txt"
+msgstr "Скачать .txt"
+
+msgid "Support report"
+msgstr "Отчёт для поддержки"
+
+msgid "A privacy-safe diagnostics archive for an issue or Telegram: service states, redacted configs, network, logs and checksums — everything needed to see WHAT hangs, without SSH. Secrets are redacted and a built-in self-check verifies tokens and passwords are absent before the archive is produced."
+msgstr "Приватно-безопасный архив диагностики для issue или Telegram: состояния служб, обезличенные конфиги, сеть, журналы и чексуммы — всё, чтобы увидеть, ЧТО зависает, без SSH. Секреты вычищаются, и встроенная самопроверка подтверждает, что токены и пароли в архив не попали."
+
+msgid "What never enters the report: node passwords and keys, tokens, subscription URLs, Wi-Fi passwords, chat ids. Everything else (network addresses, DNS, configs with secrets masked) stays — it is needed to diagnose."
+msgstr "В отчёт не попадают: пароли и ключи узлов, токены, ссылки подписок, пароли Wi-Fi, chat id. Всё остальное (сетевые адреса, DNS, конфиги с замаскированными секретами) остаётся — оно нужно для диагностики."
+
+msgid "failed"
+msgstr "сбой"
+
+msgid "Direct"
+msgstr "Напрямую"
+
+msgid "Unreachable"
+msgstr "Недоступен"
+
+msgid "Rule"
+msgstr "Правило"
+
+msgid "Done"
+msgstr "Готово"
+
+msgid "active"
+msgstr "Активен"
+
+msgid "no core installed"
+msgstr "ядро не установлено"
+
+msgid "NOT RUNNING"
+msgstr "НЕ РАБОТАЕТ"
+
+msgid "Default"
+msgstr "По умолчанию"
+
+msgid "DNS Settings"
+msgstr "Настройки DNS"
+
+msgid "DNS Servers"
+msgstr "DNS-серверы"
+
+msgid "On"
+msgstr "Вкл"
+
+msgid "No data"
+msgstr "Нет данных"
+
+msgid "Private key"
+msgstr "Приватный ключ"
+
+msgid "Enabled"
+msgstr "Включено"
+
+msgid "Stopped"
+msgstr "Остановлено"
+
+msgid "RUNNING"
+msgstr "Работает"
+
+msgid "None"
+msgstr "Нет"
+
+msgid "Disabled"
+msgstr "Отключено"
+
+msgid "passed"
+msgstr "успешно"
+
+msgid "RPC error"
+msgstr "ошибка RPC"
+
+msgid "Running"
+msgstr "Работает"
+
+msgid "Collecting…"
+msgstr "Собираю…"
+
+msgid "Failed: %s"
+msgstr "Не удалось: %s"
+
+msgid "Timeout"
+msgstr "Таймаут"
+
+msgid "Active node"
+msgstr "Активный узел"
+
+msgid "Not installed"
+msgstr "Не установлено"
+
+msgid "Error"
+msgstr "Ошибка"
+
+msgid "Installed"
+msgstr "Установлено"
+
+msgid "Unknown"
+msgstr "Неизвестно"
+
+msgid "off"
+msgstr "выкл"

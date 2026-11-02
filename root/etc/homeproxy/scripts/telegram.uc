@@ -236,6 +236,20 @@ function tg_send_html(chat_id, text, kb) {
 	return tg_call('sendMessage', body);
 }
 
+/* Document upload (Р4 /logs): multipart/form-data через curl -F.
+ * Возвращает true при ok:true в ответе Bot API. */
+function tg_send_document(chat_id, path, caption) {
+	send_gap();
+	const url = `${api_base}/sendDocument`;
+	const cap = length('' + (caption || '')) ? ` -F "caption=${jesc('' + caption)}"` : '';
+	const out = capture(`curl -s --max-time 120 -F "chat_id=${chat_id}"${cap} -F "document=@${path}" ${shellquote(url)} 2>/dev/null`);
+	let j = null;
+	try { j = json(out); } catch (e) { j = null; }
+	if (!j || j.ok !== true)
+		log('sendDocument failed: ' + substr(out || '', 0, 120));
+	return !!(j && j.ok === true);
+}
+
 function kb_rows(rows) {
 	/* rows: array of rows; each row is EITHER
 	 *   - [text, callback_data]          — a single button, OR
@@ -461,6 +475,40 @@ Zapret: ${z.enabled === true ? 'вкл' : 'выкл'} · ${z.running === true ? 
 ByeDPI: ${b.enabled === true ? 'вкл' : 'выкл'} · ${b.running === true ? 'запущен' : 'остановлен'}${length(bopts) ? ' · <code>' + esc_html(bopts) + '</code>' : ''}${corpus.count ? sprintf('\nКорпус стратегий: %d', int(corpus.count)) : ''}`;
 }
 
+/* ── /logs (Р4): отчёт для поддержки. Собираем sanitized-бандл
+ * (support_bundle.uc build, 10–30 с) и шлём файлом (<45 МБ); если сбор
+ * не удался или архив велик — sanitized текст-отчёт кусками. ───────── */
+function cmd_logs(chat_id) {
+	tg_send_html(chat_id, 'Собираю отчёт для поддержки… (10–30 секунд, секреты вычищаются автоматически)', null);
+	const rc = system('ucode /etc/homeproxy/scripts/support_bundle.uc build >/dev/null 2>&1', 120000);
+	let meta = null;
+	if (access('/tmp/ravnex_bundle_meta.json')) {
+		try { meta = json(readfile('/tmp/ravnex_bundle_meta.json') || ''); } catch (e) { meta = null; }
+	}
+	if (rc === 0 && meta && meta.ok && meta.path && access(meta.path)) {
+		const st = stat(meta.path);
+		const size = st ? st.size : 0;
+		if (size > 0 && size < 45 * 1024 * 1024) {
+			const ok = tg_send_document(chat_id, meta.path,
+				'Отчёт для поддержки Ravnex · ' + int(size / 1024) + ' КБ · секреты вычищены, самопроверка пройдена');
+			if (ok)
+				return;
+		}
+	}
+	/* Фолбэк: быстрый текст-отчёт (уже sanitized самой утилитой). */
+	const out = capture('ucode /etc/homeproxy/scripts/support_bundle.uc text 2>/dev/null');
+	if (!length(trim(out))) {
+		tg_send_html(chat_id, 'не удалось собрать отчёт — попробуйте ещё раз позже', null);
+		return;
+	}
+	tg_send_html(chat_id, 'Архив недоступен — отправляю текст-отчёт кусками:', null);
+	let rest = out;
+	while (length(rest) > 0) {
+		tg_send_html(chat_id, substr(rest, 0, MAXMSG), null);
+		rest = substr(rest, MAXMSG);
+	}
+}
+
 function nodes_text(nodes) {
 	let out = '<b>Узлы</b> (номер = /switch N):\n';
 	const cap = 12;
@@ -562,6 +610,7 @@ const HELP = '<b>Команды</b>\n' +
 	'/service start|stop|restart — служба\n' +
 	'/snapshot — снапшот конфигурации\n' +
 	'/status_engine — Zapret/ByeDPI статус\n' +
+	'/logs — отчёт для поддержки (архив файлом, секреты вычищены)\n' +
 	'/mute · /unmute — пуш-уведомления вкл/выкл\n' +
 	'/restart — перезапуск службы\n' +
 	'/help — этот список';
@@ -782,6 +831,8 @@ function handle_command(chat_id, text) {
 		tg_send_html(chat_id, cmd_switch(rest, chat_id), null);
 	} else if (cmd === 'snapshot') {
 		tg_send_html(chat_id, cmd_snapshot(), null);
+	} else if (cmd === 'logs') {
+		cmd_logs(chat_id);
 	} else if (cmd === 'status_engine') {
 		tg_send_html(chat_id, cmd_status_engine(), kb_rows([ [ '🔄 Обновить', 'act:engine' ] ]));
 	} else if (cmd === 'mute') {

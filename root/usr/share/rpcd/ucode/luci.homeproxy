@@ -7,7 +7,7 @@
 
 'use strict';
 
-import { access, error, lstat, popen, readfile, writefile, stat, rename, mkdir } from 'fs';
+import { access, error, lstat, popen, readfile, writefile, stat, rename, mkdir, open } from 'fs';
 import { cursor } from 'uci';
 import {
 	sync_learned_rulesets,
@@ -7559,6 +7559,89 @@ const methods = {
 			const raw = fd.read('all');
 			fd.close();
 			return { content: raw || '' };
+		}
+	},
+
+	/* ── Support Bundle (Р4) ──────────────────────────────────────────────
+	 * Сбор приватно-безопасного отчёта: support_bundle.uc в фоне (start),
+	 * статус/самотест (status), скачивание base64-чанками 32 КиБ (chunk —
+	 * ubus-лимит ~64 КиБ на сообщение, b64enc встроенный), быстрый
+	 * текст-отчёт (text). */
+	app_support_bundle_start: {
+		call: function(req) {
+			const mf = '/tmp/ravnex_bundle_meta.json';
+			if (access(mf)) {
+				let prev = null;
+				try { prev = json(readfile(mf) || ''); } catch (e) { prev = null; }
+				if (prev && prev.running && (time() - int(prev.ts || 0) < 300))
+					return { result: false, error: 'a bundle build is already in progress' };
+			}
+			system('rm -f /tmp/ravnex_bundle_meta.json /tmp/ravnex_bundle_meta.json.tmp 2>/dev/null');
+			/* Детач: сбор занимает секунды; UI поллит app_support_bundle_status. */
+			system(`ucode ${shellquote(HP_DIR + '/scripts/support_bundle.uc')} build >/dev/null 2>&1 &`);
+			return { result: true, started: true };
+		}
+	},
+
+	app_support_bundle_status: {
+		call: function() {
+			const mf = '/tmp/ravnex_bundle_meta.json';
+			if (!access(mf))
+				return { exists: false, running: false };
+			let meta = null;
+			try { meta = json(readfile(mf) || ''); } catch (e) { meta = null; }
+			if (!meta || type(meta) !== 'object')
+				return { exists: false, running: false };
+			meta.exists = true;
+			/* /tmp переживает только до ребута — честно сообщаем пропажу. */
+			if (meta.path && !meta.running && !access(meta.path))
+				meta.gone = true;
+			return meta;
+		}
+	},
+
+	app_support_bundle_chunk: {
+		args: { offset: 'offset' },
+		call: function(req) {
+			let meta = null;
+			try { meta = json(readfile('/tmp/ravnex_bundle_meta.json') || ''); } catch (e) { meta = null; }
+			if (!meta || type(meta) !== 'object' || !meta.path)
+				return { error: 'no bundle' };
+			const path = '' + meta.path;
+			/* Только канонический путь бандла — никаких путей снаружи. */
+			if (match(path, /^\/tmp\/ravnex_bundle_[0-9]{8}-[0-9]{6}\.tar(\.gz)?$/) == null)
+				return { error: 'bad bundle path' };
+			if (!access(path))
+				return { error: 'bundle gone' };
+			const st = stat(path);
+			const size = st ? st.size : 0;
+			const CH = 32768;
+			let off = int(('' + ((req && req.args && req.args.offset) || '0')) || '0');
+			if (off < 0) off = 0;
+			if (off >= size)
+				return { done: true, size: size };
+			/* ucode-файл: seek+read без форков; b64enc — встроенный (C, быстрый). */
+			const f = open(path);
+			if (!f)
+				return { error: 'open failed' };
+			f.seek(off);
+			const data = f.read(CH);
+			f.close();
+			if (data == null || length(data) === 0)
+				return { error: 'read failed' };
+			const next = off + length(data);
+			return { b64: b64enc(data), size: size, next: next, done: next >= size };
+		}
+	},
+
+	app_support_bundle_text: {
+		call: function() {
+			const fd = popen(`ucode ${shellquote(HP_DIR + '/scripts/support_bundle.uc')} text 2>/dev/null`);
+			if (!fd)
+				return { error: 'spawn failed' };
+			const out = fd.read('all') || '';
+			fd.close();
+			return { text: out };
 		}
 	}
 
