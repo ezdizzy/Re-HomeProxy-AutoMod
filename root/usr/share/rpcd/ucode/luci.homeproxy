@@ -31,6 +31,20 @@ import {
 	begin as op_begin, get_op as op_get, list_ops as op_list,
 	get_revision as op_revision
 } from '/etc/homeproxy/scripts/opman.uc';
+import {
+	find_daemons as pm_find, kill_entry as pm_kill_entry, kill_matched as pm_kill_matched,
+	entry_alive as pm_entry_alive, reg_get as pm_reg_get, reg_del as pm_reg_del
+} from '/etc/homeproxy/scripts/pmgr.uc';
+
+/* Ф1.4 Process Manager: ownership spec of OUR mosdns — the instance whose
+ * `-c` argument is the MultiDNS config (live or candidate). Every former
+ * "pidof mosdns && kill" site goes through this; a foreign mosdns with a
+ * different config is never touched (audit 11). */
+const MD_CONF = '/var/run/homeproxy/multidns/mosdns.yaml';
+/* Candidate keeps the .yaml extension — mosdns picks the config parser by
+ * extension ('.yaml.candidate' was "Unsupported Config Type", ч.150). */
+const MD_CAND = '/var/run/homeproxy/multidns/mosdns.candidate.yaml';
+const MD_SPECS = () => ({ exe: '/usr/bin/mosdns', arg: [ MD_CONF, MD_CAND ] });
 
 /* Apply an edited learned list WITHOUT a service restart: rewrite the watched local
  * rule-set files (proxy_domain.json / auto_ip.json) — the core hot-reloads them.
@@ -312,7 +326,12 @@ function automation_apply_files(geo_too) {
  * the exit and respawns the instance (all instances run with respawn).
  * The ubus event is still fired for builds where it does work. */
 function restart_daemon_instance(script_name, instance_name) {
-	system(`kill $(ps w | grep '[${substr(script_name, 0, 1)}]${substr(script_name, 1)}' | awk '{print $1}') 2>/dev/null; true`);
+	/* Ф1.4 (audit 36): identity kill — a ucode script daemon's cmdline has the
+	 * exact element /etc/homeproxy/scripts/<script_name>; busybox pidof does
+	 * not match script interpreters at all (lesson 23), and the old ps|grep
+	 * was a substring sweep over ps lines (rc.common-class casualties). procd
+	 * respawns the instance right after. */
+	pm_kill_matched({ script: script_name }, 3000);
 	system(`ubus call service event '{"type":"instance.restart","data":{"name":"homeproxy","instance":"` + instance_name + `"}}' 2>/dev/null`);
 }
 
@@ -3300,7 +3319,11 @@ const methods = {
 			system("uci set homeproxy.config.byedpi_enabled='0'; uci commit homeproxy 2>/dev/null; true");
 			system('/etc/init.d/ciadpi stop 2>/dev/null; /etc/init.d/ciadpi disable 2>/dev/null; true');
 			system('/etc/init.d/homeproxy reload 2>/dev/null; true');
-			system('pkill -f ciadpi 2>/dev/null; true');
+			/* Lesson 23: busybox has NO pkill — the old `pkill -f` silently did
+			 * NOTHING here. Ф1.4: identity kill by exact exe (the prod instance
+			 * is already stopped above, so any ciadpi left is a leftover, e.g. a
+			 * strategy-test instance) — no ps|grep sweep (audit 36). */
+			pm_kill_matched({ exe: 'ciadpi' }, 3000);
 			let ret;
 			if (access('/usr/bin/apk'))
 				ret = system('apk del byedpi');
@@ -3449,7 +3472,10 @@ const methods = {
 			system("uci set homeproxy.config.zapret_enabled='0'; uci commit homeproxy 2>/dev/null; true");
 			system('/etc/init.d/zapret2 stop 2>/dev/null; /etc/init.d/zapret2 disable 2>/dev/null; true');
 			system('/etc/init.d/homeproxy reload 2>/dev/null; true');
-			system('pkill -f nfqws2 2>/dev/null; true');
+			/* Lesson 23 + Ф1.4: `pkill -f` does not exist on busybox and swept by
+			 * name — replaced with the identity kill by exact exe (leftovers only,
+			 * the prod instance is stopped above). */
+			pm_kill_matched({ exe: 'nfqws2' }, 3000);
 			let ret;
 			if (access('/usr/bin/apk'))
 				ret = system('apk del zapret2');
@@ -6414,8 +6440,13 @@ const methods = {
 			 * but was flagged as unguaranteed for router builds). */
 			const pp_installed = (type(res.probe_pool) === 'object' && res.probe_pool.installed === true);
 			const sni_installed = (type(res.sni_sniffer) === 'object' && res.sni_sniffer.installed === true);
-			if (pp_installed)
-				system('killall probe_pool >/dev/null 2>&1; true');
+			if (pp_installed) {
+				/* Ф1.4 (audit 17): `killall probe_pool` swept by NAME — replaced
+				 * with the identity kill by exact exe + registry cleanup, so the
+				 * freshly installed binary is the one the next batch respawns. */
+				pm_kill_matched({ exe: 'probe_pool' }, 3000);
+				pm_reg_del('probe_pool');
+			}
 			if (pp_installed || sni_installed)
 				restart_daemon_instance('automation.uc', 'automation');
 			return res;
@@ -6441,11 +6472,12 @@ const methods = {
 				}
 			}
 			let running = false;
-			const fd2 = popen('pidof mosdns 2>/dev/null');
-			if (fd2) {
-				running = length(trim(fd2.read('all'))) > 0;
-				fd2.close();
-			}
+			/* Ф1.4 (audit 11): registry identity / conf-arg match — a bare
+			 * pidof accepted a foreign mosdns as "running". */
+			const mdr = pm_reg_get('mosdns');
+			running = (mdr != null && pm_entry_alive(mdr));
+			if (!running)
+				running = length(pm_find(MD_SPECS())) > 0;
 			/* Restart-window honesty (same contract as multidns_status): during
 			 * the routine YAML rebuild no listener exists for a few seconds. */
 			let restarting = false;
@@ -6552,14 +6584,16 @@ const methods = {
 
 			/* Stop the running mosdns before replacing the binary (a deleted binary's
 			 * process keeps running), then restart the MultiDNS procd instance so it
-			 * starts a fresh mosdns from the new /usr/bin/mosdns. */
-			let pidf = RUN_DIR + '/multidns/mosdns.pid';
-			if (access(pidf)) {
-				const c = trim(readfile(pidf));
-				if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');
-				system('rm -f ' + shellquote(pidf));
-			}
-			system('pidof mosdns >/dev/null 2>&1 && kill $(pidof mosdns) 2>/dev/null; true');
+			 * starts a fresh mosdns from the new /usr/bin/mosdns. Ф1.4 (audit 11):
+			 * registry identity + conf-arg match; the legacy text pidfile pid is
+			 * signalled only when /proc still shows OUR mosdns (PID reuse guard). */
+			let pmf = pm_reg_get('mosdns');
+			if (pmf != null && pm_entry_alive(pmf))
+				pm_kill_entry(pmf, 5000);
+			pm_kill_matched(MD_SPECS(), 5000);
+			pm_reg_del('mosdns');
+			pidf = RUN_DIR + '/multidns/mosdns.pid';
+			system('rm -f ' + shellquote(pidf));
 			/* busybox `install` applet is not present on all images — cp + chmod is equivalent. */
 			rc = system(`cp ${shellquote(bin)} /usr/bin/mosdns && chmod 0755 /usr/bin/mosdns`, 30000);
 			system(`rm -rf ${shellquote(dest)}`);
@@ -6583,15 +6617,15 @@ const methods = {
 	mosdns_remove: {
 		call: function(req) {
 			/* Disable MultiDNS first (DNS falls back to the direct upstreams via the
-			 * mdns_ok guard), stop the running mosdns, then delete the binary. */
+			 * mdns_ok guard), stop the running mosdns, then delete the binary. Ф1.4
+			 * (audit 11): identity-verified stop, a foreign mosdns is never touched. */
 			system("uci -q set homeproxy.multidns.enabled=0; uci -q commit homeproxy 2>/dev/null; true");
-			let pidf = RUN_DIR + '/multidns/mosdns.pid';
-			if (access(pidf)) {
-				const c = trim(readfile(pidf));
-				if (c) system('kill ' + shellquote(c) + ' 2>/dev/null');
-				system('rm -f ' + shellquote(pidf));
-			}
-			system('pidof mosdns >/dev/null 2>&1 && kill $(pidof mosdns) 2>/dev/null; true');
+			let pmf = pm_reg_get('mosdns');
+			if (pmf != null && pm_entry_alive(pmf))
+				pm_kill_entry(pmf, 5000);
+			pm_kill_matched(MD_SPECS(), 5000);
+			pm_reg_del('mosdns');
+			system('rm -f ' + shellquote(RUN_DIR + '/multidns/mosdns.pid'));
 			restart_daemon_instance('multidns.uc', 'multidns');
 			system('rm -f /usr/bin/mosdns');
 			/* Regenerate the client config so russia-dns/secure-dns revert to direct
@@ -6653,18 +6687,15 @@ const methods = {
 					last_live: st.last_live || false
 				});
 			}
-			/* mosdns liveness. The daemon records the live pid into
-			 * md_dir/mosdns.pid; check it, then fall back to pidof. */
+			/* mosdns liveness. Ф1.4 (audit 11): the registry identity first
+			 * (pid + starttime), then the conf-arg scan. A bare pidof accepted
+			 * a FOREIGN mosdns and a reused PID alike — both rejected here. */
 			let md_alive = false;
-			let pid_candidates = [ md_dir + '/mosdns.pid' ];
-			for (let pf in pid_candidates) {
-				if (access(pf)) {
-					let c = trim(readfile(pf));
-					if (c && system('kill -0 ' + shellquote(c) + ' 2>/dev/null') === 0) { md_alive = true; break; }
-				}
-			}
+			const md_reg = pm_reg_get('mosdns');
+			if (md_reg != null && pm_entry_alive(md_reg))
+				md_alive = true;
 			if (!md_alive)
-				md_alive = (system('pidof mosdns >/dev/null 2>&1') === 0);
+				md_alive = length(pm_find(MD_SPECS())) > 0;
 
 			/* Routine rebuild window: the quality daemon restarts mosdns whenever
 			 * the built YAML changes (learned lists / quarantine / prune state),
@@ -6712,7 +6743,12 @@ const methods = {
 			let sf = popen('uci -q get homeproxy.multidns.secure_port 2>/dev/null');
 			if (sf) { let sv = trim(sf.read('all')); if (length(sv)) secure_port = sv; sf.close(); }
 
-			let md_alive = (system('pidof mosdns >/dev/null 2>&1') === 0);
+			/* Ф1.4 (audit 11): ownership-grade liveness — registry identity or
+			 * the instance whose -c argument is OUR config. */
+			const mdreg = pm_reg_get('mosdns');
+			let md_alive = (mdreg != null && pm_entry_alive(mdreg));
+			if (!md_alive)
+				md_alive = length(pm_find(MD_SPECS())) > 0;
 
 			/* Resolve through the racing listeners (the path clients actually use). */
 			let probe = (port, name) => {

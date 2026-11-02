@@ -873,13 +873,12 @@ stop_service() {
 	fi
 	/etc/init.d/dnsmasq restart >"/dev/null" 2>&1
 
-	# Stop MultiDNS mosdns (the analyzer daemon itself is stopped by procd). Prefer
-	# our own pid file; fall back to killing any mosdns so a stale instance can't
-	# survive a restart and hold the racing ports.
-	local sdp="$RUN_DIR/multidns/mosdns.pid"
-	if [ -f "$sdp" ]; then kill "$(cat "$sdp")" 2>/dev/null; fi
-	pidof mosdns >/dev/null 2>&1 && kill "$(pidof mosdns)" 2>/dev/null
-	rm -f "$sdp" 2>/dev/null
+	# Stop MultiDNS mosdns (the analyzer daemon itself is stopped by procd).
+	# Ф1.4 (audits 11/25): the identity-verified stop — registry entry + the
+	# instance whose -c argument is OUR config; a foreign mosdns (a different
+	# config) is NEVER touched, and a reused pidfile PID is never signalled.
+	# The old `pidof mosdns && kill $(pidof mosdns)` swept every mosdns.
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" mosdns_stop >/dev/null 2>&1 || true
 
 	# Only remove the log; hiddify-c.json is manually placed by the user
 	rm -f "$RUN_DIR/hiddify-c.log"
@@ -891,6 +890,13 @@ stop_service() {
 	HC_RUN="/var/run/homecontrol"
 	HC_WIFI=0
 	nft delete table inet homecontrol 2>"/dev/null"
+	# Ф1.4 (audit 34): the filter instances live in $RUN_DIR/dnsf (control_apply
+	# DNSF_DIR) — the loop below only swept the LEGACY /var/run/homecontrol/dnsf
+	# and left every live filter dnsmasq running after a service stop. The
+	# identity-verified sweep kills each instance from its .pid.json (or from a
+	# legacy text pidfile only when /proc still shows OUR -C conf), PID reuse
+	# can never redirect the signal.
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" dnsf_stop >/dev/null 2>&1 || true
 	if [ -d "$HC_RUN/dnsf" ]; then
 		for f in "$HC_RUN"/dnsf/*.pid; do
 			[ -e "$f" ] || break

@@ -45,6 +45,11 @@
 import { access, readfile, writefile, open, stat } from 'fs';
 import { cursor } from 'uci';
 import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty } from 'homeproxy';
+import {
+	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
+	reg_set as pm_reg_set, reg_get as pm_reg_get, reg_del as pm_reg_del, reg_alive as pm_reg_alive,
+	proc_info as pm_proc_info
+} from '/etc/homeproxy/scripts/pmgr.uc';
 
 const HP_DIR = '/etc/homeproxy';
 const RUN_DIR = '/var/run/homeproxy';
@@ -687,10 +692,11 @@ function resolve_plain_view(host) {
 	 * same condition multidns itself uses (enabled flag + binary + running
 	 * process): a UCI-only check would turn every lookup into a dead-port
 	 * timeout when mosdns actually failed to start. uci cursor instead of
-	 * `uci -q get` spawns; pidof is one cheap fork per cache miss. */
+	 * `uci -q get` spawns; Ф1.4: the daemons-registry identity (audit 11 —
+	 * a bare pidof accepted a foreign mosdns). */
 	if (uci &&
 	    (uci.get('homeproxy', 'multidns', 'enabled') || '0') === '1' &&
-	    access('/usr/bin/mosdns') && system('pidof mosdns >/dev/null 2>&1') === 0) {
+	    access('/usr/bin/mosdns') && pm_reg_alive('mosdns')) {
 		let mdns_plain_port = uci.get('homeproxy', 'multidns', 'plain_port') || '5453';
 		let out = capture(`nslookup -port=${mdns_plain_port} ${shellquote(host)} 127.0.0.1 2>/dev/null`);
 		for (let l in split(out, '\n')) {
@@ -1358,6 +1364,23 @@ function discover_conntrack() {
 	return split(trim(raw), /\n/);
 }
 
+/* Ф1.4: HUP the MAIN dnsmasq only (its own pidfile, exe-verified) — the old
+ * `killall -HUP dnsmasq` swept EVERY dnsmasq, including the per-client filter
+ * instances of «Контроль» (audit 34 family: never signal by name). */
+function dns_flush_main() {
+	const pidp = '/var/run/dnsmasq/dnsmasq.pid';
+	if (!access(pidp)) {
+		system('killall -HUP dnsmasq >/dev/null 2>&1');
+		return;
+	}
+	const pid = int(trim(readfile(pidp) || '')) || 0;
+	const info = (pid >= 2) ? pm_proc_info(pid) : null;
+	if (info != null && info.exe != null && match(info.exe, /\/dnsmasq$/))
+		system(`kill -HUP ${info.pid} 2>/dev/null`);
+	else
+		system('killall -HUP dnsmasq >/dev/null 2>&1');   /* stale pidfile — legacy fallback */
+}
+
 /* SNI discovery (source `sni`): capture TLS ClientHello packets on the LAN bridge
  * and extract the server_name (SNI) hostnames. This catches DoH clients, apps with
  * hardcoded IPs and games that never hit the dnsmasq log. Best-effort — prefers
@@ -1366,17 +1389,43 @@ function discover_conntrack() {
  * filters junk, so false candidates are never learned. */
 const SNI_SNIFFER_BIN = '/usr/bin/sni_sniffer';
 const SNI_EVENTS = RUN_DIR + '/sni_events.jsonl';
+const SNI_STATE = RUN_DIR + '/sni_state.json';
 let sni_events_offset = 0;
 let sni_last_spawn = 0;
 
-/* Spawn the native sniffer once (idempotent: pidof guard + a 10-minute
- * respawn cooldown so a binary that cannot run — wrong arch, no CAP_NET_RAW —
- * does not turn into a spawn loop). The daemon keeps running across automation
- * restarts — it only dies on reboot, which is fine: its kernel BPF filter
- * drops everything but ClientHello packets, so idle cost is negligible. */
+/* Ф1.4 (audit 88): runtime state of the sniffer — interface/PID/time of the
+ * identity we spawned. A bare pidof could not tell WHICH interface the live
+ * sniffer captures; when the configured iface changes the old capture must
+ * be replaced, not silently kept. */
+function sni_state_read() {
+	if (!access(SNI_STATE))
+		return null;
+	let st = null;
+	try { st = json(readfile(SNI_STATE) || ''); } catch (e) { st = null; }
+	return (st != null && type(st) === 'object') ? st : null;
+}
+
+/* Spawn the native sniffer once (idempotent: registry-identity guard + a
+ * 10-minute respawn cooldown so a binary that cannot run — wrong arch, no
+ * CAP_NET_RAW — does not turn into a spawn loop). The daemon keeps running
+ * across automation restarts — it only dies on reboot, which is fine: its
+ * kernel BPF filter drops everything but ClientHello packets, so idle cost
+ * is negligible. An interface CHANGE kills the old capture and respawns
+ * immediately (audit 88). */
 function ensure_sni_sniffer(iface) {
 	if (!access(SNI_SNIFFER_BIN)) return false;
-	if (system('pidof sni_sniffer >/dev/null 2>&1') === 0) return true;
+	const found = pm_find({ exe: 'sni_sniffer' });
+	if (length(found)) {
+		const st = sni_state_read();
+		if (st != null && length(st.iface || '') && st.iface !== iface &&
+		    (time() - sni_last_spawn) > 300) {
+			log(`sni_sniffer: capture interface changed ${st.iface} -> ${iface}, restarting the capture`);
+			pm_kill_entry({ pid: found[0].pid, start: found[0].start, exe: found[0].exe }, 3000);
+			sni_last_spawn = 0;   /* explicit intent: respawn right now */
+		} else {
+			return true;
+		}
+	}
 	if ((time() - sni_last_spawn) < 600)
 		return false;
 	sni_last_spawn = time();
@@ -1390,6 +1439,26 @@ function ensure_sni_sniffer(iface) {
 	}
 	sni_events_offset = 0;
 	system(`${shellquote(SNI_SNIFFER_BIN)} -iface ${shellquote(iface)} -file ${shellquote(SNI_EVENTS)} >/dev/null 2>&1 &`);
+	/* Register the identity as soon as the process is visible (5 × 200 ms
+	 * grace); without a registry entry the next pass would just re-detect it
+	 * via the scan — best-effort either way. */
+	for (let i = 0; i < 5; i++) {
+		sleep(200);
+		const own = pm_find({ exe: 'sni_sniffer' });
+		if (length(own)) {
+			pm_reg_set('sni_sniffer', {
+				kind: 'automation',
+				pid: own[0].pid, start: own[0].start, started: own[0].started,
+				exe: SNI_SNIFFER_BIN, arg: iface,
+				hb: time(), note: 'SNI discovery capture'
+			});
+			writefile(SNI_STATE + '.tmp', sprintf('%.J', {
+				iface: iface, pid: own[0].pid, start: own[0].start, spawned: time()
+			}) + '\n');
+			system(`mv -f ${shellquote(SNI_STATE + '.tmp')} ${shellquote(SNI_STATE)} 2>/dev/null`);
+			break;
+		}
+	}
 	return true;
 }
 
@@ -1442,7 +1511,11 @@ function discover_sni(pkts, secs) {
 					sni_events_offset = 0;
 					if (access(SNI_EVENTS))
 						system(`rm -f ${shellquote(SNI_EVENTS)} 2>/dev/null`);
-					system('killall sni_sniffer >/dev/null 2>&1; true');
+					/* Ф1.4: identity kill (never killall by name) + registry cleanup. */
+					const stale = pm_find({ exe: 'sni_sniffer' });
+					for (let s in stale)
+						pm_kill_entry({ pid: s.pid, start: s.start, exe: s.exe }, 3000);
+					pm_reg_del('sni_sniffer');
 					ensure_sni_sniffer(iface);
 				}
 			}
@@ -1829,7 +1902,7 @@ echo done > "$PRE.done"
 	 * public RU-facing resolvers. */
 	function resolver_list() {
 		let list = [];
-		if (access('/usr/bin/mosdns') && system('pidof mosdns >/dev/null 2>&1') === 0 &&
+		if (access('/usr/bin/mosdns') && pm_reg_alive('mosdns') &&
 		    (uci.get('homeproxy', 'multidns', 'enabled') || '0') === '1') {
 			const pport = int(uci.get('homeproxy', 'multidns', 'plain_port') || '5453') || 5453;
 			push(list, sprintf('127.0.0.1:%d', pport));
@@ -1840,10 +1913,12 @@ echo done > "$PRE.done"
 		return list;
 	}
 
-	/* Resident daemon health: running (pidof) AND heartbeating (mtime within
-	 * 30 s). A stopped-but-fresh heartbeat means it died between beats. */
+	/* Resident daemon health: running (registry identity + a fresh heartbeat
+	 * within 30 s — audit 17). A stopped-but-fresh heartbeat means it died
+	 * between beats; a live-but-silent PID is a wedge. */
 	function pp_daemon_alive() {
-		if (system('pidof probe_pool >/dev/null 2>&1') !== 0) return false;
+		const found = pm_find({ exe: 'probe_pool' });
+		if (!length(found)) return false;
 		if (access(PP_HB)) {
 			const mt = stat(PP_HB);
 			if (mt && mt.mtime && (time() - mt.mtime) > 30) return false;
@@ -1855,11 +1930,20 @@ echo done > "$PRE.done"
 	 * a binary that cannot run - old one-shot-only build, wrong arch - must
 	 * not turn into a spawn loop). Returns whether a daemon is now usable. */
 	function pp_ensure_daemon() {
-		if (system('pidof probe_pool >/dev/null 2>&1') === 0) return pp_daemon_alive();
+		if (length(pm_find({ exe: 'probe_pool' }))) return pp_daemon_alive();
 		if ((time() - pp_last_respawn) < 300) return false;
 		pp_last_respawn = time();
 		system(`${shellquote(PROBE_POOL_BIN)} -daemon -dir ${shellquote(RUN_DIR)} >/dev/null 2>&1 &`);
 		for (let i = 0; i < 12 && !access(PP_HB); i++) sleep(250);
+		/* Ф1.4 (audit 17): register identity as soon as the process is
+		 * visible — PID + starttime, so later liveness checks are reuse-proof. */
+		const own = pm_find({ exe: 'probe_pool' });
+		if (length(own))
+			pm_reg_set('probe_pool', {
+				kind: 'automation',
+				pid: own[0].pid, start: own[0].start, started: own[0].started,
+				exe: PROBE_POOL_BIN, hb: time(), note: 'resident probe pool'
+			});
 		const ok = pp_daemon_alive();
 		if (ok) log('probe_pool resident daemon started (keep-alive + in-Go plain-view resolve)');
 		return ok;
@@ -1890,7 +1974,7 @@ echo done > "$PRE.done"
 			}
 			/* Daemon gone mid-flight (crash/upgrade): bail out to one-shot now. */
 			tick++;
-			if (tick % 4 === 0 && system('pidof probe_pool >/dev/null 2>&1') !== 0) return null;
+			if (tick % 4 === 0 && !length(pm_find({ exe: 'probe_pool' }))) return null;
 			sleep(250);
 		}
 	}
@@ -2520,7 +2604,7 @@ echo done > "$PRE.done"
 			 * the DNS cache NOW. do_reload()'s pending_reload gate cannot be
 			 * used here: the startup sequence resets that flag after this. */
 			sync_learned_rulesets();
-			system('killall -HUP dnsmasq >/dev/null 2>&1');
+			dns_flush_main();
 			log('applied purge of covered hosts to the core (hot reload)');
 		}
 		/* ч.61: re-derive the auth-family list (learned/pinned auth-like hosts
@@ -2605,7 +2689,7 @@ echo done > "$PRE.done"
 			 * domains immediately instead of serving stale (often forged)
 			 * answers until their old TTL expires - this is the dominant part
 			 * of the "site works only minutes later" delay. */
-			system('killall -HUP dnsmasq >/dev/null 2>&1');
+			dns_flush_main();
  			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips.');
  			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && r.ips) || 0) + ' ip (hot)');
  			last_reload = time();

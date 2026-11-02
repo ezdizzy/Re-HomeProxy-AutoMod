@@ -34,7 +34,11 @@
 
 'use strict';
 
-import { access, readfile, writefile, popen, readlink, stat, mkdir, rmdir } from 'fs';
+import { access, readfile, writefile, popen, readlink, stat, mkdir, rmdir, unlink } from 'fs';
+import {
+	proc_info as pm_proc_info, find_daemons as pm_find, kill_entry as pm_kill_entry,
+	entry_alive as pm_entry_alive, rjson as pm_rjson, wjson as pm_wjson
+} from '/etc/homeproxy/scripts/pmgr.uc';
 import {
 	RUN_DIR, atomic_write, mkdir_p, get_sections, main_opt,
 	client_states, active_rules, client_rule_targets, wifi_off_map,
@@ -301,10 +305,15 @@ function dnsf_domains_content(domains) {
 	return length(lines) ? (join('\n', lines) + '\n') : '';
 }
 
-/* Is the filter instance for `safe` actually alive (pidfile + /proc exe)?
- * /proc/<pid>/cmdline contains NUL bytes and ucode regex matching truncates
- * at the first NUL — use /proc/<pid>/exe instead. */
+/* Is the filter instance for `safe` actually alive? Ф1.4 (audit 34): the
+ * identity file `${safe}.pid.json` carries pid + starttime-ticks, so a
+ * REUSED pid is honestly "not running" (a bare pidfile pid could point at a
+ * new, unrelated process after a crash — the old `kill -0` accepted it).
+ * Legacy text pidfiles (pre-Ф1.4) are accepted with an exe check only. */
 function dnsf_running(safe) {
+	const e = pm_rjson(`${DNSF_DIR}/${safe}.pid.json`);
+	if (e != null && type(e) === 'object')
+		return pm_entry_alive({ pid: e.pid, start: e.start, exe: 'dnsmasq' });
 	const pidp = `${DNSF_DIR}/${safe}.pid`;
 	if (!access(pidp))
 		return false;
@@ -316,13 +325,25 @@ function dnsf_running(safe) {
 }
 
 function stop_dnsf(safe) {
+	const confp = `${DNSF_DIR}/${safe}.conf`;
+	/* Identity file first: kill only the verified (pid, starttime) pair. */
+	const e = pm_rjson(`${DNSF_DIR}/${safe}.pid.json`);
+	if (e != null && type(e) === 'object') {
+		pm_kill_entry({ pid: e.pid, start: e.start, exe: 'dnsmasq' }, 3000);
+		unlink(`${DNSF_DIR}/${safe}.pid.json`);
+	}
+	/* Legacy text pidfile: dnsmasq writes it itself (pid-file= in the conf).
+	 * Signal only when /proc still shows a dnsmasq started from OUR -C conf —
+	 * a reused PID (audit 34) is left alone. */
 	const pidp = `${DNSF_DIR}/${safe}.pid`;
 	if (access(pidp)) {
 		const pid = int(trim(readfile(pidp) || '')) || 0;
-		if (pid >= 2 && system(`kill -0 ${pid} 2>/dev/null`) === 0)
-			system(`kill ${pid} 2>/dev/null`);
+		const info = (pid >= 2) ? pm_proc_info(pid) : null;
+		if (info != null && info.exe != null && match(info.exe, /\/dnsmasq$/) &&
+		    index(info.cmdline, confp) >= 0)
+			pm_kill_entry({ pid: pid, start: info.start, exe: info.exe }, 3000);
+		unlink(pidp);
 	}
-	system(`rm -f '${DNSF_DIR}/${safe}.pid'`);
 }
 
 /* Make sure a filter instance is running with this exact config.
@@ -345,6 +366,15 @@ function ensure_dnsf(safe, port, domains, label) {
 	stop_dnsf(safe);
 	system(`dnsmasq -C '${confp}' >/dev/null 2>&1`);
 	sleep(300);   /* sleep() is MILLISECONDS on this build — let it daemonize */
+	/* Ф1.4 (audit 34): record the identity (pid + starttime + our -C conf)
+	 * right after the spawn — every later stop/liveness check goes through
+	 * it, PID reuse can never redirect a signal. */
+	const spawned = pm_find({ exe: 'dnsmasq', arg: confp });
+	if (length(spawned))
+		pm_wjson(`${DNSF_DIR}/${safe}.pid.json`, {
+			pid: spawned[0].pid, start: spawned[0].start,
+			started: spawned[0].started, exe: spawned[0].exe, conf: confp, ts: time()
+		});
 	if (dnsf_running(safe)) {
 		log(`dnsf ${label}: filter instance on port ${port} (${length(domains)} domains)`);
 		return true;

@@ -42,12 +42,21 @@
 import { access, readfile, writefile, open, stat } from 'fs';
 import { cursor } from 'uci';
 import { isEmpty } from 'homeproxy';
+import {
+	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
+	reg_set as pm_reg_set, reg_del as pm_reg_del, reg_get as pm_reg_get,
+	proc_info as pm_proc_info
+} from '/etc/homeproxy/scripts/pmgr.uc';
 
 const HP_DIR = '/etc/homeproxy';
 const RUN_DIR = '/var/run/homeproxy';
 const MD_DIR = RUN_DIR + '/multidns';
 const RES = HP_DIR + '/resources';
 const CONF = MD_DIR + '/mosdns.yaml';
+/* Candidate keeps the .yaml extension — mosdns picks the config PARSER by
+ * extension; 'mosdns.yaml.candidate' was rejected as "Unsupported Config
+ * Type" and the whole candidate flow silently degraded to LKG-rollback. */
+const CAND = MD_DIR + '/mosdns.candidate.yaml';
 const PID = MD_DIR + '/mosdns.pid';
 const RESTART_MARK = MD_DIR + '/mosdns.restarting';
 const STATE_FILE = MD_DIR + '/multidns_state.json';
@@ -1127,41 +1136,57 @@ function build_mosdns_conf() {
 	return join('\n', lines) + '\n';
 }
 
-/* Kill every mosdns instance started from OUR config (SIGKILL so the OS releases
- * the listening sockets immediately, avoiding "Address in use" on the next start). */
+/* Kill every mosdns instance started from OUR config (audit 11, Ф1.4): the
+ * identity is exe + the `-c` argument (our CONF or its candidate) — a
+ * FOREIGN mosdns with a different config is never touched. kill_entry
+ * verifies (pid, starttime) on every poll, so a reused PID is not signalled.
+ * 🔴 SIGKILL immediately (force_kill): the old comment stays true — the OS
+ * must release the listening sockets IMMEDIATELY, a graceful TERM keeps them
+ * bound for seconds and the next start hits "Address in use" (live-caught
+ * ч.150 as an LKG-rollback loop). The wait loop below rebinds cleanly. */
 function kill_our_mosdns() {
-	let out = trim(capture('pidof mosdns 2>/dev/null'));
-	if (!length(out)) return;
-	let pids = split(out, ' ');
-	for (let i = 0; i < length(pids); i = i + 1)
-		system('kill -9 ' + trim(pids[i]) + ' 2>/dev/null');
+	const spec = { exe: MOSDNS, arg: [ CONF, CAND ] };
+	const found = pm_find(spec);
+	for (let i = 0; i < length(found); i = i + 1)
+		pm_kill_entry(found[i], 5000, true);
 	/* Wait for the process(es) to actually disappear before we rebind.
 	 * ucode sleep() is MILLISECONDS — the old sleep(1) polled for 10 ms and
 	 * returned while mosdns was still dying, so the next start_mosdns raced
 	 * the corpse and the "not running - restarting" loop began (issue #8).
-	 * The first pidof after SIGKILL normally finds nothing and breaks at
+	 * The first scan after the kill normally finds nothing and breaks at
 	 * once; 10 × 1 s is only the pathological ceiling. */
 	for (let i = 0; i < 10; i = i + 1) {
-		if (!length(trim(capture('pidof mosdns 2>/dev/null')))) break;
+		if (!length(pm_find(spec)))
+			break;
 		sleep(1000);
 	}
 }
 
+/* Ownership-grade liveness (audit 11, second half): a bare pidof accepted a
+ * FOREIGN mosdns. Ours is the instance whose -c argument is our config
+ * (either the live CONF or the candidate being verified). */
 function mosdns_running() {
-	let out = trim(capture('pidof mosdns 2>/dev/null'));
-	return length(out) > 0;
+	return length(pm_find({ exe: MOSDNS, arg: [ CONF, CAND ] })) > 0;
 }
 
 /* Ф1.2 (аудит 12): launch mosdns with a given config and wait until it is
- * actually serving (up to 10 s). Records our PID on success. */
+ * actually serving (up to 10 s). Records the IDENTITY (pid + starttime
+ * ticks) in the daemons registry on success — the text pidfile stays only
+ * for legacy sh consumers. */
 function mosdns_try(conf_path) {
 	system('setsid ' + MOSDNS + ' start -c ' + shellquote(conf_path) + ' -d ' + shellquote(MD_DIR)
 		+ ' </dev/null >>' + shellquote(LOG_FILE + '.md') + ' 2>&1 &');
 	for (let i = 0; i < 10; i = i + 1) {
 		sleep(1000);
-		if (mosdns_running()) {
-			let pids = split(trim(capture('pidof mosdns 2>/dev/null')), ' ');
-			if (length(pids)) atomic_write(PID, pids[0]);
+		const own = pm_find({ exe: MOSDNS, arg: conf_path });
+		if (length(own)) {
+			pm_reg_set('mosdns', {
+				kind: 'dns',
+				pid: own[0].pid, start: own[0].start, started: own[0].started,
+				exe: MOSDNS, arg: conf_path,
+				hb: time(), note: 'multidns racing engine'
+			});
+			atomic_write(PID, sprintf('%d', own[0].pid));
 			return true;
 		}
 	}
@@ -1201,7 +1226,7 @@ function start_mosdns() {
 	 * REAL ports; only a candidate that actually comes up atomically replaces
 	 * CONF. A rejected candidate rolls back to the untouched previous CONF. */
 	let conf = build_mosdns_conf();
-	let cand = CONF + '.candidate';
+	let cand = CAND;
 	atomic_write(cand, conf);
 	kill_our_mosdns();
 	sleep(1000);
@@ -1236,9 +1261,19 @@ function start_mosdns() {
 }
 
 function stop_mosdns() {
+	/* Ф1.4: registry identity first (covers a process started with an older
+	 * conf path), then the conf/candidate match. The bare text-pidfile kill
+	 * is GONE — a reused PID must never be signalled (audit 34 class); the
+	 * pidfile pid is killed only when /proc still shows a mosdns binary. */
+	const e = pm_reg_get('mosdns');
+	if (e != null && pm_entry_alive(e))
+		pm_kill_entry(e, 5000);
+	pm_reg_del('mosdns');
 	if (access(PID)) {
-		let c = trim(readfile(PID));
-		if (c) system(`kill ${shellquote(c)} 2>/dev/null`);
+		const c = int(trim(readfile(PID)) || 0);
+		const info = (c > 1) ? pm_proc_info(c) : null;
+		if (info != null && info.exe != null && match(info.exe, /\/mosdns$/))
+			pm_kill_entry({ pid: c, start: info.start, exe: info.exe }, 5000);
 		system('rm -f ' + shellquote(PID));
 	}
 	kill_our_mosdns();
