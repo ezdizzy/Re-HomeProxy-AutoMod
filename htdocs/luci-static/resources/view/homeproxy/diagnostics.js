@@ -77,6 +77,16 @@ const callServiceRestart = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф1.1 Operation/Apply Manager: операции применения выполняются асинхронно
+ * (стадии Applying→Verifying→Completed/Failed, verified только по живой
+ * проверке) — статус опрашивается до завершения. */
+const callOpStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_op_status',
+	params: [ 'op_id' ],
+	expect: { '': {} }
+});
+
 /* Support Bundle (Р4): сбор приватно-безопасного отчёта. */
 const callBundleStart = rpc.declare({
 	object: 'luci.homeproxy',
@@ -725,17 +735,48 @@ function buildCoreSection(view) {
 		});
 	}
 
+	/* Ф1.1: bounded poll of one operation until completed/failed; the result
+	 * badge is driven by the server-side verified flag, not by wishful
+	 * thinking (audit 1.7: never report success before verification). */
+	function pollOpResult(opId, el, doneText, after) {
+		const deadline = Date.now() + 120000;
+		const tick = function() {
+			return L.resolveDefault(callOpStatus(opId), {}).then(function(st) {
+				const op = st && st.op;
+				if (!op) {
+					dom.content(el, statusBadge(false, _('Operation status unavailable')));
+					if (after) after();
+					return;
+				}
+				if (op.status === 'completed' || op.status === 'failed') {
+					const ok = (op.status === 'completed') && op.verified;
+					dom.content(el, statusBadge(ok,
+						ok ? doneText : ((op.detail || _('Apply failed')))));
+					if (after) after();
+					return;
+				}
+				if (Date.now() > deadline) {
+					dom.content(el, statusBadge(false, _('The operation is still running — check the operation journal')));
+					if (after) after();
+					return;
+				}
+				window.setTimeout(tick, 2000);
+			});
+		};
+		return tick();
+	}
+
 	function restart() {
-		dom.content(restartMsgEl, E('em', { 'class': 'diag-gray' }, _('Restarting… (may take ~5 s)')));
+		dom.content(restartMsgEl, E('em', { 'class': 'diag-gray' }, _('Applying configuration…')));
 		return L.resolveDefault(callServiceRestart(), {}).then(function(ret) {
-			if (ret && ret.result) {
-				dom.content(restartMsgEl, statusBadge(true, _('Service restarted')));
-				/* Refresh core status after restart */
-				return run();
-			} else {
-				dom.content(restartMsgEl, statusBadge(false,
-					_('Restart failed') + (ret && ret.exit_code != null ? ' (exit ' + ret.exit_code + ')' : '')));
-			}
+			if (ret && ret.op_id && ret.result !== false)
+				return pollOpResult(ret.op_id, restartMsgEl, _('Service restarted'), run);
+			if (ret && ret.busy && ret.op_id)
+				/* Another apply holds the lock — attach to ITS result instead
+				 * of a wishful success. */
+				return pollOpResult(ret.op_id, restartMsgEl, _('Service restarted'), run);
+			dom.content(restartMsgEl, statusBadge(false,
+				_('Restart failed') + (ret && ret.error ? ' (' + ret.error + ')' : '')));
 		});
 	}
 

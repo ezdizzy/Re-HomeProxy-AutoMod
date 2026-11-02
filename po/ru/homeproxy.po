@@ -12127,3 +12127,12 @@ msgstr "Неизвестно"
 
 msgid "off"
 msgstr "выкл"
+
+msgid "Operation status unavailable"
+msgstr "Статус операции недоступен"
+
+msgid "The operation is still running — check the operation journal"
+msgstr "Операция ещё выполняется — смотрите журнал операций"
+
+msgid "Applying configuration…"
+msgstr "Применяю конфигурацию…"

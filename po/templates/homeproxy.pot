@@ -6566,3 +6566,12 @@ msgstr ""
 
 msgid "off"
 msgstr ""
+
+msgid "Operation status unavailable"
+msgstr ""
+
+msgid "The operation is still running — check the operation journal"
+msgstr ""
+
+msgid "Applying configuration…"
+msgstr ""

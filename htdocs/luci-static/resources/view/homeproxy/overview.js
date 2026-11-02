@@ -87,6 +87,15 @@ const callServiceRestart = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф1.1 Operation/Apply Manager: applies run as tracked operations
+ * (stages + server-side verified flag) — poll until completed/failed. */
+const callOpStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_op_status',
+	params: [ 'op_id' ],
+	expect: { '': {} }
+});
+
 const callSnapshotCreate = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'app_snapshot_create',
@@ -585,13 +594,44 @@ return view.extend({
 
 		restartBtn.addEventListener('click', function() {
 			restartBtn.disabled = true;
-			noteResult(_('Restarting the service…'), null);
+			noteResult(_('Applying configuration…'), null);
 			L.resolveDefault(callServiceRestart(), {}).then(function(r) {
+				if (r && r.op_id && r.result !== false)
+					return pollOp(r.op_id);
 				restartBtn.disabled = false;
-				noteResult(r.result ? _('Service restarted.') : ((r && r.error) || _('Restart failed')),
-					!!r.result);
+				noteResult((r && r.error) || _('Restart failed'), false);
 			});
 		});
+
+		/* Ф1.1: honest result — the badge flips only when the operation has
+		 * completed AND the backend verified the service is actually up. */
+		function pollOp(opId) {
+			const deadline = Date.now() + 120000;
+			const tick = function() {
+				L.resolveDefault(callOpStatus(opId), {}).then(function(st) {
+					const op = st && st.op;
+					if (!op) {
+						restartBtn.disabled = false;
+						noteResult(_('Operation status unavailable'), false);
+						return;
+					}
+					if (op.status === 'completed' || op.status === 'failed') {
+						restartBtn.disabled = false;
+						const ok = (op.status === 'completed') && op.verified;
+						noteResult(ok ? _('Service restarted.') :
+							((op.detail || _('Apply failed'))), ok);
+						return;
+					}
+					if (Date.now() > deadline) {
+						restartBtn.disabled = false;
+						noteResult(_('The operation is still running — check the operation journal'), false);
+						return;
+					}
+					window.setTimeout(tick, 2000);
+				});
+			};
+			tick();
+		}
 
 		snapshotBtn.addEventListener('click', function() {
 			snapshotBtn.disabled = true;

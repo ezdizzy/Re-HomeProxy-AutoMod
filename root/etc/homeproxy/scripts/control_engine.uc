@@ -108,8 +108,13 @@ function tick(now) {
 	} catch (e) {
 		log('transitions: ' + e);
 	}
-	last_sig = sig;
-	system(`/usr/bin/ucode -L /etc/homeproxy/scripts /etc/homeproxy/scripts/control_apply.uc >/dev/null 2>&1`);
+	/* Ф1.1: the apply is serialized by opman/hc_apply.lock; on lock-busy it
+	 * exits 2 WITHOUT applying — the signature stays pending and the next
+	 * tick re-runs it. Any other outcome (applied, or applied-with-errors)
+	 * consumes the signature. No "applying anyway" (audit 1.6). */
+	const rc = system(`/usr/bin/ucode -L /etc/homeproxy/scripts /etc/homeproxy/scripts/control_apply.uc >/dev/null 2>&1`);
+	if (rc !== 2)
+		last_sig = sig;
 }
 
 /* Main loop inside main(): executable logic NEVER lives at script

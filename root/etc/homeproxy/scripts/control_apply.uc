@@ -34,7 +34,7 @@
 
 'use strict';
 
-import { access, readfile, writefile, popen, readlink } from 'fs';
+import { access, readfile, writefile, popen, readlink, stat, mkdir, rmdir } from 'fs';
 import {
 	RUN_DIR, atomic_write, mkdir_p, get_sections, main_opt,
 	client_states, active_rules, client_rule_targets, wifi_off_map,
@@ -471,18 +471,35 @@ function kick_wifi(macs, wifaces) {
 function main() {
 	/* Serialize applies: the RPC layer (apply_async) and the engine tick can
 	 * both run this at the same time — overlapping dnsmasq restarts raced
-	 * each other into a dead resolver (live-verified). mkdir is atomic; a
-	 * crashed apply leaves a stale lock, so the wait is bounded. */
+	 * each other into a dead resolver (lesson 107). Ф1.1 (plan 20 §3 Ф1.1,
+	 * audit 1.6/50): the mkdir lock now SELF-HEALS — a holder killed
+	 * mid-apply leaves a stale dir which is stolen after STALE_SEC; a live
+	 * holder is waited for a bounded budget; and a still-busy lock FAILS
+	 * this pass with exit code 2 instead of the old "applying anyway" —
+	 * the engine keeps the pending signature and re-runs on the next tick,
+	 * the RPC path reports busy to its caller. Overlapping dnsmasq
+	 * restarts must never race again. */
+	const LOCK_DIR = '/tmp/hc_apply.lock';
+	const STALE_SEC = 90;
+	const WAIT_BUDGET = 20;
 	let locked = false;
-	for (let i = 0; i < 20; i++) {
-		if (system('mkdir /tmp/hc_apply.lock 2>/dev/null') === 0) {
+	for (let i = 0; i < (WAIT_BUDGET * 2); i++) {
+		if (mkdir(LOCK_DIR)) {
 			locked = true;
 			break;
 		}
+		const st = stat(LOCK_DIR);
+		if (st && (time() - st.mtime) > STALE_SEC) {
+			rmdir(LOCK_DIR);   /* holder died mid-apply — steal the lock */
+			continue;
+		}
 		sleep(500);
 	}
-	if (!locked)
-		log('apply: lock busy >10s — applying anyway');
+	if (!locked) {
+		log('apply: another apply holds the lock — pass skipped (pending changes stay pending, retried on the next tick)');
+		add_event('system', 'lock', 'apply skipped: another apply is running');
+		exit(2);
+	}
 
 	mkdir_p(RUN_DIR);
 	mkdir_p(CONF_DIR);

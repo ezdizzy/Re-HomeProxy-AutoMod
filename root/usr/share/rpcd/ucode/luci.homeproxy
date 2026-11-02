@@ -27,6 +27,10 @@ import {
 	read_arp as hc_read_arp, schedule_active as hc_sched_active,
 	bump_cursor as hc_bump_cursor
 } from '/etc/homeproxy/scripts/control.uc';
+import {
+	begin as op_begin, get_op as op_get, list_ops as op_list,
+	get_revision as op_revision
+} from '/etc/homeproxy/scripts/opman.uc';
 
 /* Apply an edited learned list WITHOUT a service restart: rewrite the watched local
  * rule-set files (proxy_domain.json / auto_ip.json) — the core hot-reloads them.
@@ -310,6 +314,51 @@ function automation_apply_files(geo_too) {
 function restart_daemon_instance(script_name, instance_name) {
 	system(`kill $(ps w | grep '[${substr(script_name, 0, 1)}]${substr(script_name, 1)}' | awk '{print $1}') 2>/dev/null; true`);
 	system(`ubus call service event '{"type":"instance.restart","data":{"name":"homeproxy","instance":"` + instance_name + `"}}' 2>/dev/null`);
+}
+
+/* ── Ф1.1 Operation/Apply Manager (plan 20 §3 Ф1.1; audit 1.6/1.7/18/48) ──
+ * The ONE door for service configuration applies: an operation record is
+ * created (/var/run/homeproxy/ops/), serialized by an opman lease-lock and
+ * executed by a detached runner (apply_runner.uc) that walks the stages
+ * Applying→Verifying→Completed/Failed and marks verified ONLY after a live
+ * check (hiddify-c instance / engine processes). No "applying anyway": busy
+ * is an honest rejection carrying the holder's op_id. Double-click bursts
+ * coalesce onto the just-started op. UI status: app_op_status/app_op_list. */
+function op_spawn(action, note) {
+	const r = op_begin('service', action, 'rpcd', note || action, 0);
+	if (!r.ok) {
+		if (r.busy) {
+			const held = (r.holder && r.holder.op_id) ? op_get(r.holder.op_id) : null;
+			/* Coalesce a double-click burst: same action, holder younger
+			 * than 3 s → attach to it (revision-queue coalescing — Ф1.7). */
+			if (held && held.action === action && held.action !== '' &&
+			    (time() - int(held.started)) <= 3)
+				return { result: true, op_id: held.op_id, coalesced: true };
+			return {
+				result: false, busy: true, error: 'another apply is running',
+				op_id: (r.holder && r.holder.op_id) || '',
+				holder_started: (r.holder && r.holder.started) || 0
+			};
+		}
+		return { result: false, error: r.error || 'op begin failed' };
+	}
+	const op = r.op;
+	system('/usr/bin/ucode ' + shellquote(HP_DIR + '/scripts/apply_runner.uc') +
+		' ' + shellquote(op.op_id) + ' ' + shellquote(action) + ' >/dev/null 2>&1 &');
+	return { result: true, op_id: op.op_id, config_revision: op.config_revision };
+}
+
+/* DPI applies (zapret/byedpi): light path = engine_restart (the launcher
+ * re-reads UCI on respawn, no core RST), full path = service restart; both
+ * through the operation machinery. Keeps the legacy light_apply flag. */
+function op_spawn_dpi(light, note) {
+	const ap = light
+		? op_spawn('engine_restart', note + ' (light)')
+		: op_spawn('restart', note);
+	return {
+		result: ap.result === true, light_apply: !!light,
+		op_id: ap.op_id || '', busy: ap.busy === true
+	};
 }
 
 /* Validate a manual entry: FQDN, IPv4[/plen] or IPv6[/plen]; lowercase form back. */
@@ -2754,9 +2803,11 @@ const methods = {
 			try { res = json(out); } catch(e) { return { error: 'config_heal.uc failed: ' + out }; }
 			if (mode === 'repair') {
 				/* Apply the repaired firewall/internals immediately (user-triggered
-				 * repair must take effect at once, not on the next service start). */
-				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-				res.service_restarted = true;
+				 * repair must take effect at once, not on the next service start).
+				 * Ф1.1: through the operation machinery — serialized, verified. */
+				const ap = op_spawn('restart', 'config_heal repair');
+				res.service_restarted = ap.result === true;
+				res.op_id = ap.op_id || '';
 			}
 			return res;
 		}
@@ -2901,8 +2952,10 @@ const methods = {
 
 	diag_service_restart: {
 		call: function() {
-			const exit_code = system('/etc/init.d/homeproxy restart >/dev/null 2>&1');
-			return { result: exit_code === 0, exit_code: exit_code };
+			/* Ф1.1 (audit 48: a synchronous restart could exceed the LuCI
+			 * timeout; audit 1.7: report success only after verification):
+			 * async operation + stages + verified, the UI polls app_op_status. */
+			return op_spawn('restart', 'check & repair: service restart');
 		}
 	},
 
@@ -3787,10 +3840,39 @@ const methods = {
 				return { result: false, error: 'app package installation failed' };
 			/* The package scripts deliberately do NOT start the service (the init.d
 			 * start is slow and would hang the package transaction). Bring the new
-			 * scripts live with a BACKGROUND restart so the RPC returns immediately
-			 * and the UI never blocks. */
-			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, i18n_updated: !!ok_i18n };
+			 * scripts live through the operation machinery (Ф1.1): serialized and
+			 * verified; the RPC returns immediately either way. */
+			const ap = op_spawn('restart', 'app self-update');
+			return { result: true, i18n_updated: !!ok_i18n, op_id: ap.op_id || '',
+				deferred: ap.result !== true };
+		}
+	},
+
+	/* ── Ф1.1 Operation/Apply Manager: UI status of operations ─────────────
+	 * The apply pages poll app_op_status until the op reaches completed/
+	 * failed and show the result ONLY from the verified flag (audit 1.7). */
+	app_op_status: {
+		args: { op_id: 'op_id' },
+		call: function(req) {
+			const id = '' + (req.args?.op_id || '');
+			if (!length(id))
+				return { result: false, error: 'op_id required' };
+			const op = op_get(id);
+			if (!op)
+				return { result: false, error: 'unknown operation' };
+			return { result: true, op: op, config_revision: op_revision() };
+		}
+	},
+
+	app_op_list: {
+		args: { limit: 'limit' },
+		call: function(req) {
+			const lim = int('' + (req.args?.limit || ''));
+			const all = op_list();
+			const out = [];
+			for (let i = 0; i < length(all) && i < (lim > 0 ? lim : 10); i++)
+				push(out, all[i]);
+			return { result: true, ops: out, config_revision: op_revision() };
 		}
 	},
 
@@ -3863,8 +3945,9 @@ const methods = {
 			system('cp ' + shellquote(dir + '/config') + ' /etc/config/homeproxy');
 			if (access(dir + '/resources'))
 				system(`rm -rf ${HP_DIR}/resources.new; cp -r ${shellquote(dir + '/resources')} ${HP_DIR}/resources.new && rm -rf ${HP_DIR}/resources.old && mv ${HP_DIR}/resources ${HP_DIR}/resources.old && mv ${HP_DIR}/resources.new ${HP_DIR}/resources; rm -rf ${HP_DIR}/resources.old`);
-			system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, restored: name };
+			const ap = op_spawn('restart', 'snapshot restore ' + name);
+			return { result: true, restored: name, op_id: ap.op_id || '',
+				deferred: ap.result !== true };
 		}
 	},
 
@@ -4019,11 +4102,9 @@ const methods = {
 			const z_alive = (uci_get('homeproxy.config.zapret_enabled', '0') === '1') &&
 				system(`ps w | grep '[n]fqws2' | grep -q "qnum=${uci_get('homeproxy.config.zapret_qnum', '200')}"`) === 0;
 			system('uci commit homeproxy');
-			if (z_alive)
-				system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
-			else
-				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, light_apply: z_alive };
+			return (z_alive)
+				? op_spawn_dpi(true, 'zapret strategy apply')
+				: op_spawn_dpi(false, 'zapret strategy apply');
 		}
 	},
 
@@ -4136,11 +4217,9 @@ const methods = {
 				c.set('homeproxy', 'config', 'byedpi_enabled', '1');
 			}
 			c.commit('homeproxy');
-			if (light)
-				system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
-			else
-				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, light_apply: light, applied: { zapret: z, byedpi: b } };
+			const ap = op_spawn_dpi(light, 'engine cmd-opts apply');
+			ap.applied = { zapret: z, byedpi: b };
+			return ap;
 		}
 	},
 
@@ -4178,11 +4257,9 @@ const methods = {
 			c.set('homeproxy', 'config', 'byedpi_cmd_opts', '' + (bak.byedpi.cmd_opts || ''));
 			c.set('homeproxy', 'config', 'byedpi_enabled', new_b);
 			c.commit('homeproxy');
-			if (light)
-				system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
-			else
-				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, light_apply: light, restored: { zapret: bak.zapret, byedpi: bak.byedpi } };
+			const ap = op_spawn_dpi(light, 'ByeDPI/Zapret restore');
+			ap.restored = { zapret: bak.zapret, byedpi: bak.byedpi };
+			return ap;
 		}
 	},
 
@@ -4490,12 +4567,10 @@ const methods = {
 			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
 			const light = !flags_changed && same(prev_b, '1') &&
 				system(`ps w | grep -q ${shellquote('[c]iadpi')}`) === 0;
-			if (light)
-				system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
-			else
-				system('/etc/init.d/homeproxy restart >/dev/null 2>&1 &');
-			return { result: true, light_apply: light, applied: { cmd_opts: opts, udp_over_tcp: uot,
-				block_quic: bquic, zapret_voice: zvoice } };
+			const ap = op_spawn_dpi(light, 'ByeDPI/Zapret flags apply');
+			ap.applied = { cmd_opts: opts, udp_over_tcp: uot,
+				block_quic: bquic, zapret_voice: zvoice };
+			return ap;
 		}
 	},
 
