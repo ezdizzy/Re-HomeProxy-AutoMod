@@ -3236,12 +3236,14 @@ scan_dup_tags(config.endpoints, 'endpoint');
 scan_dup_tags(config.route.rule_set, 'rule-set');
 
 /* Atomic (temp + mv): a kill/power-cut mid-writefile would leave a truncated
- * hiddify-c.json — the core would die at start with no config at all (the
- * lastgood rollback only covers a config that FAILED THE CORE, not a missing
- * one). Same pattern as every state file in the project. */
-const cfg_tmp = RUN_DIR + '/hiddify-c.json.tmp';
+ * file — the core would die at start with no config at all. Ф1.2 (аудит 27):
+ * the target of the write is now the CANDIDATE; the running hiddify-c.json is
+ * replaced atomically ONLY after the core check passed, so a fatal config
+ * never displaces the RUNNING one. */
+const candidate = RUN_DIR + '/hiddify-c.json.candidate';
+const cfg_tmp = candidate + '.tmp';
 writefile(cfg_tmp, sprintf('%.J\n', removeBlankAttrs(config)));
-system('mv -f ' + hp_shellquote(cfg_tmp) + ' ' + hp_shellquote(RUN_DIR + '/hiddify-c.json'));
+system('mv -f ' + hp_shellquote(cfg_tmp) + ' ' + hp_shellquote(candidate));
 
 /* Hot Swap state contract (ч.59): the daemon reads THIS file, not UCI, so its view
  * always matches the generated config. Written only when the feature is active;
@@ -3270,43 +3272,56 @@ if (hp_core) {
 	}));
 
 	if (is_singbox) {
-		const chk = popen(hp_shellquote(hp_core.path) + ' check -c ' +
-		                  hp_shellquote(RUN_DIR + '/hiddify-c.json') + ' 2>&1');
-		let out = chk ? chk.read('all') : null;
-		if (chk) chk.close();
-		if (!isEmpty(out)) {
-			let m = match(out, /\[[0-9]+\]: ([a-z0-9_]+) (outbound|endpoint) is not included/);
-			let bad = null;
-			if (m) {
-				/* Pattern 1 captures the TYPE in m[1] and the word
-				 * "outbound/endpoint" in m[2] — the other two patterns are the
-				 * other way round. The old `m[2] || m[1]` extracted the literal
-				 * word for pattern 1: an inert skip-entry that never matched the
-				 * real type → check failed forever → infinite regen loop. */
+		/* Ф1.2 (аудит 27): check runs against the CANDIDATE, and its exit code
+		 * is authoritative. rc==0 → the candidate is promoted. A non-type
+		 * fatal (rc!=0, unknown pattern) leaves the running config untouched
+		 * and exits 1 — init.d keeps/rolls back the previous config. */
+		const chk_out = '/tmp/hp_check.out';
+		const chk_rc = system(hp_shellquote(hp_core.path) + ' check -c ' +
+		                      hp_shellquote(candidate) + ' >' + hp_shellquote(chk_out) + ' 2>&1');
+		let out = (chk_rc != 0 && access(chk_out)) ? readfile(chk_out) : '';
+		system('rm -f ' + hp_shellquote(chk_out));
+		let bad = null;
+		if (chk_rc != 0) {
+			/* Pattern 1 captures the TYPE in m[1] and the word
+			 * "outbound/endpoint" in m[2] — the other two patterns are the
+			 * other way round. The old `m[2] || m[1]` extracted the literal
+			 * word for pattern 1: an inert skip-entry that never matched the
+			 * real type → check failed forever → infinite regen loop. */
+			let m = match(out || '', /\[[0-9]+\]: ([a-z0-9_]+) (outbound|endpoint) is not included/);
+			if (m)
 				bad = m[1];
-			}
 			if (!bad) {
-				m = match(out, /unknown (outbound|endpoint) type: ([a-z0-9_]+)/);
+				m = match(out || '', /unknown (outbound|endpoint) type: ([a-z0-9_]+)/);
 				if (m)
 					bad = m[2];
 			}
 			if (!bad) {
-				m = match(out, /outbound type "([a-z0-9_]+)" not implemented/);   /* core dialect phrasing */
+				m = match(out || '', /outbound type "([a-z0-9_]+)" not implemented/);   /* core dialect phrasing */
 				if (m)
 					bad = m[1];
 			}
-			if (bad) {
-				hp_extra_skip[bad] = true;
-				writefile(hp_extra_skip_file, sprintf('%.J\n', {
-					version: hp_core.version,
-					types: keys(hp_extra_skip)
-				}));
-				warn(sprintf('homeproxy: the core rejects outbound type "%s" - regenerating without it.\n', bad));
-				system('/usr/bin/ucode ' + hp_shellquote(HP_DIR + '/scripts/generate_client.uc') + ' >/dev/null 2>&1');
-				exit(0);
-			}
-			/* A non-type fatal: keep the config (init.d lastgood rollback covers a
-			 * dead core) but leave a trace in the service log for diagnostics. */
+		}
+		if (bad) {
+			hp_extra_skip[bad] = true;
+			writefile(hp_extra_skip_file, sprintf('%.J\n', {
+				version: hp_core.version,
+				types: keys(hp_extra_skip)
+			}));
+			warn(sprintf('homeproxy: the core rejects outbound type "%s" - regenerating without it.\n', bad));
+			system('/usr/bin/ucode ' + hp_shellquote(HP_DIR + '/scripts/generate_client.uc') + ' >/dev/null 2>&1');
+			exit(0);
+		}
+		if (chk_rc != 0) {
+			/* A non-type fatal: the candidate stays on disk (the running config
+			 * is NOT displaced); init.d keeps the previous config / rolls back
+			 * to .lastgood — a dead core never gets a half-broken config. */
+			warn('homeproxy: core config check FAILED - keeping the previous config ('
+				+ trim(out || 'no output') + ')\n');
+			exit(1);
+		}
+		if (out) {
+			/* rc==0 with output: warnings only — log them, promote the config. */
 			warn('homeproxy: core config check: ' + trim(out) + '\n');
 		} else if (hp_extra_skip_stale) {
 			/* The file held rejections from another core version and the current
@@ -3318,6 +3333,10 @@ if (hp_core) {
 		}
 	}
 }
+
+/* Ф1.2: check passed (or the core has no check) — the candidate becomes the
+ * running config, atomically. MUST run even when hp_core is null. */
+system('mv -f ' + hp_shellquote(candidate) + ' ' + hp_shellquote(RUN_DIR + '/hiddify-c.json'));
 
 /* Marker: the running config now references the learned local rule-sets, so Automation can
  * hot-reload (rewrite the files) instead of restarting the service. Absent → do_reload falls

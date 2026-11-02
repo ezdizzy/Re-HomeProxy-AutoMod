@@ -32,6 +32,14 @@ log() {
 	echo -e "$(date "+%Y-%m-%d %H:%M:%S") [DAEMON] $*" >> "$LOG_PATH"
 }
 
+# Ф1.2 (аудит 27): is a named procd instance of this service actually running?
+# `ubus call service get <name>` breaks on this build ("Parsing message data
+# failed"), so read the service list: in its pretty JSON "running" is the first
+# field of the instance object (verified live).
+hp_instance_running() {
+	ubus call service list 2>/dev/null | grep -A1 "\"$1\": {" | grep -q '"running": true'
+}
+
 # Deadlock note: rc.common gates start/stop/reload through procd_lock()
 # (/lib/functions/procd.sh) — an UNBOUNDED `flock 1000`. The lock is inherited
 # (fd 1000, no CLOEXEC) by every child spawned while it is held, so a
@@ -301,19 +309,41 @@ start_service() {
 	fi
 
 	# Generate or copy client config
+	# Ф1.2 (аудит 27/52): BOTH branches follow the LKG pipeline — candidate →
+	# validate → atomic replace → start → verify (background, below) → only a
+	# core that actually STARTS makes the new config the next .lastgood.
 	if [ "$routing_mode" = "custom_json" ]; then
 		if [ -e "$HP_DIR/hiddify-c.json" ]; then
-			cp "$HP_DIR/hiddify-c.json" "$RUN_DIR/hiddify-c.json"
+			# audit 52: custom_json no longer bypasses validation.
+			local _cand="$RUN_DIR/hiddify-c.json.candidate"
+			cp "$HP_DIR/hiddify-c.json" "$_cand" || return 1
+			if ! ucode -e "import { readfile } from \"fs\"; json(readfile(\"$_cand\"));" >/dev/null 2>&1; then
+				rm -f "$_cand"
+				log "Error: custom_json config is not valid JSON — the running config stays untouched."
+				return 1
+			fi
+			if [ "$CORE_TYPE" = "singbox" ] && ! "$PROG" check -c "$_cand" >/dev/null 2>&1; then
+				rm -f "$_cand"
+				log "Error: sing-box rejected the custom_json config — the running config stays untouched."
+				return 1
+			fi
+			mv -f "$_cand" "$RUN_DIR/hiddify-c.json"
 		elif [ ! -e "$RUN_DIR/hiddify-c.json" ]; then
 			log "Error: client config not found. Place your config at $HP_DIR/hiddify-c.json"
 			return 1
 		fi
 	else
-		# Keep the last known-good generated config on tmpfs: if a bad subscription /
-		# node edit breaks generation, roll back to it instead of leaving the router
-		# with no tunnel at all ("user can crank anything" protection).
-		[ -e "$RUN_DIR/hiddify-c.json" ] && cp "$RUN_DIR/hiddify-c.json" "$RUN_DIR/hiddify-c.json.lastgood"
+		# Ф1.2 (аудит 27): the .lastgood file is promoted ONLY by the background
+		# verifier after a core that actually started — never copied here. A
+		# stale/broken config sitting in RUN_DIR while the service is stopped
+		# (or after a failed generation) must not poison the last-known-good.
+		# The previous live config is already in .lastgood (the verifier wrote
+		# it after the previous successful start).
+		rm -f "$RUN_DIR/hiddify-c.json.candidate"
 		rm -f "$RUN_DIR/hiddify-c.json"
+		# The generator writes hiddify-c.json.candidate and atomically renames it
+		# to hiddify-c.json ONLY after the core check passed (audit 27); a fatal
+		# check leaves the running config untouched and exits non-zero.
 		ucode "$HP_DIR/scripts/generate_client.uc"
 		if [ ! -e "$RUN_DIR/hiddify-c.json" ]; then
 			if [ -e "$RUN_DIR/hiddify-c.json.lastgood" ]; then
@@ -450,6 +480,32 @@ start_service() {
 	( sleep 8
 	  wget -qO- --timeout=8 'http://127.0.0.1:9090/proxies/main-out/delay?timeout=5000&url=http://www.gstatic.com/generate_204' >/dev/null 2>&1
 	) >/dev/null 2>&1 &
+
+	# Ф1.2 (аудит 27): confirm-or-rollback. procd starts the core only after
+	# start_service() returns, so the verification runs detached: alive after 8 s
+	# → the new config becomes the next .lastgood; dead → roll back to
+	# .lastgood and restart. A 60 s rollback marker guards against a restart
+	# storm: a config that kills the core twice stops the chain with a log line.
+	(
+		sleep 8
+		if hp_instance_running hiddify-c; then
+			[ -e "$RUN_DIR/hiddify-c.json" ] && cp "$RUN_DIR/hiddify-c.json" "$RUN_DIR/hiddify-c.json.lastgood"
+		elif [ -e "$RUN_DIR/hiddify-c.json.lastgood" ] && [ -e "$RUN_DIR/hiddify-c.json" ]; then
+			if [ -e "$RUN_DIR/.lkg_rollback" ] &&
+			   [ "$(( $(date +%s) - $(cat "$RUN_DIR/.lkg_rollback" 2>/dev/null || echo 0) ))" -lt 60 ]; then
+				log "config verify: core still failing after the rollback — stopping here (loop guard)."
+			else
+				date +%s > "$RUN_DIR/.lkg_rollback"
+				cp "$RUN_DIR/hiddify-c.json.lastgood" "$RUN_DIR/hiddify-c.json"
+				log "config verify: core failed to start with the new config — rolled back to the last good config."
+				sleep 3
+				if ! hp_instance_running hiddify-c; then
+					log "config verify: restarting the service with the rolled-back config."
+					/etc/init.d/homeproxy restart >/dev/null 2>&1
+				fi
+			fi
+		fi
+	) 1000>&- 2>/dev/null &
 
 	# Setup TUN policy routing — handled by the `tun-route` watcher instance
 	# (ч.72): a tun-mode core brings its tun device up LATE (remote rule-sets

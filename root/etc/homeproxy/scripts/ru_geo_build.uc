@@ -94,7 +94,10 @@ function log(msg) {
 }
 
 function fetch(url, dest) {
-	system(`curl -sL --connect-timeout 10 --max-time 180 -o ${shellq(dest)} ${shellq(url)} 2>/dev/null`);
+	/* Ф1.2 (аудит 53): -f makes HTTP errors (404/403/rate-limit pages) FAIL the
+	 * download instead of saving the error page body — an HTML page used to be
+	 * accepted by the size>0 check. */
+	system(`curl -fsSL --connect-timeout 10 --max-time 180 -o ${shellq(dest)} ${shellq(url)} 2>/dev/null`);
 	return !!(access(dest) && stat(dest) && stat(dest).size > 0);
 }
 
@@ -215,6 +218,22 @@ function fetch_cat_lines(cat) {
 	for (let b in GEOSITE_BASES) {
 		if (fetch(b + cat, tmp)) {
 			let lines = read_lines(tmp);
+			/* Ф1.2 (аудит 53): an HTML error page passed the size check and its
+			 * bare lines would have entered the database as "domains". Valid
+			 * category content = domain:/full:/keyword: entries AND include:
+			 * lines (the upstream top category is now include-only — its domains
+			 * live in the referenced categories and are resolved by the queue
+			 * loop below). Junk outnumbering valid lines = an error page. */
+			let ok_lines = 0, junk = 0;
+			for (let i, l in lines) {
+				if (match(l, /^(domain|full|keyword|include):/)) ok_lines++;
+				else junk++;
+			}
+			if (ok_lines < 1 || junk > ok_lines) {
+				log(`warn: category '${cat}' looks like an error page (${ok_lines} valid / ${junk} junk lines) - rejected`);
+				system(`rm -f ${shellq(tmp)}`);
+				return null;
+			}
 			let out = [];
 			for (let i, l in lines) {
 				l = trim(l);

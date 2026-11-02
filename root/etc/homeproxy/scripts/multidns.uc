@@ -1152,6 +1152,22 @@ function mosdns_running() {
 	return length(out) > 0;
 }
 
+/* Ф1.2 (аудит 12): launch mosdns with a given config and wait until it is
+ * actually serving (up to 10 s). Records our PID on success. */
+function mosdns_try(conf_path) {
+	system('setsid ' + MOSDNS + ' start -c ' + shellquote(conf_path) + ' -d ' + shellquote(MD_DIR)
+		+ ' </dev/null >>' + shellquote(LOG_FILE + '.md') + ' 2>&1 &');
+	for (let i = 0; i < 10; i = i + 1) {
+		sleep(1000);
+		if (mosdns_running()) {
+			let pids = split(trim(capture('pidof mosdns 2>/dev/null')), ' ');
+			if (length(pids)) atomic_write(PID, pids[0]);
+			return true;
+		}
+	}
+	return false;
+}
+
 function start_mosdns() {
 	/* Restart-window marker: for the duration of the routine kill->start
 	 * rebuild no listener exists, but that is not a failure. multidns_status
@@ -1180,42 +1196,42 @@ function start_mosdns() {
 	 * instance bound to our config/ports first, then launch a fresh one. The main
 	 * app's russia-dns / secure-dns resolvers are pointed at these listeners
 	 * (127.0.0.1:5453 / :5454) by generate_client.uc when MultiDNS is enabled. */
+	/* Ф1.2 (аудит 12): a config change no longer means "kill the working one,
+	 * then hope the new config is good". The candidate is started against the
+	 * REAL ports; only a candidate that actually comes up atomically replaces
+	 * CONF. A rejected candidate rolls back to the untouched previous CONF. */
 	let conf = build_mosdns_conf();
-	atomic_write(CONF, conf);
+	let cand = CONF + '.candidate';
+	atomic_write(cand, conf);
 	kill_our_mosdns();
 	sleep(1000);
-	system('setsid ' + MOSDNS + ' start -c ' + shellquote(CONF) + ' -d ' + shellquote(MD_DIR)
-		+ ' </dev/null >>' + shellquote(LOG_FILE + '.md') + ' 2>&1 &');
-	let alive = false;
-	for (let i = 0; i < 10; i = i + 1) {
-		sleep(1000);
-		if (mosdns_running()) { alive = true; break; }
-	}
-	if (alive) {
-		let pids = split(trim(capture('pidof mosdns 2>/dev/null')), ' ');
-		if (length(pids)) atomic_write(PID, pids[0]);
-	} else {
+	let alive = mosdns_try(cand);
+	if (!alive) {
 		/* One retry: the previous instance's socket may still be held by the OS
 		 * for a moment after kill. Force-clear and try again. */
 		kill_our_mosdns();
 		sleep(2000);
-		system('setsid ' + MOSDNS + ' start -c ' + shellquote(CONF) + ' -d ' + shellquote(MD_DIR)
-			+ ' </dev/null >>' + shellquote(LOG_FILE + '.md') + ' 2>&1 &');
-		for (let i = 0; i < 10; i = i + 1) {
-			sleep(1000);
-			if (mosdns_running()) { alive = true; break; }
-		}
-		if (alive) {
-			let pids = split(trim(capture('pidof mosdns 2>/dev/null')), ' ');
-			if (length(pids)) atomic_write(PID, pids[0]);
-		}
+		alive = mosdns_try(cand);
+	}
+	if (alive) {
+		/* The candidate proved itself — promote it atomically. */
+		atomic_write(CONF, conf);
+	} else if (access(CONF)) {
+		/* LKG rollback: the candidate never came up; CONF is untouched —
+		 * relaunch the previous config so acceleration stays alive. */
+		kill_our_mosdns();
+		sleep(2000);
+		alive = mosdns_try(CONF);
+		log(alive
+			? 'mosdns rejected the new config - rolled back to the previous config (LKG).'
+			: 'mosdns failed to start even with the previous config.');
 	}
 	if (!alive) {
 		let err = access(LOG_FILE + '.md') ? trim(readfile(LOG_FILE + '.md')) : '';
 		log('mosdns failed to start - resolution will not be accelerated.'
 			+ (err ? ' err: ' + err : ''));
 	}
-	system('rm -f ' + shellquote(RESTART_MARK));
+	system('rm -f ' + shellquote(RESTART_MARK) + ' ' + shellquote(cand));
 	return alive;
 }
 
