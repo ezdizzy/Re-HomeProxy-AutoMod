@@ -106,6 +106,14 @@
 			"path": "homeproxy/monitor"
 		}
 	},
+	"admin/services/homeproxy/health": {
+		"title": "Health center",
+		"order": 43,
+		"action": {
+			"type": "view",
+			"path": "homeproxy/health"
+		}
+	},
 	"admin/services/homeproxy/diagnostics": {
 		"title": "Check & repair",
 		"order": 44,

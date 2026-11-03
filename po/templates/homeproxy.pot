@@ -6685,3 +6685,165 @@ msgstr ""
 
 msgid "Service restarted and verified."
 msgstr ""
+
+msgid "Degraded"
+msgstr ""
+
+msgid "Repair"
+msgstr ""
+
+msgid "Unblock"
+msgstr ""
+
+msgid "What the system did"
+msgstr ""
+
+msgid "What happens next"
+msgstr ""
+
+msgid "Sending the repair request…"
+msgstr ""
+
+msgid "Manual request sent to the coordinator — it executes in the next tick."
+msgstr ""
+
+msgid "Sending the unblock request…"
+msgstr ""
+
+msgid "The campaign is reset — the coordinator will confirm in the next tick."
+msgstr ""
+
+msgid "No data from the health monitor yet — refresh in a minute."
+msgstr ""
+
+msgid "All subsystems are running"
+msgstr ""
+
+msgid "%d subsystem(s) down"
+msgstr ""
+
+msgid "%d subsystem(s) degraded"
+msgstr ""
+
+msgid "The service is stopped"
+msgstr ""
+
+msgid "Running: %d"
+msgstr ""
+
+msgid "Degraded: %d"
+msgstr ""
+
+msgid "Down: %d"
+msgstr ""
+
+msgid "Off: %d"
+msgstr ""
+
+msgid "Health data recomputed honestly (the monitor daemon has not written yet)"
+msgstr ""
+
+msgid "Health data is fresh (%d s old)"
+msgstr ""
+
+msgid "Health data is stale"
+msgstr ""
+
+msgid "Sentinel: no fresh data — the guard may be silent"
+msgstr ""
+
+msgid "coordinator alive, the guard only detects"
+msgstr ""
+
+msgid "fallback mode (the coordinator is dead)"
+msgstr ""
+
+msgid "findings: %d"
+msgstr ""
+
+msgid "Recovery: no fresh data — the coordinator may be dead"
+msgstr ""
+
+msgid "Recovery: %d campaign(s) in progress"
+msgstr ""
+
+msgid "Recovery: nothing in progress"
+msgstr ""
+
+msgid "manual requests queued: %d"
+msgstr ""
+
+msgid "auto-repairs frozen for %d min"
+msgstr ""
+
+msgid "Service"
+msgstr ""
+
+msgid "What the system did and will do"
+msgstr ""
+
+msgid "Verified now"
+msgstr ""
+
+msgid "Inferred"
+msgstr ""
+
+msgid "DPI engines"
+msgstr ""
+
+msgid "Failover"
+msgstr ""
+
+msgid "Interception"
+msgstr ""
+
+msgid "carried by the light pass"
+msgstr ""
+
+msgid "A configuration apply is in progress (\"%s\") — the coordinator waits for the verdict and then resets the auto-campaigns."
+msgstr ""
+
+msgid "Nothing needs attention — the watchdogs are quiet."
+msgstr ""
+
+msgid "No repairs yet — the coordinator has not executed anything."
+msgstr ""
+
+msgid "Time"
+msgstr ""
+
+msgid "What happened"
+msgstr ""
+
+msgid "The health data is unavailable: %s"
+msgstr ""
+
+msgid "Health center"
+msgstr ""
+
+msgid "Live status of every Ravnex subsystem: what is running, what the automatic recovery has done and will do next, and what you can do by hand. The feed below is the same event journal the system writes for itself."
+msgstr ""
+
+msgid "Every status carries an honest explanation: why it is what it is, what the watchdogs and the recovery coordinator have already done, what happens next — and what you can do by hand."
+msgstr ""
+
+msgid "System attention"
+msgstr ""
+
+msgid "Repair history"
+msgstr ""
+
+msgid "The unified event feed of all subsystems. The full journal with the clear button lives in Access control → Journal."
+msgstr ""
+
+msgid "The service restart re-routes every connection and goes through the verified apply door; a verified apply also resets every automatic repair campaign."
+msgstr ""
+
+msgid "Live status of every subsystem, the automatic repair log and the event feed."
+msgstr ""
+
+msgid "no fresh data"
+msgstr ""
+
+msgid "Down: %d · "
+msgstr ""

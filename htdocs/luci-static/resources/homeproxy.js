@@ -251,6 +251,7 @@ return baseclass.extend({
 		alert: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 		database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
 		trend: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+		heart: '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/><polyline points="3.5 12 6 12 7.5 9 10 15 12 10 13.5 13 15.5 12 20.5 12"/>',
 		/* Shell chrome icons (R3 v2). */
 		sun: '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
 		moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
@@ -514,14 +515,14 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 		{ pages: [ 'client', 'dns', 'node' ], cap: 'Connection' },
 		{ pages: [ 'bypass', 'rules', 'automation' ], cap: 'Blocking bypass' },
 		{ pages: [ 'devices', 'control', 'telegram' ], cap: 'Home' },
-		{ pages: [ 'status', 'monitor', 'diagnostics', 'server' ], cap: 'System section' }
+		{ pages: [ 'status', 'monitor', 'health', 'diagnostics', 'server' ], cap: 'System section' }
 	],
 
 	NAV_ICONS: {
 		overview: 'activity', client: 'layers', dns: 'globe',
 		node: 'server', bypass: 'shield', rules: 'crosshair', automation: 'refresh',
 		devices: 'devices', control: 'tool', telegram: 'send', status: 'cpu', monitor: 'trend',
-		diagnostics: 'sensors', server: 'hardrive'
+		health: 'heart', diagnostics: 'sensors', server: 'hardrive'
 	},
 
 	NAV_HIDDEN: {},
@@ -563,7 +564,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 		 * the tab closes. One-time flush per IA version: every tab refreshes
 		 * its tree once, then the cache works as before. */
 		try {
-			const MV = 'r3v3d1';
+			const MV = 'r3v3f1';
 			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
 				ui.menu.flushCache();
 				window.localStorage.setItem('hp-menu-ver', MV);

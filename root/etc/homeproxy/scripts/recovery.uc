@@ -136,8 +136,9 @@ const HUNG_KILLABLE = [ 'automation', 'multidns', 'telegram', 'urltest',
 	'hotswap', 'autopilot', 'control', 'metrics', 'health', 'sentinel',
 	'recovery' ];
 
-/* Человекочитаемые метки классов proposal-поводов (U4-тексты). */
-const PROPOSAL_HINTS = {
+/* Человекочитаемые метки классов proposal-поводов (U4-тексты).
+ * Export для Ф2.5 Explainable (explain.uc — композитор объяснений). */
+export const PROPOSAL_HINTS = {
 	core: 'проверьте узлы/подписку; «Перезапуск службы» пересоберёт конфиг (Контроль → Обход блокировок)',
 	mosdns: 'MultiDNS-демон пересобирает mosdns сам; если не восстановился — «Перезапуск службы»',
 	tgws: 'проверьте настройки tg-ws (Управление с телефона)',
@@ -263,6 +264,7 @@ export function collect_findings(sent_data, health_data) {
 				: (nm === 'core') ? 'core'
 				: (nm === 'tgws') ? 'tgws'
 				: (nm === 'tun') ? 'tun'
+				: (nm === 'fw4') ? 'fw4'
 				: (nm === 'generators') ? 'generators'
 				: (nm === 'system') ? 'system' : null;
 			if (cls != null)
@@ -597,11 +599,15 @@ export function compute_and_recover(opts) {
 		(sent_rd != null && sent_rd.data != null) ? sent_rd.data : null,
 		(health_rd != null && health_rd.data != null) ? health_rd.data : null);
 
-	/* 3. settle кампаний (last_seen/удаление флап-протухших). */
+	/* 3. settle кампаний (last_seen/удаление флап-протухших).
+	 * 🔴 Латентный баг ч.166 (вскрыт живьём ч.167: первый тик, когда кампания
+	 * прожила FLAP_FORGET — приёмка T1–T5 кампании 30+ мин не ждала):
+	 * for-in по массиву даёт ЭЛЕМЕНТ (урок 20/180) — stl.dropped[d] был
+	 * undefined и тик умирал «left-hand side expression is null» КАЖДЫЙ раз,
+	 * когда хоть один повод доживал до флап-протухания. */
 	const stl = settle_keys(keys, findings, now);
 	keys = stl.keys;
-	for (let d in stl.dropped) {
-		const de = stl.dropped[d];
+	for (let de in stl.dropped) {
 		if (de.entry.proposed === true || length(fresh_times(de.entry.times, now)) > 0)
 			push(events, { type: 'recovered', who: de.entry.label || de.key,
 				detail: 'повод исчез — кампания закрыта' });
@@ -639,8 +645,23 @@ export function compute_and_recover(opts) {
 		}
 	}
 
-	/* 5. Кандидаты; fork (журнал опов) только когда есть что исполнять или
-	 * по периодике (обнаружение ручного apply, начавшегося без кандидатов). */
+	/* 5. Кандидаты; опман опрашивается: КАЖДЫЙ тик при живых кампаниях
+	 * с действием (сброс по верифицированному apply — ради них) и каждый
+	 * второй тик иначе (фон).
+	 * 🔴 Ч.167 (живой лов): периодика раз в ~60 с пропускала КОРОТКИЕ
+	 * применения — верифицированный restart 52 с проскочил между опросами,
+	 * кампании НЕ сброшены и freeze не выставлен (обещание «verified apply
+	 * сбрасывает все кампании» нарушалось в окне пробела). list_ops = один
+	 * ls-fork + readfile'ы — по карману. Честная граница: применение КОРОЧЕ
+	 * тика (15 с) всё ещё может проскочить между опросами (класс урока 181
+	 * «рестарт мимо») — применять-стадии в дверях длиннее. */
+	let has_camps = false;
+	for (let k in keys) {
+		const e = keys[k];
+		if (e != null && e.action != null && findings_gone(e, now) !== true)
+			has_camps = true;
+	}
+	const periodic = has_camps || ((int(o.tick || 0) % 2) === 0);
 	let apply_now = null;
 	const any_manual = length(manual_queue) > 0;
 	const auto_cand = pick_auto(keys, blocked, now);
@@ -649,12 +670,41 @@ export function compute_and_recover(opts) {
 	 * (зависший op держит lease и сам блокирует будущие применения). */
 	const auto_allowed = (auto_cand != null) &&
 		((manual_until <= now) || (auto_cand.entry.action === ACT_OP_FINISH));
-	const periodic = (int(o.tick || 0) % 4) === 0;   /* раз в ~минуту */
 	if (any_manual || auto_cand != null || (periodic && watch == null)) {
 		const ops = op_list();
 		apply_now = apply_in_progress(ops, now);
 		if (apply_now != null && watch == null)
 			watch = apply_now;
+	}
+
+	/* 4b. Стартовый догон (ч.167, живой лов): ПОЛНЫЙ рестарт службы
+	 * пересоздаёт САМ координатор — демон, который смотрел apply, умирает
+	 * вместе с рестартом, а новый поднимается уже ПОСЛЕ завершения опа
+	 * (тёплый restart ~12 с < респавн+первый тик). На первом тике запуска
+	 * демона смотрим ПОСЛЕДНИЙ оп журнала: completed+verified в окне 10 мин
+	 * → тот же сброс (кампании очищены + freeze + событие manual). Повтор
+	 * идемпотентен; догон только когда watch не подхвачен (иначе сброс уже
+	 * сделала ветка поллинга watch). Ребут безопасен: журнал в tmpfs пуст. */
+	if (int(o.tick || 0) === 0 && watch == null) {
+		const ops0 = op_list();
+		const last0 = (ops0 != null && length(ops0) > 0) ? ops0[0] : null;
+		if (last0 != null && ('' + (last0.status || '')) === 'completed' &&
+		    last0.verified === true &&
+		    (now - int(last0.started || 0)) <= 600) {
+			for (let k in keys) {
+				keys[k].times = [];
+				keys[k].next_ok = 0;
+				keys[k].proposed = false;
+			}
+			blocked = {};
+			manual_until = now + MANUAL_FREEZE_SEC;
+			push(events, { type: 'manual',
+				who: 'Применение конфигурации',
+				detail: 'применение «' + (last0.action || '') + '» верифицировано (координатор перезапустился вместе со службой) — авто-кампании сброшены, автоматика выжидает ' +
+					int(MANUAL_FREEZE_SEC / 60) + ' мин' });
+			push(history, { ts: now, key: 'apply:' + (last0.action || ''),
+				action: 'apply_ok', ok: true, manual: true });
+		}
 	}
 
 	/* 6. Исполнение СТРОГО ОДНОГО действия (запрет параллельных). */
@@ -724,10 +774,16 @@ export function compute_and_recover(opts) {
 		}
 	}
 
-	/* 7. U4-предложения для классов без авто-ремонта (разово на кампанию). */
+	/* 7. U4-предложения для классов без авто-ремонта (разово на кампанию).
+	 * 🔴 Ч.167: (а) сброс кампаний оживлял proposal для проблем из флап-
+	 * памяти; (б) честное правило — предложение ТОЛЬКО о ЖИВОМ поводе
+	 * (alive=true = находка видна прямо сейчас; флап-память держит кампанию
+	 * для ремонтов, но не для оповещений о problem, которой уже нет). */
 	for (let k in keys) {
 		const e = keys[k];
 		if (e == null || e.action != null || e.proposed === true)
+			continue;
+		if (findings_gone(e, now) || e.alive !== true)
 			continue;
 		const c = classify_key('' + k);
 		if (c != null && c.action != null)
@@ -831,6 +887,7 @@ export function selftest() {
 		core: { name: 'core', label: 'Ядро', status: 'down', reason: 'api не отвечает', expected: true },
 		system: { name: 'system', label: 'Память', status: 'down', reason: 'мало', expected: true },
 		tun: { name: 'tun', label: 'TUN', status: 'down', reason: 'tun down', expected: true },
+		fw4: { name: 'fw4', label: 'fw4-перехват', status: 'down', reason: 'цепей нет', expected: true },
 		tun_route: { name: 'tun_route', label: 'TUN-watcher', status: 'down', reason: 'procd', expected: true }
 	};
 	const f = collect_findings({ findings: sf }, { entries: he });
@@ -841,6 +898,8 @@ export function selftest() {
 	check('cf_loop_ignored', f['loop:svc_start'] == null, null);
 	check('cf_core_proposal', f['core'] != null && f['core'].action == null &&
 		f['core'].class === 'core', null);
+	check('cf_fw4_proposal', f['fw4'] != null && f['fw4'].action == null &&
+		f['fw4'].class === 'fw4', 'fw4 down verdict is a proposal, not silence');
 	check('cf_system_proposal', f['system'] != null, null);
 	check('cf_tun_proposal', f['tun'] != null, null);
 	check('cf_tun_route_svc', f['svc:tun-route'] != null &&

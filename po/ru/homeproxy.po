@@ -12247,3 +12247,165 @@ msgstr "Доменные списки сохранены, но применен�
 
 msgid "Service restarted and verified."
 msgstr "Служба перезапущена и проверена."
+
+msgid "Degraded"
+msgstr "Деградация"
+
+msgid "Repair"
+msgstr "Ремонт"
+
+msgid "Unblock"
+msgstr "Разблокировать"
+
+msgid "What the system did"
+msgstr "Что система уже сделала"
+
+msgid "What happens next"
+msgstr "Что будет дальше"
+
+msgid "Sending the repair request…"
+msgstr "Отправка заявки на ремонт…"
+
+msgid "Manual request sent to the coordinator — it executes in the next tick."
+msgstr "Заявка отправлена координатору — он исполнит её в ближайшем тике."
+
+msgid "Sending the unblock request…"
+msgstr "Отправка заявки на разблокировку…"
+
+msgid "The campaign is reset — the coordinator will confirm in the next tick."
+msgstr "Кампания сброшена — координатор подтвердит в ближайшем тике."
+
+msgid "No data from the health monitor yet — refresh in a minute."
+msgstr "Данных монитора здоровья пока нет — обновите через минуту."
+
+msgid "All subsystems are running"
+msgstr "Все подсистемы работают"
+
+msgid "%d subsystem(s) down"
+msgstr "Не работают подсистем: %d"
+
+msgid "%d subsystem(s) degraded"
+msgstr "Деградируют подсистем: %d"
+
+msgid "The service is stopped"
+msgstr "Служба остановлена"
+
+msgid "Running: %d"
+msgstr "Работают: %d"
+
+msgid "Degraded: %d"
+msgstr "Деградируют: %d"
+
+msgid "Down: %d"
+msgstr "Не работают: %d"
+
+msgid "Off: %d"
+msgstr "Выключено: %d"
+
+msgid "Health data recomputed honestly (the monitor daemon has not written yet)"
+msgstr "Данные здоровья пересчитаны честно (демон-монитор ещё не писал)"
+
+msgid "Health data is fresh (%d s old)"
+msgstr "Данные здоровья свежие (возраст %d с)"
+
+msgid "Health data is stale"
+msgstr "Данные здоровья устарели"
+
+msgid "Sentinel: no fresh data — the guard may be silent"
+msgstr "Sentinel: нет свежих данных — возможно, сторож молчит"
+
+msgid "coordinator alive, the guard only detects"
+msgstr "координатор жив — сторож только детектирует"
+
+msgid "fallback mode (the coordinator is dead)"
+msgstr "режим fallback (координатор мёртв)"
+
+msgid "findings: %d"
+msgstr "находок: %d"
+
+msgid "Recovery: no fresh data — the coordinator may be dead"
+msgstr "Recovery: нет свежих данных — возможно, координатор мёртв"
+
+msgid "Recovery: %d campaign(s) in progress"
+msgstr "Recovery: кампаний в работе — %d"
+
+msgid "Recovery: nothing in progress"
+msgstr "Recovery: ничего в работе"
+
+msgid "manual requests queued: %d"
+msgstr "заявок в очереди: %d"
+
+msgid "auto-repairs frozen for %d min"
+msgstr "авто-ремонты заморожены на %d мин"
+
+msgid "Service"
+msgstr "Служба"
+
+msgid "What the system did and will do"
+msgstr "Что сделано и что дальше"
+
+msgid "Verified now"
+msgstr "Проверено сейчас"
+
+msgid "Inferred"
+msgstr "По выводу"
+
+msgid "DPI engines"
+msgstr "Движки DPI"
+
+msgid "Failover"
+msgstr "Отказоустойчивость"
+
+msgid "Interception"
+msgstr "Перехват"
+
+msgid "carried by the light pass"
+msgstr "перенос лёгкого прохода"
+
+msgid "A configuration apply is in progress (\"%s\") — the coordinator waits for the verdict and then resets the auto-campaigns."
+msgstr "Идёт применение конфигурации («%s») — координатор ждёт вердикт, после верификации сбросит авто-кампании."
+
+msgid "Nothing needs attention — the watchdogs are quiet."
+msgstr "Ничего не требует внимания — сторожа молчат."
+
+msgid "No repairs yet — the coordinator has not executed anything."
+msgstr "Ремонтов пока не было — координатор ничего не исполнял."
+
+msgid "Time"
+msgstr "Время"
+
+msgid "What happened"
+msgstr "Что произошло"
+
+msgid "The health data is unavailable: %s"
+msgstr "Данные здоровья недоступны: %s"
+
+msgid "Health center"
+msgstr "Центр здоровья"
+
+msgid "Live status of every Ravnex subsystem: what is running, what the automatic recovery has done and will do next, and what you can do by hand. The feed below is the same event journal the system writes for itself."
+msgstr "Живой статус всех подсистем Ravnex: что работает, что уже сделало и что будет делать автоматическое восстановление, что можно сделать руками. Лента ниже — тот самый журнал событий, который система пишет для себя."
+
+msgid "Every status carries an honest explanation: why it is what it is, what the watchdogs and the recovery coordinator have already done, what happens next — and what you can do by hand."
+msgstr "У каждого статуса — честное объяснение: почему он такой, что уже сделали сторожа и координатор восстановления, что будет дальше — и что можно сделать руками."
+
+msgid "System attention"
+msgstr "Внимание системы"
+
+msgid "Repair history"
+msgstr "История ремонтов"
+
+msgid "The unified event feed of all subsystems. The full journal with the clear button lives in Access control → Journal."
+msgstr "Единая лента событий всех подсистем. Полный журнал с кнопкой очистки — в «Контроль доступа» → «Журнал»."
+
+msgid "The service restart re-routes every connection and goes through the verified apply door; a verified apply also resets every automatic repair campaign."
+msgstr "Перезапуск службы перепрокладывает все соединения и идёт через верифицируемую дверь применений; верифицированное применение также сбрасывает все авто-кампании ремонтов."
+
+msgid "Live status of every subsystem, the automatic repair log and the event feed."
+msgstr "Живой статус всех подсистем, журнал автоматических ремонтов и лента событий."
+
+msgid "no fresh data"
+msgstr "нет свежих данных"
+
+msgid "Down: %d · "
+msgstr "Не работают: %d · "

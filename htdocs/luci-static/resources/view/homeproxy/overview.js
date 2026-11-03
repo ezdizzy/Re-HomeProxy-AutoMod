@@ -344,6 +344,9 @@ return view.extend({
 			[ 'diag',   'sensors',  _('Check & repair'),
 				_('One click runs the health checks and repairs the routing.'),
 				_('Check now'), 'admin/services/homeproxy/diagnostics' ],
+			[ 'health', 'heart',    _('Health center'),
+				_('Live status of every subsystem, the automatic repair log and the event feed.'),
+				_('Open'), 'admin/services/homeproxy/health' ],
 			[ 'maint',  'cpu',      _('Maintenance'),
 				_('Core version, snapshots, update checks and service management.'),
 				_('Open'), 'admin/services/homeproxy/status' ]
@@ -806,6 +809,30 @@ return view.extend({
 			hub.maint.dot.className = 'hpui-dot' + (diagSeen ? (diagOk ? ' ok' : ' bad') : '');
 			hub.maint.state.textContent = diagSeen
 				? 'Ravnex v' + sys.app_version : _('not installed');
+
+			/* Health center (concern card 9): the health doc summary rides
+			 * overview_sys (one extra readfile on the poll, no forks). A
+			 * stale doc is shown honestly as "no fresh data" — the daemon
+			 * rewrites it every tick. */
+			const hs = (sys && sys.health) || null;
+			let hText = _('no fresh data'), hDot = '';
+			if (hs && hs.fresh) {
+				if (hs.overall === 'ok') {
+					hText = _('All subsystems are running');
+					hDot = 'ok';
+				} else if (hs.overall === 'off') {
+					hText = _('The service is stopped');
+					hDot = '';
+				} else {
+					const dn = (hs.counts && hs.counts.down) || 0;
+					const dg = (hs.counts && hs.counts.degraded) || 0;
+					hText = ((dn > 0) ? _('Down: %d · ').format(dn) : '') +
+						_('Degraded: %d').format(dg);
+					hDot = (dn > 0) ? 'bad' : 'warn';
+				}
+			}
+			hub.health.dot.className = 'hpui-dot' + (hDot ? ' ' + hDot : '');
+			hub.health.state.textContent = hText;
 
 			/* Quick setup strip: visible until servers + main node exist. */
 			let nodeCount = 0;

@@ -701,7 +701,14 @@ function system_entry() {
 
 const DEEP_SCAN_SPECS = {
 	core: { exe: 'hiddify-core' },
-	mosdns: { exe: '/usr/bin/mosdns' },
+	/* 🔴 Урок 233 (ч.167, живой лов — шторм down/ok каждые 5 с): scan_procs
+	 * сравнивает basename_of(cmdline-элемента) со spec.exe — ПОЛНЫЙ ПУТЬ
+	 * ('/usr/bin/mosdns') никогда не матчился (basename 'mosdns' ≠ путь),
+	 * scan.mosdns всегда null → heal_reg не лечил реестр → light-проход
+	 * читал пустой реестр и писал «процесс mosdns отсутствует» на каждом
+	 * лёгком тике, а глубокий (по слушателям) — ok. Флап каждые 5 с в
+	 * fast-режиме + шторм событий. Спеки — ТОЛЬКО голые имена бинарников. */
+	mosdns: { exe: 'mosdns' },
 	ciadpi: { exe: 'ciadpi' },
 	nfqws2: { exe: 'nfqws2' },
 	tgws_go: { exe: 'tg-ws-proxy-go' },

@@ -44,6 +44,7 @@ import { SENTINEL_PATH as SN_PATH } from '/etc/homeproxy/scripts/sentinel.uc';
 import {
 	RECOVERY_PATH as RC_PATH, request_manual as rc_request_manual
 } from '/etc/homeproxy/scripts/recovery.uc';
+import { compose as explain_compose } from '/etc/homeproxy/scripts/explain.uc';
 
 /* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
  * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
@@ -4178,6 +4179,53 @@ const methods = {
 		}
 	},
 
+	/* ── Ф2.5 Explainable: честные объяснения для «Центра здоровья» (Ф2.6) ─
+	 * Композитор explain.uc собирает объяснения КАЖДОЙ записи из трёх
+	 * документов (health/sentinel/recovery): почему статус такой, что
+	 * система уже сделала, что будет дальше, что можно сделать руками.
+	 * Health-документ: свежий (≤90 с) отдаётся как есть; протухший честно
+	 * пересчитывается (тот же контракт, что у health_status — без записи:
+	 * писатель один, демон). Sentinel/Recovery отдаются как есть с
+	 * флагами свежести — их документы и ЕСТЬ вердикты (пересчёта нет,
+	 * уроки Ф2.2/Ф2.3). */
+	health_explain: {
+		call: function(req) {
+			const now = time();
+			const hrd = ss_read_state(HS_PATH);
+			const hage = (hrd != null && hrd.meta != null && hrd.meta.ts != null)
+				? (now - int(hrd.meta.ts)) : -1;
+			let health = null;
+			let computed = false;
+			if (hrd != null && hrd.data != null && hage >= 0 && hage <= 90) {
+				health = hrd.data;
+			} else {
+				health = hs_snapshot({ deep: true, svc_map: null,
+					prev_data: (hrd != null && hrd.data != null) ? hrd.data : null });
+				computed = true;
+			}
+			const srd = ss_read_state(SN_PATH);
+			const sage = (srd != null && srd.meta != null && srd.meta.ts != null)
+				? (now - int(srd.meta.ts)) : -1;
+			const rrd = ss_read_state(RC_PATH);
+			const rage = (rrd != null && rrd.meta != null && rrd.meta.ts != null)
+				? (now - int(rrd.meta.ts)) : -1;
+			const explains = explain_compose(health,
+				(srd != null && srd.data != null) ? srd.data : null,
+				(rrd != null && rrd.data != null) ? rrd.data : null, now);
+			return {
+				result: true,
+				health: { fresh: (!computed && hage >= 0), age: (hage >= 0) ? hage : null,
+					computed: computed ? 'rpc' : null, data: health },
+				sentinel: { fresh: (sage >= 0 && sage <= 150), age: (sage >= 0) ? sage : null,
+					data: (srd != null) ? srd.data : null },
+				recovery: { fresh: (rage >= 0 && rage <= 180), age: (rage >= 0) ? rage : null,
+					data: (rrd != null) ? rrd.data : null },
+				explains: explains,
+				generated: now
+			};
+		}
+	},
+
 	/* Snapshot management (ч.69): point-in-time copies of the app configuration
 	 * (/etc/config/homeproxy) + the routing resources (learned lists, manual
 	 * pins, geo seeds) into /etc/homeproxy/backups/snapshot-<ts>/. Restores
@@ -6420,6 +6468,29 @@ const methods = {
 			/* Core liveness: the /version endpoint is the cheapest fetch. */
 			const clash = clash_api('/version');
 			reply.clash_ok = (clash != null);
+
+			/* Ф2.6 hub card: the health doc summary rides the same poll
+			 * (one readfile, no forks). The daemon writes the doc every
+			 * tick; a stale doc shows honestly as "no fresh data" — no
+			 * recompute on a 4 s poll. */
+			reply.health = { fresh: false };
+			const hrd = ss_read_state(HS_PATH);
+			if (hrd != null && hrd.data != null && hrd.meta != null &&
+			    hrd.meta.ts != null && hrd.data.entries != null) {
+				const hage = time() - int(hrd.meta.ts);
+				if (hage >= 0 && hage <= 90) {
+					const hcounts = { ok: 0, degraded: 0, down: 0, off: 0 };
+					for (let hn in hrd.data.entries) {
+						const hst = '' + ((hrd.data.entries[hn] != null)
+							? hrd.data.entries[hn].status : 'off');
+						if (hcounts[hst] != null)
+							hcounts[hst]++;
+					}
+					reply.health = { fresh: true, age: hage,
+						overall: '' + (hrd.data.overall || 'off'),
+						counts: hcounts };
+				}
+			}
 			return reply;
 		}
 	},
