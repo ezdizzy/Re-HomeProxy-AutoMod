@@ -107,7 +107,7 @@ return view.extend({
 		}
 
 		o = s.taboption('pools', form.DynamicList, 'secure_dns_server', _('Secure DNS server') + ' 🔒',
-			_('Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS\'s socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured. Without MultiDNS a hostname DoH bootstraps through the direct pool — poisoned names (e.g. Google) fail there; prefer an IP-literal DoH (https://1.1.1.1/dns-query).'));
+			_('Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS\'s socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured. Without MultiDNS well-known DoH/DoT hostnames (Cloudflare, Google, Quad9, AdGuard, DNS.SB) are converted to IP literals automatically, and any other hostname bootstraps through the tunnel (8.8.8.8) — never through the direct pool.'));
 		o.value('https://cloudflare-dns.com/dns-query', _('Cloudflare DoH'));
 		o.value('https://dns.quad9.net/dns-query', _('Quad9 DoH'));
 		o.value('https://dns.adguard-dns.com/dns-query', _('AdGuard DoH'));

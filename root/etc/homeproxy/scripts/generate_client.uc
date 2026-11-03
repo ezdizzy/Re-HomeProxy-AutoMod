@@ -578,6 +578,64 @@ function parse_dnsserver(server_addr, default_protocol) {
 	}
 }
 
+/* Ф1.6-д (mdns-off secure-DNS, 2026-11-03): well-known encrypted-DNS providers
+ * with anycast IPs whose TLS certificates carry the IP literal in SAN, so a
+ * hostname URL for them is rewritten to the IP literal AT GENERATION and the
+ * core never bootstraps the name. Why: with MultiDNS off the bootstrap of the
+ * DoH hostname rode the direct plain pool (secure-dns domain_resolver =
+ * russia-dns) — a poisoned/broken pool SERVFAILs the bootstrap while the
+ * tunnel itself is perfectly healthy (the live window: every secure-dns answer
+ * dead at 0.36 s round-trip), and proxied domains lose DNS — "the whole
+ * internet is very slow". An IP-literal URL has nothing to bootstrap. */
+const SECURE_DNS_IP_MAP = [
+	{ host: 'cloudflare-dns.com', ip: '1.1.1.1' },
+	{ host: 'one.one.one.one', ip: '1.1.1.1' },
+	{ host: 'dns.google', ip: '8.8.8.8' },
+	{ host: 'dns.quad9.net', ip: '9.9.9.9' },
+	{ host: 'dns.adguard-dns.com', ip: '94.140.14.140' },
+	{ host: 'doh.dns.sb', ip: '185.222.222.222' },
+];
+
+function secure_ip_literal(server_addr) {
+	if (isEmpty(server_addr) || type(server_addr) !== 'string' || !match(server_addr, /:\/\//))
+		return server_addr;
+	const u = parseURL(server_addr);
+	if (u == null || isEmpty(u.hostname))
+		return server_addr;
+	const host = lc(u.hostname);
+	if (validation('ip4addr', host) || validation('ip6addr', host))
+		return server_addr;
+	for (let m in SECURE_DNS_IP_MAP) {
+		if (host === m.host) {
+			const ip = validation('ip6addr', m.ip) ? ('[' + m.ip + ']') : m.ip;
+			let out = u.protocol + '://' + ip;
+			if (!isEmpty(u.port))
+				out += ':' + u.port;
+			if (u.pathname && u.pathname !== '/')
+				out += u.pathname;
+			return out;
+		}
+	}
+	return server_addr;
+}
+
+/* Bootstrap hardening for a secure resolver that is STILL a hostname after the
+ * rewrite (custom DoH/DoT): an IP-literal UDP upstream (8.8.8.8 needs no
+ * bootstrap of its own) riding the SAME egress as the encrypted resolver, so
+ * the direct plain pool is never in the loop. Returns null for IP-literal
+ * servers (nothing to resolve — callers drop it and leave domain_resolver
+ * empty). */
+function secure_bootstrap_tag(server, detour) {
+	if (server == null || validation('ip4addr', '' + server) || validation('ip6addr', '' + server))
+		return null;
+	return {
+		tag: 'secure-bootstrap',
+		type: 'udp',
+		server: '8.8.8.8',
+		detour: detour
+	};
+}
+
 function parse_dnsquery(strquery) {
 	if (type(strquery) !== 'array' || isEmpty(strquery))
 		return null;
@@ -1137,17 +1195,26 @@ if (!isEmpty(main_node)) {
 		});
 		/* Secure pool: race via the local mosdns listener when MultiDNS is on (DoH/DoT
 		 * bypasses the hijack); otherwise sing-box's own DoH/DoT resolver with the
-		 * honest egress (secure_detour — audit 13). */
+		 * honest egress (secure_detour — audit 13). Ф1.6-д: the DoH/DoT host is
+		 * rewritten to an IP literal when possible (nothing to bootstrap) and any
+		 * remaining hostname bootstraps through secure-bootstrap (IP-literal 8.8.8.8
+		 * on the same egress) — never through the direct plain pool, which dies when
+		 * poisoned and starved every proxied domain of DNS (mdns-off outage). */
 		const mdns_sec = (mdns_ok && mdns_use_secure);
 		const secure_target = mdns_sec
 			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_secure_port) }
-			: parse_dnsserver(secure_dns_server, 'tcp');
+			: parse_dnsserver(secure_ip_literal(secure_dns_server), 'tcp');
+		const secure_bs = (!mdns_sec && secure_target != null)
+			? secure_bootstrap_tag(secure_target.server, secure_detour) : null;
+		if (secure_bs != null)
+			push(config.dns.servers, secure_bs);
 		push(config.dns.servers, {
 			tag: 'secure-dns',
-			domain_resolver: {
-				server: 'russia-dns',
-				strategy: (ipv6_support !== '1') ? 'ipv4_only' : null
-			},
+			domain_resolver: mdns_sec
+				? { server: 'russia-dns', strategy: (ipv6_support !== '1') ? 'ipv4_only' : null }
+				: (secure_bs != null)
+					? { server: 'secure-bootstrap', strategy: (ipv6_support !== '1') ? 'ipv4_only' : null }
+					: null,
 			detour: mdns_sec ? 'direct-out' : secure_detour,
 			...secure_target
 		});
@@ -1237,21 +1304,29 @@ if (!isEmpty(main_node)) {
 			detour: 'direct-out',
 			...parse_dnsserver(region_dns_server)
 		});
-		/* Remote/default resolver: DoH through the tunnel, bootstrapped via region-dns.
-		 * NOTE (Iran validation): bootstrapping a DoH *hostname* via the local resolver can be
-		 * poisoned by the ISP -- if confirmed in-country, set secure_dns_server to an IP-literal
-		 * DoH (e.g. https://1.1.1.1/dns-query) so no bootstrap is needed. */
+		/* Remote/default resolver: DoH through the tunnel. Ф1.6-д: the DoH/DoT host
+		 * is rewritten to an IP literal when possible (nothing to bootstrap) and
+		 * any remaining hostname bootstraps through secure-bootstrap (IP-literal
+		 * 8.8.8.8 on the same egress as the encrypted resolver) — never through the
+		 * region resolver, which can be poisoned by the ISP (the old NOTE (Iran
+		 * validation) workaround "set secure_dns_server to an IP-literal DoH" is
+		 * now automatic for known providers). */
 		/* Secure pool: race via the local mosdns listener when MultiDNS+secure is on;
 		 * otherwise the honest egress (secure_detour — audit 13, same rule as RU). */
 		const secure_target_br = (		mdns_ok && mdns_use_secure)
 			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_secure_port) }
-			: parse_dnsserver(secure_dns_server, 'tcp');
+			: parse_dnsserver(secure_ip_literal(secure_dns_server), 'tcp');
+		const secure_bs_br = (!(mdns_ok && mdns_use_secure) && secure_target_br != null)
+			? secure_bootstrap_tag(secure_target_br.server, secure_detour) : null;
+		if (secure_bs_br != null)
+			push(config.dns.servers, secure_bs_br);
 		push(config.dns.servers, {
 			tag: 'secure-dns',
-			domain_resolver: {
-				server: 'region-dns',
-				strategy: (ipv6_support !== '1') ? 'ipv4_only' : null
-			},
+			domain_resolver: (mdns_ok && mdns_use_secure)
+				? { server: 'region-dns', strategy: (ipv6_support !== '1') ? 'ipv4_only' : null }
+				: (secure_bs_br != null)
+					? { server: 'secure-bootstrap', strategy: (ipv6_support !== '1') ? 'ipv4_only' : null }
+					: null,
 			detour: (mdns_ok && mdns_use_secure) ? 'direct-out' : secure_detour,
 			...secure_target_br
 		});
