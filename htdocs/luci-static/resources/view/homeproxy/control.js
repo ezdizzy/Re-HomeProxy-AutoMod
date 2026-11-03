@@ -1182,10 +1182,12 @@ return view.extend({
 
 		const evIcons = { block: '🔒', allow: '🔓', temp: '⏱', wifi: '📶', schedule: '📅', system: '⚙️', update: '⬆️',
 			learn: '🧠', heal: '✅', outage: '⚠️', outage_end: '✅', clear: '🗑️', recheck: '🔁',
-			switch: '🔄', dead: '⛔', recovered: '✅', reload: '♻️' };
-		const evColors = { block: 'hpui-c-red', allow: 'hpui-c-green', temp: 'hpui-c-amber', wifi: 'hpui-c-blue' };
-		/* Ф2.4: единая лента Event Bus — источник записи виден явно. */
-		const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'), hotswap: 'Hot Swap', urltest: 'URLTest' };
+			switch: '🔄', dead: '⛔', recovered: '✅', reload: '♻️', down: '⛔', degraded: '⚠️' };
+		const evColors = { block: 'hpui-c-red', allow: 'hpui-c-green', temp: 'hpui-c-amber', wifi: 'hpui-c-blue',
+			down: 'hpui-c-red', degraded: 'hpui-c-amber' };
+		/* Ф2.4: единая лента Event Bus — источник записи виден явно. Ф2.1: события
+		 * Health Monitor (src=health) — переходы статусов подсистем. */
+		const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'), hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health') };
 
 		function refreshJournal() {
 			return Promise.all([

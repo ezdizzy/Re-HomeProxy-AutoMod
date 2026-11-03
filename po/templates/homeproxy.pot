@@ -4808,6 +4808,10 @@ msgstr ""
 msgid "URLTest"
 msgstr ""
 
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+msgid "Health"
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/client.js:1076
 #: htdocs/luci-static/resources/view/homeproxy/client.js:240
 #: htdocs/luci-static/resources/view/homeproxy/client.js:271

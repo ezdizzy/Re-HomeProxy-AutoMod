@@ -3758,6 +3758,11 @@ msgstr "Таймаут UDP"
 msgid "URLTest"
 msgstr "URLTest"
 
+#: htdocs/luci-static/resources/view/homeproxy/control.js
+
+msgid "Health"
+msgstr "Здоровье"
+
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
 msgid "Separate URLTest"

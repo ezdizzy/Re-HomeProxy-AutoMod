@@ -37,6 +37,9 @@ import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, kill_matched as pm_kill_matched,
 	entry_alive as pm_entry_alive, reg_get as pm_reg_get, reg_del as pm_reg_del
 } from '/etc/homeproxy/scripts/pmgr.uc';
+import {
+	HEALTH_PATH as HS_PATH, snapshot as hs_snapshot
+} from '/etc/homeproxy/scripts/health.uc';
 
 /* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
  * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
@@ -4068,6 +4071,30 @@ const methods = {
 			for (let i = 0; i < length(all) && i < (lim > 0 ? lim : 10); i++)
 				push(out, all[i]);
 			return { result: true, ops: out, config_revision: op_revision() };
+		}
+	},
+
+	/* ── Ф2.1 Health Monitor: единый реестр наблюдаемых подсистем ──────────
+	 * Демон (procd-инстанс "health") считает реестр адаптивно и пишет
+	 * /var/run/homeproxy/health.json КАЖДЫЙ тик — ts документа служит
+	 * живым свидетельством работы самого монитора. Здесь: свежий (≤90 с)
+	 * документ отдаётся как есть; протухший/отсутствующий честно
+	 * пересчитывается глубоким снапшотом (никогда НЕ пишется — писатель
+	 * один, демон; ответ помечен computed:'rpc' + fresh:false). Статусы:
+	 * ok/degraded/down/off (+confidence certain/indirect) — данные для
+	 * будущего «Центра здоровья» (Ф2.6, дизайн Ф9.1). */
+	health_status: {
+		call: function(req) {
+			const rd = ss_read_state(HS_PATH);
+			const now = time();
+			const age = (rd != null && rd.meta != null && rd.meta.ts != null)
+				? (now - int(rd.meta.ts)) : -1;
+			if (rd != null && rd.data != null && age >= 0 && age <= 90)
+				return { result: true, fresh: true, age: age, health: rd.data };
+			const health = hs_snapshot({ deep: true, svc_map: null,
+				prev_data: (rd != null && rd.data != null) ? rd.data : null });
+			return { result: true, fresh: false, age: (age >= 0) ? age : null,
+				computed: 'rpc', health: health };
 		}
 	},
 

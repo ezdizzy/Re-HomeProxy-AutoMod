@@ -763,6 +763,23 @@ start_service() {
 	procd_set_param respawn_retry 0
 	procd_close_instance
 
+	# Health Monitor (Ф2.1, ч.164): ALWAYS-ON instance like the telegram bot —
+	# the single observer of ALL subsystems (core, engines, mosdns listeners,
+	# tg-bot/tg-ws, automation children, TUN/route/fw4, generators, memory).
+	# The set of procd instances ITSELF is its source of expectations (service
+	# list = what should run), so the watcher must exist unconditionally. Its
+	# own health is witnessed by the ts of the status document it writes every
+	# tick (the RPC flags the data stale when the writer dies). Adaptive load:
+	# forkless light pass most of the time, deep pass rare, skipped under
+	# memory pressure (OOM edge, lesson 197).
+	mkdir -p "$RUN_DIR"
+	procd_open_instance "health"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/health_cli.uc" run
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
 	# Subscription auto-update cron. This install half was dropped in the init rewrite
 	# (commit 4f3511f) while the stop_service cleanup below was kept, leaving the UI
 	# "Auto update" checkbox wired to nothing. Restored verbatim from upstream: when

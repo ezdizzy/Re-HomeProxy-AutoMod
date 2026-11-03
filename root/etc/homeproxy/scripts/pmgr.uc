@@ -65,7 +65,7 @@
 
 'use strict';
 
-import { access, readfile, readlink, stat, unlink, mkdir, popen } from 'fs';
+import { access, readfile, readlink, stat, unlink, mkdir, rmdir, popen } from 'fs';
 import { atomic_write as ss_atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 
 export const RUN_DIR = '/var/run/homeproxy';
@@ -463,6 +463,60 @@ export function reg_save(doc) {
 	wjson(REG_PATH, doc);
 };
 
+/* 🔴 Сериализация read-modify-write (Ф2.1 ч.164, живой лов): реестр — документ
+ * «прочитал-изменил-записал» БЕЗ лока; 8+ демонов с heartbeat'ами каждые 5-60 с
+ * непрерывно перезаписывают его, и ЛЮБАЯ вставка (reg_self при старте службы,
+ * heal_reg монитора) с высокой вероятностью откатывается чужим устаревшим
+ * снапшотом — потерянные обновления + «свежий hb на мёртвой identity» + flap
+ * degraded→recovered каждые 5 с. Тот же класс, что аудит 21 для events.json
+ * (починен eventbus'ом) — здесь тот же примитив: mkdir-лок, залипший снимается
+ * по mtime > 5 с, rmdir пустого каталога (урок 168). Все МУТАЦИИ реестра
+ * (reg_set/reg_del/reg_hb/reg_gc/scan_registry) — под локом; читатели без.
+ * 🔴 Урок 216 в полной форме (пойман этим же блоком): блок ОБЯЗАН стоять
+ * НИЖЕ reg_load/reg_save — в ucode функция не видит НИКАКИЕ имена (в т.ч.
+ * function-декларации), объявленные ниже неё, без единой ошибки
+ * («access to undeclared variable reg_load» в рантайме). */
+const REG_LOCK = RUN_DIR + '/.reglock';
+const REG_LOCK_TRIES = 40;
+const REG_LOCK_RETRY_MS = 50;
+
+function reg_lock() {
+	for (let i = 0; i < REG_LOCK_TRIES; i++) {
+		if (mkdir(REG_LOCK))
+			return true;
+		const st = stat(REG_LOCK);
+		if (st && (time() - st.mtime) > 5) {
+			try { rmdir(REG_LOCK); } catch (e) { /* кто-то уже снял */ }
+		}
+		sleep(REG_LOCK_RETRY_MS);
+	}
+	return false;
+};
+
+function reg_unlock() {
+	try { rmdir(REG_LOCK); } catch (e) { /* не наш/уже снят */ }
+};
+
+/* Мутация под локом: fn(doc) меняет документ, истина = сохранить. При неудаче
+ * лока честный false (запись потеряется так же, как и без лока — не хуже).
+ * ⚠️ На этой сборке ucode НЕТ try/finally («Expecting 'catch'») — парный
+ * unlock держим в catch-ветке и после try (урок 221). */
+function reg_mutate(fn) {
+	if (!reg_lock())
+		return false;
+	let res = false;
+	try {
+		const doc = reg_load();
+		res = fn(doc);
+		if (res !== false)
+			reg_save(doc);
+	} catch (e) {
+		res = false;
+	}
+	reg_unlock();
+	return res;
+};
+
 /* Register (or refresh) one managed instance. info = { kind, pid, start,
  * started?, exe?, script?, arg?, hb?, note? }. start is REQUIRED — callers
  * take it from proc_info()/find_daemons(), never guess. */
@@ -473,21 +527,21 @@ export function reg_set(name, info) {
 	const start = int(info.start);
 	if (!(start > 0) || !(int(info.pid) > 1))
 		return false;
-	const doc = reg_load();
-	doc.daemons[name] = {
-		name: name,
-		kind: (info.kind != null) ? ('' + info.kind) : 'daemon',
-		pid: int(info.pid),
-		start: start,
-		started: (int(info.started) > 0) ? int(info.started) : (boot_epoch() + int(start / HZ)),
-		exe: (info.exe != null) ? ('' + info.exe) : null,
-		script: (info.script != null) ? ('' + info.script) : null,
-		arg: (info.arg != null) ? ('' + info.arg) : null,
-		hb: (int(info.hb) > 0) ? int(info.hb) : time(),
-		note: (info.note != null) ? ('' + info.note) : null
-	};
-	reg_save(doc);
-	return true;
+	return reg_mutate(function(doc) {
+		doc.daemons[name] = {
+			name: name,
+			kind: (info.kind != null) ? ('' + info.kind) : 'daemon',
+			pid: int(info.pid),
+			start: start,
+			started: (int(info.started) > 0) ? int(info.started) : (boot_epoch() + int(start / HZ)),
+			exe: (info.exe != null) ? ('' + info.exe) : null,
+			script: (info.script != null) ? ('' + info.script) : null,
+			arg: (info.arg != null) ? ('' + info.arg) : null,
+			hb: (int(info.hb) > 0) ? int(info.hb) : time(),
+			note: (info.note != null) ? ('' + info.note) : null
+		};
+		return true;
+	});
 };
 
 export function reg_get(name) {
@@ -496,37 +550,62 @@ export function reg_get(name) {
 };
 
 export function reg_del(name) {
-	const doc = reg_load();
-	if (doc.daemons['' + name] == null)
-		return false;
-	delete doc.daemons['' + name];
-	reg_save(doc);
-	return true;
+	return reg_mutate(function(doc) {
+		if (doc.daemons['' + name] == null)
+			return false;
+		delete doc.daemons['' + name];
+		return true;
+	});
 };
 
-/* Heartbeat touch — only refreshes an EXISTING entry, never resurrects one. */
+/* Heartbeat touch — only refreshes an EXISTING entry, never resurrects one.
+ * 🔴 Ф2.1 finding (ч.164, живой лов): a lost-update race at service start
+ * (reg_load/reg_save is read-modify-write without a lock; 11 daemons register
+ * within the same second) can leave an entry with a DEAD identity that later
+ * heartbeats keep polishing — fresh hb on a corpse. The caller of reg_hb is
+ * ALWAYS the owner daemon heartbeating its own name, so a foreign identity in
+ * the entry is reclaimed with the caller's own (pid, start) instead of
+ * polishing a corpse: e.pid === self_pid() → bump hb; otherwise re-point the
+ * entry to the caller. Missing entries stay untouched (the owner re-registers
+ * via reg_self at startup; a typo'd name must not fabricate entries). */
 export function reg_hb(name) {
-	const doc = reg_load();
-	const e = doc.daemons['' + name];
-	if (e == null)
-		return false;
-	e.hb = time();
-	reg_save(doc);
-	return true;
+	const pid = self_pid();
+	const res2 = reg_mutate(function(doc) {
+		const e = doc.daemons['' + name];
+		if (e == null)
+			return false;
+		if (int(e.pid) === int(pid)) {
+			e.hb = time();
+			return true;
+		}
+		/* Foreign (usually dead) identity — reclaim it with our own. */
+		const st = proc_start(pid);
+		if (!(pid > 1) || st == null || !(int(st) > 0))
+			return false;
+		e.pid = int(pid);
+		e.start = int(st);
+		e.started = boot_epoch() + int(st / HZ);
+		e.hb = time();
+		if (e.note == null || e.note === 'owner' || e.note === 'scanned')
+			e.note = 'hb-adopt';
+		return true;
+	});
+	return res2;
 };
 
 /* Drop entries whose identity is dead (dead pid, reused pid, stale boot). */
 export function reg_gc() {
-	const doc = reg_load();
 	let dropped = 0;
-	for (let name in doc.daemons) {
-		if (!entry_alive(doc.daemons[name])) {
-			delete doc.daemons[name];
-			dropped++;
+	reg_mutate(function(doc) {
+		dropped = 0;
+		for (let name in doc.daemons) {
+			if (!entry_alive(doc.daemons[name])) {
+				delete doc.daemons[name];
+				dropped++;
+			}
 		}
-	}
-	if (dropped)
-		reg_save(doc);
+		return (dropped > 0);
+	});
 	return dropped;
 };
 
@@ -674,12 +753,10 @@ export function kill_if(what, arg) {
 };
 
 /* Registry refresh: drop dead identities, merge identities of the known
- * daemon set scanned from /proc. */
+ * daemon set scanned from /proc. Whole pass under the registry lock (the
+ * scan itself is outside — the merge is what must not race). */
 export function scan_registry() {
-	const doc = reg_load();
-	for (let name in doc.daemons)
-		if (!entry_alive(doc.daemons[name]))
-			delete doc.daemons[name];
+	const found = {};
 	const known = [
 		{ name: 'core', kind: 'core', spec: { exe: 'hiddify-core' } },
 		{ name: 'core', kind: 'core', spec: { exe: 'sing-box' } },
@@ -703,46 +780,60 @@ export function scan_registry() {
 	for (let item in known) {
 		/* for-in over an array yields ELEMENTS (lesson 20) — item IS the
 		 * known-daemon record, never an index. */
-		const found = find_daemons(item.spec);
-		if (!length(found))
+		const hits = find_daemons(item.spec);
+		if (!length(hits))
 			continue;
-		/* Multiple instances (test engines, several bridges): the registry
-		 * keeps the FIRST, the rest go into extra_pids for observation. */
-		const info = reg_info_from(found[0], { kind: item.kind });
-		const prev = doc.daemons[item.name];
-		if (prev != null && entry_alive(prev)) {
-			/* Owner-registered entry (reg_self / a spawn that registered its
-			 * child): refresh the identity facts ONLY — the owner keeps
-			 * script/kind/note and its own heartbeat cadence. Same-name
-			 * multi-spec records (core: hiddify / sing-box / sing-box-core)
-			 * must not be re-pointed by ANOTHER spec's stray match. */
-			const same_bin = (prev.exe == null) || (info.exe == null) ||
-				(basename_of(prev.exe) === basename_of(info.exe));
-			if (same_bin || int(prev.pid) === int(info.pid)) {
-				prev.pid = info.pid;
-				prev.start = info.start;
-				prev.started = info.started;
-				if (info.exe != null && !length('' + (prev.exe || '')))
-					prev.exe = info.exe;
-			}
-		} else {
-			doc.daemons[item.name] = {
-				name: item.name, kind: info.kind, pid: info.pid, start: info.start,
-				started: info.started, exe: info.exe,
-				script: (item.spec.script != null) ? item.spec.script : null,
-				arg: null, hb: time(), note: 'scanned'
-			};
-		}
-		if (length(found) > 1) {
-			const extras = [];
-			for (let i = 1; i < length(found); i++)
-				push(extras, found[i].pid);
-			doc.daemons[item.name].extra_pids = extras;
-		} else if (doc.daemons[item.name].extra_pids != null)
-			delete doc.daemons[item.name].extra_pids;
+		/* Multiple instances (test engines, several bridges): the scan keeps
+		 * the FIRST, the rest go into extra_pids for observation. */
+		const info = reg_info_from(hits[0], { kind: item.kind });
+		const extras = [];
+		for (let i = 1; i < length(hits); i++)
+			push(extras, hits[i].pid);
+		found[item.name] = { info: info, extras: extras };
 	}
-	reg_save(doc);
-	return doc;
+	/* Merge under the lock: a stale snapshot of a concurrent writer must not
+	 * erase fresh registrations (Ф2.1 ч.164 — the lost-update class). */
+	reg_mutate(function(doc) {
+		for (let name in doc.daemons)
+			if (!entry_alive(doc.daemons[name]))
+				delete doc.daemons[name];
+		for (let name in found) {
+			let spec = null;
+			for (let it in known)
+				if (it.name === name) { spec = it.spec; break; }
+			const info = found[name].info;
+			const prev = doc.daemons[name];
+			if (prev != null && entry_alive(prev)) {
+				/* Owner-registered entry (reg_self / a spawn that registered its
+				 * child): refresh the identity facts ONLY — the owner keeps
+				 * script/kind/note and its own heartbeat cadence. Same-name
+				 * multi-spec records (core: hiddify / sing-box / sing-box-core)
+				 * must not be re-pointed by ANOTHER spec's stray match. */
+				const same_bin = (prev.exe == null) || (info.exe == null) ||
+					(basename_of(prev.exe) === basename_of(info.exe));
+				if (same_bin || int(prev.pid) === int(info.pid)) {
+					prev.pid = info.pid;
+					prev.start = info.start;
+					prev.started = info.started;
+					if (info.exe != null && !length('' + (prev.exe || '')))
+						prev.exe = info.exe;
+				}
+			} else {
+				doc.daemons[name] = {
+					name: name, kind: info.kind, pid: info.pid, start: info.start,
+					started: info.started, exe: info.exe,
+					script: (spec != null && spec.script != null) ? spec.script : null,
+					arg: null, hb: time(), note: 'scanned'
+				};
+			}
+			if (length(found[name].extras) > 0)
+				doc.daemons[name].extra_pids = found[name].extras;
+			else if (doc.daemons[name].extra_pids != null)
+				delete doc.daemons[name].extra_pids;
+		}
+		return true;
+	});
+	return reg_load();
 };
 
 export function registry_status() {
@@ -786,8 +877,12 @@ export function selftest() {
 	check('find_daemons_exe_arg', saw_self, sprintf('%d hits', length(found2)));
 	const p1 = proc_info(1);
 	check('proc_info_pid1', p1 != null && int(p1.pid) === 1, (p1 != null && p1.exe != null) ? p1.exe : 'null');
-	/* registry roundtrip (real registry, unique test name, cleaned up) */
-	const rname = 'selftest-' + uniq_tail();
+	/* registry roundtrip (real registry, unique test name, cleaned up).
+	 * 🔴 Латентный баг ч.159–ч.163 (найден Ф2.1 ч.164): дедупликация
+	 * atomic_write удалила локальную uniq_tail(), а selftest продолжал её
+	 * звать — «Reference error» (сам selftest не перезапускали). Инлайн. */
+	const c = clock();
+	const rname = 'selftest-' + int((c[1] / 1000) % 1000000);
 	const fake = { pid: 39999, start: 1, kind: 'test', exe: '/nonexistent', hb: time() };
 	check('reg_set', reg_set(rname, fake) === true, null);
 	const back = reg_get(rname);
