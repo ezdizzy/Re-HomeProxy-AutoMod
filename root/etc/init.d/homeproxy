@@ -797,6 +797,26 @@ start_service() {
 	procd_set_param respawn_retry 0
 	procd_close_instance
 
+	# Recovery Manager (Ф2.3, ч.166): ALWAYS-ON instance — the SINGLE repair
+	# coordinator (A.1 «Recovery Manager»). Collects findings from the sentinel
+	# and health DOCUMENTS (no imports of those modules), settles campaigns
+	# (stabilization hysteresis 45 s, exponential retries 30 s → 30 min, hard
+	# limit 3 auto-restarts per key per 30 min with a 2 h TTL block — procd
+	# retry budget is never exhausted, lessons 23/198), gives MANUAL actions
+	# absolute priority (10 min freeze of auto-repairs after any manual action
+	# or verified apply; a verified apply resets all campaigns), never runs two
+	# repairs in parallel (one action per tick + the opman 'repair' lease).
+	# While this instance is alive the Sentinel only detects (its findings are
+	# picked up from its document); if the coordinator dies the Sentinel falls
+	# back to one-shot repairs (Ф2.2 contract unchanged).
+	mkdir -p "$RUN_DIR"
+	procd_open_instance "recovery"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/recovery_cli.uc" run
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
 	# Subscription auto-update cron. This install half was dropped in the init rewrite
 	# (commit 4f3511f) while the stop_service cleanup below was kept, leaving the UI
 	# "Auto update" checkbox wired to nothing. Restored verbatim from upstream: when

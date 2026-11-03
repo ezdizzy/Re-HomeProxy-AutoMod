@@ -717,7 +717,7 @@ function send_push(kind, text) {
  * written during downtime are pushed, nothing replays); reboot wipes the
  * journal + cursor together → baseline at the head. */
 
-const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn', sentinel: 'service' };
+const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn', sentinel: 'service', recovery: 'service' };
 
 function bus_text(ev) {
 	const who = trim('' + (ev.who || ''));
@@ -732,6 +732,29 @@ function bus_text(ev) {
 			return '🔁 <b>Сторож</b>: цикл восстановления' +
 				(length(detail) ? '\n' + esc_html(detail) : '');
 		return '🛡 <b>Сторож</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
+			(length(detail) ? '\n' + esc_html(detail) : '');
+	}
+	if (ev.src === 'recovery') {
+		/* Ф2.3: координатор восстановления — ремонты, блокировки, ручные
+		 * заявки и предложения (U4: оповещение С ПРЕДЛОЖЕНИЕМ исправления). */
+		if (ev.type === 'repair')
+			return '🛠 <b>Recovery</b>: ' + esc_html(who || 'ремонт') +
+				(length(detail) ? '\n' + esc_html(detail) : '');
+		if (ev.type === 'blocked')
+			return '🔁 <b>Recovery</b>: авто-ремонт приостановлен' +
+				(length(detail) ? '\n' + esc_html(detail) : '');
+		if (ev.type === 'unblocked')
+			return '✅ <b>Recovery</b>: ' + esc_html(who || '') + ' — кампания возобновлена' +
+				(length(detail) ? '\n' + esc_html(detail) : '');
+		if (ev.type === 'manual')
+			return '🖐 <b>Recovery</b>: ' + esc_html(who || 'ручное действие') +
+				(length(detail) ? '\n' + esc_html(detail) : '');
+		if (ev.type === 'proposal')
+			return '💡 <b>Recovery</b>: предложение' +
+				(length(detail) ? '\n' + esc_html(detail) : '');
+		if (ev.type === 'recovered')
+			return '✅ <b>Recovery</b>: ' + esc_html(who || '') + ' — проблема ушла';
+		return '🩺 <b>Recovery</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
 			(length(detail) ? '\n' + esc_html(detail) : '');
 	}
 	if (ev.src === 'hotswap')

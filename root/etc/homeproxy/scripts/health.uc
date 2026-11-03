@@ -717,7 +717,8 @@ const DEEP_SCAN_SPECS = {
 	urltest: { script: 'urltest_watchdog.uc' },
 	hotswap: { script: 'hotswap.uc' },
 	metrics: { script: 'metrics.uc' },
-	sentinel: { script: 'sentinel_cli.uc' }
+	sentinel: { script: 'sentinel_cli.uc' },
+	recovery: { script: 'recovery_cli.uc' }
 };
 
 function deep_entries(svc, regst, now) {
@@ -757,6 +758,8 @@ function deep_entries(svc, regst, now) {
 		'control', 'control', 'control_engine.uc', svc, regst, scan);
 	entries.sentinel = daemon_entry('sentinel', 'Sentinel (сторож здоровья)', 'system',
 		'sentinel', 'sentinel', 'sentinel_cli.uc', svc, regst, scan);
+	entries.recovery = daemon_entry('recovery', 'Recovery (координатор восстановления)', 'system',
+		'recovery', 'recovery', 'recovery_cli.uc', svc, regst, scan);
 	entries.metrics = daemon_entry('metrics', 'Сборщик метрик', 'system',
 		'metrics', 'metrics', 'metrics.uc', svc, regst, scan);
 	entries.log_cleaner = inst_only_entry('log_cleaner', 'Чистка логов', 'system',
@@ -906,6 +909,8 @@ export function light_entries(svc, regst, prev, now) {
 		'control', 'control', 'control_engine.uc', svc, regst, null);
 	entries.sentinel = daemon_entry('sentinel', 'Sentinel (сторож здоровья)', 'system',
 		'sentinel', 'sentinel', 'sentinel_cli.uc', svc, regst, null);
+	entries.recovery = daemon_entry('recovery', 'Recovery (координатор восстановления)', 'system',
+		'recovery', 'recovery', 'recovery_cli.uc', svc, regst, null);
 	entries.metrics = daemon_entry('metrics', 'Сборщик метрик', 'system',
 		'metrics', 'metrics', 'metrics.uc', svc, regst, null);
 	entries.log_cleaner = inst_only_entry('log_cleaner', 'Чистка логов', 'system',

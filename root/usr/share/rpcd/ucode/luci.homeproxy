@@ -41,6 +41,9 @@ import {
 	HEALTH_PATH as HS_PATH, snapshot as hs_snapshot
 } from '/etc/homeproxy/scripts/health.uc';
 import { SENTINEL_PATH as SN_PATH } from '/etc/homeproxy/scripts/sentinel.uc';
+import {
+	RECOVERY_PATH as RC_PATH, request_manual as rc_request_manual
+} from '/etc/homeproxy/scripts/recovery.uc';
 
 /* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
  * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
@@ -4116,6 +4119,62 @@ const methods = {
 					sentinel: null };
 			return { result: true, fresh: (age >= 0 && age <= 150), age: age,
 				sentinel: rd.data };
+		}
+	},
+
+	/* ── Ф2.3 Recovery Manager: статус координатора восстановления ─────────
+	 * Демон (procd-инстанс "recovery") пишет /var/run/homeproxy/recovery.json
+	 * каждый тик (15 с; тик может затянуться исполнением ремонта до 150 с —
+	 * порог свежести 180 с с запасом). Документ отдаётся как есть; пересчёта
+	 * в rpcd НЕТ — документ и ЕСТЬ вердикт координатора (его живость =
+	 * свежесть ts). Данные для будущего «Центра здоровья» (Ф2.6) и TG-доктора
+	 * (Ф8): кампании (keys), блокировки (лимит авто-рестартов), очередь
+	 * ручных заявок, история ремонтов. */
+	recovery_status: {
+		call: function(req) {
+			const rd = ss_read_state(RC_PATH);
+			const age = (rd != null && rd.meta != null && rd.meta.ts != null)
+				? (time() - int(rd.meta.ts)) : -1;
+			if (rd == null || rd.data == null)
+				return { result: true, fresh: false, age: (age >= 0) ? age : null,
+					recovery: null };
+			return { result: true, fresh: (age >= 0 && age <= 180), age: age,
+				recovery: rd.data };
+		}
+	},
+
+	/* ── Ф2.3 Recovery Manager: ручная заявка координатору ─────────────────
+	 * Внутренний API координатора (интерфейсы Ф2.6/Ф8 садятся сюда): action
+	 * 'repair' — немедленный ремонт ключа (без окно стабилизации, вне
+	 * лимитов; авто-ремонты замораживаются на 10 мин), 'unblock' — сброс
+	 * кампании/блокировки ключа («починил руками»). Заявка пишется атомарно
+	 * в recovery_request.json (под mkdir-локом) — исполняет ДЕМОН (строго
+	 * одно действие за раз, после живого apply). Координатор мёртв — честный
+	 * отказ (никаких «принято» в никуда). */
+	recovery_action: {
+		args: { action: 'action', target: 'target', note: 'note' },
+		call: function(req) {
+			const action = '' + (req.args?.action || '');
+			const target = '' + (req.args?.target || '');
+			const note = '' + (req.args?.note || '');
+			if (!length(action) || !length(target))
+				return { result: false, error: 'action и target обязательны' };
+			/* Координатор должен быть жив (service list, урок 171). */
+			const fd = popen('ubus call service list 2>/dev/null');
+			let svcraw = '';
+			if (fd) { svcraw = fd.read('all') || ''; fd.close(); }
+			let svc_doc = null;
+			try { svc_doc = json(svcraw || '{}'); } catch (e) { svc_doc = null; }
+			const inst = (svc_doc != null && type(svc_doc.homeproxy) === 'object' &&
+				type(svc_doc.homeproxy.instances) === 'object')
+				? svc_doc.homeproxy.instances.recovery : null;
+			if (inst == null || inst.running !== true)
+				return { result: false, error: 'координатор восстановления не работает — исправьте службу и повторите' };
+			const r = rc_request_manual(action, target, note);
+			if (r == null || r.ok !== true)
+				return { result: false, error: (r != null && r.error) ? r.error : 'заявка не принята' };
+			return { result: true, queued: true, seq: r.seq,
+				detail: 'заявка принята координатором — исполнение в ближайшем тике' };
 		}
 	},
 

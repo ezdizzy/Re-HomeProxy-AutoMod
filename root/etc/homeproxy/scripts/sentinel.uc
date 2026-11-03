@@ -109,8 +109,13 @@ export const SVC_START_TIMEOUT = 150;
 /* OOM-грань (урок 197 — единый порог с Health Monitor). */
 export const MEM_SKIP_KB = 49152;
 
-/* Kinds apply-опов, при живых которых сервисные ремонты откладываются. */
-const APPLY_KINDS = [ 'restart', 'reload', 'engine_restart' ];
+/* Kinds apply-опов, при живых которых сервисные ремонты откладываются.
+ * 🔴 Урок 229 (ч.166): РЕАЛЬНЫЕ kind'ы — 'service' (RPC op_spawn делает
+ * op_begin('service', action, …)) и 'core_install'; прежний список сравнивал
+ * kind с ИМЕНАМИ action'ов ('restart'/'reload'/'engine_restart') и в
+ * рантайме не матчил ни один живой apply (selftest ч.165 был на синтетике
+ * kind='restart' — урок «selftest чист, рантайм отравлен»). */
+const APPLY_KINDS = [ 'service', 'core_install' ];
 
 const CORE_CFG = '/var/run/homeproxy/hiddify-c.json';
 const CORE_LKG = '/var/run/homeproxy/hiddify-c.json.lastgood';
@@ -130,6 +135,7 @@ const INST_LABELS = {
 	'control': 'Контроль доступа',
 	'health': 'Health Monitor',
 	'sentinel': 'Sentinel',
+	'recovery': 'Recovery (координатор)',
 	'hotswap': 'Hot Swap',
 	'urltest': 'URLTest-watchdog',
 	'metrics': 'Сборщик метрик',
@@ -595,6 +601,29 @@ export function compute_and_store(opts) {
 	for (let k in cfgf)
 		findings[k] = cfgf[k];
 
+	/* 3b. Light-проход ПЕРЕНОСИТ full-проходные находки op:/hung:/svc:/
+	 * svc_drift: (Recovery читает поводы из этого документа между полными
+	 * проходами — без переноса зависший оп/демон и убранный ubus-delete'ом
+	 * инстанс «моргали» бы пустотой каждые 30–150 с, а health видит
+	 * ubus-delete как 'off', не down). 🔴 Перенос помечается carried=true:
+	 * координатор держит по нему alive, но ПОВТОРНЫХ попыток не делает —
+	 * вердикт после попытки подтверждает только следующий ПОЛНЫЙ проход
+	 * (иначе свет-переносы порождали бы лишние start'ы после успешного
+	 * ремонта). Перенос честен: stale_sec/hb_age только растут. */
+	if (!full && prev_f != null) {
+		for (let k in prev_f) {
+			if ((index('' + k, 'op:') === 0 || index('' + k, 'hung:') === 0 ||
+			     index('' + k, 'svc:') === 0 || index('' + k, 'svc_drift:') === 0) &&
+			    findings['' + k] == null) {
+				const cf = prev_f[k];
+				if (cf != null && type(cf) === 'object') {
+					cf.carried = true;
+					findings['' + k] = cf;
+				}
+			}
+		}
+	}
+
 	/* 4. Сервисный ремонт — один батч на все svc-поводы. ТОЛЬКО в full-проходе:
 	 * light не читает журнал опов и не знает об идущем apply — сервисный старт
 	 * параллельно с apply недопустим (урок 113-класс). Light оставляет находку
@@ -658,10 +687,19 @@ export function compute_and_store(opts) {
 	 * добавляются следом, порядок в ленте честный). */
 	const events = diff_finding_events(baseline ? null : prev_f, findings, health_fresh);
 
-	/* 7. Исполнение ремонтов через opman-дверь. */
+	/* 7. Исполнение ремонтов через opman-дверь.
+	 * Ф2.3: пока Recovery-координатор ЖИВ, Sentinel — только детектор: поводы
+	 * и так пишутся в этот документ, координатор их подбирает и исполняет с
+	 * полной политикой (гистерезис/backoff/лимиты/ручной приоритет). Мёртвый
+	 * Recovery (нет инстанса в service list) — Sentinel возвращается к
+	 * разовому исполнению (fallback Ф2.2: контракт opman-двери/событий не
+	 * менялся). Урок 219: отсутствие инстанса в service list = мёртв. */
+	const recovery_live = (svc != null && svc['recovery'] === true);
 	const repairs_done = [];
 	let last_repair = (prev != null) ? prev.last_repair : null;
 	for (let a in acts_run) {
+		if (recovery_live)
+			break;   /* поводы остаются в findings — их подберёт координатор */
 		const b = op_begin('repair', a.action, 'sentinel', 'sentinel auto-repair', 0);
 		if (b == null || b.ok !== true)
 			continue;   /* apply/предыдущий ремонт держит ресурс — повторим позже */
@@ -705,6 +743,7 @@ export function compute_and_store(opts) {
 		health_age: hage,
 		config_revision: int(rev),
 		instances: svc,
+		coordinator: (recovery_live) ? 'live' : 'self',
 		findings: findings,
 		repairs: reps,
 		blocked: blocked,
@@ -763,15 +802,19 @@ export function selftest() {
 		so[0].stale_sec === 400, null);
 	check('stale_ops_empty', length(stale_ops(null, now)) === 0, null);
 
-	/* apply_in_progress. */
+	/* apply_in_progress — урок 229: РЕАЛЬНЫЕ kind'ы ('service' — так создаёт
+	 * op_spawn RPC; 'core_install'); action-имена kind'ами НЕ являются. */
 	check('apply_busy', apply_in_progress([
-		{ op_id: 'r1', kind: 'restart', status: 'running', heartbeat: now - 5 }
+		{ op_id: 'r1', kind: 'service', action: 'restart', status: 'running', heartbeat: now - 5 }
+	], now) === true, null);
+	check('apply_core_install', apply_in_progress([
+		{ op_id: 'r1', kind: 'core_install', status: 'verifying', heartbeat: now - 5 }
 	], now) === true, null);
 	check('apply_busy_stuck_not_blocking', apply_in_progress([
-		{ op_id: 'r1', kind: 'restart', status: 'running', heartbeat: now - 400 }
+		{ op_id: 'r1', kind: 'service', status: 'running', heartbeat: now - 400 }
 	], now) === false, null);
 	check('apply_free', apply_in_progress([
-		{ op_id: 'r1', kind: 'reload', status: 'completed' }
+		{ op_id: 'r1', kind: 'service', status: 'completed' }
 	], now) === false, null);
 	check('apply_free_other_kind', apply_in_progress([
 		{ op_id: 'r1', kind: 'repair', status: 'running', heartbeat: now - 5 }
