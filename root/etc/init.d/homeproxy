@@ -437,6 +437,23 @@ start_service() {
 		log "auto-enabled $CONF.config.byedpi_enabled (byedpi-out reference found)."
 	fi
 
+	# Ф3.4 (D23): migrate the RETIRED routing_mode values (custom/custom_json)
+	# to the working mode BEFORE the gates evaluate. The migrator snapshots
+	# /etc/config/homeproxy into /etc/homeproxy/backups/routing_mode-migration-<ts>/
+	# and emits an honest Event Bus record (src=init) with the rollback recipe;
+	# idempotent (silent no-op on canonical values — runs on every start).
+	# A failing migration must NOT block the start: the gates below still
+	# normalize a legacy value defensively for this start (case at the
+	# routing_mode read), and the next start retries the migration.
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/migrate_routing_mode.uc" ]; then
+		_mig="$(/usr/bin/ucode "$HP_DIR/scripts/migrate_routing_mode.uc" 2>"$RUN_DIR/migrate_rm.err")"
+		[ -n "$_mig" ] && log "routing_mode migration: $_mig"
+		if [ -s "$RUN_DIR/migrate_rm.err" ]; then
+			log "routing_mode migration stderr: $(cat "$RUN_DIR/migrate_rm.err")"
+		fi
+		rm -f "$RUN_DIR/migrate_rm.err"
+	fi
+
 	config_load "$CONF"
 
 	local preferred_core
@@ -471,12 +488,14 @@ start_service() {
 	config_get routing_mode "config" "routing_mode" "proxy_banned_ru"
 	config_get proxy_mode "config" "proxy_mode" "redirect_tproxy"
 
-	# Ф3.1 (D23): Custom routing / Custom JSON are RETIRED. A legacy value in
-	# an old UCI is read honestly as the working mode (with a log line) until
-	# the Ф3.4 migration rewrites it with a snapshot.
+	# Ф3.1/Ф3.4 (D23): Custom routing / Custom JSON are RETIRED. The migrator
+	# above (migrate_routing_mode.uc) is the PRIMARY normalizer — it snapshots
+	# the config and rewrites UCI. This branch is the defensive fallback for
+	# the start where the migrator could not complete (snapshot failure etc.):
+	# the gates keep working on the working mode, the next start retries.
 	case "$routing_mode" in
 		custom|custom_json)
-			log "routing_mode '$routing_mode' is retired (D23) — treating it as proxy_banned_ru until the Ф3.4 migration."
+			log "routing_mode '$routing_mode' is retired (D23) — the migrator did not rewrite it; treating it as proxy_banned_ru for this start."
 			routing_mode="proxy_banned_ru"
 			;;
 	esac

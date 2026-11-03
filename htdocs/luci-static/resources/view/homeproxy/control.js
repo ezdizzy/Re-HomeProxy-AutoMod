@@ -1191,8 +1191,9 @@ return view.extend({
 		/* Ф2.4: единая лента Event Bus — источник записи виден явно. Ф2.1: события
 		 * Health Monitor (src=health) — переходы статусов подсистем. Ф2.2: события
 		 * Sentinel (src=sentinel) — ремонты и циклы восстановления. Ф2.3: события
-		 * Recovery (src=recovery) — координатор восстановления. */
-		const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'), hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health'), sentinel: 'Sentinel', recovery: 'Recovery' };
+		 * Recovery (src=recovery) — координатор восстановления. Ф3.4: src=init —
+		 * события старта службы (миграция routing_mode). */
+		const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'), hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health'), sentinel: 'Sentinel', recovery: 'Recovery', init: _('Service') };
 
 		function refreshJournal() {
 			return Promise.all([

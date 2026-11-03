@@ -717,11 +717,19 @@ function send_push(kind, text) {
  * written during downtime are pushed, nothing replays); reboot wipes the
  * journal + cursor together → baseline at the head. */
 
-const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn', sentinel: 'service', recovery: 'service' };
+/* Ф3.4: src=init (события старта службы — миграция routing_mode) идёт в
+ * service-класс (toggle push_service), как сторожевые источники. */
+const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn', sentinel: 'service', recovery: 'service', init: 'service' };
 
 function bus_text(ev) {
 	const who = trim('' + (ev.who || ''));
 	const detail = trim('' + (ev.detail || ''));
+	if (ev.src === 'init') {
+		/* Ф3.4: старта службы — честные события конфигурации (миграция
+		 * routing_mode со снимком; откат — вручную из снимка). */
+		return '⚙️ <b>Служба</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
+			(length(detail) ? '\n' + esc_html(detail) : '');
+	}
 	if (ev.src === 'sentinel') {
 		if (ev.type === 'repair')
 			return '🛠 <b>Сторож</b>: ' + esc_html(who || 'ремонт') +
