@@ -780,6 +780,23 @@ start_service() {
 	procd_set_param respawn_retry 0
 	procd_close_instance
 
+	# Sentinel (Ф2.2, ч.165): ALWAYS-ON instance — the guard OF the guard (A.1,
+	# B0 idea #1). Watches the health monitor itself (health.json ts staleness),
+	# verifies procd expectations independently (service list), checks mandatory
+	# configs, honestly finishes stuck opman ops; one-shot repairs ONLY, through
+	# the opman door (never parallel with an apply) with a repair-loop guard;
+	# every repair emits a bus event (src='sentinel'). Does NOT import
+	# health.uc — a broken health deploy cannot take the guard down with the
+	# guarded. The Recovery coordinator (hysteresis, exponential retries,
+	# manual-action priority) is Ф2.3.
+	mkdir -p "$RUN_DIR"
+	procd_open_instance "sentinel"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/sentinel_cli.uc" run
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
 	# Subscription auto-update cron. This install half was dropped in the init rewrite
 	# (commit 4f3511f) while the stop_service cleanup below was kept, leaving the UI
 	# "Auto update" checkbox wired to nothing. Restored verbatim from upstream: when

@@ -40,6 +40,7 @@ import {
 import {
 	HEALTH_PATH as HS_PATH, snapshot as hs_snapshot
 } from '/etc/homeproxy/scripts/health.uc';
+import { SENTINEL_PATH as SN_PATH } from '/etc/homeproxy/scripts/sentinel.uc';
 
 /* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
  * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
@@ -4095,6 +4096,26 @@ const methods = {
 				prev_data: (rd != null && rd.data != null) ? rd.data : null });
 			return { result: true, fresh: false, age: (age >= 0) ? age : null,
 				computed: 'rpc', health: health };
+		}
+	},
+
+	/* ── Ф2.2 Sentinel: сторож здоровья самого Ravnex ──────────────────────
+	 * Демон (procd-инстанс "sentinel") пишет /var/run/homeproxy/sentinel.json
+	 * КАЖДЫЙ проход — ts документа = живое свидетельство сторожа. Документ
+	 * отдаётся как есть; протухший честно помечается fresh:false. Пересчёта в
+	 * rpcd НЕТ намеренно: документ и ЕСТЬ вердикт сторожа, а его живость
+	 * как раз и проверяется по свежести (пересчёт в rpcd-воркере лгал бы о
+	 * самом главном — работает ли сторож). */
+	sentinel_status: {
+		call: function(req) {
+			const rd = ss_read_state(SN_PATH);
+			const age = (rd != null && rd.meta != null && rd.meta.ts != null)
+				? (time() - int(rd.meta.ts)) : -1;
+			if (rd == null || rd.data == null)
+				return { result: true, fresh: false, age: (age >= 0) ? age : null,
+					sentinel: null };
+			return { result: true, fresh: (age >= 0 && age <= 150), age: age,
+				sentinel: rd.data };
 		}
 	},
 

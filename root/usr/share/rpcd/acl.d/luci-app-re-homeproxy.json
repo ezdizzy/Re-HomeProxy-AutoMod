@@ -18,7 +18,7 @@
 					"diag_core_check", "diag_config_check", "diag_dns_ru", "diag_nftables", "diag_report",
 					"byedpi_status", "byedpi_check_update", "zapret_status", "zapret_check_update", "curl_status",
 					"app_status", "app_check_update", "app_op_status", "app_op_list", "app_snapshot_list",
-					"health_status",
+					"health_status", "sentinel_status",
 					"app_rulesets_local_status", "zapret_fuzz_status", "wizard_compose_status", "wizard_compose_build",
 					"wizard_autopilot_status", "wizard_auto_pick_status", "automation_status", "automation_stats",
 					"route_explain", "wizard_scan_status", "wizard_dpidetect_status", "wizard_service_check",

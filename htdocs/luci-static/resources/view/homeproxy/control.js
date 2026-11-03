@@ -1182,12 +1182,14 @@ return view.extend({
 
 		const evIcons = { block: '🔒', allow: '🔓', temp: '⏱', wifi: '📶', schedule: '📅', system: '⚙️', update: '⬆️',
 			learn: '🧠', heal: '✅', outage: '⚠️', outage_end: '✅', clear: '🗑️', recheck: '🔁',
-			switch: '🔄', dead: '⛔', recovered: '✅', reload: '♻️', down: '⛔', degraded: '⚠️' };
+			switch: '🔄', dead: '⛔', recovered: '✅', reload: '♻️', down: '⛔', degraded: '⚠️',
+			repair: '🛠️', stale: '⏳', loop: '🔁' };
 		const evColors = { block: 'hpui-c-red', allow: 'hpui-c-green', temp: 'hpui-c-amber', wifi: 'hpui-c-blue',
-			down: 'hpui-c-red', degraded: 'hpui-c-amber' };
+			down: 'hpui-c-red', degraded: 'hpui-c-amber', repair: 'hpui-c-green', loop: 'hpui-c-red' };
 		/* Ф2.4: единая лента Event Bus — источник записи виден явно. Ф2.1: события
-		 * Health Monitor (src=health) — переходы статусов подсистем. */
-		const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'), hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health') };
+		 * Health Monitor (src=health) — переходы статусов подсистем. Ф2.2: события
+		 * Sentinel (src=sentinel) — ремонты и циклы восстановления. */
+		const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'), hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health'), sentinel: 'Sentinel' };
 
 		function refreshJournal() {
 			return Promise.all([

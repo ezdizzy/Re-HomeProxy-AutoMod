@@ -284,7 +284,13 @@ function live_reg(name) {
 
 /* Впитать свежую identity из скана в реестр (ТОЛЬКО когда запись отсутствует
  * или мертва — живые владельческие записи не трогаем). Само-лечение гонки
- * потерь обновлений при старте службы (найдено Ф2.1 ч.164). */
+ * потерь обновлений при старте службы (найдено Ф2.1 ч.164).
+ * 🔴 Урок 225 (ч.165, живой лов — флап degraded↔recovered каждые 5 с):
+ * для SCRIPT-попаданий в exe пишется null: /proc/<pid>/exe у ucode-демона —
+ * путь ИНТЕРПРЕТАТОРА (/usr/bin/ucode), а не скрипта; exe=путь-скрипта делал
+ * entry_alive вечным false (light-проход — все мёртвые, deep — живые по
+ * скану → флаб в fast-режиме, шторм событий в ленте). Для бинарных движков
+ * exe=hит-путь легален (basename/полный путь матчатся). */
 function heal_reg(name, hit, kind, script_name) {
 	if (hit == null)
 		return;
@@ -292,7 +298,8 @@ function heal_reg(name, hit, kind, script_name) {
 	if (prev != null && pm_entry_alive(prev))
 		return;
 	pm_reg_set('' + name, {
-		pid: hit.pid, start: hit.start, exe: hit.exe,
+		pid: hit.pid, start: hit.start,
+		exe: (script_name != null) ? null : hit.exe,
 		script: (script_name != null) ? ('' + script_name) : null,
 		kind: kind || 'scanned', note: 'health-scan'
 	});
@@ -619,6 +626,14 @@ function fw4_entry(svc, now) {
 
 export function generators_entry_from(ops, now) {
 	const label = 'Генераторы конфигурации';
+	/* Ремонты Sentinel'а (kind='repair', Ф2.2) — не применения генераторов:
+	 * вердикт считается по последней НЕ-ремонтной операции. */
+	const list = [];
+	if (ops != null)
+		for (let op in ops)
+			if ('' + (op.kind || '') !== 'repair')
+				push(list, op);
+	ops = list;
 	if (ops == null || !length(ops))
 		return mk_entry('generators', label, 'config', 'ok', 'indirect',
 			'применений ещё не было', {});
@@ -701,7 +716,8 @@ const DEEP_SCAN_SPECS = {
 	multidns: { script: 'multidns.uc' },
 	urltest: { script: 'urltest_watchdog.uc' },
 	hotswap: { script: 'hotswap.uc' },
-	metrics: { script: 'metrics.uc' }
+	metrics: { script: 'metrics.uc' },
+	sentinel: { script: 'sentinel_cli.uc' }
 };
 
 function deep_entries(svc, regst, now) {
@@ -739,6 +755,8 @@ function deep_entries(svc, regst, now) {
 		'autopilot', 'zapret_autopilot', 'zapret_autopilot.uc', svc, regst, scan);
 	entries.control = daemon_entry('control', 'Контроль доступа (демон)', 'access',
 		'control', 'control', 'control_engine.uc', svc, regst, scan);
+	entries.sentinel = daemon_entry('sentinel', 'Sentinel (сторож здоровья)', 'system',
+		'sentinel', 'sentinel', 'sentinel_cli.uc', svc, regst, scan);
 	entries.metrics = daemon_entry('metrics', 'Сборщик метрик', 'system',
 		'metrics', 'metrics', 'metrics.uc', svc, regst, scan);
 	entries.log_cleaner = inst_only_entry('log_cleaner', 'Чистка логов', 'system',
@@ -886,6 +904,8 @@ export function light_entries(svc, regst, prev, now) {
 		'autopilot', 'zapret_autopilot', 'zapret_autopilot.uc', svc, regst, null);
 	entries.control = daemon_entry('control', 'Контроль доступа (демон)', 'access',
 		'control', 'control', 'control_engine.uc', svc, regst, null);
+	entries.sentinel = daemon_entry('sentinel', 'Sentinel (сторож здоровья)', 'system',
+		'sentinel', 'sentinel', 'sentinel_cli.uc', svc, regst, null);
 	entries.metrics = daemon_entry('metrics', 'Сборщик метрик', 'system',
 		'metrics', 'metrics', 'metrics.uc', svc, regst, null);
 	entries.log_cleaner = inst_only_entry('log_cleaner', 'Чистка логов', 'system',
@@ -1073,6 +1093,12 @@ export function selftest() {
 	check('gen_unverified_degraded', gen_nover.status === 'degraded' && gen_nover.confidence === 'certain', null);
 	const op_fail = { op_id: 'x3', action: 'restart', status: 'failed', verified: false, started: now - 60 };
 	check('gen_failed_degraded', generators_entry_from([op_fail], now).status === 'degraded', null);
+	/* Ремонты Sentinel'а (kind='repair') не считаются применением генератора. */
+	const op_rep = { op_id: 'x7', kind: 'repair', action: 'svc_start', status: 'completed', verified: true, started: now - 10 };
+	const op_fail2 = { op_id: 'x8', kind: 'restart', action: 'restart', status: 'failed', verified: false, started: now - 3600 };
+	const gen_rep = generators_entry_from([op_rep, op_fail2], now);
+	check('gen_repair_skipped', gen_rep.status === 'degraded' &&
+		gen_rep.detail.last_op === 'x8', 'verdict=' + sprintf('%J', gen_rep));
 	const op_run = { op_id: 'x4', action: 'restart', status: 'running', stage: 'Verifying', started: now - 30 };
 	check('gen_running_ok', generators_entry_from([op_run], now).status === 'ok', null);
 	const op_stuck = { op_id: 'x5', action: 'restart', status: 'running', stage: 'Applying', started: now - (OP_STALE_SEC + 60) };
