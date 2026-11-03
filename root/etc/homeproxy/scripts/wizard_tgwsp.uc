@@ -46,6 +46,7 @@
 
 import { access, readfile, writefile, open, popen } from 'fs';
 import { cursor } from 'uci';
+import { find_daemons as pm_find, kill_matched as pm_kill_matched } from '/etc/homeproxy/scripts/pmgr.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const MODE = RUN_DIR + '/tgwsp_mode.txt';
@@ -246,13 +247,9 @@ function ensure_go_init() {
 }
 
 function go_bridge_running() {
-	let running = false;
-	const pf = popen('pidof tg-ws-proxy-go 2>/dev/null');
-	if (pf) {
-		running = length(trim(pf.read('all') || '')) > 0;
-		pf.close();
-	}
-	return running;
+	/* Ф1.4b: exact-exe identity (the old bare pidof accepted any process
+	 * name-shaped substring and could not verify the PID at all). */
+	return length(pm_find({ exe: 'tg-ws-proxy-go' })) > 0;
 }
 
 /* Issue #6: harvest the OK Cloudflare-proxy domains from the check details
@@ -537,15 +534,9 @@ function run_go_install() {
 	write_status(GO_STATUS, { running: true, stage: 'install' });
 	if (access(GO_INIT))
 		system(sq(GO_INIT) + ' stop >/dev/null 2>&1; true');
-	const kfd = popen("pgrep -f 'tg-ws-proxy-go' 2>/dev/null");
-	if (kfd) {
-		for (let pl in split(trim(kfd.read('all') || ''), '\n')) {
-			const pid = int(trim(pl) || '0');
-			if (pid > 0)
-				system('kill ' + pid + ' 2>/dev/null; true');
-		}
-		kfd.close();
-	}
+	/* Ф1.4b: identity kill — the old `pgrep -f` (silently a no-op on some
+	 * builds) swept substrings; pmgr re-verifies (pid, start) per signal. */
+	pm_kill_matched({ exe: 'tg-ws-proxy-go' }, 3000);
 	system('sleep 1');
 	system('mv -f ' + sq(GO_BIN_TMP) + ' ' + sq(GO_BIN) + ' && chmod 755 ' + sq(GO_BIN));
 	if (!access(GO_BIN)) {

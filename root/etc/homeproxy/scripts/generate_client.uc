@@ -19,6 +19,13 @@ import {
 	sync_oauth_ruleset, sync_auto_auth_ruleset
 } from 'homeproxy';
 
+/* Process Manager (Ф1.4b): ownership-grade mosdns liveness — a bare pidof
+ * accepted a FOREIGN mosdns as "running" and pointed every resolver at a
+ * listener that was never ours (audit 11). */
+import {
+	find_daemons as pm_find, reg_get as pm_reg_get, entry_alive as pm_entry_alive
+} from '/etc/homeproxy/scripts/pmgr.uc';
+
 const ubus = connect();
 
 /* const features = ubus.call('luci.homeproxy', 'singbox_get_features') || {}; */
@@ -417,7 +424,15 @@ if (routing_mode !== 'custom') {
 	 * start (bad config, port clash, missing binary) we MUST fall back to the
 	 * standard single upstreams — otherwise every query hits a dead listener and
 	 * the whole network loses DNS/internet. This guard is the hard safety net. */
-	let mdns_running = (system('pidof mosdns >/dev/null 2>&1') === 0);
+	let mdns_running = false;
+	const mreg = pm_reg_get('mosdns');
+	if (mreg != null && pm_entry_alive(mreg))
+		mdns_running = true;
+	if (!mdns_running)
+		mdns_running = length(pm_find({ exe: '/usr/bin/mosdns', arg: [
+			RUN_DIR + '/multidns/mosdns.yaml',
+			RUN_DIR + '/multidns/mosdns.candidate.yaml'
+		] })) > 0;
 	mdns_ok = (multidns_enabled === '1') && access('/usr/bin/mosdns') && mdns_running;
 
 	/* Dedicated loopback inbound the secure pool's DoH/DoT rides when

@@ -8,6 +8,7 @@
 'use strict';
 
 import { access, popen, readfile, writefile, rename, stat, mkdir, unlink, opendir } from 'fs';
+import { find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -591,12 +592,15 @@ let result;
 				} else {
 					result = { result: false, error: `lite installer failed — see ${logf}` };
 				}
-			} else {
-				const alive = system('pidof sing-box sing-box-core >/dev/null 2>&1') === 0;
-				result = alive
-					? { result: true }
-					: { result: true, warning: `installer finished but sing-box is not running — see ${logf}` };
-			}
+		} else {
+			/* Ф1.4b: identity liveness (exact /proc scan) — the lite build
+			 * runs as sing-box-core, both runtime names checked. */
+			const alive = length(pm_find({ exe: 'sing-box' })) > 0 ||
+				length(pm_find({ exe: 'sing-box-core' })) > 0;
+			result = alive
+				? { result: true }
+				: { result: true, warning: `installer finished but sing-box is not running — see ${logf}` };
+		}
 		}
 	} else if (core === 'hiddify' && match(tmp_path, /\.tar\.gz$/)) {
 		/* ч.129 (ан-146): апстрим-тарбол hiddify/hiddify-core. Структура:

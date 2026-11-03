@@ -51,6 +51,8 @@
  *   ucode pmgr_cli.uc scan | status | gc | selftest
  *   ucode pmgr_cli.uc mosdns_stop | dnsf_stop [dir]
  *   ucode pmgr_cli.uc kill_if <exe|script:NAME.uc> [arg]
+ *   ucode pmgr_cli.uc find <exe[,exe2…]|script:NAME.uc> [arg…]   (exit code)
+ *   ucode pmgr_cli.uc kill_args <exe|script:NAME.uc> [arg…]      (arg_all kill)
  *
  * ucode constraints honored (lessons 2/20/26/93/103/126/166): module export
  * functions end with `};`; helpers declared ABOVE callers (no hoisting);
@@ -74,12 +76,18 @@ const NUL = sprintf('%c', 0);
 
 /* ── procfs primitives (all null-safe: a process may vanish mid-read) ───── */
 
-function own_pid() {
+function self_pid() {
 	const raw = readfile('/proc/self/stat');
 	if (raw == null)
 		return 0;
 	const m = match(raw, /^([0-9]+) \(/);
 	return m ? int(m[1]) : 0;
+};
+
+/* Own pid/start — the identity a script daemon registers itself with
+ * (reg_self) before the main loop starts heartbeating (Ф1.4b). */
+export function own_pid() {
+	return self_pid();
 };
 
 export function boot_epoch() {
@@ -183,8 +191,14 @@ export function entry_alive(e) {
 	const pid = int(e.pid);
 	if (pid < 2)
 		return false;
-	const st = proc_start(pid);
-	if (st == null || int(st) !== int(e.start))
+	const sf = stat_fields(pid);
+	if (sf == null || int(sf.start) !== int(e.start))
+		return false;
+	/* A ZOMBIE is dead: /proc still exists (reaping pending, init/procd
+	 * gets to it within moments), but the process can never run again —
+	 * reporting it alive would make kill_entry() wait out its whole
+	 * timeout and report "failed" for a corpse. */
+	if (sf.state === 'Z')
 		return false;
 	if (e.exe != null && length('' + e.exe)) {
 		const ex = access('/proc/' + pid + '/exe') ? readlink('/proc/' + pid + '/exe') : null;
@@ -194,17 +208,11 @@ export function entry_alive(e) {
 	return true;
 };
 
-/* Find processes by identity spec. spec = { exe } and/or { script } and/or
- * { arg }. At least one of exe/script is REQUIRED (never a bare arg — an
- * arg alone could match an unrelated binary carrying the same path). */
-export function find_daemons(spec) {
-	const out = [];
-	if (spec == null || type(spec) !== 'object')
-		return out;
-	const want_exe = (spec.exe != null && length('' + spec.exe)) ? '' + spec.exe : null;
-	const want_script = (spec.script != null && length('' + spec.script)) ? '' + spec.script : null;
-	if (want_exe == null && want_script == null)
-		return out;
+/* One full /proc snapshot: { "<pid>": proc_info }. NO ps, NO pidof, NO pgrep
+ * — readfile-only enumeration (lesson 23: busybox pidof cannot even see
+ * ucode script daemons). */
+function proc_table() {
+	const out = {};
 	const fd = popen('ls -1 /proc 2>/dev/null');
 	if (!fd)
 		return out;
@@ -215,8 +223,36 @@ export function find_daemons(spec) {
 		if (!match(p, /^[0-9]+$/))
 			continue;
 		const info = proc_info(int(p));
-		if (info == null)
-			continue;
+		if (info != null)
+			out['' + info.pid] = info;
+	}
+	return out;
+};
+
+/* Find processes by identity spec. spec = { exe } and/or { script } and/or
+ * { arg } / { arg_all } / { neg }. At least one of exe/script is REQUIRED
+ * (never a bare arg — an arg alone could match an unrelated binary carrying
+ * the same path).
+ *   spec.arg     — SOME cmdline element equals the value / any listed value
+ *                  (pins "our" instance by one config path or flag)
+ *   spec.arg_all — EVERY listed value must appear as a whole cmdline element
+ *                  (a conjunction: e.g. the rc.common shell running OUR init
+ *                  script = ['/etc/rc.common', '/etc/init.d/homeproxy'])
+ *   spec.neg     — NO listed value may appear as a cmdline element (excludes
+ *                  the `--check` probe runs of the very same binary) */
+export function find_daemons(spec) {
+	const out = [];
+	if (spec == null || type(spec) !== 'object')
+		return out;
+	const want_exe = (spec.exe != null && length('' + spec.exe)) ? '' + spec.exe : null;
+	const want_script = (spec.script != null && length('' + spec.script)) ? '' + spec.script : null;
+	if (want_exe == null && want_script == null)
+		return out;
+	const all_args = (type(spec.arg_all) === 'array') ? spec.arg_all : null;
+	const neg_args = (type(spec.neg) === 'array') ? spec.neg : null;
+	const tbl = proc_table();
+	for (let k in tbl) {
+		const info = tbl[k];
 		let hit = false;
 		if (want_exe != null && exe_matches(info.exe, want_exe))
 			hit = true;
@@ -226,6 +262,26 @@ export function find_daemons(spec) {
 			continue;
 		if (spec.arg != null && !arg_matches(info.cmdline, spec.arg))
 			continue;
+		if (all_args != null) {
+			for (let a in all_args) {
+				if (!arg_matches(info.cmdline, a)) {
+					hit = false;
+					break;
+				}
+			}
+			if (!hit)
+				continue;
+		}
+		if (neg_args != null) {
+			for (let n in neg_args) {
+				if (arg_matches(info.cmdline, n)) {
+					hit = false;
+					break;
+				}
+			}
+			if (!hit)
+				continue;
+		}
 		push(out, {
 			pid: info.pid,
 			start: info.start,
@@ -251,7 +307,7 @@ export function kill_entry(e, wait_ms, force_kill) {
 	if (e == null || type(e) !== 'object')
 		return false;
 	const pid = int(e.pid);
-	if (pid < 2 || pid === own_pid())
+	if (pid < 2 || pid === self_pid())
 		return false;
 	if (!entry_alive(e))
 		return true;   /* already gone / PID reused — nothing of ours to kill */
@@ -287,6 +343,62 @@ export function kill_matched(spec, wait_ms, force_kill) {
 			push(res.killed, e.pid);
 		else
 			push(res.failed, e.pid);
+	}
+	return res;
+};
+
+/* ── process-tree reaper (Ф1.4b) ────────────────────────────────────────── */
+
+/* Snapshot the whole descendant subtree of a live process (the root included,
+ * breadth-first: root, children, grandchildren…). Every node carries its own
+ * (pid, start, exe) identity — kill_tree() re-verifies each at signal time,
+ * so a PID reused between the snapshot and the kill never receives anything.
+ * Depth is capped at 20 as a paranoia guard against procfs oddities. */
+export function proc_descendants(pid) {
+	const root = proc_info(pid);
+	if (root == null)
+		return [];
+	const out = [ { pid: root.pid, start: root.start, exe: root.exe } ];
+	const seen = {};
+	seen['' + root.pid] = true;
+	let frontier = [ root.pid ];
+	const tbl = proc_table();   /* ONE snapshot; kill_entry re-verifies each node */
+	for (let depth = 0; depth < 20 && length(frontier); depth++) {
+		const next = [];
+		for (let p in frontier) {
+			/* for-in over an OBJECT yields KEYS — k is the "<pid>" string key
+			 * of the snapshot (arrays yield ELEMENTS). */
+			for (let k in tbl) {
+				const q = tbl[k];
+				if (q == null || seen['' + q.pid] || int(q.ppid) !== int(p))
+					continue;
+				seen['' + q.pid] = true;
+				push(out, { pid: q.pid, start: q.start, exe: q.exe });
+				push(next, q.pid);
+			}
+		}
+		frontier = next;
+	}
+	return out;
+};
+
+/* Identity-verified subtree kill: find the spec's roots, snapshot each
+ * root's descendants BEFORE any signal, then kill DEEPEST-FIRST (a parent
+ * must not outlive its children and spawn replacements). Every signal goes
+ * through kill_entry — the (pid, start) identity is re-checked on every
+ * poll, a reused PID is skipped. Returns { killed: [pid…], failed: [pid…] }. */
+export function kill_tree(spec, wait_ms, force_kill) {
+	const res = { killed: [], failed: [] };
+	const roots = find_daemons(spec);
+	for (let r in roots) {
+		const snap = proc_descendants(r.pid);
+		for (let i = length(snap) - 1; i >= 0; i--) {
+			const e = snap[i];
+			if (kill_entry({ pid: e.pid, start: e.start, exe: e.exe }, wait_ms, force_kill))
+				push(res.killed, e.pid);
+			else
+				push(res.failed, e.pid);
+		}
 	}
 	return res;
 };
@@ -425,6 +537,23 @@ export function reg_alive(name) {
 	return entry_alive(reg_get(name));
 };
 
+/* Self-registration of a script daemon (Ф1.4b): the identity is the CALLER's
+ * own (pid, starttime) — call once at daemon startup, then reg_hb(name) once
+ * per main-loop cycle. Returns true when the entry exists. */
+export function reg_self(name, script, kind, note) {
+	const pid = self_pid();
+	const st = proc_start(pid);
+	if (!(pid > 1) || st == null || !(int(st) > 0))
+		return false;
+	return reg_set(name, {
+		pid: pid,
+		start: st,
+		script: (script != null) ? ('' + script) : null,
+		kind: (kind != null) ? ('' + kind) : 'script',
+		note: (note != null) ? ('' + note) : 'owner'
+	});
+};
+
 /* Build a registry-ready info from a live scan result / proc_info. */
 export function reg_info_from(found, extra) {
 	const info = {
@@ -556,6 +685,7 @@ export function scan_registry() {
 	const known = [
 		{ name: 'core', kind: 'core', spec: { exe: 'hiddify-core' } },
 		{ name: 'core', kind: 'core', spec: { exe: 'sing-box' } },
+		{ name: 'core', kind: 'core', spec: { exe: 'sing-box-core' } },
 		{ name: 'mosdns', kind: 'dns', spec: { exe: '/usr/bin/mosdns' } },
 		{ name: 'nfqws2', kind: 'dpi', spec: { exe: 'nfqws2' } },
 		{ name: 'ciadpi', kind: 'dpi', spec: { exe: 'ciadpi' } },
@@ -565,7 +695,7 @@ export function scan_registry() {
 		{ name: 'probe_pool', kind: 'automation', spec: { exe: 'probe_pool' } },
 		{ name: 'automation', kind: 'script', spec: { script: 'automation.uc' } },
 		{ name: 'telegram_bot', kind: 'script', spec: { script: 'telegram.uc' } },
-		{ name: 'control', kind: 'script', spec: { script: 'control.uc' } },
+		{ name: 'control', kind: 'script', spec: { script: 'control_engine.uc' } },
 		{ name: 'multidns', kind: 'script', spec: { script: 'multidns.uc' } },
 		{ name: 'urltest_watchdog', kind: 'script', spec: { script: 'urltest_watchdog.uc' } },
 		{ name: 'zapret_autopilot', kind: 'script', spec: { script: 'zapret_autopilot.uc' } },
@@ -581,16 +711,37 @@ export function scan_registry() {
 		/* Multiple instances (test engines, several bridges): the registry
 		 * keeps the FIRST, the rest go into extra_pids for observation. */
 		const info = reg_info_from(found[0], { kind: item.kind });
-		if (length(found) > 1) {
-			info.extra_pids = [];
-			for (let i = 1; i < length(found); i++)
-				push(info.extra_pids, found[i].pid);
+		const prev = doc.daemons[item.name];
+		if (prev != null && entry_alive(prev)) {
+			/* Owner-registered entry (reg_self / a spawn that registered its
+			 * child): refresh the identity facts ONLY — the owner keeps
+			 * script/kind/note and its own heartbeat cadence. Same-name
+			 * multi-spec records (core: hiddify / sing-box / sing-box-core)
+			 * must not be re-pointed by ANOTHER spec's stray match. */
+			const same_bin = (prev.exe == null) || (info.exe == null) ||
+				(basename_of(prev.exe) === basename_of(info.exe));
+			if (same_bin || int(prev.pid) === int(info.pid)) {
+				prev.pid = info.pid;
+				prev.start = info.start;
+				prev.started = info.started;
+				if (info.exe != null && !length('' + (prev.exe || '')))
+					prev.exe = info.exe;
+			}
+		} else {
+			doc.daemons[item.name] = {
+				name: item.name, kind: info.kind, pid: info.pid, start: info.start,
+				started: info.started, exe: info.exe,
+				script: (item.spec.script != null) ? item.spec.script : null,
+				arg: null, hb: time(), note: 'scanned'
+			};
 		}
-		doc.daemons[item.name] = {
-			name: item.name, kind: info.kind, pid: info.pid, start: info.start,
-			started: info.started, exe: info.exe, script: null, arg: null,
-			hb: time(), note: 'scanned'
-		};
+		if (length(found) > 1) {
+			const extras = [];
+			for (let i = 1; i < length(found); i++)
+				push(extras, found[i].pid);
+			doc.daemons[item.name].extra_pids = extras;
+		} else if (doc.daemons[item.name].extra_pids != null)
+			delete doc.daemons[item.name].extra_pids;
 	}
 	reg_save(doc);
 	return doc;
@@ -615,7 +766,7 @@ export function selftest() {
 		push(checks, { check: name, ok: ok, detail: detail || null });
 		return ok;
 	};
-	const me = proc_info(own_pid());
+	const me = proc_info(self_pid());
 	check('proc_info_self', me != null && int(me.pid) > 1 && length(me.cmdline) > 0,
 		(me != null) ? sprintf('%d args', length(me.cmdline)) : 'null');
 	check('boot_epoch', boot_epoch() > 0, sprintf('%d', boot_epoch()));
@@ -652,6 +803,29 @@ export function selftest() {
 	const killed = (cs != null) && kill_entry({ pid: cpid, start: cs }, 2000);
 	check('kill_entry_child', killed === true, sprintf('pid %d', cpid));
 	system('rm -f /tmp/pmgr_st_child.pid');
+	/* Ф1.4b: arg_all / neg matching + the subtree reaper. A `sh -c` chain
+	 * with TWO commands (a single command would be exec-optimized away and
+	 * lose the shell parent) — the sh is matched by exe+arg_all, its `sleep`
+	 * child is reachable ONLY through the tree walk. */
+	system('sh -c "sleep 30; sleep 30" & echo $! > /tmp/pmgr_st_tree.pid');
+	const tpid = int(trim(readfile('/tmp/pmgr_st_tree.pid')) || 0);
+	const tinfo = (tpid > 1) ? proc_info(tpid) : null;
+	const targs = (tinfo != null && length(tinfo.cmdline) > 2) ? tinfo.cmdline[2] : null;
+	check('find_arg_all', (tinfo != null && targs != null &&
+		length(find_daemons({ exe: tinfo.exe, arg_all: [ '-c', targs ] })) > 0),
+		(tinfo != null) ? sprintf('pid %d exe %s', tpid, tinfo.exe) : 'spawn failed');
+	check('find_neg_excludes', (targs != null &&
+		length(find_daemons({ exe: (tinfo != null) ? tinfo.exe : '/bin/sh',
+			arg_all: [ '-c', targs ], neg: [ '-c' ] })) === 0), null);
+	const tr = (targs != null)
+		? kill_tree({ exe: tinfo.exe, arg_all: [ '-c', targs ] }, 2000)
+		: { killed: [] };
+	/* Zombie window: a killed child may keep its /proc entry until the
+	 * parent reaps it — entry_alive() already treats state Z as dead. */
+	check('kill_tree', (targs != null && length(tr.killed) >= 2 &&
+		!entry_alive({ pid: tpid, start: tinfo.start, exe: tinfo.exe })),
+		sprintf('killed %d', length(tr.killed)));
+	system('rm -f /tmp/pmgr_st_tree.pid');
 	let all_ok = true;
 	for (let c in checks)
 		if (!c.ok)

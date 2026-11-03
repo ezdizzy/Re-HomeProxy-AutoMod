@@ -13,6 +13,13 @@
 'require ui';
 'require view';
 
+/* LuCI's rpc.js aborts every XHR after L.env.rpctimeout ?? 20 seconds —
+ * the text support report legitimately builds for ~25 s (log tails, UCI
+ * scans), so the browser killed the call and the card showed «Пустой
+ * отчёт». Raise THIS PAGE's client timeout; the server path is proven
+ * fine (the same ubus call answers in full over the CLI). */
+L.env.rpctimeout = 60;
+
 /* Diagnostics-specific additions on top of the shared hpui design system
  * (hp.uiStyle() — same visual language as the Automation tab). */
 const css = '\

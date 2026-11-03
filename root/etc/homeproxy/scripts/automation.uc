@@ -48,6 +48,7 @@ import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty } from 'homeprox
 import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
 	reg_set as pm_reg_set, reg_get as pm_reg_get, reg_del as pm_reg_del, reg_alive as pm_reg_alive,
+	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
 	proc_info as pm_proc_info
 } from '/etc/homeproxy/scripts/pmgr.uc';
 
@@ -1767,6 +1768,11 @@ function main() {
 			}
 		}
 	} catch (e) { eng_stats.hist = []; }
+
+	/* Ф1.4b: own identity in the process registry + a heartbeat every cycle —
+	 * the Sentinel (Ф2), support bundle and status RPCs read liveness here
+	 * (busybox pidof cannot see ucode scripts at all, lesson 23). */
+	pm_reg_self('automation', 'automation.uc');
 
 	/* Probe worker: one measurement per invocation, safe to run many copies in
 	 * parallel. Mirrors the serial probe() exactly — plain-view DNS resolution
@@ -3588,9 +3594,11 @@ echo done > "$PRE.done"
 	let last_failover = 0;
 	let last_geo_check = 0;
 	while (true) {
+		pm_reg_hb('automation');
 		enabled = uci.get('homeproxy', 'automation', 'enabled');
 		if (enabled !== '1') {
 			log('automation disabled, exiting.');
+			pm_reg_del('automation');
 			if (has('dns')) disable_dns_log();
 			return;
 		}

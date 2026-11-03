@@ -45,6 +45,7 @@ import { isEmpty } from 'homeproxy';
 import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
 	reg_set as pm_reg_set, reg_del as pm_reg_del, reg_get as pm_reg_get,
+	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
 	proc_info as pm_proc_info
 } from '/etc/homeproxy/scripts/pmgr.uc';
 
@@ -1778,6 +1779,10 @@ function main() {
 	dbg('main:start');
 	uci = cursor();
 	system('mkdir -p ' + MD_DIR);
+	/* Ф1.4b: own identity in the daemon registry + a heartbeat on every
+	 * loop cycle (both the disabled idle-wait and the 5 s tick) — the
+	 * Sentinel (Ф2), support bundle and status RPCs read liveness here. */
+	pm_reg_self('multidns', 'multidns.uc');
 	/* Start each daemon process with a clean quality state. The EWMA lives
 	 * inside a single run (it is rebuilt continuously); persisting it across
 	 * restarts only carries over stale/garbage samples from a previous probe
@@ -1794,6 +1799,7 @@ function main() {
 		if (enabled !== '1') {
 			stop_mosdns();
 			dbg('main: disabled, waiting');
+			pm_reg_hb('multidns');
 			/* ucode sleep() is MILLISECONDS: the old sleep(10) idled for 10 ms,
 			 * spinning this branch at ~100 Hz (issue #8). */
 			sleep(10000);
@@ -1849,6 +1855,7 @@ function main() {
 			 * pidof: 13–31 % idle CPU and a load average of 1.2+ on a
 			 * 2-core MT7981B — issue #8, root cause). */
 			sleep(5000);
+			pm_reg_hb('multidns');
 			let now = time();
 			uci.load('homeproxy');
 			let en2 = uci.get('homeproxy', 'multidns', 'enabled') || '0';

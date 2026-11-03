@@ -48,6 +48,10 @@
 
 import { access, popen, readfile, writefile, stat, rename, mkdir } from 'fs';
 import { cursor } from 'uci';
+import {
+	scan_registry as pm_scan, entry_alive as pm_entry_alive,
+	reg_get as pm_reg_get, find_daemons as pm_find
+} from '/etc/homeproxy/scripts/pmgr.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const STAGE_BASE = '/tmp/ravnex_bundle';
@@ -317,12 +321,15 @@ function build_service_status(stage) {
 	const uc = cursor();
 	try { cfgsec = uc.get_all('homeproxy', 'config'); } catch (e) { cfgsec = {}; }
 
-	const tgpid = trim(capture('pidof tg-ws-proxy-go 2>/dev/null'));
+	/* Ф1.4b: the tg-ws bridge liveness comes from the process registry
+	 * (identity = pid + starttime; the bare pidof could not verify either). */
+	const tge = pm_reg_get('tgws_go');
+	const tg_running = (tge != null && pm_entry_alive(tge));
 	const doc = {
 		generated: now_str(),
 		instances: redact_object(instances),
-		tgws_go_running: length(tgpid) > 0,
-		tgws_go_pid: tgpid,
+		tgws_go_running: tg_running,
+		tgws_go_pid: tg_running ? tge.pid : null,
 		config: redact_object(cfgsec)
 	};
 	writefile(stage + '/service_status.json', sprintf('%.J', doc) + '\n');
@@ -425,38 +432,32 @@ function build_logs(stage) {
 	}
 
 	/* daemon RSS/fd — ключевое для «зависаний»: утечка памяти/дескрипторов.
-	 * Бинарные демоны — pidof; ucode-скрипты busybox-pidof НЕ матчит (урок 23)
-	 * — присутствие через ps-grep с [.]-трюком (сам grep не матчится). */
+	 * Ф1.4b: источник — РЕЕСТР ПРОЦЕССОВ (pmgr scan): одна сводка покрывает
+	 * и бинарные демоны, и ucode-скрипты (busybox pidof скрипты НЕ матчит —
+	 * урок 23), каждое вхождение проверено по (pid, starttime). */
 	let daemons = [];
-	const pid_bins = [
-		['core', 'pidof hiddify-core sing-box 2>/dev/null'],
-		['mosdns', 'pidof mosdns 2>/dev/null'],
-		['nfqws2', 'pidof nfqws2 2>/dev/null'],
-		['ciadpi', 'pidof ciadpi 2>/dev/null'],
-		['tgws_go', 'pidof tg-ws-proxy-go 2>/dev/null']
+	const reg = pm_scan();
+	const want = [
+		'core', 'mosdns', 'nfqws2', 'ciadpi', 'tgws_go', 'tgws_rs',
+		'sni_sniffer', 'probe_pool',
+		'automation', 'telegram_bot', 'control', 'multidns',
+		'urltest_watchdog', 'zapret_autopilot', 'hotswap', 'metrics'
 	];
-	for (let d in pid_bins) {
-		const pl = trim(capture(d[1]));
-		if (!length(pl)) {
-			push(daemons, { name: d[0], running: false });
+	for (let name in want) {
+		/* for-in по массиву даёт ЭЛЕМЕНТ (урок 20) — name и есть имя записи. */
+		const e = reg.daemons[name];
+		if (e == null || !pm_entry_alive(e)) {
+			push(daemons, { name: name, running: false });
 			continue;
 		}
-		for (let pid in split(pl, /[ \t]+/))
-			push(daemons, daemon_info(d[0], pid));
-	}
-	const script_daemons = [
-		['telegram_bot', 'telegram[.]uc'],
-		['automation', 'automation[.]uc'],
-		['control', 'control[.]uc'],
-		['urltest_watchdog', 'urltest_watchdog[.]uc'],
-		['zapret_autopilot', 'zapret_autopilot[.]uc'],
-		['hotswap', 'hotswap[.]uc'],
-		['multidns', 'multidns[.]uc']
-	];
-	for (let d in script_daemons) {
-		const out = trim(capture(`ps w 2>/dev/null | grep -c "${d[1]}"`));
-		const n = match(out, /^[0-9]+$/) ? int(out) : 0;
-		push(daemons, { name: d[0], running: n > 0, instances: n });
+		const di = daemon_info(name, e.pid);
+		di.running = true;
+		di.script = (e.script != null && length('' + e.script)) ? e.script : null;
+		di.started = (int(e.started) > 0) ? int(e.started) : null;
+		di.hb = (int(e.hb) > 0) ? int(e.hb) : null;
+		if (e.extra_pids != null && length(e.extra_pids))
+			di.extra_pids = e.extra_pids;
+		push(daemons, di);
 	}
 
 	writefile(stage + '/daemons.json', sprintf('%.J', { generated: now_str(), daemons: daemons }) + '\n');
@@ -560,7 +561,18 @@ function do_text_report() {
 				inst.pid ? (' (pid ' + inst.pid + ')') : ''));
 		}
 	}
-	add(length(trim(capture('pidof tg-ws-proxy-go 2>/dev/null'))) > 0 ? 'tg-ws мост: работает' : 'tg-ws мост: не запущен');
+	/* Ф1.4b: liveness from the process registry (identity = pid + starttime),
+	 * with an exact /proc fallback for binaries; mosdns only counts as up
+	 * when the instance runs OUR config (audit 11). */
+	const up = function(name, exe_spec) {
+		const e = pm_reg_get(name);
+		if (e != null && pm_entry_alive(e))
+			return true;
+		if (exe_spec != null)
+			return length(pm_find(exe_spec)) > 0;
+		return false;
+	};
+	add(up('tgws_go', { exe: 'tg-ws-proxy-go' }) ? 'tg-ws мост: работает' : 'tg-ws мост: не запущен');
 	add('');
 
 	add('[Ядро и движки]');
@@ -568,10 +580,13 @@ function do_text_report() {
 	for (let bin in cv)
 		if (cv[bin] && cv[bin].info && cv[bin].info.version)
 			add(bin + ': v' + cv[bin].info.version);
-	add('mosdns: ' + (length(trim(capture('pidof mosdns 2>/dev/null'))) > 0 ? 'работает' : 'не запущен') +
+	add('mosdns: ' + (up('mosdns', { exe: '/usr/bin/mosdns', arg: [
+			'/var/run/homeproxy/multidns/mosdns.yaml',
+			'/var/run/homeproxy/multidns/mosdns.candidate.yaml'
+		] }) ? 'работает' : 'не запущен') +
 		(first_line(capture('mosdns version 2>/dev/null')) ? ' · ' + first_line(capture('mosdns version 2>/dev/null')) : ''));
-	add('nfqws2: ' + (length(trim(capture('pidof nfqws2 2>/dev/null'))) > 0 ? 'работает' : 'не запущен'));
-	add('ciadpi: ' + (length(trim(capture('pidof ciadpi 2>/dev/null'))) > 0 ? 'работает' : 'не запущен'));
+	add('nfqws2: ' + (up('nfqws2', { exe: 'nfqws2' }) ? 'работает' : 'не запущен'));
+	add('ciadpi: ' + (up('ciadpi', { exe: 'ciadpi' }) ? 'работает' : 'не запущен'));
 	add('');
 
 	add('[Состояния (sanitized)]');

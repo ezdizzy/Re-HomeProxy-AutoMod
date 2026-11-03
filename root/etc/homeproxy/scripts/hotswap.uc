@@ -68,6 +68,7 @@
 'use strict';
 
 import { access, readfile, writefile, open, stat, popen } from 'fs';
+import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -368,10 +369,15 @@ system('mkdir -p ' + RUN_DIR + ' 2>/dev/null; true');
 
 log('hotswap daemon started (probe timeout ' + PROBE_TIMEOUT + 'ms, dead after ' + DEAD_AFTER + ', cooldown ' + SWITCH_COOLDOWN + 's)');
 
+/* Ф1.4b: own identity in the daemon registry + a heartbeat every cycle —
+ * the Sentinel (Ф2), support bundle and status RPCs read liveness here. */
+pm_reg_self('hotswap', 'hotswap.uc');
+
 /* The main loop intentionally never exits: procd respawns would burn the
  * respawn budget, and a temporarily missing contract (config regenerating)
  * must simply be picked up on a later tick. */
 while (true) {
+	pm_reg_hb('hotswap');
 	hs = read_contract();
 
 	if (hs == null) {

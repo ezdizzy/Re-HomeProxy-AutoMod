@@ -36,6 +36,40 @@ import {
 	entry_alive as pm_entry_alive, reg_get as pm_reg_get, reg_del as pm_reg_del
 } from '/etc/homeproxy/scripts/pmgr.uc';
 
+/* ── Ф1.4b: read-only liveness through the Process Manager ───────────────
+ * Every former bare pidof / ps|grep display probe goes through these: a
+ * bare pidof cannot match ucode scripts at all (lesson 23) and accepts a
+ * reused PID; a ps|grep accepts substrings. pm_find scans /proc directly
+ * and matches whole cmdline elements; the registry identity (pid +
+ * starttime) is checked first when an owner registered the daemon. */
+function pm_bin_alive(exe, arg_all, neg) {
+	const spec = { exe: exe };
+	if (arg_all != null && length(arg_all))
+		spec.arg_all = arg_all;
+	if (neg != null && length(neg))
+		spec.neg = neg;
+	return length(pm_find(spec)) > 0;
+};
+
+function pm_bin_pid(exe, arg_all, neg) {
+	const spec = { exe: exe };
+	if (arg_all != null && length(arg_all))
+		spec.arg_all = arg_all;
+	if (neg != null && length(neg))
+		spec.neg = neg;
+	const f = pm_find(spec);
+	return length(f) ? ('' + f[0].pid) : '';
+};
+
+/* Script daemon (ucode): registry entry first (owner heartbeats), then the
+ * exact script-element scan. name = registry key, script = FILE.uc. */
+function pm_script_alive(name, script) {
+	const e = pm_reg_get(name);
+	if (e != null && pm_entry_alive(e))
+		return true;
+	return length(pm_find({ script: script })) > 0;
+};
+
 /* Ф1.4 Process Manager: ownership spec of OUR mosdns — the instance whose
  * `-c` argument is the MultiDNS config (live or candidate). Every former
  * "pidof mosdns && kill" site goes through this; a foreign mosdns with a
@@ -537,12 +571,9 @@ function clash_leaf_tag(proxies, tag) {
 }
 
 function proc_running(name) {
-	const fd = popen(`pidof ${name} 2>/dev/null`);
-	if (!fd)
-		return false;
-	const out = trim(fd.read('all'));
-	fd.close();
-	return length(out) > 0;
+	/* Ф1.4b: exact-exe identity (was a bare pidof — same name-shape, but no
+	 * PID verification and no ucode-script blindness). */
+	return pm_bin_alive(name);
 }
 
 /* GitHub issue #13: the compressed lite build runs as sing-box-core — the tiny
@@ -553,14 +584,10 @@ function proc_running(name) {
  * is harmless for names that never have a '-core' twin (hiddify-core, nfqws2…).
  * Returns the PID string ('' when not running). */
 function core_pidof(name) {
-	let out = '';
-	let fd = popen('pidof ' + shellquote(name) + ' 2>/dev/null');
-	if (fd) { out = trim(fd.read('all')); fd.close(); }
-	if (length(out))
-		return out;
-	fd = popen('pidof ' + shellquote(name + '-core') + ' 2>/dev/null');
-	if (fd) { out = trim(fd.read('all')); fd.close(); }
-	return length(out) ? out : '';
+	let pid = pm_bin_pid(name);
+	if (length(pid))
+		return pid;
+	return pm_bin_pid(name + '-core');
 }
 
 /* issue #11: rpcd's ucode plugin maps a STRING args typehint to
@@ -955,11 +982,8 @@ function hp_inbound_listening(lports, port) {
  * function declarations inside the object literal). */
 
 function hp_proc_running(name) {
-	const fd = popen('pidof ' + name + ' 2>/dev/null');
-	if (!fd) return false;
-	const out = trim(fd.read('all'));
-	fd.close();
-	return length(out) > 0;
+	/* Ф1.4b: exact-exe identity (was a bare pidof). */
+	return pm_bin_alive(name);
 }
 
 /* Sum the NFQUEUE packet/byte counters of the Zapret queue chain (mark 110
@@ -1380,26 +1404,12 @@ function hp_zapret_blocks(args, corpus) {
 
 const HP_OUR_PORTS = [ 5330, 5333, 5336, 5337, 5338, 5453, 5454, 9090 ];
 
-function hp_tgwsp_ps_text() {
-	const fd = popen('ps w 2>/dev/null');
-	if (!fd) return '';
-	const out = fd.read('all') || '';
-	fd.close();
-	return out;
-}
-
-/* True when a ps line matches `needle` but not `exclude` (lesson 58: ps w +
- * match, pidof does not match script interpreters; the --check probe run of
- * the same binary must not read as the running service). */
-function hp_tgwsp_running(ps, needle, exclude) {
-	for (let l in split(ps, '\n')) {
-		if (index(l, needle) < 0)
-			continue;
-		if (exclude && index(l, exclude) >= 0)
-			continue;
-		return true;
-	}
-	return false;
+/* Ф1.4b: bridge liveness by exact exe identity; the `--check` probe run of
+ * the same binary (its cmdline carries the whole --check ELEMENT) is
+ * excluded via the pmgr `neg` spec (lesson 58's ps+exclude trap, solved
+ * structurally instead of by substring matching). */
+function hp_tgwsp_running_bin(bin, exclude) {
+	return pm_bin_alive(bin, null, (exclude != null && length(exclude)) ? [ exclude ] : null);
 }
 
 /* TCP LISTEN ports from netstat (the first port on each line is the local
@@ -1474,7 +1484,6 @@ function hp_tgwsp_detect() {
 	if (sl) lan = sl[1];
 	out.lan = (length(lan) && match(lan, /^[0-9.]+$/)) ? lan : '';
 
-	const ps = hp_tgwsp_ps_text();
 	const ports = hp_tgwsp_listening_ports();
 
 	/* rs variant — every installed path carries the -rs suffix (an upstream
@@ -1482,7 +1491,7 @@ function hp_tgwsp_detect() {
 	if (access('/usr/bin/tg-ws-proxy-rs')) {
 		out.rs.present = true;
 		out.rs.version = hp_tgwsp_rs_version('/usr/bin/tg-ws-proxy-rs');
-		out.rs.running = hp_tgwsp_running(ps, 'tg-ws-proxy-rs', '--check');
+		out.rs.running = hp_tgwsp_running_bin('tg-ws-proxy-rs', '--check');
 		out.rs.integration = access('/etc/init.d/tg-ws-proxy-rs') ? true : false;
 		/* Foreign UCI — READ-ONLY peek for port/state/link facts. */
 		const o = c.get_all('tg-ws-proxy-rs', 'main');
@@ -1504,11 +1513,11 @@ function hp_tgwsp_detect() {
 	 * installed by the Wizard's «tg-ws (transparent)» button — SOCKS5 on loopback)
 	 * or a foreign tgm-managed setup. 1443 belongs to the rs package, not here. */
 	if (access('/usr/bin/tg-ws-proxy-go') || access('/usr/bin/tgm') ||
-	    index(ps, 'tg-ws-proxy-go') >= 0) {
+	    hp_tgwsp_running_bin('tg-ws-proxy-go', null)) {
 		out.go.present = true;
 		out.go.manager = access('/usr/bin/tgm') ? true : false;
 		out.go.managed = access('/etc/init.d/tgws-go') ? true : false;
-		out.go.running = hp_tgwsp_running(ps, 'tg-ws-proxy-go', null);
+		out.go.running = hp_tgwsp_running_bin('tg-ws-proxy-go', null);
 		for (let gp in [ 2080, 1080 ])
 			if (index(ports, gp) >= 0) { out.go.port = gp; break; }
 		/* Our instance: the UCI port is authoritative when it is the one listening. */
@@ -2701,33 +2710,34 @@ const methods = {
 			};
 
 			/* ByeDPI (ciadpi) runs independently of the core, so detect it regardless.
-			 * Use pidof, not `pgrep -x` — BusyBox pgrep -x matches argv0 (/usr/bin/ciadpi),
-			 * not the bare name, so it misses the process. */
-			let bfd = popen('pidof ciadpi 2>/dev/null');
-			if (bfd) {
-				const bpid = trim(bfd.read('all'));
-				bfd.close();
+			 * Ф1.4b: exact-exe identity via pmgr (pidof could not verify the PID
+			 * and the pgrep -x variant missed argv0-shaped processes entirely). */
+			{
+				const bpid = pm_bin_pid('ciadpi');
 				result.byedpi_running = length(bpid) > 0;
 				result.byedpi_pid = length(bpid) > 0 ? bpid : null;
 			}
 
 			/* Zapret (nfqws2) is the homeproxy-launched packet mangler — detect like ByeDPI. */
-			let zfd = popen('pidof nfqws2 2>/dev/null');
-			if (zfd) {
-				const zpid = trim(zfd.read('all'));
-				zfd.close();
+			{
+				const zpid = pm_bin_pid('nfqws2');
 				result.zapret_running = length(zpid) > 0;
 				result.zapret_pid = length(zpid) > 0 ? zpid : null;
 			}
 
 			/* mosdns — MultiDNS racing engine (own process, managed by the
-			 * homeproxy.multidns procd instance). */
-			let mfd = popen('pidof mosdns 2>/dev/null');
-			if (mfd) {
-				const mpid = trim(mfd.read('all'));
-				mfd.close();
-				result.mosdns_running = length(mpid) > 0;
-				result.mosdns_pid = length(mpid) > 0 ? mpid : null;
+			 * homeproxy.multidns procd instance). Ф1.4b (audit 11): registry
+			 * identity / conf-arg ownership — a bare pidof accepted a FOREIGN
+			 * mosdns as "running". */
+			{
+				let mp = '';
+				const mreg = pm_reg_get('mosdns');
+				if (mreg != null && pm_entry_alive(mreg))
+					mp = '' + mreg.pid;
+				if (!length(mp))
+					mp = pm_bin_pid('/usr/bin/mosdns', [ MD_CONF, MD_CAND ]);
+				result.mosdns_running = length(mp) > 0;
+				result.mosdns_pid = length(mp) > 0 ? mp : null;
 			}
 
 			if (!binary)
@@ -2924,9 +2934,7 @@ const methods = {
 			let zapret_enabled = false;
 			let zfd = popen('uci -q get homeproxy.config.zapret_enabled 2>/dev/null');
 			if (zfd) { zapret_enabled = trim(zfd.read('all')) === '1'; zfd.close(); }
-			let zapret_running = false;
-			zfd = popen('pidof nfqws2 2>/dev/null');
-			if (zfd) { zapret_running = length(trim(zfd.read('all'))) > 0; zfd.close(); }
+			let zapret_running = pm_bin_alive('nfqws2');
 
 			let zq_lines = [];
 			fd = popen('nft list chain inet fw4 homeproxy_zapret_queue 2>/dev/null');
@@ -3013,11 +3021,10 @@ const methods = {
 			add('## ByeDPI (ciadpi)');
 			if (access('/usr/bin/ciadpi')) {
 				add('Installed: yes');
-				/* busybox pgrep -x matches argv0 and MISSES the real ciadpi
-				 * (diag_core_check documents the same trap) — pidof, like
-				 * everywhere else. */
-				fd = popen('pidof ciadpi 2>/dev/null');
-				if (fd) { const bpid = trim(fd.read('all')); fd.close(); add('PID: ' + (length(bpid) > 0 ? bpid : 'not running')); }
+				/* Ф1.4b: identity liveness (the busybox pgrep -x argv0 trap is
+				 * structurally gone — the /proc scan matches the exe). */
+				const bpid = pm_bin_pid('ciadpi');
+				add('PID: ' + (length(bpid) > 0 ? bpid : 'not running'));
 			} else {
 				add('Installed: no');
 			}
@@ -3029,8 +3036,8 @@ const methods = {
 				fd = popen('uci -q get homeproxy.config.zapret_enabled 2>/dev/null');
 				let zen = '0'; if (fd) { zen = trim(fd.read('all')); fd.close(); }
 				add('Enabled: ' + (zen === '1' ? 'yes' : 'no'));
-				fd = popen('pidof nfqws2 2>/dev/null');
-				if (fd) { const zpid = trim(fd.read('all')); fd.close(); add('PID: ' + (length(zpid) > 0 ? zpid : 'not running')); }
+				const zpid = pm_bin_pid('nfqws2');
+				add('PID: ' + (length(zpid) > 0 ? zpid : 'not running'));
 				fd = popen('uci -q get homeproxy.config.zapret_voice 2>/dev/null');
 				let zvoice = '0'; if (fd) { zvoice = trim(fd.read('all')); fd.close(); }
 				add('Discord calls: ' + (zvoice === '1' ? 'on' : 'off'));
@@ -3205,12 +3212,7 @@ const methods = {
 					}
 				}
 			}
-			let running = false;
-			const fd2 = popen('pidof ciadpi 2>/dev/null');
-			if (fd2) {
-				running = length(trim(fd2.read('all'))) > 0;
-				fd2.close();
-			}
+			let running = pm_bin_alive('ciadpi');
 			let pkg_manager = null;
 			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
 			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
@@ -3358,12 +3360,7 @@ const methods = {
 					}
 				}
 			}
-			let running = false;
-			const fd2 = popen('pidof nfqws2 2>/dev/null');
-			if (fd2) {
-				running = length(trim(fd2.read('all'))) > 0;
-				fd2.close();
-			}
+			let running = pm_bin_alive('nfqws2');
 			let pkg_manager = null;
 			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
 			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
@@ -3591,17 +3588,14 @@ const methods = {
 				restore_cmd += `nft add rule inet fw4 homeproxy_output_redir meta nfproto ${out_chain_nfproto} meta l4proto tcp jump homeproxy_redirect 2>/dev/null; true`;
 			}
 
-			/* Lesson 23: busybox has NO pkill — the old `pkill -f` silently
-			 * left the test instance running (and the next test then failed
-			 * to bind the port). ps w + grep + awk kills by exact port; the
-			 * bracket trick keeps the grep from matching its own shell. */
-			system(`kill $(ps w | grep '[c]iadpi' | grep 'p ${test_port}' | awk '{print $1}') 2>/dev/null; true`);
+			/* Ф1.4b: identity kill of any leftover TEST instance (elements
+			 * -p <test_port>), then the fresh spawn. The old ps w | grep |
+			 * awk pipeline killed by substring and could not verify PIDs. */
+			pm_kill_matched({ exe: 'ciadpi', arg_all: [ '-p', '' + test_port ] }, 2000);
 			system(`/usr/bin/ciadpi -i 127.0.0.1 -p ${test_port} ${cmd_opts} &`);
 			system('sleep 0.5');
 
-			let running = false;
-			const pfd = popen(`pgrep -f 'ciadpi.*${test_port}' 2>/dev/null`);
-			if (pfd) { running = length(trim(pfd.read('all'))) > 0; pfd.close(); }
+			const running = length(pm_find({ exe: 'ciadpi', arg_all: [ '-p', '' + test_port ] })) > 0;
 
 			if (!running) {
 				system(restore_cmd);
@@ -3609,11 +3603,7 @@ const methods = {
 			}
 
 			if (!has_curl) {
-				/* Lesson 23: busybox has NO pkill — the old `pkill -f` silently
-			 * left the test instance running (and the next test then failed
-			 * to bind the port). ps w + grep + awk kills by exact port; the
-			 * bracket trick keeps the grep from matching its own shell. */
-			system(`kill $(ps w | grep '[c]iadpi' | grep 'p ${test_port}' | awk '{print $1}') 2>/dev/null; true`);
+				pm_kill_matched({ exe: 'ciadpi', arg_all: [ '-p', '' + test_port ] }, 2000);
 				system(restore_cmd);
 				return { result: true, method: 'startup', results: [] };
 			}
@@ -3661,11 +3651,9 @@ const methods = {
 			}
 			system(`rm -rf ${tmp} 2>/dev/null; true`);
 
-			/* Lesson 23: busybox has NO pkill — the old `pkill -f` silently
-			 * left the test instance running (and the next test then failed
-			 * to bind the port). ps w + grep + awk kills by exact port; the
-			 * bracket trick keeps the grep from matching its own shell. */
-			system(`kill $(ps w | grep '[c]iadpi' | grep 'p ${test_port}' | awk '{print $1}') 2>/dev/null; true`);
+			/* Ф1.4b: identity kill of the TEST instance only (the production
+			 * ciadpi listens on 5335, its -p element never matches). */
+			pm_kill_matched({ exe: 'ciadpi', arg_all: [ '-p', '' + test_port ] }, 2000);
 			system(restore_cmd);
 
 			return {
@@ -4125,8 +4113,10 @@ const methods = {
 				if (f) f.close();
 				return length(v) ? v : def;
 			};
+			/* Ф1.4b: the live queue pinned by the exact --qnum element — the
+			 * tester's temp instance (qnum 209) can never read as "running". */
 			const z_alive = (uci_get('homeproxy.config.zapret_enabled', '0') === '1') &&
-				system(`ps w | grep '[n]fqws2' | grep -q "qnum=${uci_get('homeproxy.config.zapret_qnum', '200')}"`) === 0;
+				length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + uci_get('homeproxy.config.zapret_qnum', '200') ] })) > 0;
 			system('uci commit homeproxy');
 			return (z_alive)
 				? op_spawn_dpi(true, 'zapret strategy apply')
@@ -4225,14 +4215,16 @@ const methods = {
 			 * respawn, so the strategy swap is a kill — the core (and every
 			 * tunneled connection behind it) stays up. A fresh enablement or a
 			 * dead engine needs the full start path to (re)register instances. */
-			const engine_alive = (flag, pat) => (('' + (flag || '')) === '1') &&
-				system(`ps w | grep -q ${shellquote(pat)}`) === 0;
+			/* Ф1.4b: engine liveness by exact exe identity (was a ps|grep
+			 * substring that matched test instances and reused PIDs alike). */
 			const prev_z = c.get('homeproxy', 'config', 'zapret_enabled');
 			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
 			const zq = trim('' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200'));
-			const z_ok = !length(z) || (engine_alive(prev_z, `[n]fqws2`) &&
-				system(`ps w | grep '[n]fqws2' | grep -q "qnum=${zq}"`) === 0);
-			const b_ok = !length(b) || engine_alive(prev_b, `[c]iadpi`);
+			const z_engine_alive = () => (('' + (prev_z || '')) === '1') && pm_bin_alive('nfqws2');
+			const b_engine_alive = () => (('' + (prev_b || '')) === '1') && pm_bin_alive('ciadpi');
+			const z_ok = !length(z) || (z_engine_alive() &&
+				length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + zq ] })) > 0);
+			const b_ok = !length(b) || b_engine_alive();
 			const light = !!(z_ok && b_ok && (length(z) || length(b)));
 			if (length(z)) {
 				c.set('homeproxy', 'config', 'zapret_cmd_opts', z);
@@ -4271,11 +4263,12 @@ const methods = {
 			const zq = trim('' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200'));
 			const new_z = bak.zapret.enabled ? '1' : '0';
 			const new_b = bak.byedpi.enabled ? '1' : '0';
-			const engine_alive = (flag, pat) => (('' + (flag || '')) === '1') &&
-				system(`ps w | grep -q ${shellquote(pat)}`) === 0;
-			const z_ok = (new_z === '1') ? (engine_alive(prev_z, `[n]fqws2`) &&
-				system(`ps w | grep '[n]fqws2' | grep -q "qnum=${zq}"`) === 0) : true;
-			const b_ok = (new_b === '1') ? engine_alive(prev_b, `[c]iadpi`) : true;
+			/* Ф1.4b: engine liveness by exact exe identity (was ps|grep). */
+			const z_engine_alive = () => (('' + (prev_z || '')) === '1') && pm_bin_alive('nfqws2');
+			const b_engine_alive = () => (('' + (prev_b || '')) === '1') && pm_bin_alive('ciadpi');
+			const z_ok = (new_z === '1') ? (z_engine_alive() &&
+				length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + zq ] })) > 0) : true;
+			const b_ok = (new_b === '1') ? b_engine_alive() : true;
 			const light = (new_z === ('' + (prev_z || ''))) && (new_b === ('' + (prev_b || ''))) &&
 				z_ok && b_ok;
 			c.set('homeproxy', 'config', 'zapret_cmd_opts', '' + (bak.zapret.cmd_opts || ''));
@@ -4591,8 +4584,9 @@ const methods = {
 				return { result: true, unchanged: true, applied: { cmd_opts: opts, udp_over_tcp: uot,
 					block_quic: bquic, zapret_voice: zvoice } };
 			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
+			/* Ф1.4b: engine liveness by exact exe identity (was ps|grep). */
 			const light = !flags_changed && same(prev_b, '1') &&
-				system(`ps w | grep -q ${shellquote('[c]iadpi')}`) === 0;
+				pm_bin_alive('ciadpi');
 			const ap = op_spawn_dpi(light, 'ByeDPI/Zapret flags apply');
 			ap.applied = { cmd_opts: opts, udp_over_tcp: uot,
 				block_quic: bquic, zapret_voice: zvoice };
@@ -4812,13 +4806,8 @@ const methods = {
 				sni_sniffer: !!access('/usr/bin/sni_sniffer'),
 				sni_running: false
 			};
-			if (helpers.sni_sniffer) {
-				let pfd = popen('pidof sni_sniffer 2>/dev/null');
-				if (pfd) {
-					helpers.sni_running = length(trim(pfd.read('all'))) > 0;
-					pfd.close();
-				}
-			}
+			if (helpers.sni_sniffer)
+				helpers.sni_running = pm_bin_alive('sni_sniffer');
 
 			/* Engine performance profile — the same detection the daemon runs at
 			 * startup: explicit UCI value first, then cores/memory autodetect. */
@@ -4859,8 +4848,8 @@ const methods = {
 	 * cycles, probes per pool, verdict distribution, source activity, daemon
 	 * RAM, event feed, ~2 h history ring). This RPC reads ONLY that file -
 	 * it must never parse the heavy automation_state.json for counters -
-	 * and adds daemon liveness: busybox pidof does not match ucode script
-	 * names (lesson 58), so one `ps w` + match like overview_sys. */
+	 * and adds daemon liveness from the Process Manager (Ф1.4b): the
+	 * registry heartbeat first, then the exact script-element scan. */
 	automation_stats: {
 		call: function(req) {
 			const f = RUN_DIR + '/automation_stats.json';
@@ -4868,13 +4857,7 @@ const methods = {
 			if (access(f)) {
 				try { st = json(readfile(f) || '') || {}; } catch (e) { st = {}; }
 			}
-			let running = false;
-			let pfd = popen('ps w 2>/dev/null');
-			if (pfd) {
-				const ps = pfd.read('all') || '';
-				pfd.close();
-				running = (match(ps, /automation\.uc/) != null);
-			}
+			const running = pm_script_alive('automation', 'automation.uc');
 			const age = st.ts ? (time() - int(st.ts)) : -1;
 			return {
 				running: running,
@@ -5853,13 +5836,8 @@ const methods = {
 				c.delete('homeproxy', 'config', 'tgws_rs_domains');
 			c.commit('homeproxy');
 			if (v === '0' && access('/etc/init.d/tgws-go')) {
-				const pf = popen('pidof tg-ws-proxy-go 2>/dev/null');
-				let running = false;
-				if (pf) {
-					running = length(trim(pf.read('all') || '')) > 0;
-					pf.close();
-				}
-				if (running)
+				/* Ф1.4b: identity liveness (was a bare pidof). */
+				if (pm_bin_alive('tg-ws-proxy-go'))
 					system('/etc/init.d/tgws-go restart >/dev/null 2>&1 &');
 			}
 			return { result: true, enabled: (v === '1') };
@@ -6121,26 +6099,18 @@ const methods = {
 			}
 			reply.app_version = app_ver_cache.ver;
 
-			/* Script daemons (automation engine, telegram bot): busybox
-			 * pidof does NOT match ucode script names (the process name is
-			 * "ucode" — lesson 23), so scan the ps table once and match
-			 * the script paths (the same `ps w | grep '[name].uc'`
-			 * pattern the lesson carries). */
+			/* Script daemons (automation engine, telegram bot): Ф1.4b — the
+			 * Process Manager answers for ucode scripts (busybox pidof does
+			 * NOT match them at all, lesson 23): registry heartbeat first,
+			 * then the exact script-element scan. */
 			let efd = popen('uci -q get homeproxy.telegram.enabled 2>/dev/null');
 			if (efd) {
 				const v = trim(efd.read('all'));
 				efd.close();
 				reply.telegram.enabled = (v === '1');
 			}
-			reply.automation_running = false;
-			reply.telegram.running = false;
-			let psfd = popen('ps w 2>/dev/null');
-			if (psfd) {
-				const tbl = psfd.read('all') || '';
-				psfd.close();
-				reply.automation_running = (match(tbl, /automation\.uc/) != null);
-				reply.telegram.running = (match(tbl, /telegram\.uc/) != null);
-			}
+			reply.automation_running = pm_script_alive('automation', 'automation.uc');
+			reply.telegram.running = pm_script_alive('telegram_bot', 'telegram.uc');
 
 			/* Core liveness: the /version endpoint is the cheapest fetch. */
 			const clash = clash_api('/version');
@@ -6179,14 +6149,10 @@ const methods = {
 			reply.pushes.learn = (g('push_learn', '1') === '1');
 			reply.pushes.service = (g('push_service', '1') === '1');
 			reply.pushes.control = (g('push_control', '1') === '1');
-			/* Daemon liveness: busybox pidof does NOT match ucode script
-			 * names (lesson 23/58) — one ps w scan + match. */
-			const fd = popen('ps w 2>/dev/null');
-			if (fd) {
-				const tbl = fd.read('all') || '';
-				fd.close();
-				reply.running = (match(tbl, /telegram\.uc/) != null);
-			}
+			/* Daemon liveness: Ф1.4b — the Process Manager (registry
+			 * heartbeat first, then the exact script-element scan; busybox
+			 * pidof does NOT match ucode script names, lesson 23/58). */
+			reply.running = pm_script_alive('telegram_bot', 'telegram.uc');
 			return reply;
 		}
 	},

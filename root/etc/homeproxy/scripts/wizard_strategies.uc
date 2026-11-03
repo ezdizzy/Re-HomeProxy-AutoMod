@@ -48,6 +48,7 @@
 'use strict';
 
 import { access, readfile, writefile, popen, lstat } from 'fs';
+import { kill_matched as pm_kill_matched, find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const STATUS = RUN_DIR + '/wizard_strategies.json';
@@ -518,19 +519,11 @@ function parse_md_blocks(text, prefix) {
 /* ═══════════════════════ nfqws2 smoke validation ══════════════════════ */
 
 function kill_temp_nfqws() {
-	const fd = popen('pgrep nfqws2 2>/dev/null');
-	if (!fd) return;
-	const out = trim(fd.read('all'));
-	fd.close();
-	for (let pid in split(out, /[ \n]+/)) {
-		if (!length('' + pid)) continue;
-		const cf = popen(`tr '\\0' ' ' < /proc/${pid}/cmdline 2>/dev/null`);
-		if (!cf) continue;
-		const cl = cf.read('all');
-		cf.close();
-		if (index(cl, 'qnum=' + SMOKE_QNUM) >= 0)
-			system(`kill ${pid} 2>/dev/null`);
-	}
+	/* Ф1.4b: identity kill — the exact binary whose --qnum element is OUR
+	 * temp queue. The old pgrep+cmdline-grep walked every nfqws2 by hand;
+	 * pmgr re-verifies (pid, start) before each signal and never kills the
+	 * production queue (its --qnum element differs). */
+	pm_kill_matched({ exe: 'nfqws2', arg_all: [ '--qnum=' + SMOKE_QNUM ] }, 2000);
 }
 
 /* Spawn nfqws2 on the temp queue for ~1 s: a strategy whose args the binary
@@ -542,12 +535,7 @@ function smoke_ok(args) {
 	kill_temp_nfqws();
 	system(`${NFQWS} --qnum=${SMOKE_QNUM} --user=daemon --fwmark=0x40000000 ${LUA_ARGS} ${args} >/dev/null 2>&1 &`);
 	system('sleep 1');
-	let alive = false;
-	const fd = popen(`pgrep -f 'qnum=${SMOKE_QNUM}' >/dev/null 2>&1 && echo y`);
-	if (fd) {
-		alive = (trim(fd.read('all')) === 'y');
-		fd.close();
-	}
+	const alive = length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + SMOKE_QNUM ] })) > 0;
 	kill_temp_nfqws();
 	return { ok: alive };
 }

@@ -43,6 +43,7 @@
  * showed endless "watchdog started" lines ~125 s apart) — the watchdog
  * never actually polled anything until this import was fixed (ч.59). */
 import { access, readfile, writefile, open, stat, popen } from 'fs';
+import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
 
 /* Local shell quote. This build of ucode has NO shellquote builtin and this
  * file imports nothing that provides one — the original release called the
@@ -192,9 +193,15 @@ if (access(DEAD_FILE)) {
 
 log('urltest watchdog started (interval ' + CHECK_INTERVAL + 's, grace ' + BOOT_GRACE + 's, marks ' + length(keys(deadset)) + ')');
 
+/* Ф1.4b: own identity in the daemon registry (before the boot grace) + a
+ * heartbeat every cycle — the Sentinel (Ф2), support bundle and status RPCs
+ * read liveness here (busybox pidof cannot see ucode scripts, lesson 23). */
+pm_reg_self('urltest_watchdog', 'urltest_watchdog.uc');
+
 sleep(BOOT_GRACE * 1000);
 
 while (true) {
+	pm_reg_hb('urltest_watchdog');
 	sleep(CHECK_INTERVAL * 1000);
 
 	const proxies = fetch_proxies();

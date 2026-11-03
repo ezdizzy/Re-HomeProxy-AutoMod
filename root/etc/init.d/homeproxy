@@ -995,30 +995,32 @@ engine_restart() {
 	# stop path removes them on purpose, and the next start applies the
 	# strategy anyway.
 	local core_alive=0
-	pidof hiddify-core >/dev/null 2>&1 && core_alive=1
-	# The compressed lite build runs as sing-box-core (the wrapper execs it).
-	pidof sing-box >/dev/null 2>&1 && core_alive=1
-	pidof sing-box-core >/dev/null 2>&1 && core_alive=1
+	# Ф1.4b: identity liveness through the Process Manager CLI — exact exe,
+	# both core runtime names (the compressed lite build runs as sing-box-core).
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" find hiddify-core,sing-box,sing-box-core >/dev/null 2>&1 && core_alive=1
 	if [ "$core_alive" != "1" ]; then
 		log "engine_restart: core not running — skipped (the next start applies the strategy)."
 		return 0
 	fi
 
 	config_load "$CONF"
-	local zapret_enabled byedpi_enabled zapret_qnum p killed=0
+	local zapret_enabled byedpi_enabled zapret_qnum killed=0
 	config_get_bool zapret_enabled "config" "zapret_enabled" "0"
 	config_get_bool byedpi_enabled "config" "byedpi_enabled" "0"
 	if [ "$zapret_enabled" = "1" ] && [ -x /opt/zapret2/nfq2/nfqws2 ]; then
 		config_get zapret_qnum "config" "zapret_qnum" "200"
-		for p in $(pgrep nfqws2 2>/dev/null); do
-			# Match ONLY the live queue (the tester's temp instance runs qnum 209).
-			tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "qnum=$zapret_qnum" && { kill "$p" 2>/dev/null; killed=1; }
-		done
+		# Ф1.4b: identity kill — the engine whose --qnum ELEMENT is the live
+		# queue (the tester's temp instance runs qnum 209 and never matches);
+		# (pid, starttime) re-verified per signal, a reused PID is skipped.
+		# kill_args exit codes: 0 = killed ≥1, 2 = nothing matched, 1 = failure.
+		ucode "$HP_DIR/scripts/pmgr_cli.uc" kill_args /opt/zapret2/nfq2/nfqws2 "--qnum=$zapret_qnum" >/dev/null 2>&1
+		[ $? -eq 0 ] && killed=1
 	fi
 	if [ "$byedpi_enabled" = "1" ] && [ -x /usr/bin/ciadpi ]; then
-		for p in $(pgrep ciadpi 2>/dev/null); do
-			tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "127.0.0.1 -p 5335" && { kill "$p" 2>/dev/null; killed=1; }
-		done
+		# Ф1.4b: identity kill — our loopback instance (elements -i 127.0.0.1
+		# -p 5335); the wizard's test instance (port 15335) never matches.
+		ucode "$HP_DIR/scripts/pmgr_cli.uc" kill_args /usr/bin/ciadpi -i 127.0.0.1 -p 5335 >/dev/null 2>&1
+		[ $? -eq 0 ] && killed=1
 	fi
 	[ "$killed" = "1" ] && log "engine_restart: engines killed — procd respawns the launcher with the current UCI strategy."
 

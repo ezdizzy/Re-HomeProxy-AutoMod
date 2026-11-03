@@ -17,15 +17,33 @@
  * The status file survives page reloads, so the UI resumes watching an
  * already-running install. A mkdir lock prevents concurrent installs; a
  * stale lock (runner killed mid-way) self-heals after 40 minutes.
+ *
+ * Ф1.4b (audit 36): every stage process carries a recorded IDENTITY — the
+ * stage spawns detached with its pid written to a pidfile, (pid, starttime,
+ * exe) is snapshotted into core_install_stage.json, and the whole install
+ * runs as an opman operation (kind core_install) in the journal. The old
+ * `ps w | grep -E … | xargs kill -9` reaper matched SUBSTRINGS and killed
+ * rc.common shells it did not own; the reaper now walks the stage's
+ * descendant tree (pmgr kill_tree, identity re-verified per signal) and
+ * only sweeps an rc.common running OUR init script inside the stage's time
+ * window.
+ *
+ * Lesson 167 honored: the 2-arg system(cmd, timeout) is instant-kill on
+ * this build — the stage runs in a DETACHED chain (rc collected into a
+ * rcfile, pid into a pidfile) and the runner polls the rcfile with a
+ * deadline instead of ever passing a timeout to system().
  */
 
 'use strict';
 
 import { access, readfile, writefile, rename, mkdir, rmdir, stat, unlink, popen } from 'fs';
+import { begin as op_begin, heartbeat as op_heartbeat, stage as op_stage, finish as op_finish } from '/etc/homeproxy/scripts/opman.uc';
+import { kill_tree as pm_kill_tree, kill_entry as pm_kill_entry, find_daemons as pm_find, proc_info as pm_proc_info } from '/etc/homeproxy/scripts/pmgr.uc';
 
 const CORE_MGMT = '/usr/share/homeproxy/scripts/core_mgmt.uc';
 const RUN_FILE = '/var/run/homeproxy/core_install.json';
 const LOCK_DIR = '/var/run/homeproxy/core_install.lock';
+const STAGE_FILE = '/var/run/homeproxy/core_install_stage.json';
 const STALE_SEC = 2400;
 
 function shellquote(s) {
@@ -40,13 +58,45 @@ function wstatus(o) {
 	rename(tmp, RUN_FILE);
 }
 
-/* Run one core_mgmt.uc action with a HARD timeout. system(cmd, timeout)
- * kills the direct child on expiry; the kill sweep below reaps ucode
- * stragglers the shell left behind (busybox has no timeout(1) and a hung
- * installer must never wedge the runner — lesson of the 2026-10-24 live
- * wedge: an installer's health-check blocked on the init flock forever). */
-function run_action(action, args, timeout_ms) {
+/* Stage identity file — the (pid, start, exe) anchor every kill goes by. */
+function wstage(o) {
+	mkdir('/var/run/homeproxy');
+	const tmp = STAGE_FILE + '.tmp';
+	writefile(tmp, sprintf('%.J', o) + '\n');
+	rename(tmp, STAGE_FILE);
+}
+
+/* Identity-only reaper (audit 36):
+ *   1. kill_tree from the stage root (ucode CORE_MGMT <action>) — covers the
+ *      whole in-tree chain: wget/apk/tar, the lite installer sh, the service
+ *      restarts it spawned. Every signal re-verifies (pid, start).
+ *   2. Escapees by exact identity: a busybox rc.common running OUR init
+ *      script — killed only when its start time falls INSIDE the stage
+ *      window (a concurrent user restart predating the stage is untouched).
+ *   3. Catch-up rounds for late spawns (same identity rules). */
+function reap_stage(action, stage_started) {
+	const spec = { exe: '/usr/bin/ucode', arg_all: [ CORE_MGMT, action ] };
+	const rc_spec = { exe: '/bin/busybox', arg_all: [ '/etc/rc.common', '/etc/init.d/homeproxy' ] };
+	for (let round = 0; round < 3; round++) {
+		pm_kill_tree(spec, 3000);
+		const found = pm_find(rc_spec);
+		for (let e in found) {
+			if (int(e.started) >= int(stage_started) - 5)
+				pm_kill_entry({ pid: e.pid, start: e.start, exe: e.exe }, 3000);
+		}
+		if (!length(pm_find(spec)) && !length(pm_find(rc_spec)))
+			break;
+		sleep(1000);
+	}
+}
+
+/* Run one core_mgmt.uc action as a DETACHED chain with a hard deadline.
+ * Returns the stage's JSON result, or { error } after reaping by identity. */
+function run_action(action, args, timeout_ms, op_id) {
 	const outfile = '/tmp/hp_ci_stage.json';
+	const rcfile = '/tmp/hp_ci_stage.rc';
+	const pidfile = '/tmp/hp_ci_stage.pid';
+	system(`rm -f ${shellquote(outfile)} ${shellquote(rcfile)} ${shellquote(pidfile)} 2>/dev/null; true`);
 	let full = `ucode ${shellquote(CORE_MGMT)} ${action}`;
 	for (let a in (args || []))
 		full += ' ' + shellquote(a);
@@ -62,22 +112,44 @@ function run_action(action, args, timeout_ms) {
 	 * mid-flight on a slow link and left a partial tmp file (audit 2026-10-25);
 	 * 650 s covers the full budget. */
 	const caps = { download_pkg: 650000, install_pkg: 900000 };
-	const rc = system(full, caps[action] || timeout_ms || 420000);
-	if (rc != 0) {
-		/* system() kills only the DIRECT child — the installer (a grandchild)
-		 * survives as an orphan and keeps spawning service starts (live
-		 * 2026-10-24: an orphaned lite installer re-ran start/rollback loops
-		 * for minutes). Reap the whole chain, a few rounds to catch spawns. */
-		for (let round = 0; round < 3; round++) {
-			system("ps w | grep -E 'sing-box-extended-lite-installer|rc.common /etc/init.d/homeproxy|core_mgmt.uc (prepare_install|download_pkg|install_pkg|install_kmods)' | grep -v grep | awk '{print $1}' | xargs -r kill -9 2>/dev/null");
-			system('sleep 1');
-		}
-		return { error: `stage ${action} failed or timed out (rc=${rc})` };
+	const cap = caps[action] || timeout_ms || 420000;
+	/* Detached chain: the stage runs in background inside the subshell, $!
+	 * (the ucode pid) lands in the pidfile as its identity anchor, wait
+	 * collects the rc into the rcfile. system() returns immediately. */
+	system('( ' + full + ' & echo $! > ' + shellquote(pidfile) +
+		'; wait $!; echo $? > ' + shellquote(rcfile) + ' ) </dev/null &');
+	const stage_started = time();
+	let spid = 0;
+	for (let i = 0; i < 30 && !spid; i++) {
+		if (access(pidfile))
+			spid = int(trim(readfile(pidfile) || '') || 0);
+		if (!spid)
+			sleep(100);
 	}
+	const sinfo = (spid > 1) ? pm_proc_info(spid) : null;
+	wstage({
+		stage: action, op_id: op_id || null, started: stage_started,
+		pid: sinfo ? sinfo.pid : spid, start: sinfo ? sinfo.start : 0,
+		exe: sinfo ? sinfo.exe : null
+	});
+	const deadline = time() + int(cap / 1000) + 5;
+	while (true) {
+		if (access(rcfile))
+			break;
+		if (time() >= deadline) {
+			reap_stage(action, stage_started);
+			return { error: `stage ${action} failed or timed out (deadline ${int(cap / 1000)}s) — orphans reaped by identity` };
+		}
+		if (op_id) {
+			try { op_heartbeat(op_id); } catch (e) { /* journal hiccup — the poll continues */ }
+		}
+		sleep(500);
+	}
+	const rc = int(trim(readfile(rcfile) || '') || 0);
 	const raw = trim(readfile(outfile) || '');
 	let out;
 	try { out = json(raw); } catch (e) { out = null; }
-	return (out && type(out) == 'object') ? out : { error: `no valid JSON from: ${action}` };
+	return (out && type(out) == 'object') ? out : { error: `no valid JSON from: ${action} (rc=${rc})` };
 }
 
 /* Post-failure recovery: if the binary on disk IS a valid lite build, the
@@ -123,59 +195,105 @@ function main() {
 		}
 	}
 
-	const started = time();
-	wstatus({ running: true, core: core, variant: variant, stage: 'prepare', started: started, ts: time() });
+	/* The journal operation (Ф1.4b): the install becomes visible in
+	 * app_op_list with a live heartbeat; a runner death self-heals via the
+	 * 120 s lease. A busy journal never blocks the install — the mkdir lock
+	 * above is the real serializer, the op is the record. */
+	const opr = op_begin('core_install', 'install ' + core + (length(variant) ? ' ' + variant : ''),
+		'core_install_runner', 'background core install');
+	const op_id = (opr && opr.ok) ? opr.op.op_id : null;
 
-	const prep = run_action('prepare_install', [core, variant]);
+	try { unlink(STAGE_FILE); } catch (e) { /* first run */ }
+
+	const started = time();
+	wstatus({ running: true, core: core, variant: variant, stage: 'prepare', started: started, ts: time(), op_id: op_id });
+	if (op_id) {
+		try { op_stage(op_id, 'prepare'); } catch (e) { /* journal hiccup */ }
+	}
+
+	const prep = run_action('prepare_install', [core, variant], null, op_id);
 	if (prep.error || prep.result === false) {
-		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: prep.error || 'prepare failed', started: started, finished: time() });
+		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: prep.error || 'prepare failed', started: started, finished: time(), op_id: op_id });
+		if (op_id) {
+			try { op_finish(op_id, false, false, 'prepare: ' + (prep.error || 'prepare failed')); } catch (e) { /* journal hiccup */ }
+		}
+		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 		rmdir(LOCK_DIR);
 		return;
 	}
 
 	const dl_url = prep.dl_url || prep.installer_url;
 	if (!dl_url || !prep.tmp_path) {
-		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: 'prepare returned no download URL', started: started, finished: time() });
+		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: 'prepare returned no download URL', started: started, finished: time(), op_id: op_id });
+		if (op_id) {
+			try { op_finish(op_id, false, false, 'prepare returned no download URL'); } catch (e) { /* journal hiccup */ }
+		}
+		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 		rmdir(LOCK_DIR);
 		return;
 	}
 
-	wstatus({ running: true, core: core, variant: variant, stage: 'download', note: prep.note || '', started: started, ts: time() });
-	const dl = run_action('download_pkg', [core, dl_url, prep.tmp_path]);
+	wstatus({ running: true, core: core, variant: variant, stage: 'download', note: prep.note || '', started: started, ts: time(), op_id: op_id });
+	if (op_id) {
+		try { op_stage(op_id, 'download'); } catch (e) { /* journal hiccup */ }
+	}
+	const dl = run_action('download_pkg', [core, dl_url, prep.tmp_path], null, op_id);
 	if (!dl.result) {
-		wstatus({ running: false, ok: false, core: core, stage: 'download', error: dl.error || 'download failed', started: started, finished: time() });
+		wstatus({ running: false, ok: false, core: core, stage: 'download', error: dl.error || 'download failed', started: started, finished: time(), op_id: op_id });
+		if (op_id) {
+			try { op_finish(op_id, false, false, 'download: ' + (dl.error || 'download failed')); } catch (e) { /* journal hiccup */ }
+		}
+		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 		rmdir(LOCK_DIR);
 		return;
 	}
 
-	wstatus({ running: true, core: core, variant: variant, stage: 'install', note: prep.note || '', started: started, ts: time() });
-	const inst = run_action('install_pkg', [core, prep.tmp_path, prep.pkg_manager]);
+	wstatus({ running: true, core: core, variant: variant, stage: 'install', note: prep.note || '', started: started, ts: time(), op_id: op_id });
+	if (op_id) {
+		try { op_stage(op_id, 'install'); } catch (e) { /* journal hiccup */ }
+	}
+	const inst = run_action('install_pkg', [core, prep.tmp_path, prep.pkg_manager], null, op_id);
 	if (!inst.result) {
 		/* Recovery: the binary swap may have happened before the installer
 		 * died (health-check hang) — detect a valid lite/extended build on
 		 * disk and still finish the job. */
 		const note = (core === 'singbox-lite') ? lite_recovery_note() : null;
 		if (note) {
-			wstatus({ running: true, core: core, variant: variant, stage: 'kmods', started: started, ts: time() });
-			const kr = run_action('install_kmods', [prep.pkg_manager]);
+			wstatus({ running: true, core: core, variant: variant, stage: 'kmods', started: started, ts: time(), op_id: op_id });
+			if (op_id) {
+				try { op_stage(op_id, 'kmods'); } catch (e) { /* journal hiccup */ }
+			}
+			const kr = run_action('install_kmods', [prep.pkg_manager], null, op_id);
 			wstatus({
 				running: false, ok: true, core: core, stage: 'done',
-				started: started, finished: time(), note: note,
+				started: started, finished: time(), note: note, op_id: op_id,
 				warning: (kr && kr.result === true) ? null : 'kmod install failed',
 				kmods_ok: (kr && kr.result === true) ? true : false
 			});
+			if (op_id) {
+				try { op_finish(op_id, true, false, note); } catch (e) { /* journal hiccup */ }
+			}
+			try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 			rmdir(LOCK_DIR);
 			return;
 		}
-		wstatus({ running: false, ok: false, core: core, stage: 'install', error: inst.error || 'installation failed', started: started, finished: time() });
+		wstatus({ running: false, ok: false, core: core, stage: 'install', error: inst.error || 'installation failed', started: started, finished: time(), op_id: op_id });
+		if (op_id) {
+			try { op_finish(op_id, false, false, 'install: ' + (inst.error || 'installation failed')); } catch (e) { /* journal hiccup */ }
+		}
+		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 		rmdir(LOCK_DIR);
 		return;
 	}
 
-	wstatus({ running: true, core: core, variant: variant, stage: 'kmods', started: started, ts: time() });
-	const kmods = run_action('install_kmods', [prep.pkg_manager]);
+	wstatus({ running: true, core: core, variant: variant, stage: 'kmods', started: started, ts: time(), op_id: op_id });
+	if (op_id) {
+		try { op_stage(op_id, 'kmods'); } catch (e) { /* journal hiccup */ }
+	}
+	const kmods = run_action('install_kmods', [prep.pkg_manager], null, op_id);
 	/* kmod failure is not fatal: usually already present from a previous core */
 
+	const detail = join('; ', filter([inst.note || null, inst.warning || null], (x) => (x != null)));
 	wstatus({
 		running: false,
 		ok: true,
@@ -185,8 +303,13 @@ function main() {
 		finished: time(),
 		note: inst.note || null,
 		warning: inst.warning || null,
-		kmods_ok: (kmods && kmods.result === true) ? true : false
+		kmods_ok: (kmods && kmods.result === true) ? true : false,
+		op_id: op_id
 	});
+	if (op_id) {
+		try { op_finish(op_id, true, false, detail); } catch (e) { /* journal hiccup */ }
+	}
+	try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 	rmdir(LOCK_DIR);
 }
 

@@ -49,6 +49,13 @@ import * as ctrl from '/etc/homeproxy/scripts/telegram_control.uc';
 /* Control state summary for /status (plan 15): the same library the
  * rpcd backend and the enforcer use. */
 import { client_states, main_opt } from '/etc/homeproxy/scripts/control.uc';
+/* Process Manager (Ф1.4b): registry self-registration + heartbeats, and
+ * identity-grade liveness for the /status engine lines (a bare pidof
+ * accepted a foreign mosdns and cannot see ucode scripts at all). */
+import {
+	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
+	reg_get as pm_reg_get, entry_alive as pm_entry_alive, find_daemons as pm_find
+} from '/etc/homeproxy/scripts/pmgr.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const LOG_FILE = RUN_DIR + '/telegram.log';
@@ -346,7 +353,43 @@ function fmt_dur(s) {
 }
 
 function proc_up(name) {
-	return (system(`pidof ${name} >/dev/null 2>&1`) === 0);
+	/* Ф1.4b: identity-grade liveness. mosdns — registry identity first, then
+	 * the instance whose -c argument is OUR config (a foreign mosdns is not
+	 * "ours"); nfqws2 — the live production queue pinned by its --qnum
+	 * element (the tester's temp queue never counts); ciadpi — our loopback
+	 * listen port element. */
+	if (name === 'mosdns') {
+		const e = pm_reg_get('mosdns');
+		if (e != null && pm_entry_alive(e))
+			return true;
+		return length(pm_find({ exe: '/usr/bin/mosdns', arg: [
+			'/var/run/homeproxy/multidns/mosdns.yaml',
+			'/var/run/homeproxy/multidns/mosdns.candidate.yaml'
+		] })) > 0;
+	}
+	if (name === 'nfqws2') {
+		let qnum = '200';
+		try {
+			const c = uci_cfg_snap('zapret_qnum');
+			if (c != null && length('' + c)) qnum = '' + c;
+		} catch (e) {}
+		return length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + qnum ] })) > 0;
+	}
+	if (name === 'ciadpi')
+		return length(pm_find({ exe: 'ciadpi', arg_all: [ '-p', '5335' ] })) > 0;
+	return length(pm_find({ exe: name })) > 0;
+}
+
+/* One UCI value read (the bot reads config through `uci -q get` — the same
+ * pattern as uci_get above; a fresh popen per call keeps hot-reload honest). */
+function uci_cfg_snap(key) {
+	const fd = popen(`uci -q get homeproxy.config.${key} 2>/dev/null`);
+	let v = null;
+	if (fd) {
+		v = trim(fd.read('all') || '');
+		fd.close();
+	}
+	return (length(v || '')) ? v : null;
 }
 
 function cmd_status() {
@@ -947,7 +990,12 @@ function main() {
 		try { last_update_id = int(readfile(OFF_FILE) || '0') || 0; } catch (e) { last_update_id = 0; }
 	}
 	log('telegram bot v2 started (always-on instance; idle until enabled)');
+	/* Ф1.4b: own identity in the daemon registry + a heartbeat every cycle —
+	 * the Sentinel (Ф2), support bundle and status RPCs read liveness here
+	 * (busybox pidof cannot see ucode scripts at all, lesson 23). */
+	pm_reg_self('telegram_bot', 'telegram.uc');
 	while (true) {
+		pm_reg_hb('telegram_bot');
 		try {
 			read_cfg();
 			if (cfg.enabled !== '1' || !token_ok(cfg.token)) {

@@ -70,6 +70,9 @@
 
 import { readfile, access, writefile, popen } from 'fs';
 import { cursor } from 'uci';
+import {
+	find_daemons as pm_find, entry_alive as pm_entry_alive, reg_get as pm_reg_get
+} from '/etc/homeproxy/scripts/pmgr.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const REQ = RUN_DIR + '/wizard_autopick_req.json';
@@ -639,7 +642,9 @@ function main() {
 	 * The verify stage below polls the CORE pid; with the light path the
 	 * core never disappears, so `seen` fills in immediately. */
 	const zq = '' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200');
-	const z_alive = system(`ps w | grep '[n]fqws2' | grep -q "qnum=${zq}"`) === 0;
+	/* Ф1.4b: the live queue is pinned by the exact --qnum element — the
+	 * tester's temp qnum can never read as the production engine. */
+	const z_alive = length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + zq ] })) > 0;
 	if (z_alive) {
 		system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
 		note(res, 'Стратегия применена с лёгким рестартом движка (ядро не перезапускается).');
@@ -656,10 +661,18 @@ function main() {
 	if (!z_alive) {
 		while ((time() - t0) < CORE_WAIT_MAX) {
 			sleep(5000);
-			const fd = popen('pidof hiddify-core 2>/dev/null');
-			let pid = '';
-			if (fd) { pid = trim(fd.read('all') || ''); fd.close(); }
-			if (length(pid)) {
+			/* Ф1.4b: core liveness by identity (registry entry first, then
+			 * the exact /proc scan; the lite build runs as sing-box-core —
+			 * the bare pidof of the old code missed it entirely). */
+			let core_up = false;
+			const cre = pm_reg_get('core');
+			if (cre != null && pm_entry_alive(cre))
+				core_up = true;
+			else
+				core_up = length(pm_find({ exe: 'hiddify-core' })) > 0 ||
+					length(pm_find({ exe: 'sing-box' })) > 0 ||
+					length(pm_find({ exe: 'sing-box-core' })) > 0;
+			if (core_up) {
 				seen++;
 				if (seen >= 2) break;
 			} else {

@@ -79,6 +79,10 @@
 
 import { readfile, writefile, access, popen } from 'fs';
 import { cursor } from 'uci';
+import {
+	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
+	find_daemons as pm_find, entry_alive as pm_entry_alive, reg_get as pm_reg_get
+} from '/etc/homeproxy/scripts/pmgr.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const STATE = RUN_DIR + '/zapret_autopilot.json';
@@ -223,8 +227,15 @@ function popen_read(cmd) {
 }
 
 function core_up() {
-	return (length(popen_read('pidof hiddify-core')) > 0 ||
-	        length(popen_read('pidof sing-box')) > 0);
+	/* Ф1.4b: identity liveness — the registry entry first, then the exact
+	 * /proc scan. The lite build runs as sing-box-core (the bare pidof of
+	 * the old code missed it entirely). */
+	const cre = pm_reg_get('core');
+	if (cre != null && pm_entry_alive(cre))
+		return true;
+	return length(pm_find({ exe: 'hiddify-core' })) > 0 ||
+	       length(pm_find({ exe: 'sing-box' })) > 0 ||
+	       length(pm_find({ exe: 'sing-box-core' })) > 0;
 }
 
 /* Local wall-clock minutes since midnight — busybox `date` is TZ-aware and
@@ -1381,11 +1392,15 @@ function main() {
 	S.error = '';
 	wstat();
 	log('демон автопилота запущен');
+	/* Ф1.4b: own identity in the daemon registry + a heartbeat every cycle —
+	 * the Sentinel (Ф2), support bundle and status RPCs read liveness here. */
+	pm_reg_self('zapret_autopilot', 'zapret_autopilot.uc');
 	if (S.pending) {
 		stage('resume', 'продолжаю прерванное действие…');
 		resume();
 	}
 	while (true) {
+		pm_reg_hb('zapret_autopilot');
 		try {
 			tick();
 		} catch (e) {

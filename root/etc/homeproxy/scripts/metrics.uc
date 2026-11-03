@@ -52,6 +52,7 @@
  * the same trap that silently killed the urltest watchdog at its first
  * fetch (ч.59). */
 import { access, readfile, writefile, stat, popen } from 'fs';
+import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -362,9 +363,14 @@ function flush() {
 system('mkdir -p ' + shellquote(RUN_DIR) + ' 2>/dev/null; true');
 restore_totals();
 
+/* Ф1.4b: own identity in the daemon registry + a heartbeat every cycle —
+ * the support bundle and the Sentinel (Ф2) read liveness here. */
+pm_reg_self('metrics', 'metrics.uc');
+
 /* Main loop. Sleep FIRST so every emitted point sits on the interval grid;
  * the very first point has no CPU delta yet (null) by design. */
 while (true) {
+	pm_reg_hb('metrics');
 	sleep(SAMPLE_INTERVAL * 1000);
 
 	const t = time();

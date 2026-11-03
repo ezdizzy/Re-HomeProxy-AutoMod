@@ -11,7 +11,8 @@
 // ТОЛЬКО по живой проверке фактического состояния:
 //   restart/reload  → procd-инстанс 'hiddify-c' = running; если служба
 //                     выключена в конфиге — verified с честной заметкой;
-//   engine_restart  → включённые движки (nfqws2/ciadpi) присутствуют в ps.
+//   engine_restart  → включённые движки (nfqws2/ciadpi) живы по identity
+//                     (pmgr find_daemons; у Zapret пинуется живая очередь).
 //
 // Конфиг ЯДРА генерирует сам init.d-старт (строка ~317) — руннер НЕ вызывает
 // generate_client и НЕ бампает ревизию до применения (исключена петля
@@ -33,6 +34,7 @@
 'use strict';
 
 import { get_op, stage, heartbeat, finish } from '/etc/homeproxy/scripts/opman.uc';
+import { find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
 import { access, readfile, popen } from 'fs';
 import { cursor } from 'uci';
 
@@ -55,6 +57,15 @@ function uci_flag1(key, def) {
 		return ('' + (c.get('homeproxy', 'config', key) || def)) === '1';
 	} catch (e) {
 		return ('' + def) === '1';
+	}
+}
+
+function uci_str(key, def) {
+	try {
+		const c = cursor();
+		return trim('' + (c.get('homeproxy', 'config', key) || def));
+	} catch (e) {
+		return '' + def;
 	}
 }
 
@@ -94,10 +105,15 @@ function verify_engines(op_id) {
 	const b_on = uci_flag1('byedpi_enabled', '0');
 	if (!z_on && !b_on)
 		return { ok: true, note: 'no DPI engines enabled (verified)' };
+	/* Ф1.4b: pm-liveness — exact (exe, arg) identity instead of a ps|grep
+	 * substring. The Zapret probe pins the LIVE queue number, so the
+	 * tester's temp instance (qnum 209) can never read as the running
+	 * production engine. */
+	const zq = uci_str('zapret_qnum', '200');
 	const deadline = time() + VERIFY_SEC.engine_restart;
 	while (true) {
-		const z_ok = !z_on || system(`ps w | grep -q '[n]fqws2'`) === 0;
-		const b_ok = !b_on || system(`ps w | grep -q '[c]iadpi'`) === 0;
+		const z_ok = !z_on || length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + zq ] })) > 0;
+		const b_ok = !b_on || length(pm_find({ exe: 'ciadpi' })) > 0;
 		if (z_ok && b_ok) {
 			const names = [];
 			if (z_on) push(names, 'nfqws2');

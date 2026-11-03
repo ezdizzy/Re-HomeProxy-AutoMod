@@ -16,6 +16,7 @@
 
 import { readfile, writefile } from 'fs';
 import { cursor } from 'uci';
+import { find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
 
 const _mode = ARGV[0] || 'check';
 const REPAIR = (_mode == 'repair' || _mode == 'repair-noreload' || _mode == 'repair-rules');
@@ -291,11 +292,11 @@ function nft_homeproxy_lines() {
 }
 
 function service_active() {
-	if (system('pidof hiddify-core >/dev/null 2>&1') === 0)
-		return true;
-	if (system('pidof sing-box >/dev/null 2>&1') === 0)
-		return true;
-	return false;
+	/* Ф1.4b: exact-exe identity scan (the lite build runs as sing-box-core —
+	 * the old pidof pair missed it entirely). */
+	return length(pm_find({ exe: 'hiddify-core' })) > 0 ||
+	       length(pm_find({ exe: 'sing-box' })) > 0 ||
+	       length(pm_find({ exe: 'sing-box-core' })) > 0;
 }
 
 function check_nft_live() {

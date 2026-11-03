@@ -100,12 +100,12 @@ NFQ_PID=""
 WATCH_PID=""
 
 cleanup() {
-	# nfqws2 daemonizes (so $! is stale) and busybox has no pkill. Match nfqws2 by
-	# process NAME (never the shell/grep itself), then kill only the one on our temp
-	# qnum (sparing the live qnum=200 instance).
-	for p in $(pgrep nfqws2 2>/dev/null); do
-		tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "qnum=$QNUM" && kill "$p" 2>/dev/null
-	done
+	# nfqws2 daemonizes (so $! is stale) and busybox has no pkill. Ф1.4b: kill
+	# through the Process Manager CLI — the exact binary whose --qnum element
+	# equals OUR temp queue, (pid, starttime) verified per signal (the old
+	# pgrep+grep loop matched substrings and could signal a reused PID; the
+	# live qnum=200 instance is never touched).
+	ucode /etc/homeproxy/scripts/pmgr_cli.uc kill_args "$NFQWS" "--qnum=$QNUM" >/dev/null 2>&1
 	[ -n "$NFQ_PID" ] && kill "$NFQ_PID" 2>/dev/null
 	nft delete table inet "$TABLE" 2>/dev/null
 	# remove our surgical bypass rules from the LIVE output_redir chain (by comment)
@@ -216,7 +216,9 @@ if [ "$BASELINE" != "1" ]; then
 	$NFQWS --qnum=$QNUM --user=daemon --fwmark=$DMARK $LUA $STRAT >/dev/null 2>&1 &
 	NFQ_PID=$!
 	sleep 1
-	pgrep -f "qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 did not start - check strategy"
+	# Ф1.4b: identity liveness (exact exe + the --qnum element), not a
+	# substring pgrep that matched any process mentioning the number.
+	ucode /etc/homeproxy/scripts/pmgr_cli.uc find "$NFQWS" "--qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 did not start - check strategy"
 fi
 
 # 5. Probe every host in parallel: curl forced to the resolved IP, write

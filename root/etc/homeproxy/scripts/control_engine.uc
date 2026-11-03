@@ -22,6 +22,7 @@ import {
 	client_states, active_rules, wifi_off_map, read_wifi_temps,
 	read_temps, main_opt, log, add_event
 } from 'control';
+import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
 
 const TICK = 60; /* seconds per check */
 
@@ -122,7 +123,11 @@ function tick(now) {
  * control_apply.uc). */
 function main() {
 	log('control engine started (always-on instance; idle while disabled)');
+	/* Ф1.4b: own identity in the daemon registry + a heartbeat every cycle —
+	 * the Sentinel (Ф2), support bundle and status RPCs read liveness here. */
+	pm_reg_self('control', 'control_engine.uc');
 	while (true) {
+		pm_reg_hb('control');
 		const now = time();
 		try {
 			tick(now);
