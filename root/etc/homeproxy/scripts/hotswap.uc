@@ -70,6 +70,7 @@
 import { access, open, stat, popen } from 'fs';
 import { write_state as ss_write_state, read_state as ss_read_state } from '/etc/homeproxy/scripts/statestore.uc';
 import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
+import { emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -246,6 +247,13 @@ function tag_label(tag) {
 	if (hs && type(hs.labels) === 'object' && type(hs.labels[tag]) === 'string' && length(hs.labels[tag]))
 		return hs.labels[tag];
 	return tag;
+}
+
+/* Ф2.4: publish a switch to the shared Event Bus (LuCI journal + TG informer).
+ * who = human node name (hotswap.messages_node_names_not_cfg_ids), detail =
+ * the machine reason. Best-effort: a broken bus never touches switching. */
+function ev_switch(who) {
+	try { ev_emit('hotswap', 'switch', who, last_reason + ' (#' + switches + ')'); } catch (e) { /* best-effort */ }
 }
 
 function health_of(tag) {
@@ -559,6 +567,7 @@ while (true) {
 					last_switch_ts = now_ts;
 					last_reason = 'primary down: ' + tag_label(active) + ' -> ' + tag_label(target);
 					log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
+					ev_switch(tag_label(target));
 					health_of(target).fails = 0;
 					if (hs.antiflap) {
 						last_pinned = pinned;
@@ -607,6 +616,7 @@ while (true) {
 						last_switch_ts = now_ts;
 						last_reason = 'antiflap: sustained better node: ' + tag_label(last_pinned) + ' -> ' + tag_label(best);
 						log('ANTIFLAP: ' + last_reason + ' (switch #' + switches + ')');
+						ev_switch(tag_label(best));
 					}
 				}
 			}
@@ -624,6 +634,7 @@ while (true) {
 					last_reason = (fb_target === hs.primary) ? ('primary recovered: ' + tag_label(fb_target))
 					                                          : ('failback to the previous node: ' + tag_label(fb_target));
 					log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
+					ev_switch(tag_label(fb_target));
 					health_of(fb_target).oks = 0;
 					health_of(fb_target).first_ok = 0;
 					if (hs.antiflap) {

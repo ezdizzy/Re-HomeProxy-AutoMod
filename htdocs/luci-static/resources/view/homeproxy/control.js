@@ -1180,8 +1180,12 @@ return view.extend({
 		const evList = E('div', { 'class': 'hpui-log', 'style': 'max-height:420px' });
 		const logBox = E('pre', { 'class': 'hpui-pre hpui-log' }, [ '' ]);
 
-		const evIcons = { block: '🔒', allow: '🔓', temp: '⏱', wifi: '📶', schedule: '📅', system: '⚙️', update: '⬆️' };
+		const evIcons = { block: '🔒', allow: '🔓', temp: '⏱', wifi: '📶', schedule: '📅', system: '⚙️', update: '⬆️',
+			learn: '🧠', heal: '✅', outage: '⚠️', outage_end: '✅', clear: '🗑️', recheck: '🔁',
+			switch: '🔄', dead: '⛔', recovered: '✅', reload: '♻️' };
 		const evColors = { block: 'hpui-c-red', allow: 'hpui-c-green', temp: 'hpui-c-amber', wifi: 'hpui-c-blue' };
+		/* Ф2.4: единая лента Event Bus — источник записи виден явно. */
+		const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'), hotswap: 'Hot Swap', urltest: 'URLTest' };
 
 		function refreshJournal() {
 			return Promise.all([
@@ -1195,9 +1199,11 @@ return view.extend({
 					const t = new Date(ev.ts * 1000);
 					const hh = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2);
 					const icon = evIcons[ev.type] || '•';
+					const src = srcLabels[ev.src || 'control'] || (ev.src || 'control');
 					lines.push(E('div', {}, [
 						E('span', { 'class': evColors[ev.type] || 'hpui-c-grey' }, [ hh + ' ' + icon + ' ' + (ev.who || '') ]),
-						(ev.detail ? ' — ' + ev.detail : '')
+						(ev.detail ? ' — ' + ev.detail : ''),
+						E('span', { 'class': 'hpui-cap', 'style': 'margin-left:8px' }, [ '[' + src + ']' ])
 					]));
 				}
 				dom.content(evList, lines.length ? lines : [ _('The journal is empty.') ]);

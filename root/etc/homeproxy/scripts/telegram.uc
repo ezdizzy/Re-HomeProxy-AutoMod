@@ -14,12 +14,14 @@
  * Long-polls the Bot API (getUpdates, UCI-configurable timeout) in HTML
  * parse_mode with inline keyboards, answers commands from the bound chat
  * only (homeproxy.telegram.chat_id; empty = the first chat wins — pinned on
- * the first message, as in v1), and pushes notifications by watching the
- * run-state files (NOT the engine internals):
- *   hotswap_state.json   — Hot Swap node changes / failback
- *   urltest_dead         — watchdog dead-node marks (added / recovered)
- *   automation_stats.json events ring — learned blocks, self-heals
- *   Clash /version       — core down / recovered
+ * the first message, as in v1), and pushes notifications. Ф2.4: the informer
+ * is a SUBSCRIBER of the shared Event Bus (eventbus.uc, journal.jsonl) —
+ * one durable cursor ('telegram-bus') covers Hot Swap switches, URLTest
+ * watchdog dead/recovered/reload and automation learn/heal/outage records;
+ * the «Контроль» module subscribes to its own src=control stream with the
+ * same mechanism ('telegram-ctrl'). Remaining file probes:
+ *   automation_stats.json (learned counters for /status),
+ *   Clash /version        — core down / recovered.
  *
  * Commands (v1 kept, RU texts — the bot audience is the router owner):
  *   /status /ping /connections /close /restart /help /start
@@ -56,15 +58,17 @@ import {
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
 	reg_get as pm_reg_get, entry_alive as pm_entry_alive, find_daemons as pm_find
 } from '/etc/homeproxy/scripts/pmgr.uc';
-/* State Store (Ф1.7): hotswap_state.json в версионированном конверте,
- * чтение толерантно к легаси-документу. */
-import { read_state as ss_read_state } from '/etc/homeproxy/scripts/statestore.uc';
+/* Event Bus (Ф2.4): the informer subscribes to the shared journal with a
+ * durable cursor (survives daemon restarts within one boot; a reboot wipes
+ * the journal and the cursor together). */
+import {
+	tail as bus_tail, last_id as bus_head,
+	cursor_get as bus_cursor_get, cursor_set as bus_cursor_set
+} from '/etc/homeproxy/scripts/eventbus.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const LOG_FILE = RUN_DIR + '/telegram.log';
 const OFF_FILE = RUN_DIR + '/telegram_offset';
-const HS_FILE = RUN_DIR + '/hotswap_state.json';
-const DEAD_FILE = RUN_DIR + '/urltest_dead';
 const STATS_FILE = RUN_DIR + '/automation_stats.json';
 const API = 'http://127.0.0.1:9090';
 const PROBE_URL = 'http://www.gstatic.com/generate_204';
@@ -85,10 +89,12 @@ let cfg = {
 	push_control: '1'
 };
 let seen = {
-	hs_switches: -1, hs_active: '', dead_str: null,
-	learn_t: 0, core_ok: null
+	core_ok: null
 };
 let last_push = {};   /* kind -> { text, ts } dedup */
+let bus_id = 0;       /* Ф2.4: Event Bus cursor (last consumed event_id) */
+let bus_saved = 0;    /* id already persisted to the durable cursor */
+let bus_ready = false;/* baseline done (never re-baseline mid-boot) */
 
 /* ── basics ───────────────────────────────────────────────────────────── */
 
@@ -702,101 +708,78 @@ function send_push(kind, text) {
 	tg_send_html(allowed_chat, text, null);
 }
 
-function push_hotswap() {
-	if (!access(HS_FILE)) return;
-	/* Ф1.7: документ в конверте State Store (data внутри); легаси тоже читается. */
-	const st = ss_read_state(HS_FILE).data;
-	if (!st || type(st) !== 'object') return;
-	const sw = int(st.switches || 0);
-	const active = '' + (st.active || '');
-	if (seen.hs_switches === -1) { seen.hs_switches = sw; seen.hs_active = active; return; }
-	if (sw === seen.hs_switches && active === seen.hs_active)
-		return;
-	const old = seen.hs_active;
-	seen.hs_switches = sw;
-	seen.hs_active = active;
-	let arrow = '';
-	if (length(old) && old !== active)
-		arrow = `${esc_html(node_label(old))} → `;
-	send_push('hotswap',
-		`🔄 <b>Hot Swap</b>: ${arrow}<b>${esc_html(node_label(active))}</b>` +
-		((st.last_reason && length('' + st.last_reason)) ? `\nПричина: ${esc_html('' + st.last_reason)}` : '') +
-		sprintf('\n(переключение #%d)', sw));
+/* ── Ф2.4: Event Bus subscription (one cursor, hotswap/urltest/automation) ──
+ * The «Контроль» src=control stream is consumed by telegram_control.push_scan
+ * with its own cursor. Here: the remaining sources. Toggles map like before —
+ * push_hotswap guards src=hotswap, push_watchdog guards src=urltest,
+ * push_learn guards src=automation — so user settings keep their meaning.
+ * Durable cursor: daemon restart continues from the last consumed id (events
+ * written during downtime are pushed, nothing replays); reboot wipes the
+ * journal + cursor together → baseline at the head. */
+
+const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn' };
+
+function bus_text(ev) {
+	const who = trim('' + (ev.who || ''));
+	const detail = trim('' + (ev.detail || ''));
+	if (ev.src === 'hotswap')
+		return '🔄 <b>Hot Swap</b>' +
+			(length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
+			(length(detail) ? '\n' + esc_html(detail) : '');
+	if (ev.src === 'urltest') {
+		if (ev.type === 'recovered')
+			return '✅ <b>URLTest</b>: узел восстановился' +
+				(length(who) ? ': ' + esc_html(who) : '');
+		if (ev.type === 'reload')
+			return '♻️ <b>URLTest</b>' + (length(detail) ? ': ' + esc_html(detail) : '');
+		return '⛔ <b>URLTest</b>: узел помечен мёртвым' +
+			(length(who) ? ': ' + esc_html(who) : '') +
+			(length(detail) ? '\n' + esc_html(detail) : '');
+	}
+	/* automation */
+	if (ev.type === 'outage')
+		return '⚠️ <b>Автоматизация</b>: ' + esc_html(detail || 'авария: обучение приостановлено');
+	if (ev.type === 'outage_end')
+		return '✅ <b>Автоматизация</b>: ' + esc_html(detail || 'авария завершена');
+	if (ev.type === 'heal')
+		return '✅ <b>Автоматизация</b>: самолечение' +
+			(length(detail) ? ':\n' + esc_html(detail) : '');
+	return '🧠 <b>Автоматизация</b>' + (length(who) ? ': ' + esc_html(who) : '') +
+		(length(detail) ? '\n' + esc_html(detail) : '');
 }
 
-/* Membership check without dynamic regex: exact line compare on split lists. */
-function in_list(list, item) {
-	for (let i = 0; i < length(list); i++)
-		if (trim(list[i]) === item) return true;
-	return false;
-}
-
-function push_watchdog() {
-	const cur = access(DEAD_FILE) ? trim(readfile(DEAD_FILE) || '') : '';
-	if (seen.dead_str == null) { seen.dead_str = cur; return; }
-	if (cur === seen.dead_str) return;
-	const oldl = split(seen.dead_str, '\n');
-	const newl = split(cur, '\n');
-	seen.dead_str = cur;
-	let added = [];
-	for (let i = 0; i < length(newl); i++) {
-		const t = trim(newl[i]);
-		if (length(t) && !in_list(oldl, t))
-			push(added, t);
+function push_bus() {
+	/* Baseline ONCE per daemon run: durable cursor (same boot) or the journal
+	 * head. A zero head is a LEGITIMATE baseline (empty journal after boot) —
+	 * re-baselining on every scan would silently skip the first events. */
+	if (!bus_ready) {
+		bus_ready = true;
+		const cur = bus_cursor_get('telegram-bus');
+		bus_id = (cur != null) ? int(cur) : bus_head();
+		bus_saved = bus_id;
 	}
-	let gone = [];
-	for (let i = 0; i < length(oldl); i++) {
-		const t = trim(oldl[i]);
-		if (length(t) && !in_list(newl, t))
-			push(gone, t);
-	}
-	if (length(added)) {
-		let lines = [];
-		for (let i = 0; i < length(added) && i < 6; i++)
-			push(lines, '• ' + esc_html(node_label(added[i])));
-		send_push('watchdog', '⛔ <b>URLTest</b>: узел помечен мёртвым:\n' + join('\n', lines));
-	}
-	if (length(gone)) {
-		let lines = [];
-		for (let i = 0; i < length(gone) && i < 6; i++)
-			push(lines, '• ' + esc_html(node_label(gone[i])));
-		send_push('watchdog', '✅ <b>URLTest</b>: узел восстановился:\n' + join('\n', lines));
-	}
-}
-
-function push_learn() {
-	if (!access(STATS_FILE)) return;
-	let st = null;
-	try { st = json(readfile(STATS_FILE) || ''); } catch (e) { st = null; }
-	if (!st || type(st.events) !== 'array') return;
-	const evs = st.events;
-	let maxt = seen.learn_t;
-	for (let i = 0; i < length(evs); i++)
-		if (evs[i].t > maxt) maxt = evs[i].t;
-	if (seen.learn_t === 0) { seen.learn_t = maxt; return; }
-	if (maxt <= seen.learn_t) return;
-	let learned = [], healed = [];
+	const evs = bus_tail(200, bus_id);
+	let sent = 0;
 	for (let i = 0; i < length(evs); i++) {
 		const ev = evs[i];
-		if (ev.t <= seen.learn_t) continue;
-		if (ev.k === 'learn' && cfg.push_learn === '1') push(learned, '' + (ev.m || ''));
-		else if (ev.k === 'heal' && cfg.push_learn === '1') push(healed, '' + (ev.m || ''));
+		if (ev.id <= bus_id)
+			continue;
+		/* Cap BEFORE consuming: events past the cap stay unconsumed (cursor
+		 * keeps their id) — the next scan resumes, nothing is lost. */
+		if (sent >= 10) {
+			log('bus: 10 pushes sent this scan, tail deferred');
+			break;
+		}
+		bus_id = ev.id;
+		const kind = BUS_SRC_KIND[ev.src];
+		if (kind == null || !push_enabled(kind))
+			continue;   /* baseline advances regardless of toggles — unmute never replays */
+		sent++;
+		send_push(kind, bus_text(ev));
 	}
-	seen.learn_t = maxt;
-	if (length(learned)) {
-		const cap = 8;
-		let lines = [];
-		for (let i = 0; i < length(learned) && i < cap; i++)
-			push(lines, '• ' + esc_html(learned[i]));
-		let tail = (length(learned) > cap) ? `\n… и ещё ${length(learned) - cap}` : '';
-		send_push('learn', '🧠 <b>Автоматизация</b> выучила:\n' + join('\n', lines) + tail);
-	}
-	if (length(healed)) {
-		const cap = 6;
-		let lines = [];
-		for (let i = 0; i < length(healed) && i < cap; i++)
-			push(lines, '• ' + esc_html(healed[i]));
-		send_push('learn', '✅ <b>Автоматизация</b>: самолечение:\n' + join('\n', lines));
+	if (bus_id !== bus_saved) {
+		bus_cursor_set('telegram-bus', bus_id);
+		bus_saved = bus_id;
 	}
 }
 
@@ -832,9 +815,7 @@ const ctrl_api = {
 };
 
 function push_scan() {
-	try { push_hotswap(); } catch (e) { log('push hotswap: ' + e); }
-	try { push_watchdog(); } catch (e) { log('push watchdog: ' + e); }
-	try { push_learn(); } catch (e) { log('push learn: ' + e); }
+	try { push_bus(); } catch (e) { log('push bus: ' + e); }
 	try { push_service(); } catch (e) { log('push service: ' + e); }
 	try { ctrl.push_scan(ctrl_api); } catch (e) { log('push control: ' + e); }
 }

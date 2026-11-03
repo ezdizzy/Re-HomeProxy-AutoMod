@@ -7940,8 +7940,9 @@ const methods = {
 	control_events: {
 		args: { limit: 'limit' },
 		call: function(req) {
-			/* Ф1.7 (аудит 21): журнал — append-only Event Bus; подпись UI та же
-			 * ({ts,type,who,detail}), источник — шина с монотонным event_id. */
+			/* Ф1.7/Ф2.4: журнал — append-only Event Bus; подпись UI расширяется
+			 * полем src (Контроль/Автообход/Hot Swap/URLTest — единая лента).
+			 * Битые строки шина молча пропускает сама. */
 			let limit = int(req.args?.limit) || 100;
 			if (limit < 1 || limit > 1000)
 				limit = 100;
@@ -7950,6 +7951,7 @@ const methods = {
 			for (let i = 0; i < length(evs); i++)
 				push(out, {
 					ts: evs[i].ts,
+					src: evs[i].src || 'control',
 					type: evs[i].type,
 					who: evs[i].who,
 					detail: evs[i].detail

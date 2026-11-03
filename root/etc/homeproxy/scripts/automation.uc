@@ -44,6 +44,7 @@
 
 import { access, readfile, writefile, open, stat } from 'fs';
 import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
+import { emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
 import { cursor } from 'uci';
 import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty } from 'homeproxy';
 import {
@@ -213,6 +214,10 @@ let alt_dns = [];
 let auto_set = {};
 let pending_reload = false;
 let pending_new = 0;
+/* Ф2.4: hosts learned since the LAST apply — flushed as ONE aggregated Event
+ * Bus record at the apply point (a burst must not flood the LuCI journal or
+ * the Telegram chat with per-host rows). */
+let learn_names = [];
 let excludes = [];
 let direct_set = {};
 let proxy_set = {};
@@ -308,6 +313,28 @@ function eng_event(kind, msg) {
 	push(eng_stats.events, { t: time(), k: kind, m: '' + msg });
 	while (length(eng_stats.events) > 24)
 		shift(eng_stats.events);
+}
+
+/* Ф2.4: publish an automation event to the shared Event Bus (journal.jsonl) —
+ * subscribers are the LuCI journal and the Telegram informer. Best-effort:
+ * a broken bus never touches the engine (same contract as eng_event). */
+function ev_auto(type, who, detail) {
+	try { ev_emit('automation', type, who || '', detail || ''); } catch (e) { /* best-effort */ }
+}
+
+/* Aggregated 'learn' record: up to 8 host names + '+K' tail. Called at the
+ * apply point where learn_names is drained. */
+function ev_learn_flush(where) {
+	const n = length(learn_names);
+	if (!n) return;
+	let shown = [];
+	for (let i = 0; i < n && i < 8; i++)
+		push(shown, learn_names[i]);
+	let detail = join(', ', shown);
+	if (n > 8)
+		detail += ' …+' + (n - 8);
+	ev_auto('learn', 'выучено ' + n, detail + ' (' + where + ')');
+	learn_names = [];
 }
 
 /* Daemon RAM (VmRSS of THIS process, kB). POSIX ERE: /proc files separate
@@ -2843,6 +2870,9 @@ echo done > "$PRE.done"
 			dns_flush_main();
  			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips.');
  			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && r.ips) || 0) + ' ip (hot)');
+ 			/* Ф2.4: one aggregated bus record per apply — a learn burst must
+ 			 * not flood the LuCI journal / the TG chat with per-host rows. */
+ 			ev_learn_flush('горячее применение');
  			last_reload = time();
 			pending_reload = false;
 			pending_new = 0;
@@ -2860,6 +2890,7 @@ echo done > "$PRE.done"
 		sync_learned_rulesets();
  		log('applying learned list - restarting service to load new config.');
  		eng_event('reload', 'service reload');
+ 		ev_learn_flush('применение с перезапуском');
  		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
 		last_reload = time();
 		pending_reload = false;
@@ -2917,6 +2948,8 @@ echo done > "$PRE.done"
 		outage_events++;
 		log('АВАРИЯ: база прямого пути не отвечает (' + canary_detail + ') — обучение приостановлено, сбои не записываются как блокировки');
 		eng_event('outage', 'прямой путь недоступен (' + canary_detail + '), обучение приостановлено');
+		ev_auto('outage', 'авария: обучение приостановлено',
+			'прямой путь недоступен (' + canary_detail + ')');
 	}
 
 	/* Close the outage window: queue everything learned during it for the
@@ -2961,6 +2994,8 @@ echo done > "$PRE.done"
 			(added ? (' — ' + added + ' записей из окна аварии добавлены в очередь перепроверки (' + length(recheck_queue) + ' всего)') : (' — во время аварии выучено: 0, очередь перепроверки: ' + length(recheck_queue))) +
 			(pdrop ? (', сброшено DNS-poison-меток: ' + pdrop) : ''));
 		eng_event('outage_end', 'прямой путь восстановлен, перепроверка: ' + length(recheck_queue));
+		ev_auto('outage_end', 'авария завершена: прямой путь восстановлен',
+			'простой ' + (now - since) + ' с; очередь перепроверки: ' + length(recheck_queue));
 	}
 
 	function classify(dom, d, p, is_ip, tcp_direct, rtt_direct, rtt_proxy) {
@@ -3172,9 +3207,9 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
- 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); }
- 				} else if (!auto_set[dom]) {
- 					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')');
+ 				if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); push(learn_names, dom); }
+ 			} else if (!auto_set[dom]) {
+ 				auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')'); push(learn_names, dom);
 					if (is_auth_like(dom))
 						sync_auth_families();
 				}
@@ -3257,9 +3292,9 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
- 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); }
+ 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); push(learn_names, dom); }
  				} else if (!auto_set[dom]) {
- 					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom);
+ 					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom); push(learn_names, dom);
 					/* ч.61: a fresh auth-like learn extends its domain family. */
 					if (is_auth_like(dom))
 						sync_auth_families();
@@ -3565,6 +3600,7 @@ echo done > "$PRE.done"
  						eng_event('learn', dom + ' (pain override)');
  						pending_reload = true;
  						pending_new++;
+ 						push(learn_names, dom);
 					} else {
 						log('pain override skipped - proxy cannot reach ' + dom);
 						fst.pain_passes = 0;
@@ -3797,6 +3833,13 @@ echo done > "$PRE.done"
  				write_auto_ip_list(auto_ip_set);
  				log('self-healed (answers direct again): ' + join(', ', healed));
  				eng_event('heal', join(', ', healed));
+ 				{
+ 					let shown = [];
+ 					for (let i = 0; i < length(healed) && i < 8; i++)
+ 						push(shown, healed[i]);
+ 					let hd = join(', ', shown) + ((length(healed) > 8) ? ' …+' + (length(healed) - 8) : '');
+ 					ev_auto('heal', 'самолечение: ' + length(healed), hd);
+ 				}
  				pending_reload = true;
  			}
 		}
@@ -4021,6 +4064,8 @@ echo done > "$PRE.done"
 			canary_ts = 0;
  			log('clear marker: in-memory state wiped, working sets reloaded (fresh start).');
  			eng_event('clear', 'learned list cleared');
+ 			learn_names = [];
+ 			ev_auto('clear', 'выученный список очищен', 'состояние движка сброшено, старт с чистого листа');
 		} else if (access(RELOAD_MARKER + '_geo')) {
 			system('rm -f ' + shellquote(RELOAD_MARKER + '_geo'));
 			load_ru_geo();
@@ -4043,6 +4088,7 @@ echo done > "$PRE.done"
 				if (!manual_proxy_set[h] && !manual_direct_set[h]) push(recheck_queue, h);
 			log('ПЕРЕПРОВЕРКА: ручной запуск — ' + length(recheck_queue) + ' записей в очереди (пакет ' + RECHECK_BATCH + ' за цикл, отвечающие напрямую снимаются сразу)');
 			eng_event('recheck', 'запущена перепроверка списка: ' + length(recheck_queue) + ' записей');
+			ev_auto('recheck', 'запущена перепроверка списка', length(recheck_queue) + ' записей (пакет ' + RECHECK_BATCH + ' за цикл)');
 		}
 
 		let run_now = false;

@@ -35,11 +35,17 @@ import {
 	add_event, main_opt, list_devices, bump_cursor,
 	read_temps, write_temps, read_arp
 } from '/etc/homeproxy/scripts/control.uc';
-import { tail as ev_tail, last_id as ev_head } from '/etc/homeproxy/scripts/eventbus.uc';
+import { tail as ev_tail, last_id as ev_head, cursor_get as ev_cursor_get, cursor_set as ev_cursor_set } from '/etc/homeproxy/scripts/eventbus.uc';
 
 /* Module state (module scope is closure-safe; declared before use). */
 let API = null;
-let ev_last_id = 0;    /* Event Bus cursor (Ф1.7): монотонный id, не ts */
+let ev_last_id = 0;    /* Event Bus cursor (Ф1.7/Ф2.4): монотонный id, не ts.
+                        * Ф2.4: курсор durably в tmpfs ('telegram-ctrl') —
+                        * рестарт демона продолжает с последнего обработанного
+                        * события (простой не теряет события, реплея нет);
+                        * ребут роняет курсор вместе с журналом → базлайн. */
+let ev_saved_id = 0;   /* id already persisted to the durable cursor */
+let ev_ready = false;  /* baseline done (never re-baseline mid-boot) */
 let arp_seen = null;   /* MACs seen on the network (new-device pushes) */
 
 const DEV_PAGE = 6;    /* devices per page in the inline keyboard */
@@ -788,29 +794,35 @@ function leases_map() {
 export function push_scan(api) {
 	API = api;
 
-	/* 1) events journal tail — Event Bus (Ф1.7, аудит 21): курсор = монотонный
-	 * event_id (ts-секунды неуникальны, конкурентные записи старого
-	 * read-modify-write затирали события). Базлайн при старте = голова шины:
-	 * после рестарта демона флуда нет. */
+	/* 1) events journal tail — Event Bus (Ф1.7/Ф2.4, аудит 21): курсор =
+	 * монотонный event_id (ts-секунды неуникальны, конкурентные записи
+	 * старого read-modify-write затирали события). Базлайн при старте =
+	 * durable-курсор этой же загрузки либо голова шины: после рестарта
+	 * демона события простоя НЕ теряются и НЕ переигрываются; после ребута
+	 * журнал и курсор обнуляются вместе. */
 	{
-		const evs = ev_tail(200, (ev_last_id > 0) ? ev_last_id : 0);
-		if (ev_last_id === 0) {
-			/* Baseline: события, уже сидевшие в журнале, не переигрываем. */
-			ev_last_id = ev_head();
-		} else {
-			for (let i = 0; i < length(evs); i++) {
-				const ev = evs[i];
-				if (ev.id <= ev_last_id || ev.src !== 'control')
-					continue;
-				if (ev.id > ev_last_id)
-					ev_last_id = ev.id;
-				const icon = (ev.type in EV_ICON) ? EV_ICON[ev.type] : '•';
-				const who = trim('' + (ev.who || ''));
-				const detail = trim('' + (ev.detail || ''));
-				api.push('control',
-					icon + ' <b>Контроль</b>' + (length(who) ? ': ' + esc(who) : '') +
-					(length(detail) ? '\n' + esc(detail) : ''));
-			}
+		if (!ev_ready) {
+			ev_ready = true;
+			const cur = ev_cursor_get('telegram-ctrl');
+			ev_last_id = (cur != null) ? int(cur) : ev_head();
+			ev_saved_id = ev_last_id;
+		}
+		const evs = ev_tail(200, ev_last_id);
+		for (let i = 0; i < length(evs); i++) {
+			const ev = evs[i];
+			if (ev.id <= ev_last_id || ev.src !== 'control')
+				continue;
+			ev_last_id = ev.id;
+			const icon = (ev.type in EV_ICON) ? EV_ICON[ev.type] : '•';
+			const who = trim('' + (ev.who || ''));
+			const detail = trim('' + (ev.detail || ''));
+			api.push('control',
+				icon + ' <b>Контроль</b>' + (length(who) ? ': ' + esc(who) : '') +
+				(length(detail) ? '\n' + esc(detail) : ''));
+		}
+		if (ev_last_id !== ev_saved_id) {
+			ev_cursor_set('telegram-ctrl', ev_last_id);
+			ev_saved_id = ev_last_id;
 		}
 	}
 

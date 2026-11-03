@@ -45,6 +45,7 @@
 import { access, readfile, writefile, open, stat, popen } from 'fs';
 import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
+import { emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
 
 /* Local shell quote. This build of ucode has NO shellquote builtin and this
  * file imports nothing that provides one — the original release called the
@@ -53,6 +54,24 @@ import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scr
  * on a dead node). Same one-liner the other daemons carry. */
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
+}
+
+/* Human-readable node name (hotswap.messages_node_names_not_cfg_ids): the
+ * same one-liner the bot carries — strip cfg-…-out and read the UCI label.
+ * Rare events only: one popen per emit is nothing. */
+function node_label(tag) {
+	let sid = replace('' + tag, /^cfg-/, '');
+	sid = replace(sid, /-out$/, '');
+	const fd = popen(`uci -q get homeproxy.${sid}.label 2>/dev/null`);
+	let v = null;
+	if (fd) { v = trim(fd.read('all') || ''); fd.close(); }
+	return (v != null && length(v)) ? v : sid;
+}
+
+/* Ф2.4: publish a watchdog event to the shared Event Bus (LuCI journal + TG
+ * informer). Best-effort: a broken bus never touches the watchdog logic. */
+function ev_uw(type, who, detail) {
+	try { ev_emit('urltest', type, who, detail); } catch (e) { /* best-effort */ }
 }
 
 const RUN_DIR = '/var/run/homeproxy';
@@ -212,6 +231,7 @@ while (true) {
 			delete deadset[k];
 			dead_changed = true;
 			log('node recovered, mark removed: ' + k);
+			ev_uw('recovered', node_label(k), 'узел снова отвечает — метка мёртвого снята');
 		}
 	}
 	if (dead_changed)
@@ -267,6 +287,8 @@ while (true) {
 		if (deadset[now] == null) {
 			deadset[now] = true;
 			flush_dead();
+			ev_uw('dead', node_label(now),
+				'узел помечен мёртвым (группа ' + gname + '), живая альтернатива: ' + node_label(alt));
 		}
 
 		/* 1b) Force a re-pick WITHOUT a restart (ч.59): a full service restart
@@ -298,6 +320,8 @@ while (true) {
 		last_restart = now_ts;
 		fail[gname] = 0;
 		log('RELOAD to escape dead URLTest pick ' + now + ' (group ' + gname + ')');
+		ev_uw('reload', node_label(now),
+			'перезагрузка службы: уход с мёртвого узла (группа ' + gname + ')');
 
 		/* setsid: survive the procd kill of our own instance long enough to
 		 * trigger the reload; detached so system() returns immediately. */

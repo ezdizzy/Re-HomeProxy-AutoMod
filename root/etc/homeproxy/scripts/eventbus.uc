@@ -23,8 +23,18 @@
 // Ротация: journal.jsonl > MAX_BYTES → mv в journal.1.jsonl (atomically
 // заменяет прошлую генерацию; читатели читают ОБЕ — событие, застрявшее в
 // ротируемом файле, не теряется). Журнал живёт в tmpfs: после ребута и журнал,
-// и счётчик обнуляются вместе — id монотонны в пределах одной загрузки;
-// подписчики держат курсор в памяти или хранят его вместе с boot_epoch (Ф2.4).
+// и счётчик обнуляются вместе — id монотонны в пределах одной загрузки.
+//
+// Подписчики (Ф2.4): курсор подписчика = event_id. Курсор можно хранить
+// В ПАМЯТИ (базлайн last_id() при старте демона — ничего не переигрывается)
+// либо durably — cursor_set(name, id) пишет tmpfs-документ { boot, id }:
+// поле boot = /proc/sys/kernel/random/boot_id, поэтому курсор ПЕРЕЖИВАЕТ
+// рестарт демона (продолжение с последнего обработанного id — события,
+// написанные в простое, не теряются), а ребут роняет и файл, и журнал
+// вместе (boot_id не совпадёт, даже если файл каким-то чудом уцелел —
+// двойная защита от реплея/пропуска). clear() (UI «очистить») удаляет
+// ТОЛЬКО журнал — счётчик сохраняется, id монотонны и после очистки,
+// курсоры подписчиков остаются валидными.
 //
 // Уроки: 166 (`};`, проверка модуля только импортирующим чекером), 2/93/126
 // (импорты до использования, хелперы выше), 167/112 (без shell и system()),
@@ -71,6 +81,21 @@ function release_lock() {
 
 function unlink_quiet(path) {
 	try { unlink(path); } catch (e) { /* нет файла — норма */ }
+};
+
+/* Идентификатор загрузки (boot_epoch для курсоров подписчиков). Ядро Linux
+ * держит стабильный UUID на одну загрузку; отсутствие файла = нестандартная
+ * сборка — константа 'unknown' (курсоры тогда живут только пока жив tmpfs —
+ * что и так правда: EV_DIR в /var/run). */
+const BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id';
+let _boot_id = null;
+
+function boot_id() {
+	if (_boot_id != null)
+		return _boot_id;
+	const s = trim(readfile(BOOT_ID_PATH) || '');
+	_boot_id = (length(s) > 0) ? s : 'unknown';
+	return _boot_id;
 };
 
 function read_counter() {
@@ -134,9 +159,14 @@ export function emit(src, type, who, detail) {
 	return id;
 };
 
-/* Текущая голова id (счётчик) — для базлайна подписчика при старте. */
+/* Голова журнала = id ПОСЛЕДНЕГО выданного события (не «следующий»):
+ * счётчик-файл хранит следующий к выдаче, поэтому голова = счётчик − 1
+ * (0, если журнал пуст). Базлайн подписчика при старте = last_id():
+ * tail(since=last_id) пропустит только уже записанное, все будущие события
+ * (id ≥ last_id+1) подписчик увидит. (Ч.159 брал «счётчик» и молча терял
+ * первое событие после старта — поймано при ревью Ф2.4.) */
 export function last_id() {
-	try { return read_counter(); } catch (e) { return 0; }
+	try { return max(0, read_counter() - 1); } catch (e) { return 0; }
 };
 
 /* Хвост журнала: события с id > since_id (0 = все), последние limit, по
@@ -176,16 +206,43 @@ export function tail(limit, since_id) {
 	return res;
 };
 
-/* Очистить журнал (UI «очистить»): обе генерации + счётчик. Под локом,
- * чтобы параллельный emit не оказался «между» удалениями. */
+/* Очистить журнал (UI «очистить»): обе генерации, счётчик СОХРАНЯЕТСЯ —
+ * id монотонны в пределах загрузки и после очистки, durable-курсоры
+ * подписчиков остаются валидными (ничего не пропускается и не переигрывается).
+ * Под локом, чтобы параллельный emit не оказался «между» удалениями. */
 export function clear() {
 	try {
 		mkdir_p(EV_DIR);
 		if (take_lock()) {
 			unlink_quiet(JOURNAL);
 			unlink_quiet(JOURNAL_PREV);
-			unlink_quiet(COUNTER);
 			release_lock();
 		}
+	} catch (e) { /* best-effort */ }
+};
+
+/* ── durable-курсоры подписчиков (Ф2.4) ──────────────────────────────────
+ * tmpfs-документ { boot, id }: подписчик переживает СВОЙ рестарт без
+ * реплея и без потери событий простоя; ребут убивает и курсор, и журнал
+ * (tmpfs), а проверка boot_id защищает и от уцелевшего файла. */
+
+export function cursor_get(name) {
+	try {
+		const raw = readfile(EV_DIR + '/cursor.' + name + '.json');
+		if (raw == null)
+			return null;
+		const doc = json(raw);
+		if (doc == null || type(doc) !== 'object' || doc.boot !== boot_id())
+			return null;
+		const id = int(doc.id);
+		return (id > 0) ? id : null;
+	} catch (e) { return null; }
+};
+
+export function cursor_set(name, id) {
+	try {
+		mkdir_p(EV_DIR);
+		atomic_write(EV_DIR + '/cursor.' + name + '.json',
+			sprintf('%J', { boot: boot_id(), id: int(id) || 0 }));
 	} catch (e) { /* best-effort */ }
 };
