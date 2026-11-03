@@ -69,6 +69,15 @@ const callAclListWrite = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф1.1b: applies run as tracked operations — poll app_op_status until the
+ * server-side verified verdict. */
+const callOpStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_op_status',
+	params: [ 'op_id' ],
+	expect: { '': {} }
+});
+
 /* Resolve a sing-box outbound tag (cfg-<section>-out) to its UCI label
  * (same logic as wizard.js/diagnostics.js). */
 function resolveTag(tag) {
@@ -278,6 +287,36 @@ return view.extend({
 		});
 		const dListSave = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
 			[ _('Save domain lists') ]);
+		/* Ф1.1b: the direct-list save spawns a tracked reload operation —
+		 * poll app_op_status until the honest verified verdict; a hot apply
+		 * (proxy list file sync) resolves at once. */
+		function pollListApply(desc, okText, failText) {
+			if (!desc || desc.hot || !desc.op_id) {
+				dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ okText ]));
+				return;
+			}
+			const deadline = Date.now() + 150000;
+			const tick = function() {
+				return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st) {
+					const op = st && st.op;
+					if (op && op.status !== 'completed' && op.status !== 'failed') {
+						if (Date.now() > deadline) {
+							dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+								[ _('The apply operation is still running — check the operation journal on the Diagnostics page.') ]));
+							return;
+						}
+						window.setTimeout(tick, 2000);
+						return;
+					}
+					const ok = !!op && op.status === 'completed' && op.verified;
+					dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [
+						ok ? okText : (failText + ((op && op.detail) ? (' — ' + op.detail) : ''))
+					]));
+				});
+			};
+			tick();
+		}
+
 		dListSave.addEventListener('click', function() {
 			dListSave.disabled = true;
 			dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Saving…') ]));
@@ -286,9 +325,16 @@ return view.extend({
 				L.resolveDefault(callAclListWrite('direct_list', dListDirect.value || ''), {})
 			]).then(function(res) {
 				const bad = (!res[0] || res[0].result === false || !res[1] || res[1].result === false);
-				dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ bad
-					? _('Saving the domain lists failed.')
-					: _('Domain lists saved — the proxy list merges with the learned records on the next config reload (the service reloads it automatically).') ]));
+				if (bad) {
+					dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Saving the domain lists failed.') ]));
+					return;
+				}
+				/* The direct-list write carries the tracked reload op; the
+				 * proxy list rides the watched-file hot sync. */
+				pollListApply((res[1] && res[1].apply) || (res[0] && res[0].apply),
+					_('Domain lists saved and applied — the core is running the new lists.'),
+					_('Domain lists saved, but the apply failed'));
 			}).finally(function() { dListSave.disabled = false; });
 		});
 		L.resolveDefault(callAclListRead('proxy_list'), {}).then(function(r) {
@@ -432,9 +478,12 @@ return view.extend({
 						}
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
 							[ _('Rule applied — the service is restarting, the check will run automatically…') ]));
-						/* The service reload takes a few seconds; the poll loop
-						 * fires the live check as soon as the core is back. */
-						state.pendingCheck = { preset: preset, since: Date.now() };
+						/* Ф1.1b: the apply rides a tracked operation — the live
+						 * check waits for the op verdict before probing (the
+						 * reload may not even have started when the 8 s guard
+						 * fires). */
+						state.pendingCheck = { preset: preset, since: Date.now(),
+							op_id: (r.apply && r.apply.op_id) || '' };
 						return refresh();
 					}).finally(function() { applyBtn.disabled = false; });
 				});
@@ -652,23 +701,36 @@ return view.extend({
 					renderPresets(data[0]);
 
 				/* Deferred live check: fire once the core is running again
-				 * after the apply-triggered reload (min 8 s after apply). */
+				 * after the apply-triggered reload (min 8 s after apply).
+				 * Ф1.1b: when the apply spawned an operation, the op verdict
+				 * comes first — probing mid-reload would read the OLD config. */
 				const pc = state.pendingCheck;
 				if (pc && (Date.now() - pc.since > 8000)) {
-					state.pendingCheck = null;
-					callServiceList('homeproxy').then(function(res) {
-						let running = false;
-						try { running = !!res['homeproxy']['instances']['hiddify-c']['running']; } catch (e) {}
-						if (running) {
-							if (pc.preset.check)
-								return runServiceCheck(pc.preset.check);
-							return runPathCheck(pc.preset);
-						}
-						/* Still restarting — retry on the next poll tick. */
-						state.pendingCheck = pc;
-					}).catch(function() {
-						state.pendingCheck = pc;
-					});
+					const proceed = function() {
+						state.pendingCheck = null;
+						callServiceList('homeproxy').then(function(res) {
+							let running = false;
+							try { running = !!res['homeproxy']['instances']['hiddify-c']['running']; } catch (e) {}
+							if (running) {
+								if (pc.preset.check)
+									return runServiceCheck(pc.preset.check);
+								return runPathCheck(pc.preset);
+							}
+							/* Still restarting — retry on the next poll tick. */
+							state.pendingCheck = pc;
+						}).catch(function() {
+							state.pendingCheck = pc;
+						});
+					};
+					if (pc.op_id) {
+						L.resolveDefault(callOpStatus(pc.op_id), {}).then(function(st) {
+							const op = st && st.op;
+							if (!op || op.status === 'completed' || op.status === 'failed')
+								proceed();
+						});
+					} else {
+						proceed();
+					}
 				}
 			});
 		}

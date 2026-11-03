@@ -12187,3 +12187,48 @@ msgstr "Авария сети: база прямого пути не отвеч�
 
 msgid "Re-check in progress: %d entries left."
 msgstr "Перепроверка идёт: осталось %d записей."
+
+msgid "The apply operation is still running — check the operation journal on the Diagnostics page."
+msgstr "Операция применения ещё выполняется — смотрите журнал операций на странице «Проверка и ремонт»."
+
+msgid "Learned lists applied and verified."
+msgstr "Выученные списки применены и проверены."
+
+msgid "Restart failed: "
+msgstr "Не удалось перезапустить: "
+
+msgid "Clear failed: "
+msgstr "Не удалось очистить: "
+
+msgid "Another apply is running — the change is saved and will take effect with the next service restart."
+msgstr "Выполняется другое применение — изменение сохранено и вступит в силу при следующем перезапуске службы."
+
+msgid "The operation is still running — check the operation journal on the Diagnostics page."
+msgstr "Операция ещё выполняется — смотрите журнал операций на странице «Проверка и ремонт»."
+
+msgid "Strategy applied and verified — Zapret serves it now. Run \"Test strategy\" to confirm it works on your ISP, then create a service rule below."
+msgstr "Стратегия применена и проверена — Zapret её обслуживает. Запустите «Проверить стратегию», чтобы убедиться, что она работает у вашего провайдера, затем создайте правило сервиса ниже."
+
+msgid "ByeDPI options saved — nothing changed, no restart needed."
+msgstr "Настройки ByeDPI сохранены — ничего не изменилось, перезапуск не нужен."
+
+msgid "ByeDPI options applied and verified — the engine card above reflects the new state."
+msgstr "Настройки ByeDPI применены и проверены — карточка движка выше отражает новое состояние."
+
+msgid "Composition applied and verified — the engine(s) are enabled."
+msgstr "Композиция применена и проверена — движки включены."
+
+msgid "Previous strategies restored and verified."
+msgstr "Прежние стратегии восстановлены и проверены."
+
+msgid "Strategy applied and verified — the service serves it now; run \"Test strategy\" to confirm."
+msgstr "Стратегия применена и проверена — сервис её обслуживает; запустите «Проверить стратегию» для подтверждения."
+
+msgid "Domain lists saved and applied — the core is running the new lists."
+msgstr "Доменные списки сохранены и применены — ядро работает с новыми списками."
+
+msgid "Domain lists saved, but the apply failed"
+msgstr "Доменные списки сохранены, но применение не удалось"
+
+msgid "Service restarted and verified."
+msgstr "Служба перезапущена и проверена."

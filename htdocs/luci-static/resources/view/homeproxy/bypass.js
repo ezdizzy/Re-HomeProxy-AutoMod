@@ -40,6 +40,13 @@
 'require view';
 'require homeproxy as hp';
 
+const callOpStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_op_status',
+	params: [ 'op_id' ],
+	expect: { '': {} }
+});
+
 const callPresetList = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'wizard_preset_list',
@@ -358,6 +365,54 @@ return view.extend({
 			E('h4', { style: 'margin-top:14px' }, [ _('Results') ]),
 			dpiResult
 		]);
+
+		/* Ф1.1b: engine applies run as tracked operations (opman + apply_runner:
+		 * stages Applying→Verifying→Completed/Failed, verified only after a live
+		 * engine check). Poll app_op_status until the honest verdict — never
+		 * report success before verification (audit 1.7). busy attaches to the
+		 * holder op ONLY when it coalesced onto ours; a foreign holder means our
+		 * UCI write is saved and lands with the next restart. */
+		function pollApply(desc, okText, after) {
+			if (!desc || desc.hot) {
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ okText ]));
+				if (after) after(true);
+				return;
+			}
+			if (desc.busy && !desc.coalesced) {
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Another apply is running — the change is saved and will take effect with the next service restart.') ]));
+				if (after) after(false);
+				return;
+			}
+			if (!desc.op_id) {
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Apply failed: ') + (desc.error || _('rpc error')) ]));
+				if (after) after(false);
+				return;
+			}
+			const deadline = Date.now() + 150000;
+			const tick = function() {
+				return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st2) {
+					const op = st2 && st2.op;
+					if (op && op.status !== 'completed' && op.status !== 'failed') {
+						if (Date.now() > deadline) {
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('The operation is still running — check the operation journal on the Diagnostics page.') ]));
+							if (after) after(false);
+							return;
+						}
+						window.setTimeout(tick, 2000);
+						return;
+					}
+					const ok = !!op && op.status === 'completed' && op.verified;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [
+						ok ? okText : ((op && (op.detail || op.error)) || _('Apply failed'))
+					]));
+					if (after) after(ok);
+				});
+			};
+			tick();
+		}
 		for (let i in DPI_TABS) {
 			const idx = parseInt(i, 10);
 			const key = DPI_TABS[i][0];
@@ -847,17 +902,12 @@ return view.extend({
 				[ _('Applying the strategy — the service restarts…') ]));
 			L.resolveDefault(callFuzzApply(s), {}).then(function(r) {
 				applyStratBtn.disabled = false;
-				if (!r || r.result === false) {
+				if (!r || (r.result === false && !r.op_id)) {
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 						[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
 					return;
 				}
-				dom.content(dpiResult, E('div', {}, [
-					E('p', { 'class': 'hpui-hint' },
-						[ _('Strategy applied — Zapret is enabled (it was off) and the service restarts.') ]),
-					E('p', { 'class': 'hpui-hint' },
-						[ _('Run "Test strategy" in ~30 seconds to confirm it works on your ISP, then create a service rule below.') ])
-				]));
+				pollApply(r, _('Strategy applied and verified — Zapret serves it now. Run "Test strategy" to confirm it works on your ISP, then create a service rule below.'));
 			});
 		});
 
@@ -1049,10 +1099,17 @@ return view.extend({
 				bUot.checked ? '1' : '0', bQuic.checked ? '1' : '0',
 				bVoice.checked ? '1' : '0'), {}).then(function(r) {
 				bSave.disabled = false;
-				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-					[ (r && r.result)
-						? _('ByeDPI options saved — the service restarts; the engine card above reflects the new state.')
-						: _('Save failed: ') + ((r && r.error) || _('rpc error')) ]));
+				if (r && r.unchanged) {
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('ByeDPI options saved — nothing changed, no restart needed.') ]));
+					return;
+				}
+				if (!r || (r.result === false && !r.op_id)) {
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Save failed: ') + ((r && r.error) || _('rpc error')) ]));
+					return;
+				}
+				pollApply(r, _('ByeDPI options applied and verified — the engine card above reflects the new state.'));
 			});
 		});
 
@@ -1440,35 +1497,38 @@ return view.extend({
 				[ _('Applying composition — the service restarts…') ]));
 			L.resolveDefault(callComposeApply(cb.zapret || '', cb.byedpi || ''), {}).then(function(r) {
 				compApplyBtn.disabled = false;
-				if (!r || r.result === false) {
+				if (!r || (r.result === false && !r.op_id)) {
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 						[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
 					return;
 				}
-				const box = E('div', {});
-				box.appendChild(E('p', { 'class': 'hpui-hint' },
-					[ _('Composition applied — the engine(s) are enabled and the service restarts.') ]));
-				const rbBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
-					[ _('Restore previous') ]);
-				rbBtn.addEventListener('click', function() {
-					rbBtn.disabled = true;
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Restoring the previous strategies — the service restarts…') ]));
-					L.resolveDefault(callComposeRollback(), {}).then(function(r2) {
-						rbBtn.disabled = false;
-						if (!r2 || r2.result === false) {
-							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-								[ _('Restore failed: ') + ((r2 && r2.error) || _('rpc error')) ]));
-							return;
-						}
+				pollApply(r, _('Composition applied and verified — the engine(s) are enabled.'), function(ok) {
+					if (!ok)
+						return;
+					const box = E('div', {});
+					box.appendChild(E('p', { 'class': 'hpui-hint' },
+						[ _('Composition applied and verified — the engine(s) are enabled.') ]));
+					const rbBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+						[ _('Restore previous') ]);
+					rbBtn.addEventListener('click', function() {
+						rbBtn.disabled = true;
 						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-							[ _('Previous strategies restored — the service restarts.') ]));
+							[ _('Restoring the previous strategies — the service restarts…') ]));
+						L.resolveDefault(callComposeRollback(), {}).then(function(r2) {
+							rbBtn.disabled = false;
+							if (!r2 || (r2.result === false && !r2.op_id)) {
+								dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+									[ _('Restore failed: ') + ((r2 && r2.error) || _('rpc error')) ]));
+								return;
+							}
+							pollApply(r2, _('Previous strategies restored and verified.'));
+						});
 					});
+					box.appendChild(rbBtn);
+					box.appendChild(E('p', { 'class': 'hpui-hint' },
+						[ _('The same Restore stays available below and after a page reload (server snapshot).') ]));
+					dom.content(dpiResult, box);
 				});
-				box.appendChild(rbBtn);
-				box.appendChild(E('p', { 'class': 'hpui-hint' },
-					[ _('The same Restore stays available below and after a page reload (server snapshot).') ]));
-				dom.content(dpiResult, box);
 			});
 		});
 
@@ -1592,13 +1652,12 @@ return view.extend({
 					[ _('Restoring the previous strategies — the service restarts…') ]));
 				L.resolveDefault(callComposeRollback(), {}).then(function(r) {
 					rb.disabled = false;
-					if (!r || r.result === false) {
+					if (!r || (r.result === false && !r.op_id)) {
 						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 							[ _('Restore failed: ') + ((r && r.error) || _('rpc error')) ]));
 						return;
 					}
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Previous strategies restored — the service restarts.') ]));
+					pollApply(r, _('Previous strategies restored and verified.'));
 				});
 			});
 			restoreRow.appendChild(rb);
@@ -1767,10 +1826,15 @@ return view.extend({
 								ab.disabled = true;
 								L.resolveDefault(callFuzzApply(s.args), {}).then(function(r2) {
 									ab.disabled = false;
-									ab.textContent = (r2 && r2.result) ? '✓' : '✗';
-									dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ r2 && r2.result
-										? _('Strategy applied — the service restarts; run "Test strategy" in ~30 s to confirm.')
-										: ((r2 && r2.error) || _('Apply failed')) ]));
+									if (!r2 || (r2.result === false && !r2.op_id)) {
+										ab.textContent = '✗';
+										dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+											[ (r2 && r2.error) || _('Apply failed') ]));
+										return;
+									}
+									ab.textContent = '…';
+									pollApply(r2, _('Strategy applied and verified — the service serves it now; run "Test strategy" to confirm.'),
+										function(ok) { ab.textContent = ok ? '✓' : '✗'; });
 								});
 							});
 						return;
@@ -2284,10 +2348,12 @@ return view.extend({
 					[ _('Restoring the previous strategies — the service restarts…') ]));
 				L.resolveDefault(callComposeRollback(), {}).then(function(r2) {
 					rb.disabled = false;
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ (r2 && r2.result)
-							? _('Previous strategies restored — the service restarts.')
-							: _('Restore failed: ') + ((r2 && r2.error) || _('rpc error')) ]));
+					if (!r2 || (r2.result === false && !r2.op_id)) {
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Restore failed: ') + ((r2 && r2.error) || _('rpc error')) ]));
+						return;
+					}
+					pollApply(r2, _('Previous strategies restored and verified.'));
 				});
 			});
 			box.appendChild(rb);
@@ -2351,7 +2417,11 @@ return view.extend({
 				for (let p in PRESETS)
 					if (PRESETS[p].source === src)
 						hosts = PRESETS[p].hosts || [];
-				state.dpiPendingCheck = { source: src, hosts: hosts, since: Date.now() };
+				/* Ф1.1b: the apply rides an operation — the chain check waits
+				 * for the op verdict BEFORE probing the route (the reload may
+				 * not even have started when the 8 s guard fires). */
+				state.dpiPendingCheck = { source: src, hosts: hosts, since: Date.now(),
+					op_id: (r.apply && r.apply.op_id) || '' };
 				refresh();
 			});
 		});
@@ -2597,20 +2667,33 @@ return view.extend({
 
 				/* The DPI chain (strategy → rule → verify) waits the same way
 				 * as the presets did: fire once the core is running again
-				 * after the apply-triggered reload (min 8 s after apply). */
+				 * after the apply-triggered reload (min 8 s after apply).
+				 * Ф1.1b: when the apply spawned an operation, the op verdict
+				 * comes first — probing mid-reload would read the OLD config. */
 				const dc = state.dpiPendingCheck;
 				if (dc && (Date.now() - dc.since > 8000)) {
-					state.dpiPendingCheck = null;
-					callServiceList('homeproxy').then(function(res) {
-						let running = false;
-						try { running = !!res['homeproxy']['instances']['hiddify-c']['running']; } catch (e) {}
-						if (running)
-							runChainCheck(dc);
-						else
+					const proceed = function() {
+						state.dpiPendingCheck = null;
+						callServiceList('homeproxy').then(function(res) {
+							let running = false;
+							try { running = !!res['homeproxy']['instances']['hiddify-c']['running']; } catch (e) {}
+							if (running)
+								runChainCheck(dc);
+							else
+								state.dpiPendingCheck = dc;
+						}).catch(function() {
 							state.dpiPendingCheck = dc;
-					}).catch(function() {
-						state.dpiPendingCheck = dc;
-					});
+						});
+					};
+					if (dc.op_id) {
+						L.resolveDefault(callOpStatus(dc.op_id), {}).then(function(st) {
+							const op = st && st.op;
+							if (!op || op.status === 'completed' || op.status === 'failed')
+								proceed();
+						});
+					} else {
+						proceed();
+					}
 				}
 			});
 		}

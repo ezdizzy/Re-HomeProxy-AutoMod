@@ -120,6 +120,15 @@ const callRestart = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф1.1b: applies run as tracked operations (stages + server-side verified
+ * flag) — poll app_op_status until completed/failed. */
+const callOpStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_op_status',
+	params: [ 'op_id' ],
+	expect: { '': {} }
+});
+
 function downloadList(content) {
 	const blob = new Blob([content || ''], { type: 'text/plain' });
 	const a = document.createElement('a');
@@ -129,6 +138,43 @@ function downloadList(content) {
 	a.click();
 	a.remove();
 	URL.revokeObjectURL(a.href);
+}
+
+/* Ф1.1b: an apply descriptor from the list-edit RPCs ({hot:true} = instant
+ * watched-file sync, {op_id} = a tracked operation). Hot applies resolve at
+ * once; operations are polled to the honest verdict (busy attaches to the
+ * holder — its restart carries our already-committed change). `after` runs
+ * once the apply is settled (refresh etc.); okText overrides the success
+ * line (the same helper also polls the Restart-service operation). */
+function applyLearnedOp(desc, after, okText) {
+	if (!desc || desc.hot || !desc.op_id) {
+		if (after) after();
+		return;
+	}
+	const doneText = okText || _('Learned lists applied and verified.');
+	const deadline = Date.now() + 150000;
+	const tick = function() {
+		return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st) {
+			const op = st && st.op;
+			if (op && op.status !== 'completed' && op.status !== 'failed') {
+				if (Date.now() > deadline) {
+					ui.addNotification(null, E('p', {},
+						_('The apply operation is still running — check the operation journal on the Diagnostics page.')), 'info');
+					if (after) after();
+					return;
+				}
+				window.setTimeout(tick, 2000);
+				return;
+			}
+			const ok = !!op && op.status === 'completed' && op.verified;
+			ui.addNotification(null, E('p', {}, ok
+				? doneText
+				: _('Apply failed: ') + ((op && (op.detail || op.error)) || _('rpc error'))),
+				ok ? 'info' : 'error');
+			if (after) after();
+		});
+	};
+	tick();
 }
 
 function btn(label, handler) {
@@ -498,7 +544,17 @@ return view.extend({
 					return refresh();
 				});
 			}),
-			btn(_('Restart service'), function() { return callRestart(); })
+			btn(_('Restart service'), function() {
+				/* Ф1.1b: the restart is a tracked operation — poll to the
+				 * honest verified verdict instead of a wishful no-op. */
+				return callRestart().then(function(r) {
+					if (!r || (r.result === false && !r.op_id))
+						return ui.addNotification(null, E('p', {},
+							_('Restart failed: ') + ((r && r.error) || _('rpc error'))), 'error');
+					return applyLearnedOp({ op_id: r.op_id }, function() {},
+						_('Service restarted and verified.'));
+				});
+			})
 		]));
 
 		/* ── List pane ─────────────────────────────────────────────────── */
@@ -554,7 +610,7 @@ return view.extend({
 						ui.addNotification('error', _('Restore failed: ') + ((r && r.error) || ''));
 					else
 						ui.addNotification('info', _('Restore complete — added %d site(s).').format(r.added || 0));
-					return refresh();
+					return applyLearnedOp(r && r.apply, refresh);
 				}).catch(function(e) {
 					ui.addNotification('error', _('Restore failed: ') + e);
 				});
@@ -586,7 +642,15 @@ return view.extend({
 			btn(_('Clear learned'), function() {
 				return hp.confirmModal(_('Clear learned'),
 					_('Delete ALL learned sites? The engine will re-learn them from scratch.'), _('Delete all'))
-					.then(function(ok) { return ok ? callClear().then(refresh) : null; });
+					.then(function(ok) {
+						if (!ok)
+							return null;
+						return callClear().then(function(r) {
+							if (r && r.result === false)
+								ui.addNotification('error', _('Clear failed: ') + ((r && r.error) || ''));
+							return applyLearnedOp(r && r.apply, refresh);
+						});
+					});
 			}),
 			btn(_('Re-check learned'), function() {
 				return callRecheck().then(function(r) {
@@ -697,8 +761,9 @@ return view.extend({
 				b.addEventListener('click', function() {
 					if (this.classList.contains('on')) return;
 					this.disabled = true;
-					callEntryAction(entry.host, mode).then(function() { return refresh(); })
-						.finally(function() { b.disabled = false; });
+					callEntryAction(entry.host, mode).then(function(r) {
+						return applyLearnedOp(r && r.apply, refresh);
+					}).finally(function() { b.disabled = false; });
 				});
 				return b;
 			};
@@ -781,8 +846,9 @@ return view.extend({
 					hp.confirmModal(_('Delete entry'), _('Delete entry %s?').format(e.host), _('Delete'))
 						.then(function(ok) {
 							if (!ok) { delBtn.disabled = false; return; }
-							callEntryDelete(e.host).then(function() { return refresh(); })
-								.finally(function() { delBtn.disabled = false; });
+							callEntryDelete(e.host).then(function(r) {
+								return applyLearnedOp(r && r.apply, refresh);
+							}).finally(function() { delBtn.disabled = false; });
 						});
 				});
 				const cells = [

@@ -15,6 +15,37 @@
 'require ui';
 'require view';
 
+/* Ф1.1b: applies run as tracked operations (stages + server-side verified
+ * flag) — snapshot restore (and any op-carrying reply) is polled to the
+ * honest verdict instead of a wishful success. */
+const callOpStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_op_status',
+	params: [ 'op_id' ],
+	expect: { '': {} }
+});
+
+/* Poll one operation to completion; `onDone(ok, detail)` fires exactly once. */
+function pollOp(opId, onDone) {
+	const deadline = Date.now() + 150000;
+	const tick = function() {
+		return L.resolveDefault(callOpStatus(opId), {}).then(function(st) {
+			const op = st && st.op;
+			if (op && op.status !== 'completed' && op.status !== 'failed') {
+				if (Date.now() > deadline) {
+					onDone(false, _('The operation is still running — check the operation journal on the Diagnostics page.'));
+					return;
+				}
+				window.setTimeout(tick, 2000);
+				return;
+			}
+			const ok = !!op && op.status === 'completed' && op.verified;
+			onDone(ok, ok ? '' : ((op && (op.detail || op.error)) || _('Apply failed')));
+		});
+	};
+	tick();
+}
+
 /* Thanks to luci-app-aria2 */
 const css = '				\
 #log_textarea {				\
@@ -1093,6 +1124,15 @@ function buildSnapshotsCard() {
 							return;
 						setMsg(_('Restoring...'), '#9a9a9a');
 						return L.resolveDefault(callSnapshotRestore(name), {}).then((r) => {
+							/* Ф1.1b: the restore rides a tracked operation —
+							 * poll to the verified verdict (the RPC returns
+							 * before the restart even starts). */
+							if (r && r.op_id)
+								return pollOp(r.op_id, (ok2, detail) => {
+									setMsg(ok2 ? _('Restored: %s').format(name)
+										: ((r.error || _('Restore failed')) + (detail ? (' — ' + detail) : '')),
+										ok2 ? '#3fbf5f' : '#e05252');
+								});
 							setMsg(r.result ? _('Restored: %s').format(name) : (r.error || _('Restore failed')),
 								r.result ? '#3fbf5f' : '#e05252');
 						});

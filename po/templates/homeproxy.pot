@@ -6626,3 +6626,48 @@ msgstr ""
 
 msgid "Re-check in progress: %d entries left."
 msgstr ""
+
+msgid "The apply operation is still running — check the operation journal on the Diagnostics page."
+msgstr ""
+
+msgid "Learned lists applied and verified."
+msgstr ""
+
+msgid "Restart failed: "
+msgstr ""
+
+msgid "Clear failed: "
+msgstr ""
+
+msgid "Another apply is running — the change is saved and will take effect with the next service restart."
+msgstr ""
+
+msgid "The operation is still running — check the operation journal on the Diagnostics page."
+msgstr ""
+
+msgid "Strategy applied and verified — Zapret serves it now. Run \"Test strategy\" to confirm it works on your ISP, then create a service rule below."
+msgstr ""
+
+msgid "ByeDPI options saved — nothing changed, no restart needed."
+msgstr ""
+
+msgid "ByeDPI options applied and verified — the engine card above reflects the new state."
+msgstr ""
+
+msgid "Composition applied and verified — the engine(s) are enabled."
+msgstr ""
+
+msgid "Previous strategies restored and verified."
+msgstr ""
+
+msgid "Strategy applied and verified — the service serves it now; run \"Test strategy\" to confirm."
+msgstr ""
+
+msgid "Domain lists saved and applied — the core is running the new lists."
+msgstr ""
+
+msgid "Domain lists saved, but the apply failed"
+msgstr ""
+
+msgid "Service restarted and verified."
+msgstr ""

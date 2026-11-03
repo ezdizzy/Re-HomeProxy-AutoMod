@@ -38,6 +38,16 @@ import {
 	entry_alive as pm_entry_alive, reg_get as pm_reg_get, reg_del as pm_reg_del
 } from '/etc/homeproxy/scripts/pmgr.uc';
 
+/* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
+ * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
+ * const после инициализации возвращает null, без ошибки). op_spawn, перенесённый
+ * выше apply_learned_list_hot, ссылался на HP_DIR из строки ~389 → system() звал
+ * руннер по пути 'null/scripts/…' → op навсегда queued, а воркер rpcd падал
+ * (Segmentation fault на консоли, ubus «Unknown error»). ПРАВИЛО: ВСЕ top-level
+ * консты — НАВЕРХ ФАЙЛА, выше первой функции, которая их использует. */
+const HP_DIR = '/etc/homeproxy';
+const RUN_DIR = '/var/run/homeproxy';
+
 /* ── Ф1.4b: read-only liveness through the Process Manager ───────────────
  * Every former bare pidof / ps|grep display probe goes through these: a
  * bare pidof cannot match ucode scripts at all (lesson 23) and accepts a
@@ -82,27 +92,81 @@ const MD_CONF = '/var/run/homeproxy/multidns/mosdns.yaml';
 const MD_CAND = '/var/run/homeproxy/multidns/mosdns.candidate.yaml';
 const MD_SPECS = () => ({ exe: '/usr/bin/mosdns', arg: [ MD_CONF, MD_CAND ] });
 
+/* Kanged from ucode/luci */
+function shellquote(s) {
+	return `'${replace(s, "'", "'\\''")}'`;
+}
+
+/* ── Ф1.1 Operation/Apply Manager (plan 20 §3 Ф1.1; audit 1.6/1.7/18/48) ──
+ * The ONE door for service configuration applies: an operation record is
+ * created (/var/run/homeproxy/ops/), serialized by an opman lease-lock and
+ * executed by a detached runner (apply_runner.uc) that walks the stages
+ * Applying→Verifying→Completed/Failed and marks verified ONLY after a live
+ * check (hiddify-c instance / engine processes). No "applying anyway": busy
+ * is an honest rejection carrying the holder's op_id. Double-click bursts
+ * coalesce onto the just-started op. UI status: app_op_status/app_op_list.
+ * Ф1.1b: the ONE door moved ABOVE the learned/automation hot-reload helpers
+ * (definition order — no hoisting reliance) so their migration-edge fallback
+ * goes through the same serialized+verified+polled path as every other
+ * service apply (was a bare synchronous generate+reload inside rpcd). */
+function op_spawn(action, note) {
+	const r = op_begin('service', action, 'rpcd', note || action, 0);
+	if (!r.ok) {
+		if (r.busy) {
+			const held = (r.holder && r.holder.op_id) ? op_get(r.holder.op_id) : null;
+			/* Coalesce a double-click burst: same action, holder younger
+			 * than 3 s → attach to it (revision-queue coalescing — Ф1.7). */
+			if (held && held.action === action && held.action !== '' &&
+			    (time() - int(held.started)) <= 3)
+				return { result: true, op_id: held.op_id, coalesced: true };
+			return {
+				result: false, busy: true, error: 'another apply is running',
+				op_id: (r.holder && r.holder.op_id) || '',
+				holder_started: (r.holder && r.holder.started) || 0
+			};
+		}
+		return { result: false, error: r.error || 'op begin failed' };
+	}
+	const op = r.op;
+	system('/usr/bin/ucode ' + shellquote(HP_DIR + '/scripts/apply_runner.uc') +
+		' ' + shellquote(op.op_id) + ' ' + shellquote(action) + ' >/dev/null 2>&1 &');
+	return { result: true, op_id: op.op_id, config_revision: op.config_revision };
+}
+
+/* DPI applies (zapret/byedpi): light path = engine_restart (the launcher
+ * re-reads UCI on respawn, no core RST), full path = service restart; both
+ * through the operation machinery. Keeps the legacy light_apply flag. */
+function op_spawn_dpi(light, note) {
+	const ap = light
+		? op_spawn('engine_restart', note + ' (light)')
+		: op_spawn('restart', note);
+	return {
+		result: ap.result === true, light_apply: !!light,
+		op_id: ap.op_id || '', busy: ap.busy === true
+	};
+}
+
 /* Apply an edited learned list WITHOUT a service restart: rewrite the watched local
  * rule-set files (proxy_domain.json / auto_ip.json) — the core hot-reloads them.
  * Full generate+reload is kept only as a fallback for the migration edge where the
  * running config does not yet reference the learned rule-sets (no hot-reload marker).
- * The old unconditional restart dropped every connection on each list edit/clear. */
+ * The old unconditional restart dropped every connection on each list edit/clear.
+ * Ф1.1b: the fallback now goes through the opman door (op_spawn('reload')) —
+ * serialized with every other apply, journaled, verified, UI-pollable via the
+ * returned apply descriptor {hot:true} | {result,op_id,busy?,error?}; the
+ * generation itself happens inside the op (init.d start), LKG-protected. */
 function apply_learned_list_hot() {
 	if (!access('/var/run/homeproxy/.learned_hotreload')) {
-		system('ucode /etc/homeproxy/scripts/generate_client.uc >/dev/null 2>&1');
-		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-		return;
+		const ap = op_spawn('reload', 'learned lists apply (generate+reload)');
+		return { hot: false, result: ap.result === true, op_id: ap.op_id || '',
+			busy: ap.busy === true, error: ap.error || '' };
 	}
 	sync_learned_rulesets();
 	sync_manual_direct_ruleset();
 	/* ч.61: auth families derive from the learned/pinned sets — a manual list
 	 * edit may add/remove an auth-like host, so re-derive and hot-sync too. */
 	sync_auto_auth_ruleset();
-}
-
-/* Kanged from ucode/luci */
-function shellquote(s) {
-	return `'${replace(s, "'", "'\\''")}'`;
+	return { hot: true };
 }
 
 /* Atomic list write (temp + rename): a direct writefile() can be caught mid-write
@@ -332,24 +396,28 @@ function installed_pkg_version(pkg, rx) {
 	return ver;
 }
 
-const HP_DIR = '/etc/homeproxy';
-const RUN_DIR = '/var/run/homeproxy';
+/* HP_DIR/RUN_DIR объявлены НАВЕРХУ файла (после импортов) — см. урок Ф1.1b:
+ * функции, объявлённые до top-level const, видят её как null навсегда. */
 
 /* After list edits: rewrite the watched rule-set files (hot reload) and ping the
  * daemon so it re-reads its working sets within one pass. Without the hot-reload
  * marker (fresh install / migration edge) the full regenerate+reload path runs
- * once so the new rule-sets enter the running config. */
+ * once so the new rule-sets enter the running config.
+ * Ф1.1b: the fallback rides the opman door (serialized + journaled + verified +
+ * UI-pollable); the hot path stays a fast file sync + daemon ping. Returns the
+ * apply descriptor {hot:true} | {hot:false,result,op_id,busy?,error?}. */
 function automation_apply_files(geo_too) {
 	if (!access('/var/run/homeproxy/.learned_hotreload')) {
-		system('ucode /etc/homeproxy/scripts/generate_client.uc >/dev/null 2>&1');
-		system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-	} else {
-		sync_learned_rulesets();
-		sync_manual_direct_ruleset();
-		if (geo_too)
-			sync_ru_geo_rulesets();
+		const ap = op_spawn('reload', 'automation lists apply (generate+reload)');
+		return { hot: false, result: ap.result === true, op_id: ap.op_id || '',
+			busy: ap.busy === true, error: ap.error || '' };
 	}
+	sync_learned_rulesets();
+	sync_manual_direct_ruleset();
+	if (geo_too)
+		sync_ru_geo_rulesets();
 	system('touch ' + RUN_DIR + '/automation.reload' + (geo_too ? '_geo' : ''));
+	return { hot: true };
 }
 
 /* Restart one of the service's ucode daemon instances (automation / multidns).
@@ -368,51 +436,6 @@ function restart_daemon_instance(script_name, instance_name) {
 	 * respawns the instance right after. */
 	pm_kill_matched({ script: script_name }, 3000);
 	system(`ubus call service event '{"type":"instance.restart","data":{"name":"homeproxy","instance":"` + instance_name + `"}}' 2>/dev/null`);
-}
-
-/* ── Ф1.1 Operation/Apply Manager (plan 20 §3 Ф1.1; audit 1.6/1.7/18/48) ──
- * The ONE door for service configuration applies: an operation record is
- * created (/var/run/homeproxy/ops/), serialized by an opman lease-lock and
- * executed by a detached runner (apply_runner.uc) that walks the stages
- * Applying→Verifying→Completed/Failed and marks verified ONLY after a live
- * check (hiddify-c instance / engine processes). No "applying anyway": busy
- * is an honest rejection carrying the holder's op_id. Double-click bursts
- * coalesce onto the just-started op. UI status: app_op_status/app_op_list. */
-function op_spawn(action, note) {
-	const r = op_begin('service', action, 'rpcd', note || action, 0);
-	if (!r.ok) {
-		if (r.busy) {
-			const held = (r.holder && r.holder.op_id) ? op_get(r.holder.op_id) : null;
-			/* Coalesce a double-click burst: same action, holder younger
-			 * than 3 s → attach to it (revision-queue coalescing — Ф1.7). */
-			if (held && held.action === action && held.action !== '' &&
-			    (time() - int(held.started)) <= 3)
-				return { result: true, op_id: held.op_id, coalesced: true };
-			return {
-				result: false, busy: true, error: 'another apply is running',
-				op_id: (r.holder && r.holder.op_id) || '',
-				holder_started: (r.holder && r.holder.started) || 0
-			};
-		}
-		return { result: false, error: r.error || 'op begin failed' };
-	}
-	const op = r.op;
-	system('/usr/bin/ucode ' + shellquote(HP_DIR + '/scripts/apply_runner.uc') +
-		' ' + shellquote(op.op_id) + ' ' + shellquote(action) + ' >/dev/null 2>&1 &');
-	return { result: true, op_id: op.op_id, config_revision: op.config_revision };
-}
-
-/* DPI applies (zapret/byedpi): light path = engine_restart (the launcher
- * re-reads UCI on respawn, no core RST), full path = service restart; both
- * through the operation machinery. Keeps the legacy light_apply flag. */
-function op_spawn_dpi(light, note) {
-	const ap = light
-		? op_spawn('engine_restart', note + ' (light)')
-		: op_spawn('restart', note);
-	return {
-		result: ap.result === true, light_apply: !!light,
-		op_id: ap.op_id || '', busy: ap.busy === true
-	};
 }
 
 /* Validate a manual entry: FQDN, IPv4[/plen] or IPv6[/plen]; lowercase form back. */
@@ -1848,15 +1871,19 @@ const methods = {
 			 * core routing by the PREVIOUS ruleset until some later restart —
 			 * deleted entries kept proxying (and added ones stayed direct) with
 			 * zero feedback. proxy_list feeds the watched local rule-set file →
-			 * hot sync; anything else takes the full regenerate+reload path. */
+			 * hot sync; anything else takes the full regenerate+reload path —
+			 * Ф1.1b: through the opman door (serialized + verified + UI-pollable),
+			 * the descriptor rides the reply as `apply`. */
+			let apply;
 			if (req.args?.type === 'proxy_list') {
-				apply_learned_list_hot();
+				apply = apply_learned_list_hot();
 			} else {
-				system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-				system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+				const ap = op_spawn('reload', 'direct list apply (generate+reload)');
+				apply = { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true, error: ap.error || '' };
 			}
 
-			return { result: true };
+			return { result: true, apply: apply };
 		}
 	},
 
@@ -5544,10 +5571,16 @@ const methods = {
 				if (target) {
 					c.delete('homeproxy', target);
 					c.commit('homeproxy');
-					system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-					if (!access(RUN_DIR + '/hiddify-c.json'))
-						return { result: false, error: 'config generation failed' };
-					system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
+					/* Ф1.1b: apply through the opman door (was a synchronous
+					 * generate+reload inside rpcd — unserialized, unverified,
+					 * 20 s client XHR window). The op runner regenerates inside
+					 * init.d start (LKG-protected) and verifies; the UI polls
+					 * the returned op_id. */
+					const ap = op_spawn('reload', 'routing rule remove (preset)');
+					return { result: true, action: 'removed', section_id: target,
+						apply: { hot: false, result: ap.result === true,
+							op_id: ap.op_id || '', busy: ap.busy === true,
+							error: ap.error || '' } };
 				}
 				return { result: true, action: 'removed', section_id: target || null };
 			}
@@ -5580,13 +5613,17 @@ const methods = {
 
 			/* Apply IMMEDIATELY (same path as the manual editor: regenerate +
 			 * full reload — a rule needs the core restart, unlike learned-list
-			 * hot reloads). Generation failure leaves the previous config in
-			 * place (init.d keeps last-good) and is reported. */
-			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-			if (!access(RUN_DIR + '/hiddify-c.json'))
-				return { result: false, error: 'config generation failed' };
-			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-			return { result: true, action: 'applied', section_id: target, rules_for_source: count };
+			 * hot reloads). Ф1.1b: through the opman door — serialized with
+			 * every other apply, journaled, verified; the UI (and the ubus
+			 * callers) poll the returned op_id. Generation failure inside the
+			 * op leaves the previous config in place (init.d keeps last-good)
+			 * and the op reports honest failed. */
+			const ap = op_spawn('reload', 'routing rule apply (preset)');
+			return { result: true, action: 'applied', section_id: target,
+				rules_for_source: count,
+				apply: { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true,
+					error: ap.error || '' } };
 		}
 	},
 
@@ -5605,11 +5642,13 @@ const methods = {
 				return { result: false, error: 'not a routing rule section' };
 			c.delete('homeproxy', sid);
 			c.commit('homeproxy');
-			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-			if (!access(RUN_DIR + '/hiddify-c.json'))
-				return { result: false, error: 'config generation failed' };
-			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-			return { result: true, action: 'removed', section_id: sid };
+			/* Ф1.1b: apply through the opman door (was a synchronous
+			 * generate+reload inside rpcd). */
+			const ap = op_spawn('reload', 'routing rule delete');
+			return { result: true, action: 'removed', section_id: sid,
+				apply: { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true,
+					error: ap.error || '' } };
 		}
 	},
 
@@ -6983,9 +7022,10 @@ const methods = {
 			}
 			system('mkdir -p ' + HP_DIR + '/resources');
 			atomic_write(file, content ?? '');
-			/* Regenerate so the edited learned list takes effect immediately (hot reload). */
-			apply_learned_list_hot();
-			return { result: true };
+			/* Regenerate so the edited learned list takes effect immediately (hot
+			 * reload); the migration-edge fallback rides the opman door — Ф1.1b. */
+			const apply = apply_learned_list_hot();
+			return { result: true, apply: apply };
 		}
 	},
 
@@ -7001,8 +7041,8 @@ const methods = {
 			 * cleared entries on the next learn and stale verdicts suppressed
 			 * re-probing for a day (the "cleared the list, nothing learns" bug). */
 			system('touch ' + RUN_DIR + '/automation.reload_clear');
-			apply_learned_list_hot();
-			return { result: true };
+			const apply = apply_learned_list_hot();
+			return { result: true, apply: apply };
 			}
 		},
 
@@ -7114,9 +7154,13 @@ const methods = {
 
 			if (!added_dom && !added_ip)
 				return { result: true, added: 0 };
-			system('ucode ' + HP_DIR + '/scripts/generate_client.uc >/dev/null 2>&1');
-			system('/etc/init.d/homeproxy reload >/dev/null 2>&1');
-			return { result: true, added: added_dom + added_ip };
+			/* Ф1.1b: the restore apply goes through the opman door (was a
+			 * bare synchronous generate+reload inside rpcd). */
+			const ap = op_spawn('reload', 'automation list restore');
+			return { result: true, added: added_dom + added_ip,
+				apply: { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true,
+					error: ap.error || '' } };
 		}
 	},
 
@@ -7162,8 +7206,8 @@ const methods = {
 					auto_write_set(HP_DIR + '/resources/auto_proxy_ip.txt', auto_ips);
 				}
 			}
-			automation_apply_files(false);
-			return { result: true, entry: entry, action: action };
+			const apply = automation_apply_files(false);
+			return { result: true, entry: entry, action: action, apply: apply };
 		}
 	},
 
@@ -7189,8 +7233,8 @@ const methods = {
 			if (rm(HP_DIR + '/resources/manual_direct.txt')) removed = true;
 			if (!removed)
 				return { result: false, error: 'entry not found' };
-			automation_apply_files(false);
-			return { result: true };
+			const apply = automation_apply_files(false);
+			return { result: true, apply: apply };
 		}
 	},
 
@@ -7229,8 +7273,8 @@ const methods = {
 				const auto_ips = auto_read_set(HP_DIR + '/resources/auto_proxy_ip.txt');
 				if (auto_ips[entry]) { delete auto_ips[entry]; auto_write_set(HP_DIR + '/resources/auto_proxy_ip.txt', auto_ips); }
 			}
-			automation_apply_files(false);
-			return { result: true };
+			const apply = automation_apply_files(false);
+			return { result: true, apply: apply };
 		}
 	},
 
