@@ -7558,8 +7558,18 @@ msgstr "Сейчас трафик идёт через резервный узе�
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
-msgid "Search: host, address, chain, rule…"
-msgstr "Поиск: хост, адрес, цепочка, правило…"
+msgid "Search: client, host, address, chain, rule…"
+msgstr "Поиск: клиент, хост, адрес, цепочка, правило…"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Router"
+msgstr "Роутер"
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Tunnel transport"
+msgstr "Транспорт туннеля"
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 

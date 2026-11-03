@@ -594,6 +594,69 @@ function clash_leaf_tag(proxies, tag) {
 	return tag;
 }
 
+/* ── Ф9.10: client attribution for the Connections table ────────────────
+ * «Клиент» answers WHO initiated a connection. Classes: a LAN device
+ * (sourceIP resolved against the devices registry — UCI client sections +
+ * DHCP leases + ARP via control.list_devices), the router itself (sourceIP
+ * equals any of its own v4 addresses), the tunnel machinery (connections
+ * created by the core's SERVICE inbounds: automation probe pool via
+ * auto-direct-in / auto-proxy-in, MultiDNS DoH relay via mdns-proxy-in), or
+ * an external/WAN source (raw IP is shown as-is — honest, nothing invented;
+ * server-mode cfg-*-in clients land here too). Lesson 189: metadata.sourceIP
+ * is already in the Clash API /connections; metadata.type = "<inbound-type>/
+ * <inbound-tag>" names the tunnel input. dns-in / mixed-in / tproxy-in /
+ * redirect-in / tun-in carry DEVICE or router traffic — they stay in their
+ * source classes. The core's own transport legs to node servers never pass
+ * an inbound and never appear in /connections at all. */
+const HP_TRANSPORT_INBOUNDS = {
+	'auto-direct-in': true,
+	'auto-proxy-in': true,
+	'mdns-proxy-in': true
+};
+
+function monitor_router_addrs() {
+	const out = {};
+	const fd = popen('ip -4 addr show 2>/dev/null');
+	if (fd) {
+		const raw = fd.read('all') || '';
+		fd.close();
+		const lines = split(raw, /\n/);
+		for (let i = 0; i < length(lines); i++) {
+			const m = match(lines[i], /inet ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
+			if (m)
+				out[m[1]] = true;
+		}
+	}
+	return out;
+}
+
+function monitor_client_map() {
+	const out = {};
+	const devs = hc_list_devices();
+	for (let i = 0; i < length(devs); i++) {
+		const d = devs[i];
+		const ip = d.ip || '';
+		if (!ip || (ip in out))
+			continue;
+		const name = d.alias || d.hostname || '';
+		out[ip] = length(name) ? name : '';
+	}
+	return out;
+}
+
+function monitor_client_of(sip, mtype, raddrs, devmap) {
+	if (sip in raddrs) {
+		const parts = split(mtype, '/');
+		const itag = length(parts) ? parts[length(parts) - 1] : '';
+		if (itag in HP_TRANSPORT_INBOUNDS)
+			return { kind: 'transport', inbound: itag };
+		return { kind: 'router' };
+	}
+	if (sip in devmap)
+		return { kind: 'device', name: devmap[sip] || '' };
+	return { kind: 'external' };
+}
+
 function proc_running(name) {
 	/* Ф1.4b: exact-exe identity (was a bare pidof — same name-shape, but no
 	 * PID verification and no ucode-script blindness). */
@@ -2763,9 +2826,13 @@ const methods = {
 			const data = clash_api('/connections');
 			if (!data)
 				return { error: 'Clash API not reachable' };
+			const raddrs = monitor_router_addrs();
+			const devmap = monitor_client_map();
 			let conns = [];
 			for (let c in (data.connections || [])) {
 				const md = c.metadata || {};
+				const sip = '' + (md.sourceIP || '');
+				const mtype = '' + (md.type || '');
 				push(conns, {
 					id: c.id || '',
 					host: md.host || '',
@@ -2773,6 +2840,8 @@ const methods = {
 					network: md.network || '',
 					chain: c.chains || [],
 					rule: c.rule ? (c.rulePayload ? `${c.rule} ${c.rulePayload}` : c.rule) : '',
+					sourceIP: sip,
+					client: monitor_client_of(sip, mtype, raddrs, devmap),
 					upload: c.upload || 0,
 					download: c.download || 0,
 					start: c.start || ''

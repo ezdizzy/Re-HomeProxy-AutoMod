@@ -82,6 +82,24 @@ function chainLabel(tag) {
 	return tag;
 }
 
+/* Ф9.10: who initiated the connection (the «Клиент» column). The RPC
+ * classifies by metadata.sourceIP against the devices registry, the
+ * router's own addresses and the tunnel's service inbounds; external/WAN
+ * sources show the raw IP. Titles keep the underlying IP / inbound tag. */
+function clientView(c) {
+	const cl = c.client || {};
+	const ip = c.sourceIP || '';
+	switch (cl.kind) {
+		case 'device':
+			return { color: 'inherit', text: cl.name || ip || '—', title: ip };
+		case 'router':
+			return { color: C_GREY, text: _('Router'), title: ip };
+		case 'transport':
+			return { color: C_GREY, text: _('Tunnel transport'), title: cl.inbound || ip };
+	}
+	return { color: C_GREY, text: ip || '—', title: ip };
+}
+
 function imp(node, styles) {
 	for (const k in styles) node.style.setProperty(k, styles[k], 'important');
 }
@@ -178,7 +196,7 @@ return view.extend({
 		const connSearch = E('input', {
 			'type': 'text',
 			'class': 'cbi-input-text',
-			'placeholder': _('Search: host, address, chain, rule…'),
+			'placeholder': _('Search: client, host, address, chain, rule…'),
 			'style': 'flex:1 1 240px; min-width:200px'
 		});
 		connSearch.addEventListener('input', function() {
@@ -381,7 +399,11 @@ return view.extend({
 			if (connQuery) {
 				const q = connQuery;
 				conns = conns.filter(function(c) {
-					const hay = ((c.host || '') + ' ' + (c.destination || '') + ' ' +
+					/* haystack = what the user SEES: client cell text, source
+					 * IP, host, destination, chain, rule (ч.60 + Ф9.10). */
+					const cv = clientView(c);
+					const hay = ((cv.text || '') + ' ' + (c.sourceIP || '') + ' ' +
+						(c.host || '') + ' ' + (c.destination || '') + ' ' +
 						(c.chain || []).join(' ') + ' ' + (c.rule || '')).toLowerCase();
 					return hay.indexOf(q) !== -1;
 				});
@@ -411,10 +433,12 @@ return view.extend({
 			const prevWrap = connTableWrap.firstElementChild;
 			const scrollTop = (prevWrap && prevWrap.tagName === 'DIV') ? prevWrap.scrollTop : 0;
 
-			const table = makeTable([ _('Host'), _('Network'), _('Chain'), _('Rule'), _('Downloaded'), _('Uploaded') ]);
+			const table = makeTable([ _('Client'), _('Host'), _('Network'), _('Chain'), _('Rule'), _('Downloaded'), _('Uploaded') ]);
 			for (const c of conns) {
 				const chain = (c.chain || []).map(chainLabel).join(' → ');
+				const cv = clientView(c);
 				addRow(table, [
+					{ el: E('span', { 'style': 'color:' + cv.color, 'title': cv.title || '' }, [ cv.text ]) },
 					{ text: c.host || c.destination || '—', color: 'inherit' },
 					{ text: (c.network || '').toUpperCase(), color: C_GREY },
 					{ text: chain || '—', color: 'inherit' },

@@ -5525,7 +5525,17 @@ msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
 
-msgid "Search: host, address, chain, rule…"
+msgid "Search: client, host, address, chain, rule…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Router"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/homeproxy/monitor.js
+
+msgid "Tunnel transport"
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/monitor.js
