@@ -3936,7 +3936,7 @@ echo done > "$PRE.done"
 
 	let routing_mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 	if (routing_mode === 'custom' || routing_mode === 'custom_json')
-		log(`routing mode is '${routing_mode}' - learning paused (legacy custom mode, D23; probes are not wired). Switch to a preset mode to resume.`);
+		log(`routing mode is '${routing_mode}' - learning paused (legacy custom mode, D23; probes are not wired; the migrator rewrites it at the next service start). Switch to a preset mode to resume.`);
 	else if (routing_mode === 'direct')
 		log('routing mode is direct («Напрямую») - all bypass mechanisms are off, learning paused.');
 

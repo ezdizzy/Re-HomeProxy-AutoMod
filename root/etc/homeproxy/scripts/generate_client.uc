@@ -59,13 +59,14 @@ const ucirurule = 'proxy_ru_rule';
  *                    app plane only); the core is not started, generation is skipped;
  *   global           «Всё через узел» — ALL traffic goes through the selected main node.
  * Custom routing / Custom JSON are RETIRED (D23): a legacy value still present in an
- * old UCI is read honestly as the working mode (with a warn) until the Ф3.4 migration
- * rewrites it with a snapshot. */
+ * old UCI is read honestly as the working mode (with a warn); the migrator
+ * migrate_routing_mode.uc rewrites it with a snapshot at the next service start
+ * (Ф3.4). */
 const routing_mode_raw = uci.get(uciconfig, ucimain, 'routing_mode');
 let routing_mode = (routing_mode_raw == null || routing_mode_raw === '')
 	? 'proxy_banned_ru' : '' + routing_mode_raw;
 if (routing_mode === 'custom' || routing_mode === 'custom_json') {
-	warn('homeproxy: routing mode "' + routing_mode + '" is retired (D23) - generating the working-mode config; UCI migration comes with Ф3.4.\n');
+	warn('homeproxy: routing mode "' + routing_mode + '" is retired (D23) - generating the working-mode config; the migrator rewrites it at the next service start.\n');
 	routing_mode = 'proxy_banned_ru';
 }
 if (routing_mode === 'direct') {

@@ -3035,8 +3035,13 @@ const methods = {
 		call: function() {
 			let fd = popen('uci get homeproxy.config.routing_mode 2>/dev/null');
 			if (!fd) return { skip: true };
-			const mode = trim(fd.read('all'));
+			let mode = trim(fd.read('all'));
 			fd.close();
+			/* Lesson 209: a missing/empty/retired value reads as the working
+			 * mode — its RU DNS test belongs here too (the migrator rewrites
+			 * retired values at the next service start). */
+			if (mode === '' || mode === 'custom' || mode === 'custom_json')
+				mode = 'proxy_banned_ru';
 
 			/* The DNS test runs in every selective mode. Region is data: the resolver
 			 * tag and the domestic anchor domain (must be in the region's geosite so it
@@ -3309,8 +3314,17 @@ const methods = {
 			add('## DNS Tests');
 			let mode_fd = popen('uci get homeproxy.config.routing_mode 2>/dev/null');
 			if (mode_fd) {
-				const routing_mode = trim(mode_fd.read('all'));
+				let routing_mode = trim(mode_fd.read('all'));
 				mode_fd.close();
+				/* Lesson 209: a missing/empty/retired value reads as the working
+				 * mode (the migrator rewrites retired values at the next service
+				 * start) — report the mode the config actually runs. */
+				const raw_mode = routing_mode;
+				if (routing_mode === '' || routing_mode === 'custom' || routing_mode === 'custom_json')
+					routing_mode = 'proxy_banned_ru';
+				const mode_note = (raw_mode !== '' && raw_mode !== routing_mode)
+					? ' (legacy "' + raw_mode + '" reads as this; the migrator rewrites it at the next service start)'
+					: '';
 				const REGION_DIAG = {
 					proxy_banned_ru: { tag: 'russia-dns', label: 'Russia', domain: 'mail.ru' },
 					bypass_cn:       { tag: 'region-dns', label: 'China',  domain: 'baidu.com' },
@@ -3325,7 +3339,7 @@ const methods = {
 						if (s.tag === rd.tag) region_server = s.server || s.address;
 						if (s.tag === 'secure-dns') secure_server = s.server || s.address;
 					}
-					add('Mode: ' + routing_mode);
+					add('Mode: ' + routing_mode + mode_note);
 					add(rd.label + ' DNS server: ' + (region_server || 'not found'));
 					add('Secure DNS server: ' + (secure_server || 'not found'));
 					add('Bootstrap: ' + (region_server || 'not found'));
@@ -3334,7 +3348,7 @@ const methods = {
 					dns_fd = popen('nslookup andrevi.ch 2>&1');
 					if (dns_fd) { add('nslookup andrevi.ch:\n' + trim(dns_fd.read('all'))); dns_fd.close(); }
 				} else {
-					add('Mode: ' + routing_mode + ' (DNS test runs in selective modes only)');
+					add('Mode: ' + routing_mode + mode_note + ' (DNS test runs in selective modes only)');
 				}
 			}
 			add('');
@@ -4961,8 +4975,10 @@ const methods = {
 				return { result: false, error: 'set_rule makes no sense for "general"' };
 			if (set_rule) {
 				/* The same guard the presets carry: rules exist only in
-				 * "Bypass blocking" (proxy_banned_ru). */
-				const rm = cursor().get('homeproxy', 'config', 'routing_mode') || '';
+				 * "Bypass blocking" (proxy_banned_ru). A missing/empty value is
+				 * the working mode as well (lesson 209 — one default in every
+				 * reader; the migrator never writes a missing value). */
+				const rm = cursor().get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 				if (rm !== 'proxy_banned_ru')
 					return { result: false, error: 'rules_mode' };
 			}
