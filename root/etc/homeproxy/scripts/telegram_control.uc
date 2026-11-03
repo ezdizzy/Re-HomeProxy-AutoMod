@@ -24,22 +24,22 @@
 
 'use strict';
 
-import { access, readfile, popen } from 'fs';
+import { readfile, popen } from 'fs';
 /* ч.118: ceil was used by the device-list pagination without an import —
  * every /devices page beyond the first threw "access to undeclared variable
  * ceil" and the callback died. NOTE: this ucode build's 'math' module does
  * NOT export ceil (importing it breaks the whole module load — proven
  * live), so the ceiling is done with integer arithmetic instead. */
 import {
-	EVENTS_PATH,
 	client_states, get_sections, get_section,
 	add_event, main_opt, list_devices, bump_cursor,
 	read_temps, write_temps, read_arp
 } from '/etc/homeproxy/scripts/control.uc';
+import { tail as ev_tail, last_id as ev_head } from '/etc/homeproxy/scripts/eventbus.uc';
 
 /* Module state (module scope is closure-safe; declared before use). */
 let API = null;
-let ev_last_ts = 0;
+let ev_last_id = 0;    /* Event Bus cursor (Ф1.7): монотонный id, не ts */
 let arp_seen = null;   /* MACs seen on the network (new-device pushes) */
 
 const DEV_PAGE = 6;    /* devices per page in the inline keyboard */
@@ -788,21 +788,22 @@ function leases_map() {
 export function push_scan(api) {
 	API = api;
 
-	/* 1) events journal tail */
-	if (access(EVENTS_PATH)) {
-		let events = [];
-		try { events = json(readfile(EVENTS_PATH) || '[]'); } catch (e) { events = []; }
-		let maxt = ev_last_ts;
-		for (let i = 0; i < length(events); i++)
-			if (events[i].ts > maxt)
-				maxt = events[i].ts;
-		if (ev_last_ts === 0) {
-			ev_last_ts = maxt;   /* baseline: no flood after daemon restart */
-		} else if (maxt > ev_last_ts) {
-			for (let i = 0; i < length(events); i++) {
-				const ev = events[i];
-				if (ev.ts <= ev_last_ts)
+	/* 1) events journal tail — Event Bus (Ф1.7, аудит 21): курсор = монотонный
+	 * event_id (ts-секунды неуникальны, конкурентные записи старого
+	 * read-modify-write затирали события). Базлайн при старте = голова шины:
+	 * после рестарта демона флуда нет. */
+	{
+		const evs = ev_tail(200, (ev_last_id > 0) ? ev_last_id : 0);
+		if (ev_last_id === 0) {
+			/* Baseline: события, уже сидевшие в журнале, не переигрываем. */
+			ev_last_id = ev_head();
+		} else {
+			for (let i = 0; i < length(evs); i++) {
+				const ev = evs[i];
+				if (ev.id <= ev_last_id || ev.src !== 'control')
 					continue;
+				if (ev.id > ev_last_id)
+					ev_last_id = ev.id;
 				const icon = (ev.type in EV_ICON) ? EV_ICON[ev.type] : '•';
 				const who = trim('' + (ev.who || ''));
 				const detail = trim('' + (ev.detail || ''));
@@ -810,7 +811,6 @@ export function push_scan(api) {
 					icon + ' <b>Контроль</b>' + (length(who) ? ': ' + esc(who) : '') +
 					(length(detail) ? '\n' + esc(detail) : ''));
 			}
-			ev_last_ts = maxt;
 		}
 	}
 

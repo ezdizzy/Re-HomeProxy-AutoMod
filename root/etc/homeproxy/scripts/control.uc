@@ -20,13 +20,16 @@
 'use strict';
 
 import { access, readfile, writefile, open, popen, stat } from 'fs';
+import { atomic_write as ss_atomic_write, mkdir_p as ss_mkdir_p } from '/etc/homeproxy/scripts/statestore.uc';
+import { emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
 import { cursor } from 'uci';
 
 export const CONF = 'homecontrol';
 export const RUN_DIR = '/var/run/homecontrol';
 export const STATE_DIR = '/etc/homecontrol';
 export const LOG_PATH = RUN_DIR + '/control.log';
-export const EVENTS_PATH = RUN_DIR + '/events.json';
+/* Ф1.7: журнал событий переехал в append-only Event Bus
+ * (/var/run/homeproxy/events/journal.jsonl, eventbus.uc) — аудит 21. */
 
 let _cursor = null;
 let _cursor_ts = 0;
@@ -79,16 +82,15 @@ export function dirname(p) {
 	return m ? m[1] : '.';
 };
 
+/* Ensure dir exists (ucode mkdir loop — State Store, Ф1.7; без shell). */
 export function mkdir_p(p) {
-	system(`mkdir -p '${p}'`);
+	ss_mkdir_p(p);
 };
 
-/* Atomic write: temp + mv, so the UI/TG readers never see a truncated file. */
+/* Atomic write: temp + mv, so the UI/TG readers never see a truncated file.
+ * Канонический механизм — State Store (statestore.uc, Ф1.7). */
 export function atomic_write(path, content) {
-	mkdir_p(dirname(path));
-	const tmp = path + '.tmp';
-	writefile(tmp, content);
-	system(`mv -f '${tmp}' '${path}'`);
+	ss_atomic_write(path, content);
 };
 
 export function shellquote(s) {
@@ -138,25 +140,15 @@ export function main_opt(opt, def) {
 	return v;
 };
 
-/* Append an event to the events journal (capped, atomic). */
+/* Append an event to the Event Bus journal (Ф1.7, аудит 21): append-only
+ * JSONL с монотонным event_id — конкурентные писатели не затирают события,
+ * курсор подписчика — id, а не timestamp-секунды. src = 'control'. */
 export function add_event(type, who, detail) {
 	if (main_opt('log_enabled', '1') !== '1')
 		return;
-	let events = [];
-	const raw = access(EVENTS_PATH) ? readfile(EVENTS_PATH) : null;
-	if (raw) {
-		try { events = json(raw); } catch (e) { events = []; }
-	}
-	const maxn = int(main_opt('log_max', '500')) || 500;
-	push(events, {
-		ts: time(),
-		type: type,        /* block, allow, wifi, schedule, temp, system */
-		who: who || '',
-		detail: detail || ''
-	});
-	while (length(events) > maxn)
-		shift(events);
-	atomic_write(EVENTS_PATH, sprintf('%J', events) + '\n');
+	try {
+		ev_emit('control', type, who || '', detail || '');
+	} catch (e) { /* best-effort: событие не роняет вызывающего */ }
 };
 
 /* Parse "HH:MM" to minutes-since-midnight, or null. */

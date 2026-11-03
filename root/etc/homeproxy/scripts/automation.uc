@@ -43,6 +43,7 @@
 'use strict';
 
 import { access, readfile, writefile, open, stat } from 'fs';
+import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { cursor } from 'uci';
 import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty } from 'homeproxy';
 import {
@@ -520,11 +521,7 @@ function load_state() {
 	try { return json(c) || {}; } catch (e) { return {}; }
 }
 
-function atomic_write(path, content) {
-	let tmp = path + '.tmp';
-	writefile(tmp, content);
-	system('mv -f ' + tmp + ' ' + path);
-}
+/* Каноническая атомарная запись — State Store (statestore.uc, Ф1.7). */
 
 function save_state(state) {
 	atomic_write(STATE_FILE, sprintf('%.J\n', state));

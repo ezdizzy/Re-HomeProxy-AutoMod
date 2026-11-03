@@ -43,6 +43,7 @@
  * showed endless "watchdog started" lines ~125 s apart) — the watchdog
  * never actually polled anything until this import was fixed (ч.59). */
 import { access, readfile, writefile, open, stat, popen } from 'fs';
+import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
 
 /* Local shell quote. This build of ucode has NO shellquote builtin and this
@@ -86,11 +87,7 @@ function log(msg) {
 	} catch (e) { /* logging must never kill the daemon */ }
 }
 
-function atomic_write(path, content) {
-	const tmp = path + '.tmp';
-	writefile(tmp, content);
-	system('mv -f ' + shellquote(tmp) + ' ' + shellquote(path));
-}
+/* Каноническая атомарная запись — State Store (statestore.uc, Ф1.7). */
 
 function flush_dead() {
 	let lines = [];

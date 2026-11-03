@@ -33,11 +33,11 @@
 
 'use strict';
 
-import { access, readfile, writefile, stat, mkdir, rmdir, rename, unlink, popen } from 'fs';
+import { access, readfile, stat, mkdir, rmdir, unlink, popen } from 'fs';
+import { REV_PATH, read_revision, atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 
 const OPS_DIR = '/var/run/homeproxy/ops';
 const STATE_DIR = '/var/run/homeproxy/state';
-const REV_PATH = STATE_DIR + '/config_revision';
 const LEASE_SEC = 120;
 const KEEP_OPS = 50;
 
@@ -58,12 +58,6 @@ function uniq_tail() {
 	/* clock() = [секунды, наносекунды] на этой сборке (automation.uc). */
 	const c = clock();
 	return int((c[1] / 1000) % 1000000);
-};
-
-function atomic_write(path, content) {
-	const tmp = path + '.tmp.' + uniq_tail();
-	writefile(tmp, content);
-	rename(tmp, path);
 };
 
 function json_safe(s) {
@@ -95,11 +89,10 @@ function valid_kind(s) {
 	return length('' + s) <= 32 && match('' + s, /^[a-z0-9_-]+$/) != null;
 };
 
-/* ── ревизии ── */
+/* ── ревизии (счётчик VERIFIED применений) ── */
 
 export function get_revision() {
-	const n = int(trim(readfile(REV_PATH) ?? ''));
-	return (n > 0) ? n : 1;
+	return read_revision();
 };
 
 export function bump_revision() {

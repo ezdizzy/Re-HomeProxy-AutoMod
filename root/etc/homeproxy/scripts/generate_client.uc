@@ -26,6 +26,10 @@ import {
 	find_daemons as pm_find, reg_get as pm_reg_get, entry_alive as pm_entry_alive
 } from '/etc/homeproxy/scripts/pmgr.uc';
 
+/* State Store (Ф1.7, аудит 10): state-файлы генератора — через канонический
+ * атомарный механизм + версионированный конверт (schema_version/config_revision). */
+import { write_state as ss_write_state, read_state as ss_read_state } from '/etc/homeproxy/scripts/statestore.uc';
+
 const ubus = connect();
 
 /* const features = ubus.call('luci.homeproxy', 'singbox_get_features') || {}; */
@@ -1979,7 +1983,7 @@ if (!isEmpty(main_node)) {
 				let hs_default = null;
 				if (main_urltest_mode !== 'prefer') {
 					try {
-						const hs_prev = json(readfile(RUN_DIR + '/hotswap_state.json') || '');
+						const hs_prev = ss_read_state(RUN_DIR + '/hotswap_state.json').data;
 						if (hs_prev && type(hs_prev.active) === 'string' &&
 						    index(hs_members, hs_prev.active) >= 0 &&
 						    urltest_dead[hs_prev.active] == null)
@@ -2151,7 +2155,7 @@ if (!isEmpty(main_node)) {
 			 * A dead-marked pick is never fronted. */
 			let hs_default = null;
 			try {
-				const hs_prev = json(readfile(RUN_DIR + '/hotswap_state.json') || '');
+				const hs_prev = ss_read_state(RUN_DIR + '/hotswap_state.json').data;
 				if (hs_prev && type(hs_prev.active) === 'string')
 					hs_default = hs_prev.active;
 			} catch (e) { hs_default = null; }
@@ -3285,9 +3289,11 @@ system('mv -f ' + hp_shellquote(cfg_tmp) + ' ' + hp_shellquote(candidate));
 
 /* Hot Swap state contract (ч.59): the daemon reads THIS file, not UCI, so its view
  * always matches the generated config. Written only when the feature is active;
- * an absent/stale file puts the daemon into idle probing of the group state. */
+ * an absent/stale file puts the daemon into idle probing of the group state.
+ * Ф1.7 (аудит 10): раньше здесь был голый writefile (обрыв = битый контракт до
+ * следующей генерации) — теперь атомарный write_state State Store с конвертом. */
 if (hotswap_state) {
-	writefile(RUN_DIR + '/hotswap.json', sprintf('%.J\n', hotswap_state));
+	ss_write_state(RUN_DIR + '/hotswap.json', hotswap_state);
 } else {
 	system('rm -f ' + hp_shellquote(RUN_DIR + '/hotswap.json') + ' 2>/dev/null');
 }
@@ -3303,11 +3309,11 @@ if (hp_core) {
 	const skipped_list = [];
 	for (let k, v in hp_skipped_nodes)
 		push(skipped_list, v);
-	writefile(RUN_DIR + '/core_skipped.json', sprintf('%.J\n', {
+	ss_write_state(RUN_DIR + '/core_skipped.json', {
 		core: hp_core_id,
 		version: hp_core.version,
 		skipped: skipped_list
-	}));
+	});
 
 	if (is_singbox) {
 		/* Ф1.2 (аудит 27): check runs against the CANDIDATE, and its exit code

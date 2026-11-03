@@ -40,6 +40,7 @@
 'use strict';
 
 import { access, readfile, writefile, open, stat } from 'fs';
+import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { cursor } from 'uci';
 import { isEmpty } from 'homeproxy';
 import {
@@ -166,12 +167,8 @@ function capture(cmd) {
 	return c ? c : '';
 }
 
-/* Atomically replace a file (temp + mv) so readers never see a truncated file. */
-function atomic_write(path, content) {
-	let tmp = path + '.tmp';
-	writefile(tmp, content);
-	system('mv -f ' + tmp + ' ' + path);
-}
+/* Каноническая атомарная запись — State Store (statestore.uc, Ф1.7);
+ * temp+rename, чтобы читатели никогда не видели обрезанный файл. */
 
 function read_lines(path) {
 	if (!access(path)) return [];

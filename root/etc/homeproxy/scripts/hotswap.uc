@@ -67,7 +67,8 @@
 
 'use strict';
 
-import { access, readfile, writefile, open, stat, popen } from 'fs';
+import { access, open, stat, popen } from 'fs';
+import { write_state as ss_write_state, read_state as ss_read_state } from '/etc/homeproxy/scripts/statestore.uc';
 import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
 
 function shellquote(s) {
@@ -125,11 +126,7 @@ function log(msg) {
 	} catch (e) { /* logging must never kill the daemon */ }
 }
 
-function atomic_write(path, content) {
-	const tmp = path + '.tmp';
-	writefile(tmp, content);
-	system('mv -f ' + shellquote(tmp) + ' ' + shellquote(path));
-}
+/* Каноническая атомарная запись — State Store (statestore.uc, Ф1.7). */
 
 /* GET /proxies → the proxies map, null on any failure (core down etc.). */
 function fetch_proxies() {
@@ -302,7 +299,7 @@ function write_state(active, primary) {
 	let members = {};
 	for (let k, v in health)
 		members[k] = { state: (v.fails ? 'down' : (v.oks ? 'alive' : 'unknown')), fails: v.fails, oks: v.oks, last_delay: v.last_delay };
-	atomic_write(STATE_FILE, sprintf('%.J\n', {
+	ss_write_state(STATE_FILE, {
 		enabled: (hs != null),
 		mode: hs ? (hs.mode || 'node') : null,
 		group: hs ? hs.group : 'main-out',
@@ -322,20 +319,19 @@ function write_state(active, primary) {
 		last_reason: last_reason,
 		members: members,
 		updated: now
-	}));
+	});
 	last_state_write = now;
 }
 
-/* Read + validate the contract; reset health when it changed. */
+/* Read + validate the contract; reset health when it changed.
+ * Контракт пишет генератор через statestore.write_state (Ф1.7, аудит 10):
+ * конверт { schema_version, config_revision, ts, data }; читаем через
+ * read_state — легаси-документ (старый генератор) тоже валиден. */
 function read_contract() {
-	if (!access(HS_FILE))
+	const rs = ss_read_state(HS_FILE);
+	let c = rs.data;
+	if (c == null)
 		return null;
-	let c = null;
-	try {
-		c = json(readfile(HS_FILE) || '');
-	} catch (e) {
-		return null;
-	}
 	if (type(c) !== 'object' || c.enabled !== true || type(c.group) !== 'string' ||
 	    type(c.primary) !== 'string')
 		return null;

@@ -45,6 +45,7 @@
 'use strict';
 
 import { access, readfile, writefile, open, popen } from 'fs';
+import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { cursor } from 'uci';
 import { find_daemons as pm_find, kill_matched as pm_kill_matched } from '/etc/homeproxy/scripts/pmgr.uc';
 
@@ -179,11 +180,7 @@ function sq(s) {
 	return `'${replace('' + s, "'", "'\\''")}'`;
 }
 
-function atomic_write(path, content) {
-	const tmp = path + '.tmp';
-	writefile(tmp, content);
-	system(`mv -f ${sq(tmp)} ${sq(path)}`);
-}
+/* Каноническая атомарная запись — State Store (statestore.uc, Ф1.7). */
 
 function write_status(path, obj) {
 	obj.ts = time();

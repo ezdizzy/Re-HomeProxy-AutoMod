@@ -56,6 +56,9 @@ import {
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
 	reg_get as pm_reg_get, entry_alive as pm_entry_alive, find_daemons as pm_find
 } from '/etc/homeproxy/scripts/pmgr.uc';
+/* State Store (Ф1.7): hotswap_state.json в версионированном конверте,
+ * чтение толерантно к легаси-документу. */
+import { read_state as ss_read_state } from '/etc/homeproxy/scripts/statestore.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const LOG_FILE = RUN_DIR + '/telegram.log';
@@ -701,8 +704,8 @@ function send_push(kind, text) {
 
 function push_hotswap() {
 	if (!access(HS_FILE)) return;
-	let st = null;
-	try { st = json(readfile(HS_FILE) || ''); } catch (e) { st = null; }
+	/* Ф1.7: документ в конверте State Store (data внутри); легаси тоже читается. */
+	const st = ss_read_state(HS_FILE).data;
 	if (!st || type(st) !== 'object') return;
 	const sw = int(st.switches || 0);
 	const active = '' + (st.active || '');

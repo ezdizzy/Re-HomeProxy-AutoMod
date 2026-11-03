@@ -52,6 +52,7 @@
  * the same trap that silently killed the urltest watchdog at its first
  * fetch (ч.59). */
 import { access, readfile, writefile, stat, popen } from 'fs';
+import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
 
 function shellquote(s) {
@@ -319,11 +320,7 @@ function sample_learned() {
 	return learned;
 }
 
-function atomic_write(path, content) {
-	const tmp = path + '.tmp';
-	writefile(tmp, content);
-	system('mv -f ' + shellquote(tmp) + ' ' + shellquote(path));
-}
+/* Каноническая атомарная запись — State Store (statestore.uc, Ф1.7). */
 
 /* Restore the carried per-exit totals from the output file left by the
  * previous metrics run (same tmpfs file): the counters then survive a

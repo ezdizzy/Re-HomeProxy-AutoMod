@@ -35,8 +35,9 @@
  *   { name, kind, pid, start, started, exe, script, arg, hb, note }
  * reg_gc() drops entries whose identity is dead (or whose boot differs).
  *
- * UNIFIED ATOMIC STATE WRITES (audit 10): wstat()/wjson() = temp + rename;
- * new code writes state files through them instead of a bare writefile().
+ * UNIFIED ATOMIC STATE WRITES (audit 10 → Ф1.7 statestore): wstat()/wjson() =
+ * temp + rename через State Store; new code writes state files through them
+ * instead of a bare writefile().
  *
  * KILL POLICY: kill_entry() verifies the identity BEFORE the signal and on
  * every poll (PID reuse during the wait window cannot redirect the KILL):
@@ -64,7 +65,8 @@
 
 'use strict';
 
-import { access, readfile, readlink, writefile, rename, stat, unlink, mkdir, popen } from 'fs';
+import { access, readfile, readlink, stat, unlink, mkdir, popen } from 'fs';
+import { atomic_write as ss_atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 
 export const RUN_DIR = '/var/run/homeproxy';
 export const REG_PATH = RUN_DIR + '/daemons.json';
@@ -403,7 +405,7 @@ export function kill_tree(spec, wait_ms, force_kill) {
 	return res;
 };
 
-/* ── unified atomic state writes (audit 10) ─────────────────────────────── */
+/* ── unified atomic state writes (audit 10 → statestore) ────────────────── */
 
 function mkdir_p(p) {
 	let cur = '';
@@ -417,15 +419,11 @@ function mkdir_p(p) {
 	}
 };
 
-function uniq_tail() {
-	const c = clock();
-	return int((c[1] / 1000) % 1000000);
-};
-
+/* Каноническая атомарная запись — State Store (statestore.uc, Ф1.7);
+ * pmgr сохраняет собственные имена wstat/wjson/rjson ради стабильности
+ * API существующих импортёров. */
 export function wstat(path, content) {
-	const tmp = path + '.tmp.' + uniq_tail();
-	writefile(tmp, content);
-	rename(tmp, path);
+	ss_atomic_write(path, content);
 };
 
 export function wjson(path, obj) {

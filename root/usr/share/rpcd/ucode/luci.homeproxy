@@ -16,7 +16,7 @@ import {
 	sync_auto_auth_ruleset
 } from '/etc/homeproxy/scripts/homeproxy.uc';
 import {
-	RUN_DIR as HC_RUN_DIR, EVENTS_PATH as HC_EVENTS_PATH, LOG_PATH as HC_LOG_PATH,
+	RUN_DIR as HC_RUN_DIR, LOG_PATH as HC_LOG_PATH,
 	main_opt as hc_main_opt, get_sections as hc_get_sections, get_section as hc_get_section,
 	add_event as hc_add_event, read_temps as hc_read_temps, write_temps as hc_write_temps,
 	read_wifi_temps as hc_read_wifi_temps, wifi_temp_set as hc_wifi_temp_set,
@@ -27,6 +27,8 @@ import {
 	read_arp as hc_read_arp, schedule_active as hc_sched_active,
 	bump_cursor as hc_bump_cursor
 } from '/etc/homeproxy/scripts/control.uc';
+import { read_state as ss_read_state, atomic_write as ss_atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
+import { tail as ev_tail, clear as ev_clear } from '/etc/homeproxy/scripts/eventbus.uc';
 import {
 	begin as op_begin, get_op as op_get, list_ops as op_list,
 	get_revision as op_revision
@@ -105,11 +107,10 @@ function shellquote(s) {
 
 /* Atomic list write (temp + rename): a direct writefile() can be caught mid-write
  * by the automation daemon or the core's rule-set watcher reading the file — a
- * truncated parse then blanks the learned set or kills hot reload. */
+ * truncated parse then blanks the learned set or kills hot reload.
+ * Ф1.7 (аудит 10): канонический механизм — State Store (statestore.uc). */
 function atomic_write(path, content) {
-	const tmp = path + '.tmp';
-	writefile(tmp, content);
-	system(`mv -f ${shellquote(tmp)} ${shellquote(path)}`);
+	ss_atomic_write(path, content);
 }
 
 /* ── Automation table helpers (entry add/delete/manual status, RU-geo) ──
@@ -2171,23 +2172,15 @@ const methods = {
 	core_skipped: {
 		call: function() {
 			/* Nodes the ACTIVE core cannot load (per-core capability, written by
-			 * generate_client.uc). The UI shows this as a warning: those nodes
-			 * are excluded from pools until a core that supports them runs. */
+			 * generate_client.uc через State Store — Ф1.7, аудит 10). The UI shows
+			 * this as a warning: those nodes are excluded from pools until a core
+			 * that supports them runs. */
 			let out = { core: null, version: null, skipped: [] };
-			const fd = popen('cat /var/run/homeproxy/core_skipped.json 2>/dev/null');
-			if (fd) {
-				const raw = trim(fd.read('all'));
-				fd.close();
-				if (length(raw)) {
-					try {
-						const st = json(raw);
-						if (type(st) === 'object') {
-							out.core = st.core ?? null;
-							out.version = st.version ?? null;
-							out.skipped = (type(st.skipped) === 'array') ? st.skipped : [];
-						}
-					} catch (e) { /* corrupt state — report empty */ }
-				}
+			const st = ss_read_state('/var/run/homeproxy/core_skipped.json').data;
+			if (type(st) === 'object') {
+				out.core = st.core ?? null;
+				out.version = st.version ?? null;
+				out.skipped = (type(st.skipped) === 'array') ? st.skipped : [];
 			}
 			return out;
 		}
@@ -2471,12 +2464,10 @@ const methods = {
 				return (lbl && length(lbl)) ? '' + lbl : m[1];
 			};
 
-			/* Daemon state (tmpfs; missing file = feature off or not yet generated). */
-			let st = null;
-			const raw = readfile('/var/run/homeproxy/hotswap_state.json');
-			if (raw && length(trim(raw))) {
-				try { st = json(raw); } catch(e) { st = null; }
-			}
+			/* Daemon state (tmpfs; missing file = feature off or not yet generated).
+			 * Ф1.7: документ в конверте State Store (schema_version/config_revision);
+			 * read_state толерантен к легаси-документу. */
+			let st = ss_read_state('/var/run/homeproxy/hotswap_state.json').data;
 
 			/* Live selector view. */
 			const clash = clash_api('/proxies/main-out');
@@ -7836,25 +7827,27 @@ const methods = {
 	control_events: {
 		args: { limit: 'limit' },
 		call: function(req) {
-			let events = [];
-			if (access(HC_EVENTS_PATH)) {
-				try { events = json(readfile(HC_EVENTS_PATH)); } catch (e) { events = []; }
-			}
+			/* Ф1.7 (аудит 21): журнал — append-only Event Bus; подпись UI та же
+			 * ({ts,type,who,detail}), источник — шина с монотонным event_id. */
 			let limit = int(req.args?.limit) || 100;
 			if (limit < 1 || limit > 1000)
 				limit = 100;
-			const start = max(0, length(events) - limit);
+			const evs = ev_tail(limit, 0);
 			const out = [];
-			for (let i = start; i < length(events); i++)
-				push(out, events[i]);
+			for (let i = 0; i < length(evs); i++)
+				push(out, {
+					ts: evs[i].ts,
+					type: evs[i].type,
+					who: evs[i].who,
+					detail: evs[i].detail
+				});
 			return { events: out };
 		}
 	},
 
 	control_events_clear: {
 		call: function(req) {
-			if (access(HC_EVENTS_PATH))
-				system(`rm -f '${HC_EVENTS_PATH}'`);
+			ev_clear();
 			hc_add_event('system', '', 'events journal cleared');
 			return { result: true };
 		}
