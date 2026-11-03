@@ -361,6 +361,15 @@ start_service() {
 	config_get_bool ipv6_support "config" "ipv6_support" "0"
 	config_get dns_port "infra" "dns_port" "5333"
 	mkdir -p "$DNSMASQ_DIR"
+	# conf-dir loads files ALPHABETICALLY. The legacy unprefixed pair sorted the
+	# frozen WAN fallback BEFORE the primary resolvers ("redirect-dns-" <
+	# "redirect-dns."), turning the emergency floor into the PRIMARY dnsmasq
+	# upstream (DNS-regression 2026-11-03). The numeric prefixes pin the order:
+	# 10- primary resolvers first, 90- frozen fallback last. Remove the legacy
+	# names so dnsmasq never loads a stale copy alongside the new ones.
+	rm -f "$DNSMASQ_DIR/redirect-dns.conf" \
+		"$DNSMASQ_DIR/redirect-dns-fallback.conf" \
+		"$DNSMASQ_DIR/redirect-dns-fallback.cand"
 	echo -e "conf-dir=$DNSMASQ_DIR" > "$DNSMASQ_DIR/../dnsmasq-homeproxy.conf"
 	case "$routing_mode" in
 	"bypass_cn"|"bypass_ir"|"custom"|"custom_json"|"global"|"proxy_banned_ru")
@@ -368,7 +377,7 @@ start_service() {
 		# strict-order pins 5333 as the primary server (default dnsmasq prefers
 		# whichever upstream answered fastest, which would let LAN queries drift
 		# onto the fallback below and bypass the core's split-DNS routing).
-		cat <<-EOF >> "$DNSMASQ_DIR/redirect-dns.conf"
+		cat <<-EOF >> "$DNSMASQ_DIR/10-redirect-dns.conf"
 			no-poll
 			no-resolv
 			strict-order
@@ -384,7 +393,7 @@ start_service() {
 		if [ "$md_en" = "1" ] && [ "$mdns_wired" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
 			local mdns_fb_port
 			config_get mdns_fb_port "multidns" "plain_port" "5453"
-			echo "server=127.0.0.1#${mdns_fb_port}" >> "$DNSMASQ_DIR/redirect-dns.conf"
+			echo "server=127.0.0.1#${mdns_fb_port}" >> "$DNSMASQ_DIR/10-redirect-dns.conf"
 		fi
 
 		# Emergency DNS floor (Ф1.3, audits 45/49): freeze the WAN resolvers as
@@ -395,6 +404,9 @@ start_service() {
 		#   - the snapshot is FROZEN per service start (a flapping WAN cannot
 		#     churn dnsmasq config) and kept as last-known-good when
 		#     resolv.conf.auto is unusable at start (WAN down at boot);
+		#   - the "90-" filename prefix pins it as the LAST conf-dir entry
+		#     (alphabetical load order): the unprefixed name loaded BEFORE the
+		#     primaries and made the floor the primary resolver;
 		#   - dnsmasq's own egress escapes the interception via the skuid rule
 		#     in firewall_post.ut — otherwise a dead core would intercept the
 		#     fallback queries too and the floor would die with the chain.
@@ -403,8 +415,8 @@ start_service() {
 		# is reachable only when the earlier resolvers timed out.
 		local wan_resolv dns_fb dns_fb_cand dns_fb_n ns
 		wan_resolv="/tmp/resolv.conf.d/resolv.conf.auto"
-		dns_fb="$DNSMASQ_DIR/redirect-dns-fallback.conf"
-		dns_fb_cand="$DNSMASQ_DIR/redirect-dns-fallback.cand"
+		dns_fb="$DNSMASQ_DIR/90-redirect-dns-fallback.conf"
+		dns_fb_cand="$DNSMASQ_DIR/90-redirect-dns-fallback.cand"
 		dns_fb_n=0
 		rm -f "$dns_fb_cand"
 		if [ -r "$wan_resolv" ]; then
