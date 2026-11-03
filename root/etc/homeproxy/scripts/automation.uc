@@ -1609,18 +1609,120 @@ function discover_dns() {
 	return rev;
 }
 
+/* ── dnsmasq query-log OWNERSHIP (Ф1.6, аудит 15/89) ──────────────────────
+ * UCI-value OWNERSHIP: the audit forbids overwriting the user's dhcp
+ * logqueries/logfacility without keeping and restoring them. On this build
+ * the UCI mechanism is the ONLY working one: dnsmasq runs inside a procd
+ * JAIL and a file-based log-facility (a conf-dir file) is INVISIBLE from
+ * within it — "cannot open log …: No such file or directory" → FAILED to
+ * start up → procd crash loop → LAN WITHOUT DNS (live-caught, session 76;
+ * the UCI variant worked for days because the dnsmasq init script handles
+ * log-facility itself). So: snapshot the user's options when we take over,
+ * set OURS while active, restore exactly theirs on disable. The snapshot
+ * survives daemon restarts (atomic JSON in RUN_DIR); a takeover when the
+ * facility is already our path (legacy build values or a reboot) records
+ * "no user options" instead of treating our own values as the user's. */
+const DNSLOG_OWNERSHIP = RUN_DIR + '/dnslog_ownership.json';
+
+function dnsmasq_section_id() {
+	/* The first dnsmasq-typed section of /etc/config/dhcp — found by TYPE
+	 * through the ucode UCI cursor. NO shell, NO glob, NO shared capture
+	 * tmp: the shell `uci show dhcp.@dnsmasq[0]` capture returned empty
+	 * inside the daemon context (session 76) and silently routed the old
+	 * file-based variant into a fallback directory dnsmasq never reads. */
+	const all = uci.get_all('dhcp');
+	if (type(all) !== 'object')
+		return null;
+	for (let sid in all) {
+		const sec = all[sid];
+		if (type(sec) === 'object' && sec['.type'] === 'dnsmasq')
+			return sid;
+	}
+	return null;
+}
+
+function dnslog_restart_dnsmasq(why) {
+	/* The restart's FULL stderr is captured and logged — a silent failure here
+	 * reads as "log empty" days later (урок 192: СНИМАЙ ПОЛНЫЙ stderr). */
+	const out = RUN_DIR + '/automation-dnslog-restart.out';
+	const rc = system('/etc/init.d/dnsmasq restart >' + shellquote(out) + ' 2>&1');
+	const txt = access(out) ? trim(readfile(out) || '') : '';
+	system('rm -f ' + shellquote(out));
+	if (rc != 0 || txt != '')
+		log('dnslog: dnsmasq restart (' + why + ') rc=' + rc + (txt != '' ? ' — ' + txt : ''));
+}
+
+function dnslog_write_ownership(obj) {
+	const tmp = DNSLOG_OWNERSHIP + '.tmp';
+	writefile(tmp, sprintf('%.J\n', obj));
+	system('mv -f ' + shellquote(tmp) + ' ' + shellquote(DNSLOG_OWNERSHIP));
+}
+
 function enable_dns_log() {
-	system('uci -q set dhcp.@dnsmasq[0].logqueries=1');
-	system('uci -q set dhcp.@dnsmasq[0].logfacility=' + shellquote(DNS_LOG));
-	system('uci commit dhcp');
-	system('/etc/init.d/dnsmasq restart >/dev/null 2>&1');
+	const sid = dnsmasq_section_id();
+	if (sid == null) {
+		log('dnslog: no dnsmasq UCI section found — query logging NOT enabled');
+		return;
+	}
+	const cur_f = uci.get('dhcp', sid, 'logfacility');
+	const cur_q = uci.get('dhcp', sid, 'logqueries');
+	let owned = null;
+	const raw = readfile(DNSLOG_OWNERSHIP);
+	if (raw != null) {
+		owned = json(raw);
+		if (type(owned) !== 'object')
+			owned = null;
+	}
+	if (owned == null) {
+		const takeover = (cur_f == DNS_LOG)
+			? { logqueries: null, logfacility: null }
+			: { logqueries: (cur_q == null) ? null : ('' + cur_q),
+			    logfacility: (cur_f == null) ? null : ('' + cur_f) };
+		dnslog_write_ownership({ taken: takeover });
+		log('dnslog: took ownership of dnsmasq log options (user had: q=' +
+		    (takeover.logqueries == null ? 'none' : takeover.logqueries) +
+		    ', f=' + (takeover.logfacility == null ? 'none' : takeover.logfacility) + ')');
+	}
+	if (cur_f == DNS_LOG)
+		return;   /* already ours — no dnsmasq blip on daemon restarts */
+	uci.set('dhcp', sid, 'logqueries', '1');
+	uci.set('dhcp', sid, 'logfacility', DNS_LOG);
+	uci.save('dhcp');
+	uci.commit('dhcp');
+	dnslog_restart_dnsmasq('enable');
 }
 
 function disable_dns_log() {
-	system('uci -q del dhcp.@dnsmasq[0].logqueries');
-	system('uci -q del dhcp.@dnsmasq[0].logfacility');
-	system('uci commit dhcp');
-	system('/etc/init.d/dnsmasq restart >/dev/null 2>&1');
+	const sid = dnsmasq_section_id();
+	if (sid == null)
+		return;
+	let changed = false;
+	const raw = readfile(DNSLOG_OWNERSHIP);
+	let owned = (raw != null) ? json(raw) : null;
+	if (type(owned) === 'object' && type(owned.taken) === 'object') {
+		/* Restore EXACTLY what the user had before the takeover. */
+		if (owned.taken.logqueries != null)
+			uci.set('dhcp', sid, 'logqueries', owned.taken.logqueries);
+		else
+			uci.delete('dhcp', sid, 'logqueries');
+		if (owned.taken.logfacility != null)
+			uci.set('dhcp', sid, 'logfacility', owned.taken.logfacility);
+		else
+			uci.delete('dhcp', sid, 'logfacility');
+		uci.save('dhcp');
+		uci.commit('dhcp');
+		system('rm -f ' + shellquote(DNSLOG_OWNERSHIP));
+		changed = true;
+	} else if (uci.get('dhcp', sid, 'logfacility') == DNS_LOG) {
+		/* No snapshot — clear only OUR legacy pair (exact-path marker). */
+		uci.delete('dhcp', sid, 'logfacility');
+		uci.delete('dhcp', sid, 'logqueries');
+		uci.save('dhcp');
+		uci.commit('dhcp');
+		changed = true;
+	}
+	if (changed)
+		dnslog_restart_dnsmasq('disable');
 }
 
 /* ── DNS failover (C) ───────────────────────────────────────────────────── */

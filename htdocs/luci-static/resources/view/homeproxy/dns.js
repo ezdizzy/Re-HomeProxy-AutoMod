@@ -107,7 +107,7 @@ return view.extend({
 		}
 
 		o = s.taboption('pools', form.DynamicList, 'secure_dns_server', _('Secure DNS server') + ' 🔒',
-			_('Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS\'s socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured.'));
+			_('Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS\'s socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured. Without MultiDNS a hostname DoH bootstraps through the direct pool — poisoned names (e.g. Google) fail there; prefer an IP-literal DoH (https://1.1.1.1/dns-query).'));
 		o.value('https://cloudflare-dns.com/dns-query', _('Cloudflare DoH'));
 		o.value('https://dns.quad9.net/dns-query', _('Quad9 DoH'));
 		o.value('https://dns.adguard-dns.com/dns-query', _('AdGuard DoH'));
@@ -351,13 +351,18 @@ return view.extend({
 				let succ = (e.success != null) ? (e.success + '%') : '—';
 				let trend = '';
 				if (e.samples >= 2) trend = '≈'; /* trend history shown via score stability */
-				const cells = [ String(e.server), pool ];
-				const tr = E('tr', {});
-				/* Transport + the factual egress path (audit 14): DoQ/DoH3 always
-				 * show "direct" — mosdns socks5 carries DoH/DoT only. */
-				tr.appendChild(E('td', {}, [ (e.transport || '—') + ' ',
-					E('span', { 'class': 'hpui-badge ' + (e.proxied ? 'hpui-b-green' : 'hpui-b-grey') },
-						[ e.proxied ? _('Via proxy') : _('Directly') ]) ]));
+			const tr = E('tr', {});
+			/* Server + Pool cells first: the ч.154 transport-column edit BUILT
+			 * these two cells but never appended them — every row rendered 8
+			 * cells under 10 headers, the server name vanished and all columns
+			 * shifted left (user report, session 76). */
+			tr.appendChild(E('td', {}, [ String(e.server || '—') ]));
+			tr.appendChild(E('td', {}, [ pool ]));
+			/* Transport + the factual egress path (audit 14): DoQ/DoH3 always
+			 * show "direct" — mosdns socks5 carries DoH/DoT only. */
+			tr.appendChild(E('td', {}, [ (e.transport || '—') + ' ',
+				E('span', { 'class': 'hpui-badge ' + (e.proxied ? 'hpui-b-green' : 'hpui-b-grey') },
+					[ e.proxied ? _('Via proxy') : _('Directly') ]) ]));
 				for (let c of [ String(e.score != null ? e.score : '—'), lat, open, live, succ, trend ])
 					tr.appendChild(E('td', {}, [ c ]));
 				tr.appendChild(E('td', {}, [

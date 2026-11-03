@@ -6727,7 +6727,10 @@ const methods = {
 			if (vfd) { md_svp = trim(vfd.read('all')); vfd.close(); }
 			vfd = popen('uci -q get homeproxy.multidns.use_secure 2>/dev/null');
 			if (vfd) { md_use_secure = trim(vfd.read('all')); vfd.close(); }
-			const svp_on = (md_svp != null && md_svp !== '' && md_svp !== '0');
+			/* Default-ON (missing option = '1'), mirroring generate_client.uc —
+			 * the old "missing = off" read lied "proxied: false" for every
+			 * install that never wrote the option (session 76). */
+			const svp_on = (md_svp !== '0');
 			const mdns_sec_on = (enabled === '1') && (md_use_secure !== '0');
 			const proxy_real = !(md_node in [null, '', 'nil', 'direct-out', 'byedpi-out', 'zapret-out']);
 

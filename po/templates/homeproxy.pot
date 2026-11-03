@@ -6576,7 +6576,7 @@ msgstr ""
 msgid "Applying configuration…"
 msgstr ""
 
-msgid "Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS's socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured."
+msgid "Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS's socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured. Without MultiDNS a hostname DoH bootstraps through the direct pool — poisoned names (e.g. Google) fail there; prefer an IP-literal DoH (https://1.1.1.1/dns-query)."
 msgstr ""
 
 msgid "via MultiDNS (local mosdns racing listener)"

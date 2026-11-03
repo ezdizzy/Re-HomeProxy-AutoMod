@@ -340,7 +340,8 @@ let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outb
     dns_disable_cache_expire, dns_independent_cache, dns_client_subnet, cache_file_store_rdrc,
     cache_file_rdrc_timeout, direct_domain_list, proxy_domain_list,
     multidns_enabled, mdns_use_plain, mdns_use_secure, mdns_secure_via_proxy,
-    mdns_ok, mdns_plain_port, mdns_secure_port, mdns_proxy_in, mdns_proxy_port;
+    mdns_ok, mdns_plain_port, mdns_secure_port, mdns_proxy_in, mdns_proxy_port,
+    secure_detour;
 
 if (routing_mode !== 'custom') {
 	main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
@@ -443,6 +444,26 @@ if (routing_mode !== 'custom') {
 	 * target the multidns daemon puts into the mosdns config. */
 	mdns_proxy_in = mdns_ok && mdns_use_secure && mdns_secure_via_proxy;
 	mdns_proxy_port = int(uci.get(uciconfig, 'multidns', 'proxy_port') || '5338') || 5338;
+
+	/* Ф1.6 (аудит 13): honest secure-DNS egress. A real VPN node as main →
+	 * DoH/DoT rides main-out, so the UI's "resolves via proxy" promise is
+	 * FACTUAL (the ISP no longer sees a plain DoH connection). ByeDPI/Zapret
+	 * main → direct-out ON PURPOSE: their desync corrupts tunneled DoH/DoT
+	 * sessions (ByeDPI carries traffic; DNS resolves directly), and with a
+	 * Direct main node there is no proxy to ride. MultiDNS secure is exempt —
+	 * the resolver points at the local loopback listener (the query never
+	 * leaves the box) and mosdns itself egresses its secure pool through
+	 * mdns-proxy-in → main-out, one layer down. multidns_status reads the
+	 * FACTUAL detour from the generated config and renders it on the DNS
+	 * page, so this expression and the RPC's intended-transport fallback must
+	 * stay in lockstep. 🔴 Declared in the top-level let list ABOVE and only
+	 * assigned here: a const INSIDE this block is block-scoped in ucode, and
+	 * the DNS emission below (outside the block) died with "access to
+	 * undeclared variable" — the exact ч.192 fatal class. A manual run with
+	 * MultiDNS secure ON hid it (the ternary never evaluated the else branch)
+	 * — only a full-stderr run of the mdns_sec=false path proves it. */
+	secure_detour = (main_node in ['direct-out', 'byedpi-out', 'zapret-out'])
+		? 'direct-out' : 'main-out';
 
 	if (is_selective_mode(routing_mode)) {
 		secure_dns_server = first_of(uci.get(uciconfig, ucimain, 'secure_dns_server')) || 'https://cloudflare-dns.com/dns-query';
@@ -1111,7 +1132,8 @@ if (!isEmpty(main_node)) {
 			...ru_dns_target
 		});
 		/* Secure pool: race via the local mosdns listener when MultiDNS is on (DoH/DoT
-		 * bypasses the hijack); otherwise sing-box's own direct DoH/DoT resolver. */
+		 * bypasses the hijack); otherwise sing-box's own DoH/DoT resolver with the
+		 * honest egress (secure_detour — audit 13). */
 		const mdns_sec = (mdns_ok && mdns_use_secure);
 		const secure_target = mdns_sec
 			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_secure_port) }
@@ -1122,7 +1144,7 @@ if (!isEmpty(main_node)) {
 				server: 'russia-dns',
 				strategy: (ipv6_support !== '1') ? 'ipv4_only' : null
 			},
-			detour: 'direct-out',
+			detour: mdns_sec ? 'direct-out' : secure_detour,
 			...secure_target
 		});
 		config.dns.final = 'russia-dns';
@@ -1215,7 +1237,8 @@ if (!isEmpty(main_node)) {
 		 * NOTE (Iran validation): bootstrapping a DoH *hostname* via the local resolver can be
 		 * poisoned by the ISP -- if confirmed in-country, set secure_dns_server to an IP-literal
 		 * DoH (e.g. https://1.1.1.1/dns-query) so no bootstrap is needed. */
-		/* Secure pool: race via the local mosdns listener when MultiDNS+secure is on. */
+		/* Secure pool: race via the local mosdns listener when MultiDNS+secure is on;
+		 * otherwise the honest egress (secure_detour — audit 13, same rule as RU). */
 		const secure_target_br = (		mdns_ok && mdns_use_secure)
 			? { type: 'udp', server: '127.0.0.1', server_port: int(mdns_secure_port) }
 			: parse_dnsserver(secure_dns_server, 'tcp');
@@ -1225,7 +1248,7 @@ if (!isEmpty(main_node)) {
 				server: 'region-dns',
 				strategy: (ipv6_support !== '1') ? 'ipv4_only' : null
 			},
-			detour: 'direct-out',
+			detour: (mdns_ok && mdns_use_secure) ? 'direct-out' : secure_detour,
 			...secure_target_br
 		});
 		config.dns.final = 'secure-dns';
