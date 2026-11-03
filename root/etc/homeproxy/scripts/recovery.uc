@@ -121,8 +121,14 @@ export const ACT_HUNG_KILL = 'hung_kill';
 
 /* Health-записи, маппящиеся на procd-инстанс (лечение svc_start / hung_kill —
  * respawn гарантирован procd'ом). Остальные имена — proposal-классы или
- * пропуск (ленивые/самовосстанавливающиеся — урок 223). */
+ * пропуск (ленивые/самовосстанавливающиеся — урок 223).
+ * 🔴 Ф3.2 (T2b, живой лов 2026-11-04): запись 'core' → procd-инстанс
+ * «hiddify-c». Раньше down ядра уходил в proposal-класс — координатор только
+ * «предлагал», а не ремонтировал, и убитое/удалённое ядро оставало LAN без
+ * интернета до ручного «Перезапуск службы». Идемпотентный start безопасен:
+ * битый конфиг откатывает LKG-конвейер (Ф1.2) с маркером против шторма. */
 const HEALTH_SVC_NAMES = {
+	core: 'hiddify-c',
 	automation: 'automation', multidns: 'multidns', telegram: 'telegram',
 	urltest: 'urltest', hotswap: 'hotswap', autopilot: 'autopilot',
 	control: 'control', sentinel: 'sentinel', health: 'health',
@@ -186,8 +192,10 @@ export function classify_key(key) {
 		return { action: null, target: k, class: 'monitor' };
 	if (k === 'uci' || index(k, 'config:') === 0)
 		return { action: null, target: k, class: 'config' };
-	/* Health-записи без procd-инстанса: core/mosdns/tgws/tun/tun_route/fw4/
-	 * generators/system — proposal по имени записи. */
+	/* Health-записи без procd-инстанса: mosdns/tgws/tun/tun_route/fw4/
+	 * generators/system — proposal по имени записи. 'core' остаётся proposal
+	 * ТОЛЬКО для босого ключа (легаси/ручная заявка): реальный down ядра
+	 * collect_findings маппит в 'svc:hiddify-c' (Ф3.2 — авто-ремонт). */
 	if (k === 'core' || k === 'mosdns' || k === 'tgws' || k === 'tun' ||
 	    k === 'tun_route' || k === 'fw4' || k === 'generators' || k === 'system')
 		return { action: null, target: k, class: k };
@@ -884,7 +892,7 @@ export function selftest() {
 	const he = {
 		metrics: { name: 'metrics', label: 'Сборщик метрик', status: 'down', reason: 'r2', expected: true },
 		probe_pool: { name: 'probe_pool', label: 'pp', status: 'down', reason: 'r3', expected: true },
-		core: { name: 'core', label: 'Ядро', status: 'down', reason: 'api не отвечает', expected: true },
+		core: { name: 'core', label: 'Ядро', status: 'down', reason: 'инстанс исчез из service list', expected: true },
 		system: { name: 'system', label: 'Память', status: 'down', reason: 'мало', expected: true },
 		tun: { name: 'tun', label: 'TUN', status: 'down', reason: 'tun down', expected: true },
 		fw4: { name: 'fw4', label: 'fw4-перехват', status: 'down', reason: 'цепей нет', expected: true },
@@ -896,8 +904,13 @@ export function selftest() {
 	check('cf_config_proposal', f['config:core_cfg'] != null &&
 		f['config:core_cfg'].action == null, null);
 	check('cf_loop_ignored', f['loop:svc_start'] == null, null);
-	check('cf_core_proposal', f['core'] != null && f['core'].action == null &&
-		f['core'].class === 'core', null);
+	/* 🔴 Ф3.2 (T2b): down ядра — это svc:hiddify-c (авто-ремонт), не proposal. */
+	check('cf_core_svc', f['svc:hiddify-c'] != null &&
+		f['svc:hiddify-c'].action === ACT_SVC_START &&
+		f['svc:hiddify-c'].target === 'hiddify-c' &&
+		f['svc:hiddify-c'].class === 'svc', null);
+	check('cf_core_not_proposal', f['core'] == null,
+		'the bare core proposal key is no longer produced from a down verdict');
 	check('cf_fw4_proposal', f['fw4'] != null && f['fw4'].action == null &&
 		f['fw4'].class === 'fw4', 'fw4 down verdict is a proposal, not silence');
 	check('cf_system_proposal', f['system'] != null, null);

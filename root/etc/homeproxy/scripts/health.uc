@@ -380,11 +380,74 @@ function daemon_entry(name, label, group, inst_name, reg_name, script_name, svc,
 		{ respawn_window: true });
 };
 
+/* «Напрямую» (Ф3.1) — единственный режим, где отсутствие инстанса ядра
+ * легитимно (ядро по настройкам не запускается). Легаси custom/custom_json
+ * читаются как рабочий режим (та же нормализация, что в init.d). */
+function core_mode_direct() {
+	const m = uci_str('homeproxy', 'config', 'routing_mode');
+	return (m === 'direct');
+};
+
+const CORE_LABEL = 'Ядро (hiddify-core/sing-box)';
+
+/* Ф3.2 (T2b, живой лов 2026-11-04): в рабочем режиме отсутствие инстанса
+ * ядра — это СМЕРТЬ (убит/удалён извне/procd сдался), а не «выключено
+ * настройками»: перехват ещё активен, LAN без интернета. Ложный off глушил
+ * и событие (off-переходы не алармятся), и ремонт (Recovery off не читает) —
+ * пользователь оставался без интернета, пока сам не нажал «Перезапуск
+ * службы». Чистая функция — самопроверяемая (mode_direct параметром). */
+export function core_missing_verdict(mode_direct) {
+	if (mode_direct === true)
+		return mk_entry('core', CORE_LABEL, 'core', 'off', 'certain',
+			'режим «Напрямую» — ядро по настройкам не запускается', {});
+	return mk_entry('core', CORE_LABEL, 'core', 'down', 'certain',
+		'инстанс «hiddify-c» исчез из service list в рабочем режиме — ' +
+		'внешнее вмешательство или сбой procd (перехват висит без слушателей)', {});
+};
+
+/* Честный вердикт ядра в ЛЁГКОМ проходе (чистая функция — самопроверяемая):
+ * svc-факт из кэша глубокого прохода, живость identity реестра СВЕЖАЯ
+ * (registry_status_map пересчитал alive форклесс), API-факт — переносом.
+ * Мёртвая identity ядра = down, а не «окно респавна»: degraded никем не
+ * ремонтируется (Recovery читает только down) — T2b простоял 2 мин. */
+export function light_core_entry(svc_core, core_reg_all, prev_core, mode_direct, now) {
+	if (svc_core == null)
+		return core_missing_verdict(mode_direct);
+	if (svc_core === false)
+		return mk_entry('core', CORE_LABEL, 'core', 'down', 'certain',
+			'procd: инстанс ядра не работает (respawn-окно или бюджет исчерпан)', {});
+	const core_reg = (core_reg_all != null && core_reg_all.alive === true) ? core_reg_all : null;
+	if (core_reg != null) {
+		const d = { pid: core_reg.pid };
+		let api_degraded = false;
+		if (prev_core != null && prev_core.detail != null &&
+		    prev_core.detail.api_checked != null &&
+		    (now - int(prev_core.detail.api_checked)) < CARRY_SEC &&
+		    prev_core.detail.api_ok === false) {
+			d.api_ok = false;
+			d.api_checked = prev_core.detail.api_checked;
+			api_degraded = true;
+		}
+		return (api_degraded)
+			? mk_entry('core', CORE_LABEL, 'core', 'degraded', 'indirect',
+				'Clash API не отвечал при последней глубокой проверке (' +
+				int((now - int(prev_core.detail.api_checked)) / 60) + ' мин назад)', d)
+			: mk_entry('core', CORE_LABEL, 'core', 'ok', 'certain',
+				'ядро живо (идентичность подтверждена; API — с последней глубокой проверки)', d);
+	}
+	if (core_reg_all != null)
+		return mk_entry('core', CORE_LABEL, 'core', 'down', 'certain',
+			'процесс ядра мёртв (identity реестра не отвечает) — ' +
+			'перехват висит без слушателей', { dead_identity: true });
+	return mk_entry('core', CORE_LABEL, 'core', 'degraded', 'indirect',
+		'инстанс жив, процесс ядра не подтверждён (окно респавна или старт)',
+		{ respawn_window: true });
+};
+
 function core_entry(core_hit, svc, now) {
-	const label = 'Ядро (hiddify-core/sing-box)';
+	const label = CORE_LABEL;
 	if (svc['hiddify-c'] == null)
-		return mk_entry('core', label, 'core', 'off', 'certain',
-			'выключен настройками — инстанс «hiddify-c» не запущен', {});
+		return core_missing_verdict(core_mode_direct());
 	if (svc['hiddify-c'] === false)
 		return mk_entry('core', label, 'core', 'down', 'certain',
 			'procd: инстанс ядра не работает (respawn-окно или бюджет исчерпан)', {});
@@ -614,7 +677,11 @@ export function fw4_entry_from(chains, core_expected, now) {
 	if (chains > 0)
 		return mk_entry('fw4', label, 'net', 'ok', 'certain',
 			'цепи homeproxy присутствуют в fw4 (' + chains + ')', { chains: chains, checked: now });
-	return mk_entry('fw4', label, 'net', 'degraded', 'certain',
+	/* Ф3.2 (T5, живой прогон): полный роспуск цепей при живом ядре — это down,
+	 * а не degraded: degraded Recovery не читает, и «пропал перехват» уходил бы
+	 * без proposal (фикстура Ф2.3 ждала down — урок 229-класс, код расходился
+	 * с замыслом). Ожидаемый перехват исчез = авария координатора. */
+	return mk_entry('fw4', label, 'net', 'down', 'certain',
 		'цепи homeproxy в fw4 не найдены — перехват не активен', { chains: 0, checked: now });
 };
 
@@ -791,38 +858,11 @@ export function light_entries(svc, regst, prev, now) {
 		return null;
 	const entries = {};
 
-	/* Ядро: identity из реестра (записана прошлым сканом), API-факт переносом. */
-	const core_reg = (regst['core'] != null && regst['core'].alive === true)
-		? regst['core'] : null;
-	const prev_core = (prev.entries.core != null) ? prev.entries.core : null;
-	if (svc['hiddify-c'] == null) {
-		entries.core = mk_entry('core', 'Ядро (hiddify-core/sing-box)', 'core', 'off',
-			'certain', 'выключен настройками — инстанс «hiddify-c» не запущен', {});
-	} else if (svc['hiddify-c'] === false) {
-		entries.core = mk_entry('core', 'Ядро (hiddify-core/sing-box)', 'core', 'down',
-			'certain', 'procd: инстанс ядра не работает (respawn-окно или бюджет исчерпан)', {});
-	} else if (core_reg != null) {
-		const d = { pid: core_reg.pid };
-		let api_degraded = false;
-		if (prev_core != null && prev_core.detail != null &&
-		    prev_core.detail.api_checked != null &&
-		    (now - int(prev_core.detail.api_checked)) < CARRY_SEC &&
-		    prev_core.detail.api_ok === false) {
-			d.api_ok = false;
-			d.api_checked = prev_core.detail.api_checked;
-			api_degraded = true;
-		}
-		entries.core = (api_degraded)
-			? mk_entry('core', 'Ядро (hiddify-core/sing-box)', 'core', 'degraded', 'indirect',
-				'Clash API не отвечал при последней глубокой проверке (' +
-				int((now - int(prev_core.detail.api_checked)) / 60) + ' мин назад)', d)
-			: mk_entry('core', 'Ядро (hiddify-core/sing-box)', 'core', 'ok', 'certain',
-				'ядро живо (идентичность подтверждена; API — с последней глубокой проверки)', d);
-	} else {
-		entries.core = mk_entry('core', 'Ядро (hiddify-core/sing-box)', 'core', 'degraded',
-			'indirect', 'инстанс жив, процесс ядра не подтверждён (окно респавна или старт)',
-			{ respawn_window: true });
-	}
+	/* Ядро: вердикт в light_core_entry (Ф3.2 — мёртвая identity = down,
+	 * отсутствие инстанса в рабочем режиме = down, не «off настройками»). */
+	entries.core = light_core_entry(svc['hiddify-c'], regst['core'],
+		(prev.entries.core != null) ? prev.entries.core : null,
+		core_mode_direct(), now);
 
 	/* Движки: identity из реестра (прошлый скан). 🔴 Ключ реестра — pmgr-имя
 	 * ('ciadpi'/'nfqws2'), ключ записи — 'byedpi'/'zapret' (не совпадают!). */
@@ -1092,7 +1132,7 @@ export function selftest() {
 	const fw_ok = fw4_entry_from(5, true, now);
 	check('fw4_ok', fw_ok.status === 'ok' && fw_ok.detail.chains === 5, null);
 	const fw_bad = fw4_entry_from(0, true, now);
-	check('fw4_missing_chains', fw_bad.status === 'degraded', null);
+	check('fw4_missing_chains_down', fw_bad.status === 'down', null);
 	const fw_off = fw4_entry_from(0, false, now);
 	check('fw4_off_when_no_core', fw_off.status === 'off', null);
 
@@ -1137,6 +1177,24 @@ export function selftest() {
 	/* scan-хелпер: basename. */
 	check('basename', basename_of('/usr/bin/hiddify-core') === 'hiddify-core' &&
 		basename_of('nfqws2') === 'nfqws2', null);
+
+	/* Ф3.2 (T2b, живой лов 2026-11-04): честные вердикты ядра. */
+	const cv_missing = core_missing_verdict(false);
+	check('core_missing_working_down', cv_missing.status === 'down' && cv_missing.expected === true,
+		sprintf('%J', cv_missing));
+	const cv_off = core_missing_verdict(true);
+	check('core_missing_direct_off', cv_off.status === 'off' && cv_off.expected === false, null);
+	check('light_core_dead_identity_down',
+		light_core_entry(true, { pid: 1, alive: false }, null, false, now).status === 'down', null);
+	check('light_core_missing_working_down',
+		light_core_entry(null, { pid: 1, alive: true }, null, false, now).status === 'down', null);
+	check('light_core_alive_ok',
+		light_core_entry(true, { pid: 2, alive: true }, null, false, now).status === 'ok', null);
+	check('light_core_api_carry_degraded',
+		light_core_entry(true, { pid: 2, alive: true },
+			{ detail: { api_ok: false, api_checked: now - 60 } }, false, now).status === 'degraded', null);
+	check('light_core_respawn_window_degraded',
+		light_core_entry(true, null, null, false, now).status === 'degraded', null);
 
 	let all_ok = true;
 	for (let c in checks)

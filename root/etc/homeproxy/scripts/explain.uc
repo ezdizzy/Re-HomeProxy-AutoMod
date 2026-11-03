@@ -56,8 +56,11 @@ export const GROUP_ORDER = [
 ];
 
 /* Health-запись → procd-инстанс (зеркало HEALTH_SVC_NAMES recovery.uc —
- * источник тот же класс ключей 'svc:'); сверено с recovery.uc ч.166. */
+ * источник тот же класс ключей 'svc:'); сверено с recovery.uc ч.166.
+ * 🔴 Ф3.2 (T2b): 'core' → 'hiddify-c' — кампания ядра живёт под
+ * 'svc:hiddify-c' (авто-ремонт), explain обязан её находить. */
 const SVC_INST = {
+	core: 'hiddify-c',
 	automation: 'automation', multidns: 'multidns', telegram: 'telegram',
 	urltest: 'urltest', hotswap: 'hotswap', autopilot: 'autopilot',
 	control: 'control', sentinel: 'sentinel', health: 'health',
@@ -569,6 +572,22 @@ export function selftest() {
 	check('proposal_hint', ex.hint != null && length(ex.hint) > 0, null);
 	check('proposal_not_repairable', ex.repairable === false, null);
 	check('proposal_manual_hint', index(ex.manual[0], 'предложение системы') >= 0, sprintf('%J', ex.manual));
+
+	/* 7b. Ф3.2: кампания ядра под 'svc:hiddify-c' (авто-ремонт) — запись core
+	 * обязана её находить и быть repairable (Ремонт-кнопка), без «авто-ремонта нет». */
+	health.entries.core = fe('core', 'Ядро', 'core', 'down', 'certain',
+		'инстанс «hiddify-c» исчез из service list в рабочем режиме');
+	c = compose(health, { overall: 'down', coordinator: 'live', findings: {
+		'svc:hiddify-c': { status: 'down', label: 'Ядро', reason: 'procd: инстанс не работает' } } },
+		{ overall: 'active', active_keys: 1, blocked_keys: 0, manual_queue: [],
+		  keys: { 'svc:hiddify-c': camp('svc:hiddify-c', { action: 'svc_start', target: 'hiddify-c', class: 'svc' }) },
+		  blocked: {}, history: [], manual_freeze_until: 0, watch_op: null }, now);
+	ex = c.entries.core;
+	check('core_svc_campaign_found', ex.campaign != null && ex.campaign.key === 'svc:hiddify-c',
+		sprintf('%J', ex.campaign));
+	check('core_svc_repairable', ex.repairable === true, null);
+	check('core_svc_no_proposal_line', index('' + join(' | ', ex.next), 'авто-ремонта для этого класса нет') < 0,
+		sprintf('%J', ex.next));
 
 	/* 8. Находка при ок-записи → alert на записи (Sentinel заметил раньше). */
 	health.entries.core = fe('core', 'Ядро', 'core', 'ok', 'certain', 'ядро живо');

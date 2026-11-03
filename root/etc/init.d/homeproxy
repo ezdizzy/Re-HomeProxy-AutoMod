@@ -663,12 +663,20 @@ start_service() {
 	config_get table_mark "infra" "table_mark" "100"
 	config_get tproxy_mark "infra" "tproxy_mark" "101"
 
+	# 🔴 Ф3.2 (живой лов 2026-11-04): `ip rule add` НЕ идемпотентен — каждый
+	# start (Recovery/Sentinel svc_start, LKG-рестарты верификатора) добавлял
+	# ЕЩЁ ОДНО идентичное правило; на боевой коробке накопилось 7 дубликатов
+	# fwmark 101. Честная ре-аккламация: снести наши копии и добавить одну.
+	# (`ip route add`, в отличие от rule, существующий маршрут не дублирует —
+	# падает с "File exists", потому || true.)
+	while ip rule del fwmark "$tproxy_mark" table "$table_mark" 2>"/dev/null"; do :; done
 	ip rule add fwmark "$tproxy_mark" table "$table_mark"
-	ip route add local 0.0.0.0/0 dev lo table "$table_mark"
+	ip route add local 0.0.0.0/0 dev lo table "$table_mark" 2>"/dev/null" || true
 
 	if [ "$ipv6_support" -eq "1" ]; then
+		while ip -6 rule del fwmark "$tproxy_mark" table "$table_mark" 2>"/dev/null"; do :; done
 		ip -6 rule add fwmark "$tproxy_mark" table "$table_mark"
-		ip -6 route add local ::/0 dev lo table "$table_mark"
+		ip -6 route add local ::/0 dev lo table "$table_mark" 2>"/dev/null" || true
 	fi
 
 	# TUN policy routing is installed LATER (after the core brings up the tun device).
