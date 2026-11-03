@@ -414,7 +414,7 @@ function buildProviderSection() {
 
 		if (!result.proxy_in && !result.mixed_in)
 			scanResult.appendChild(E('div', { 'class': 'hpui-banner' },
-				[ _('The diagnostic inbounds are unavailable (Custom routing / Custom JSON) — only a partial picture is possible.') ]));
+				[ _('The diagnostic inbounds are unavailable (the core is off or in "Direct" mode) — only a partial picture is possible.') ]));
 
 		/* Column order follows the verdict (Ф8-W2): the CONFIGURED path
 		 * and its verdict first; the direct/main-path probes are the
@@ -696,7 +696,7 @@ function buildConnectivitySection(view, coreType) {
 	}
 
 	/* Dedicated UDP node — only the modes that expose "Main UDP node" in the UI set it
-	   (Global + the bypass_cn/bypass_ir reverse modes; proxy_banned_ru/custom don't, and
+	   (Global + the bypass_cn/bypass_ir reverse modes; proxy_banned_ru doesn't, and
 	   'redirect' proxy mode has no UDP path). Show which node currently carries UDP. */
 	const udpNode   = uci.get('homeproxy', 'config', 'main_udp_node');
 	const proxyMode = uci.get('homeproxy', 'config', 'proxy_mode');

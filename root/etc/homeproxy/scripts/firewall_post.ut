@@ -75,15 +75,16 @@ uci.load(cfgname);
  * hijack block then rendered even when OpenWrt's own dnsmasq hijack was on). */
 uci.load('dhcp');
 
-const routing_mode = uci.get(cfgname, 'config', 'routing_mode') || 'proxy_banned_ru';
+/* Ф3.1: THREE routing modes (proxy_banned_ru / direct / global). Custom routing /
+ * Custom JSON are RETIRED (D23) — a legacy value reads as the working mode until
+ * the Ф3.4 migration rewrites it. */
+let routing_mode = uci.get(cfgname, 'config', 'routing_mode') || 'proxy_banned_ru';
+if (routing_mode === 'custom' || routing_mode === 'custom_json')
+	routing_mode = 'proxy_banned_ru';
 let outbound_node, outbound_udp_node;
 
-if (routing_mode !== 'custom') {
-	outbound_node = uci.get(cfgname, 'config', 'main_node') || 'nil';
-	outbound_udp_node = uci.get(cfgname, 'config', 'main_udp_node') || 'nil';
-} else {
-	outbound_node = uci.get(cfgname, 'routing', 'default_outbound') || 'nil';
-}
+outbound_node = uci.get(cfgname, 'config', 'main_node') || 'nil';
+outbound_udp_node = uci.get(cfgname, 'config', 'main_udp_node') || 'nil';
 
 let routing_port = uci.get(cfgname, 'config', 'routing_port');
 if (routing_port === 'common')
@@ -159,7 +160,7 @@ if (match(proxy_mode, /redirect|tproxy|tun/)) {
 if (match(proxy_mode, /redirect/))
 	redirect_port = uci.get(cfgname, 'infra', 'redirect_port') || '5331';
 if (match(proxy_mode, /tproxy/))
-	if (outbound_udp_node !== 'nil' || routing_mode === 'custom' || routing_mode === 'proxy_banned_ru') {
+	if (outbound_udp_node !== 'nil' || routing_mode === 'proxy_banned_ru') {
 		tproxy_port = uci.get(cfgname, 'infra', 'tproxy_port') || '5332';
 		tproxy_mark = resolve_mark(uci.get(cfgname, 'infra', 'tproxy_mark') || '101');
 	}
@@ -424,7 +425,6 @@ chain homeproxy_redirect {
 	ip6 daddr @homeproxy_local_addr_v6 counter return
 	{% endif %}
 
-	{% if (routing_mode !== 'custom'): %}
 	{% if (!isEmpty(control_info.lan_global_proxy_ipv4_ips)): %}
 	ip saddr {{ array_to_nftarr(control_info.lan_global_proxy_ipv4_ips) }} counter goto homeproxy_redirect_proxy_port
 	{% endif /* lan_global_proxy_ipv4_ips */ %}
@@ -434,7 +434,6 @@ chain homeproxy_redirect {
 	{% if (!isEmpty(control_info.lan_global_proxy_mac_addrs)): %}
 	ether saddr {{ array_to_nftarr(control_info.lan_global_proxy_mac_addrs) }} counter goto homeproxy_redirect_proxy_port
 	{% endif /* lan_global_proxy_mac_addrs */ %}
-	{% endif /* routing_mode */ %}
 
 	ip daddr @homeproxy_wan_direct_addr_v4 counter return
 	{% if (ipv6_support === '1'): %}
@@ -492,7 +491,7 @@ chain homeproxy_quic {
 {% endif %}
 
 {# UDP tproxy #}
-{% if (match(proxy_mode, /tproxy/) && (outbound_udp_node !== 'nil' || routing_mode === 'custom' || routing_mode === 'proxy_banned_ru')): %}
+{% if (match(proxy_mode, /tproxy/) && (outbound_udp_node !== 'nil' || routing_mode === 'proxy_banned_ru')): %}
 chain homeproxy_mangle_tproxy {
 	meta l4proto udp meta mark set {{ tproxy_mark }} tproxy ip to 127.0.0.1:{{ tproxy_port }} counter accept
 	{% if (ipv6_support === '1'): %}
@@ -562,7 +561,6 @@ chain homeproxy_mangle_prerouting {
 	ip6 daddr @homeproxy_local_addr_v6 counter return
 	{% endif %}
 
-	{% if (routing_mode !== 'custom'): %}
 	{% if (!isEmpty(control_info.lan_global_proxy_ipv4_ips)): %}
 	ip saddr {{ array_to_nftarr(control_info.lan_global_proxy_ipv4_ips) }} counter goto homeproxy_mangle_tproxy_port
 	{% endif /* lan_global_proxy_ipv4_ips */ %}
@@ -572,7 +570,6 @@ chain homeproxy_mangle_prerouting {
 	{% if (!isEmpty(control_info.lan_global_proxy_mac_addrs)): %}
 	ether saddr {{ array_to_nftarr(control_info.lan_global_proxy_mac_addrs) }} counter goto homeproxy_mangle_tproxy_port
 	{% endif /* lan_global_proxy_mac_addrs */ %}
-	{% endif /* routing_mode */ %}
 
 	ip daddr @homeproxy_wan_direct_addr_v4 counter return
 	{% if (ipv6_support === '1'): %}
@@ -725,7 +722,6 @@ chain homeproxy_mangle_tun {
 	ip6 daddr @homeproxy_local_addr_v6 counter return
 	{% endif %}
 
-	{% if (routing_mode !== 'custom'): %}
 	{% if (!isEmpty(control_info.lan_global_proxy_ipv4_ips)): %}
 	ip saddr {{ array_to_nftarr(control_info.lan_global_proxy_ipv4_ips) }} counter goto homeproxy_mangle_tun_mark
 	{% endif /* lan_global_proxy_ipv4_ips */ %}
@@ -735,7 +731,6 @@ chain homeproxy_mangle_tun {
 	{% if (!isEmpty(control_info.lan_global_proxy_mac_addrs)): %}
 	ether saddr {{ array_to_nftarr(control_info.lan_global_proxy_mac_addrs) }} counter goto homeproxy_mangle_tun_mark
 	{% endif /* lan_global_proxy_mac_addrs */ %}
-	{% endif /* routing_mode */ %}
 
 	{% if (control_info.wan_direct_ipv4_ips): %}
 	ip daddr {{ array_to_nftarr(control_info.wan_direct_ipv4_ips) }} counter return

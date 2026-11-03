@@ -213,9 +213,13 @@ function proxyBadge(c) {
 		return false;
 	}
 
-	const isGaming = inList('lan_gaming_mode_mac_addrs') || inList('lan_gaming_mode_ipv4_ips');
-	const isGlobal = (routing === 'custom') &&
-		(inList('lan_global_proxy_mac_addrs') || inList('lan_global_proxy_ipv4_ips'));
+	/* Ф3.1: in the direct mode («Напрямую») NOTHING is proxied — the honest
+	 * badge is "No proxy" no matter what the per-device policy says (the
+	 * policies keep their values and apply again after switching back). */
+	if (routing === 'direct')
+		return E('span', { 'class': 'hpui-badge hpui-b-grey' }, [ _('No proxy') ]);
+
+	const isGlobal = inList('lan_global_proxy_mac_addrs') || inList('lan_global_proxy_ipv4_ips');
 
 	let cls, label;
 	if (isGlobal) {
@@ -538,13 +542,11 @@ return view.extend({
 		so = fwtool.addMACOption(s, 'lan_ip_policy', 'lan_gaming_mode_mac_addrs', _('Gaming mode MAC-s'), null, hosts);
 
 		so = fwtool.addIPOption(s, 'lan_ip_policy', 'lan_global_proxy_ipv4_ips', _('Global proxy IPv4 IP-s'), _('In global proxy mode, all traffic from the selected device goes through the proxy.'), 'ipv4', hosts, true);
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
 
 		so = fwtool.addIPOption(s, 'lan_ip_policy', 'lan_global_proxy_ipv6_ips', _('Global proxy IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends({'homeproxy.config.routing_mode': /^((?!custom).)+$/, 'homeproxy.config.ipv6_support': '1'});
+		so.depends('homeproxy.config.ipv6_support', '1');
 
 		so = fwtool.addMACOption(s, 'lan_ip_policy', 'lan_global_proxy_mac_addrs', _('Global proxy MAC-s'), null, hosts);
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
 
 		s.tab('wan_ip_policy', _('WAN IP Policy'));
 

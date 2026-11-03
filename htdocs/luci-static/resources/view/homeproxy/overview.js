@@ -127,13 +127,15 @@ function resolveTag(tag) {
 	return tag;
 }
 
-/* Routing mode → display label (same names the Client tab uses). */
+/* Routing mode → display label (Ф3.1: the three-mode model; legacy custom
+ * values still read honestly as the working mode). */
 function routingModeLabel(mode) {
 	switch (mode) {
 		case 'proxy_banned_ru': return _('Bypass blocking (rule lists)');
-		case 'global': return _('Global');
-		case 'custom': return _('Custom routing');
-		case 'custom_json': return _('Custom JSON');
+		case 'global': return _('Everything through node');
+		case 'direct': return _('Direct (all mechanisms off)');
+		case 'custom':
+		case 'custom_json': return _('Bypass blocking (rule lists)') + ' (' + _('legacy mode') + ')';
 		default: return mode || '—';
 	}
 }
@@ -688,10 +690,16 @@ return view.extend({
 			const coreName = coreType === 'hiddify' ? 'hiddify-core' :
 				coreType === 'singbox' ? 'sing-box-extended' : _('not installed');
 			const coreVer = features.version ? 'v' + features.version : '';
-			mcardNum(mcards.core, coreName, sys.clash_ok ? '' : (coreType ? 'hpui-c-red' : ''));
+			mcardNum(mcards.core, coreName, sys.clash_ok ? '' : (coreType && cfgMode !== 'direct' ? 'hpui-c-red' : ''));
 			mcards.core.note.textContent = (coreVer ? coreVer : '') +
-				(sys.clash_ok ? ' · ' + _('running') : (coreType ? ' · ' + _('not responding') : ''));
-			if (!coreType) {
+				(sys.clash_ok ? ' · ' + _('running')
+					: (coreType ? ' · ' + ((cfgMode === 'direct') ? _('off (direct mode)') : _('not responding')) : ''));
+			/* Ф3.1: in the direct mode («Напрямую») the core being down is the
+			 * CHOSEN state, not a fault — the hero says so instead of alarming. */
+			if (cfgMode === 'direct') {
+				heroStatus.className = 'hpui-hero-status ok';
+				heroStatus.textContent = _('Direct mode is on — bypass is off');
+			} else if (!coreType) {
 				heroStatus.className = 'hpui-hero-status bad';
 				heroStatus.textContent = _('Core is not installed');
 			} else if (!sys.clash_ok) {
@@ -718,11 +726,11 @@ return view.extend({
 				exitDot = node.delay ? 'ok' : '';
 			} else {
 				mcardNum(mcards.node, '—', 'hpui-c-grey');
-				mcards.node.note.textContent = (cfgMode === 'custom' || cfgMode === 'custom_json')
-					? _('Custom routing — no main node')
+				mcards.node.note.textContent = (cfgMode === 'direct')
+					? _('Direct mode — bypass is off')
 					: (cfgMainNode === 'direct-out' ? _('Direct') : _('no node'));
-				exitText = (cfgMode === 'custom' || cfgMode === 'custom_json')
-					? _('Custom routing — no main node')
+				exitText = (cfgMode === 'direct')
+					? _('Direct mode — bypass is off')
 					: (cfgMainNode === 'direct-out' ? _('Direct') : _('Proxy is not configured'));
 				exitDot = (cfgMainNode === 'direct-out') ? 'warn' : '';
 			}
@@ -803,10 +811,13 @@ return view.extend({
 			 * the same poll — no extra RPC. */
 			const diagOk = !!sys.clash_ok;
 			const diagSeen = !!sys.app_version;
-			hub.diag.dot.className = 'hpui-dot' + (diagSeen ? (diagOk ? ' ok' : ' bad') : '');
+			/* Ф3.1: direct mode — the core being down is the chosen state. */
+			const directNow = (cfgMode === 'direct');
+			hub.diag.dot.className = 'hpui-dot' + (diagSeen ? ((diagOk || directNow) ? ' ok' : ' bad') : '');
 			hub.diag.state.textContent = !diagSeen ? _('not installed')
-				: (diagOk ? _('Everything is running') : _('Core is not responding'));
-			hub.maint.dot.className = 'hpui-dot' + (diagSeen ? (diagOk ? ' ok' : ' bad') : '');
+				: (directNow ? _('Direct mode is on — bypass is off')
+					: (diagOk ? _('Everything is running') : _('Core is not responding')));
+			hub.maint.dot.className = 'hpui-dot' + (diagSeen ? ((diagOk || directNow) ? ' ok' : ' bad') : '');
 			hub.maint.state.textContent = diagSeen
 				? 'Ravnex v' + sys.app_version : _('not installed');
 

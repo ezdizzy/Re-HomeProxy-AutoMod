@@ -740,8 +740,13 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 			return L.resolveDefault(callShellSys(), {}).then((sys) => {
 				const ok = !!(sys && sys.clash_ok);
 				const seen = !!(sys && sys.app_version);
-				dotEl.className = 'hpui-dot' + (seen ? (ok ? ' ok' : ' bad') : '');
-				textEl.textContent = ok ? _('System is running') : _('Core is not responding');
+				/* Ф3.1: in the direct mode («Напрямую») the core being down is
+				 * the CHOSEN state — the status line says so instead of
+				 * alarming on every page of the app. */
+				const direct = (uci.get('homeproxy', 'config', 'routing_mode') === 'direct');
+				dotEl.className = 'hpui-dot' + (seen ? ((ok || direct) ? ' ok' : ' bad') : '');
+				textEl.textContent = direct ? _('Direct mode is on — bypass is off')
+					: (ok ? _('System is running') : _('Core is not responding'));
 				subEl.textContent = (sys && sys.app_version) ? 'Ravnex v' + sys.app_version : '';
 			});
 		}, this), 10);

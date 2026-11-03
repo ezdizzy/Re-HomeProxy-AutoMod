@@ -288,7 +288,7 @@ return view.extend({
 
 		let o = s.option(form.Flag, 'enabled', _('Enable automation'),
 			_('Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br>'
-			+ '<b>Mode notes:</b> active only in "Bypass blocking". Automatically paused in Global (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in Custom routing / Custom JSON. After toggling, press "Restart service" on the Overview tab.'));
+			+ '<b>Mode notes:</b> active only in "Bypass blocking". Automatically paused in "Everything through node" (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in "Direct" mode (all mechanisms are off). After toggling, press "Restart service" on the Overview tab.'));
 		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'mode', _('Mode'));
@@ -418,8 +418,9 @@ return view.extend({
 
 		const pauseReasons = {
 			disabled: _('Automation is disabled — enable it in Settings to start learning.'),
-			custom: _('Automation is paused: Custom routing is active — the engine has no preset pools to learn from. Switch to "Bypass blocking" to resume.'),
-			global: _('Automation is paused: Global mode tunnels everything — there is nothing left to learn. Switch to "Bypass blocking" to resume.'),
+			custom: _('Automation is paused: a legacy custom routing mode is active — the engine has no preset pools to learn from. Switch to "Bypass blocking" to resume.'),
+			global: _('Automation is paused: "Everything through node" tunnels everything — there is nothing left to learn. Switch to "Bypass blocking" to resume.'),
+			direct_mode: _('Automation is paused: "Direct" mode is on — all bypass mechanisms are off. Switch back to "Bypass blocking" to resume.'),
 			direct: _('Automation is paused: Main node is Direct (no proxy) — there is no proxy side to verify against. Choose URLTest or a node as Main node to resume.'),
 			outage: _('Automation is paused: network outage — the direct-path baseline (control sites) does not answer, so failed probes are NOT recorded as blocks. Learning resumes automatically once the connection is back.')
 		};

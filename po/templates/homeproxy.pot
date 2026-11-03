@@ -6847,3 +6847,48 @@ msgstr ""
 
 msgid "Down: %d · "
 msgstr ""
+
+msgid "Automation is paused: a legacy custom routing mode is active — the engine has no preset pools to learn from. Switch to \"Bypass blocking\" to resume."
+msgstr ""
+
+msgid "Automation is paused: \"Everything through node\" tunnels everything — there is nothing left to learn. Switch to \"Bypass blocking\" to resume."
+msgstr ""
+
+msgid "Automation is paused: \"Direct\" mode is on — all bypass mechanisms are off. Switch back to \"Bypass blocking\" to resume."
+msgstr ""
+
+msgid "Everything through node"
+msgstr ""
+
+msgid "Direct (all mechanisms off)"
+msgstr ""
+
+msgid "All bypass mechanisms are switched OFF in this mode: interception, the Zapret/ByeDPI engines, the DNS scheme and the core itself are not running — the router hands out the internet exactly as the provider gives it. Use it for repairs and diagnostics. The settings below keep their values and take effect again when you switch back to \"Bypass blocking\" or \"Everything through node\"."
+msgstr ""
+
+msgid "The diagnostic inbounds are unavailable (the core is off or in \"Direct\" mode) — only a partial picture is possible."
+msgstr ""
+
+msgid "legacy mode"
+msgstr ""
+
+msgid "off (direct mode)"
+msgstr ""
+
+msgid "Direct mode is on — bypass is off"
+msgstr ""
+
+msgid "Direct mode — bypass is off"
+msgstr ""
+
+msgid "legacy custom routing"
+msgstr ""
+
+msgid "The pinned diagnostic inbounds are not listening (the core is off or in \"Direct\" mode) — path checks are limited."
+msgstr ""
+msgid "• <b>Bypass blocking (rule lists)</b> — the everyday WORKING mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The bypass engines (Zapret / ByeDPI) and the Automation engine work here.<br>• <b>Everything through node</b> — ALL traffic goes through the Main node; per-service rules are not used.<br>• <b>Direct (all mechanisms off)</b> — for repairs and diagnostics: interception, engines, the DNS scheme and the core itself are OFF, the router just hands out the internet as the provider gives it.<br>Changing the mode re-renders the page so only relevant options stay visible"
+msgstr ""
+msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br><b>Mode notes:</b> active only in \"Bypass blocking\". Automatically paused in \"Everything through node\" (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in \"Direct\" mode (all mechanisms are off). After toggling, press \"Restart service\" on the Overview tab."
+msgstr ""
+msgid "Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh).<br><b>Wired into:</b> \"Bypass blocking\" and region preset modes, whose DNS pools it accelerates. In \"Everything through node\" nothing queries its listeners — mosdns is not started there, so leave this off in that mode; in \"Direct\" mode nothing runs at all."
+msgstr ""

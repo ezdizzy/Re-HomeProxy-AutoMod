@@ -329,7 +329,9 @@ function fuzz_running() {
 }
 
 function routing_mode() {
-	return '' + (cursor().get('homeproxy', 'config', 'routing_mode') || '');
+	/* Ф3.1: legacy custom/custom_json read as the working mode (D23). */
+	const rm = '' + (cursor().get('homeproxy', 'config', 'routing_mode') || '');
+	return (rm === 'custom' || rm === 'custom_json') ? 'proxy_banned_ru' : rm;
 }
 
 function tgws_enabled() {

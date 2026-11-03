@@ -2834,9 +2834,10 @@ echo done > "$PRE.done"
 	 * Mirrors the per-pass gate: 'nil' main and Global mode are equally unlearnable. */
 	let main_node_start = uci.get('homeproxy', 'config', 'main_node') || 'nil';
 	let main_is_direct = (main_node_start === 'direct-out' || main_node_start === 'nil' ||
-	                      (uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru') === 'global');
+	                      (uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru') === 'global' ||
+	                      (uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru') === 'direct');
 	if (main_is_direct)
-		log('main node is Direct (no proxy) - proxy-side probes disabled, learning paused.');
+		log('no proxy side to probe (main node is Direct or the mode is Global/«Напрямую») - proxy-side probes disabled, learning paused.');
 
 	let last_reload = 0;
 	pending_reload = false;
@@ -3316,31 +3317,36 @@ echo done > "$PRE.done"
 	function pass(run_now) {
 		enabled = uci.get('homeproxy', 'automation', 'enabled');
 		if (enabled !== '1') return;
-		/* Mode gating. Learning is only meaningful when a real proxy path exists
-		 * AND the mode actually routes by rules:
-		 * - custom/custom_json: pinned test inbounds are not emitted there;
-		 * - Global: EVERYTHING tunnels anyway — nothing to learn;
-		 * - Main node Direct: no proxy side to verify against.
-		 * Stay resident — flipping back to a learnable setup resumes on the next
-		 * pass. While paused the pass is FULLY inert: no discovery, no probes,
-		 * no state churn — and dnsmasq query logging is torn down (its 4 MB
-		 * self-rotation lives in discover_dns(), which never runs here; an
-		 * always-on log would grow until reboot). */
-		let rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
-		let main_node_now = uci.get('homeproxy', 'config', 'main_node') || 'nil';
-		main_is_direct = (main_node_now === 'direct-out' || main_node_now === 'nil' || rmode === 'global');
-		if (rmode === 'custom' || rmode === 'custom_json' || rmode === 'global' || main_is_direct) {
-			if (dns_log_on) {
-				if (has('dns')) disable_dns_log();
-				dns_log_on = false;
-				log('learning paused (' + (rmode === 'global' ? 'Global mode' :
-				    (main_is_direct ? 'main node is Direct' : rmode)) +
-				    ') - dnsmasq query logging disabled.');
-				eng_event('pause', (rmode === 'global' ? 'Global mode' :
-				         (main_is_direct ? 'main node is Direct' : rmode)));
-			}
-			return false;
+	/* Mode gating. Learning is only meaningful when a real proxy path exists
+	 * AND the mode actually routes by rules (Ф3.1: the WORKING mode):
+	 * - Custom routing / Custom JSON are RETIRED (D23): a legacy value reads
+	 *   as the working mode for the GENERATOR, but until the Ф3.4 migration
+	 *   rewrites UCI the probes' pinned inbounds may not match the generated
+	 *   config honestly — keep learning paused on legacy values;
+	 * - Global: EVERYTHING tunnels anyway — nothing to learn;
+	 * - Direct («Напрямую»): ALL mechanisms are off — no probes at all;
+	 * - Main node Direct: no proxy side to verify against.
+	 * Stay resident — flipping back to a learnable setup resumes on the next
+	 * pass. While paused the pass is FULLY inert: no discovery, no probes,
+	 * no state churn — and dnsmasq query logging is torn down (its 4 MB
+	 * self-rotation lives in discover_dns(), which never runs here; an
+	 * always-on log would grow until reboot). */
+	let rmode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
+	let main_node_now = uci.get('homeproxy', 'config', 'main_node') || 'nil';
+	main_is_direct = (main_node_now === 'direct-out' || main_node_now === 'nil' || rmode === 'global');
+	let mode_paused = (rmode === 'custom' || rmode === 'custom_json' || rmode === 'direct');
+	if (mode_paused || rmode === 'global' || main_is_direct) {
+		if (dns_log_on) {
+			if (has('dns')) disable_dns_log();
+			dns_log_on = false;
+			log('learning paused (' + (mode_paused ? ('routing mode ' + rmode) :
+			    (rmode === 'global' ? 'Global mode' : 'main node is Direct')) +
+			    ') - dnsmasq query logging disabled.');
+			eng_event('pause', (mode_paused ? ('routing mode ' + rmode) :
+			         (rmode === 'global' ? 'Global mode' : 'main node is Direct')));
 		}
+		return false;
+	}
 		if (has('dns') && !dns_log_on) {
 			enable_dns_log();
 			dns_log_on = true;
@@ -3930,14 +3936,17 @@ echo done > "$PRE.done"
 
 	let routing_mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 	if (routing_mode === 'custom' || routing_mode === 'custom_json')
-		log(`routing mode is '${routing_mode}' - learning paused (no preset pools; probes are not wired). Switch to a preset mode to resume.`);
+		log(`routing mode is '${routing_mode}' - learning paused (legacy custom mode, D23; probes are not wired). Switch to a preset mode to resume.`);
+	else if (routing_mode === 'direct')
+		log('routing mode is direct («Напрямую») - all bypass mechanisms are off, learning paused.');
 
 	/* Enable DNS query logging only when the CURRENT setup is learnable: its 4 MB
 	 * self-rotation lives in discover_dns(), which never runs while paused — an
 	 * always-on log would grow until reboot. pass() flips logging on the
 	 * paused↔active edge when the routing mode / main node changes. */
 	let _learnable_start = (routing_mode !== 'custom' && routing_mode !== 'custom_json' &&
-	                        routing_mode !== 'global' && !main_is_direct);
+	                        routing_mode !== 'global' && routing_mode !== 'direct' &&
+	                        !main_is_direct);
 	if (has('dns') && _learnable_start) {
 		enable_dns_log();
 		dns_log_on = true;
@@ -3995,6 +4004,7 @@ echo done > "$PRE.done"
 		const rm = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 		const mn = uci.get('homeproxy', 'config', 'main_node') || 'nil';
 		if (rm === 'custom' || rm === 'custom_json') paused = 'custom';
+		else if (rm === 'direct') paused = 'direct';
 		else if (rm === 'global') paused = 'global';
 		else if (mn === 'direct-out' || mn === 'nil') paused = 'direct';
 		const doc = {

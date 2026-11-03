@@ -5110,7 +5110,8 @@ const methods = {
 
 			/* Why the engine is (or is not) allowed to learn right now — mirrors the
 			 * daemon's pass() gate so the UI can show an honest paused banner:
-			 * '' = learning active; 'disabled' | 'custom' | 'global' | 'direct'. */
+			 * '' = learning active; 'disabled' | 'custom' | 'global' | 'direct'
+			 * | 'direct_mode'. */
 			let paused = '';
 			if (enabled !== '1')
 				paused = 'disabled';
@@ -5123,6 +5124,7 @@ const methods = {
 			if (paused === '')
 				paused = (rmode === 'custom' || rmode === 'custom_json') ? 'custom'
 				       : (rmode === 'global') ? 'global'
+				       : (rmode === 'direct') ? 'direct_mode'
 				       : (mnode === 'direct-out' || mnode === 'nil') ? 'direct'
 				       : '';
 			/* Outage guard (2026-11-03): an open outage window suspends learning

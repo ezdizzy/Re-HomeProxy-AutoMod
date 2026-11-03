@@ -121,6 +121,7 @@ const CORE_CFG = '/var/run/homeproxy/hiddify-c.json';
 const CORE_LKG = '/var/run/homeproxy/hiddify-c.json.lastgood';
 const MDNS_CONF = '/var/run/homeproxy/multidns/mosdns.yaml';
 const SYS_CONF = '/etc/config/homeproxy';
+const SVC_EPOCH_PATH = '/var/run/homeproxy/.service_epoch';
 
 /* Человекочитаемые имена инстансов (сообщения — именами, не сырыми id —
  * память hotswap.messages_node_names_not_cfg_ids). */
@@ -219,6 +220,14 @@ export function drifted_instances(prev_inst, svc) {
 		if (svc['' + k] == null)
 			push(out, '' + k);
 	return out;
+};
+
+/* Легитимность смены набора (Ф3.1): применился op (ревизия выросла), живой
+ * apply, ИЛИ служба рестартовала (счётчик стартов .service_epoch вырос —
+ * init.d заново оценил все гейты по UCI). Только «всё без изменений» = аномалия. */
+export function instance_change_legit(prev_rev, prev_epoch, rev, epoch, apply_running) {
+	return int(prev_rev) !== int(rev) || int(prev_epoch) !== int(epoch) ||
+		apply_running === true;
 };
 
 /* Зависшие операции: queued/running/verifying с протухшим heartbeat. */
@@ -462,6 +471,22 @@ export function service_instances() {
 	return out;
 };
 
+/* Счётчик стартов службы (Ф3.1): init.d bump'ит его на КАЖДОМ start_service.
+ * Легитимность смены набора инстансов: рестарт службы = init.d заново оценил
+ * все гейты по UCI — набор обязан измениться; исчезновение инстанса БЕЗ
+ * рестарта (ubus service delete, урок 219) счётчик не трогает = аномалия.
+ * Дискриминатор строже bump'а config_revision: он покрывает и смены набора
+ * через обычные LuCI-формы (Save&Apply → procd reload-триггер → stop+start,
+ * мимо opman). Файл в tmpfs: ребут обнуляет вместе с документом сторожа. */
+export function service_epoch() {
+	const raw = readfile(SVC_EPOCH_PATH);
+	if (raw == null)
+		return 0;
+	const m = match(trim('' + raw), /^([0-9]+)$/);
+	return (m != null) ? int(m[1]) : 0;
+};
+
+
 /* ── ремонты ─────────────────────────────────────────────────────────────── */
 
 /* Идемпотентный start службы: rc-файл + опрос с heartbeat ора (урок 167:
@@ -538,22 +563,31 @@ export function compute_and_store(opts) {
 	let svc = (prev != null && prev.instances != null) ? prev.instances : null;
 	let apply_running = false;
 	let ops_now = null;
+	let epoch = 0;
 	const rev = ss_read_revision();
 	if (full) {
 		svc = service_instances();
 		ops_now = op_list();
 		apply_running = apply_in_progress(ops_now, now);
+		epoch = service_epoch();
 		if (now >= grace_until) {
-			/* Дрейф набора (урок 219): только при НЕизменившейся ревизии и
-			 * вне окна apply — иначе смена набора легитимна. */
+			/* Дрейф набора (урок 219): только при НЕизменившейся ревизии,
+			 * НЕизменившемся счётчике стартов службы и вне окна apply —
+			 * иначе смена набора легитимна. 🔴 Ф3.1: рестарт службы —
+			 * ЕДИНСТВЕННЫЙ легитимный способ смены набора (init.d заново
+			 * оценивает все гейты по UCI — смена режима маршрутизации,
+			 * движков, автоматизации), и он bump'ит .service_epoch. Смена
+			 * набора при НЕизменившемся счётчике = внешний вмешатель­ство
+			 * (ubus delete) — именно оно и есть аномалия. */
 			const prev_inst = (prev != null && prev.instances != null) ? prev.instances : null;
 			const prev_rev = (prev != null) ? int(prev.config_revision || 0) : -1;
-			if (prev_inst != null && prev_rev === int(rev) && !apply_running) {
+			const prev_epoch = (prev != null) ? int(prev.service_epoch || 0) : -1;
+			if (prev_inst != null && !instance_change_legit(prev_rev, prev_epoch, rev, epoch, apply_running)) {
 				for (let name in drifted_instances(prev_inst, svc)) {
 					findings['svc_drift:' + name] = {
 						status: 'down', label: inst_label(name),
-						reason: 'инстанс исчез из service list без применения конфигурации (ревизия ' +
-							rev + ' не менялась) — внешний вмешательство (ubus delete?)',
+						reason: 'инстанс исчез из service list без рестарта службы (ревизия ' +
+							rev + ' и счётчик стартов ' + epoch + ' не менялись) — внешний вмешательство (ubus delete?)',
 						confidence: 'certain'
 					};
 					push(svc_want, inst_label(name));
@@ -742,6 +776,7 @@ export function compute_and_store(opts) {
 		deep: full,
 		health_age: hage,
 		config_revision: int(rev),
+		service_epoch: epoch,
 		instances: svc,
 		coordinator: (recovery_live) ? 'live' : 'self',
 		findings: findings,
@@ -789,6 +824,14 @@ export function selftest() {
 	check('drift_none', length(drifted_instances(null, { a: true })) === 0 &&
 		length(drifted_instances({ a: true }, { a: true, b: false })) === 0 &&
 		length(drifted_instances({ a: null }, { a: false })) === 0, null);
+
+	/* instance_change_legit (Ф3.1): рестарт службы (эпоха выросла), применение
+	 * (ревизия выросла) и живой apply легитимизируют смену набора; только
+	 * «всё без изменений» — аномалия. */
+	check('chg_legit_epoch', instance_change_legit(5, 3, 5, 4, false) === true &&
+		instance_change_legit(5, 3, 6, 3, false) === true &&
+		instance_change_legit(5, 3, 5, 3, true) === true, null);
+	check('chg_anomaly', instance_change_legit(5, 3, 5, 3, false) === false, null);
 
 	/* stale_ops. */
 	const ops = [

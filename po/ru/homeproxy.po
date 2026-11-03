@@ -5302,10 +5302,10 @@ msgstr "Включить автоматизацию"
 
 msgid ""
 "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br>"
-"<b>Mode notes:</b> active only in \"Bypass blocking\". Automatically paused in Global (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in Custom routing / Custom JSON. After toggling, press \"Restart service\" on the Overview tab."
+"<b>Mode notes:</b> active only in \"Bypass blocking\". Automatically paused in \"Everything through node\" (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in \"Direct\" mode (all mechanisms are off). After toggling, press \"Restart service\" on the Overview tab."
 msgstr ""
 "Автоматически изучает заблокированные сайты: трафик, который не проходит напрямую, но работает через прокси, добавляется в списки Правил маршрутизации. Полностью совместимо с ByeDPI и Zapret — изученные сайты просто используют ваш основной путь.<br>"
-"<b>Заметки по режимам:</b> активно только в «Обход блокировок». Автоматически приостановлено в Глобальном (весь трафик и так туннелируется — нечего изучать), при Основном узле «Напрямую» (нет прокси-стороны для проверки) и в Своя маршрутизация / Свой JSON. После переключения нажмите «Перезапустить службу» на вкладке «Обзор»."
+"<b>Режимы:</b> работает только в «Обход блокировок». Автоматически на паузе в «Всё через узел» (туннелируется всё — учить нечему), при Основном узле «Напрямую» (нет прокси-стороны для проверки) и в режиме «Напрямую» (все механизмы выключены). После включения нажмите «Перезапустить службу» на вкладке «Обзор»."
 
 #: htdocs/luci-static/resources/view/homeproxy/automation.js
 
@@ -6062,8 +6062,8 @@ msgstr "Отдельный выход для UDP-трафика (игры, зв�
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "• <b>Bypass blocking (rule lists)</b> — the everyday mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The Automation engine (its own page) keeps these lists current automatically.<br>• <b>Global</b> — ALL traffic goes through the Main node; per-service rules are not used.<br>• <b>Custom routing</b> / <b>Custom JSON</b> — fully manual alternatives: build your own routing/DNS from scratch instead of the curated rule lists.<br>Changing the mode re-renders the page so only relevant options stay visible"
-msgstr "• <b>Обход блокировок (по спискам правил)</b> — повседневный режим: всё идёт напрямую, а трафик, попавший в Правила маршрутизации (YouTube, Russia Inside, Re-filter…), идёт через Основной узел — именно так открываются заблокированные сайты без туннелирования всего подключения. Движок автоматизации (отдельная страница) поддерживает эти списки актуальными автоматически.<br>• <b>Глобальный</b> — ВЕСЬ трафик через Основной узел; правила для отдельных сервисов не используются.<br>• <b>Своя маршрутизация</b> / <b>Свой JSON</b> — полностью ручные альтернативы: своя маршрутизация и DNS с нуля вместо готовых списков.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
+msgid "• <b>Bypass blocking (rule lists)</b> — the everyday WORKING mode: everything stays direct, and traffic matching Routing Rules (YouTube, Russia Inside, Re-filter…) goes through the Main node — that is exactly what opens blocked sites without tunneling the whole connection. The bypass engines (Zapret / ByeDPI) and the Automation engine work here.<br>• <b>Everything through node</b> — ALL traffic goes through the Main node; per-service rules are not used.<br>• <b>Direct (all mechanisms off)</b> — for repairs and diagnostics: interception, engines, the DNS scheme and the core itself are OFF, the router just hands out the internet as the provider gives it.<br>Changing the mode re-renders the page so only relevant options stay visible"
+msgstr "• <b>Обход блокировок (по спискам правил)</b> — повседневный РАБОЧИЙ режим: всё идёт напрямую, а трафик, попавший в Правила маршрутизации (YouTube, Russia Inside, Re-filter…), идёт через Основной узел — именно так открываются заблокированные сайты без туннелирования всего подключения. Здесь работают движки обхода (Zapret / ByeDPI) и движок автоматизации.<br>• <b>Всё через узел</b> — ВЕСЬ трафик через Основной узел; правила для отдельных сервисов не используются.<br>• <b>Напрямую (все механизмы выключены)</b> — для ремонта и диагностики: перехват, движки, схема DNS и само ядро ВЫКЛЮЧЕНЫ, роутер раздаёт интернет ровно так, как его даёт провайдер.<br>При смене режима страница перестраивается, и остаются только относящиеся к режиму настройки"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -6413,10 +6413,10 @@ msgstr "Быстро задать основной DNS плюс резервны
 
 msgid ""
 "Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh).<br>"
-"<b>Wired into:</b> \"Bypass blocking\" and region preset modes, whose DNS pools it accelerates. In Global / Custom routing / Custom JSON nothing queries its listeners — mosdns is not started there, so leave this off in those modes."
+"<b>Wired into:</b> \"Bypass blocking\" and region preset modes, whose DNS pools it accelerates. In \"Everything through node\" nothing queries its listeners — mosdns is not started there, so leave this off in that mode; in \"Direct\" mode nothing runs at all."
 msgstr ""
 "Гоняет несколько серверов каждого DNS-пула одновременно (каждый запрос) и возвращает самый быстрый валидный ответ. Обычный «Россия»-пул и шифрованный «Защищённый» пул гоняются независимо, зеркалируя раздельную маршрутизацию. Демон качества по HTTPS проверяет, что возвращённый сервером IP действительно открывает сайт, оценивает серверы по задержке + доле открываемых + тренду и вырезает мёртвые/отравленные. Требует движок mosdns (ставится install.sh).<br>"
-"<b>Подключено к:</b> режимам «Обход блокировок» и региональным пресетам — ускоряет именно их DNS-пулы. В Глобальном / Своя маршрутизация / Свой JSON его слушатели никто не спрашивает — mosdns там не запускается, поэтому в этих режимах держите выключенным."
+"<b>Подключено к:</b> режимам «Обход блокировок» и региональным пресетам — ускоряет именно их DNS-пулы. В «Всё через узел» его слушатели никто не спрашивает — mosdns там не запускается, поэтому в этом режиме держите выключенным; в «Напрямую» не работает вообще ничего."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -12409,3 +12409,42 @@ msgstr "нет свежих данных"
 
 msgid "Down: %d · "
 msgstr "Не работают: %d · "
+
+msgid "Automation is paused: a legacy custom routing mode is active — the engine has no preset pools to learn from. Switch to \"Bypass blocking\" to resume."
+msgstr "Автоматизация на паузе: активен устаревший режим своей маршрутизации — движку не из чего учиться. Переключитесь на «Обход блокировок», чтобы продолжить."
+
+msgid "Automation is paused: \"Everything through node\" tunnels everything — there is nothing left to learn. Switch to \"Bypass blocking\" to resume."
+msgstr "Автоматизация на паузе: «Всё через узел» туннелирует всё — учить больше нечему. Переключитесь на «Обход блокировок», чтобы продолжить."
+
+msgid "Automation is paused: \"Direct\" mode is on — all bypass mechanisms are off. Switch back to \"Bypass blocking\" to resume."
+msgstr "Автоматизация на паузе: включён режим «Напрямую» — все механизмы обхода выключены. Переключитесь на «Обход блокировок», чтобы продолжить."
+
+msgid "Everything through node"
+msgstr "Всё через узел"
+
+msgid "Direct (all mechanisms off)"
+msgstr "Напрямую (все механизмы выключены)"
+
+msgid "All bypass mechanisms are switched OFF in this mode: interception, the Zapret/ByeDPI engines, the DNS scheme and the core itself are not running — the router hands out the internet exactly as the provider gives it. Use it for repairs and diagnostics. The settings below keep their values and take effect again when you switch back to \"Bypass blocking\" or \"Everything through node\"."
+msgstr "В этом режиме ВСЕ механизмы обхода выключены: перехват, движки Zapret/ByeDPI, схема DNS и само ядро не работают — роутер раздаёт интернет ровно так, как его даёт провайдер. Режим для ремонта и диагностики. Настройки ниже сохраняют свои значения и снова заработают при переключении обратно в «Обход блокировок» или «Всё через узел»."
+
+msgid "The diagnostic inbounds are unavailable (the core is off or in \"Direct\" mode) — only a partial picture is possible."
+msgstr "Диагностические инбаунды недоступны (ядро выключено или режим «Напрямую») — возможна только частичная картина."
+
+msgid "legacy mode"
+msgstr "устаревший режим"
+
+msgid "off (direct mode)"
+msgstr "выключен (режим «Напрямую»)"
+
+msgid "Direct mode is on — bypass is off"
+msgstr "Включён режим «Напрямую» — обход выключен"
+
+msgid "Direct mode — bypass is off"
+msgstr "Режим «Напрямую» — обход выключен"
+
+msgid "legacy custom routing"
+msgstr "устаревшая своя маршрутизация"
+
+msgid "The pinned diagnostic inbounds are not listening (the core is off or in \"Direct\" mode) — path checks are limited."
+msgstr "Закреплённые диагностические инбаунды не слушают (ядро выключено или режим «Напрямую») — проверки путей ограничены."

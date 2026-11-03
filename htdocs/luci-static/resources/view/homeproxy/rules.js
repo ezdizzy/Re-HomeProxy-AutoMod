@@ -21,6 +21,18 @@ const callPresetList = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Routing mode → display label (Ф3.1: the three-mode model). */
+function routingModeLabelOf(mode) {
+	switch (mode) {
+		case 'proxy_banned_ru': return _('Bypass blocking (rule lists)');
+		case 'global': return _('Everything through node');
+		case 'direct': return _('Direct (all mechanisms off)');
+		case 'custom':
+		case 'custom_json': return _('legacy custom routing');
+		default: return mode || '—';
+	}
+}
+
 const callPresetApply = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'wizard_preset_apply',
@@ -359,13 +371,13 @@ return view.extend({
 			envBanners.innerHTML = '';
 			if (env.routing_mode && env.routing_mode !== 'proxy_banned_ru')
 				envBanners.appendChild(E('div', { 'class': 'hpui-banner' },
-					[ _('Routing rules apply ONLY in "Bypass blocking" mode — the current mode is "%s", so preset rules would have no effect.').format(env.routing_mode) ]));
+					[ _('Routing rules apply ONLY in "Bypass blocking" mode — the current mode is "%s", so preset rules would have no effect.').format(routingModeLabelOf(env.routing_mode)) ]));
 			if (env.main_is_direct)
 				envBanners.appendChild(E('div', { 'class': 'hpui-banner' },
 					[ _('Main node is Direct: rules pointing at "Same as main node" would egress directly. Choose Zapret/ByeDPI or a real node, or switch the Main node first.') ]));
 			if (!env.proxy_in && !env.direct_in)
 				envBanners.appendChild(E('div', { 'class': 'hpui-banner' },
-					[ _('The pinned diagnostic inbounds are not listening (Custom routing / Custom JSON) — path checks are limited.') ]));
+					[ _('The pinned diagnostic inbounds are not listening (the core is off or in "Direct" mode) — path checks are limited.') ]));
 
 			presetRows.innerHTML = '';
 			presetRows.appendChild(E('div', { 'class': 'wiz-note' },

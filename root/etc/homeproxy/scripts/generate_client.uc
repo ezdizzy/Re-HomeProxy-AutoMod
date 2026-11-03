@@ -44,12 +44,7 @@ const uciinfra = 'infra',
       ucimain = 'config',
       ucicontrol = 'control';
 
-const ucidnssetting = 'dns',
-      ucidnsserver = 'dns_server',
-      ucidnsrule = 'dns_rule';
-
-const uciroutingsetting = 'routing',
-      uciroutingnode = 'routing_node',
+const uciroutingnode = 'routing_node',
       uciroutingrule = 'routing_rule';
 
 const ucinode = 'node';
@@ -57,7 +52,26 @@ const uciruleset = 'ruleset';
 const uciserver = 'server';
 const ucirurule = 'proxy_ru_rule';
 
-const routing_mode = uci.get(uciconfig, ucimain, 'routing_mode') || 'proxy_banned_ru';
+/* Ф3.1 (D14/D23): THREE routing modes —
+ *   proxy_banned_ru  «Обход блокировок» — the WORKING mode: bypass engines + routing
+ *                    rules; the itdoginfo/refilter lists are its built-in preset;
+ *   direct           «Напрямую» — ALL bypass mechanisms are OFF (the service runs the
+ *                    app plane only); the core is not started, generation is skipped;
+ *   global           «Всё через узел» — ALL traffic goes through the selected main node.
+ * Custom routing / Custom JSON are RETIRED (D23): a legacy value still present in an
+ * old UCI is read honestly as the working mode (with a warn) until the Ф3.4 migration
+ * rewrites it with a snapshot. */
+const routing_mode_raw = uci.get(uciconfig, ucimain, 'routing_mode');
+let routing_mode = (routing_mode_raw == null || routing_mode_raw === '')
+	? 'proxy_banned_ru' : '' + routing_mode_raw;
+if (routing_mode === 'custom' || routing_mode === 'custom_json') {
+	warn('homeproxy: routing mode "' + routing_mode + '" is retired (D23) - generating the working-mode config; UCI migration comes with Ф3.4.\n');
+	routing_mode = 'proxy_banned_ru';
+}
+if (routing_mode === 'direct') {
+	warn('homeproxy: direct mode («Напрямую») - all bypass mechanisms are OFF; the core is not started and config generation is skipped.\n');
+	exit(0);
+}
 
 /* Selective routing is ONE engine; the region is data.
  *   forward (blocklist): default direct, lists -> proxy.            proxy_banned_ru (RU)
@@ -338,16 +352,18 @@ const oauth_stability_opt = (uci.get(uciconfig, ucimain, 'oauth_stability') !== 
  * independent), so the trigger is opt-in now. */
 const reload_on_wan_opt = (uci.get(uciconfig, ucimain, 'reload_on_wan') === '1');
 
-let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outbound_dns,
+let main_node, main_udp_node, dedicated_udp_node,
     domain_strategy, dns_server, china_dns_server, iran_dns_server, russia_dns_server,
-    secure_dns_server, proxy_calls, no_proxy_torrents, show_advanced_rules, dns_default_strategy, dns_default_server, dns_disable_cache,
-    dns_disable_cache_expire, dns_independent_cache, dns_client_subnet, cache_file_store_rdrc,
-    cache_file_rdrc_timeout, direct_domain_list, proxy_domain_list,
+    secure_dns_server, proxy_calls, no_proxy_torrents, show_advanced_rules, dns_default_strategy,
+    direct_domain_list, proxy_domain_list,
     multidns_enabled, mdns_use_plain, mdns_use_secure, mdns_secure_via_proxy,
     mdns_ok, mdns_plain_port, mdns_secure_port, mdns_proxy_in, mdns_proxy_port,
     secure_detour;
 
-if (routing_mode !== 'custom') {
+/* App-managed config: every remaining mode (working / «Всё через узел» / legacy
+ * region presets) reads the SAME UCI knobs — the custom-section branch was
+ * retired with D23. */
+{
 	main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
 	if (main_node === 'nil' || isEmpty(main_node)) {
 		/* Legacy 'nil' used to abort generation entirely, leaving the service
@@ -493,21 +509,6 @@ if (routing_mode !== 'custom') {
 	 * из диалекта — поле удалили в vanilla 1.13/1.14 и upstream v5 (decode
 	 * «removed in 1.13.0»); UCI-ключи остаются нетронутыми для совместимости
 	 * (миграция старых установок — в migrate_config.uc). */
-} else {
-	/* DNS settings */
-	dns_default_strategy = uci.get(uciconfig, ucidnssetting, 'default_strategy');
-	dns_default_server = uci.get(uciconfig, ucidnssetting, 'default_server');
-	dns_disable_cache = uci.get(uciconfig, ucidnssetting, 'disable_cache');
-	dns_disable_cache_expire = uci.get(uciconfig, ucidnssetting, 'disable_cache_expire');
-	dns_independent_cache = uci.get(uciconfig, ucidnssetting, 'independent_cache');
-	dns_client_subnet = uci.get(uciconfig, ucidnssetting, 'client_subnet');
-	cache_file_store_rdrc = uci.get(uciconfig, ucidnssetting, 'cache_file_store_rdrc'),
-	cache_file_rdrc_timeout = uci.get(uciconfig, ucidnssetting, 'cache_file_rdrc_timeout');
-
-	/* Routing settings */
-	default_outbound = uci.get(uciconfig, uciroutingsetting, 'default_outbound') || 'nil';
-	default_outbound_dns = uci.get(uciconfig, uciroutingsetting, 'default_outbound_dns') || 'default-dns';
-	domain_strategy = uci.get(uciconfig, uciroutingsetting, 'domain_strategy');
 }
 
 const proxy_mode = uci.get(uciconfig, ucimain, 'proxy_mode') || 'redirect_tproxy',
@@ -517,12 +518,9 @@ const mixed_port = uci.get(uciconfig, uciinfra, 'mixed_port') || '5330';
 
 let self_mark, redirect_port, tproxy_port, tun_name,
     tun_addr4, tun_addr6, tun_mtu, tcpip_stack,
-    endpoint_independent_nat, udp_timeout;
+    udp_timeout;
 
-if (routing_mode === 'custom')
-	udp_timeout = uci.get(uciconfig, uciroutingsetting, 'udp_timeout');
-else
-	udp_timeout = uci.get(uciconfig, 'infra', 'udp_timeout');
+udp_timeout = uci.get(uciconfig, 'infra', 'udp_timeout');
 
 /* self_mark is needed in EVERY mode, not just redirect: firewall_post.ut return-
  * rules expect route.default_mark as the loop guard for the core's own egress.
@@ -540,10 +538,6 @@ if (match(proxy_mode, /tun/)) {
 	tun_addr6 = uci.get(uciconfig, uciinfra, 'tun_addr6') || 'fdfe:dcba:9876::1/126';
 	tun_mtu = uci.get(uciconfig, uciinfra, 'tun_mtu') || '9000';
 	tcpip_stack = 'system';
-	if (routing_mode === 'custom') {
-		tcpip_stack = uci.get(uciconfig, uciroutingsetting, 'tcpip_stack') || 'system';
-		endpoint_independent_nat = uci.get(uciconfig, uciroutingsetting, 'endpoint_independent_nat');
-	}
 }
 
 const log_level = uci.get(uciconfig, ucimain, 'log_level') || 'warn';
@@ -1092,7 +1086,7 @@ function get_outbound(cfg) {
 			else if (!hp_node_usable(node)) {
 				/* Capability guard: referencing a node the selected core cannot
 				 * load is a fatal "non-existent outbound". Reroute to the main
-				 * path (direct when there is none, e.g. custom routing). */
+				 * path (direct when there is no main outbound). */
 				warn(sprintf('homeproxy: %s targets a node not supported by the selected core - rerouted to the main path.\n', cfg));
 				return has_outbound('main-out') ? 'main-out' : 'direct-out';
 			}
@@ -1167,11 +1161,7 @@ config.dns = {
 		}
 	],
 	rules: [],
-	strategy: dns_default_strategy,
-	disable_cache: strToBool(dns_disable_cache),
-	disable_expire: strToBool(dns_disable_cache_expire),
-	independent_cache: strToBool(dns_independent_cache),
-	client_subnet: dns_client_subnet
+	strategy: dns_default_strategy
 };
 
 if (!isEmpty(main_node)) {
@@ -1396,88 +1386,6 @@ if (!isEmpty(main_node)) {
 			action: 'reject'
 		});
 	}
-} else if (!isEmpty(default_outbound)) {
-	/* DNS servers */
-	uci.foreach(uciconfig, ucidnsserver, (cfg) => {
-		if (cfg.enabled !== '1')
-			return;
-
-		let outbound = get_outbound(cfg.outbound);
-
-		/* ч.129 (ан-146): специальный случай «direct-out → null при пустом self_mark»
-		 * удалён — диалект унифицирован. detour:'direct-out' легален во всех
-		 * версиях (проверка 1.15 отвергает только поле detour НА САМОМ direct
-		 * outbound, а не объекты, детурящие К нему); unmarked direct-out даёт
-		 * тот же проводной результат, что и implied direct (прямой unmarked dial). */
-
-		push(config.dns.servers, {
-			tag: 'cfg-' + cfg['.name'] + '-dns',
-			type: cfg.type,
-			server: cfg.server,
-			server_port: strToInt(cfg.server_port),
-			path: cfg.path,
-			headers: cfg.headers,
-			tls: cfg.tls_sni ? {
-				enabled: true,
-				server_name: cfg.tls_sni
-			} : null,
-			domain_resolver: (cfg.address_resolver || cfg.address_strategy) ? {
-				server: get_resolver(cfg.address_resolver || dns_default_server),
-				strategy: cfg.address_strategy
-			} : null,
-			detour: outbound
-		});
-	});
-
-	/* DNS rules */
-	uci.foreach(uciconfig, ucidnsrule, (cfg) => {
-		if (cfg.enabled !== '1')
-			return;
-
-		push(config.dns.rules, {
-			ip_version: strToInt(cfg.ip_version),
-			query_type: parse_dnsquery(cfg.query_type),
-			network: cfg.network,
-			protocol: cfg.protocol,
-			domain: cfg.domain,
-			domain_suffix: cfg.domain_suffix,
-			domain_keyword: cfg.domain_keyword,
-			domain_regex: cfg.domain_regex,
-			port: parse_port(cfg.port),
-			port_range: cfg.port_range,
-			source_ip_cidr: cfg.source_ip_cidr,
-			source_ip_is_private: strToBool(cfg.source_ip_is_private),
-			ip_cidr: cfg.ip_cidr,
-			ip_is_private: strToBool(cfg.ip_is_private),
-			source_port: parse_port(cfg.source_port),
-			source_port_range: cfg.source_port_range,
-			process_name: cfg.process_name,
-			process_path: cfg.process_path,
-			process_path_regex: cfg.process_path_regex,
-			user: cfg.user,
-			rule_set: get_ruleset(cfg.rule_set),
-			rule_set_ip_cidr_match_source: strToBool(cfg.rule_set_ip_cidr_match_source),
-			invert: strToBool(cfg.invert),
-			outbound: get_outbound(cfg.outbound),
-			action: cfg.action,
-			server: get_resolver(cfg.server),
-			strategy: cfg.domain_strategy,
-			disable_cache: strToBool(cfg.dns_disable_cache),
-			rewrite_ttl: strToInt(cfg.rewrite_ttl),
-			client_subnet: cfg.client_subnet,
-			method: cfg.reject_method,
-			no_drop: strToBool(cfg.reject_no_drop),
-			rcode: cfg.predefined_rcode,
-			answer: cfg.predefined_answer,
-			ns: cfg.predefined_ns,
-			extra: cfg.predefined_extra
-		});
-	});
-
-	if (isEmpty(config.dns.rules))
-		config.dns.rules = null;
-
-	config.dns.final = get_resolver(dns_default_server);
 }
 /* DNS end */
 
@@ -1534,7 +1442,6 @@ if (match(proxy_mode, /tun/))
 		address: (ipv6_support === '1') ? [tun_addr4, tun_addr6] : [tun_addr4],
 		mtu: strToInt(tun_mtu),
 		auto_route: false,
-		endpoint_independent_nat: strToBool(endpoint_independent_nat),
 		udp_timeout: strToTime(udp_timeout),
 		stack: tcpip_stack,
 	});
@@ -1544,9 +1451,7 @@ if (match(proxy_mode, /tun/))
  * path, so it can tell a blocked domain from a merely-slow one. They are bound to
  * 127.0.0.1 only (never exposed). The matching route rules (below) pin each inbound
  * to a fixed outbound. Emitted whenever the core config is generated by THIS
- * generator (main-out exists in every non-custom mode — every branch below emits
- * it); Custom routing / Custom JSON keep their own configs, so the Wizard there
- * falls back to the mixed inbound and reports the direct path as unavailable. */
+ * generator (main-out exists in every app-managed mode). */
 if (!isEmpty(main_node))
 	push(config.inbounds, {
 		type: 'mixed',
@@ -2338,7 +2243,7 @@ if (!isEmpty(main_node)) {
 		/* Duplicate-tag guard (Hot Swap): with Hot Swap on, the selector pool
 		 * already emitted these nodes under cfg-<sid>-out; a second emission is
 		 * a fatal "duplicate outbound tag" for the core. (The other emission
-		 * loops — advanced rules, custom routing — carry the same guard.) */
+		 * loops — advanced rules — carry the same guard.) */
 		if (has_outbound('cfg-' + i + '-out')) continue;
 		if (urltest_node.type in ['wireguard', 'amneziawg']) {
 			push(config.endpoints, generate_endpoint(urltest_node));
@@ -2413,74 +2318,6 @@ if (!isEmpty(main_node)) {
 				push_outbound(config.outbounds, urltest_node);
 		}
 	}
-} else if (!isEmpty(default_outbound)) {
-	let urltest_nodes = [],
-	    routing_nodes = [];
-
-	uci.foreach(uciconfig, uciroutingnode, (cfg) => {
-		if (cfg.enabled !== '1')
-			return;
-
-		if (cfg.node === 'urltest') {
-			const existing_urltest_nodes = usable_nodes(cfg.urltest_nodes);
-			push(config.outbounds, {
-				type: 'urltest',
-				tag: 'cfg-' + cfg['.name'] + '-out',
-				outbounds: map(existing_urltest_nodes, (k) => `cfg-${k}-out`),
-				url: cfg.urltest_url,
-				interval: strToTime(cfg.urltest_interval),
-				tolerance: strToInt(cfg.urltest_tolerance),
-				idle_timeout: strToTime(cfg.urltest_idle_timeout),
-				interrupt_exist_connections: strToBool(cfg.urltest_interrupt_exist_connections)
-			});
-			urltest_nodes = [...urltest_nodes, ...filter(existing_urltest_nodes, (l) => !~index(urltest_nodes, l))];
-		} else {
-			const outbound = uci.get_all(uciconfig, cfg.node) || {};
-			/* Skip a routing node whose target proxy node is empty or dangling —
-			 * otherwise push_outbound() appends a null outbound and the next line
-			 * dereferences it, crashing config generation (no file is written). */
-			if (isEmpty(outbound)) return;
-			/* Skip a target the selected core cannot load (same rationale as above). */
-			if (!hp_node_usable(cfg.node)) return;
-			/* Duplicate tag guard: same rationale as the advanced block above. */
-			if (has_outbound('cfg-' + cfg.node + '-out'))
-				return;
-			if (outbound.type in ['wireguard', 'amneziawg']) {
-				push(config.endpoints, generate_endpoint(outbound));
-				config.endpoints[length(config.endpoints)-1].bind_interface = cfg.bind_interface;
-				config.endpoints[length(config.endpoints)-1].detour = get_outbound(cfg.outbound);
-				if (cfg.domain_resolver)
-					config.endpoints[length(config.endpoints)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver),
-						strategy: cfg.domain_strategy
-					};
-			} else {
-				push_outbound(config.outbounds, outbound);
-				config.outbounds[length(config.outbounds)-1].bind_interface = cfg.bind_interface;
-				const chain_detour = get_outbound(cfg.outbound);
-				if (chain_detour)
-					config.outbounds[length(config.outbounds)-1].detour = chain_detour;
-				if (cfg.domain_resolver)
-					config.outbounds[length(config.outbounds)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver),
-						strategy: cfg.domain_strategy
-					};
-			}
-			push(routing_nodes, cfg.node);
-		}
-	});
-
-	for (let i in filter(urltest_nodes, (l) => !~index(routing_nodes, l))) {
-		/* Duplicate tag guard: the node may already have been emitted as a routing
-		 * node target above (two urltest groups sharing a member). */
-		if (has_outbound('cfg-' + i + '-out')) continue;
-		const urltest_node = uci.get_all(uciconfig, i);
-		if (!urltest_node) continue;
-		if (urltest_node.type in ['wireguard', 'amneziawg'])
-			push(config.endpoints, generate_endpoint(urltest_node));
-		else
-			push_outbound(config.outbounds, urltest_node);
-	}
 }
 
 if (isEmpty(config.endpoints))
@@ -2515,9 +2352,8 @@ config.route = {
  * ABOVE the resolve/sniff and region rules so the probes are not themselves re-routed by
  * the normal rules. The proxy side forces `main-out` — which already IS byedpi-out /
  * zapret-out when those are the configured main node — so detection stays faithful to the
- * user's chosen anti-DPI path. Same gate as the inbounds: Custom routing emits no
- * main-out, so the pinned rules must not be emitted there either (a dangling
- * outbound reference would FATAL the core — ч.65-class trap). */
+ * user's chosen anti-DPI path. Same gate as the inbounds: main-out must exist
+ * (a dangling outbound reference would FATAL the core — ч.65-class trap). */
 if (!isEmpty(main_node)) {
 	push(config.route.rules, {
 		inbound: 'auto-direct-in',
@@ -3160,77 +2996,6 @@ if (!isEmpty(main_node)) {
 
 	if (isEmpty(config.route.rule_set))
 		config.route.rule_set = null;
-} else if (!isEmpty(default_outbound)) {
-	config.route.default_domain_resolver = is_singbox ? {
-		action: 'resolve',
-		server: get_resolver(default_outbound_dns)
-	} : get_resolver(default_outbound_dns);
-
-	if (domain_strategy)
-		push(config.route.rules, {
-			action: 'resolve',
-			strategy: domain_strategy
-		});
-
-	uci.foreach(uciconfig, uciroutingrule, (cfg) => {
-		if (cfg.enabled !== '1')
-			return null;
-
-		push(config.route.rules, {
-			inbound: cfg.inbound,
-			ip_version: strToInt(cfg.ip_version),
-			protocol: cfg.protocol,
-			network: cfg.network,
-			domain: cfg.domain,
-			domain_suffix: cfg.domain_suffix,
-			domain_keyword: cfg.domain_keyword,
-			domain_regex: cfg.domain_regex,
-			source_ip_cidr: cfg.source_ip_cidr,
-			source_ip_is_private: strToBool(cfg.source_ip_is_private),
-			ip_cidr: cfg.ip_cidr,
-			ip_is_private: strToBool(cfg.ip_is_private),
-			source_port: parse_port(cfg.source_port),
-			source_port_range: cfg.source_port_range,
-			port: parse_port(cfg.port),
-			port_range: cfg.port_range,
-			process_name: cfg.process_name,
-			process_path: cfg.process_path,
-			process_path_regex: cfg.process_path_regex,
-			user: cfg.user,
-			rule_set: get_ruleset(cfg.rule_set),
-			rule_set_ip_cidr_match_source: strToBool(cfg.rule_set_ip_cidr_match_source),
-			rule_set_ip_cidr_accept_empty: strToBool(cfg.rule_set_ip_cidr_accept_empty),
-			invert: strToBool(cfg.invert),
-			action: cfg.action,
-			outbound: get_outbound(cfg.outbound),
-			override_address: cfg.override_address,
-			override_port: strToInt(cfg.override_port),
-			udp_disable_domain_unmapping: strToBool(cfg.udp_disable_domain_unmapping),
-			udp_connect: strToBool(cfg.udp_connect),
-			udp_timeout: strToTime(cfg.udp_timeout),
-			tls_fragment: strToBool(cfg.tls_fragment),
-			tls_fragment_fallback_delay: strToTime(cfg.tls_fragment_fallback_delay),
-			tls_record_fragment: strToBool(cfg.tls_record_fragment)
-		});
-	});
-
-	config.route.final = get_outbound(default_outbound);
-
-	/* Rule set */
-	uci.foreach(uciconfig, uciruleset, (cfg) => {
-		if (cfg.enabled !== '1')
-			return null;
-
-		push(config.route.rule_set, {
-			type: cfg.type,
-			tag: 'cfg-' + cfg['.name'] + '-rule',
-			format: cfg.format,
-			path: cfg.path,
-			url: cfg.url,
-			...hp_rs_dl(get_outbound(cfg.outbound)),
-			update_interval: cfg.update_interval
-		});
-	});
 }
 /* Routing rules end */
 
@@ -3281,12 +3046,10 @@ config.experimental = {
 		external_controller: '127.0.0.1:9090'
 	}
 };
-if (is_selective_mode(routing_mode) || routing_mode === 'custom') {
+if (is_selective_mode(routing_mode)) {
 	config.experimental.cache_file = {
 		enabled: true,
-		path: RUN_DIR + '/cache.db',
-		store_rdrc: strToBool(cache_file_store_rdrc),
-		rdrc_timeout: strToTime(cache_file_rdrc_timeout),
+		path: RUN_DIR + '/cache.db'
 	};
 }
 /* Experimental end */

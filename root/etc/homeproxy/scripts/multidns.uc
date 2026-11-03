@@ -398,6 +398,9 @@ function update_probe_set(ips) {
  * build_mosdns_conf / analyze / update_probe_set so all three always agree. */
 function assemble_plain_pool(st) {
 	let mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
+	/* Ф3.1: legacy custom/custom_json read as the working mode (D23). */
+	if (mode === 'custom' || mode === 'custom_json')
+		mode = 'proxy_banned_ru';
 	let pl = [];
 	if (mode === 'proxy_banned_ru')
 		pl = to_list(uci.get('homeproxy', 'config', 'russia_dns_server'));
