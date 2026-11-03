@@ -6892,3 +6892,9 @@ msgid "Automatically learn blocked sites: traffic that fails directly but works 
 msgstr ""
 msgid "Race several servers in each DNS pool at once (every query) and return the fastest valid answer. Plain “Russia” pool and encrypted “Secure” pool are raced independently, mirroring split routing. A quality daemon verifies over HTTPS that each server’s returned IP actually opens the site, scores servers by latency + open-ratio + trend and prunes dead/polluted ones. Requires the mosdns engine (installed by install.sh).<br><b>Wired into:</b> \"Bypass blocking\" and region preset modes, whose DNS pools it accelerates. In \"Everything through node\" nothing queries its listeners — mosdns is not started there, so leave this off in that mode; in \"Direct\" mode nothing runs at all."
 msgstr ""
+
+msgid "\"No rule\" does NOT mean \"straight into the Russian internet\": it only removes the rule — the domains are not added to any proxy list and follow the GENERAL routing rules (mass lists like Russia Inside / Re-filter and learned records may still send them through the node). Only traffic unmatched by every rule egresses directly."
+msgstr ""
+
+msgid "No rule"
+msgstr ""

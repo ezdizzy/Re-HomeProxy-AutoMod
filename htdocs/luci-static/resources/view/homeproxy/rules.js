@@ -382,6 +382,11 @@ return view.extend({
 			presetRows.innerHTML = '';
 			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
 				[ _('The mass lists below already cover YouTube/Discord/Telegram and most blocked resources — a per-service rule overrides the mass list.') ]));
+			/* U6/D20 honesty: "direct" wording made users read the empty action
+			 * as "this list goes into the Russian internet" — say what really
+			 * happens: no rule, general routing decides. */
+			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
+				[ _('"No rule" does NOT mean "straight into the Russian internet": it only removes the rule — the domains are not added to any proxy list and follow the GENERAL routing rules (mass lists like Russia Inside / Re-filter and learned records may still send them through the node). Only traffic unmatched by every rule egresses directly.') ]));
 
 			function buildServiceRow(preset) {
 				const rule = (list.rules || {})[preset.source];
@@ -400,7 +405,11 @@ return view.extend({
 				row.appendChild(E('span', { 'class': 'wiz-state' }, [ ruleStateText(rule, count) ]));
 
 				const sel = E('select', { 'class': 'cbi-input-select wiz-select' });
-				sel.appendChild(E('option', { value: '' }, [ _('Direct (remove rule)') ]));
+				/* D20/Ф3.3: the former "Direct (remove rule)" lied by accident —
+				 * "Direct" made users expect a guaranteed direct egress, while the
+				 * empty value only DELETES the rule (rpcd wizard_preset_apply) and
+				 * the domain then follows the general routing rules. */
+				sel.appendChild(E('option', { value: '' }, [ _('No rule') ]));
 				if (!env.main_is_direct)
 					sel.appendChild(E('option', { value: 'main-out' }, [ _('Same as main node') ]));
 				if (env.byedpi_enabled)

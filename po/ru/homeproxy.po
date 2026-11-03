@@ -12448,3 +12448,9 @@ msgstr "устаревшая своя маршрутизация"
 
 msgid "The pinned diagnostic inbounds are not listening (the core is off or in \"Direct\" mode) — path checks are limited."
 msgstr "Закреплённые диагностические инбаунды не слушают (ядро выключено или режим «Напрямую») — проверки путей ограничены."
+
+msgid "\"No rule\" does NOT mean \"straight into the Russian internet\": it only removes the rule — the domains are not added to any proxy list and follow the GENERAL routing rules (mass lists like Russia Inside / Re-filter and learned records may still send them through the node). Only traffic unmatched by every rule egresses directly."
+msgstr "«Нет правила» — это НЕ «напрямую в российский интернет»: действие лишь убирает правило — домены не добавляются в прокси-списки и идут по ОБЩИМ правилам маршрутизации (массовые списки вроде Russia Inside / Re-filter и выученные записи всё ещё могут провести их через узел). Напрямую идёт только трафик, не совпавший ни с одним правилом."
+
+msgid "No rule"
+msgstr "Нет правила"
