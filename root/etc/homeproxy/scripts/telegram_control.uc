@@ -67,6 +67,17 @@ function clean_text(s) {
 	return trim(replace('' + (s || ''), /['"`\\\n\r]/g, ''));
 }
 
+/* Ф1.5 (аудит 31): callback-data и id-строки никогда не попадают в shell
+ * без проверки формата uci-имени ([A-Za-z0-9_]+) и существования секции
+ * нужного типа — подделанный коллбек обязан быть честной ошибкой. */
+function sid_ok(sid, stype) {
+	if (type(sid) !== 'string' || length(sid) > 64 ||
+	    match(sid, /^[A-Za-z0-9_]+$/) == null)
+		return false;
+	const s = get_section(sid);
+	return !!(s && s['.type'] === stype);
+};
+
 function kb(rows) {
 	return API.kb_rows(rows);
 }
@@ -145,15 +156,21 @@ function cfg_id_for_dev(d, create) {
 		return null;
 	if (!d.mac && !d.ip)
 		return null;
+	/* Ф1.5: the device fields come from live ARP/DHCP state — only strict
+	 * charset-safe forms may reach the uci shell (belt-and-braces). */
+	const mac_ok = length(d.mac) && match(d.mac, /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/) != null;
+	const ip_ok = length(d.ip) && match(d.ip, /^(\d{1,3}\.){3}\d{1,3}$/) != null;
+	if (!mac_ok && !ip_ok)
+		return null;
 	const fd = popen(`uci -q add homecontrol client`);
 	const newid = fd ? trim((fd.read('line') || '')) : '';
 	if (fd)
 		fd.close();
 	if (!length(newid))
 		return null;
-	if (length(d.mac))
+	if (mac_ok)
 		shell_uci(`uci -q set homecontrol.${newid}.mac='${d.mac}'`);
-	if (length(d.ip))
+	if (ip_ok)
 		shell_uci(`uci -q set homecontrol.${newid}.ip='${d.ip}'`);
 	const nm = clean_text(d.alias || d.hostname);
 	if (length(nm))
@@ -456,6 +473,8 @@ function blocksite(api, chat_id, rest) {
 		const cid = cfg_id_for_dev(d, true);
 		if (!cid)
 			return 'у устройства нет MAC/IP — правило для него невозможно';
+		if (!sid_ok(cid, 'client'))
+			return 'идентификатор устройства неверен — попробуйте ещё раз';
 		push(cids, cid);
 	}
 
@@ -579,7 +598,14 @@ function wifi_kb() {
 }
 
 function wifi_toggle(api, chat_id, iface, disable, cbid) {
-	if (!length(iface)) {
+	/* Ф1.5: the iface id travels through callback data — allow-list it
+	 * against the live Wi-Fi view (never raw shell text). */
+	const ifaces = wifi_ifaces();
+	let known = false;
+	for (let i = 0; i < length(ifaces); i++)
+		if (ifaces[i].id === iface)
+			known = true;
+	if (!known || match(iface, /^[A-Za-z0-9_]+$/) == null) {
 		api.answer_cb(cbid, 'Ошибка');
 		return;
 	}
@@ -693,6 +719,13 @@ export function handle_cb(api, chat_id, data, cbid) {
 	}
 	if (substr(data, 0, 5) === 'sdel:') {
 		const rid = substr(data, 5);
+		/* Ф1.5 (аудит 31): a forged callback must not become shell text —
+		 * format + existence + exact type before the delete. */
+		if (!sid_ok(rid, 'rule')) {
+			api.answer_cb(cbid, 'Правило уже удалено');
+			api.send_html(chat_id, sites_text(), sites_kb());
+			return true;
+		}
 		shell_uci(`uci -q delete homecontrol.${rid}`);
 		commit_hc();
 		add_event('system', rid, 'site rule removed (Telegram)');
