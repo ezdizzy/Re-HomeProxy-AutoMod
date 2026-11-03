@@ -54,7 +54,7 @@
 					"wizard_tgws_sync_set", "wizard_strategy_apply", "wizard_corpus_import", "wizard_fuzz_generate",
 					"telegram_set", "telegram_test", "automation_helpers_install",
 					"mosdns_prepare_install", "mosdns_install_pkg", "mosdns_remove",
-					"automation_list_write", "automation_test_now", "automation_restore",
+					"automation_list_write", "automation_test_now", "automation_restore", "automation_recheck",
 					"automation_entry_add", "automation_entry_delete", "automation_entry_action", "automation_geo_update",
 					"control_set", "control_set_paused",
 					"control_client_add", "control_client_delete", "control_client_rename", "control_client_block",

@@ -70,6 +70,10 @@ const resources_dir = '/etc/homeproxy/resources';
 const cfgname = 'homeproxy';
 const uci = cursor();
 uci.load(cfgname);
+/* The DHCP config supplies the dnsmasq hijack flag + port; without an explicit
+ * load these reads silently returned null and dns_hijacked never matched (the
+ * hijack block then rendered even when OpenWrt's own dnsmasq hijack was on). */
+uci.load('dhcp');
 
 const routing_mode = uci.get(cfgname, 'config', 'routing_mode') || 'proxy_banned_ru';
 let outbound_node, outbound_udp_node;
@@ -181,6 +185,50 @@ for (let i in control_options)
 const dns_redirect = uci.get(cfgname, 'infra', 'dns_redirect') || '1';
 const dns_hijacked = uci.get('dhcp', '@dnsmasq[0]', 'dns_redirect') || '0',
       dns_port = uci.get('dhcp', '@dnsmasq[0]', 'port') || '53';
+
+/* Ф1.6 (lesson 188): an EMPTY listen_interfaces must never mean "intercept the
+ * WAN ingress". Packets arriving on the router's own WAN address (replies to the
+ * router's sockets — DNS/QUIC/NTP — and unsolicited scans) are not client
+ * traffic; intercepting them made the core re-send them via direct-out to the
+ * router's own WAN (rewritten source → connected socket dropped them) and paid
+ * a 5 s failover ladder per DNS server (the 2026-11-03 DNS regression). The fw4
+ * context knows the WAN-zone devices: fw4.load() builds the zone state from UCI
+ * + netifd (l3 devices, pppoe included); a static UCI fallback covers a render
+ * without netifd state. "Empty" now renders an exclusion guard for the WAN zone
+ * instead of no guard at all. */
+let wan_devices = [];
+try {
+	fw4.load();
+	for (let z in fw4.zones()) {
+		if (z.name !== 'wan')
+			continue;
+		for (let d in (z.match_devices || []))
+			if (d && index(wan_devices, d) < 0)
+				push(wan_devices, d);
+	}
+} catch (e) {
+	wan_devices = [];
+}
+if (!length(wan_devices)) {
+	const fwc = cursor();
+	fwc.load('firewall');
+	const nwc = cursor();
+	nwc.load('network');
+	fwc.foreach('firewall', 'zone', (z) => {
+		if (z.name !== 'wan')
+			return;
+		for (let d in (z.device || []))
+			if (d && index(wan_devices, d) < 0)
+				push(wan_devices, d);
+		for (let n in (z.network || [])) {
+			const dev = nwc.get('network', n, 'device');
+			if (dev && index(wan_devices, dev) < 0)
+				push(wan_devices, dev);
+		}
+	});
+}
+/* Only syntactically safe device names reach the nft render. */
+wan_devices = filter(wan_devices, (d) => !!match(d, /^[A-Za-z0-9_.@:-]+$/));
 /* UCI config end */
 -%}
 
@@ -289,8 +337,18 @@ chain dstnat {
 {% if ((dns_redirect === '1') && (dns_hijacked !== '1')): %}
 	{% if (control_info.listen_interfaces): %}
 	meta iifname {{ array_to_nftarr(control_info.listen_interfaces) }}
+	{% elif (length(wan_devices)): %}
+	{# empty list = everywhere EXCEPT the WAN zone (lesson 188) #}
+	meta iifname != {{ array_to_nftarr(wan_devices) }}
 	{%- endif /* listen_interfaces */ %}
 	meta nfproto { ipv4, ipv6 } udp dport 53 counter redirect to :{{ dns_port }} comment "!{{ cfgname }}: DNS hijack"
+	{# TCP/53 rides the same hijack (audits 33/15/23-B8): without it a LAN client's
+	   TCP DNS bypassed the local split-DNS resolver entirely — it either fell into
+	   the generic TCP interception (redirect modes / TUN) or egressed untouched
+	   (tproxy mode), so the core's DNS rules never saw the query. dnsmasq answers
+	   TCP on the same port; the redirect keeps the whole split-DNS path identical
+	   for UDP and TCP. DoT/DoQ/DoH ports (853/443) stay ordinary connections. #}
+	meta nfproto { ipv4, ipv6 } tcp dport 53 counter redirect to :{{ dns_port }} comment "!{{ cfgname }}: DNS hijack TCP"
 {% endif /* dns_hijacked */ %}
 {% if (match(proxy_mode, /redirect/)): %}
 	meta nfproto { {{ (ipv6_support === '1') ? 'ipv4, ipv6' : 'ipv4' }} } meta l4proto tcp jump homeproxy_redirect_lanac
@@ -313,7 +371,10 @@ chain homeproxy_redirect_proxy_port {
 chain homeproxy_redirect_lanac {
 	{% if (control_info.listen_interfaces): %}
 	meta iifname != {{ array_to_nftarr(control_info.listen_interfaces) }} counter return
-	{% endif %}
+	{% elif (length(wan_devices)): %}
+	{# empty list = everywhere EXCEPT the WAN zone (lesson 188) #}
+	meta iifname != {{ array_to_nftarr(wan_devices) }} counter return
+	{% endif /* listen_interfaces */ %}
 	meta mark {{ self_mark }} counter return
 
 	{% if (control_info.lan_proxy_mode === 'listed_only'): %}
@@ -456,7 +517,10 @@ chain homeproxy_mangle_mark {
 chain homeproxy_mangle_lanac {
 	{% if (control_info.listen_interfaces): %}
 	meta iifname != {{ array_to_nftarr(uniq([...control_info.listen_interfaces, ...['lo']])) }} counter return
-	{% endif %}
+	{% elif (length(wan_devices)): %}
+	{# empty list = everywhere EXCEPT the WAN zone (lesson 188) #}
+	meta iifname != {{ array_to_nftarr(wan_devices) }} counter return
+	{% endif /* listen_interfaces */ %}
 	meta iifname != lo udp dport 53 counter return
 	meta mark {{ self_mark }} counter return
 
@@ -579,10 +643,16 @@ chain homeproxy_mangle_lanac {
 	   into the tun device. #}
 	meta mark {{ self_mark }} counter return
 	udp dport 53 counter return
+	{# TCP/53 must reach the dstnat hijack (dnsmasq), not ride the tun device —
+	   otherwise LAN TCP DNS bypasses the local split-DNS resolver (audits 15/23-B8). #}
+	tcp dport 53 counter return
 
 	{% if (control_info.listen_interfaces): %}
 	meta iifname != {{ array_to_nftarr(control_info.listen_interfaces) }} counter return
-	{% endif %}
+	{% elif (length(wan_devices)): %}
+	{# empty list = everywhere EXCEPT the WAN zone (lesson 188) #}
+	meta iifname != {{ array_to_nftarr(wan_devices) }} counter return
+	{% endif /* listen_interfaces */ %}
 
 	{% if (control_info.lan_proxy_mode === 'listed_only'): %}
 	{% if (!isEmpty(control_info.lan_proxy_ipv4_ips)): %}

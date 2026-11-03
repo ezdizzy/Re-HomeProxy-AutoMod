@@ -87,6 +87,14 @@ const callTestNow = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Outage guard (2026-11-03): manual accelerated re-check of the whole
+ * learned list — entries answering directly are unlearned within minutes. */
+const callRecheck = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_recheck',
+	expect: { '': {} }
+});
+
 const callHelpersInstall = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'automation_helpers_install',
@@ -366,7 +374,8 @@ return view.extend({
 			disabled: _('Automation is disabled — enable it in Settings to start learning.'),
 			custom: _('Automation is paused: Custom routing is active — the engine has no preset pools to learn from. Switch to "Bypass blocking" to resume.'),
 			global: _('Automation is paused: Global mode tunnels everything — there is nothing left to learn. Switch to "Bypass blocking" to resume.'),
-			direct: _('Automation is paused: Main node is Direct (no proxy) — there is no proxy side to verify against. Choose URLTest or a node as Main node to resume.')
+			direct: _('Automation is paused: Main node is Direct (no proxy) — there is no proxy side to verify against. Choose URLTest or a node as Main node to resume.'),
+			outage: _('Automation is paused: network outage — the direct-path baseline (control sites) does not answer, so failed probes are NOT recorded as blocks. Learning resumes automatically once the connection is back.')
 		};
 
 		function fmtTime(ts) {
@@ -416,6 +425,8 @@ return view.extend({
 		/* Ф8-F3: Master-rule protection transparency — the user must see that
 		 * resources covered by their configured rules never enter learning. */
 		const engProtect = E('div', { 'class': 'hpauto-eng-note', style: 'margin:0 0 6px 0' });
+		/* Outage guard (2026-11-03): network-outage / re-check state line. */
+		const engOutage = E('div', { 'class': 'hpauto-eng-note', style: 'display:none; margin:0 0 6px 0' });
 		const engCards = E('div', { 'class': 'hpauto-cards' });
 		const ENG_CARD_DEFS = [
 			[ 'cycles',  _('Cycles') ],
@@ -461,6 +472,7 @@ return view.extend({
 			E('h4', {}, [ _('Engine overview') ]),
 			engHint,
 			engProtect,
+			engOutage,
 			engCards,
 			engCharts,
 			engCap,
@@ -575,6 +587,15 @@ return view.extend({
 				return hp.confirmModal(_('Clear learned'),
 					_('Delete ALL learned sites? The engine will re-learn them from scratch.'), _('Delete all'))
 					.then(function(ok) { return ok ? callClear().then(refresh) : null; });
+			}),
+			btn(_('Re-check learned'), function() {
+				return callRecheck().then(function(r) {
+					if (r && r.result === false)
+						ui.addNotification('error', _('Re-check failed to start: ') + ((r && r.error) || ''));
+					else
+						ui.addNotification('info', _('Re-check started: %d entries queued — entries that answer directly will be removed from the learned list within a few minutes.').format((r && r.queued) || 0));
+					return refresh();
+				});
 			})
 		]));
 		panes.list.appendChild(fileInput);
@@ -859,6 +880,9 @@ return view.extend({
 			pause:  _('Learning paused'),
 			resume: _('Learning resumed'),
 			clear:  _('Learned list cleared'),
+			outage: _('Network outage'),
+			outage_end: _('Direct path recovered'),
+			recheck: _('Re-check'),
 			warn:   _('Warning')
 		};
 
@@ -898,6 +922,22 @@ return view.extend({
 					: _('No Master rules protect resources from learning.');
 			} else
 				engProtect.textContent = '';
+
+			/* Outage guard (2026-11-03): honest engine state while the direct
+			 * path is down (learning suspended, nothing poisoned) and while
+			 * the accelerated re-check queue drains. One line, one place. */
+			const og = st.outage || {};
+			const rcq = (st.recheck && st.recheck.pending) || 0;
+			let ogText = '';
+			if (og.active)
+				ogText = '⚠ ' + _('Network outage: the direct-path baseline failed — learning is suspended so failed probes cannot poison the learned list.');
+			else if (rcq > 0)
+				ogText = '↻ ' + _('Re-check in progress: %d entries left.').format(rcq);
+			if (ogText !== state.ogSig) {
+				state.ogSig = ogText;
+				engOutage.textContent = ogText;
+				engOutage.style.display = ogText ? 'block' : 'none';
+			}
 
 			/* Cards (text-only every tick — anti-flicker). */
 			const c = st.cycle || {};

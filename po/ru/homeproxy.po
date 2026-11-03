@@ -12136,3 +12136,54 @@ msgstr "Операция ещё выполняется — смотрите жу
 
 msgid "Applying configuration…"
 msgstr "Применяю конфигурацию…"
+
+msgid "Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS's socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured."
+msgstr "Разрешает заблокированные домены по шифрованному DNS (DoH/DoT). Можно добавить несколько — MultiDNS гонит их все, без него используется первая запись. Транспорт выбирается честно и показывается живьём в мониторе качества DNS ниже: через прокси-туннель, когда главный путь — VPN-узел; через socks5-туннель MultiDNS по каждому upstream; напрямую, когда главный путь — ByeDPI/Zapret (их десинхронизация ломает DoH/DoT) или прокси не настроен."
+
+msgid "via MultiDNS (local mosdns racing listener)"
+msgstr "через MultiDNS (локальный гоночный слушатель mosdns)"
+
+msgid "upstreams tunneled through the proxy (socks5)"
+msgstr "upstream-ы туннелируются через прокси (socks5)"
+
+msgid "upstreams queried directly (still encrypted)"
+msgstr "upstream-ы опрашиваются напрямую (всё равно шифровано)"
+
+msgid "through the proxy (main-out)"
+msgstr "через прокси (main-out)"
+
+msgid "directly (ByeDPI/Zapret main path — deliberate: the desync corrupts DoH/DoT)"
+msgstr "напрямую (главный путь ByeDPI/Zapret — осознанно: десинхронизация ломает DoH/DoT)"
+
+msgid "directly (no proxy configured)"
+msgstr "напрямую (прокси не настроен)"
+
+msgid "Secure DNS now"
+msgstr "Защищённый DNS сейчас"
+
+msgid "Automation is paused: network outage — the direct-path baseline (control sites) does not answer, so failed probes are NOT recorded as blocks. Learning resumes automatically once the connection is back."
+msgstr "Автоматизация приостановлена: авария сети — база прямого пути (контрольные сайты) не отвечает, поэтому сбои проб НЕ записываются как блокировки. Обучение продолжится автоматически, когда связь восстановится."
+
+msgid "Re-check learned"
+msgstr "Перепроверить выученные"
+
+msgid "Re-check failed to start: "
+msgstr "Не удалось запустить перепроверку: "
+
+msgid "Re-check started: %d entries queued — entries that answer directly will be removed from the learned list within a few minutes."
+msgstr "Перепроверка запущена: %d записей в очереди — записи, отвечающие напрямую, будут сняты с прокси в течение нескольких минут."
+
+msgid "Network outage"
+msgstr "Авария сети"
+
+msgid "Direct path recovered"
+msgstr "Прямой путь восстановлен"
+
+msgid "Re-check"
+msgstr "Перепроверка"
+
+msgid "Network outage: the direct-path baseline failed — learning is suspended so failed probes cannot poison the learned list."
+msgstr "Авария сети: база прямого пути не отвечает — обучение приостановлено, чтобы сбои не записывались в выученный список."
+
+msgid "Re-check in progress: %d entries left."
+msgstr "Перепроверка идёт: осталось %d записей."

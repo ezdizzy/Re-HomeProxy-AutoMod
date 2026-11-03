@@ -6575,3 +6575,54 @@ msgstr ""
 
 msgid "Applying configuration…"
 msgstr ""
+
+msgid "Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS's socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured."
+msgstr ""
+
+msgid "via MultiDNS (local mosdns racing listener)"
+msgstr ""
+
+msgid "upstreams tunneled through the proxy (socks5)"
+msgstr ""
+
+msgid "upstreams queried directly (still encrypted)"
+msgstr ""
+
+msgid "through the proxy (main-out)"
+msgstr ""
+
+msgid "directly (ByeDPI/Zapret main path — deliberate: the desync corrupts DoH/DoT)"
+msgstr ""
+
+msgid "directly (no proxy configured)"
+msgstr ""
+
+msgid "Secure DNS now"
+msgstr ""
+
+msgid "Automation is paused: network outage — the direct-path baseline (control sites) does not answer, so failed probes are NOT recorded as blocks. Learning resumes automatically once the connection is back."
+msgstr ""
+
+msgid "Re-check learned"
+msgstr ""
+
+msgid "Re-check failed to start: "
+msgstr ""
+
+msgid "Re-check started: %d entries queued — entries that answer directly will be removed from the learned list within a few minutes."
+msgstr ""
+
+msgid "Network outage"
+msgstr ""
+
+msgid "Direct path recovered"
+msgstr ""
+
+msgid "Re-check"
+msgstr ""
+
+msgid "Network outage: the direct-path baseline failed — learning is suspended so failed probes cannot poison the learned list."
+msgstr ""
+
+msgid "Re-check in progress: %d entries left."
+msgstr ""

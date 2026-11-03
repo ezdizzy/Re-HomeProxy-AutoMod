@@ -172,6 +172,35 @@ const TRIGGER_FILE = RUN_DIR + '/automation.trigger';
 const LOG_FILE = RUN_DIR + '/automation.log';
 const DNS_LOG = '/var/log/dnsmasq-q.log';
 
+/* ── Outage guard (2026-11-03, user report) ──────────────────────────
+ * When the internet drops or DNS breaks, EVERY direct probe fails while
+ * the proxy side (socks5h = remote resolution through the tunnel) keeps
+ * answering — the engine then "learned" every LAN-requested host as
+ * blocked and flooded auto_proxy_list with normally-direct sites, and
+ * the slow self-heal (2 entries/hour, 7-day age gate) took days to
+ * unwind the damage. The guard: a canary baseline of RU-stable hosts
+ * that are never DPI-blocked. Canaries failing DIRECT = the direct path
+ * itself is broken — "direct failed + proxy works" is then the SHAPE of
+ * the outage, not evidence of per-site blocking → learning suspended
+ * for the pass, nothing written, poison marks dropped on recovery. */
+const CANARY_HOSTS = [ 'ya.ru', 'vk.com', 'mail.ru', 'wildberries.ru' ];
+const CANARY_OK_MIN = 2;        /* ≥2 of the canaries answering direct = healthy */
+const CANARY_TTL = 120;         /* verdict cache, seconds */
+const CANARY_TIMEOUT = 5;
+/* Accelerated re-check of learned entries (recovery + manual action):
+ * RECHECK_BATCH entries per pass; an entry is unlearned only after
+ * RECHECK_CONFIRM consecutive clean DIRECT answers measured at least
+ * CONFIRM_RETRY apart — the SAME bar the hourly self-heal applies
+ * (HEAL_CONFIRM). 🔴 Урок 196: one lucky direct answer is NOT evidence —
+ * a short GET slips through a DPI window while the real browser page
+ * dies (github.com/google.com/gemini.google.com class): the first
+ * 1-confirm build wrongly unlearned genuinely blocked sites. Direct
+ * probes lie; unlearning must confirm like everything else. */
+const RECHECK_BATCH = 16;
+const RECHECK_CONFIRM = 3;
+const RECHECK_MARKER = RUN_DIR + '/automation.recheck';
+const OUTAGE_HIST_MAX = 10;
+
 /* Module-level state shared with the top-level helper function dns_failover_check().
  * Some ucode builds do not support closures over main()'s locals, so these helpers
  * must read module-scoped variables. */
@@ -2470,6 +2499,9 @@ echo done > "$PRE.done"
 	let raw_ex = replace(ex_opt || 'localhost,local,lan,in-addr.arpa,ip6.arpa', /#[^\n]*/g, '');
 	excludes = split(raw_ex, /[,\n]/);
 	excludes = filter(excludes, (x) => length(trim(x)));
+	/* Canary hosts are measurement baselines, never candidates (2026-11-03). */
+	for (let ci = 0; ci < length(CANARY_HOSTS); ci++)
+		push(excludes, CANARY_HOSTS[ci]);
 
 	/* DNS failover (C) reads the DNS section, not the automation section. */
 	dns_failover = uci.get('homeproxy', 'config', 'dns_failover') || '0';
@@ -2683,6 +2715,20 @@ echo done > "$PRE.done"
 	let last_reload = 0;
 	pending_reload = false;
 
+	/* ── Outage guard state (2026-11-03). Declared BEFORE classify()/pass():
+	 * this ucode build only closes over main() locals declared lexically
+	 * before the nested function definition (hot_set / asn_enabled lessons). */
+	let learn_gate_ok = true;   /* per-pass verdict consumed by classify() */
+	let canary_ts = 0;          /* last canary baseline check time */
+	let canary_ok = true;       /* cached verdict (optimistic until first check) */
+	let canary_detail = '';     /* human-readable last measurement */
+	let outage_since = 0;       /* open outage window start (0 = none) */
+	let outage_events = 0;      /* how many outage windows were opened */
+	let recheck_queue = [];     /* hosts queued for accelerated direct re-check */
+	/* An outage window opened before a daemon restart stays open. */
+	if (type(state.__outage) === 'object' && int(state.__outage.since || 0) > 0)
+		outage_since = int(state.__outage.since);
+
 	function do_reload() {
 		let marker = RUN_DIR + '/.learned_hotreload';
 		if (access(marker)) {
@@ -2721,7 +2767,110 @@ echo done > "$PRE.done"
 		pending_new = 0;
 	}
 
+	/* ── Outage guard: canary baseline of the direct path (2026-11-03) ──
+	 * Cached CANARY_TTL seconds, refreshed on demand: a direct wave with at
+	 * least one failure (only direct failures can produce a learn), a due
+	 * re-check batch, or a pending pain-override learn. Healthy = at least
+	 * CANARY_OK_MIN canaries answer direct. RU-stable hosts are used
+	 * deliberately: they are never DPI-blocked, so canaries failing direct
+	 * means the direct path itself is down (provider outage, broken router
+	 * DNS, config accident) or wholesale-degraded — exactly the states where
+	 * "direct failed + proxy works" holds for every host on the LAN and a
+	 * learn would be false. */
+	function canary_check() {
+		const now = time();
+		if ((now - canary_ts) < CANARY_TTL)
+			return canary_ok;
+		canary_ts = now;
+		let items = [];
+		for (let i = 0; i < length(CANARY_HOSTS); i++)
+			push(items, { i: 'c' + i, h: CANARY_HOSTS[i] });
+		let dw = probe_all(items, 'direct', CANARY_TIMEOUT, false);
+		let ok_n = 0;
+		for (let i = 0; i < length(items); i++)
+			if (dw['c' + i] && dw['c' + i].ok) ok_n++;
+		if (ok_n >= CANARY_OK_MIN) {
+			canary_ok = true;
+			canary_detail = sprintf('%d/%d direct ok', ok_n, length(items));
+			return true;
+		}
+		/* Direct path looks broken: measure the proxy side once for the log —
+		 * "direct dead + proxy alive" is the exact accident shape the user hit. */
+		let px_n = -1;
+		if (!main_is_direct) {
+			px_n = 0;
+			let pw = probe_all(items, 'proxy', CANARY_TIMEOUT, false);
+			for (let i = 0; i < length(items); i++)
+				if (pw['c' + i] && pw['c' + i].ok) px_n++;
+		}
+		canary_ok = false;
+		canary_detail = (px_n >= 0)
+			? sprintf('%d/%d direct ok, %d/%d proxy ok', ok_n, length(items), px_n, length(items))
+			: sprintf('%d/%d direct ok', ok_n, length(items));
+		return false;
+	}
+
+	/* Open the outage window (persisted in state — survives restarts). */
+	function outage_mark(now) {
+		if (outage_since) return;
+		outage_since = now;
+		state.__outage = { since: now };
+		outage_events++;
+		log('АВАРИЯ: база прямого пути не отвечает (' + canary_detail + ') — обучение приостановлено, сбои не записываются как блокировки');
+		eng_event('outage', 'прямой путь недоступен (' + canary_detail + '), обучение приостановлено');
+	}
+
+	/* Close the outage window: queue everything learned during it for the
+	 * accelerated direct re-check (its "direct failed" evidence was
+	 * manufactured by the outage), and drop DNS-poison marks made during it
+	 * (a broken plain view manufactures disjoint answers wholesale). The
+	 * queue is MERGED — a manual whole-list recheck in progress must not
+	 * lose its remaining backlog when an outage window opens mid-drain. */
+	function outage_recover(now) {
+		if (!outage_since) return;
+		const since = outage_since;
+		outage_since = 0;
+		delete state.__outage;
+		let hist = state.__outage_hist;
+		if (type(hist) !== 'array') hist = [];
+		push(hist, { s: since, e: now });
+		while (length(hist) > OUTAGE_HIST_MAX) shift(hist);
+		state.__outage_hist = hist;
+		let added = 0;
+		const queue_add = (h) => {
+			for (let qi = 0; qi < length(recheck_queue); qi++)
+				if (recheck_queue[qi] === h) return;
+			push(recheck_queue, h);
+			added++;
+		};
+		for (let h in keys(auto_set)) {
+			const st = state[h];
+			if (type(st) === 'object' && int(st.added || 0) >= since &&
+			    !manual_proxy_set[h] && !manual_direct_set[h])
+				queue_add(h);
+		}
+		for (let h in keys(auto_ip_set)) {
+			const st = state[h];
+			if (type(st) === 'object' && int(st.added || 0) >= since &&
+			    !manual_proxy_set[h] && !manual_direct_set[h])
+				queue_add(h);
+		}
+		let pdrop = 0;
+		for (let ph in keys(poisoned_hosts))
+			if (int(poisoned_hosts[ph] || 0) >= since) { delete poisoned_hosts[ph]; pdrop++; }
+		log('АВАРИЯ ЗАВЕРШЕНА: прямой путь восстановлен через ' + (now - since) + ' с' +
+			(added ? (' — ' + added + ' записей из окна аварии добавлены в очередь перепроверки (' + length(recheck_queue) + ' всего)') : (' — во время аварии выучено: 0, очередь перепроверки: ' + length(recheck_queue))) +
+			(pdrop ? (', сброшено DNS-poison-меток: ' + pdrop) : ''));
+		eng_event('outage_end', 'прямой путь восстановлен, перепроверка: ' + length(recheck_queue));
+	}
+
 	function classify(dom, d, p, is_ip, tcp_direct, rtt_direct, rtt_proxy) {
+		/* Outage gate (2026-11-03): with the canary baseline failed nothing is
+		 * learnable — the caller skips the waves entirely; this choke point
+		 * also covers stale-cache races and the pain override. No record is
+		 * touched: "no measurement → no verdict". */
+		if (!learn_gate_ok)
+			return;
 		if (!state[dom]) state[dom] = {};
 		let st = state[dom];
 		st.last_probe = time();
@@ -3240,11 +3389,26 @@ echo done > "$PRE.done"
 			let ditems = [];
 			for (let i = 0; i < length(sel); i++) push(ditems, { i: 'd' + i, h: sel[i] });
 			let dwave = probe_all(ditems, 'direct', timeout, http2_probe);
-			let pitems = [];
+			/* Outage guard: refresh the canary verdict whenever this wave could
+			 * produce a learn (only direct failures can). Gate closed → skip the
+			 * proxy wave and every classify() below: no measurement, no verdict,
+			 * no state churn — and the outage window is opened/extended. */
+			learn_gate_ok = true;
 			for (let i = 0; i < length(sel); i++)
-				if (!(dwave['d' + i] && dwave['d' + i].ok))
-					push(pitems, { i: 'p' + i, h: sel[i] });
-			let pwave = main_is_direct ? {} : probe_all(pitems, 'proxy', timeout, http2_probe);
+				if (!(dwave['d' + i] && dwave['d' + i].ok)) { learn_gate_ok = canary_check(); break; }
+			if (learn_gate_ok && outage_since)
+				outage_recover(now);
+			if (!learn_gate_ok) {
+				outage_mark(now);
+				hot_set = {};
+			}
+			let pitems = [];
+			if (learn_gate_ok)
+				for (let i = 0; i < length(sel); i++)
+					if (!(dwave['d' + i] && dwave['d' + i].ok))
+						push(pitems, { i: 'p' + i, h: sel[i] });
+			let pwave = (learn_gate_ok && !main_is_direct) ? probe_all(pitems, 'proxy', timeout, http2_probe) : {};
+			if (learn_gate_ok)
 			for (let i = 0; i < length(sel); i++) {
 				let d_res = dwave['d' + i] || { code: '000', ok: false, block: false, fp: '', rtt_ms: 0 };
 				let p_res = pwave['p' + i] || null;
@@ -3269,6 +3433,13 @@ echo done > "$PRE.done"
 					push(force, { i: 'f' + length(force), h: dom, dwi: 'd' + i, pwi: 'p' + i });
 			}
 			if (length(force) && !main_is_direct) {
+				/* Outage guard: force-learn obeys the canary gate too — refresh
+				 * the baseline before overriding passing probes. */
+				if (!canary_check()) {
+					learn_gate_ok = false;
+					outage_mark(now);
+					hot_set = {};
+				}
 				/* Direct-passing hosts never got a proxy wave — measure now. */
 				let extra = [];
 				for (let f in force)
@@ -3279,7 +3450,7 @@ echo done > "$PRE.done"
 					const dom = f.h;
 					const p_ok = (pwave[f.pwi] && pwave[f.pwi].ok) || (fwave[f.i] && fwave[f.i].ok);
 					const fst = state[dom];
-					if (p_ok) {
+					if (p_ok && learn_gate_ok) {
 						auto_set[dom] = true;
 						fst.status = 'blocked';
 						fst.confirms = 0;
@@ -3328,13 +3499,24 @@ echo done > "$PRE.done"
 				let di = [];
 				for (let i = 0; i < length(ipsel); i++) push(di, { i: 'i' + i, h: ipsel[i] });
 				let idw = probe_all(di, 'direct', timeout, http2_probe);
-				let needp = {}, pi = [];
+				/* Outage guard for the IP pipeline: same rule as domains. */
+				learn_gate_ok = true;
 				for (let i = 0; i < length(ipsel); i++)
-					if (!(idw['i' + i] && idw['i' + i].ok)) { needp[i] = true; push(pi, { i: 'i' + i, h: ipsel[i] }); }
-				let ipw = main_is_direct ? {} : probe_all(pi, 'proxy', timeout, http2_probe);
+					if (!(idw['i' + i] && idw['i' + i].ok)) { learn_gate_ok = canary_check(); break; }
+				if (learn_gate_ok && outage_since)
+					outage_recover(now);
+				if (!learn_gate_ok) {
+					outage_mark(now);
+					hot_set = {};
+				}
+				let needp = {}, pi = [];
+				if (learn_gate_ok)
+					for (let i = 0; i < length(ipsel); i++)
+						if (!(idw['i' + i] && idw['i' + i].ok)) { needp[i] = true; push(pi, { i: 'i' + i, h: ipsel[i] }); }
+				let ipw = (learn_gate_ok && !main_is_direct) ? probe_all(pi, 'proxy', timeout, http2_probe) : {};
 				let ti = [];
 				for (let i = 0; i < length(ipsel); i++) {
-					if (!needp[i]) continue;
+					if (!needp[i] || !learn_gate_ok) continue;
 					if ((ipw['i' + i] && ipw['i' + i].ok)) continue;
 					push(ti, { i: 'i' + i, x: i, h: ipsel[i] });
 				}
@@ -3371,11 +3553,117 @@ echo done > "$PRE.done"
 			}
 		}
 
+		/* ── Accelerated re-check (2026-11-03) ───────────────────────────
+		 * Entries learned during an outage window, or the whole learned set
+		 * after the manual "re-check the list" action (automation.recheck
+		 * marker), are re-probed DIRECT in small batches every pass. An entry
+		 * is unlearned only after RECHECK_CONFIRM consecutive clean direct
+		 * answers measured CONFIRM_RETRY apart (probe honesty doctrine —
+		 * lesson 196: a single lucky GET through a DPI window is not
+		 * evidence; github/google/gemini must never flap). Auth-like hosts
+		 * are never probe-unlearned at all (their flows split across exits —
+		 * the same reason the hot lane skips them). This is the fast-
+		 * treatment path for a polluted list — the hourly self-heal below is
+		 * 2 entries/hour with a 7-day age gate, days for a mass false-learn. */
+		if (length(recheck_queue)) {
+			learn_gate_ok = canary_check();
+			if (learn_gate_ok) {
+				let batch = [];
+				while (length(batch) < RECHECK_BATCH && length(recheck_queue))
+					push(batch, shift(recheck_queue));
+				let ritems = [], deferred = 0;
+				for (let bi = 0; bi < length(batch); bi++) {
+					const h = batch[bi];
+					/* Auth-like hosts keep their learned routing; a "clean"
+					 * probe answer there is the OAuth loop lying. */
+					if (!match(h, /^(\d{1,3}\.){3}\d{1,3}$/) && is_auth_like(h))
+						continue;
+					const hst = state[h];
+					/* Persistent-pain protection (lesson 196): a host the
+					 * user's own traffic is ACTIVELY suffering on (fresh
+					 * sighting burst — the hot-lane signal) must never be
+					 * unlearned by probe answers: the user's pain outranks
+					 * the probe (the pain-override doctrine). The burst ends
+					 * when the pain ends; the queue re-visits later. */
+					if (type(hst) === 'object' &&
+					    ((time() - int(hst.sight_t || 0)) < 600) &&
+					    int(hst.sight || 0) >= HOT_MIN_FREQ)
+						continue;
+					/* Spacing: consecutive confirms must be SEPARATE
+					 * measurements — a host confirmed on this pass re-enters
+					 * the queue and may be confirmed again only after
+					 * CONFIRM_RETRY seconds. */
+					if (type(hst) === 'object' && int(hst.recheck_t || 0) &&
+					    (now - int(hst.recheck_t)) < CONFIRM_RETRY) {
+						push(recheck_queue, h);
+						deferred++;
+						continue;
+					}
+					push(ritems, { i: 'r' + bi, h: h });
+				}
+				let rw = length(ritems) ? probe_all(ritems, 'direct', timeout, http2_probe) : {};
+				let unlearned = [], kept = 0;
+				for (let i = 0; i < length(ritems); i++) {
+					const h = ritems[i].h;
+					const res = rw['r' + i];
+					const ist = state[h];
+					if (type(ist) !== 'object') continue;
+					ist.recheck_t = now;
+					if (res && res.dns_fail) {
+						/* ч.119 doctrine: no measurement — neither count nor
+						 * reset the streak; try again on a later pass. */
+						push(recheck_queue, h);
+						continue;
+					}
+					if (res && res.ok) {
+						ist.recheck_n = int(ist.recheck_n || 0) + 1;
+						if (int(ist.recheck_n) >= RECHECK_CONFIRM) {
+							/* Manual pins are user decisions — the pin owns
+							 * routing; drop a learned duplicate without fuss. */
+							if (!manual_proxy_set[h] && !manual_direct_set[h]) {
+								if (match(h, /^(\d{1,3}\.){3}\d{1,3}$/)) {
+									if (auto_ip_set[h]) { delete auto_ip_set[h]; push(unlearned, h); }
+								} else if (auto_set[h]) {
+									delete auto_set[h];
+									push(unlearned, h);
+								}
+							}
+							ist.heal = 0;
+							ist.status = 'direct';
+							ist.confirms = 0;
+							delete ist.recheck_n;
+							delete ist.recheck_t;
+						} else {
+							push(recheck_queue, h);   /* needs the next spaced confirm */
+						}
+					} else {
+						kept++;
+						ist.recheck_n = 0;            /* streak broken */
+						ist.heal = 0;
+					}
+				}
+				if (length(unlearned)) {
+					write_auto_list(auto_set);
+					write_auto_ip_list(auto_ip_set);
+					sync_auth_families();
+					pending_reload = true;
+					log('ПЕРЕПРОВЕРКА: ' + length(unlearned) + ' записей ответили напрямую ' + RECHECK_CONFIRM + ' пробы подряд и сняты с прокси: ' + join(', ', unlearned));
+					eng_event('recheck', 'снято ' + length(unlearned) + ' (' + join(', ', unlearned) + ')');
+				}
+				if (length(recheck_queue))
+					log('ПЕРЕПРОВЕРКА: в очереди ещё ' + length(recheck_queue) + ' записей (пакет ' + RECHECK_BATCH + ' за цикл' + (deferred ? ', ' + deferred + ' отложено до следующего замера' : '') + ')');
+				else if (length(unlearned) || kept)
+					log('ПЕРЕПРОВЕРКА завершена: снято ' + length(unlearned) + ', подтверждено заблокированным: ' + kept);
+			}
+		}
+
 		/* Self-healing (both modes): hourly, re-probe DIRECT a couple of learned
 		 * entries older than 7 days. An entry answering directly HEAL_CONFIRM times
 		 * in a row no longer needs the proxy — remove it from the lists.
-		 * Manual "always proxy" pins are NEVER unlearned here (that is their point). */
-		if ((now - last_reeval) > REEVAL_PERIOD) {
+		 * Manual "always proxy" pins are NEVER unlearned here (that is their point).
+		 * Outage guard: skipped while the canary baseline is failed — a dead
+		 * direct path cannot produce a measurement, only heal-streak resets. */
+		if ((now - last_reeval) > REEVAL_PERIOD && learn_gate_ok) {
 			last_reeval = now;
 			let healed = [];
 			let rechecked = 0;
@@ -3430,7 +3718,7 @@ echo done > "$PRE.done"
 			for (let d in manual_proxy_set) keep[d] = true;
 			for (let d in manual_direct_set) keep[d] = true;
 			for (let h in keys(state)) {
-				if (h === '__dns_offset') continue;
+				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let st = state[h];
 				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
@@ -3442,7 +3730,7 @@ echo done > "$PRE.done"
 			 * them reset the confirm counter and the host never got learned. */
 			let rest = [];
 			for (let h in keys(state)) {
-				if (h === '__dns_offset') continue;
+				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let cst = state[h];
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
@@ -3582,6 +3870,16 @@ echo done > "$PRE.done"
 				direct: protect_stats.direct },
 			ram_kb: ram_kb,
 			paused: paused,
+			/* Outage guard + re-check queue visibility (2026-11-03). */
+			outage: {
+				active: !!outage_since,
+				since: outage_since || 0,
+				canary_ts: canary_ts,
+				canary_ok: canary_ok,
+				detail: canary_detail,
+				events: outage_events
+			},
+			recheck: { pending: length(recheck_queue) },
 			events: eng_stats.events,
 			hist: eng_stats.hist
 		};
@@ -3618,6 +3916,10 @@ echo done > "$PRE.done"
 			state.__dns_offset = dns_log_offset;
 			reload_lists();
 			save_state(state);
+			/* Outage guard state is wiped with everything else. */
+			outage_since = 0;
+			recheck_queue = [];
+			canary_ts = 0;
  			log('clear marker: in-memory state wiped, working sets reloaded (fresh start).');
  			eng_event('clear', 'learned list cleared');
 		} else if (access(RELOAD_MARKER + '_geo')) {
@@ -3629,6 +3931,19 @@ echo done > "$PRE.done"
 			system('rm -f ' + shellquote(RELOAD_MARKER));
 			reload_lists();
 			log('reload marker: working sets reloaded.');
+		} else if (access(RECHECK_MARKER)) {
+			/* Manual "re-check the learned list" (2026-11-03): queue the WHOLE
+			 * learned set for the accelerated direct re-check — the fast
+			 * treatment path when an outage polluted the list (or the user
+			 * just wants a fresh verdict on every entry). */
+			system('rm -f ' + shellquote(RECHECK_MARKER));
+			recheck_queue = [];
+			for (let h in keys(auto_set))
+				if (!manual_proxy_set[h] && !manual_direct_set[h]) push(recheck_queue, h);
+			for (let h in keys(auto_ip_set))
+				if (!manual_proxy_set[h] && !manual_direct_set[h]) push(recheck_queue, h);
+			log('ПЕРЕПРОВЕРКА: ручной запуск — ' + length(recheck_queue) + ' записей в очереди (пакет ' + RECHECK_BATCH + ' за цикл, отвечающие напрямую снимаются сразу)');
+			eng_event('recheck', 'запущена перепроверка списка: ' + length(recheck_queue) + ' записей');
 		}
 
 		let run_now = false;

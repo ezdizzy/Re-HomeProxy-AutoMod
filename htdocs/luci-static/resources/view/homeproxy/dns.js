@@ -107,7 +107,7 @@ return view.extend({
 		}
 
 		o = s.taboption('pools', form.DynamicList, 'secure_dns_server', _('Secure DNS server') + ' 🔒',
-			_('Resolves blocked domains via proxy — your ISP cannot see which sites you look up. Uses encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used.'));
+			_('Resolves blocked domains with encrypted DNS (DoH/DoT). You may add several — MultiDNS races all of them, without it the first entry is used. The transport is chosen honestly and shown live in the DNS quality monitor below: through the proxy tunnel when a VPN node is the main path; through MultiDNS\'s socks5 tunnel per upstream; directly when the main path is ByeDPI/Zapret (their desync corrupts DoH/DoT) or when no proxy is configured.'));
 		o.value('https://cloudflare-dns.com/dns-query', _('Cloudflare DoH'));
 		o.value('https://dns.quad9.net/dns-query', _('Quad9 DoH'));
 		o.value('https://dns.adguard-dns.com/dns-query', _('AdGuard DoH'));
@@ -255,11 +255,27 @@ return view.extend({
 		function mdRefresh() {
 			return mdStatus().then(function(st) {
 				const en = st.enabled === '1';
+				let secLine = '';
+				if (st.secure_dns) {
+					const sd = st.secure_dns;
+					let mode;
+					if (sd.target === 'mosdns')
+						mode = _('via MultiDNS (local mosdns racing listener)') + ' — ' +
+							(sd.proxied ? _('upstreams tunneled through the proxy (socks5)') : _('upstreams queried directly (still encrypted)'));
+					else if (sd.proxied)
+						mode = _('through the proxy (main-out)');
+					else if (sd.reason === 'dpi')
+						mode = _('directly (ByeDPI/Zapret main path — deliberate: the desync corrupts DoH/DoT)');
+					else
+						mode = _('directly (no proxy configured)');
+					secLine = ' &nbsp;|&nbsp; ' + _('Secure DNS now') + ': <b>' + mode + '</b>';
+				}
 				mdStatusEl.innerHTML =
 					_('Enabled') + ': <b>' + (en ? _('yes') : _('no')) + '</b> &nbsp;|&nbsp; ' +
 					_('mosdns') + ': <b>' + (st.mosdns ? _('running') : (st.restarting ? _('restarting...') : _('stopped'))) + '</b> &nbsp;|&nbsp; ' +
 					_('Plain pool') + ': <b>' + (st.active && st.active.ru ? st.active.ru.length : 0) + '</b> &nbsp;|&nbsp; ' +
-					_('Secure pool') + ': <b>' + (st.active && st.active.secure ? st.active.secure.length : 0) + '</b>';
+					_('Secure pool') + ': <b>' + (st.active && st.active.secure ? st.active.secure.length : 0) + '</b>' +
+					secLine;
 				mdRenderTable(st.servers);
 			}).catch(function(e) {
 				mdStatusEl.textContent = _('MultiDNS status unavailable: ') + e;
@@ -318,7 +334,7 @@ return view.extend({
 			/* Shared design system table (Automation look): sticky grey header,
 			 * translucent row hover. */
 			const table = E('table', { 'class': 'hpui-table' });
-			const headers = [ _('Server'), _('Pool'), _('Score'), _('Latency'), _('Open %'), _('Live %'), _('Success %'), _('Trend'), _('Status') ];
+			const headers = [ _('Server'), _('Pool'), _('Transport'), _('Score'), _('Latency'), _('Open %'), _('Live %'), _('Success %'), _('Trend'), _('Status') ];
 			const thead = E('thead', {});
 			const htr = E('tr', {});
 			for (let h of headers)
@@ -335,10 +351,15 @@ return view.extend({
 				let succ = (e.success != null) ? (e.success + '%') : '—';
 				let trend = '';
 				if (e.samples >= 2) trend = '≈'; /* trend history shown via score stability */
-				const cells = [ String(e.server), pool, String(e.score != null ? e.score : '—'), lat, open, live, succ, trend ];
+				const cells = [ String(e.server), pool ];
 				const tr = E('tr', {});
-				for (let i = 0; i < cells.length; i++)
-					tr.appendChild(E('td', {}, [ cells[i] ]));
+				/* Transport + the factual egress path (audit 14): DoQ/DoH3 always
+				 * show "direct" — mosdns socks5 carries DoH/DoT only. */
+				tr.appendChild(E('td', {}, [ (e.transport || '—') + ' ',
+					E('span', { 'class': 'hpui-badge ' + (e.proxied ? 'hpui-b-green' : 'hpui-b-grey') },
+						[ e.proxied ? _('Via proxy') : _('Directly') ]) ]));
+				for (let c of [ String(e.score != null ? e.score : '—'), lat, open, live, succ, trend ])
+					tr.appendChild(E('td', {}, [ c ]));
 				tr.appendChild(E('td', {}, [
 					E('span', { 'class': 'hpui-badge ' + (e.pruned ? 'hpui-b-grey' : 'hpui-b-green') },
 						[ e.pruned ? _('pruned') : _('active') ])

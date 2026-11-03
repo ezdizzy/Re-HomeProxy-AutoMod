@@ -4883,6 +4883,11 @@ const methods = {
 				       : (rmode === 'global') ? 'global'
 				       : (mnode === 'direct-out' || mnode === 'nil') ? 'direct'
 				       : '';
+			/* Outage guard (2026-11-03): an open outage window suspends learning
+			 * even though the mode is learnable — the banner must say so. The
+			 * window lives in automation_state.json (__outage), already parsed. */
+			if (paused === '' && type(state.__outage) === 'object' && int(state.__outage.since || 0) > 0)
+				paused = 'outage';
 
 			let n_manual_proxy = 0, n_manual_direct = 0, n_learned = 0;
 			for (let i, e in entries) {
@@ -6707,6 +6712,69 @@ const methods = {
 			let efd = popen('uci -q get homeproxy.multidns.enabled 2>/dev/null');
 			if (efd) { enabled = trim(efd.read('all')); efd.close(); }
 
+			/* Ф1.6 (audits 13/14): the FACTUAL secure-DNS transport + per-upstream
+			 * proxied status. The transport is read from the GENERATED core config
+			 * (the truth the core actually runs), not re-derived from UCI: the
+			 * generator decides mosdns-loopback vs sing-box resolver and its detour
+			 * (main-out since audit 13 — the old 'always direct-out' contradicted
+			 * the UI's "resolves via proxy" promise). Per-upstream: mosdns socks5
+			 * only carries TCP-based transports (DoH/DoT), so DoQ/DoH3 stay direct
+			 * — each row reports where its queries really egress. */
+			let md_node = null, md_svp = null, md_use_secure = null;
+			let vfd = popen('uci -q get homeproxy.config.main_node 2>/dev/null');
+			if (vfd) { md_node = trim(vfd.read('all')); vfd.close(); }
+			vfd = popen('uci -q get homeproxy.multidns.secure_via_proxy 2>/dev/null');
+			if (vfd) { md_svp = trim(vfd.read('all')); vfd.close(); }
+			vfd = popen('uci -q get homeproxy.multidns.use_secure 2>/dev/null');
+			if (vfd) { md_use_secure = trim(vfd.read('all')); vfd.close(); }
+			const svp_on = (md_svp != null && md_svp !== '' && md_svp !== '0');
+			const mdns_sec_on = (enabled === '1') && (md_use_secure !== '0');
+			const proxy_real = !(md_node in [null, '', 'nil', 'direct-out', 'byedpi-out', 'zapret-out']);
+
+			let secure_dns = null;
+			const gen_file = RUN_DIR + '/hiddify-c.json';
+			if (access(gen_file)) {
+				try {
+					const gen = json(readfile(gen_file)) || {};
+					for (let s in ((gen.dns && gen.dns.servers) || [])) {
+						if (s.tag !== 'secure-dns')
+							continue;
+						const loopback = (s.server === '127.0.0.1');
+						secure_dns = {
+							target: loopback ? 'mosdns' : 'singbox',
+							detour: s.detour || null,
+							proxied: loopback ? (svp_on && proxy_real) : (s.detour === 'main-out')
+						};
+						if (!secure_dns.proxied && !loopback)
+							secure_dns.reason = (md_node in ['byedpi-out', 'zapret-out']) ? 'dpi' : 'noproxy';
+						break;
+					}
+				} catch (e) { secure_dns = null; }
+			}
+			if (secure_dns == null && md_node != null) {
+				/* Config not generated (or no secure-dns server): report the intended
+				 * transport so the page does not go blank after a fresh install. */
+				if (mdns_sec_on && access('/usr/bin/mosdns'))
+					secure_dns = { target: 'mosdns', detour: 'direct-out', proxied: svp_on && proxy_real };
+				else if (!proxy_real) {
+					secure_dns = { target: 'singbox', detour: 'direct-out', proxied: false,
+						reason: (md_node in ['byedpi-out', 'zapret-out']) ? 'dpi' : 'noproxy' };
+				}
+				else
+					secure_dns = { target: 'singbox', detour: 'main-out', proxied: true };
+			}
+
+			/* Per-upstream transport from the entry spelling (mirrors parse_entry in
+			 * multidns.uc; the daemon module cannot be imported here — it runs its
+			 * main loop on import). */
+			const transport_of = (entry) => {
+				const m = match('' + entry, /^(https?|tls|quic|tcp):\/\//);
+				if (m)
+					return (m[1] === 'https') ? 'DoH' : (m[1] === 'tls') ? 'DoT'
+						: (m[1] === 'quic') ? 'DoQ' : (m[1] === 'http') ? 'HTTP' : 'TCP';
+				return 'UDP';
+			};
+
 			/* Active pools = the servers currently configured in UCI. We take
 			 * this straight from the daemon's recorded state.pools so the
 			 * monitor is authoritative and does not depend on mosdns running. */
@@ -6731,9 +6799,16 @@ const methods = {
 				 * in both pools as two independent rows. */
 				let is_sec = (substr(s, 0, 4) === 'sec:');
 				let base = is_sec ? substr(s, 4) : s;
+				let transport = transport_of(base);
 				push(servers, {
 					server: base,
 					pool: is_sec ? 'secure' : pool_of(base),
+					/* Ф1.6 (audit 14): where this upstream's queries really egress —
+					 * mosdns socks5 carries DoH/DoT only (https/tls scheme), so
+					 * DoQ/DoH3 and plain TCP upstreams stay direct; plain-pool rows
+					 * are direct by design. */
+					transport: transport,
+					proxied: is_sec && svp_on && proxy_real && (transport == 'DoH' || transport == 'HTTP'),
 					score: st.score != null ? st.score : null,
 					latency: st.lat != null ? st.lat : null,
 					success: st.succ != null ? st.succ : null,
@@ -6779,7 +6854,8 @@ const methods = {
 				mosdns: md_alive,
 				restarting: md_restarting,
 				active: active,
-				servers: servers
+				servers: servers,
+				secure_dns: secure_dns
 			};
 		}
 	},
@@ -6949,6 +7025,30 @@ const methods = {
 		call: function(req) {
 			system('mkdir -p ' + RUN_DIR + '; touch ' + RUN_DIR + '/automation.trigger');
 			return { result: true };
+		}
+	},
+
+	/* Manual "re-check the learned list" (2026-11-03): the daemon queues the
+	 * WHOLE learned set for accelerated direct re-probing (24 per pass) and
+	 * unlearns every entry that answers directly — the fast-treatment path
+	 * when a network outage polluted the list with false "blocked" entries. */
+	automation_recheck: {
+		call: function(req) {
+			let queued = 0;
+			const lists = [ HP_DIR + '/resources/auto_proxy_list.txt', HP_DIR + '/resources/auto_proxy_ip.txt' ];
+			for (let li = 0; li < length(lists); li++) {
+				if (!access(lists[li])) continue;
+				let c = trim(readfile(lists[li]) || '');
+				if (!length(c)) continue;
+				let rows = split(c, /[\r\n]/);
+				for (let ri = 0; ri < length(rows); ri++) {
+					let x = trim(rows[ri]);
+					if (length(x) && !match(x, /^#/))
+						queued++;
+				}
+			}
+			system('mkdir -p ' + RUN_DIR + '; touch ' + RUN_DIR + '/automation.recheck');
+			return { result: true, queued: queued };
 		}
 	},
 
