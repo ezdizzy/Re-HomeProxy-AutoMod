@@ -58,6 +58,14 @@ import {
  * больше не съедают лимит), UDP/IPv6 учитываются явно; проверка приватных
  * адресов — полный реестр IANA Special-Purpose (B5.3). */
 import { conntrack_flows, is_special_ip } from '/etc/homeproxy/scripts/discovery.uc';
+/* Ф6.6 (аудит B5): чистая логика жизненного цикла выученных записей —
+ * валидация IP с причиной отказа (B5.17), UUID-схлопывание только для
+ * tracker-суффиксов (B5.6), PSL-родитель OAuth-family (B5.5), разнообразие
+ * свидетельств для pain-порога (B5.12, урок 254). Проверяется selftest'ом
+ * модуля на роутере. */
+import {
+	validate_learned_ip, uuid_collapse, psl_parent, src_diversity
+} from '/etc/homeproxy/scripts/learn_core.uc';
 
 const HP_DIR = '/etc/homeproxy';
 const RUN_DIR = '/var/run/homeproxy';
@@ -87,13 +95,21 @@ const PERF_PARALLEL = 16;
  * roughly two passes. */
 const CONFIRM_RETRY = 90;
 
-/* Self-healing: re-check learned entries older than 7 days, REEVAL_BATCH per hour.
- * An entry is removed only after HEAL_CONFIRM consecutive DIRECT successes — a single
- * transient direct success (flapping proxy, captive portal) must not unlearn it. */
+/* Self-healing (Ф6.6, B5.9/16): планировщик БЕЗ голодания — next_due-очередь
+ * с round-robin курсором (пересматривает весь список, а не только голову),
+ * приоритет старых записей, РАЗДЕЛЬНЫЕ бюджеты домены/IP, быстрая серия
+ * восстановления 3×10–30 мин (HEAL_SERIES_GAP) вместо недельных интервалов
+ * между подтверждениями. An entry is removed only after HEAL_CONFIRM
+ * consecutive DIRECT successes — a single transient direct success (flapping
+ * proxy, captive portal) must not unlearn it. */
 const REEVAL_PERIOD = 3600;
 const REEVAL_AGE = 604800;
 const REEVAL_BATCH = 2;
+const REEVAL_BATCH_IP = 2;      /* separate IP budget (B5.9: IP-список не голодает) */
 const HEAL_CONFIRM = 3;
+const HEAL_SERIES_GAP = 900;    /* быстрая серия: следующая проверка через 15 мин */
+const HEAL_POLL = 300;          /* такт планировщика fast-серии (5 мин) */
+const PTR_BATCH = 12;           /* фоновый rDNS-свип за часовой цикл (B5.17) */
 
 /* Shared-CDN IPv4 prefixes NEVER learned as IPs. Big CDNs hand the SAME addresses to
  * blocked and unblocked services alike; one learned prefix there reroutes unrelated
@@ -249,6 +265,7 @@ let poisoned_hosts = {};
 let blocked_hosts = {};
 let last_reeval = 0;
 let last_prune = 0;
+let last_heal_trace = 0;   /* rate-limit for the heal scheduler tick trace */
 /* Tracks whether WE enabled dnsmasq query logging. The enable/disable pair
  * restarts dnsmasq, so it must run only on the paused↔active edge, never per
  * pass. Kept module-level: pass() is where the mode gate lives. */
@@ -965,6 +982,20 @@ function is_resolver_ip(ip) {
 	return is_public_infra_ip(ip) || resolver_ips[ip] === true;
 }
 
+/* Ф6.6/B5.17: инъекция зависимостей для learn_core.validate_learned_ip —
+ * ОДНА и та же валидация в load (reload_lists), learn (classify/intake)
+ * и sync (homeproxy.uc тянет сокращённое окружение сам). */
+function learned_ip_env() {
+	return {
+		special: is_special_ip,
+		shared_cdn: is_shared_cdn_ip,
+		infra: is_public_infra_ip,
+		resolver: is_resolver_ip,
+		local: is_local_ip,
+		ru_ip: is_ru_ip
+	};
+}
+
 /* CDN/cloud ranges (cdn_ip4.txt): binary search over the first-octet buckets,
  * same shape as is_ru_ip(). CDN space is NEVER learned as IPs — one learned
  * prefix there reroutes unrelated services sharing the same addresses. */
@@ -1257,11 +1288,47 @@ function is_auth_like(host) {
  * answers 403 direct / 200 proxy, live-verified) stays DIRECT with a RU IP
  * while accounts.* rides the proxy — the provider's risk engine sees one
  * identity session hopping countries and the social sign-in loops forever. */
+/* Ф6.6/B5.5: PSL-загрузка (многометковые правила из RES/psl_suffix.txt,
+ * статический ассет пакета — D5). { set, wild, excl } для learn_core.psl_parent.
+ * Файл отсутствует/пуст → null (auth_family падает на прежний жёсткий список). */
+let psl_rules = null;
+function psl_load() {
+	if (psl_rules != null)
+		return psl_rules;
+	const rules = { set: {}, wild: {}, excl: {} };
+	const lines = read_lines(RES + '/psl_suffix.txt');
+	for (let r in lines) {
+		r = trim(r);
+		if (!length(r) || substr(r, 0, 1) === '#')
+			continue;
+		if (substr(r, 0, 1) === '!')
+			rules.excl[substr(r, 1)] = true;
+		else if (substr(r, 0, 2) === '*.')
+			rules.wild[substr(r, 2)] = true;
+		else
+			rules.set[r] = true;
+	}
+	if (length(keys(rules.set)))
+		psl_rules = rules;
+	else
+		psl_rules = { set: null, wild: null, excl: null };
+	return psl_rules;
+}
+
 function auth_family(host) {
 	host = lc(trim(host));
 	const parts = split(host, '.');
 	const n = length(parts);
 	if (n < 2) return null;
+	/* Ф6.6/B5.5: точный зарегистрированный родитель по PSL (private-секция
+	 * включена: blogspot.com/github.io — свои registered-домены; com.es без
+	 * записи больше не расширяет ВСЮ зону). Фолбэк — прежний жёсткий список
+	 * двухметковых суффиксов. */
+	const psl = psl_load();
+	if (psl.set != null) {
+		const p = psl_parent(host, psl);
+		return (p == null) ? null : p;
+	}
 	/* Two-level public suffixes: the parent is the three last labels. */
 	const two = (n >= 3) && match(parts[n-2] + '.' + parts[n-1],
 		/^(co|com|net|org|gov|edu)\.(uk|au|jp|br|cn|tw|hk|ua|tr|mx|in|nz|ar|sa|eg|pk|ph|my|sg|th|vn|kr|ru|za|il|id)$/);
@@ -1391,21 +1458,12 @@ function is_excluded(host, ignore_lists) {
  * "deadbeef-corp.com" untouched. MODULE scope and ABOVE all callers: this
  * ucode build neither hoists function declarations nor shares closures between
  * sibling nested functions (hot_set lesson). */
+/* Ф6.6/B5.6: схлопывание UUID-меток ТОЛЬКО для известных tracker/CDN-суффиксов
+ * (learn_core.uuid_collapse): <uuid>.tenant-platform.example больше не съедает
+ * всю платформу — чужие домены возвращаются без изменений. */
 function collapse_uuid_host(h) {
-	const parts = split(h, '.');
-	if (length(parts) < 3) return h;
-	if (!match(parts[0], /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i))
-		return h;
-	/* Pure-UUID label: the label disappears entirely
-	 * (<uuid>.xz.fbcdn.net -> xz.fbcdn.net). Fused one: keep the text tail
-	 * (<uuid>-netseer-ipaddr-assoc.xz.fbcdn.net ->
-	 * netseer-ipaddr-assoc.xz.fbcdn.net). */
-	if (length(parts[0]) === 36)
-		return join('.', slice(parts, 1));
-	if (substr(parts[0], 36, 1) !== '-')
-		return h;
-	const rest = substr(parts[0], 37);
-	return (length(rest) ? rest + '.' : '') + join('.', slice(parts, 1));
+	const cd = uuid_collapse(h, null);
+	return (cd == null) ? h : cd;
 }
 
 /* ── Discovery ──────────────────────────────────────────────────────────── */
@@ -1936,6 +1994,25 @@ function main() {
 	 * host_timeout() which reads the EWMA state). state + adaptive_timeout are
 	 * therefore declared here, BEFORE the probe helper definitions below. */
 	let state = load_state();
+
+	/* Ф6.6/B5.17: причина удаления записи — в state для UI (automation.js
+	 * показывает её в колонке «Почему») + событие в ленту (только при СМЕНЕ
+	 * причины — conntrack-шум не спамит ленту каждый проход). Запись
+	 * живёт до обычной PRUNE-чистки, так что пользователь видит ПОЧЕМУ
+	 * снято. 🔴 ВКЛАДЫВАЕТСЯ В main(): state — переменная main (урок
+	 * сеанса 182: модульный уровень замыкания main не видит — fatal
+	 * «access to undeclared variable state» в crash-loop). */
+	function note_ip_drop(host, reason) {
+		let st = state[host];
+		if (!st || type(st) !== 'object') { state[host] = {}; st = state[host]; }
+		if (st.drop_reason !== reason) {
+			st.drop_reason = reason;
+			st.drop_t = time();
+			eng_event('drop', host + ' (' + reason + ')');
+		}
+		if (!st.status)
+			st.status = 'direct';
+	}
 	/* ч.69: adaptive timeouts are always on (they were the default and the
 	 * opt-out only invited foot-guns). */
 	let adaptive_timeout = true;
@@ -2727,11 +2804,17 @@ echo done > "$PRE.done"
 			/* Self-heal legacy UUID-minted entries: collapse to the base domain —
 			 * routing by suffix on the base covers every variant. Older builds also
 			 * wrote UPPERCASE minted variants (no lc() in intake) — lowercase the
-			 * result so exactly one canonical entry remains. */
+			 * result so exactly one canonical entry remains. Ф6.6/B5.6: схлопывание
+			 * ТОЛЬКО для tracker-суффиксов (learn_core.uuid_collapse) — чужие
+			 * UUID-записи остаются как есть (вся платформа не съедается). */
 			const cd = lc(collapse_uuid_host(d));
 			if (cd !== d) {
 				log('collapsing learned entry to base domain: ' + d + ' -> ' + cd);
 				auto_set[cd] = true;
+				if (state[cd] && type(state[cd]) === 'object') {
+					state[cd].observed_host = d;
+					state[cd].route_scope = cd;
+				}
 				dropped++;
 				continue;
 			}
@@ -2751,40 +2834,25 @@ echo done > "$PRE.done"
 			}
 			auto_set[d] = true;
 		}
-		/* Sanitize on load: infrastructure IPs must never live in the learned set —
-		 * a poisoned entry survives in-memory even after the list file is cleaned
-		 * externally until the next restart. Also rDNS-sweep the (capped) learned
-		 * IPs for RU-TLD hosts — bare IPs bypass the domain-side .ru/.su/.рф guard,
-		 * so a poisoned entry like mail.ilona.su's A-record self-heals here. */
+		/* Sanitize on load (Ф6.6/B5.17): ЕДИНАЯ валидация выученного IP с
+		 * причиной отказа (формат октетов, IANA Special-Purpose, общий CDN,
+		 * резолверы/анycast, собственные адреса, RU-сети) — прежний ad-hoc
+		 * набор пропускал старые записи мимо части защит. rDNS-свип ВСЕГО
+		 * списка теперь фоновый, с курсором (в часовом слоте гигиены) —
+		 * прежний лимит «только первые 48» оставлял хвост непроверенным. */
 		let ip_dropped = 0;
-		let ip_idx = 0;
 		for (let d in read_lines(AUTO_IP_LIST)) {
 			d = trim(d);
-			ip_idx++;
 			if (!length(d)) continue;
-			if (is_resolver_ip(d)) {
-				log('dropping learned IP (DNS resolver/anycast infrastructure): ' + d);
-				ip_dropped++;
-				continue;
-			}
-			if (is_local_ip(d)) {
-				log('dropping learned IP (router own address): ' + d);
-				ip_dropped++;
-				continue;
-			}
 			if (manual_direct_set[d]) {
 				log('dropping learned IP (user pinned always-direct): ' + d);
 				ip_dropped++;
 				continue;
 			}
-			if (geo_loaded && is_ru_ip(d)) {
-				log('dropping learned IP (RU-geo database, always direct): ' + d);
-				ip_dropped++;
-				continue;
-			}
-			/* PTR lookups cost up to ~3s each — sweep only small lists. */
-			if (ip_idx <= 48 && ptr_is_ru(d)) {
-				log('dropping learned IP (RU-TLD rDNS, always direct): ' + d);
+			const vr = validate_learned_ip(d, learned_ip_env());
+			if (vr != null) {
+				log('dropping learned IP (' + vr + '): ' + d);
+				note_ip_drop(d, vr);
 				ip_dropped++;
 				continue;
 			}
@@ -3053,6 +3121,16 @@ echo done > "$PRE.done"
 		else if (st.status !== 'blocked')
 			delete st.block_kind;
 
+		/* Ф6.6/B5.18: история доказательств — кольцо последних 5 измерений
+		 * { t, d, p } + счётчик проверок. Пишется на КАЖДОЕ измерение записи:
+		 * статус и коды всегда можно сверить с фактами (урок 254). */
+		st.verifies = int(st.verifies || 0) + 1;
+		let ev = (type(st.evidence) === 'array') ? st.evidence : [];
+		push(ev, { t: st.last_probe, d: st.direct, p: st.proxy });
+		while (length(ev) > 5)
+			shift(ev);
+		st.evidence = ev;
+
 		/* Track EWMA RTT for adaptive timeouts (Phase 1).
 		 * RTT in milliseconds; alpha=0.3 for EWMA smoothing. */
 		if (adaptive_timeout) {
@@ -3166,11 +3244,17 @@ echo done > "$PRE.done"
 			/* Hard guard, independent of every intake path: some IP classes must
 			 * NEVER be learned no matter how the probe verdicts look — private/
 			 * router-own addresses (probing self always "fails" direct), shared
-			 * CDNs and public resolver/anycast infra (collateral tunneling). */
-			if (is_ip && (is_private_ip(dom) || is_shared_cdn_ip(dom) || is_resolver_ip(dom) || is_local_ip(dom))) {
-				st.status = 'direct';
-				st.confirms = 0;
-				return;
+			 * CDNs and public resolver/anycast infra (collateral tunneling).
+			 * Ф6.6/B5.17: единая валидация с ПРИЧИНОЙ (та же функция, что в
+			 * load и sync) — причина остаётся в state для UI. */
+			if (is_ip) {
+				const vr = validate_learned_ip(dom, learned_ip_env());
+				if (vr != null) {
+					st.status = 'direct';
+					st.confirms = 0;
+					st.drop_reason = vr;
+					return;
+				}
 			}
 			/* Proxy returns a real page, but if its body matches the direct body
 			 * (a block page the signature list missed), the proxy doesn't actually
@@ -3240,9 +3324,9 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
- 				if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); push(learn_names, dom); }
+ 			if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); push(learn_names, dom); }
  			} else if (!auto_set[dom]) {
- 				auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')'); push(learn_names, dom);
+ 				auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')'); push(learn_names, dom);
 					if (is_auth_like(dom))
 						sync_auth_families();
 				}
@@ -3325,9 +3409,9 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
- 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); push(learn_names, dom); }
+ 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); push(learn_names, dom); }
  				} else if (!auto_set[dom]) {
- 					auto_set[dom] = true; st.added = time(); write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom); push(learn_names, dom);
+ 					auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom); push(learn_names, dom);
 					/* ч.61: a fresh auth-like learn extends its domain family. */
 					if (is_auth_like(dom))
 						sync_auth_families();
@@ -3397,12 +3481,18 @@ echo done > "$PRE.done"
 		 * ccTLD ("7.ua", "b.ly", "g.tj") is wildcard-ad noise, never user traffic. */
 	let domain_candidates = {}, ip_candidates = {}, host_score = {};
 	let reeval_set = {};
+	/* Ф6.6/B5.6: исходный (до схлопывания) хост — для provenance записи
+	 * (observed_host), и B5.12: времена упоминаний источниками. */
+	let observed_orig = {};
 	hot_set = {};
-	let intake = (h, source_weight) => {
+	let intake = (h, source_weight, src) => {
 		h = lc(trim(h));
 		if (!looks_like_host(h)) return;
+		const h0 = h;
 		h = collapse_uuid_host(h);
 		if (!looks_like_host(h)) return;
+		if (h !== h0)
+			observed_orig[h] = h0;
 		/* Ф4.1: the shared classifier decides "IP literal or domain" — one
 		 * answer for every generator (octet validation included: '1.2.3.999'
 		 * is no longer a fake IP candidate). */
@@ -3420,14 +3510,22 @@ echo done > "$PRE.done"
 			return;
 		domain_candidates[h] = true;
 		host_score[h] = num(host_score[h]) + source_weight;
+		/* Ф6.6/B5.12: отметка источника в записи (если она уже есть) —
+		 * разнообразие независимых свидетельств для pain-порога. */
+		const cst = state[h];
+		if (type(cst) === 'object') {
+			if (src === 'dns') cst.src_dns = time();
+			else if (src === 'sni') cst.src_sni = time();
+			else if (src === 'clash') cst.src_clash = time();
+		}
 	};
 	/* DNS first: it captures the domain at query time, newest-first. Weighted score
 	 * combines per-source counts so the probe budget goes to what the user actually
 	 * hammers most across all sources, not just DNS hash order. */
 	if (has('dns'))
-		for (let i, h in discover_dns()) { eng_pass.dns++; intake(h, w_dns); }
-	if (has('clash'))     for (let i, h in discover_clash(timeout)) { eng_pass.clash++; intake(h, w_clash); }
-	if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) { eng_pass.sni++; intake(h, w_sni); }
+		for (let i, h in discover_dns()) { eng_pass.dns++; intake(h, w_dns, 'dns'); }
+	if (has('clash'))     for (let i, h in discover_clash(timeout)) { eng_pass.clash++; intake(h, w_clash, 'clash'); }
+	if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) { eng_pass.sni++; intake(h, w_sni, 'sni'); }
 	/* Raw-IP candidates are collected ONLY when IP learning is enabled — the old
 	 * separate 'conntrack' discovery source is merged into the ip_learn switch. */
 	if (ip_learn === '1')
@@ -3464,14 +3562,19 @@ echo done > "$PRE.done"
 		 * (>= PAIN_BURST in-pass weighted score now, or seen within the last
 		 * 10 min of this episode). Sight counts only if FRESH (seen within
 		 * 10 min) — a single long-past storm must never keep a host
-		 * permanently hot; a stale burst must never re-arm the counter. */
+		 * permanently hot; a stale burst must never re-arm the counter.
+		 * Ф6.6/B5.12 (урок 254: движок выучил хост при direct=200/proxy=200):
+		 * порог снимается РАЗНООБРАЗИЕМ независимых свидетельств — ≥2 свежих
+		 * источника ИЛИ появления в ≥2 разных проходах. Один DNS-шторм
+		 * (AAAA/prefetch/одно устройство) внутри одного прохода — не боль. */
 		for (let h in keys(domain_candidates)) {
 			const cst = state[h];
 			if (type(cst) !== 'object') continue;
 			const eff_sight = ((time() - int(cst.sight_t || 0)) < 600) ? int(cst.sight || 0) : 0;
-			if (num(host_score[h]) >= PAIN_BURST)
+			const div = src_diversity(cst, time());
+			if (num(host_score[h]) >= PAIN_BURST && div >= 2)
 				cst.pain_burst = time();
-			const burst = (num(host_score[h]) >= PAIN_BURST) ||
+			const burst = (num(host_score[h]) >= PAIN_BURST && div >= 2) ||
 			              ((time() - int(cst.pain_burst || 0)) < 600);
 			if ((eff_sight >= HOT_MIN_FREQ) && burst &&
 			    (cst.status === 'direct' || cst.status === 'direct_pending'))
@@ -3534,12 +3637,15 @@ echo done > "$PRE.done"
 				if (!escape) {
 					/* Escape 2 (hot lane): the user is hammering this host —
 					 * within this pass (host_score) or accumulated across recent
-					 * passes (fresh st.sight). Emergency reverify, cooldown. */
+					 * passes (fresh st.sight). Emergency reverify, cooldown.
+					 * Ф6.6/B5.12: только при разнообразии независимых
+					 * свидетельств (≥2 источника или ≥2 прохода). */
 					const eff_sight = ((time() - int(st.sight_t || 0)) < 600) ? int(st.sight || 0) : 0;
 					const hot_freq = num(host_score[dom]) >= HOT_MIN_FREQ;
 					const hot_sight = eff_sight >= HOT_MIN_FREQ;
 					if (st.status === 'direct' && domain_candidates[dom] &&
 					    (hot_freq || hot_sight) &&
+					    src_diversity(st, now) >= 2 &&
 					    (!st.hot_check || ((now - int(st.hot_check)) > HOT_COOLDOWN))) {
 						st.hot_check = now;
 						hot_set[dom] = true;
@@ -3556,8 +3662,10 @@ echo done > "$PRE.done"
 			 * probe (the user's organic retries are the second witness). The
 			 * hot lane used to cover only 'direct'-verdict rechecks; fresh
 			 * candidates now learn on the FIRST pass while the user actively
-			 * fights the block. Auth-like hosts stay excluded in classify. */
-			if (num(host_score[dom]) >= PAIN_BURST)
+			 * fights the block. Auth-like hosts stay excluded in classify.
+			 * Ф6.6/B5.12: burst должен нести разнообразие свидетельств. */
+			if (num(host_score[dom]) >= PAIN_BURST && state[dom] &&
+			    type(state[dom]) === 'object' && src_diversity(state[dom], now) >= 2)
 				hot_set[dom] = true;
 			push(sel, dom);
 		}
@@ -3594,6 +3702,14 @@ echo done > "$PRE.done"
 				 * not an IP anywhere in the project anymore). */
 				let ce_d = classify_entry(sel[i]);
 				classify(sel[i], d_res, p_res, !!(ce_d && ce_d.kind !== 'domain'), false, d_res.rtt_ms || 0, (p_res && p_res.rtt_ms) || 0);
+				/* Ф6.6/B5.6: provenance схлопнутого хоста — observed_host хранит
+				 * ИСХОДНУЮ метку, route_scope = выученный (маршрутизируемый) хост. */
+				const orig = observed_orig[sel[i]];
+				const wst = state[sel[i]];
+				if (orig && type(wst) === 'object') {
+					wst.observed_host = orig;
+					wst.route_scope = sel[i];
+				}
 			}
 
 			/* ── Persistent-pain override ────────────────────────────────────
@@ -3636,6 +3752,7 @@ echo done > "$PRE.done"
 						fst.direct = (dwave[f.dwi] || {}).code || '000';
 						fst.proxy = (fwave[f.i] || pwave[f.pwi] || {}).code || '200';
 						fst.added = time();
+						fst.learn_method = 'http';
 						fst.pain_passes = 0;
 						fst.sight = 0;
 						delete fst.pain_burst;
@@ -3667,7 +3784,24 @@ echo done > "$PRE.done"
 				 * (the sync classifier drops it) — don't spend probes on it. */
 				let ce_ip = classify_entry(ip);
 				if (!ce_ip || ce_ip.kind === 'domain') continue;
-				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_resolver_ip(ip) || is_local_ip(ip) || is_excluded(ip, reeval_set[ip] === true)) continue;
+				/* Ф6.6/B5.17: единая валидация (load/learn/sync) — пробы на
+				 * недопустимые IP не тратятся; выученная запись, переставшая
+				 * быть валидной, снимается сразу с причиной. Причина в state —
+				 * ТОЛЬКО для записей с историей (были выучены/пробовались):
+				 * conntrack-шум не должен плодить state-записи каждый проход. */
+				const vr_intake = validate_learned_ip(ip, learned_ip_env());
+				if (vr_intake != null) {
+					if (auto_ip_set[ip]) {
+						delete auto_ip_set[ip];
+						write_auto_ip_list(auto_ip_set);
+						pending_reload = true;
+						note_ip_drop(ip, vr_intake);
+					} else if (state[ip] && type(state[ip]) === 'object') {
+						note_ip_drop(ip, vr_intake);
+					}
+					continue;
+				}
+				if (is_excluded(ip, reeval_set[ip] === true)) continue;
 				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
 				 * probe on it (learned/fast-tracked IPs pass via their count). */
 				if (((int(ip_candidates[ip]) || 0) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
@@ -3816,6 +3950,11 @@ echo done > "$PRE.done"
 							ist.heal = 0;
 							ist.status = 'direct';
 							ist.confirms = 0;
+							/* B5.15: атомарность — block_kind и next_due не переживают
+							 * снятие записи, иначе UI/планировщик врут. */
+							delete ist.block_kind;
+							delete ist.next_due;
+							ist.heal_count = int(ist.heal_count || 0) + 1;
 							delete ist.recheck_n;
 							delete ist.recheck_t;
 						} else {
@@ -3842,56 +3981,174 @@ echo done > "$PRE.done"
 			}
 		}
 
-		/* Self-healing (both modes): hourly, re-probe DIRECT a couple of learned
-		 * entries older than 7 days. An entry answering directly HEAL_CONFIRM times
-		 * in a row no longer needs the proxy — remove it from the lists.
+		/* ── Self-heal scheduler (Ф6.6, B5.4/9/15/16) ──────────────────────
+		 * Прежний обход «с головы списка, 2 записи/час, 7-дневный гейт»
+		 * голодал: хвост из 2000 доменов ждал ~42 дня, а 3 подтверждения
+		 * растягивались на НЕДЕЛИ (каждая проба обновляла last_probe, а
+		 * следующая проверка была только через 7 дней). Теперь:
+		 *   • next_due-очередь — следующая проверка живёт В ЗАПИСИ;
+		 *   • round-robin курсор по отсортированному списку (B5.16) —
+		 *     продвижение гарантировано, даже когда ничего не «due»;
+		 *   • приоритет старых записей (сортировка по last_probe);
+		 *   • РАЗДЕЛЬНЫЕ бюджеты домены/IP (B5.9) — IP-список не голодает;
+		 *   • БЫСТРАЯ СЕРИЯ восстановления (B5.9): первая прямая удача
+		 *     ставит next_due = now + 15 мин — 3 подтверждения за ~30 мин;
+		 *   • проба СИММЕТРИЧНА обучению (B5.4): TCP-запись лечится
+		 *     tcp-пробой, HTTP-запись — http-пробой;
+		 *   • heal АТОМАРЕН (B5.15): удалить из списка + status=direct +
+		 *     сброс счётчиков + убрать block_kind; auth-family
+		 *     пересчитывается (B5.15b).
 		 * Manual "always proxy" pins are NEVER unlearned here (that is their point).
 		 * Outage guard: skipped while the canary baseline is failed — a dead
 		 * direct path cannot produce a measurement, only heal-streak resets. */
-		if ((now - last_reeval) > REEVAL_PERIOD && learn_gate_ok) {
-			last_reeval = now;
+		const heal_weekly = (now - last_reeval) > REEVAL_PERIOD;
+		const heal_soon = (int(state.__heal_next || 0) > 0 && now >= int(state.__heal_next));
+		if ((heal_weekly || heal_soon) && learn_gate_ok) {
+			/* Диагностика планировщика (B5.9): трейс такта — НЕ ЧАЩЕ раза в
+			 * 10 мин (дренаж очереди из-за приоритета старых может держать
+			 * soon=1 несколько проходов подряд — это норма, не шторм). */
+			if ((now - last_heal_trace) > 600) {
+				last_heal_trace = now;
+				log('heal tick: weekly=' + (heal_weekly ? '1' : '0') + ' soon=' + (heal_soon ? '1' : '0') +
+					' gate=' + (learn_gate_ok ? '1' : '0') + ' next=' + (state.__heal_next || 0));
+			}
+			if (heal_weekly)
+				last_reeval = now;
 			let healed = [];
-			let rechecked = 0;
-			for (let lst in [auto_set, auto_ip_set]) {
-				/* keys() snapshot: entries are deleted from lst during iteration. */
-				for (let h in keys(lst)) {
-					if (manual_proxy_set[h] || manual_direct_set[h]) continue;
-					if (rechecked >= REEVAL_BATCH) break;
+			let healed_auth = false;
+			const heal_cursor = (type(state.__heal_cursor) === 'object') ? state.__heal_cursor : {};
+			const due_of = (st) => (type(st) === 'object')
+				? ((st.next_due != null) ? int(st.next_due)
+					: (st.last_probe ? int(st.last_probe) + REEVAL_AGE : 0))
+				: 0;
+			for (let lst_pass = 0; lst_pass < 2; lst_pass++) {
+				const is_ip_list = (lst_pass === 1);
+				const lst = is_ip_list ? auto_ip_set : auto_set;
+				const budget = is_ip_list ? REEVAL_BATCH_IP : REEVAL_BATCH;
+				const ckey = is_ip_list ? 'i' : 'd';
+				/* Сортированный снимок ключей — детерминированный round-robin;
+				 * ручные пины никогда не снимаются этим путём. */
+				const all = sort(filter(keys(lst), (h) => !manual_proxy_set[h] && !manual_direct_set[h]));
+				if (!length(all))
+					continue;
+				let picks = [];
+				let due = [];
+				for (let h in all) {
+					const dh = state[h];
+					if (due_of(dh) <= now)
+						push(due, {
+							h: h,
+							t: (type(dh) === 'object' && dh.last_probe) ? int(dh.last_probe) : 0,
+							/* B5.9: серия восстановления (heal>0) ПРИОРИТЕТНЕЕ
+							 * миграции легаси-записей — иначе +900-мин интервалы
+							 * серии растягиваются очередью первых проверок. */
+							s: (type(dh) === 'object' && int(dh.heal || 0) > 0) ? 0 : 1
+						});
+				}
+				if (length(due)) {
+					sort(due, (a, b) => (a.s !== b.s) ? (a.s - b.s) : (a.t - b.t));
+					for (let i = 0; i < length(due) && length(picks) < budget; i++)
+						push(picks, due[i].h);
+				}
+				/* Round-robin от курсора (только часовой слот) — гарантия,
+				 * что хвост списка пересматривается, а не только голова. */
+				if (!length(picks) && heal_weekly) {
+					const start = int(heal_cursor[ckey] || 0) % length(all);
+					for (let k = 0; k < length(all) && length(picks) < budget; k++)
+						push(picks, all[(start + k) % length(all)]);
+					heal_cursor[ckey] = (start + budget) % length(all);
+					state.__heal_cursor = heal_cursor;
+				}
+				for (let pi = 0; pi < length(picks); pi++) {
+					const h = picks[pi];
 					let st = state[h];
-					if (st && st.last_probe && (now - st.last_probe) < REEVAL_AGE) continue;
- 					rechecked++;
- 					if (eng_pass) eng_pass.direct++;
- 					let d_res = probe(h, false, timeout);
-					if (!st) { state[h] = {}; st = state[h]; }
+					if (!st || type(st) !== 'object') { state[h] = {}; st = state[h]; }
+					if (eng_pass)
+						eng_pass.direct++;
+					const use_tcp = (st.learn_method === 'tcp');
+					if (use_tcp && eng_pass)
+						eng_pass.tcp++;
+					let d_ok = false;
+					let measured = true;
+					let ev_d = '';
+					if (use_tcp) {
+						d_ok = tcp_reachable(h, false, timeout);
+						ev_d = d_ok ? 'tcp-ok' : 'tcp-fail';
+					} else {
+						const d_res = probe(h, false, timeout);
+						if (d_res.dns_fail)
+							measured = false;
+						else
+							d_ok = d_res.ok;
+						st.direct = d_res.code;
+						ev_d = st.direct;
+					}
 					st.last_probe = now;
-					if (d_res.dns_fail) {
-						/* ч.119 (issue #10): no measurement (plain DNS blip) —
-						 * neither count nor reset the heal streak. */
-					} else if (d_res.ok) {
-						st.heal = (st.heal || 0) + 1;
+					/* B5.18: измерение heal в кольцо доказательств. */
+					let ev = (type(st.evidence) === 'array') ? st.evidence : [];
+					push(ev, { t: now, d: ev_d, p: 'n/a' });
+					while (length(ev) > 5)
+						shift(ev);
+					st.evidence = ev;
+					if (!measured) {
+						/* ч.119: нет измерения — не считаем и не сбрасываем серию. */
+						st.next_due = now + 600;
+					} else if (d_ok) {
+						st.heal = int(st.heal || 0) + 1;
 						if (st.heal >= HEAL_CONFIRM) {
+							/* B5.15: атомарный heal — список + статус + счётчики. */
 							delete lst[h];
+							st.status = 'direct';
+							st.confirms = 0;
+							st.heal = 0;
+							delete st.block_kind;
+							delete st.dconfirms;
+							delete st.recheck_n;
+							delete st.recheck_t;
+							delete st.next_due;
+							st.heal_count = int(st.heal_count || 0) + 1;
 							push(healed, h);
+							if (!is_ip_list && is_auth_like(h))
+								healed_auth = true;
+						} else {
+							/* быстрая серия восстановления (B5.9). */
+							st.next_due = now + HEAL_SERIES_GAP;
 						}
 					} else {
 						st.heal = 0;
+						st.next_due = now + REEVAL_AGE;
 					}
 				}
 			}
  			if (length(healed)) {
  				write_auto_list(auto_set);
  				write_auto_ip_list(auto_ip_set);
+				if (healed_auth)
+					sync_auth_families();   /* B5.15b: family без основания умирает */
  				log('self-healed (answers direct again): ' + join(', ', healed));
  				eng_event('heal', join(', ', healed));
  				{
  					let shown = [];
  					for (let i = 0; i < length(healed) && i < 8; i++)
- 						push(shown, healed[i]);
+  						push(shown, healed[i]);
  					let hd = join(', ', shown) + ((length(healed) > 8) ? ' …+' + (length(healed) - 8) : '');
  					ev_auto('heal', 'самолечение: ' + length(healed), hd);
  				}
  				pending_reload = true;
  			}
+			/* Ранняя дата ближайшей fast-серии — такт планировщика (B5.9). */
+			let heal_nxt = 0;
+			for (let lst2 in [auto_set, auto_ip_set]) {
+				for (let h2 in keys(lst2)) {
+					const st2 = state[h2];
+					if (type(st2) !== 'object' || !st2.next_due)
+						continue;
+					const dv = int(st2.next_due);
+					if (heal_nxt === 0 || dv < heal_nxt)
+						heal_nxt = dv;
+				}
+			}
+			state.__heal_next = heal_nxt;
 		}
 
 		/* State hygiene (hourly): records for hosts NOT in any active list expire
@@ -3910,7 +4167,10 @@ echo done > "$PRE.done"
 			for (let d in manual_proxy_set) keep[d] = true;
 			for (let d in manual_direct_set) keep[d] = true;
 			for (let h in keys(state)) {
-				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist') continue;
+				/* B5.15/планировщик: служебные ключи heal-планировщика и
+				 * rDNS-курсора не записи — переживают чистку. */
+				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist' ||
+				    h === '__heal_cursor' || h === '__heal_next' || h === '__ptr_cursor') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let st = state[h];
 				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
@@ -3922,7 +4182,8 @@ echo done > "$PRE.done"
 			 * them reset the confirm counter and the host never got learned. */
 			let rest = [];
 			for (let h in keys(state)) {
-				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist') continue;
+				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist' ||
+				    h === '__heal_cursor' || h === '__heal_next' || h === '__ptr_cursor') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let cst = state[h];
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
@@ -3954,6 +4215,37 @@ echo done > "$PRE.done"
 				if ((now - blocked_hosts[bh]) > 2592000) { delete blocked_hosts[bh]; bcut++; }
 			if (bcut > 0)
 				log('pruned ' + bcut + ' expired upstream-blocked marks');
+
+			/* Ф6.6/B5.17: фоновый rDNS-свип выученных IP С КУРСОРОМ — прежний
+			 * лимит «только первые 48 при загрузке» оставлял хвост списка
+			 * непроверенным навсегда. PTR-проба идёт через локальный dnsmasq
+			 * (миллисекунды), батч ограничен, чтобы часовой слот не тянулся. */
+			{
+				const pips = sort(keys(auto_ip_set));
+				if (length(pips)) {
+					const pc0 = (type(state.__ptr_cursor) === 'object') ? int(state.__ptr_cursor.p || 0) : 0;
+					const pstart = pc0 % length(pips);
+					let pchecked = 0, pdropped = 0;
+					for (let k = 0; k < length(pips) && pchecked < PTR_BATCH; k++) {
+						const ph = pips[(pstart + k) % length(pips)];
+						if (manual_proxy_set[ph] || manual_direct_set[ph])
+							continue;
+						pchecked++;
+						if (ptr_is_ru(ph)) {
+							delete auto_ip_set[ph];
+							note_ip_drop(ph, 'ru_ptr');
+							log('dropping learned IP (RU-TLD rDNS, always direct): ' + ph);
+							pdropped++;
+						}
+					}
+					state.__ptr_cursor = { p: (pstart + PTR_BATCH) % length(pips) };
+					if (pdropped > 0) {
+						write_auto_ip_list(auto_ip_set);
+						pending_reload = true;
+						eng_event('drop', 'rDNS-свип: снято ' + pdropped + ' IP (RU-TLD rDNS)');
+					}
+				}
+			}
 		}
 
 		/* Persist state ONCE per cycle (not per probe): the file write is atomic but

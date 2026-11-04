@@ -7504,3 +7504,42 @@ msgstr ""
 
 msgid "Chooses the full chain for EACH popular service independently: route rule → engine (Zapret/ByeDPI/proxy) → strategy → transport → exit. The plan reads only measured facts — the Strategy Lab verdicts, the service profile batteries and your routing rules. An auto-pick applies a VERIFIED strategy with the rule set to Zapret and ROLLS BACK AUTOMATICALLY if the live check fails afterwards; a strategy that only passed the handshake is offered manually with a warning; when nothing works, the plan says WHAT exactly fails. WhatsApp is measured by its profile battery and the provider scan only — the Strategy Lab has no fuzz corpus for it."
 msgstr ""
+
+msgid "Removed"
+msgstr ""
+
+msgid "invalid entry format"
+msgstr ""
+
+msgid "private/special-purpose range (IANA registry)"
+msgstr ""
+
+msgid "shared CDN address (never learned)"
+msgstr ""
+
+msgid "DNS resolver/anycast infrastructure"
+msgstr ""
+
+msgid "the router own address"
+msgstr ""
+
+msgid "RU network (always direct)"
+msgstr ""
+
+msgid "RU-TLD reverse DNS (always direct)"
+msgstr ""
+
+msgid "removed from the lists: %s"
+msgstr ""
+
+msgid "learned via TCP probe"
+msgstr ""
+
+msgid "Night auto-pick (01:00–06:00): a scheduled re-rank is allowed at night even outside the maintenance window — it applies only a strategy that is measurably better."
+msgstr ""
+
+msgid "Night auto-pick"
+msgstr ""
+
+msgid "Manual composition hold is active (Hot Swap): the scheduled re-rank is suspended — live checks and dead-resource repairs continue."
+msgstr ""

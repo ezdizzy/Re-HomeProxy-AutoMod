@@ -131,6 +131,14 @@ const START_MARGIN_PCT = 25;    /* anti-flap: START-latency switch needs a
                                  * the user feels, a single burst is not) */
 const GENERAL_SCORE_STEP = 100; /* general: +1 distinguishing host       */
 
+/* Ф6.7 (автопилот v4): Hot Swap 9 — ручные пики и ручные композиции
+ * сохраняются. Внешняя/ручная смена zapret_cmd_opts (пользователь из UI или
+ * применение из Лаборатории) ставит manual_hold: ПЛАНОВАЯ переразметка
+ * удержана, живые проверки и ремонт умершего ресурса работают как раньше. */
+const MANUAL_HOLD_TTL = 7 * 24 * 3600;  /* удержа недели — дальше честный лог   */
+const NIGHT_FROM = 60;          /* ночной автоподбор: 01:00 (мин)          */
+const NIGHT_TO = 360;           /* …06:00 (мин)                            */
+
 /* ч.127 honesty: TSPU/operator verdicts the old probe missed. A cross-host
  * redirect to a known stub host or a SMALL 200 body carrying a refusal
  * signature is a blocked resource (strike-worthy); the strongest hosts of
@@ -160,7 +168,8 @@ let S = {
 	last_apply: null,
 	tried: {},
 	next_check_ts: 0, next_cycle_ts: 0,
-	log: []
+	log: [],
+	manual_hold: null            /* Ф6.7: { ts, src } — Hot Swap 9 */
 };
 
 function sq(s) {
@@ -266,6 +275,27 @@ function window_active(cfg) {
 	return (cur >= a || cur < b);   /* wrap past midnight */
 }
 
+/* Ф6.7: ночной автоподбор (01:00–06:00) — опция; плановая переразметка
+ * разрешена ночью даже вне окна обслуживания, применяет только «лучше»
+ * (антифлап-марджины в cycle() остаются фильтром). */
+function night_active(cfg) {
+	if (!cfg.night_pick)
+		return false;
+	const cur = now_hm();
+	if (cur < 0)
+		return false;
+	return (cur >= NIGHT_FROM && cur < NIGHT_TO);
+}
+
+/* Ф6.7: объяснимый вердикт решения — живёт в состоянии ресурса, UI
+ * показывает его строкой под winner'ом (не чёрный ящик, аудит A.2). */
+function explain(res, text) {
+	const st = (res === 'general') ? S.general : S.resources[res];
+	if (st == null)
+		return;
+	st.explain = { ts: time(), text: '' + text };
+}
+
 function has_res(list, what) {
 	for (let x in list)
 		if (x === what)
@@ -307,7 +337,8 @@ function cfg_read() {
 		check_min: (cm >= 5 && cm <= 180) ? cm : 15,
 		fail_strikes: (fs_ >= 1 && fs_ <= 5) ? fs_ : 2,
 		fuzz_mode: (get('fuzz_mode', 'quick') === 'full') ? 'full' : 'quick',
-		window: window
+		window: window,
+		night_pick: (get('night_pick', '0') === '1')
 	};
 }
 
@@ -923,6 +954,9 @@ function resume() {
 		}
 		S.last_apply = { ts: time(), zapret: p.zapret, winners: winners,
 			general: (p.general_winner) ? p.general_winner.name : null };
+		/* Ф6.7: применение автопилота вернуло владение композицией — удержа
+		 * снята (внешние изменения после этого снова детектируются). */
+		S.manual_hold = null;
 		const names = [];
 		for (let res in winners)
 			push(names, res + ' → ' + (winners[res] ? winners[res].name : '?'));
@@ -1030,20 +1064,38 @@ function cycle(cfg) {
 		return;
 	}
 	const target = { resources: {}, general: null };
+	const hold = hold_active();
+	if (hold) {
+		log_once('hold_active', 'действует удержа плановой переразметки (Hot Swap 9, источник: ' +
+			((S.manual_hold.src === 'lab') ? 'ручной пик' : 'внешняя/ручная композиция') +
+			') — живые проверки и ремонт умершего ресурса продолжаются');
+	}
+	/* Ф6.7: вердикты Strategy Lab — ЕДИНСТВЕННЫЙ источник истины с
+	 * карточкой «Оптимизатор маршрутов» (service_optimizer_plan читает те же
+	 * вердикты). best_available = manual_only: автоприменение запрещено (92). */
+	const labv = (fz != null && type(fz.verdicts) === 'object') ? fz.verdicts : null;
 	for (let res in cfg.resources) {
 		if (res === 'general') {
 			const cur = S.general.winner;
 			const cand = pick_general(fz, null);
 			let use = cand;
-			if (cur && cand && cand.args == cur.args)
+			if (hold) {
+				if (cur)
+					target.general = cur;
+				use = null;
+			}
+			else if (cur && cand && cand.args == cur.args)
 				use = null;
 			else if (cur && cand && (S.general.strikes == 0) &&
 				(cand.score < cur.score + GENERAL_SCORE_STEP)) {
 				log_once('genhold', 'general: текущая стратегия остаётся лучшей в пределах запаса по score');
+				explain('general', 'держу текущую: кандидат хуже в пределах запаса по score (' + cand.score + ' против ' + cur.score + ')');
 				use = null;
 			}
-			if (use)
+			if (use) {
 				target.general = use;
+				explain('general', 'смена: кандидат ' + use.name + ' лучше по score (' + use.score + ' против ' + (cur ? cur.score : '—') + ')');
+			}
 			continue;
 		}
 		/* A resource whose rule does not lead to Zapret is never served by
@@ -1053,6 +1105,30 @@ function cycle(cfg) {
 			continue;
 		}
 		const cur = S.resources[res].winner;
+		/* Hot Swap 9: удержа — ресурс остаётся на текущей стратегии. */
+		if (hold || (cur && cur.manual === true)) {
+			if (cur)
+				target.resources[res] = cur;
+			if (!hold)
+				log_once('manualhold_' + res, res + ': ручной пик сохранён (Hot Swap 9) — плановая переразметка его не заменяет');
+			continue;
+		}
+		/* Ф6.7: честные вердикты лаборатории ДО выбора кандидата. */
+		const lv = (labv != null && type(labv[res]) === 'object') ? labv[res] : null;
+		if (lv != null && lv.verdict === 'best_available') {
+			log_once('labavail_' + res, res + ': вердикт лаборатории best_available — автоприменение запрещено (аудит 92), примените вручную из Лаборатории');
+			explain(res, 'best_available: обязательные компоненты не подтверждены deep-пробами — только ручное применение (92)');
+			if (cur)
+				target.resources[res] = cur;
+			continue;
+		}
+		if (lv != null && lv.verdict === 'no_candidate') {
+			log_once('labnone_' + res, res + ': вердикт лаборатории no_candidate — ни одна стратегия корпуса не прошла обязательные проверки');
+			explain(res, 'no_candidate: корпус не дал подтверждённой стратегии; подробности — в вердиктах лаборатории');
+			if (cur)
+				target.resources[res] = cur;
+			continue;
+		}
 		const cand = pick_resource(fz, res, null);
 		let use = cand;
 		if (cur && cand && cand.args == cur.args)
@@ -1099,13 +1175,22 @@ function cycle(cfg) {
 					((cud >= 0) ? '' + cud : 'n/a') + ' против ' + ((cd >= 0) ? '' + cd : 'n/a') +
 					', старт ' + ust + ' против ' + cst + ' мс, поток ' + uspd + ' против ' + cspd +
 					' Б/с, TLS ' + cand.tls_ms + ' против ' + cur.tls_ms + ' мс)');
+				explain(res, 'держу текущую: кандидат хуже в пределах антифлап-запаса (deep ' +
+					((cud >= 0) ? '' + cud : 'n/a') + ' против ' + ((cd >= 0) ? '' + cd : 'n/a') +
+					', старт ' + ust + '/' + cst + ' мс, поток ' + uspd + '/' + cspd + ' Б/с)');
 				use = null;
+			} else {
+				explain(res, 'смена на «' + cand.name + '»: замер лучше (deep ' +
+					((cd >= 0) ? '' + cd : 'n/a') + ', старт ' + cst + ' мс, поток ' + cspd + ' Б/с, TLS ' + cand.tls_ms + ' мс)');
 			}
 		}
-		if (use)
+		if (use) {
 			target.resources[res] = use;
-		else if (cur)
+		}
+		else if (cur) {
 			target.resources[res] = cur;   /* re-emit the unchanged winner */
+			explain(res, 'оставил текущую стратегию: подтверждённых улучшений нет');
+		}
 		else
 			log_once('nopick_' + res, res + ': в рейтинге ничего не прошло — обслуживает общий хвост');
 	}
@@ -1152,7 +1237,13 @@ function repair(cfg, res) {
 	if (cur)
 		tried_add(res, cur.args);
 	log(res + ': стратегия перестала работать (' + ((res === 'general') ? S.general.strikes : S.resources[res].strikes) +
-		' неудачных проверок подряд) — переключаюсь на ' + alt.name);
+		' неудачных проверок подряд) — переключаюсь на ' + alt.name +
+		(hold_active() ? ' — удержа (Hot Swap 9) снята: ресурс МЁРТВ, ремонт важнее удержи' : ''));
+	/* Ф6.7: ремонт снимает удержу — мёртвый ресурс ремонтируется даже при
+	 * ручном пике (иначе пользователь остаётся на сломанной стратегии). */
+	S.manual_hold = null;
+	explain(res, 'ремонт: ' + ((res === 'general') ? S.general.strikes : S.resources[res].strikes) +
+		' неудачных проверок подряд — смена на «' + alt.name + '»');
 	const target = { resources: {}, general: null };
 	for (let rr in cfg.resources) {
 		if (rr === 'general') {
@@ -1236,6 +1327,32 @@ function resource_matrix(res, meta) {
 	return pr;
 }
 
+/* Ф6.7: свежая батарея профилей (Ф6.3) как ДОПОЛНИТЕЛЬНОЕ измерение health —
+ * ноль новых проб: результат уже измерен батареей (пользователем или RPC).
+ * Свежесть 30 мин; сводка по сервисам, которые ведёт автопилот. */
+function profile_battery() {
+	const p = read_json(RUN_DIR + '/service_profile_result.json');
+	if (p == null || type(p.components) !== 'array')
+		return null;
+	if ((time() - int(p.ts || 0)) > 1800)
+		return null;                     /* старше 30 мин — не свежая */
+	const sums = {};
+	for (let k in ['youtube', 'discord', 'telegram'])
+		sums[k] = { working: 0, degraded: 0, bad: 0, unprobed: 0 };
+	/* for-in over an array yields the ELEMENTS (lesson 20/31). */
+	for (let r in p.components) {
+		if (type(r) !== 'object') continue;
+		const k = '' + (r.profile || '');
+		if (sums[k] == null) continue;
+		const s = '' + (r.state || '');
+		if (s === 'working') sums[k].working++;
+		else if (s === 'degraded') sums[k].degraded++;
+		else if (s === 'broken' || s === 'refused') sums[k].bad++;
+		else if (s === 'unprobed') sums[k].unprobed++;
+	}
+	return sums;
+}
+
 function health(cfg) {
 	if (access(RELOAD_MARK))
 		return;
@@ -1249,6 +1366,8 @@ function health(cfg) {
 		return;
 	}
 	once_clear('probehold');
+	/* Ф6.7: свежая батарея профилей (Ф6.3) — дополнительное измерение без проб. */
+	const battery = profile_battery();
 	for (let res in cfg.resources) {
 		if (res !== 'general' && !S.resources[res].mgmt) {
 			/* Not managed — its own path serves it (e.g. tg-ws); no red
@@ -1308,6 +1427,23 @@ function health(cfg) {
 			if (S.next_cycle_ts == 0 || S.next_cycle_ts > time() + 1800)
 				S.next_cycle_ts = time() + 1800;
 		}
+		/* Ф6.7: кросс-проверка с батареей профилей (Ф6.3). Батарея — ДРУГОЕ
+		 * измерение (компоненты, которых страница/deep-матрица не видит:
+		 * MTProto DC, gateway WS). broken/refused при нашем ok → честная
+		 * деградация и подтягивание переразметки, БЕЗ страйка (не наш замер;
+		 * двойное наказание одним фактом запрещено). */
+		const batt = (battery != null && res !== 'general') ? battery[res] : null;
+		if (batt != null && int(batt.bad || 0) > 0) {
+			st.note = 'батарея профиля: ' + int(batt.bad) + ' сломано' +
+				((length(st.note || '')) ? ' · ' + st.note : '');
+			if (pr.ok) {
+				st.slow = true;
+				if (S.next_cycle_ts == 0 || S.next_cycle_ts > time() + 1800)
+					S.next_cycle_ts = time() + 1800;
+			}
+			log_once('batt_' + res, res + ': батарея профиля сообщает о ' + int(batt.bad) +
+				' сломанных компонентах — деградация, без страйка (не наш замер)');
+		}
 	}
 	S.next_check_ts = time() + cfg.check_min * 60;
 	wstat();
@@ -1342,12 +1478,22 @@ function adopt_manual() {
 			stream: int(w.stream || 0), start_ms: int(w.start_ms || 0), score: 0,
 			manual: true, runners: [] };
 		S.resources[res].strikes = 0;
+		explain(res, 'ручной выбор принят (Hot Swap 9): плановая переразметка не заменит его; живые проверки продолжаются');
 		log('ручной выбор из Лаборатории стратегий принят для ' + res + ': ' + (w.name || 'кастомные аргументы'));
 		any = true;
 	}
-	if (any)
+	if (any) {
+		/* Ф6.7: ручной пик ставит удержу плановой переразметки. */
+		S.manual_hold = { ts: time(), src: 'lab' };
 		wstat();
+	}
 	system(`rm -f ${sq(MANUAL_FILE)} 2>/dev/null`);
+}
+
+/* Ф6.7: активна ли удержа плановой переразметки (Hot Swap 9). Без TTL —
+ * снятие только явное: ремонт умершего ресурса или успешный автоподбор. */
+function hold_active() {
+	return !!(S.manual_hold && type(S.manual_hold) === 'object');
 }
 
 /* ── main loop ──────────────────────────────────────────────────────── */
@@ -1418,6 +1564,22 @@ function tick() {
 
 	adopt_manual();
 
+	/* Ф6.7 (Hot Swap 9): детект ВНЕШНЕЙ смены композиции — пользователь
+	 * применил стратегию/композицию из UI (или руками). Плановая переразметка
+	 * удержана, живые проверки продолжаются. Снимается ремонтом умершего
+	 * ресурса или успешным применением автопилота. */
+	{
+		const curz = '' + (cursor().get('homeproxy', 'config', 'zapret_cmd_opts') || '');
+		if (!S.pending && S.last_apply && type(S.last_apply) === 'object' &&
+		    length('' + (S.last_apply.zapret || '')) && curz != S.last_apply.zapret &&
+		    length(curz)) {
+			S.last_apply.zapret = curz;   /* not re-armed by the same change */
+			S.manual_hold = { ts: time(), src: 'external' };
+			log('обнаружена внешняя/ручная композиция — плановая переразметка удержана (Hot Swap 9); живые проверки и ремонт продолжаются');
+			wstat();
+		}
+	}
+
 	/* ч.127 ROOT FIX: health() was called on EVERY tick (60 s) — the
 	 * check_min interval (the UI's honest «next check: HH:MM») was written
 	 * but never used as a gate. The result: 5 probes a minute against the
@@ -1429,12 +1591,18 @@ function tick() {
 		health(cfg);
 
 	if (time() >= S.next_cycle_ts) {
-		if (window_active(cfg)) {
+		if (hold_active()) {
+			/* Удержа: переразметка не нужна — не тратим ни слот, ни фаззинг. */
+			S.next_cycle_ts = time() + cfg.interval_h * 3600;
+			log_once('holdskip', 'плановая переразметка удержана (Hot Swap 9) — слот отложен');
+			wstat();
+		} else if (window_active(cfg) || night_active(cfg)) {
 			stage('watch', '');
 			cycle(cfg);   /* arms next_cycle itself (apply may kill us) */
 			return;
 		}
-		log_once('window', 'вне окна обслуживания — плановая переразметка ждёт');
+		else
+			log_once('window', 'вне окна обслуживания — плановая переразметка ждёт');
 	}
 	wstat();
 }

@@ -6,6 +6,11 @@
 
 import { open, readfile, writefile, access, stat } from 'fs';
 import { urldecode_params } from 'luci.http';
+/* Ф6.6/B5.17: единая валидация выученных IP — третья точка (генератор
+ * правилетс-файлов). learn_core ничего не импортирует, discovery — только
+ * fs; циклов нет. */
+import { validate_learned_ip } from '/etc/homeproxy/scripts/learn_core.uc';
+import { is_special_ip } from '/etc/homeproxy/scripts/discovery.uc';
 
 /* Global variables start */
 export const HP_DIR = '/etc/homeproxy';
@@ -362,6 +367,13 @@ function read_list_entries(res, name) {
  *
  * Called by generate_client.uc (so the files always exist when the core starts) and by
  * automation.uc on every learn (the hot path — rewrite the file, the core picks it up). */
+/* Ф6.6/B5.17: сокращённое окружение валидации для генератора — здесь
+ * доступен только реестр IANA Special-Purpose (остальные списки живут
+ * в automation.uc; формат проверяет classify_entry выше). */
+function learned_ip_env_hp() {
+	return { special: is_special_ip };
+}
+
 export function sync_learned_rulesets(res_dir) {
 	let res = res_dir || (HP_DIR + '/resources');
 	system('mkdir -p ' + shellQuote(res));
@@ -445,6 +457,15 @@ export function sync_learned_rulesets(res_dir) {
 	for (let d in read_list_entries(res, 'auto_proxy_ip.txt')) {
 		let c = classify_entry(d);
 		if (!c || c.kind === 'domain') {
+			drops++;
+			continue;
+		}
+		/* Ф6.6/B5.17: ТРЕТЬЯ точка единой валидации выученного IP (load и
+		 * learn — в automation.uc): формат и IANA Special-Purpose проверяются
+		 * и на генераторе — устаревшая/испорченная запись не маршрутизирует
+		 * даже между стартами демона. Причина — в счётчике drops. */
+		const vdrop = validate_learned_ip(c.value, learned_ip_env_hp());
+		if (vdrop != null) {
 			drops++;
 			continue;
 		}

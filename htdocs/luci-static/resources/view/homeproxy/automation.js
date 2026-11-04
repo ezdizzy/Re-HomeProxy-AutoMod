@@ -702,6 +702,9 @@ return view.extend({
 				return E('span', { 'class': 'hpbadge hpb-mproxy' }, [ _('Always proxy') ]);
 			if (e.src === 'manual_direct')
 				return E('span', { 'class': 'hpbadge hpb-mdirect' }, [ _('Always direct') ]);
+			/* Ф6.6/B5.17: недавно снятая запись — серый бейдж, причина в «Почему». */
+			if (e.src === 'dropped')
+				return E('span', { 'class': 'hpbadge hpb-type' }, [ _('Removed') ]);
 			if (e.status === 'geo')
 				return E('span', { 'class': 'hpbadge hpb-mproxy' }, [ _('Geo (proxied)') ]);
 			if (e.status === 'geo_blocked')
@@ -724,6 +727,19 @@ return view.extend({
 		}
 
 		function reasonText(e) {
+			/* Ф6.6/B5.17: причина снятия записи (единая валидация IP). */
+			if (e.src === 'dropped') {
+				const DROPS = {
+					invalid: _('invalid entry format'),
+					private_range: _('private/special-purpose range (IANA registry)'),
+					shared_cdn: _('shared CDN address (never learned)'),
+					resolver_infrastructure: _('DNS resolver/anycast infrastructure'),
+					local: _('the router own address'),
+					ru_network: _('RU network (always direct)'),
+					ru_ptr: _('RU-TLD reverse DNS (always direct)')
+				};
+				return _('removed from the lists: %s').format(DROPS[e.drop_reason] || (e.drop_reason || '—'));
+			}
 			if (e.status === 'geo')
 				return _('geo-sensitive service — always routed via proxy');
 			if (e.status === 'geo_blocked')
@@ -743,9 +759,11 @@ return view.extend({
 				};
 				let kind = KINDS[e.kind] || null;
 				if (!e.direct && !e.proxy)
-					return kind || _('blocked (details not recorded)');
+					return (kind || _('blocked (details not recorded)')) +
+						(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '');
 				let d = e.direct || '✗', p = e.proxy || '✓';
-				return (kind ? (kind + ' · ') : '') + _('direct %s ✗ / proxy %s ✓').format(d, p);
+				return (kind ? (kind + ' · ') : '') + _('direct %s ✗ / proxy %s ✓').format(d, p) +
+					(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '');
 			}
 			if (e.status === 'blocked_no_proxy') return _('blocked both ways');
 			if (e.status === 'unknown') return _('uncertain');

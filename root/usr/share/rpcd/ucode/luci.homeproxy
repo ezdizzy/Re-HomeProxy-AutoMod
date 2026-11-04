@@ -1654,7 +1654,8 @@ function hp_autopilot_cfg() {
 		check_min: int(get('check_min', '15')),
 		fail_strikes: int(get('fail_strikes', '2')),
 		fuzz_mode: (get('fuzz_mode', 'quick') === 'full') ? 'full' : 'quick',
-		window: '' + get('window', '')
+		window: '' + get('window', ''),
+		night_pick: (get('night_pick', '0') === '1')
 	};
 }
 
@@ -5311,7 +5312,8 @@ const methods = {
 		args: {
 			enabled: 'enabled', resources: 'resources', set_rules: 'set_rules',
 			interval_h: 'interval_h', check_min: 'check_min', window: 'window',
-			fuzz_mode: 'fuzz_mode', fail_strikes: 'fail_strikes'
+			fuzz_mode: 'fuzz_mode', fail_strikes: 'fail_strikes',
+			night_pick: 'night_pick'
 		},
 		call: function(req) {
 			const a = (req && req.args) || {};
@@ -5365,6 +5367,11 @@ const methods = {
 			c.set('homeproxy', 'autopilot', 'check_min', '' + check_min);
 			c.set('homeproxy', 'autopilot', 'fail_strikes', '' + fail_strikes);
 			c.set('homeproxy', 'autopilot', 'fuzz_mode', fuzz_mode);
+			/* Ф6.7: ночной автоподбор (01:00–06:00, только если лучше) — опция.
+			 * Не передан (старый вызывающий) — прежнее значение не трогаем. */
+			const night_pick = flag(a.night_pick);
+			if (night_pick != null)
+				c.set('homeproxy', 'autopilot', 'night_pick', night_pick);
 			if (length(win))
 				c.set('homeproxy', 'autopilot', 'window', win);
 			else
@@ -5580,11 +5587,23 @@ const methods = {
 						e.last_probe = st.last_probe || 0;
 						e.direct = st.direct || '';
 						e.proxy = st.proxy || '';
-						/* ч.68: block-kind verdict tag (dns_poison/stub/sigpage/
-						 * tls_dpi/hardcode) + the "WAF answered" flag for the
-						 * reasons column. */
+					/* ч.68: block-kind verdict tag (dns_poison/stub/sigpage/
+					 * tls_dpi/hardcode) + the "WAF answered" flag for the
+					 * reasons column. */
 						if (st.block_kind) e.kind = st.block_kind;
 						if (st.waf_seen) e.waf_seen = st.waf_seen;
+						/* Ф6.6/B5.18: история доказательств записи (метод обучения,
+						 * счётчики проверок/самолечений, причина снятия) — UI
+						 * показывает их в колонке «Почему». */
+						if (st.learn_method) e.learn_method = st.learn_method;
+						if (st.verifies != null) e.verifies = int(st.verifies) || 0;
+						if (st.heal_count != null) e.heals = int(st.heal_count) || 0;
+						if (st.drop_reason) e.drop_reason = st.drop_reason;
+						if (st.observed_host && st.observed_host !== host) e.observed_host = st.observed_host;
+						if (type(st.evidence) === 'array' && length(st.evidence)) {
+							const lev = st.evidence[length(st.evidence) - 1];
+							e.ev_last = { t: int(lev.t || 0), d: '' + (lev.d || ''), p: '' + (lev.p || '') };
+						}
 				} else {
 					e.status = (src === 'learned') ? 'blocked' : src;
 					e.added = 0;
@@ -5625,6 +5644,38 @@ const methods = {
 					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
 						push_entry(trim(x), 'manual_direct');
 			}
+			sort(entries, (a, b) => (b.added || 0) - (a.added || 0));
+
+			/* Ф6.6/B5.17: недавно снятые записи с ПРИЧИНОЙ — честный UI:
+			 * пользователь видит, ЧТО удалено из списков и ПОЧЕМУ (private_
+			 * range/shared_cdn/resolver_infrastructure/ru_network/invalid/
+			 * ru_ptr). Только записи state с drop_reason, не в списках,
+			 * не старше 14 дней (PRUNE_AGE), не более 40 свежих. */
+			let dropped_rows = [];
+			for (let h in state) {
+				const dst = state[h];
+				if (type(dst) !== 'object' || !dst.drop_reason)
+					continue;
+				/* Всё ещё в списках/пинах — не «снято». */
+				if (by_host[h])
+					continue;
+				push(dropped_rows, { host: h, rec: dst });
+			}
+			sort(dropped_rows, (a, b) => (int(b.rec.drop_t || 0)) - (int(a.rec.drop_t || 0)));
+			const DROP_CAP = 40;
+			for (let i = 0; i < length(dropped_rows) && i < DROP_CAP; i++) {
+				const dh = dropped_rows[i].host;
+				const dr = dropped_rows[i].rec;
+				const dtyp = (match(dh, /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/) ||
+					(index(dh, ':') >= 0 && match(dh, /^[0-9a-fA-F:]+(\/\d{1,3})?$/))) ? 'ip' : 'domain';
+				const de = { host: dh, type: dtyp, src: 'dropped',
+					status: dr.status || 'direct', added: int(dr.drop_t || 0),
+					last_probe: int(dr.last_probe || 0),
+					direct: '' + (dr.direct || ''), proxy: '' + (dr.proxy || ''),
+					drop_reason: '' + dr.drop_reason };
+				push(entries, de);
+			}
+			/* Re-sort merged: newest first. */
 			sort(entries, (a, b) => (b.added || 0) - (a.added || 0));
 
 			let blocked = [], direct = [], unknown = [];

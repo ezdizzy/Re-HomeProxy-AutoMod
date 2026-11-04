@@ -221,7 +221,7 @@ const callAutoPilotStatus = rpc.declare({
 const callAutoPilotSet = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'wizard_autopilot_set',
-	params: [ 'enabled', 'resources', 'set_rules', 'interval_h', 'check_min', 'window', 'fuzz_mode', 'fail_strikes' ],
+	params: [ 'enabled', 'resources', 'set_rules', 'interval_h', 'check_min', 'window', 'fuzz_mode', 'fail_strikes', 'night_pick' ],
 	expect: { '': {} }
 });
 
@@ -2146,6 +2146,8 @@ return view.extend({
 		const apCheck = E('input', { type: 'number', min: '5', max: '180', 'class': 'cbi-input-text', style: 'width:70px', value: '15' });
 		const apWin = E('input', { type: 'text', 'class': 'cbi-input-text', style: 'width:150px',
 			placeholder: _('empty — any time') });
+		/* Ф6.7: ночной автоподбор (01:00–06:00, только если лучше) — опция. */
+		const apNight = E('input', { type: 'checkbox' });
 		const apSave = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' }, [ _('Save auto-pilot') ]);
 		const apAlive = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
 		const apNames = { youtube: _('YouTube'), discord: _('Discord'),
@@ -2179,7 +2181,10 @@ return view.extend({
 			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('check every') ]),
 			  apCheck, E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ 'min' ]),
 			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('apply in window') ]),
-			  apWin ]);
+			  apWin,
+			  E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer',
+				title: _('Night auto-pick (01:00–06:00): a scheduled re-rank is allowed at night even outside the maintenance window — it applies only a strategy that is measurably better.') },
+				[ apNight, ' ' + _('Night auto-pick') ]) ]);
 		dpiPanes.dpiAp.appendChild(E('div', { style: 'margin-top:14px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
 			[ apHead, apRow1, apResWrap, apRow3, E('p', { 'class': 'wiz-note' },
 				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The "apply in window" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
@@ -2192,8 +2197,9 @@ return view.extend({
 		apMode.addEventListener('change', function() { apDirty = true; });
 		apInterval.addEventListener('input', function() { apDirty = true; });
 		apCheck.addEventListener('input', function() { apDirty = true; });
-		apWin.addEventListener('input', function() { apDirty = true; });
-		apSave.addEventListener('click', function() {
+	apWin.addEventListener('input', function() { apDirty = true; });
+	apNight.addEventListener('change', function() { apDirty = true; });
+	apSave.addEventListener('click', function() {
 			const res = [];
 			for (let k in apRes)
 				if (apRes[k].checked)
@@ -2211,7 +2217,7 @@ return view.extend({
 					String(parseInt(apInterval.value, 10) || 6),
 					String(parseInt(apCheck.value, 10) || 15),
 					apWin.value || '', apMode.value || 'quick',
-					'2'), {}).then(function(r) {
+					'2', apNight.checked ? '1' : '0'), {}).then(function(r) {
 					apSave.disabled = false;
 					if (!r || r.result !== true) {
 						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
@@ -2251,6 +2257,7 @@ return view.extend({
 				apInterval.value = cfg.interval_h || 6;
 				apCheck.value = cfg.check_min || 15;
 				apWin.value = cfg.window || '';
+				apNight.checked = (cfg.night_pick === true);
 			}
 			apStatus.innerHTML = '';
 			if (!ok) {
@@ -2269,6 +2276,9 @@ return view.extend({
 				head.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; opacity:.8' },
 					[ ' · ' + st.stage_note ]));
 			apStatus.appendChild(head);
+			if (st && st.manual_hold)
+				apStatus.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' },
+					[ '✋ ' + _('Manual composition hold is active (Hot Swap): the scheduled re-rank is suspended — live checks and dead-resource repairs continue.') ]));
 			if (st && st.resources) {
 				const grid = E('div', { style: 'margin:4px 0 0 12px' });
 				for (let rk in apRes) {
@@ -2302,11 +2312,15 @@ return view.extend({
 					}
 					if (r.strikes > 0)
 						line.appendChild(badge('hpui-b-red', '⚠ ' + _('%d failed check(s)').format(r.strikes)));
-					if (r.rule_node != null && rk !== 'general')
-						line.appendChild(document.createTextNode(
-							' · ' + _('rule: %s').format(r.rule_node || _('none'))));
-					grid.appendChild(line);
-				}
+				if (r.rule_node != null && rk !== 'general')
+					line.appendChild(document.createTextNode(
+						' · ' + _('rule: %s').format(r.rule_node || _('none'))));
+				grid.appendChild(line);
+				/* Ф6.7: объяснимый вердикт решения (не чёрный ящик). */
+				if (r.explain && r.explain.text)
+					grid.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:1px 0 0 12px; opacity:.75' },
+						[ '↳ ' + r.explain.text ]));
+			}
 				apStatus.appendChild(grid);
 			}
 			const times = [];
