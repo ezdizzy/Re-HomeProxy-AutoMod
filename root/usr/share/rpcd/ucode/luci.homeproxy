@@ -13,7 +13,9 @@ import {
 	sync_learned_rulesets,
 	sync_manual_direct_ruleset,
 	sync_ru_geo_rulesets,
-	sync_auto_auth_ruleset
+	sync_auto_auth_ruleset,
+	classify_entry,
+	ipv6_hextets
 } from '/etc/homeproxy/scripts/homeproxy.uc';
 import {
 	RUN_DIR as HC_RUN_DIR, LOG_PATH as HC_LOG_PATH,
@@ -446,23 +448,25 @@ function restart_daemon_instance(script_name, instance_name) {
 	system(`ubus call service event '{"type":"instance.restart","data":{"name":"homeproxy","instance":"` + instance_name + `"}}' 2>/dev/null`);
 }
 
-/* Validate a manual entry: FQDN, IPv4[/plen] or IPv6[/plen]; lowercase form back. */
+/* Validate a manual entry — Ф4.1: through the ONE classifier (homeproxy.uc
+ * classify_entry): FQDN, IPv4[/plen], IPv6[/plen] with REAL validation
+ * (octet ranges, no octal traps, prefix length ≤32/≤128 — a /33 used to pass
+ * the old regex silently and then vanish in the sync). Returns the CANONICAL
+ * list key: bare IPs stay bare (the automation daemon keys its state by the
+ * bare probe host — one key space), CIDR keeps its prefix, domains lowercase
+ * with dots stripped. Null when invalid. */
 function valid_automation_entry(e) {
-	e = lc(trim(e ?? ''));
-	if (!length(e) || length(e) > 253) return null;
-	if (match(e, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(\/\d{1,2})?$/)) {
-		let m = match(e, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/);
-		if (int(m[1]) > 255 || int(m[2]) > 255 || int(m[3]) > 255 || int(m[4]) > 255) return null;
-		return e;
-	}
-	if (index(e, ':') >= 0 && match(e, /^[0-9a-f:]+(\/\d{1,3})?$/)) return e;
-	if (match(e, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/) && index(e, '.') > 0 && !match(e, /\.\./))
-		return e;
-	return null;
+	let c = classify_entry(e ?? '');
+	if (!c)
+		return null;
+	return (c.kind === 'ipv4' || c.kind === 'ipv6') ? c.host : c.value;
 }
 
 function auto_entry_type(e) {
-	return (match(e, /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/) || (index(e, ':') >= 0 && match(e, /^[0-9a-f:]+(\/\d{1,3})?$/))) ? 'ip' : 'domain';
+	let c = classify_entry(e ?? '');
+	if (!c || c.kind === 'domain')
+		return 'domain';
+	return 'ip';
 }
 
 /* "Listening ports" (Core & Tools + diagnostics report): busybox
@@ -739,8 +743,12 @@ function rulesets_remote_list() {
  * Top-level helper (rpcd ucode rejects function declarations inside the
  * methods object) so route_explain and the Wizard checks share it. */
 function hp_route_trace(host, conf) {
-	const is_ip4 = !!match(host, /^(\d{1,3}\.){3}\d{1,3}$/);
-	const is_ip6 = (!is_ip4 && index(host, ':') >= 0);
+	/* Ф4.1: classification through the ONE classifier — route_explain agrees
+	 * with every generator on what is an IP (octet/prefix validation included;
+	 * a broken string is a domain candidate at worst, never a fake IP). */
+	const ce_h = classify_entry(host);
+	const is_ip4 = !!ce_h && (ce_h.kind === 'ipv4' || ce_h.kind === 'cidr4');
+	const is_ip6 = !!ce_h && (ce_h.kind === 'ipv6' || ce_h.kind === 'cidr6');
 	const is_ip = is_ip4 || is_ip6;
 
 	/* IPv4 CIDR matching WITHOUT bit shifts (this rpcd-ucode build has
@@ -772,6 +780,33 @@ function hp_route_trace(host, conf) {
 		const a2 = int(ipa[full]), b2 = int(bna[full]);
 		return int(a2 / OCT_STEP[rem]) === int(b2 / OCT_STEP[rem]);
 	};
+	/* IPv6 CIDR matching, same no-bit-shift discipline (int32 trap): compare
+	 * hextet-by-hextet (ipv6_hextets expands '::'), remainder bits kept from
+	 * the top via integer division by 2^(16-rem). Ф4.1: v6 ip_cidr entries
+	 * (learned /128, geo prefixes) are explainable now, not blind. */
+	const ip6_in_cidr = (ip, cidr) => {
+		const m = match(cidr, /^([0-9a-fA-F:.]+)\/(\d+)$/);
+		const base = m ? m[1] : cidr;
+		const bits = m ? int(m[2]) : 128;
+		const a = ipv6_hextets(ip), b = ipv6_hextets(base);
+		if (!a || !b)
+			return false;
+		if (bits <= 0)
+			return true;
+		const full = int(bits / 16);
+		for (let i = 0; i < full && i < 8; i++)
+			if (a[i] !== b[i]) return false;
+		const rem = bits - full * 16;
+		if (rem <= 0)
+			return true;
+		if (full >= 8)
+			return false;
+		let div = 1;
+		for (let i = 0; i < 16 - rem; i++)
+			div *= 2;
+		return int(a[full] / div) === int(b[full] / div);
+	};
+	const ip_cidr_hit = (ip, cidr) => is_ip4 ? ip_in_cidr(ip, cidr) : ip6_in_cidr(ip, cidr);
 
 	/* rule-set tag → declaration */
 	const rsets = {};
@@ -795,9 +830,9 @@ function hp_route_trace(host, conf) {
 					if (index(host, d) >= 0) return 'domain_keyword ' + d;
 				for (let d in (r.domain_regex || []))
 					if (match(host, d)) return 'domain_regex ' + d;
-			} else if (is_ip4) {
+			} else if (is_ip) {
 				for (let c in (r.ip_cidr || []))
-					if (ip_in_cidr(host, c)) return 'ip_cidr ' + c;
+					if (ip_cidr_hit(host, c)) return 'ip_cidr ' + c;
 			}
 		}
 		return null;
@@ -896,9 +931,9 @@ function hp_route_trace(host, conf) {
 				for (let d in r.domain_keyword)
 					if (!hit && index(host, d) >= 0)
 						hit = rdesc = `domain_keyword ${d}`;
-		} else if (is_ip4 && type(r.ip_cidr) === 'array') {
+		} else if (is_ip && type(r.ip_cidr) === 'array') {
 			for (let c in r.ip_cidr)
-				if (!hit && ip_in_cidr(host, c))
+				if (!hit && ip_cidr_hit(host, c))
 					hit = rdesc = `ip_cidr ${c}`;
 		}
 		if (!hit && type(r.rule_set) !== 'undefined') {
@@ -7437,10 +7472,9 @@ const methods = {
 			const entry = valid_automation_entry(req.args?.entry);
 			const action = req.args?.action || 'proxy';
 			if (!entry)
-				return { result: false, error: 'invalid entry (use a domain or IP)' };
+				return { result: false, error: 'некорректная запись: введите домен, IPv4/IPv6 или CIDR (префикс 1–32 / 1–128)' };
 			if (action !== 'proxy' && action !== 'direct')
 				return { result: false, error: 'invalid action' };
-			const is_ip = (auto_entry_type(entry) === 'ip');
 
 			/* Manual "always proxy" pins never touch the auto lists; the learned
 			 * lists only accept RU-safe hosts (the daemon purges violations, but

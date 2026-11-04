@@ -16,7 +16,7 @@ import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
 	removeBlankAttrs, validation, HP_DIR, RUN_DIR,
 	sync_learned_rulesets, sync_manual_direct_ruleset, sync_ru_geo_rulesets,
-	sync_oauth_ruleset, sync_auto_auth_ruleset
+	sync_oauth_ruleset, sync_auto_auth_ruleset, classify_entry
 } from 'homeproxy';
 
 /* Process Manager (Ф1.4b): ownership-grade mosdns liveness — a bare pidof
@@ -356,7 +356,7 @@ const reload_on_wan_opt = (uci.get(uciconfig, ucimain, 'reload_on_wan') === '1')
 let main_node, main_udp_node, dedicated_udp_node,
     domain_strategy, dns_server, china_dns_server, iran_dns_server, russia_dns_server,
     secure_dns_server, proxy_calls, no_proxy_torrents, show_advanced_rules, dns_default_strategy,
-    direct_domain_list, proxy_domain_list,
+    direct_domain_list, direct_ips, proxy_domain_list,
     multidns_enabled, mdns_use_plain, mdns_use_secure, mdns_secure_via_proxy,
     mdns_ok, mdns_plain_port, mdns_secure_port, mdns_proxy_in, mdns_proxy_port,
     secure_detour;
@@ -498,9 +498,27 @@ let main_node, main_udp_node, dedicated_udp_node,
 
 	dns_default_strategy = (ipv6_support !== '1') ? 'ipv4_only' : null;
 
+	direct_ips = [];
 	direct_domain_list = trim(readfile(HP_DIR + '/resources/direct_list.txt'));
-	if (direct_domain_list)
-		direct_domain_list = split(direct_domain_list, /[\r\n]/);
+	if (direct_domain_list) {
+		/* Ф4.1: static list keeps its KEYWORD semantics for domain-shaped lines
+		 * (curated by the user), but IP-shaped lines are classified out into a
+		 * paired inline ip_cidr rule-set ('direct-ip'): as a keyword an IP can
+		 * never match a hostname — a dead entry; as ip_cidr it routes exactly
+		 * the pinned address (normalized: bare IPv4 → /32). */
+		let kw = [];
+		for (let i, d in split(direct_domain_list, /[\r\n]/)) {
+			d = trim(d);
+			if (!length(d))
+				continue;
+			let c = classify_entry(d);
+			if (c && c.kind !== 'domain')
+				push(direct_ips, c.value);
+			else
+				push(kw, d);
+		}
+		direct_domain_list = length(kw) ? kw : null;
+	}
 
 	proxy_domain_list = trim(readfile(HP_DIR + '/resources/proxy_list.txt'));
 	if (proxy_domain_list)
@@ -2392,13 +2410,22 @@ if (!isEmpty(main_node)) {
 		strategy: (ipv6_support !== '1') ? 'prefer_ipv4' : null
 	} : default_resolver_server;
 
-	/* Direct list (not needed in proxy_banned_ru — direct is the default) */
-	if (length(direct_domain_list) && routing_mode !== 'proxy_banned_ru')
+	/* Direct list (not needed in proxy_banned_ru — direct is the default).
+	 * Ф4.1: IP-shaped entries of direct_list ride the paired inline 'direct-ip'
+	 * rule-set in the SAME rule (a single rule_set array — one match attempt,
+	 * domain keywords and ip_cidr together). */
+	if ((length(direct_domain_list) || length(direct_ips)) && routing_mode !== 'proxy_banned_ru') {
+		let direct_rs = [];
+		if (length(direct_domain_list))
+			push(direct_rs, 'direct-domain');
+		if (length(direct_ips))
+			push(direct_rs, 'direct-ip');
 		push(config.route.rules, {
-			rule_set: 'direct-domain',
+			rule_set: direct_rs,
 			action: 'route',
 			outbound: 'direct-out'
 		});
+	}
 
 	/* Main UDP out — only in `global` here (everything proxied, no carve-outs, order moot).
 	 * In selective modes (RU/reverse) the UDP-node rule is emitted LAST, after the region
@@ -2437,7 +2464,10 @@ if (!isEmpty(main_node)) {
 		: null;
 
 	/* Rule set */
-	/* Direct list */
+	/* Direct list (domain keywords) + paired IP twin ('direct-ip', Ф4.1) —
+	 * both inline: the direct_list apply path is a full generate+reload
+	 * (acllist_write → op_spawn('reload')), so inline is hot enough and the
+	 * entries never sit in the config as dead keyword strings. */
 	if (length(direct_domain_list) && routing_mode !== 'proxy_banned_ru')
 		push(config.route.rule_set, {
 			type: 'inline',
@@ -2445,6 +2475,16 @@ if (!isEmpty(main_node)) {
 			rules: [
 				{
 					domain_keyword: direct_domain_list,
+				}
+			]
+		});
+	if (length(direct_ips) && routing_mode !== 'proxy_banned_ru')
+		push(config.route.rule_set, {
+			type: 'inline',
+			tag: 'direct-ip',
+			rules: [
+				{
+					ip_cidr: direct_ips,
 				}
 			]
 		});
@@ -3061,12 +3101,18 @@ system('mkdir -p ' + RUN_DIR);
  * exist before the core starts. Automation rewrites them on every learn → hot reload.
  * Also the manual "always direct" pins (auto_direct.json), the RU-geo rule-set files
  * (ru_geoip.json / ru_geosite.json — stale-only rewrite, see sync_ru_geo_rulesets),
- * and the OAuth stability list (oauth_domain.json, ч.59). */
-sync_learned_rulesets();
-sync_manual_direct_ruleset();
-sync_ru_geo_rulesets();
-sync_oauth_ruleset();
-sync_auto_auth_ruleset();
+ * and the OAuth stability list (oauth_domain.json, ч.59). Ф4.1: invalid list
+ * entries are dropped AND counted by the classifier — never silent. */
+{
+	let cls_dropped = 0;
+	let rr = sync_learned_rulesets();        cls_dropped += rr.dropped || 0;
+	rr = sync_manual_direct_ruleset();       cls_dropped += rr.dropped || 0;
+	rr = sync_ru_geo_rulesets();             cls_dropped += rr.dropped || 0;
+	rr = sync_oauth_ruleset();               cls_dropped += rr.dropped || 0;
+	rr = sync_auto_auth_ruleset();           cls_dropped += rr.dropped || 0;
+	if (cls_dropped > 0)
+		warn('homeproxy: classify_entry dropped ' + cls_dropped + ' invalid list entries (Ф4.1 validation — see /etc/homeproxy/resources/*.txt)\n');
+}
 
 /* ч.65 last line of defense: a duplicate tag among dns servers / outbounds /
  * endpoints / rule-sets is a hard core FATAL ("duplicate rule-set tag ...") →

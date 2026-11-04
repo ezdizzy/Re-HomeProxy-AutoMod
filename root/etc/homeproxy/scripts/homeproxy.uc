@@ -103,6 +103,242 @@ function write_ruleset_file(path, obj) {
 	system('mv -f ' + shellQuote(tmp) + ' ' + shellQuote(path));
 }
 
+/* ── Ф4.1 (аудит B6.1/B6.2/B6.10): ЕДИНЫЙ классификатор записей списков ───
+ * Каждый генератор (sync_* здесь, статические списки generate_client, learn-
+ * конвейер automation, валидаторы записей RPC) решает «строка = домен или IP?»
+ * ТОЛЬКО через classify_entry() — в проекте было несколько несовместимых
+ * классификаторов: sync_learned_rulesets отбрасывал голый IPv4 (IP-обучение
+ * фактически не маршрутизировало — игры/hardcoded IP), ручные IPv4 проваливались
+ * в domain_suffix, а длина префикса CIDR не проверялась вовсе (/33 проходил).
+ *
+ * classify_entry(raw) → null (запись невалидна — вызывающий ОБЯЗАН отбросить её
+ * и посчитать) либо нормализованная запись:
+ *   { kind: 'domain'|'ipv4'|'ipv6'|'cidr4'|'cidr6',
+ *     value: <форма для эмиссии в rule-set>, prefix: <int|null> }
+ * Нормализация value:
+ *   - голый IPv4 → '<ip>/32'   (B6.1: выученные IP обязаны маршрутизировать)
+ *   - голый IPv6 → '<addr>/128'
+ *   - домены     → lowercase, один ведущий и один хвостовой '.', срезаны
+ *     ('.Example.COM.' → 'example.com' — сам apex матчится вместе с поддоменами)
+ *   - CIDR       → '<base>/<префикс>' (base валиден; префикс 1..32 / 1..128 —
+ *     битый префикс НЕ проходит молча; /0 отвергается — «весь интернет» не
+ *     может быть намерением одной записи списка)
+ * Разбор — арифметикой (разбиение октетов/гекстетов), не одним регэкспом
+ * (урок 26: match() со строковым паттерном молча null; 999.1.1.1, 01.2.3.4
+ * (восьмеричная ловушка Go net.ParseIP), :::, /33 — всё это invalid). */
+
+function ipv4_parts_ok(s) {
+	let p = split(s, '.');
+	if (length(p) !== 4)
+		return false;
+	for (let i, o in p) {
+		if (!match(o, /^[0-9]{1,3}$/))
+			return false;
+		if (length(o) > 1 && substr(o, 0, 1) === '0')
+			return false;
+		if (int(o) > 255)
+			return false;
+	}
+	return true;
+}
+
+/* Expand an IPv6 literal into 8 hextet integers (or null when invalid).
+ * Used by classify_entry (validation) and by route_explain (ip_cidr matching). */
+export function ipv6_hextets(s) {
+	if (index(s, ':') < 0)
+		return null;
+	let L = length(s);
+	/* single leading/trailing colon (not part of '::') is invalid */
+	if (substr(s, 0, 1) === ':' && substr(s, 0, 2) !== '::')
+		return null;
+	if (substr(s, L - 1, 1) === ':' && substr(s, L - 2, 2) !== '::')
+		return null;
+	/* at most one '::' (':::' counts twice → rejected) */
+	let dbl = 0;
+	for (let i = 0; i + 1 < L; i++)
+		if (substr(s, i, 2) === '::')
+			dbl++;
+	if (dbl > 1)
+		return null;
+	let head = s, tail = '';
+	if (dbl) {
+		let pos = index(s, '::');
+		head = substr(s, 0, pos);
+		tail = substr(s, pos + 2);
+	}
+	const HEXD = '0123456789abcdef';
+	/* Sums groups of a colon-separated part; the LAST group may be an embedded
+	 * IPv4 (counts as 2 hextets, only when it terminates the address). -1 on
+	 * any malformed group. */
+	let count = (part, allow_v4) => {
+		if (!length(part))
+			return 0;
+		let parts = split(part, ':'), n = 0;
+		for (let i, g in parts) {
+			if (!length(g))
+				return -1;
+			if (allow_v4 && i === length(parts) - 1 && index(g, '.') >= 0) {
+				if (!ipv4_parts_ok(g))
+					return -1;
+				n += 2;
+				continue;
+			}
+			if (!match(g, /^[0-9a-fA-F]{1,4}$/))
+				return -1;
+			n++;
+		}
+		return n;
+	};
+	if (dbl) {
+		let hn = count(head, false), tn = count(tail, true);
+		if (hn < 0 || tn < 0 || hn + tn > 7)
+			return null;
+	} else {
+		let n = count(s, true);
+		if (n !== 8)
+			return null;
+	}
+	let out = [];
+	let fill = (part, allow_v4, groups) => {
+		/* groups: expected hextet count AFTER v4-expansion; left-pad with zeros
+		 * (the '::' zero-fill or the exact-8 form needs no padding). Values are
+		 * computed directly as integers — no hex-string roundtrip. */
+		if (!length(part)) {
+			for (let i = 0; i < groups; i++)
+				push(out, 0);
+			return true;
+		}
+		let parts = split(part, ':');
+		let vals = [];
+		for (let i, g in parts) {
+			if (allow_v4 && i === length(parts) - 1 && index(g, '.') >= 0) {
+				let q = split(g, '.');
+				push(vals, int(q[0]) * 256 + int(q[1]));
+				push(vals, int(q[2]) * 256 + int(q[3]));
+				continue;
+			}
+			let v = 0;
+			for (let c = 0; c < length(g); c++) {
+				let d = index(HEXD, lc(substr(g, c, 1)));
+				if (d < 0)
+					return false;
+				v = v * 16 + d;
+			}
+			push(vals, v);
+		}
+		if (length(vals) > groups)
+			return false;
+		for (let i = 0; i < groups - length(vals); i++)
+			push(out, 0);
+		for (let i, v in vals)
+			push(out, v);
+		return true;
+	};
+	if (dbl) {
+		let hn = count(head, false), tn = count(tail, true);
+		/* zero-fill order: head groups first (left-aligned), zeros, then tail */
+		let hp = length(head) ? split(head, ':') : [];
+		let hgrp = 0;
+		for (let i, g in hp)
+			hgrp += (i === length(hp) - 1 && index(g, '.') >= 0) ? 0 : 1;
+		if (!fill(head, false, hgrp))
+			return null;
+		let tp = length(tail) ? split(tail, ':') : [];
+		let tgrp = 0;
+		for (let i, g in tp)
+			tgrp += (i === length(tp) - 1 && index(g, '.') >= 0) ? 2 : 1;
+		for (let i = 0; i < 8 - hgrp - tgrp; i++)
+			push(out, 0);
+		if (!fill(tail, true, tgrp))
+			return null;
+	} else {
+		if (!fill(s, true, 8))
+			return null;
+	}
+	if (length(out) !== 8)
+		return null;
+	return out;
+};
+
+/* classify_entry — see the block comment above. */
+export function classify_entry(raw) {
+	/* 🔴 this ucode build has NO `undefined` global (lesson 103-class): the bare
+	 * name throws "access to undeclared variable" — a missing argument is
+	 * detected via type() instead. */
+	if (raw === null || type(raw) !== 'string')
+		return null;
+	let s = trim('' + raw);
+	if (!length(s) || length(s) > 253 + 4)
+		return null;
+	let host = s, plen = null;
+	let sl = index(s, '/');
+	if (sl >= 0) {
+		host = trim(substr(s, 0, sl));
+		let ps = trim(substr(s, sl + 1));
+		if (!length(host) || !length(ps) || !match(ps, /^[0-9]{1,3}$/))
+			return null;
+		plen = int(ps);
+	}
+	if (index(host, ':') >= 0) {
+		if (!ipv6_hextets(host))
+			return null;
+		if (plen === null)
+			return { kind: 'ipv6', value: host + '/128', host: host, prefix: 128 };
+		if (plen < 1 || plen > 128)
+			return null;
+		return { kind: 'cidr6', value: host + '/' + sprintf('%d', plen), host: host, prefix: plen };
+	}
+	if (match(host, /^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/)) {
+		if (!ipv4_parts_ok(host))
+			return null;
+		if (plen === null)
+			return { kind: 'ipv4', value: host + '/32', host: host, prefix: 32 };
+		if (plen < 1 || plen > 32)
+			return null;
+		return { kind: 'cidr4', value: host + '/' + sprintf('%d', plen), host: host, prefix: plen };
+	}
+	/* domain (strict, for USER-AUTHORED lists): a '/' entry that is not an IP
+	 * family is junk; single labels and empty labels never route. */
+	if (plen !== null)
+		return null;
+	if (substr(host, 0, 1) === '.')
+		host = substr(host, 1);
+	if (substr(host, length(host) - 1, 1) === '.')
+		host = substr(host, 0, length(host) - 1);
+	host = lc(host);
+	if (length(host) < 3 || index(host, '.') <= 0)
+		return null;
+	if (!match(host, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/))
+		return null;
+	if (match(host, /\.\./))
+		return null;
+	/* Final label all-digits is junk (the project's own candidate filter,
+	 * looks_like_host: '192.100' / '1.2.3' are broken IP fragments, never
+	 * real domains — a suffix on them can never match real traffic). */
+	let labels = split(host, '.');
+	if (match(labels[length(labels) - 1], /^[0-9]+$/))
+		return null;
+	return { kind: 'domain', value: host, host: host, prefix: null };
+};
+
+/* Read a list file into non-comment entries (shared line handling for the
+ * sync family: '#' comments, blank lines, per-line trim, tab→space). */
+function read_list_entries(res, name) {
+	if (!access(res + '/' + name))
+		return [];
+	let raw = readfile(res + '/' + name);
+	if (raw === null || type(raw) !== 'string')
+		return [];
+	let out = [];
+	for (let l in split('' + raw, /[\r\n]/)) {
+		l = trim(replace(l, /\t/g, ' '));
+		if (!length(l) || substr(l, 0, 1) === '#')
+			continue;
+		push(out, l);
+	}
+	return out;
+}
+
 /* Learned-list hot reload:
  * Write the auto-detected blocked-site lists as sing-box RuleSet source JSON files so the
  * core can hot-reload them via its LOCAL rule-set file watcher — no service restart, no
@@ -116,73 +352,74 @@ function write_ruleset_file(path, obj) {
  *
  * Called by generate_client.uc (so the files always exist when the core starts) and by
  * automation.uc on every learn (the hot path — rewrite the file, the core picks it up). */
-export function sync_learned_rulesets() {
-	let res = HP_DIR + '/resources';
-	system('mkdir -p ' + res);
+export function sync_learned_rulesets(res_dir) {
+	let res = res_dir || (HP_DIR + '/resources');
+	system('mkdir -p ' + shellQuote(res));
+	/* Ф4.1: every entry decision goes through classify_entry() — one classifier
+	 * for all generators. Invalid entries are DROPPED AND COUNTED (never silent:
+	 * the counter rides the return value and every caller logs it). */
+	let drops = 0;
 	/* Static list keeps its upstream KEYWORD semantics (substring match, curated by
 	 * the user). Learned entries are EXACT hosts discovered automatically — they must
 	 * go out as domain_suffix (suffix-with-dot-boundary match): a keyword like "t.co"
 	 * would also match "reddit.com" and silently reroute unrelated sites via proxy.
-	 * Manual "always proxy" pins (Automation table) share the learned semantics. */
-	let domains = [], learned_domains = [], ips = [];
-
-	if (access(res + '/proxy_list.txt')) {
-		let raw = readfile(res + '/proxy_list.txt');
-		if (raw)
-			domains = filter(split(trim(raw), /[\r\n]/), (d) => {
-				d = trim(d);
-				return length(d) && !match(d, /^\s*#/);
-			});
+	 * Manual "always proxy" pins (Automation table) share the learned semantics.
+	 * IP-shaped lines of the static list are EXTRACTED to the IP set: an IP can
+	 * never match as a domain substring keyword — a dead entry today, a routed
+	 * ip_cidr entry after classification. */
+	let domains = [], learned_domains = [], ips = {};
+	for (let d in read_list_entries(res, 'proxy_list.txt')) {
+		let c = classify_entry(d);
+		if (c && c.kind !== 'domain') {
+			ips[c.value] = true;
+			continue;
+		}
+		push(domains, d);
 	}
 	/* manual_proxy.txt holds user-pinned hosts (always via proxy, protected from
-	 * self-healing). Domain/IP split mirrors the learned lists. */
-	let manual_domains = [];
-	if (access(res + '/manual_proxy.txt')) {
-		let raw = readfile(res + '/manual_proxy.txt');
-		if (raw)
-			manual_domains = filter(split(trim(raw), /[\r\n]/), (d) => {
-				d = trim(d);
-				return length(d) && !match(d, /^\s*#/);
-			});
+	 * self-healing). B6.2: a manual IPv4 (bare or CIDR) is an IP entry — it goes
+	 * to the ip_cidr set normalized (/32 for bare), NEVER to domain_suffix
+	 * (a suffix on an IP literal can never match a sniffed hostname — dead). */
+	for (let d in read_list_entries(res, 'manual_proxy.txt')) {
+		let c = classify_entry(d);
+		if (!c) {
+			drops++;
+			continue;
+		}
+		if (c.kind === 'domain')
+			push(learned_domains, c.value);
+		else
+			ips[c.value] = true;
 	}
-	if (access(res + '/auto_proxy_list.txt')) {
-		let raw = readfile(res + '/auto_proxy_list.txt');
-		if (raw)
-			for (let i, d in filter(split(trim(raw), /[\r\n]/), (x) => {
-				x = trim(x);
-				return length(x) && !match(x, /^\s*#/);
-			}))
-				push(learned_domains, d);
+	/* Learned hosts keep the permissive domain path (the automation pipeline
+	 * already filters candidates upstream; an odd-but-present entry must not
+	 * silently lose its route). Only MISPLACEMENTS are fixed here: an IP-shaped
+	 * learned entry rides the IP set instead of a dead domain_suffix. */
+	for (let d in read_list_entries(res, 'auto_proxy_list.txt')) {
+		let c = classify_entry(d);
+		if (c && c.kind !== 'domain') {
+			ips[c.value] = true;
+			continue;
+		}
+		push(learned_domains, d);
 	}
-	if (access(res + '/auto_proxy_ip.txt')) {
-		let raw = readfile(res + '/auto_proxy_ip.txt');
-		if (raw)
-			ips = filter(split(trim(raw), /[\r\n]/), (x) => {
-				x = trim(x);
-				return length(x) && !match(x, /^\s*#/) &&
-				       (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/));
-			});
-	}
-	/* Manual proxy IPs ride the same auto_ip ruleset as learned IPs. */
-	if (access(res + '/manual_proxy.txt')) {
-		let raw = readfile(res + '/manual_proxy.txt');
-		if (raw)
-			for (let i, x in filter(split(trim(raw), /[\r\n]/), (y) => {
-				y = trim(y);
-				return length(y) && !match(y, /^\s*#/);
-			}))
-				if (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/))
-					push(ips, x);
+	/* B6.1: the learned IP list is written with BARE IPv4 (the automation learn
+	 * pipeline keys state by the probe host). The old regex required '/plen' and
+	 * silently DROPPED every bare IPv4 — IP learning never routed (games, apps
+	 * with hardcoded IPs). classify_entry normalizes bare IPv4 → /32, bare IPv6
+	 * → /128, and rejects broken prefixes (/33 never passes silently). */
+	for (let d in read_list_entries(res, 'auto_proxy_ip.txt')) {
+		let c = classify_entry(d);
+		if (!c || c.kind === 'domain') {
+			drops++;
+			continue;
+		}
+		ips[c.value] = true;
 	}
 
 	/* Both rules live in ONE watched rule-set file so a single hot-reload applies
 	 * static and learned entries together. Manual proxy pins ride with learned
 	 * (domain-shaped lines as suffixes; IP-shaped lines already went to `ips`). */
-	for (let i, d in manual_domains) {
-		if (match(d, /^[0-9.]+\/[0-9]+$/) || match(d, /^[0-9a-fA-F:]+(\/[0-9]+)?$/))
-			continue; /* IP-shaped lines are handled below, never as domain_suffix */
-		push(learned_domains, d);
-	}
 	/* ч.63: a learned/pinned 'www.X' host implicitly owns the X site. OAuth and
 	 * SSO redirect layers bounce through the APEX and sibling subdomains that
 	 * never appear in a DNS/SNI capture (tinkercad.com realm redirects,
@@ -198,6 +435,10 @@ export function sync_learned_rulesets() {
 	for (let a in keys(apexes))
 		if (index(learned_domains, a) < 0)
 			push(learned_domains, a);
+	let ip_arr = [];
+	for (let v in keys(ips))
+		push(ip_arr, v);
+	sort(ip_arr, (a, b) => (a < b) ? -1 : (a > b) ? 1 : 0);
 	let rules = [];
 	if (length(domains))
 		push(rules, { domain_keyword: domains });
@@ -209,43 +450,49 @@ export function sync_learned_rulesets() {
 	});
 	write_ruleset_file(res + '/auto_ip.json', {
 		version: 1,
-		rules: length(ips) ? [ { ip_cidr: ips } ] : []
+		rules: length(ip_arr) ? [ { ip_cidr: ip_arr } ] : []
 	});
 
-	return { domains: length(domains) + length(learned_domains), ips: length(ips) };
+	return { domains: length(domains) + length(learned_domains), ips: length(ip_arr), dropped: drops };
 };
 
 /* Manual "always direct" pins (Automation table): watched local rule-set consumed by
  * the 'auto-direct' route rule, which sits ABOVE the proxy/learned rules so a pinned
  * host always rides direct-out. Regenerated by the RPC that edits manual_direct.txt;
  * here it only guarantees the file exists (an empty rule-set is a no-op). */
-export function sync_manual_direct_ruleset() {
-	let res = HP_DIR + '/resources';
-	system('mkdir -p ' + res);
-	let doms = [], ips = [];
-	if (access(res + '/manual_direct.txt')) {
-		let raw = readfile(res + '/manual_direct.txt');
-		if (raw)
-			for (let i, x in filter(split(trim(raw), /[\r\n]/), (y) => {
-				y = trim(y);
-				return length(y) && !match(y, /^\s*#/);
-			})) {
-				if (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/))
-					push(ips, x);
-				else
-					push(doms, lc(x));
-			}
+export function sync_manual_direct_ruleset(res_dir) {
+	let res = res_dir || (HP_DIR + '/resources');
+	system('mkdir -p ' + shellQuote(res));
+	/* Ф4.1 B6.2: entries decided by classify_entry() — a manual IPv4 (bare or
+	 * CIDR) is an ip_cidr entry (normalized /32 when bare), NEVER domain_suffix
+	 * (the old classifier dropped bare v4 into the DOMAIN branch — dead entry);
+	 * junk is dropped and counted, never silent. */
+	let doms = [], ips = {}, drops = 0;
+	for (let x in read_list_entries(res, 'manual_direct.txt')) {
+		let c = classify_entry(x);
+		if (!c) {
+			drops++;
+			continue;
+		}
+		if (c.kind === 'domain')
+			push(doms, c.value);
+		else
+			ips[c.value] = true;
 	}
+	let ip_arr = [];
+	for (let v in keys(ips))
+		push(ip_arr, v);
+	sort(ip_arr, (a, b) => (a < b) ? -1 : (a > b) ? 1 : 0);
 	let rules = [];
 	if (length(doms))
 		push(rules, { domain_suffix: doms });
-	if (length(ips))
-		push(rules, { ip_cidr: ips });
+	if (length(ip_arr))
+		push(rules, { ip_cidr: ip_arr });
 	write_ruleset_file(res + '/auto_direct.json', {
 		version: 1,
 		rules: rules
 	});
-	return { domains: length(doms), ips: length(ips) };
+	return { domains: length(doms), ips: length(ip_arr), dropped: drops };
 };
 
 /* OAuth stability (ч.59): watched local rule-set consumed by the 'oauth-domain'
@@ -255,23 +502,25 @@ export function sync_manual_direct_ruleset() {
  * encrypted pool, and never escape into QUIC. Regenerated by generate_client
  * on every config build; the watched file keeps it hot-reloadable like the
  * other local rule-sets. */
-export function sync_oauth_ruleset() {
-	let res = HP_DIR + '/resources';
-	system('mkdir -p ' + res);
-	let doms = [];
-	if (access(res + '/oauth_stable.txt')) {
-		let raw = readfile(res + '/oauth_stable.txt');
-		if (raw)
-			doms = filter(split(trim(raw), /[\r\n]/), (x) => {
-				x = lc(trim(replace(x, /#.*$/, '')));
-				return length(x) && match(x, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/);
-			});
+export function sync_oauth_ruleset(res_dir) {
+	let res = res_dir || (HP_DIR + '/resources');
+	system('mkdir -p ' + shellQuote(res));
+	/* Ф4.1: entries through classify_entry() — domains only (an IP or junk
+	 * entry is dropped and counted, never silently kept as a dead suffix). */
+	let doms = [], drops = 0;
+	for (let x in read_list_entries(res, 'oauth_stable.txt')) {
+		x = replace(x, /#.*$/, '');
+		let c = classify_entry(x);
+		if (c && c.kind === 'domain')
+			push(doms, c.value);
+		else
+			drops++;
 	}
 	write_ruleset_file(res + '/oauth_domain.json', {
 		version: 1,
 		rules: length(doms) ? [ { domain_suffix: doms } ] : []
 	});
-	return { domains: length(doms) };
+	return { domains: length(doms), dropped: drops };
 };
 
 /* Auth-family list (ч.61): REGISTERED PARENT domains of learned auth-like
@@ -283,23 +532,24 @@ export function sync_oauth_ruleset() {
  * loop). The watched 'auto-auth-domain' rule-set routes the WHOLE family
  * through the dedicated pinned OAuth exit so every identity leg is
  * consistent. */
-export function sync_auto_auth_ruleset() {
-	let res = HP_DIR + '/resources';
-	system('mkdir -p ' + res);
-	let doms = [];
-	if (access(res + '/auto_auth.txt')) {
-		let raw = readfile(res + '/auto_auth.txt');
-		if (raw)
-			doms = filter(split(trim(raw), /[\r\n]/), (x) => {
-				x = lc(trim(x));
-				return length(x) && match(x, /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/);
-			});
+export function sync_auto_auth_ruleset(res_dir) {
+	let res = res_dir || (HP_DIR + '/resources');
+	system('mkdir -p ' + shellQuote(res));
+	/* Ф4.1: entries through classify_entry() — the parent-domain list is
+	 * domains only; an IP/junk entry is dropped and counted. */
+	let doms = [], drops = 0;
+	for (let x in read_list_entries(res, 'auto_auth.txt')) {
+		let c = classify_entry(x);
+		if (c && c.kind === 'domain')
+			push(doms, c.value);
+		else
+			drops++;
 	}
 	write_ruleset_file(res + '/auto_auth.json', {
 		version: 1,
 		rules: length(doms) ? [ { domain_suffix: doms } ] : []
 	});
-	return { domains: length(doms) };
+	return { domains: length(doms), dropped: drops };
 };
 
 /* RU-geo rule-sets for the "RU never via proxy" guard:
@@ -308,9 +558,10 @@ export function sync_auto_auth_ruleset() {
  * The .txt sources are downloaded by ru_geo_update.sh (RPC / daemon auto-update).
  * JSON files are (re)written ONLY when missing or stale (source newer) — they are
  * hundreds of KB and live on flash; regenerating on every call would wear it. */
-export function sync_ru_geo_rulesets() {
-	let res = HP_DIR + '/resources';
-	system('mkdir -p ' + res);
+export function sync_ru_geo_rulesets(res_dir) {
+	let res = res_dir || (HP_DIR + '/resources');
+	system('mkdir -p ' + shellQuote(res));
+	let gdrops = 0;
 	let stale = (src, dst) => {
 		if (!access(dst)) return true;
 		let a = stat(src), b = stat(dst);
@@ -318,19 +569,23 @@ export function sync_ru_geo_rulesets() {
 		return false;
 	};
 
-	/* geoip: plain CIDR lines (v4/v6 mixed). An empty rule-set is emitted when the
-	 * source has not been downloaded yet — the config always references these files
+	/* geoip: plain CIDR lines (v4/v6 mixed), classified by classify_entry()
+	 * (Ф4.1) — prefix length validated (a /33 from a broken upstream mirror
+	 * never reaches the core as a dead/malformed entry), bare IPs normalized
+	 * to /32|/128. An empty rule-set is emitted when the source has not been
+	 * downloaded yet — the config always references these files
 	 * (hot reload needs a stable path), so they must always exist. */
 	if (!access(res + '/ru_geoip.json') ||
 	    (access(res + '/ru_geoip.txt') && stale(res + '/ru_geoip.txt', res + '/ru_geoip.json'))) {
 		let cids = [];
-		let raw = access(res + '/ru_geoip.txt') ? readfile(res + '/ru_geoip.txt') : '';
-		if (raw)
-			cids = filter(split(trim(raw), /[\r\n]/), (x) => {
-				x = trim(x);
-				return length(x) && !match(x, /^\s*#/) &&
-				       (match(x, /^[0-9.]+\/[0-9]+$/) || match(x, /^[0-9a-fA-F:]+(\/[0-9]+)?$/));
-			});
+		for (let x in read_list_entries(res, 'ru_geoip.txt')) {
+			let c = classify_entry(x);
+			if (!c || c.kind === 'domain') {
+				gdrops++;
+				continue;
+			}
+			push(cids, c.value);
+		}
 		write_ruleset_file(res + '/ru_geoip.json', {
 			version: 1,
 			rules: length(cids) ? [ { ip_cidr: cids } ] : []
@@ -340,6 +595,10 @@ export function sync_ru_geo_rulesets() {
 	/* geosite: prefixed lines (v2ray geosite source format):
 	 *   domain:x → domain_suffix, full:x → domain, keyword:x → domain_keyword.
 	 * regexp/attribute lines are skipped (not representable without PCRE).
+	 * NOT classified strictly (Ф4.1): the upstream format carries TLD-level
+	 * suffixes like 'domain:.ru' that a strict hostname check would DROP —
+	 * that would silently punch a hole in the RU-protection. The format is
+	 * structured upstream data, not user-authored entries.
 	 * Empty rule-set emitted when the source is not downloaded yet (see geoip). */
 	if (!access(res + '/ru_geosite.json') ||
 	    (access(res + '/ru_geosite.txt') && stale(res + '/ru_geosite.txt', res + '/ru_geosite.json'))) {
@@ -371,7 +630,7 @@ export function sync_ru_geo_rulesets() {
 			rules: rules
 		});
 	}
-	return { geoip: access(res + '/ru_geoip.json'), geosite: access(res + '/ru_geosite.json') };
+	return { geoip: access(res + '/ru_geoip.json'), geosite: access(res + '/ru_geosite.json'), dropped: gdrops };
 };
 
 /* Utilities end */
@@ -531,3 +790,149 @@ export function parseURL(url) {
 	return objurl;
 };
 /* String parser end */
+
+/* ── Ф4.1 selftest (B6.10) — обязательные микротесты классификации ──────────
+ * Чистая логика (classify_entry / ipv6_hextets) + файл-уровень в ИЗОЛИРОВАННОМ
+ * каталоге /tmp/hp-selftest-<ts> (параметр res_dir у sync-семьи — живые
+ * /etc/homeproxy/resources самотест НЕ трогает). Сценарии B6.10: IPv4/32,
+ * ручные IP → ip_cidr (не domain_suffix), битый CIDR (не проходит молча),
+ * повреждённый список не ломает ruleset (JSON остаётся валидным), статический
+ * keyword-список сохраняет семантику с извлечением IP-строк.
+ * Прогон: ucode -e 'import {selftest} from "…/homeproxy.uc"; printf("%.J\n", selftest());' */
+export function selftest() {
+	let pass = 0, fail = 0, details = [];
+	let ok = (name, cond) => {
+		if (cond) { pass++; return; }
+		fail++;
+		push(details, name);
+	};
+	let cls = (s) => { let c = classify_entry(s); return c ? (c.kind + '|' + c.value) : 'null'; };
+
+	const CASES = [
+		['93.184.216.34', 'ipv4|93.184.216.34/32'],
+		['93.184.216.34/32', 'cidr4|93.184.216.34/32'],
+		['93.184.216.0/24', 'cidr4|93.184.216.0/24'],
+		[' 93.184.216.34 ', 'ipv4|93.184.216.34/32'],
+		['1.2.3.4/33', 'null'],
+		['1.2.3.4/99', 'null'],
+		['1.2.3.4/0', 'null'],
+		['1.2.3.4/abc', 'null'],
+		['999.1.1.1', 'null'],
+		['1.2.3', 'null'],
+		['1.2.3.4.5', 'null'],
+		['01.2.3.4', 'null'],
+		['256.1.1.1', 'null'],
+		['2001:db8::1', 'ipv6|2001:db8::1/128'],
+		['2001:db8::/32', 'cidr6|2001:db8::/32'],
+		['::1', 'ipv6|::1/128'],
+		['::', 'ipv6|::/128'],
+		['::ffff:1.2.3.4', 'ipv6|::ffff:1.2.3.4/128'],
+		['a::b::c', 'null'],
+		[':::', 'null'],
+		['1.2.3.4::b', 'null'],
+		['12345::', 'null'],
+		['1:2:3:4:5:6:7:8', 'ipv6|1:2:3:4:5:6:7:8/128'],
+		['1:2:3:4:5:6:1.2.3.4', 'ipv6|1:2:3:4:5:6:1.2.3.4/128'],
+		['1:2:3:4:5:6:7:1.2.3.4', 'null'],
+		['2001:db8::1/129', 'null'],
+		['example.com', 'domain|example.com'],
+		['.Example.COM.', 'domain|example.com'],
+		['EXAMPLE.com', 'domain|example.com'],
+		['xn--b1agh1fop.com', 'domain|xn--b1agh1fop.com'],
+		['localhost', 'null'],
+		['a..b', 'null'],
+		['example.com/path', 'null'],
+		['example.com:443', 'null'],
+		['-bad-', 'null'],
+		['user@Example.com', 'null'],
+		['example.com/24', 'null'],
+		['', 'null'],
+		['   ', 'null']
+	];
+	for (let i, t in CASES)
+		ok('classify [' + t[0] + '] → ' + t[1], cls(t[0]) === t[1]);
+
+	let hx = (s) => { let a = ipv6_hextets(s); return a ? join(',', a) : 'null'; };
+	ok('hextets ::ffff:1.2.3.4', hx('::ffff:1.2.3.4') === '0,0,0,0,0,65535,258,772');
+	ok('hextets 2001:db8::1', hx('2001:db8::1') === '8193,3512,0,0,0,0,0,1');
+	ok('hextets :: ', hx('::') === '0,0,0,0,0,0,0,0');
+	ok('hextets full form', hx('2001:0db8:0000:0000:0000:0000:0000:0001') === hx('2001:db8::1'));
+
+	/* файл-уровень в изоляции */
+	let dir = '/tmp/hp-selftest-' + sprintf('%d', time());
+	system('rm -rf ' + shellQuote(dir));
+	system('mkdir -p ' + shellQuote(dir));
+	try {
+		let rj = (name) => { let raw = readfile(dir + '/' + name); let j = null; try { j = json(raw); } catch (e) { j = null; } return j; };
+
+		/* B6.1: голый IPv4 выученного списка → /32 маршрутизируется; битый
+		 * префикс и мусор отброшены И посчитаны (не молча) */
+		writefile(dir + '/auto_proxy_ip.txt', '93.184.216.34\n2001:db8::1\n1.2.3.4/33\nnot-an-ip\n# comment\n\n');
+		let r1 = sync_learned_rulesets(dir);
+		let j1 = rj('auto_ip.json');
+		ok('B6.1 counts', r1.ips === 2 && r1.dropped === 2);
+		ok('B6.1 json cidr /32+/128', j1 && j1.rules[0] &&
+			index(j1.rules[0].ip_cidr, '93.184.216.34/32') >= 0 &&
+			index(j1.rules[0].ip_cidr, '2001:db8::1/128') >= 0);
+
+		/* B6.2: ручной IP → ip_cidr (НИКОГДА domain_suffix), домен → suffix,
+		 * мусор отброшен с счётчиком */
+		writefile(dir + '/proxy_list.txt', '');
+		writefile(dir + '/auto_proxy_list.txt', '');
+		writefile(dir + '/auto_proxy_ip.txt', '');
+		writefile(dir + '/manual_proxy.txt', 'example.com\n1.2.3.4\nbad..entry\n');
+		let r2 = sync_learned_rulesets(dir);
+		let j2 = rj('proxy_domain.json');
+		let j3 = rj('auto_ip.json');
+		ok('B6.2 manual split', r2.domains === 1 && r2.ips === 1 && r2.dropped === 1);
+		ok('B6.2 suffix only domain', j2 && j2.rules[0] && j2.rules[0].domain_suffix &&
+			length(j2.rules[0].domain_suffix) === 1 && j2.rules[0].domain_suffix[0] === 'example.com');
+		ok('B6.2 ip in cidr', j3 && j3.rules[0] && index(j3.rules[0].ip_cidr, '1.2.3.4/32') >= 0);
+
+		/* «Напрямую»-пины: тот же расклад для manual_direct */
+		writefile(dir + '/manual_direct.txt', '4.3.2.1\nexample.org\ngarbage@@\n');
+		let r4 = sync_manual_direct_ruleset(dir);
+		let j4 = rj('auto_direct.json');
+		ok('direct split', r4.domains === 1 && r4.ips === 1 && r4.dropped === 1);
+		ok('direct cidr+suffix', j4 && length(j4.rules) === 2 &&
+			j4.rules[0].domain_suffix[0] === 'example.org' &&
+			index(j4.rules[1].ip_cidr, '4.3.2.1/32') >= 0);
+
+		/* статический keyword-список: семантика сохранена, IP-строки извлечены */
+		writefile(dir + '/proxy_list.txt', 'youtube\n93.184.216.34\nt.co\n');
+		writefile(dir + '/manual_proxy.txt', '');
+		writefile(dir + '/auto_proxy_list.txt', '');
+		writefile(dir + '/auto_proxy_ip.txt', '');
+		let r5 = sync_learned_rulesets(dir);
+		let j5 = rj('proxy_domain.json');
+		let j6 = rj('auto_ip.json');
+		ok('static keywords kept', j5 && j5.rules[0] && j5.rules[0].domain_keyword &&
+			length(j5.rules[0].domain_keyword) === 2 &&
+			j5.rules[0].domain_keyword[0] === 'youtube' && j5.rules[0].domain_keyword[1] === 't.co');
+		ok('static ip extracted', j6 && j6.rules[0] && index(j6.rules[0].ip_cidr, '93.184.216.34/32') >= 0);
+
+		/* повреждённый список: sync выживает, JSON остаётся ВАЛИДНЫМ (ядро не
+		 * получает битый rule-set), валидные соседи-строки выживают */
+		writefile(dir + '/manual_direct.txt', sprintf('%c%cbroken', 1, 2) + '@@\n4.3.2.1\n');
+		let r7 = sync_manual_direct_ruleset(dir);
+		let j7 = rj('auto_direct.json');
+		ok('damaged list survives', r7.dropped === 1 && j7 && j7.rules[0] &&
+			index(j7.rules[0].ip_cidr, '4.3.2.1/32') >= 0);
+
+		/* oauth: только домены; IP/мусор отброшены */
+		writefile(dir + '/oauth_stable.txt', 'clerk.com\n1.2.3.4\n# c\n');
+		let r8 = sync_oauth_ruleset(dir);
+		ok('oauth domains only', r8.domains === 1 && r8.dropped === 1);
+
+		/* ru_geoip: валидация CIDR апстрима */
+		writefile(dir + '/ru_geoip.txt', '5.61.0.0/16\n2001:db8::/32\n1.2.3.4/33\n');
+		let r9 = sync_ru_geo_rulesets(dir);
+		let j9 = rj('ru_geoip.json');
+		ok('geoip validated', r9.dropped === 1 && j9 && j9.rules[0] && length(j9.rules[0].ip_cidr) === 2);
+	} catch (e) {
+		ok('file-level no exception: ' + sprintf('%s', e), false);
+	}
+	system('rm -rf ' + shellQuote(dir));
+
+	return { ok: fail === 0, pass: pass, fail: fail, details: details };
+};

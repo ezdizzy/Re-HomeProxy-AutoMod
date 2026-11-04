@@ -46,7 +46,7 @@ import { access, readfile, writefile, open, stat } from 'fs';
 import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
 import { cursor } from 'uci';
-import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty } from 'homeproxy';
+import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty, classify_entry } from 'homeproxy';
 import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
 	reg_set as pm_reg_set, reg_get as pm_reg_get, reg_del as pm_reg_del, reg_alive as pm_reg_alive,
@@ -2869,8 +2869,8 @@ echo done > "$PRE.done"
 			 * answers until their old TTL expires - this is the dominant part
 			 * of the "site works only minutes later" delay. */
 			dns_flush_main();
- 			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips.');
- 			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && r.ips) || 0) + ' ip (hot)');
+ 			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips' + ((r && r.dropped) ? (', ' + r.dropped + ' invalid dropped') : '') + '.');
+ 			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && r.ips) || 0) + ' ip (hot)' + ((r && r.dropped) ? (', ' + r.dropped + ' dropped') : ''));
  			/* Ф2.4: one aggregated bus record per apply — a learn burst must
  			 * not flood the LuCI journal / the TG chat with per-host rows. */
  			ev_learn_flush('горячее применение');
@@ -3371,7 +3371,11 @@ echo done > "$PRE.done"
 		if (!looks_like_host(h)) return;
 		h = collapse_uuid_host(h);
 		if (!looks_like_host(h)) return;
-		if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) {
+		/* Ф4.1: the shared classifier decides "IP literal or domain" — one
+		 * answer for every generator (octet validation included: '1.2.3.999'
+		 * is no longer a fake IP candidate). */
+		let ce = classify_entry(h);
+		if (ce && ce.kind !== 'domain') {
 			/* Bare-IP literal from the DNS/SNI log belongs to the IP pipeline
 			 * (seen-threshold + private/local/infra filters), NOT to domains:
 			 * routing it into domain_candidates let it bypass every IP guard
@@ -3553,8 +3557,11 @@ echo done > "$PRE.done"
 				let d_res = dwave['d' + i] || { code: '000', ok: false, block: false, fp: '', rtt_ms: 0 };
 				let p_res = pwave['p' + i] || null;
 				/* A client may resolve a BARE IP literal (dnsmasq logs it like a name);
-				 * classify by content so the UI Type column stays truthful. */
-				classify(sel[i], d_res, p_res, !!match(sel[i], /^(\d{1,3}\.){3}\d{1,3}$/), false, d_res.rtt_ms || 0, (p_res && p_res.rtt_ms) || 0);
+				 * classify by content so the UI Type column stays truthful. Ф4.1:
+				 * the shared classifier (octet/prefix validation — '1.2.3.999' is
+				 * not an IP anywhere in the project anymore). */
+				let ce_d = classify_entry(sel[i]);
+				classify(sel[i], d_res, p_res, !!(ce_d && ce_d.kind !== 'domain'), false, d_res.rtt_ms || 0, (p_res && p_res.rtt_ms) || 0);
 			}
 
 			/* ── Persistent-pain override ────────────────────────────────────
@@ -3623,6 +3630,11 @@ echo done > "$PRE.done"
 			let ipsel = [];
 			for (let ip in ip_candidates) {
 				if (length(ipsel) >= ip_cap) break;
+				/* Ф4.1: a candidate that does not classify as an IP (legacy junk
+				 * in the learned file — e.g. a broken prefix) can never route
+				 * (the sync classifier drops it) — don't spend probes on it. */
+				let ce_ip = classify_entry(ip);
+				if (!ce_ip || ce_ip.kind === 'domain') continue;
 				if (is_private_ip(ip) || is_shared_cdn_ip(ip) || is_resolver_ip(ip) || is_local_ip(ip) || is_excluded(ip, reeval_set[ip] === true)) continue;
 				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
 				 * probe on it (learned/fast-tracked IPs pass via their count). */
