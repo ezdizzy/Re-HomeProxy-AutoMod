@@ -64,6 +64,21 @@
  *     resolves the bot id; the offset file is per bot (audit 1.3/TG-04).
  *   - /nodes is paginated (8 per page, stable global numbering for
  *     /switch N — audit 42); /users lists the RBAC state (Admin+).
+ *
+ * Ф8.2 Subsystem split (ч.185):
+ *   - ALL mutations from the chat ride the Control API (luci.homeproxy RPC,
+ *     audit 1.5/TG-06) — mute/pin/pairing/service via ubus, «Контроль»
+ *     device/rule/wifi/pause actions via the control_* RPC door; the Clash
+ *     API PUT/DELETE (switch, /close) stays the core's own control plane
+ *     (the same door hotswap uses).
+ *   - Danger-level confirmations (D25): heavy actions (service stop/restart,
+ *     persistent device block/allow, Wi-Fi off, rules add/del, mode change,
+ *     updates, repairs) ask for a SECOND TAP — a pending map with a 5 min
+ *     TTL, the role is re-checked at the tap itself.
+ *   - D25 full control: /mode (routing mode), /safe (Safe Mode — direct
+ *     egress with DNS/firewall kept, unlike the «Direct» mode), /doctor
+ *     (Recovery/Sentinel status), /repair (manual repair requests),
+ *     /update (app self-update + core install + engine packages).
  */
 
 'use strict';
@@ -107,6 +122,12 @@ const BODY_F = RUN_DIR + '/.tg.body';
 const ROLES = [ 'owner', 'admin', 'operator', 'viewer' ];
 const ROLE_RANK = { owner: 4, admin: 3, operator: 2, viewer: 1 };
 const NODES_PAGE = 8;
+/* RU-имена режимов маршрутизации (D25 /mode; значения — из client.js). */
+const MODE_RU = {
+	proxy_banned_ru: 'Обход блокировок',
+	global: 'Всё через узел',
+	direct: 'Напрямую (всё выключено)'
+};
 
 /* Module-level state (module scope is safe for closures; ucode lesson 44/45
  * only bites function-locals declared AFTER the closure). */
@@ -125,7 +146,6 @@ let cfg = {
 	poll: '25', push_interval: '2',
 	push_hotswap: '1', push_watchdog: '1', push_learn: '1', push_service: '1',
 	push_control: '1',
-	pair_code: '', pair_until: 0, pair_role: 'owner',
 	users: { owner: [], admin: [], operator: [], viewer: [] }
 };
 let seen = {
@@ -204,6 +224,32 @@ function uci_list(opt) {
 	return vals;
 }
 
+/* Control API bridge (Ф8.2, аудит 1.5/TG-06): ВСЕ мутации из чата идут
+ * через ту же RPC-дверь luci.homeproxy, что и UI. Возвращает разбор ответа
+ * или null (честный отказ — вызывающий сообщает об ошибке). Аргументы —
+ * только строки (rpcd string-policy, урок 132). */
+function ubus_call(method, args, timeout_s) {
+	const t = (timeout_s != null && timeout_s > 0 && timeout_s <= 60) ? int(timeout_s) : 10;
+	const cmd = `ubus -t ${t} call luci.homeproxy ${method} ${shellquote(sprintf('%J', args))}`;
+	const raw = capture(cmd);
+	let j = null;
+	try { j = json(raw || ''); } catch (e) { j = null; }
+	if (j == null)
+		log('ubus ' + method + ': no/invalid reply (rpcd недоступен?)');
+	return j;
+}
+
+/* One telegram.* UCI value read (safe state etc. — read-only probes). */
+function uci_tg_snap(key) {
+	const fd = popen(`uci -q get homeproxy.telegram.${key} 2>/dev/null`);
+	let v = null;
+	if (fd) {
+		v = trim(fd.read('all') || '');
+		fd.close();
+	}
+	return (length(v || '')) ? v : null;
+}
+
 /* Hot-reload the whole config from UCI (called every loop iteration — the
  * daemon never needs a service restart after settings changes). */
 function read_cfg() {
@@ -218,9 +264,6 @@ function read_cfg() {
 	cfg.push_learn    = uci_get('push_learn', '1');
 	cfg.push_service  = uci_get('push_service', '1');
 	cfg.push_control  = uci_get('push_control', '1');
-	cfg.pair_code  = trim(uci_get('pair_code', ''));
-	cfg.pair_until = int(uci_get('pair_until', '0') || '0');
-	cfg.pair_role  = uci_get('pair_role', 'owner');
 	cfg.users = {
 		owner:    uci_list('owner_user'),
 		admin:    uci_list('admin_user'),
@@ -275,9 +318,16 @@ function ensure_owner_seed() {
 			log('RBAC: bound chat is a group — owner cannot be seeded, legacy access applies there');
 		return;
 	}
-	system(`uci -q add_list homeproxy.telegram.owner_user='${cid}'; uci -q commit homeproxy`);
-	push(cfg.users.owner, cid);
-	log('RBAC: owner seeded from the bound private chat (' + cid + ')');
+	/* Ф8.2: the seed (chat_id + owner_user) rides the Control API; the RPC
+	 * guards itself (seeds ONLY when no users exist). On failure the legacy
+	 * in-chat access keeps the bot usable (users_count() is still 0). */
+	const r = ubus_call('telegram_bind_set', { chat_id: cid, owner_uid: cid }, 10);
+	if (r && r.result === true && r.owner_seeded === true) {
+		push(cfg.users.owner, cid);
+		log('RBAC: owner seeded from the bound private chat (' + cid + ')');
+	} else
+		log('RBAC: owner seed via Control API did not apply (' +
+			((r && r.error) ? r.error : 'rpcd недоступен') + ') — legacy access stays');
 }
 
 /* Entities are split so no tooling decodes them back (lesson 51 family). */
@@ -443,25 +493,26 @@ function tg_answer_cb(cb_id, text) {
 
 /* One-time 60 s pairing code (generated in LuCI): /start <code> or a bare
  * code message from an unknown user in a PRIVATE chat binds them under the
- * chosen role and burns the code. Returns true when the message was
- * consumed as a pairing attempt. */
+ * chosen role and burns the code. Ф8.2: the whole transaction (validate,
+ * add the user, burn the code — one atomic commit) runs in the Control API
+ * (telegram_pair_consume); the daemon only reports the outcome. Returns
+ * true when the message was consumed as a pairing attempt. */
 function pair_try(chat_id, uid, text) {
 	const m = match(text, /^\/start\s+([0-9]{4,8})$/) || match(text, /^([0-9]{4,8})$/);
 	if (!m)
 		return false;
-	const code = trim('' + (cfg.pair_code || ''));
-	if (!length(code) || trim(m[1]) !== code || time() > cfg.pair_until) {
-		log('pairing: wrong/expired code from user ' + uid);
+	const r = ubus_call('telegram_pair_consume', { code: trim(m[1]), uid: '' + uid }, 10);
+	if (r == null) {
+		tg_send_html(chat_id, '⚠ Проверить код не удалось (Control API недоступен). Попробуйте ещё раз.', null);
+		return true;
+	}
+	if (r.result !== true) {
+		log('pairing: wrong/expired code from user ' + uid + ' (' + ((r && r.error) || '?') + ')');
 		tg_send_html(chat_id, '⛔ Код не принят (неверный или истёкший). Сгенерируйте новый на странице «Telegram-бот» в LuCI.', null);
 		return true;
 	}
-	const role = (ROLE_RANK[cfg.pair_role] != null) ? cfg.pair_role : 'owner';
-	system(`uci -q add_list homeproxy.telegram.${role}_user='${uid}'; uci -q commit homeproxy`);
-	push(cfg.users[role], '' + uid);
-	/* burn the code (one-time) */
-	system(`uci -q delete homeproxy.telegram.pair_code; uci -q delete homeproxy.telegram.pair_until; uci -q delete homeproxy.telegram.pair_role; uci -q commit homeproxy`);
-	cfg.pair_code = '';
-	cfg.pair_until = 0;
+	const role = (ROLE_RANK[r.role] != null) ? r.role : 'viewer';
+	read_cfg();   /* fresh RBAC mirror (the daemon re-reads UCI each loop anyway) */
 	log('pairing: user ' + uid + ' paired as ' + role);
 	tg_send_html(chat_id, `✅ Пользователь привязан (роль: <b>${role}</b>). /help — список команд.`, null);
 	return true;
@@ -622,12 +673,22 @@ function cmd_status() {
 				: `Контроль: вкл · заблокировано: ${blocked}`;
 		}
 	} catch (e) { ctl_line = 'Контроль: ?'; }
+	/* Ф8.2: режим маршрутизации + Safe Mode в статусе. */
+	const rmode = uci_cfg_snap('routing_mode') || 'proxy_banned_ru';
+	let mode_line = 'Режим: ' + esc_html(MODE_RU[rmode] || rmode);
+	const safe_st = uci_tg_snap('safe');
+	if (safe_st === '1') {
+		const sprev = uci_tg_snap('safe_prev');
+		mode_line += '\n🛡 <b>SAFE MODE</b>: выход = direct' +
+			(length('' + (sprev || '')) ? ' (возврат узла ' + esc_html(sprev) + ': /safeoff)' : ' (возврат: /safeoff)');
+	}
 	return `<b>Re:HomeProxy</b>
 Ядро: ${core}
 ${main_line}
 Zapret: ${zapret} · ByeDPI: ${byedpi} · MultiDNS: ${mosdns}
 Автоматизация: ${learned} записей
-${esc_html(ctl_line)}`;
+${esc_html(ctl_line)}
+${mode_line}`;
 }
 
 function cmd_ping() {
@@ -668,16 +729,21 @@ function cmd_close() {
 }
 
 /* Reply FIRST, then act: stop/restart kills this very daemon, so the
- * confirmation must be out before the command runs. */
+ * confirmation must be out before the command runs. Ф8.2: the action
+ * itself rides the Control API (control_service_set — allowlist start/
+ * stop/restart), not a bare shell from the bot. */
 function do_service(action, chat_id) {
 	let txt = '';
 	if (action === 'stop') txt = '🛑 Останавливаю службу — это последнее сообщение до запуска. Запустить обратно: /service start';
 	else if (action === 'restart') txt = '🔄 Перезапускаю службу (~10 с; /status подтвердит).';
 	else if (action === 'start') txt = '▶️ Запускаю службу…';
 	else return 'использование: /service start|stop|restart';
-	log('service ' + action + ' via Telegram');
+	log('service ' + action + ' via Telegram (Control API)');
 	tg_send_html(chat_id, txt, null);
-	system(`/etc/init.d/homeproxy ${action} >/dev/null 2>&1 &`);
+	const r = ubus_call('control_service_set', { action: action }, 15);
+	if (r == null || r.result !== true)
+		tg_send_html(chat_id, '⚠ Команда ушла, но Control API не подтвердил (' +
+			esc_html('' + ((r && r.error) || 'rpcd недоступен')) + ').', null);
 	return null;   /* already answered */
 }
 
@@ -856,6 +922,12 @@ const HELP = '<b>Команды</b>\n' +
 	'/blocksite домен [№] — блок сайта (/unblocksite)\n' +
 	'/pause · /resume — пауза контроля\n' +
 	'/wifi — Wi-Fi сети вкл/выкл\n' +
+	'/doctor — здоровье, сторож, recovery (🩺)\n' +
+	'/repair — ручные ремонты по находкам (админ+)\n' +
+	'/safe — Safe Mode: выход напрямую, DNS/firewall живы\n' +
+	'/safeoff — вернуть прежний узел\n' +
+	'/mode — режим маршрутизации (владелец)\n' +
+	'/update — обновления: приложение, ядро, пакеты (владелец)\n' +
 	'/ping — аптайм, load, память\n' +
 	'/connections — активные соединения\n' +
 	'/close — закрыть все соединения\n' +
@@ -866,7 +938,8 @@ const HELP = '<b>Команды</b>\n' +
 	'/mute · /unmute — пуш-уведомления вкл/выкл\n' +
 	'/users — пользователи и роли (админ+)\n' +
 	'/restart — перезапуск службы\n' +
-	'/help — этот список';
+	'/help — этот список\n\n' +
+	'⚠ Опасные действия исполняются после второй кнопки «Подтвердить».';
 
 /* RBAC state (Ф8.1): who is allowed and with which role (Admin+ view). */
 function cmd_users() {
@@ -885,14 +958,16 @@ function cmd_users() {
 /* Main inline menu (plan 15): every feature one tap away — no need to
  * remember command names. */
 function main_menu_text() {
-	return '<b>Re:HomeProxy — меню</b>\nЯдро, узлы, родительский контроль и Wi-Fi — в кнопках ниже.';
+	return '<b>Re:HomeProxy — меню</b>\nЯдро, узлы, контроль, доктор и Safe Mode — в кнопках ниже.';
 }
 
 function main_menu_kb() {
 	return kb_rows([
 		[ [ '📊 Статус', 'act:refresh' ], [ '📡 Узлы', 'act:nodes' ] ],
 		[ [ '🛡 Контроль', 'ctl:menu' ], [ '📶 Wi-Fi', 'ctl:wifi' ] ],
-		[ [ '⚙️ Движки', 'act:engine' ], [ '📸 Снапшот', 'act:snapshot' ] ],
+		[ [ '🩺 Доктор', 'act:doctor' ], [ '🛠 Ремонт', 'act:repair' ] ],
+		[ [ '🆘 Safe Mode', 'act:safe' ], [ '🎚 Режим', 'act:mode' ] ],
+		[ [ '⚙️ Движки', 'act:engine' ], [ '⬆ Обновления', 'act:update' ] ],
 		[ [ '❓ Помощь', 'act:help' ] ]
 	]);
 }
@@ -1079,6 +1154,252 @@ function push_service() {
 		send_push('service', '✅ <b>Ядро снова отвечает</b>.');
 }
 
+/* ── подтверждения второй кнопкой (Ф8.2/D25) ────────────────────────────
+ * Опасные действия исполняются ТОЛЬКО после явного тапа «Подтвердить».
+ * Pending живёт в памяти с TTL 5 минут и не переживает рестарт демона
+ * (честно: «срок подтверждения истёк»); роль перепроверяется в момент
+ * тапа — кнопку нельзя перепродать другому пользователю. ──────────────── */
+/* App self-update: prepare → download → install (the SAME chain the UI
+ * runs; the package scripts restart rpcd, the apply door restarts the
+ * service — the bot warns FIRST and may die mid-chain, by design). */
+function upd_app_chain(chat_id) {
+	const prep = ubus_call('app_prepare_install', {}, 30);
+	if (prep == null || prep.error != null) {
+		tg_send_html(chat_id, '⚠ Приложение: подготовка не удалась (' +
+			esc_html('' + ((prep && prep.error) || 'rpcd недоступен')) + ').', null);
+		return;
+	}
+	tg_send_html(chat_id, '⬇ Обновляю приложение до ' + esc_html('' + (prep.version || '?')) +
+		'… LuCI и бот перезапустятся; /status после перезапуска покажет версию.', null);
+	capture(`ucode /usr/share/homeproxy/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.app.dl_url)} ${shellquote('' + prep.app.tmp_path)} 2>&1`);
+	if (!access('' + prep.app.tmp_path)) {
+		tg_send_html(chat_id, '⚠ Приложение: скачивание не удалось — обновление НЕ выполнено.', null);
+		return;
+	}
+	let i18n = '';
+	if (prep.i18n) {
+		capture(`ucode /usr/share/homeproxy/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.i18n.dl_url)} ${shellquote('' + prep.i18n.tmp_path)} 2>&1`);
+		if (access('' + prep.i18n.tmp_path))
+			i18n = '' + prep.i18n.tmp_path;
+	}
+	const inst = ubus_call('app_install_pkg', {
+		app_path: '' + prep.app.tmp_path, i18n_path: i18n, pkg_manager: '' + (prep.pkg_manager || 'apk')
+	}, 150);
+	if (inst && inst.result === true)
+		tg_send_html(chat_id, '✅ Пакет установлен — служба перезапускается через apply-дверь. Бот вернётся сам.', null);
+	else
+		tg_send_html(chat_id, '⚠ Установка не удалась: ' +
+			esc_html('' + ((inst && inst.error) || 'rpcd недоступен')), null);
+}
+
+/* Core install: detached runner + progress in core_install_status (the bot
+ * does NOT wait minutes — /update shows the live stage on the next call). */
+function upd_core_start(chat_id, core) {
+	const r = ubus_call('core_install_start', { core: core, variant: '' }, 15);
+	if (r && r.result === true)
+		tg_send_html(chat_id, '⬇ Установка ядра ' + esc_html(core) + ' запущена в фоне (скачивание ~46–95 МБ). Стадия: /update.', null);
+	else
+		tg_send_html(chat_id, '⚠ Установка ядра не запущена: ' +
+			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+}
+
+/* Engine package (byedpi/zapret/mosdns): prepare → download → install. */
+function upd_pkg_chain(chat_id, name) {
+	const prep = ubus_call(name + '_prepare_install', {}, 30);
+	if (prep == null || prep.error != null) {
+		tg_send_html(chat_id, '⚠ ' + esc_html(name) + ': подготовка не удалась (' +
+			esc_html('' + ((prep && prep.error) || 'rpcd недоступен')) + ').', null);
+		return;
+	}
+	tg_send_html(chat_id, '⬇ Скачиваю ' + esc_html(name) + '… (бот занят ~1–2 мин, отчёт следующим сообщением)', null);
+	capture(`ucode /usr/share/homeproxy/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.dl_url)} ${shellquote('' + prep.tmp_path)} 2>&1`);
+	if (!access('' + prep.tmp_path)) {
+		tg_send_html(chat_id, '⚠ ' + esc_html(name) + ': скачивание не удалось — обновление НЕ выполнено.', null);
+		return;
+	}
+	const iargs = { tmp_path: '' + prep.tmp_path };
+	if (name !== 'mosdns')
+		iargs.pkg_manager = '' + (prep.pkg_manager || 'apk');
+	const inst = ubus_call(name + '_install_pkg', iargs, 150);
+	if (inst && inst.result === true)
+		tg_send_html(chat_id, '✅ ' + esc_html(name) + ': установлен.', null);
+	else
+		tg_send_html(chat_id, '⚠ ' + esc_html(name) + ': установка не удалась: ' +
+			esc_html('' + ((inst && inst.error) || 'rpcd недоступен')), null);
+}
+
+const CONFIRM_TTL = 300;
+const CONFIRM_MAX = 8;
+let confirms = {};      /* key -> { chat, role, kind, payload, ts } */
+let confirm_seq = 0;
+
+function confirm_gc() {
+	const now = time();
+	for (let k in confirms) {
+		const c = confirms[k];
+		if (c == null || c.ts + CONFIRM_TTL < now)
+			delete confirms[k];
+	}
+	let n = 0;
+	for (let k in confirms)
+		n++;
+	while (n >= CONFIRM_MAX) {
+		let oldest = null, oldest_k = '';
+		for (let k in confirms)
+			if (confirms[k] && (oldest == null || confirms[k].ts < oldest)) {
+				oldest = confirms[k].ts;
+				oldest_k = k;
+			}
+		if (!length(oldest_k))
+			break;
+		delete confirms[oldest_k];
+		n--;
+	}
+}
+
+/* Shows the confirmation card; role = the role the ASKER must keep at the
+ * tap time (the payload carries everything the executor needs). */
+function confirm_ask(chat_id, role, kind, payload, title, warn_text) {
+	confirm_gc();
+	confirm_seq = (confirm_seq + 1) % 1000000;
+	const key = '' + confirm_seq;
+	confirms[key] = { chat: chat_id, role: role, kind: kind, payload: payload, ts: time() };
+	tg_send_html(chat_id,
+		'⚠ <b>' + esc_html(title) + '</b>\n' + esc_html(warn_text) +
+		'\nПодтвердите действие второй кнопкой — она живёт 5 минут.',
+		kb_rows([ [ [ '✅ Подтвердить', 'cfm:' + key ], [ '✖ Отмена', 'cfx:' + key ] ] ]));
+}
+
+function confirm_drop(key, chat_id, cbid) {
+	const c = confirms[key];
+	delete confirms[key];
+	if (c) {
+		tg_answer_cb(cbid, 'Отменено');
+		if (c.chat === chat_id)
+			tg_send_html(chat_id, '✖ Отменено — ничего не изменено.', null);
+	} else
+		tg_answer_cb(cbid, 'Срок подтверждения истёк');
+}
+
+/* Title line for the rep:/unb: confirmation cards. */
+function rep_unb_title(prefix, key) {
+	return (prefix === 'rep:')
+		? ('Выполнить ремонт «' + key + '»?')
+		: ('Разблокировать кампанию «' + key + '»?');
+}
+
+function confirm_resolve(key, chat_id, role, cbid) {
+	const c = confirms[key];
+	if (c == null) {
+		tg_answer_cb(cbid, 'Срок подтверждения истёк');
+		return;
+	}
+	delete confirms[key];
+	if (c.chat !== chat_id) {
+		tg_answer_cb(cbid, 'Чужое подтверждение');
+		return;
+	}
+	if (!role_ok(role, c.role)) {
+		log('RBAC: confirm denied for role ' + role + ' (needs ' + c.role + ')');
+		tg_answer_cb(cbid, 'Недостаточно прав');
+		tg_send_html(chat_id, '⛔ Подтверждение отклонено: ваша роль «' + role + '», действие требует «' + c.role + '».', null);
+		return;
+	}
+	confirm_exec(c, chat_id, cbid);
+}
+
+/* Executes a confirmed action — each kind has exactly ONE place where the
+ * mutation happens. */
+function confirm_exec(c, chat_id, cbid) {
+	const kind = c.kind;
+	if (kind === 'service') {
+		tg_answer_cb(cbid, 'Выполняю');
+		do_service(c.payload, chat_id);
+		return;
+	}
+	if (kind === 'mode') {
+		tg_answer_cb(cbid, 'Меняю режим');
+		tg_send_html(chat_id, '🎚 Меняю режим на <b>' + esc_html(MODE_RU[c.payload] || c.payload) +
+			'</b> — служба перезапустится (~30 с), затем /status подтвердит.', null);
+		const r = ubus_call('control_mode_set', { mode: c.payload }, 15);
+		if (r == null || r.result !== true)
+			tg_send_html(chat_id, '⚠ Смена режима не подтверждена: ' +
+				esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+		else if (r.unchanged === true)
+			tg_send_html(chat_id, 'Режим уже «' + esc_html(MODE_RU[c.payload] || c.payload) + '» — ничего не изменено.', null);
+		return;
+	}
+	if (kind === 'wifi') {
+		const parts = split('' + c.payload, '|');
+		const iface = (length(parts) > 0) ? parts[0] : '';
+		const off = (length(parts) > 1 && parts[1] === '1');
+		tg_answer_cb(cbid, off ? 'Выключаю Wi-Fi' : 'Включаю Wi-Fi');
+		try { ctrl.wifi_toggle(ctrl_api, chat_id, iface, off, cbid); }
+		catch (e) { log('wifi exec: ' + e); }
+		return;
+	}
+	if (kind === 'dev') {
+		const parts = split('' + c.payload, '|');
+		const act = (length(parts) > 0) ? parts[0] : '';
+		const ref = (length(parts) > 1) ? parts[1] : '';
+		tg_answer_cb(cbid, 'Выполняю');
+		try { ctrl.dev_action(ctrl_api, ref, act, cbid, chat_id); }
+		catch (e) { log('dev exec: ' + e); }
+		return;
+	}
+	if (kind === 'rule_add') {
+		const parts = split('' + c.payload, '|');
+		const doms = (length(parts) > 0) ? parts[0] : '';
+		const cids = (length(parts) > 1) ? parts[1] : '';
+		tg_answer_cb(cbid, 'Добавляю');
+		try { ctrl.blocksite_exec(ctrl_api, chat_id, doms, cids, cbid); }
+		catch (e) { log('rule_add exec: ' + e); }
+		return;
+	}
+	if (kind === 'rule_del') {
+		tg_answer_cb(cbid, 'Удаляю');
+		try { ctrl.rule_delete_exec(ctrl_api, chat_id, '' + c.payload, cbid); }
+		catch (e) { log('rule_del exec: ' + e); }
+		return;
+	}
+	if (kind === 'rule_del_domain') {
+		tg_answer_cb(cbid, 'Удаляю');
+		try { ctrl.unblocksite_exec(ctrl_api, chat_id, '' + c.payload, cbid); }
+		catch (e) { log('rule_del_domain exec: ' + e); }
+		return;
+	}
+	if (kind === 'repair' || kind === 'unblock') {
+		tg_answer_cb(cbid, 'Заявка…');
+		const r = ubus_call('recovery_action', {
+			action: (kind === 'repair') ? 'repair' : 'unblock',
+			target: '' + c.payload, note: 'manual request via Telegram'
+		}, 15);
+		if (r && r.result === true)
+			tg_send_html(chat_id, '🛠 Заявка принята координатором (seq ' + esc_html('' + (r.seq || '')) +
+				') — исполнение в ближайшем тике. /doctor покажет результат.', null);
+		else
+			tg_send_html(chat_id, '⚠ Заявка не принята: ' +
+				esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+		return;
+	}
+	if (kind === 'upd') {
+		tg_answer_cb(cbid, 'Запускаю');
+		const p = '' + c.payload;
+		if (p === 'app')
+			upd_app_chain(chat_id);
+		else if (substr(p, 0, 5) === 'core:')
+			upd_core_start(chat_id, substr(p, 5));
+		else if (substr(p, 0, 4) === 'pkg:')
+			upd_pkg_chain(chat_id, substr(p, 4));
+		else
+			tg_send_html(chat_id, 'неизвестная цель обновления', null);
+		return;
+	}
+	tg_answer_cb(cbid, '');
+}
+
+/* ── Ф8.2/D25: режимы, Safe Mode, доктор, ремонт, обновления ──────────── */
+
 /* Primitives handed to the «Контроль» module. ч.118: moved ABOVE push_scan —
  * in this ucode dialect a name declared LATER is invisible to a function
  * defined earlier (no hoisting at all; lesson 126), so push_scan's
@@ -1095,13 +1416,185 @@ const ctrl_api = {
 	jesc: jesc,
 	log: log,
 	uci_get: uci_get,
-	push: send_push
+	push: send_push,
+	/* Ф8.2: the «Контроль» module asks its own second-button confirmations
+	 * for the HEAVY actions and quiets the matching event pushes (the bot's
+	 * own actions must not echo back into the same chat). */
+	confirm_ask: confirm_ask,
+	role: 'viewer',
+	quiet: { until: 0 }
 };
 
 function push_scan() {
 	try { push_bus(); } catch (e) { log('push bus: ' + e); }
 	try { push_service(); } catch (e) { log('push service: ' + e); }
 	try { ctrl.push_scan(ctrl_api); } catch (e) { log('push control: ' + e); }
+}
+
+const ST_RU = { ok: '✅ норма', degraded: '⚠️ деградация', down: '⛔ недоступен', off: '⚪ выключен' };
+
+function cmd_mode_text() {
+	const cur = uci_cfg_snap('routing_mode') || 'proxy_banned_ru';
+	return '<b>Режим маршрутизации</b>\nТекущий: <b>' + esc_html(MODE_RU[cur] || cur) + '</b>' +
+		'\nСмена режима перезапускает службу (~30 с).';
+}
+
+function mode_kb() {
+	const cur = uci_cfg_snap('routing_mode') || 'proxy_banned_ru';
+	const mk = (v) => [ (cur === v ? '• ' : '') + (MODE_RU[v] || v), 'mdo:' + v ];
+	return kb_rows([
+		[ mk('proxy_banned_ru'), mk('global') ],
+		[ mk('direct') ],
+		[ '⬅ Меню', 'act:menu' ]
+	]);
+}
+
+function cmd_mode_ask(chat_id, role, mode) {
+	confirm_ask(chat_id, role, 'mode', mode,
+		'Сменить режим на «' + (MODE_RU[mode] || mode) + '»?',
+		'Служба перезапустится (~30 с), активные соединения оборвутся. Прежний режим: ' +
+		esc_html(MODE_RU[uci_cfg_snap('routing_mode') || 'proxy_banned_ru'] || '?') + '.');
+}
+
+/* Safe Mode (A.3): instant escape hatch — NO confirmation (the whole point
+ * is one tap to safety); DNS/firewall/engines stay up by construction. */
+function cmd_safe(chat_id) {
+	tg_send_html(chat_id, '🛡 Включаю Safe Mode: выход пойдёт напрямую, а MultiDNS/zapret/firewall остаются включёнными. Служба перезапустится (~30 с); /status подтвердит.', null);
+	const r = ubus_call('control_safe_set', { enable: '1' }, 15);
+	if (r == null || r.result !== true)
+		tg_send_html(chat_id, '⚠ Safe Mode не включён: ' +
+			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+	else if (r.unchanged === true)
+		tg_send_html(chat_id, 'Выход уже прямой — Safe Mode не требуется.', null);
+}
+
+function cmd_safeoff(chat_id) {
+	tg_send_html(chat_id, '↩ Выхожу из Safe Mode: возвращаю прежний главный узел. Служба перезапустится (~30 с).', null);
+	const r = ubus_call('control_safe_set', { enable: '0' }, 15);
+	if (r == null || r.result !== true)
+		tg_send_html(chat_id, '⚠ Не выполнено: ' +
+			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+	else
+		tg_send_html(chat_id, '✅ Главный узел возвращён (' + esc_html('' + (r.restored || '?')) + '); /status покажет живой выход.', null);
+}
+
+/* ДОКТОР (Ф8.2): статусы/ремонт/лечение как интерфейс к Recovery/Sentinel —
+ * один вызов health_explain отдаёт health+sentinel+recovery и честные
+ * объяснения. Читают все роли; ремонты — отдельная команда (admin). */
+function doctor_text() {
+	const j = ubus_call('health_explain', {}, 30);
+	if (j == null || j.result !== true)
+		return 'статус здоровья недоступен (RPC не ответил — rpcd или демоны?)';
+	const h = (j.health && j.health.data) ? j.health.data : null;
+	const entries = (h && h.entries) ? h.entries : {};
+	const overall = (h && h.overall != null) ? '' + h.overall : '?';
+	let out = '<b>🩺 Доктор</b>\nОбщее состояние: <b>' + (ST_RU[overall] || esc_html(overall)) + '</b>';
+	const bad = [];
+	for (let k in entries) {
+		const e = entries[k];
+		const st = '' + (e.status || 'off');
+		if (st === 'ok' || st === 'off')
+			continue;
+		push(bad, e);
+	}
+	if (length(bad)) {
+		out += '\n\n<b>Проблемы:</b>';
+		for (let i = 0; i < length(bad) && i < 10; i++)
+			out += '\n• ' + esc_html(bad[i].label || bad[i].name) + ': ' +
+				(ST_RU['' + bad[i].status] || esc_html('' + bad[i].status)) +
+				(length('' + (bad[i].reason || '')) ? ' — ' + esc_html('' + bad[i].reason) : '');
+	} else
+		out += '\nВсе компоненты в норме.';
+	const rc = (j.recovery && j.recovery.data) ? j.recovery.data : null;
+	if (rc) {
+		let rline = '\n\nRecovery: ' + ((rc.overall === 'active') ? 'кампания активна' : 'ок');
+		if (int(rc.active_keys || 0) > 0)
+			rline += ' · активных ключей: ' + int(rc.active_keys);
+		if (int(rc.blocked_keys || 0) > 0)
+			rline += ' · заблокировано кампаний: ' + int(rc.blocked_keys);
+		const until = int(rc.manual_freeze_until || 0);
+		if (until > time())
+			rline += ' · авто-ремонты заморожены ещё ' + fmt_dur(until - time());
+		out += rline;
+	}
+	const fresh = (j.health && j.health.fresh === true);
+	const age = (j.health && j.health.age != null) ? int(j.health.age) : null;
+	out += '\n<i>данные: ' + (fresh ? ('свежие (' + age + ' с)') : 'пересчитаны сейчас') + '</i>';
+	return out;
+}
+
+function repair_view() {
+	const j = ubus_call('health_explain', {}, 30);
+	if (j == null || j.result !== true)
+		return { text: 'список ремонтов недоступен (RPC не ответил)', kb: null };
+	const exs = (type(j.explains) === 'array') ? j.explains : [];
+	const rep = [], unb = [];
+	for (let i = 0; i < length(exs); i++) {
+		const ex = exs[i];
+		if (ex.status === 'ok' || !ex.campaign || !length('' + ex.campaign.key))
+			continue;
+		if (ex.repairable === true)
+			push(rep, ex);
+		else if (ex.unblockable === true)
+			push(unb, ex);
+	}
+	if (!length(rep) && !length(unb))
+		return { text: '🛠 Ремонты не требуются — координатор не видит проблем с ручным ремонтом. /doctor — общий статус.', kb: null };
+	let out = '<b>🛠 Ремонт</b>\n';
+	const rows = [];
+	for (let i = 0; i < length(rep) && i < 8; i++) {
+		const ex = rep[i];
+		out += '• ' + esc_html(ex.label || ex.name) + ': ' + (ST_RU['' + ex.status] || esc_html('' + ex.status)) +
+			(length('' + (ex.reason || '')) ? ' — ' + esc_html('' + ex.reason) : '') + '\n';
+		push(rows, [ '🛠 ' + substr('' + (ex.label || ex.name), 0, 18), 'rep:' + ex.campaign.key ]);
+	}
+	for (let i = 0; i < length(unb) && i < 4; i++) {
+		const ex = unb[i];
+		out += '⛔ ' + esc_html(ex.label || ex.name) + ' — кампания заблокирована\n';
+		push(rows, [ '🔓 Разблокировать', 'unb:' + ex.campaign.key ]);
+	}
+	push(rows, [ '⬅ Меню', 'act:menu' ]);
+	return { text: out, kb: kb_rows(rows) };
+}
+
+/* Обновления (Ф8.2/D25): версии и доступные обновления; кнопки — только
+ * для того, что умеет сама (ядро — core_install_start; приложение и пакеты
+ * движков — prepare → download → install, та же цепочка, что в UI). */
+function update_text() {
+	let out = '<b>Обновления</b>\n';
+	const ap = ubus_call('app_check_update', {}, 25);
+	if (ap && ap.latest_version != null)
+		out += 'Приложение: ' + esc_html('' + (ap.installed_version || '—')) + ' → ' +
+			esc_html('' + ap.latest_version) + (ap.update_available ? ' — <b>есть обновление</b>' : '') + '\n';
+	else
+		out += 'Приложение: проверка не удалась (GitHub?)\n';
+	const ci = trim(readfile(RUN_DIR + '/core.info') || '');
+	try {
+		const cj = json(ci || '');
+		if (cj)
+			out += 'Ядро: ' + esc_html((cj.core_type || '?') + ' ' + (cj.version || '')) + '\n';
+	} catch (e) {}
+	const cis = ubus_call('core_install_status', {}, 10);
+	if (cis && cis.running === true)
+		out += '⚠ Установка ядра уже идёт' + (cis.stage ? ' (' + esc_html('' + cis.stage) + ')' : '') + '\n';
+	const rows = [];
+	if (ap && ap.update_available === true)
+		push(rows, [ '⬆ Приложение', 'upd:app' ]);
+	const engs = [ 'byedpi', 'zapret', 'mosdns' ];
+	for (let i = 0; i < length(engs); i++) {
+		const name = engs[i];
+		const r = ubus_call(name + '_check_update', {}, 25);
+		if (r && r.latest_version != null) {
+			out += esc_html(name) + ': ' + esc_html('' + (r.installed_version || '—')) + ' → ' +
+				esc_html('' + r.latest_version) + (r.update_available ? ' — <b>есть обновление</b>' : '') + '\n';
+			if (r.update_available === true)
+				push(rows, [ '⬆ ' + name, 'upd:pkg:' + name ]);
+		} else
+			out += esc_html(name) + ': проверка не удалась (GitHub?)\n';
+	}
+	push(rows, [ '⬆ Ядро (hiddify-core)', 'upd:core:hiddify' ]);
+	push(rows, [ '⬅ Меню', 'act:menu' ]);
+	return { text: out, kb: kb_rows(rows) };
 }
 
 /* ── dispatch ─────────────────────────────────────────────────────────── */
@@ -1111,11 +1604,14 @@ function push_scan() {
 const CMD_MIN = {
 	status: 'viewer', ping: 'viewer', connections: 'viewer', menu: 'viewer',
 	start: 'viewer', help: 'viewer', nodes: 'viewer', status_engine: 'viewer',
+	doctor: 'viewer',
 	control: 'viewer', devices: 'viewer', sites: 'viewer', wifi: 'viewer',
+	safe: 'operator', safeoff: 'operator',
 	switch: 'operator', close: 'operator', mute: 'operator', unmute: 'operator',
 	pause: 'operator', resume: 'operator',
 	service: 'admin', restart: 'admin', snapshot: 'admin', logs: 'admin',
-	blocksite: 'admin', unblocksite: 'admin', users: 'admin'
+	blocksite: 'admin', unblocksite: 'admin', users: 'admin', repair: 'admin',
+	mode: 'owner', update: 'owner'
 };
 
 function cmd_need(cmd) {
@@ -1134,8 +1630,10 @@ function handle_command(chat_id, text, role) {
 	}
 	/* «Контроль» commands (/control /devices /sites /blocksite /unblocksite
 	 * /pause /resume /wifi) — the module answers them itself (already gated
-	 * by the CMD_MIN check above). */
+	 * by the CMD_MIN check above). Ф8.2: the module sees the ASKER's role
+	 * (api.role) for its own second-button confirmations. */
 	try {
+		ctrl_api.role = role;
 		if (ctrl.handle_command(ctrl_api, chat_id, cmd, rest))
 			return;
 	} catch (e) {
@@ -1150,10 +1648,20 @@ function handle_command(chat_id, text, role) {
 	} else if (cmd === 'close') {
 		tg_send_html(chat_id, cmd_close(), null);
 	} else if (cmd === 'restart') {
-		do_service('restart', chat_id);
+		confirm_ask(chat_id, role, 'service', 'restart',
+			'Перезапустить службу?',
+			'Активные соединения оборвутся (~10 с). Это последний шанс отменить.');
 	} else if (cmd === 'service') {
-		const r = do_service(rest, chat_id);
-		if (r != null) tg_send_html(chat_id, esc_html(r), null);
+		if (rest === 'stop' || rest === 'restart')
+			confirm_ask(chat_id, role, 'service', rest,
+				(rest === 'stop') ? 'Остановить службу?' : 'Перезапустить службу?',
+				(rest === 'stop')
+					? 'Прокси, DNS-перехват и этот бот остановятся. Запуск обратно: /service start.'
+					: 'Активные соединения оборвутся (~10 с).');
+		else {
+			const r = do_service(rest, chat_id);
+			if (r != null) tg_send_html(chat_id, esc_html(r), null);
+		}
 	} else if (cmd === 'nodes') {
 		const nodes = list_nodes();
 		if (!nodes || !length(nodes))
@@ -1171,13 +1679,33 @@ function handle_command(chat_id, text, role) {
 	} else if (cmd === 'status_engine') {
 		tg_send_html(chat_id, cmd_status_engine(), kb_rows([ [ '🔄 Обновить', 'act:engine' ] ]));
 	} else if (cmd === 'mute') {
-		system('uci -q set homeproxy.telegram.mute=1; uci commit homeproxy');
-		cfg.mute = '1';
-		tg_send_html(chat_id, '🔇 Пуш-уведомления выключены (команды работают). /unmute — обратно.', null);
+		const r = ubus_call('telegram_flag_set', { key: 'mute', value: '1' }, 10);
+		if (r && r.result === true) {
+			cfg.mute = '1';
+			tg_send_html(chat_id, '🔇 Пуш-уведомления выключены (команды работают). /unmute — обратно.', null);
+		} else
+			tg_send_html(chat_id, '⚠ Не удалось: ' + esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
 	} else if (cmd === 'unmute') {
-		system('uci -q set homeproxy.telegram.mute=0; uci commit homeproxy');
-		cfg.mute = '0';
-		tg_send_html(chat_id, '🔔 Пуш-уведомления включены.', null);
+		const r = ubus_call('telegram_flag_set', { key: 'mute', value: '0' }, 10);
+		if (r && r.result === true) {
+			cfg.mute = '0';
+			tg_send_html(chat_id, '🔔 Пуш-уведомления включены.', null);
+		} else
+			tg_send_html(chat_id, '⚠ Не удалось: ' + esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+	} else if (cmd === 'mode') {
+		tg_send_html(chat_id, cmd_mode_text(), mode_kb());
+	} else if (cmd === 'safe') {
+		cmd_safe(chat_id);
+	} else if (cmd === 'safeoff') {
+		cmd_safeoff(chat_id);
+	} else if (cmd === 'doctor') {
+		tg_send_html(chat_id, doctor_text(), kb_rows([ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ] ]));
+	} else if (cmd === 'repair') {
+		const rv = repair_view();
+		tg_send_html(chat_id, rv.text, rv.kb);
+	} else if (cmd === 'update') {
+		const uv = update_text();
+		tg_send_html(chat_id, uv.text, uv.kb);
 	} else if (cmd === 'menu' || cmd === 'start') {
 		tg_send_html(chat_id, main_menu_text(), main_menu_kb());
 	} else if (cmd === 'help') {
@@ -1189,17 +1717,27 @@ function handle_command(chat_id, text, role) {
 
 /* Minimum role per callback prefix (Ф8.1): the same gate commands have,
  * applied to inline buttons (audit 1.1 — checks on callbacks too). Matched
- * top-down; the plain 'act:' catch-all stays last. */
+ * top-down; the plain 'act:' catch-all stays last. Ф8.2: cfm:/cfx: stay
+ * viewer here — the pending confirmation re-checks the REQUIRED role at
+ * the tap itself (confirm_resolve). */
 const CB_MIN_PREFIX = [
+	[ 'cfm:', 'viewer' ], [ 'cfx:', 'viewer' ],
+	[ 'mdo:', 'owner' ], [ 'upd:', 'owner' ],
+	[ 'rep:', 'admin' ], [ 'unb:', 'admin' ],
+	[ 'saf:', 'operator' ],
 	[ 'ctl:blk:', 'admin' ], [ 'ctl:alw:', 'admin' ],
 	[ 'ctl:wblk:', 'admin' ], [ 'ctl:walm:', 'admin' ], [ 'sdel:', 'admin' ],
+	[ 'woff:', 'admin' ],
 	[ 'act:snapshot', 'admin' ], [ 'act:restart', 'admin' ],
+	[ 'act:repair', 'admin' ], [ 'act:mode', 'owner' ], [ 'act:update', 'owner' ],
+	[ 'act:safe', 'operator' ],
 	[ 'sw:', 'operator' ],
-	[ 'woff:', 'operator' ], [ 'wton:', 'operator' ],
+	[ 'wton:', 'operator' ],
 	[ 'ctl:pause', 'operator' ], [ 'ctl:resume', 'operator' ],
 	[ 'ctl:t30:', 'operator' ], [ 'ctl:t60:', 'operator' ],
 	[ 'ctl:t120:', 'operator' ], [ 'ctl:t1440:', 'operator' ],
 	[ 'ctl:tunb:', 'operator' ], [ 'ctl:tal60:', 'operator' ], [ 'ctl:tal1440:', 'operator' ],
+	[ 'act:doctor', 'viewer' ],
 	[ 'ctl:devi:', 'viewer' ], [ 'ctl:dev:', 'viewer' ],
 	[ 'ctl:sites', 'viewer' ], [ 'ctl:wifi', 'viewer' ],
 	[ 'ctl:refresh', 'viewer' ], [ 'ctl:menu', 'viewer' ],
@@ -1233,18 +1771,26 @@ function handle_update(u) {
 		if (allowed_chat === 0) {
 			/* Pin the first PRIVATE chat that ever talks to us; a group or
 			 * channel cannot pin itself (a bound group keeps working only
-			 * when it was already bound). */
+			 * when it was already bound). Ф8.2: the pin (+ owner seed) rides
+			 * the Control API (telegram_bind_set) — no bare UCI writes. */
 			if (!is_private) {
 				log('ignored ' + ctype + ' chat ' + chat_id + ' pin attempt');
 				return;
 			}
+			const br = ubus_call('telegram_bind_set', {
+				chat_id: '' + chat_id,
+				owner_uid: (uid != null) ? '' + uid : ''
+			}, 10);
+			if (br == null || br.result !== true) {
+				log('bind via Control API failed: ' + ((br && br.error) || 'rpcd недоступен'));
+				tg_send_html(chat_id, '⚠ Не удалось привязать чат (Control API недоступен). Попробуйте ещё раз.', null);
+				return;   /* honest rollback — the pin did not happen */
+			}
 			allowed_chat = chat_id;
-			system(`uci set homeproxy.telegram.chat_id=${chat_id}; uci commit homeproxy`);
 			cfg.chat_id = '' + chat_id;
-			log('pinned allowed chat: ' + chat_id);
+			log('pinned allowed chat: ' + chat_id + (br.owner_seeded === true ? ' (owner seeded)' : ''));
 			if (uid != null) {
 				cfg.users.owner = [ '' + uid ];
-				system(`uci -q add_list homeproxy.telegram.owner_user='${uid}'; uci -q commit homeproxy`);
 				log('RBAC: owner paired at pin (' + uid + ')');
 			}
 			tg_send_html(chat_id, 'Бот привязан к этому чату (Re:HomeProxy). /help — список команд.', null);
@@ -1317,7 +1863,53 @@ function handle_update(u) {
 			tg_send_html(chat_id, cmd_snapshot(), null);
 		} else if (data === 'act:restart') {
 			tg_answer_cb(cbid, 'Перезапуск службы');
-			do_service('restart', chat_id);
+			confirm_ask(chat_id, role, 'service', 'restart',
+				'Перезапустить службу?',
+				'Активные соединения оборвутся (~10 с). Это последний шанс отменить.');
+		} else if (data === 'act:doctor') {
+			tg_answer_cb(cbid, 'Доктор');
+			tg_send_html(chat_id, doctor_text(), kb_rows([ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ] ]));
+		} else if (data === 'act:repair') {
+			tg_answer_cb(cbid, 'Ремонт');
+			const rv = repair_view();
+			tg_send_html(chat_id, rv.text, rv.kb);
+		} else if (data === 'act:mode') {
+			tg_answer_cb(cbid, 'Режим');
+			tg_send_html(chat_id, cmd_mode_text(), mode_kb());
+		} else if (data === 'act:safe') {
+			tg_answer_cb(cbid, 'Safe Mode');
+			cmd_safe(chat_id);
+		} else if (data === 'act:update') {
+			tg_answer_cb(cbid, 'Обновления');
+			const uv = update_text();
+			tg_send_html(chat_id, uv.text, uv.kb);
+		} else if (substr(data, 0, 4) === 'cfm:' || substr(data, 0, 4) === 'cfx:') {
+			const key = substr(data, 4);
+			if (substr(data, 0, 4) === 'cfx:')
+				confirm_drop(key, chat_id, cbid);
+			else
+				confirm_resolve(key, chat_id, role, cbid);
+		} else if (substr(data, 0, 4) === 'saf:') {
+			tg_answer_cb(cbid, 'Возврат узла');
+			cmd_safeoff(chat_id);
+		} else if (substr(data, 0, 4) === 'mdo:') {
+			cmd_mode_ask(chat_id, role, substr(data, 4));
+		} else if (substr(data, 0, 4) === 'rep:' || substr(data, 0, 4) === 'unb:') {
+			const key = substr(data, 4);
+			confirm_ask(chat_id, role, (substr(data, 0, 4) === 'rep:') ? 'repair' : 'unblock', key,
+				(rep_unb_title(substr(data, 0, 4), key)),
+				'Заявка уйдёт координатору восстановления и исполнится в ближайшем тике.');
+		} else if (substr(data, 0, 4) === 'upd:') {
+			const target = substr(data, 4);
+			let title = 'Запустить обновление?', warn = 'Опасность зависит от цели; установка может занять несколько минут.';
+			if (target === 'app') {
+				title = 'Обновить приложение (сам-обновление)?';
+				warn = 'LuCI и бот перезапустятся; на время установки бот будет недоступен.';
+			} else if (substr(target, 0, 5) === 'core:')
+				title = 'Установить ядро ' + substr(target, 5) + '?';
+			else if (substr(target, 0, 4) === 'pkg:')
+				title = 'Обновить пакет ' + substr(target, 4) + '?';
+			confirm_ask(chat_id, role, 'upd', target, title, warn);
 		} else if (data === 'act:help') {
 			tg_answer_cb(cbid, 'Помощь');
 			tg_send_html(chat_id, HELP, main_menu_kb());
@@ -1329,9 +1921,11 @@ function handle_update(u) {
 			tg_send_html(chat_id, cmd_status(), kb_rows([ [ 'Узлы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ] ]));
 		} else {
 			/* «Контроль» callbacks — device actions first, then the panel
-			 * views; an unconsumed callback is acknowledged silently. */
+			 * views; an unconsumed callback is acknowledged silently.
+			 * Ф8.2: the module sees the TAPPER's role (api.role). */
 			let consumed = false;
 			try {
+				ctrl_api.role = role;
 				consumed = ctrl.handle_dev_action(ctrl_api, chat_id, data, cbid);
 				if (!consumed)
 					consumed = ctrl.handle_cb(ctrl_api, chat_id, data, cbid);

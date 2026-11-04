@@ -8011,6 +8011,208 @@ const methods = {
 		}
 	},
 
+	/* ── Ф8.2 Control API для бота (аудит 1.5/TG-06): ВСЕ мутации из
+	 * Telegram ходят через эту же RPC-дверь, что и UI, — демон больше не
+	 * трогает UCI/shell напрямую. Аргументы — string-policy (урок 33:
+	 * нативные типы валят регистрацию объекта на rpcd). ─────────────────── */
+
+	/* Собственные флаги бота (mute/пуш-переключатели): строгий allowlist,
+	 * один commit. Демон подхватит изменение на следующем цикле (hot reload). */
+	telegram_flag_set: {
+		args: { key: 'key', value: 'value' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const key = trim('' + (a.key == null ? '' : a.key));
+			const val = trim('' + (a.value == null ? '' : a.value));
+			const keys = { mute: true, push_hotswap: true, push_watchdog: true,
+				push_learn: true, push_service: true, push_control: true };
+			if (keys[key] == null)
+				return { result: false, error: 'bad key' };
+			if (val !== '0' && val !== '1')
+				return { result: false, error: 'bad value' };
+			const c = cursor();
+			c.set('homeproxy', 'telegram', key, val);
+			c.commit('homeproxy');
+			return { result: true };
+		}
+	},
+
+	/* Привязка чата (первый private-чат) + seed владельца — демон вызывает
+	 * один раз; guard здесь зеркалит демонский: owner сеется ТОЛЬКО когда
+	 * пользователей нет вообще (после первой привязки — RBAC и pairing). */
+	telegram_bind_set: {
+		args: { chat_id: 'chat_id', owner_uid: 'owner_uid' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const chat = trim('' + (a.chat_id == null ? '' : a.chat_id));
+			const uid = trim('' + (a.owner_uid == null ? '' : a.owner_uid));
+			if (!length(chat) || match(chat, /^-?[0-9]+$/) == null)
+				return { result: false, error: 'bad chat_id' };
+			if (length(uid) && match(uid, /^[0-9]+$/) == null)
+				return { result: false, error: 'bad owner_uid' };
+			const c = cursor();
+			c.set('homeproxy', 'telegram', 'chat_id', chat);
+			let seeded = false;
+			if (length(uid)) {
+				const roles = [ 'owner', 'admin', 'operator', 'viewer' ];
+				let any = 0;
+				for (let i = 0; i < length(roles); i++) {
+					const arr = c.get('homeproxy', 'telegram', roles[i] + '_user');
+					if (type(arr) === 'array')
+						any += length(arr);
+				}
+				if (any === 0) {
+					c.set('homeproxy', 'telegram', 'owner_user', [ uid ]);
+					seeded = true;
+				}
+			}
+			c.commit('homeproxy');
+			return { result: true, owner_seeded: seeded };
+		}
+	},
+
+	/* Транзакция pairing (Ф8.2): валидация кода+срока, добавление пользователя
+	 * под ролью кода и сжигание кода — ОДНИМ атомарным commit'ом; демон
+	 * только сообщает исход. Уже привязанный id не дублируется (код всё равно
+	 * сгорает — одноразовость честная). */
+	telegram_pair_consume: {
+		args: { code: 'code', uid: 'uid' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const code = trim('' + (a.code == null ? '' : a.code));
+			const uid = trim('' + (a.uid == null ? '' : a.uid));
+			if (match(code, /^[0-9]{4,8}$/) == null)
+				return { result: false, error: 'bad code format' };
+			if (match(uid, /^[0-9]+$/) == null)
+				return { result: false, error: 'bad uid' };
+			const c = cursor();
+			const stored = trim('' + (c.get('homeproxy', 'telegram', 'pair_code') || ''));
+			const until = int('' + (c.get('homeproxy', 'telegram', 'pair_until') || '0') || '0');
+			const role = trim('' + (c.get('homeproxy', 'telegram', 'pair_role') || 'owner'));
+			const roles = { owner: 1, admin: 1, operator: 1, viewer: 1 };
+			if (!length(stored) || stored !== code || time() > until ||
+			    roles[role] == null)
+				return { result: false, error: 'wrong or expired code' };
+			const opt = role + '_user';
+			const arr = c.get('homeproxy', 'telegram', opt);
+			const cur = (type(arr) === 'array') ? arr : [];
+			let have = false;
+			for (let k = 0; k < length(cur); k++)
+				if ('' + cur[k] === uid)
+					have = true;
+			if (!have)
+				push(cur, uid);
+			c.set('homeproxy', 'telegram', opt, cur);
+			c.delete('homeproxy', 'telegram', 'pair_code');
+			c.delete('homeproxy', 'telegram', 'pair_until');
+			c.delete('homeproxy', 'telegram', 'pair_role');
+			c.commit('homeproxy');
+			return { result: true, role: role };
+		}
+	},
+
+	/* Служба (Ф8.2/D25): та же init.d-дверь, что бот дёргал напрямую, теперь
+	 * за Control API со строгим allowlist. Вызывающий шлёт свой ответ
+	 * ДО этого вызова (stop/restart убивают и демон бота). Спавн отсоединённый. */
+	control_service_set: {
+		args: { action: 'action' },
+		call: function(req) {
+			const action = trim('' + ((req && req.args && req.args.action) || ''));
+			if (action !== 'start' && action !== 'stop' && action !== 'restart')
+				return { result: false, error: 'bad action' };
+			system(`/etc/init.d/homeproxy ${action} >/dev/null 2>&1 &`);
+			return { result: true, action: action };
+		}
+	},
+
+	/* Смена режима маршрутизации (Ф8.2/D25): снимок → set → отсоединённый
+	 * рестарт (режим применяют init.d-гейты: direct выключает движки/DNS-схему
+	 * ровно как режим из UI). Неизменённый режим — честный no-op без рестарта
+	 * (идемпотентная дисциплина). */
+	control_mode_set: {
+		args: { mode: 'mode' },
+		call: function(req) {
+			const mode = trim('' + ((req && req.args && req.args.mode) || ''));
+			const modes = { proxy_banned_ru: 1, global: 1, direct: 1 };
+			if (modes[mode] == null)
+				return { result: false, error: 'bad mode' };
+			const c = cursor();
+			const cur = '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
+			if (cur === mode)
+				return { result: true, unchanged: true, mode: mode };
+			const BK = HP_DIR + '/backups';
+			system('mkdir -p ' + shellquote(BK));
+			const tsf = '/tmp/hp-mode.ts';
+			system('date +%Y%m%d-%H%M%S > ' + tsf);
+			const ts = trim(readfile(tsf) || '');
+			system('rm -f ' + tsf);
+			if (!length(ts))
+				return { result: false, error: 'date failed' };
+			const dir = BK + '/mode-change-' + ts;
+			system('mkdir -p ' + shellquote(dir) + ' && cp /etc/config/homeproxy ' + shellquote(dir + '/config'));
+			if (!access(dir + '/config'))
+				return { result: false, error: 'snapshot failed — mode NOT changed' };
+			c.set('homeproxy', 'config', 'routing_mode', mode);
+			c.commit('homeproxy');
+			system(`/etc/init.d/homeproxy restart >/dev/null 2>&1 &`);
+			return { result: true, mode: mode, prev: cur, snapshot: dir };
+		}
+	},
+
+	/* Safe Mode (Ф8.2/A.3): ЗАВЕДОМО безопасное состояние — выход идёт
+	 * напрямую (main_node=direct-out), но MultiDNS / zapret / схема DNS и
+	 * firewall ОСТАЮТСЯ ЖИВЫМИ (в отличие от режима «Напрямую», где всё
+	 * выключено). Состояние живёт в UCI (telegram.safe / safe_prev), поэтому
+	 * /safe off восстанавливает точный прежний main_node после любого
+	 * рестарта демонов. */
+	control_safe_set: {
+		args: { enable: 'enable' },
+		call: function(req) {
+			const on = ((req && req.args && (req.args.enable === true ||
+				req.args.enable === '1')) === true);
+			const c = cursor();
+			if (!on) {
+				const prev = trim('' + (c.get('homeproxy', 'telegram', 'safe_prev') || ''));
+				if (!length(prev))
+					return { result: false, error: 'safe mode is not active' };
+				if (match(prev, /^[A-Za-z0-9_-]+$/) == null)
+					return { result: false, error: 'corrupt safe_prev — восстановите main node в UI' };
+				c.set('homeproxy', 'config', 'main_node', prev);
+				c.delete('homeproxy', 'telegram', 'safe');
+				c.delete('homeproxy', 'telegram', 'safe_prev');
+				c.commit('homeproxy');
+				system(`/etc/init.d/homeproxy restart >/dev/null 2>&1 &`);
+				return { result: true, restored: prev };
+			}
+			const rmode = '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
+			if (rmode === 'direct')
+				return { result: false, error: 'режим «Напрямую» — прокси уже выключен целиком, safe mode не требуется' };
+			const cur = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			if (cur === 'direct-out')
+				return { result: true, unchanged: true, note: 'main node уже direct' };
+			if (!length(cur) || match(cur, /^[A-Za-z0-9_-]+$/) == null)
+				return { result: false, error: 'main node не сконфигурирован — safe mode невозможен' };
+			const BK = HP_DIR + '/backups';
+			system('mkdir -p ' + shellquote(BK));
+			const tsf = '/tmp/hp-safe.ts';
+			system('date +%Y%m%d-%H%M%S > ' + tsf);
+			const ts = trim(readfile(tsf) || '');
+			system('rm -f ' + tsf);
+			if (!length(ts))
+				return { result: false, error: 'date failed' };
+			const dir = BK + '/safe-mode-' + ts;
+			system('mkdir -p ' + shellquote(dir) + ' && cp /etc/config/homeproxy ' + shellquote(dir + '/config'));
+			if (!access(dir + '/config'))
+				return { result: false, error: 'snapshot failed — safe mode NOT enabled' };
+			c.set('homeproxy', 'config', 'main_node', 'direct-out');
+			c.set('homeproxy', 'telegram', 'safe', '1');
+			c.set('homeproxy', 'telegram', 'safe_prev', cur);
+			c.commit('homeproxy');
+			system(`/etc/init.d/homeproxy restart >/dev/null 2>&1 &`);
+			return { result: true, prev: cur, snapshot: dir };
+		}
+	},
+
 	/* On-demand connectivity check (D6): getMe resolves the bot identity,
 	 * then a test message goes straight to the bound chat — works even
 	 * while the daemon itself is idle/disabled.

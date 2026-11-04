@@ -21,6 +21,16 @@
 //   /wifi               Wi-Fi сети: вкл/выкл
 // Pushes (kind "control", telegram.push_control): блок/разрешение/расписания/
 // Wi-Fi/системные события из events.json + новые устройства в сети.
+//
+// Ф8.2 (ч.185, аудит 1.5/TG-06): ВСЕ мутации ходят через Control API —
+// RPC-методы luci.homeproxy (control_client_*, control_rule_*,
+// control_set_paused, control_wifi_set) вызываются по ubus; модуль больше
+// НЕ пишет UCI и не дёргает shell для действий. Тяжёлые действия (постоянный
+// блок/Wi-Fi-блок устройства, удаление/добавление правил, выключение Wi-Fi)
+// получают подтверждение второй кнопкой через api.confirm_ask (роль — в
+// api.role); лёгкие временные действия идут сразу. События пишут RPC'и —
+// модуль только гасит эхо-пуш этих же событий (api.quiet.until), чтобы
+// результат действия не приходил в тот же чат дважды.
 
 'use strict';
 
@@ -32,8 +42,8 @@ import { readfile, popen } from 'fs';
  * live), so the ceiling is done with integer arithmetic instead. */
 import {
 	client_states, get_sections, get_section,
-	add_event, main_opt, list_devices, bump_cursor,
-	read_temps, write_temps, read_arp
+	main_opt, list_devices, bump_cursor,
+	read_arp
 } from '/etc/homeproxy/scripts/control.uc';
 import { tail as ev_tail, last_id as ev_head, cursor_get as ev_cursor_get, cursor_set as ev_cursor_set } from '/etc/homeproxy/scripts/eventbus.uc';
 
@@ -47,6 +57,7 @@ let ev_last_id = 0;    /* Event Bus cursor (Ф1.7/Ф2.4): монотонный i
 let ev_saved_id = 0;   /* id already persisted to the durable cursor */
 let ev_ready = false;  /* baseline done (never re-baseline mid-boot) */
 let arp_seen = null;   /* MACs seen on the network (new-device pushes) */
+let dev_last_err = null;   /* last honest Control API error (for the reply) */
 
 const DEV_PAGE = 6;    /* devices per page in the inline keyboard */
 
@@ -126,25 +137,6 @@ function dev_display(d, st) {
 	return s;
 }
 
-function apply_async(api) {
-	/* Re-apply immediately; the 60 s engine would do it anyway — feedback
-	 * to a Telegram tap must be fast. */
-	system(`( /usr/bin/ucode -L /etc/homeproxy/scripts /etc/homeproxy/scripts/control_apply.uc >/dev/null 2>&1 ) &`);
-	api.log('control: apply scheduled');
-}
-
-function shell_uci(cmd) {
-	return system(cmd + ' >/dev/null 2>&1');
-}
-
-/* commit + cursor invalidation: without it the module's cached ucode uci
- * cursor serves a stale snapshot to the NEXT view built right after an
- * action (live-caught, ч.108 — same bug as the rpcd backend). */
-function commit_hc() {
-	shell_uci(`uci -q commit homecontrol`);
-	bump_cursor();
-}
-
 function capture(cmd) {
 	const fd = popen(cmd);
 	let out = '';
@@ -152,7 +144,61 @@ function capture(cmd) {
 	return out;
 }
 
-/* ── configured-client management ─────────────────────────────────────── */
+/* Minimal JSON writer for the ubus args (strings only; no json() — lesson
+ * 266: json() PARSES only). Escape \ " and control chars. */
+function jstr(s) {
+	let esc = '';
+	s = '' + s;
+	for (let i = 0; i < length(s); i++) {
+		const ch = substr(s, i, 1);
+		if (ch === '"') esc += '\\"';
+		else if (ch === '\\') esc += '\\\\';
+		else if (ch === '\n') esc += '\\n';
+		else if (ch === '\r') esc += '\\r';
+		else if (ch === '\t') esc += '\\t';
+		else esc += ch;
+	}
+	return esc;
+}
+
+function api_json(o) {
+	let out = '{';
+	let first = true;
+	for (let k in o) {
+		if (!first)
+			out += ',';
+		first = false;
+		out += '"' + jstr(k) + '":"' + jstr('' + o[k]) + '"';
+	}
+	return out + '}';
+}
+
+/* Ф8.2 Control API bridge: mutations ride the SAME luci.homeproxy RPC door
+ * the UI uses (audit 1.5/TG-06) — no bare UCI writes, no shell actions from
+ * the chat path. The commit happens in rpcd; the module only invalidates
+ * its cached uci cursor and quiets the echo push (api.quiet.until). */
+function ubus_call(method, args, timeout_s) {
+	const t = (timeout_s != null && timeout_s > 0 && timeout_s <= 60) ? int(timeout_s) : 10;
+	const cmd = `ubus -t ${t} call luci.homeproxy ${method} '${api_json(args)}'`;
+	const raw = capture(cmd);
+	let j = null;
+	try { j = json(raw || ''); } catch (e) { j = null; }
+	if (j == null)
+		API.log('ubus ' + method + ': no/invalid reply (rpcd недоступен?)');
+	return j;
+}
+
+/* Suppress the next control pushes for a short window: the action the bot
+ * JUST performed must not echo back into the same chat as a second message
+ * (the direct reply is the single result place). */
+function quiet_touch(api) {
+	try {
+		if (api.quiet)
+			api.quiet.until = time() + 25;
+	} catch (e) {}
+}
+
+/* ── configured-client management (Ф8.2: via Control API) ─────────────── */
 
 function cfg_id_for_dev(d, create) {
 	/* configured device -> its section id; unconfigured -> create one */
@@ -163,27 +209,21 @@ function cfg_id_for_dev(d, create) {
 	if (!d.mac && !d.ip)
 		return null;
 	/* Ф1.5: the device fields come from live ARP/DHCP state — only strict
-	 * charset-safe forms may reach the uci shell (belt-and-braces). */
+	 * charset-safe forms may reach the RPC (belt-and-braces). */
 	const mac_ok = length(d.mac) && match(d.mac, /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/) != null;
 	const ip_ok = length(d.ip) && match(d.ip, /^(\d{1,3}\.){3}\d{1,3}$/) != null;
 	if (!mac_ok && !ip_ok)
 		return null;
-	const fd = popen(`uci -q add homecontrol client`);
-	const newid = fd ? trim((fd.read('line') || '')) : '';
-	if (fd)
-		fd.close();
-	if (!length(newid))
-		return null;
-	if (mac_ok)
-		shell_uci(`uci -q set homecontrol.${newid}.mac='${d.mac}'`);
-	if (ip_ok)
-		shell_uci(`uci -q set homecontrol.${newid}.ip='${d.ip}'`);
-	const nm = clean_text(d.alias || d.hostname);
-	if (length(nm))
-		shell_uci(`uci -q set homecontrol.${newid}.name='${nm}'`);
-	shell_uci(`uci -q set homecontrol.${newid}.blocked='0'`);
-	commit_hc();
-	return newid;
+	const r = ubus_call('control_client_add', {
+		name: clean_text(d.alias || d.hostname),
+		mac: mac_ok ? d.mac : '',
+		ip: ip_ok ? d.ip : ''
+	}, 10);
+	if (r && r.result === true && length('' + (r.id || ''))) {
+		bump_cursor();   /* the commit happened in rpcd — invalidate our cache */
+		return '' + r.id;
+	}
+	return null;
 }
 
 /* ── panel ────────────────────────────────────────────────────────────── */
@@ -367,8 +407,11 @@ function device_menu_kb(ref) {
 	return kb(rows);
 }
 
-/* Block/unblock/temp for a device (auto-adds unconfigured ones). */
-function dev_action(api, ref, action, cbid, chat_id) {
+/* Block/unblock/temp for a device (auto-adds unconfigured ones).
+ * Ф8.2: EVERY mutation rides the control_* RPC door (commit + apply + the
+ * event happen in rpcd); the module reports the honest outcome and quiets
+ * the echo push. EXPORTED: the bot's confirm flow calls it directly. */
+export function dev_action(api, ref, action, cbid, chat_id) {
 	const d = dev_by_ref(ref);
 	if (!d) {
 		api.answer_cb(cbid, 'Список изменился');
@@ -383,7 +426,8 @@ function dev_action(api, ref, action, cbid, chat_id) {
 	const cid = cfg_id_for_dev(d, true);
 	if (!cid) {
 		api.answer_cb(cbid, 'Ошибка');
-		api.send_html(chat_id, 'не удалось добавить устройство в контроль', null);
+		api.send_html(chat_id, 'не удалось добавить устройство в контроль' +
+			' (Control API: ' + ((dev_last_err != null) ? dev_last_err : 'rpcd недоступен') + ')', null);
 		return;
 	}
 	if ((action === 'wblk' || action === 'walm') && !length(d.mac)) {
@@ -392,65 +436,51 @@ function dev_action(api, ref, action, cbid, chat_id) {
 		return;
 	}
 	const label = d.alias || d.hostname || d.ip || d.mac;
-	let ok = false, note = '';
+	let ok = false, note = '', err = null;
+	let method = null, args = null;
 	if (action === 'blk' || action === 'alw') {
-		const b = (action === 'blk') ? '1' : '0';
-		shell_uci(`uci -q set homecontrol.${cid}.blocked='${b}'`);
-		commit_hc();
-		add_event((action === 'blk') ? 'block' : 'allow', label,
-			(action === 'blk') ? 'blocked manually (Telegram)' : 'unblocked (Telegram)');
-		ok = true;
+		method = 'control_client_block';
+		args = { id: cid, blocked: (action === 'blk') ? '1' : '0' };
 		note = (action === 'blk') ? 'заблокирован' : 'разрешён';
 	} else if (action === 'wblk' || action === 'walm') {
-		const b = (action === 'wblk') ? '1' : '0';
-		shell_uci(`uci -q set homecontrol.${cid}.wifi_blocked='${b}'`);
-		commit_hc();
-		add_event((b === '1') ? 'block' : 'allow', label,
-			(b === '1') ? 'Wi-Fi blocked (Telegram)' : 'Wi-Fi block removed (Telegram)');
-		ok = true;
-		note = (b === '1') ? 'Wi-Fi заблокирован (кабель работает)' : 'Wi-Fi разблокирован';
+		method = 'control_client_wifi_block';
+		args = { id: cid, blocked: (action === 'wblk') ? '1' : '0' };
+		note = (action === 'wblk') ? 'Wi-Fi заблокирован (кабель работает)' : 'Wi-Fi разблокирован';
 	} else if (action === 'tal60' || action === 'tal1440') {
-		const mins = (action === 'tal60') ? 60 : 1440;
-		const temps = read_temps();
-		const until = time() + mins * 60;
-		if (length(d.mac))
-			temps[d.mac] = { until: until, mode: 'allow' };
-		if (length(d.ip))
-			temps[d.ip] = { until: until, mode: 'allow' };
-		write_temps(temps);
-		add_event('temp', label, `temporary ALLOW for ${mins} min (Telegram)`);
-		ok = true;
-		note = 'временно разрешён на ' + fmt_minutes(mins) + ' (до ' + fmt_clock(until) + ')';
+		method = 'control_client_temp_allow';
+		args = { id: cid, minutes: (action === 'tal60') ? '60' : '1440' };
+		note = 'временно разрешён на ' + ((action === 'tal60') ? '1 ч' : 'сутки');
 	} else if (action === 't30' || action === 't60' || action === 't120' || action === 't1440') {
-		const TEMP_MIN = { t30: 30, t60: 60, t120: 120, t1440: 1440 };
-		const mins = TEMP_MIN[action];
-		const temps = read_temps();
-		const until = time() + mins * 60;
-		if (length(d.mac))
-			temps[d.mac] = { until: until, mode: 'block' };
-		if (length(d.ip))
-			temps[d.ip] = { until: until, mode: 'block' };
-		write_temps(temps);
-		add_event('temp', label, `temporary block for ${mins} min (Telegram)`);
-		ok = true;
-		note = 'временный блок на ' + fmt_minutes(mins) + ' (до ' + fmt_clock(until) + ')';
+		const TEMP_MIN = { t30: '30', t60: '60', t120: '120', t1440: '1440' };
+		method = 'control_client_temp_block';
+		args = { id: cid, minutes: TEMP_MIN[action] };
+		note = 'временный блок на ' + fmt_minutes(int(TEMP_MIN[action]));
 	} else if (action === 'tunb') {
-		const temps = read_temps();
-		if (length(d.mac))
-			delete temps[d.mac];
-		if (length(d.ip))
-			delete temps[d.ip];
-		write_temps(temps);
-		add_event('temp', label, 'temporary block removed (Telegram)');
-		ok = true;
+		method = 'control_client_temp_unblock';
+		args = { id: cid };
 		note = 'временный блок снят';
+	} else {
+		api.answer_cb(cbid, 'Неизвестное действие');
+		return;
+	}
+	dev_last_err = null;
+	const r = ubus_call(method, args, 15);
+	if (r && r.result === true) {
+		ok = true;
+		bump_cursor();
+		quiet_touch(api);
+	} else {
+		err = (r && r.error) ? '' + r.error : 'rpcd недоступен';
+		dev_last_err = err;
 	}
 	if (ok) {
-		apply_async(api);
 		api.answer_cb(cbid, note);
-		api.send_html(chat_id, '✅ ' + esc(label) + ': ' + note, device_menu_kb(ref));
+		api.send_html(chat_id, '✅ ' + esc(label) + ': ' + esc(note), device_menu_kb(ref));
+	} else {
+		api.answer_cb(cbid, 'Ошибка');
+		api.send_html(chat_id, '⚠ ' + esc(label) + ': действие не выполнено — ' + esc(err), device_menu_kb(ref));
 	}
-}
+};
 
 /* ── sites view / actions ─────────────────────────────────────────────── */
 
@@ -493,10 +523,11 @@ function sites_kb() {
 	return kb(rows);
 }
 
-function blocksite(api, chat_id, rest) {
+/* Validation only — the mutation waits for the second button. */
+function blocksite_check(rest) {
 	const parts = split(trim(rest || ''), /\s+/);
 	if (!length(parts) || !length(trim(parts[0])))
-		return 'использование: /blocksite <домен[,домен]> [№ устройства из /devices]';
+		return { error: 'использование: /blocksite <домен[,домен]> [№ устройства из /devices]' };
 	const doms = [];
 	const raw = split(parts[0], ',');
 	for (let i = 0; i < length(raw); i++) {
@@ -505,75 +536,127 @@ function blocksite(api, chat_id, rest) {
 			push(doms, d);
 	}
 	if (!length(doms))
-		return 'укажите хотя бы один домен';
+		return { error: 'укажите хотя бы один домен' };
 	for (let i = 0; i < length(doms); i++)
 		if (match(doms[i], /^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z-]{2,}$/) == null)
-			return 'не похоже на домен: ' + doms[i];
-
-	/* optional scope: device number from /devices */
+			return { error: 'не похоже на домен: ' + doms[i] };
 	const cids = [];
 	if (length(parts) > 1 && (match(trim(parts[1]), /^[0-9]+$/) != null)) {
 		const d = dev_by_idx(int(trim(parts[1])) - 1);
 		if (!d)
-			return 'нет устройства с таким номером — /devices';
+			return { error: 'нет устройства с таким номером — /devices' };
 		const cid = cfg_id_for_dev(d, true);
 		if (!cid)
-			return 'у устройства нет MAC/IP — правило для него невозможно';
+			return { error: 'у устройства нет MAC/IP — правило для него невозможно' };
 		if (!sid_ok(cid, 'client'))
-			return 'идентификатор устройства неверен — попробуйте ещё раз';
+			return { error: 'идентификатор устройства неверен — попробуйте ещё раз' };
 		push(cids, cid);
 	}
-
-	const fd = popen(`uci -q add homecontrol rule`);
-	const newid = fd ? trim((fd.read('line') || '')) : '';
-	if (fd)
-		fd.close();
-	if (!length(newid))
-		return 'uci add failed';
-	shell_uci(`uci -q set homecontrol.${newid}.type='domain'`);
-	const nm = clean_text(doms[0]);
-	if (length(nm))
-		shell_uci(`uci -q set homecontrol.${newid}.name='${nm}'`);
-	for (let i = 0; i < length(doms); i++)
-		shell_uci(`uci -q add_list homecontrol.${newid}.target='${doms[i]}'`);
-	for (let i = 0; i < length(cids); i++)
-		shell_uci(`uci -q add_list homecontrol.${newid}.client_ids='${cids[i]}'`);
-	shell_uci(`uci -q set homecontrol.${newid}.enabled='1'`);
-	commit_hc();
-	add_event('system', doms[0], 'site rule added via Telegram' +
-		(length(cids) ? ' (per-client)' : ' (whole network)'));
-	apply_async(api);
-	return '✅ блок добавлен: ' + join(', ', doms) +
-		(length(cids) ? ' (для выбранного устройства)' : ' (вся сеть)') +
-		'\nсписок: /sites';
+	return { doms: doms, cids: cids };
 }
 
-function unblocksite(api, chat_id, rest) {
+/* The confirmed mutation: one control_rule_add RPC (commit + apply + event
+ * happen in rpcd). */
+export function blocksite_exec(api, chat_id, doms_csv, cids_csv, cbid) {
+	const doms = [];
+	const dra = split('' + (doms_csv || ''), ',');
+	for (let i = 0; i < length(dra); i++)
+		if (length(trim(dra[i])))
+			push(doms, trim(dra[i]));
+	const cids = [];
+	const cra = split('' + (cids_csv || ''), ',');
+	for (let i = 0; i < length(cra); i++)
+		if (length(trim(cra[i])))
+			push(cids, trim(cra[i]));
+	if (!length(doms)) {
+		api.answer_cb(cbid, 'Пусто');
+		return;
+	}
+	const r = ubus_call('control_rule_add', {
+		name: doms[0], type: 'domain',
+		targets: join(',', doms), client_ids: join(',', cids)
+	}, 15);
+	if (r && r.result === true) {
+		bump_cursor();
+		quiet_touch(api);
+		api.answer_cb(cbid, 'Добавлено');
+		api.send_html(chat_id, '✅ блок добавлен: ' + esc(join(', ', doms)) +
+			(length(cids) ? ' (для выбранного устройства)' : ' (вся сеть)') + '\nсписок: /sites', sites_kb());
+	} else {
+		api.answer_cb(cbid, 'Ошибка');
+		api.send_html(chat_id, '⚠ Правило не добавлено: ' +
+			esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), null);
+	}
+};
+
+/* Validation + count for the confirm card. */
+function unblocksite_check(rest) {
 	const dom = lc(clean_text(split(trim(rest || ''), ' ')[0] || ''));
 	if (!length(dom))
-		return 'использование: /unblocksite <домен>';
+		return { error: 'использование: /unblocksite <домен>' };
 	const rules = get_sections('rule');
 	let n = 0;
 	for (let i = 0; i < length(rules); i++) {
-		const r = rules[i];
-		const tg = r.target || [];
-		let hit = false;
+		const tg = rules[i].target || [];
 		for (let k = 0; k < length(tg); k++)
 			if (lc(tg[k]) === dom)
-				hit = true;
-		if (hit) {
-			shell_uci(`uci -q delete homecontrol.${r.id}`);
-			n++;
-		}
+				n++;
 	}
-	if (n > 0) {
-		commit_hc();
-		add_event('system', dom, `site rule(s) removed via Telegram (${n})`);
-		apply_async(api);
-		return '✅ удалено правил: ' + n + ' (' + dom + ')';
-	}
-	return 'правил с ' + dom + ' не найдено — /sites';
+	return { dom: dom, count: n };
 }
+
+/* The confirmed mutation: delete EVERY rule still matching the domain
+ * (the live list is re-resolved at confirm time — honest). */
+export function unblocksite_exec(api, chat_id, dom, cbid) {
+	const rules = get_sections('rule');
+	let n = 0, fail = null;
+	for (let i = 0; i < length(rules); i++) {
+		const r0 = rules[i];
+		const tg = r0.target || [];
+		let hit = false;
+		for (let k = 0; k < length(tg); k++)
+			if (lc(tg[k]) === lc('' + dom))
+				hit = true;
+		if (!hit)
+			continue;
+		const r = ubus_call('control_rule_delete', { id: r0.id }, 15);
+		if (r && r.result === true)
+			n++;
+		else if (fail == null)
+			fail = (r && r.error) ? '' + r.error : 'rpcd недоступен';
+	}
+	bump_cursor();
+	if (n > 0) {
+		quiet_touch(api);
+		api.answer_cb(cbid, 'Удалено');
+		api.send_html(chat_id, '✅ удалено правил: ' + n + ' (' + esc('' + dom) + ')' +
+			(fail ? '\n⚠ часть не удалась: ' + esc(fail) : ''), sites_kb());
+	} else {
+		api.answer_cb(cbid, fail ? 'Ошибка' : 'Не найдено');
+		api.send_html(chat_id, (fail ? '⚠ удаление не выполнено: ' + esc(fail)
+			: 'правил с ' + esc('' + dom) + ' не найдено — /sites'), null);
+	}
+};
+
+/* The confirmed mutation for a SINGLE rule id (sdel:). */
+export function rule_delete_exec(api, chat_id, rid, cbid) {
+	if (!sid_ok(rid, 'rule')) {
+		api.answer_cb(cbid, 'Правило уже удалено');
+		api.send_html(chat_id, sites_text(), sites_kb());
+		return;
+	}
+	const r = ubus_call('control_rule_delete', { id: rid }, 15);
+	if (r && r.result === true) {
+		bump_cursor();
+		quiet_touch(api);
+		api.answer_cb(cbid, 'Удалено');
+		api.send_html(chat_id, '✅ правило удалено.', sites_kb());
+	} else {
+		api.answer_cb(cbid, 'Ошибка');
+		api.send_html(chat_id, '⚠ Правило не удалено: ' +
+			esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), sites_kb());
+	}
+};
 
 /* ── wifi view ────────────────────────────────────────────────────────── */
 
@@ -643,7 +726,10 @@ function wifi_kb() {
 	return kb(rows);
 }
 
-function wifi_toggle(api, chat_id, iface, disable, cbid) {
+/* Ф8.2: the toggle rides control_wifi_set (commit + wifi reload + event in
+ * rpcd). Wi-Fi OFF carries its own second-button confirmation (telegram.uc
+ * asks it — this function IS the confirmed executor). EXPORTED. */
+export function wifi_toggle(api, chat_id, iface, disable, cbid) {
 	/* Ф1.5: the iface id travels through callback data — allow-list it
 	 * against the live Wi-Fi view (never raw shell text). */
 	const ifaces = wifi_ifaces();
@@ -655,19 +741,18 @@ function wifi_toggle(api, chat_id, iface, disable, cbid) {
 		api.answer_cb(cbid, 'Ошибка');
 		return;
 	}
-	if (disable) {
-		shell_uci(`uci -q set wireless.${iface}.disabled='1'`);
-		add_event('wifi', iface, 'turned off (Telegram)');
+	const r = ubus_call('control_wifi_set', { iface: iface, disabled: disable ? '1' : '0' }, 20);
+	if (r && r.result === true) {
+		bump_cursor();
+		quiet_touch(api);
+		api.answer_cb(cbid, disable ? 'Выключено' : 'Включено');
+		api.send_html(chat_id, wifi_text(), wifi_kb());
 	} else {
-		shell_uci(`uci -q delete wireless.${iface}.disabled`);
-		shell_uci(`rm -f '/var/run/homecontrol/wifi.off.${iface}'`);
-		add_event('wifi', iface, 'turned on (Telegram)');
+		api.answer_cb(cbid, 'Ошибка');
+		api.send_html(chat_id, '⚠ Wi-Fi не переключён: ' +
+			esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), null);
 	}
-	shell_uci(`uci -q commit wireless`);
-	system(`wifi reload 2>/dev/null`);
-	api.answer_cb(cbid, disable ? 'Выключаю' : 'Включаю');
-	api.send_html(chat_id, wifi_text(), wifi_kb());
-}
+};
 
 /* ── command / callback entry points (called by telegram.uc) ─────────── */
 
@@ -687,27 +772,56 @@ export function handle_command(api, chat_id, cmd, rest) {
 		return true;
 	}
 	if (cmd === 'blocksite') {
-		api.send_html(chat_id, esc(blocksite(api, chat_id, rest)), null);
+		const c = blocksite_check(rest);
+		if (c.error != null) {
+			api.send_html(chat_id, esc(c.error), null);
+			return true;
+		}
+		/* Ф8.2: adding a rule is a HEAVY action — the second button. The
+		 * optional device number may already have added the client section
+		 * (an auxiliary mutation, disclosed here honestly). */
+		api.confirm_ask(chat_id, (api.role != null) ? api.role : 'admin', 'rule_add',
+			join(',', c.doms) + '|' + join(',', c.cids),
+			'Заблокировать ' + join(', ', c.doms) + '?',
+			(length(c.cids) ? 'Правило для выбранного устройства (устройство добавлено в контроль).'
+				: 'Правило на ВСЮ сеть — все устройства теряют доступ к домену.'));
 		return true;
 	}
 	if (cmd === 'unblocksite') {
-		api.send_html(chat_id, esc(unblocksite(api, chat_id, rest)), null);
+		const c = unblocksite_check(rest);
+		if (c.error != null) {
+			api.send_html(chat_id, esc(c.error), null);
+			return true;
+		}
+		if (c.count === 0) {
+			api.send_html(chat_id, 'правил с ' + esc(c.dom) + ' не найдено — /sites', null);
+			return true;
+		}
+		api.confirm_ask(chat_id, (api.role != null) ? api.role : 'admin', 'rule_del_domain',
+			c.dom, 'Удалить правила с ' + c.dom + '?',
+			'Будет удалено правил: ' + c.count + '. Список пересматривается в момент подтверждения.');
 		return true;
 	}
 	if (cmd === 'pause') {
-		shell_uci(`uci -q set homecontrol.main.paused='1'`);
-		commit_hc();
-		add_event('system', '', 'enforcement paused (Telegram)');
-		apply_async(api);
-		api.send_html(chat_id, '⏸ Контроль на паузе — всё разрешено. /resume — обратно.', panel_kb());
+		const r = ubus_call('control_set_paused', { paused: '1' }, 15);
+		if (r && r.result === true) {
+			bump_cursor();
+			quiet_touch(api);
+			api.send_html(chat_id, '⏸ Контроль на паузе — всё разрешено. /resume — обратно.', panel_kb());
+		} else
+			api.send_html(chat_id, '⚠ Пауза не применена: ' +
+				esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), null);
 		return true;
 	}
 	if (cmd === 'resume') {
-		shell_uci(`uci -q set homecontrol.main.paused='0'`);
-		commit_hc();
-		add_event('system', '', 'enforcement resumed (Telegram)');
-		apply_async(api);
-		api.send_html(chat_id, '▶ Контроль возобновлён.', panel_kb());
+		const r = ubus_call('control_set_paused', { paused: '0' }, 15);
+		if (r && r.result === true) {
+			bump_cursor();
+			quiet_touch(api);
+			api.send_html(chat_id, '▶ Контроль возобновлён.', panel_kb());
+		} else
+			api.send_html(chat_id, '⚠ Возобновление не применено: ' +
+				esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), null);
 		return true;
 	}
 	if (cmd === 'wifi') {
@@ -717,19 +831,39 @@ export function handle_command(api, chat_id, cmd, rest) {
 	return false;
 };
 
-/* Handle a device action callback. Returns true when consumed. */
+/* Handle a device action callback. Returns true when consumed.
+ * Ф8.2: PERSISTENT actions (block / allow / Wi-Fi-block / Wi-Fi-unblock)
+ * ask for the second button here; TEMP actions stay one-tap (operator). */
 export function handle_dev_action(api, chat_id, data, cbid) {
 	API = api;
-	const prefixes = { 'ctl:blk:': 'blk', 'ctl:alw:': 'alw', 'ctl:t30:': 't30',
-		'ctl:t60:': 't60', 'ctl:t120:': 't120', 'ctl:t1440:': 't1440',
-		'ctl:tunb:': 'tunb', 'ctl:tal60:': 'tal60', 'ctl:tal1440:': 'tal1440',
+	const ask = { 'ctl:blk:': 'blk', 'ctl:alw:': 'alw',
 		'ctl:wblk:': 'wblk', 'ctl:walm:': 'walm' };
-	for (let p in prefixes) {
+	for (let p in ask) {
 		if (substr(data, 0, length(p)) === p) {
 			/* Ф8.1 (audit 20): the remainder is the STABLE device reference
 			 * (c:<sid> / m:<mac> / i:<ip>) — resolved against the live list
-			 * at tap time; stale/foreign refs are an honest «not found». */
-			dev_action(api, substr(data, length(p)), prefixes[p], cbid, chat_id);
+			 * at EXEC time; stale/foreign refs are an honest «not found». */
+			const ref = substr(data, length(p));
+			const d = dev_by_ref(ref);
+			let lbl = ref;
+			if (d)
+				lbl = d.alias || d.hostname || d.ip || d.mac;
+			api.confirm_ask(chat_id, (api.role != null) ? api.role : 'admin',
+				'dev', ask[p] + '|' + ref,
+				(p === 'ctl:blk:') ? ('Заблокировать «' + lbl + '»?')
+					: (p === 'ctl:alw:') ? ('Разрешить «' + lbl + '»?')
+					: (p === 'ctl:wblk:') ? ('Запретить Wi-Fi «' + lbl + '»?')
+					: ('Разрешить Wi-Fi «' + lbl + '»?'),
+				'Постоянное действие (переживает перезапуски). Временные варианты — в меню устройства.');
+			return true;
+		}
+	}
+	const temps = { 'ctl:t30:': 't30', 'ctl:t60:': 't60', 'ctl:t120:': 't120',
+		'ctl:t1440:': 't1440', 'ctl:tunb:': 'tunb',
+		'ctl:tal60:': 'tal60', 'ctl:tal1440:': 'tal1440' };
+	for (let p in temps) {
+		if (substr(data, 0, length(p)) === p) {
+			dev_action(api, substr(data, length(p)), temps[p], cbid, chat_id);
 			return true;
 		}
 	}
@@ -768,37 +902,47 @@ export function handle_cb(api, chat_id, data, cbid) {
 	}
 	if (substr(data, 0, 5) === 'sdel:') {
 		const rid = substr(data, 5);
-		/* Ф1.5 (аудит 31): a forged callback must not become shell text —
-		 * format + existence + exact type before the delete. */
+		/* Ф1.5 (аудит 31): a forged callback must not become anything —
+		 * format + existence + exact type BEFORE the confirmation. */
 		if (!sid_ok(rid, 'rule')) {
 			api.answer_cb(cbid, 'Правило уже удалено');
 			api.send_html(chat_id, sites_text(), sites_kb());
 			return true;
 		}
-		shell_uci(`uci -q delete homecontrol.${rid}`);
-		commit_hc();
-		add_event('system', rid, 'site rule removed (Telegram)');
-		apply_async(api);
-		api.answer_cb(cbid, 'Удалено');
-		api.send_html(chat_id, sites_text(), sites_kb());
+		const rules = get_sections('rule');
+		let lbl = rid;
+		for (let i = 0; i < length(rules); i++)
+			if (rules[i].id === rid) {
+				lbl = (rules[i].target && length(rules[i].target)) ? rules[i].target[0] : rid;
+				break;
+			}
+		api.confirm_ask(chat_id, (api.role != null) ? api.role : 'admin', 'rule_del', rid,
+			'Удалить правило «' + lbl + '»?',
+			'Правило перестанет действовать после apply (~60 с или сразу).');
 		return true;
 	}
 	if (data === 'ctl:pause') {
 		api.answer_cb(cbid, 'Пауза');
-		shell_uci(`uci -q set homecontrol.main.paused='1'`);
-		commit_hc();
-		add_event('system', '', 'enforcement paused (Telegram)');
-		apply_async(api);
-		api.send_html(chat_id, '⏸ Контроль на паузе — всё разрешено.', panel_kb());
+		const r = ubus_call('control_set_paused', { paused: '1' }, 15);
+		if (r && r.result === true) {
+			bump_cursor();
+			quiet_touch(api);
+			api.send_html(chat_id, '⏸ Контроль на паузе — всё разрешено.', panel_kb());
+		} else
+			api.send_html(chat_id, '⚠ Пауза не применена: ' +
+				esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), null);
 		return true;
 	}
 	if (data === 'ctl:resume') {
 		api.answer_cb(cbid, 'Продолжаю');
-		shell_uci(`uci -q set homecontrol.main.paused='0'`);
-		commit_hc();
-		add_event('system', '', 'enforcement resumed (Telegram)');
-		apply_async(api);
-		api.send_html(chat_id, '▶ Контроль возобновлён.', panel_kb());
+		const r = ubus_call('control_set_paused', { paused: '0' }, 15);
+		if (r && r.result === true) {
+			bump_cursor();
+			quiet_touch(api);
+			api.send_html(chat_id, '▶ Контроль возобновлён.', panel_kb());
+		} else
+			api.send_html(chat_id, '⚠ Возобновление не применено: ' +
+				esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), null);
 		return true;
 	}
 	if (data === 'ctl:wifi') {
@@ -808,7 +952,18 @@ export function handle_cb(api, chat_id, data, cbid) {
 	}
 	if (substr(data, 0, 5) === 'woff:' || substr(data, 0, 5) === 'wton:') {
 		const iface = substr(data, 5);
-		wifi_toggle(api, chat_id, iface, (substr(data, 0, 5) === 'woff:'), cbid);
+		if (substr(data, 0, 5) === 'woff:') {
+			/* Ф8.2: Wi-Fi OFF is a HEAVY persistent action — second button. */
+			const ifaces = wifi_ifaces();
+			let ssid = iface;
+			for (let i = 0; i < length(ifaces); i++)
+				if (ifaces[i].id === iface)
+					ssid = ifaces[i].ssid || iface;
+			api.confirm_ask(chat_id, (api.role != null) ? api.role : 'admin', 'wifi',
+				iface + '|1', 'Выключить Wi-Fi «' + ssid + '»?',
+				'Беспроводные устройства потеряют сеть (кабель работает). Включить обратно: одна кнопка.');
+		} else
+			wifi_toggle(api, chat_id, iface, false, cbid);
 		return true;
 	}
 	return false;
@@ -851,11 +1006,17 @@ export function push_scan(api) {
 			ev_saved_id = ev_last_id;
 		}
 		const evs = ev_tail(200, ev_last_id);
+		/* Ф8.2: events the bot ITSELF just caused (via RPC) are suppressed
+		 * for a short window — the direct reply is the single result place.
+		 * The cursor advances regardless (a suppressed event never replays). */
+		const quiet_now = (api.quiet && int(api.quiet.until || 0) > time());
 		for (let i = 0; i < length(evs); i++) {
 			const ev = evs[i];
 			if (ev.id <= ev_last_id || ev.src !== 'control')
 				continue;
 			ev_last_id = ev.id;
+			if (quiet_now)
+				continue;
 			const icon = (ev.type in EV_ICON) ? EV_ICON[ev.type] : '•';
 			const who = trim('' + (ev.who || ''));
 			const detail = trim('' + (ev.detail || ''));
