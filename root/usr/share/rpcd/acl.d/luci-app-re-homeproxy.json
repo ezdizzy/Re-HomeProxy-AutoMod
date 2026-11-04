@@ -61,6 +61,7 @@
 					"mosdns_prepare_install", "mosdns_install_pkg", "mosdns_remove",
 					"automation_list_write", "automation_test_now", "automation_restore", "automation_recheck",
 					"automation_entry_add", "automation_entry_delete", "automation_entry_action", "automation_geo_update",
+					"automation_geo_protect_set",
 					"list_create", "list_delete", "list_write", "list_import", "list_update",
 					"list_backup_create", "list_backup_restore", "wizard_preset_add",
 					"control_set", "control_set_paused", "recovery_action",

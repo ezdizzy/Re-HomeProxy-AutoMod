@@ -7543,3 +7543,111 @@ msgstr ""
 
 msgid "Manual composition hold is active (Hot Swap): the scheduled re-rank is suspended — live checks and dead-resource repairs continue."
 msgstr ""
+
+msgid "Expert settings"
+msgstr ""
+
+msgid "DPI auto-pilot"
+msgstr ""
+
+msgid "Logs"
+msgstr ""
+
+msgid "Automation is disabled — turn on the switch above to start learning."
+msgstr ""
+
+msgid "Automation events"
+msgstr ""
+
+msgid "The shared event journal of the automation family — learning, self-heals, Hot Swap switches, the URLTest watchdog and the DPI auto-pilot. The full feed of every subsystem lives on the Health center page."
+msgstr ""
+
+msgid "The DPI auto-pilot keeps the bypass strategies working without attention: on schedule it re-ranks the tested strategies and applies the best one per resource; when a resource stops answering, the next alternative applies immediately. Every apply takes a server snapshot (Restore stays available) and verifies the resource live. One-click picks and fresh measurements live on the Blocking bypass page — the Strategy Lab."
+msgstr ""
+
+msgid "Strategy Lab and one-click auto-pick"
+msgstr ""
+
+msgid "databases not installed"
+msgstr ""
+
+msgid "the RU-protection card on the Connection page"
+msgstr ""
+
+msgid "hidden by default — open only if needed"
+msgstr ""
+
+msgid "The engine learns which sites your provider blocks and sends them around the block automatically: traffic that fails directly but works through the proxy is added to the lists. Three levels: this one is the site learning itself, the DPI auto-pilot keeps the bypass strategies fresh on its own, the Logs level shows the engine log and the automation event journal."
+msgstr ""
+
+msgid "One click keeps a resource working: the auto-pick ranks the strategies and applies the best one for a single resource with a server snapshot and a live check. The SCHEDULED auto-pilot (always-on re-ranks and repairs) is configured on the Auto-bypass page — an always-on keeper belongs to automation."
+msgstr ""
+
+msgid "The scheduled auto-pilot (enable, resources, re-rank interval, night auto-pick) lives on the Auto-bypass page, \"DPI auto-pilot\" level — an always-on keeper belongs to automation. The daemon hot-reads its settings every tick."
+msgstr ""
+
+msgid "Open the DPI auto-pilot settings"
+msgstr ""
+
+msgid "The change is applied and verified."
+msgstr ""
+
+msgid "Save RU-protection"
+msgstr ""
+
+msgid "Update databases now"
+msgstr ""
+
+msgid "RU traffic does NOT go through the proxy"
+msgstr ""
+
+msgid "RU-geo databases auto-update"
+msgstr ""
+
+msgid "Update the RU-geo databases automatically"
+msgstr ""
+
+msgid "every"
+msgstr ""
+
+msgid "The daemon checks the database age hourly and re-downloads it in the background when it is older than the interval. The databases list all Russian networks and the domains of major RU services (banks, marketplaces, Yandex/VK/Mail.ru stacks); sources: GrimbirdUsers/ru-routing-dat via GitHub / jsDelivr mirrors, ipdeny.com fallback."
+msgstr ""
+
+msgid "Saved — the auto-update settings are re-read by the daemon on its own hourly check."
+msgstr ""
+
+msgid "Applying — the core config regenerates…"
+msgstr ""
+
+msgid "RU-protection is ON and verified — RU traffic stays direct."
+msgstr ""
+
+msgid "RU-protection is OFF and verified — RU traffic may follow the lists."
+msgstr ""
+
+msgid "The RU-geo update started in the background — the status line shows the new date in a minute."
+msgstr ""
+
+msgid "Update failed: "
+msgstr ""
+
+msgid "Guard is on"
+msgstr ""
+
+msgid "Guard is off"
+msgstr ""
+
+msgid "networks %s, domains %s"
+msgstr ""
+
+msgid "not downloaded — press \"Update databases now\""
+msgstr ""
+
+msgid "RU-protection"
+msgstr ""
+
+msgid "RU traffic does NOT go through the proxy: Russian networks and domains (the RU-geo databases, .ru/.su/.рф) are always routed DIRECT — even when a resource sits in the learned, static or your own proxy lists. RU services (banks, marketplaces, government portals) flag VPN exits — the guard keeps them off the tunnel. The check order: service rules → your \"Direct\" lists → RU-protection → your \"Proxy\" lists → learned lists."
+msgstr ""
+
+msgid "down"
+msgstr ""

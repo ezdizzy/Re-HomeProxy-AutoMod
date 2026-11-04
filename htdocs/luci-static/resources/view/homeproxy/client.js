@@ -38,6 +38,36 @@ const callHotswapStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф7.2: the RU-protection card (guarantee + RU-geo databases). The guard is
+ * a routing invariant of the "Bypass blocking" mode — its card lives on the
+ * Connection page, NOT in the automation settings. UCI keys stay
+ * homeproxy.automation.*; the save goes through the tracked-op RPC. */
+const callGeoStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_geo_status',
+	expect: { '': {} }
+});
+
+const callGeoUpdate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_geo_update',
+	expect: { '': {} }
+});
+
+const callGeoProtectSet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'automation_geo_protect_set',
+	params: [ 'protect', 'auto_update', 'hours' ],
+	expect: { '': {} }
+});
+
+const callOpStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_op_status',
+	params: [ 'op_id' ],
+	expect: { '': {} }
+});
+
 const CORE_MGMT = '/usr/share/homeproxy/scripts/core_mgmt.uc';
 
 const callByeDPIStatus = rpc.declare({
@@ -1517,12 +1547,164 @@ return view.extend({
 		 * DOMAIN lists moved to the Routing Wizard (Services → exits) —
 		 * both are routing inputs, and the Wizard is their single editor. */
 
+		/* ── Ф7.2: the RU-protection card (top of the Connection page) ────
+		 * The honest place of the guarantee: «RU traffic does NOT go through
+		 * the proxy» — a routing invariant, not an automation setting. The
+		 * guard sits in the generated config BEFORE the proxy lists; the
+		 * RU-geo databases feed it (and the learning exclusion). Shown only
+		 * in "Bypass blocking" — the only mode where the invariant rules
+		 * exist. ONE result area under the card (ui.action_buttons_result_
+		 * placement); saves go through the tracked op with a verified
+		 * verdict. */
+		function pollGeoOp(desc, after, okText) {
+			if (!desc || desc.hot || !desc.op_id) {
+				if (after) after();
+				return;
+			}
+			const doneText = okText || _('The change is applied and verified.');
+			const deadline = Date.now() + 150000;
+			const tick = function() {
+				return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st) {
+					const op = st && st.op;
+					if (op && op.status !== 'completed' && op.status !== 'failed') {
+						if (Date.now() > deadline) {
+							ui.addNotification(null, E('p', {},
+								_('The apply operation is still running — check the operation journal on the Diagnostics page.')), 'info');
+							if (after) after();
+							return;
+						}
+						window.setTimeout(tick, 2000);
+						return;
+					}
+					const ok = !!op && op.status === 'completed' && op.verified;
+					ui.addNotification(null, E('p', {}, ok
+						? doneText
+						: _('Apply failed: ') + ((op && (op.detail || op.error)) || _('rpc error'))),
+						ok ? 'info' : 'error');
+					if (after) after();
+				});
+			};
+			tick();
+		}
+
+		let ruCard = null;
+		if (modeNow === 'proxy_banned_ru') {
+			if (!document.getElementById('hp-ru-style')) {
+				document.head.appendChild(E('style', { id: 'hp-ru-style' }, [ `
+.rurow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg-2); margin: 6px 0; }
+` ]));
+			}
+			const ruResult = E('div', { 'class': 'hpui-hint', style: 'margin-top:6px' });
+			const ruStatus = E('div', { 'class': 'hpui-hint', style: 'margin-top:6px' });
+			const geoProtect = E('input', { type: 'checkbox' });
+			const geoAuto = E('input', { type: 'checkbox' });
+			const geoHours = E('input', { type: 'number', min: '1', max: '720', 'class': 'cbi-input-text', style: 'width:80px' });
+			const ruSave = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' }, [ _('Save RU-protection') ]);
+			const ruUpdate = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Update databases now') ]);
+			geoProtect.checked = (uci.get('homeproxy', 'automation', 'geo_protect') != null)
+				? (uci.get('homeproxy', 'automation', 'geo_protect') !== '0') : true;
+			geoAuto.checked = (uci.get('homeproxy', 'automation', 'geo_auto_update') === '1');
+			geoHours.value = uci.get('homeproxy', 'automation', 'geo_update_hours') || '24';
+			const ruRow = E('div', { 'class': 'rurow' }, [
+				E('label', { 'class': 'hpui-hint', style: 'margin:0; cursor:pointer; font-weight:600' },
+					[ geoProtect, ' ' + _('RU traffic does NOT go through the proxy') ]),
+				ruSave
+			]);
+			const ruExpert = E('details', { style: 'margin:6px 0 0 0' }, [
+				E('summary', { style: 'cursor:pointer; opacity:.8' }, [ _('RU-geo databases auto-update') ]),
+				E('div', { 'class': 'rurow' }, [
+					E('label', { 'class': 'hpui-hint', style: 'margin:0; cursor:pointer' },
+						[ geoAuto, ' ' + _('Update the RU-geo databases automatically') ]),
+					E('label', { 'class': 'hpui-hint', style: 'margin:0' }, [ _('every') ]),
+					geoHours, E('span', { 'class': 'hpui-hint', style: 'margin:0' }, [ 'h' ]),
+					ruUpdate
+				]),
+				E('p', { 'class': 'hpui-hint' },
+					[ _('The daemon checks the database age hourly and re-downloads it in the background when it is older than the interval. The databases list all Russian networks and the domains of major RU services (banks, marketplaces, Yandex/VK/Mail.ru stacks); sources: GrimbirdUsers/ru-routing-dat via GitHub / jsDelivr mirrors, ipdeny.com fallback.') ])
+			]);
+			ruSave.addEventListener('click', function() {
+				ruSave.disabled = true;
+				const wasProtect = (uci.get('homeproxy', 'automation', 'geo_protect') != null)
+					? (uci.get('homeproxy', 'automation', 'geo_protect') !== '0') : true;
+				L.resolveDefault(callGeoProtectSet(
+					geoProtect.checked ? '1' : '0',
+					geoAuto.checked ? '1' : '0',
+					String(parseInt(geoHours.value, 10) || 24)), {}).then(function(r) {
+					ruSave.disabled = false;
+					if (!r || r.result !== true) {
+						ruResult.textContent = _('Save failed: ') + ((r && r.error) || _('rpc error'));
+						return;
+					}
+					if (r.unchanged) {
+						ruResult.textContent = _('Saved — the auto-update settings are re-read by the daemon on its own hourly check.');
+						return;
+					}
+					/* The guard changed → generate+reload (tracked op). */
+					ruResult.textContent = _('Applying — the core config regenerates…');
+					pollGeoOp(r, function() { ruResult.textContent = ''; },
+						geoProtect.checked
+							? _('RU-protection is ON and verified — RU traffic stays direct.')
+							: _('RU-protection is OFF and verified — RU traffic may follow the lists.'));
+				}).catch(function(e) {
+					ruSave.disabled = false;
+					ruResult.textContent = _('Save failed: ') + e;
+				});
+			});
+			ruUpdate.addEventListener('click', function() {
+				ruUpdate.disabled = true;
+				L.resolveDefault(callGeoUpdate(), {}).then(function(r) {
+					ruUpdate.disabled = false;
+					if (r && r.result === false)
+						ruResult.textContent = _('Update failed to start: ') + (r.error || '');
+					else
+						ruResult.textContent = _('The RU-geo update started in the background — the status line shows the new date in a minute.');
+					refreshRuStatus();
+				}).catch(function(e) {
+					ruUpdate.disabled = false;
+					ruResult.textContent = _('Update failed: ') + e;
+				});
+			});
+			function renderRuStatus(meta) {
+				const g = (meta && meta.meta) || meta || {};
+				ruStatus.textContent = '';
+				ruStatus.appendChild(E('span', { 'class': 'hpui-badge ' + (geoProtect.checked ? 'hpui-b-green' : 'hpui-b-grey') },
+					[ geoProtect.checked ? _('Guard is on') : _('Guard is off') ]));
+				ruStatus.appendChild(document.createTextNode(' '));
+				ruStatus.appendChild(E('b', {}, [ _('RU-geo databases') ]));
+				ruStatus.appendChild(document.createTextNode(': ' + (g.installed
+					? _('networks %s, domains %s').format(g.geoip || 0, g.geosite || 0)
+					: _('not downloaded — press "Update databases now"'))
+					+ (g.updated ? (' · ' + (function(ts) {
+						const d = Math.floor((Date.now() / 1000 - Number(ts)) / 86400);
+						if (d <= 0) return _('updated today');
+						if (d === 1) return _('updated yesterday');
+						return _('updated %d days ago').format(d);
+					})(g.updated)) : '')
+					+ (g.updating ? (' · ' + _('updating…')) : '')));
+			}
+			function refreshRuStatus() {
+				return L.resolveDefault(callGeoStatus(), {}).then(renderRuStatus);
+			}
+			poll.add(refreshRuStatus, 10);
+			refreshRuStatus();
+			ruCard = E('div', { 'class': 'hpui-panel', style: 'margin:0 0 14px 0' }, [
+				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('shield'), _('RU-protection') ]),
+				E('p', { 'class': 'hpui-hint', style: 'margin:2px 0 8px 0' },
+					[ _('RU traffic does NOT go through the proxy: Russian networks and domains (the RU-geo databases, .ru/.su/.рф) are always routed DIRECT — even when a resource sits in the learned, static or your own proxy lists. RU services (banks, marketplaces, government portals) flag VPN exits — the guard keeps them off the tunnel. The check order: service rules → your "Direct" lists → RU-protection → your "Proxy" lists → learned lists.') ]),
+				ruRow,
+				ruExpert,
+				ruStatus,
+				ruResult
+			]);
+		}
+
 		return m.render().then(function(node) {
 			return E('div', {}, [
 				hp.pageIntro(_('Connection'),
 					_('How the traffic leaves your home: which server is the main one, how the routing mode decides what goes through the proxy, and what keeps the connection alive when a server dies. Everyday service→exit rules live on the Service rules page; DNS pools common to all modes — on the DNS settings page.')),
+				ruCard,
 				node
-			]);
+			].filter(function(x) { return x; }));
 		});
 	}
 

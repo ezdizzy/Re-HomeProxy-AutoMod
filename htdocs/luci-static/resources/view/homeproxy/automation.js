@@ -3,19 +3,26 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Ravnex — Automation tab.
+ * Ravnex — Automation tab (Ф7.1: THREE logical levels, not a settings zoo).
  *
- * Internal tabs: Overview (status cards + the Ф5 "Engine overview" panel:
- * cycle/probe/RAM/entries cards, inline-SVG sparklines, verdict
- * distribution, source activity and a recent-events feed, all fed by the
- * light automation_stats RPC), Sites (table with
- * sticky header, search, filters, add/delete, manual "always proxy"/"always
- * direct" pins), RU-geo databases (freshness + update), Settings (UCI form),
- * Engine log. The detection only ADDS sites proven unreachable directly yet
+ * Level "Auto-bypass" (D13 «Автообход блокировок»): the site-learning
+ * engine — master switch, status cards, the Sites table (search/filters/
+ * add/delete/pins), the Ф5 "Engine overview" panel (cycle/probe/RAM/entries
+ * cards, inline-SVG sparklines, verdict distribution, source activity and
+ * a recent-events feed, fed by the light automation_stats RPC) and the
+ * EXPERT settings collapsed into a <details> (U4: the less the user sees
+ * by default, the better). Level "DPI auto-pilot": the scheduled strategy
+ * auto-pilot (moved here from the Blocking bypass page — its natural home
+ * is automation; the one-click auto-pick stays with the Strategy Lab).
+ * Level "Logs": the engine log + the automation-family Event Bus feed
+ * (learn/heal/outage + Hot Swap switches + URLTest watchdog + autopilot
+ * decisions). The detection only ADDS sites proven unreachable directly yet
  * reachable via the proxy, and routes them through the user's configured main
  * path — so it stays fully compatible with ByeDPI and Zapret. Russian
  * networks/domains are hard-excluded from learning and from proxying
- * (RU-geo databases + TLD guards + manual pins).
+ * (RU-geo databases + TLD guards + manual pins); the RU-PROTECTION card
+ * itself (guarantee + databases) lives on the Connection page (Ф7.2) —
+ * it is a routing invariant, not an automation setting.
  */
 
 'use strict';
@@ -63,9 +70,27 @@ const callEntryAction = rpc.declare({
 	expect: { '': {} }
 });
 
-const callGeoUpdate = rpc.declare({
+/* Ф7.1: the scheduled DPI auto-pilot moved here from the Blocking bypass
+ * page (its logical home is automation). Same RPCs, same contract. */
+const callAutoPilotStatus = rpc.declare({
 	object: 'luci.homeproxy',
-	method: 'automation_geo_update',
+	method: 'wizard_autopilot_status',
+	expect: { '': {} }
+});
+
+const callAutoPilotSet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_autopilot_set',
+	params: [ 'enabled', 'resources', 'set_rules', 'interval_h', 'check_min', 'window', 'fuzz_mode', 'fail_strikes', 'night_pick' ],
+	expect: { '': {} }
+});
+
+/* Ф7.3: the automation-family Event Bus feed (Журналы level) — the same
+ * journal the Health center renders, filtered to the automation family. */
+const callEvents = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'control_events',
+	params: [ 'limit' ],
 	expect: { '': {} }
 });
 
@@ -239,14 +264,6 @@ tr.hpsrc-manual.hpsrc-manual-direct td:first-child { box-shadow: inset 3px 0 0 #
 .hpchip.on.hpc-direct { background: rgba(154,154,154,.25); border-color: #8a8a8a; color: inherit; }
 .hpdel { appearance: none; border: none; background: transparent; color: var(--hp-red); font-weight: 700; cursor: pointer; font-size: 1.05em; padding: 2px 8px; border-radius: var(--hp-radius-sm); opacity: .55; }
 .hpdel:hover { opacity: 1; background: var(--hp-red-soft); }
-.hpgeo-cards { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
-.hpgeo-card { flex: 1 1 280px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); padding: 12px 14px; background: var(--hp-panel-bg); }
-.hpgeo-card h4 { margin: 0 0 8px 0; }
-.hpgeo-meta { font-size: .88em; opacity: .85; margin: 4px 0; }
-.hpgeo-age-fresh { color: var(--hp-ink-green); }
-.hpgeo-age-stale { color: var(--hp-amber-hot); font-weight: 600; }
-.hpauto-log { max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; padding: 8px; background: var(--hp-console-bg); color: var(--hp-console-fg); border: 1px solid var(--hp-console-line); border-radius: var(--hp-radius-sm); font-size: 0.85em; font-family: var(--hp-font-mono); }
-.hpauto-hint { font-size: .88em; opacity: .8; margin: 8px 0; }
 .hpauto-panel { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); padding: 12px 14px; background: var(--hp-panel-bg); margin: 10px 0; box-shadow: var(--hp-shadow); }
 .hpauto-panel h4 { margin: 0 0 8px 0; }
 .hpauto-eng-charts { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
@@ -261,6 +278,17 @@ tr.hpsrc-manual.hpsrc-manual-direct td:first-child { box-shadow: inset 3px 0 0 #
 .hpauto-eng-ev { display: flex; gap: 8px; font-size: .85em; margin: 2px 0; align-items: baseline; }
 .hpauto-eng-ev .t { opacity: .6; white-space: nowrap; font-size: .92em; }
 .hpauto-eng-ev .m { word-break: break-word; }
+.hpauto-expert { margin: 12px 0; }
+.hpauto-expert summary { cursor: pointer; font-weight: 600; opacity: .8; padding: 6px 0; user-select: none; }
+.hpauto-expert summary:hover { opacity: 1; }
+.hpauto-feed { margin: 6px 0; }
+.hpauto-feed-ev { display: flex; gap: 8px; font-size: .85em; margin: 2px 0; align-items: baseline; }
+.hpauto-feed-ev .t { opacity: .6; white-space: nowrap; font-size: .92em; }
+.hpauto-feed-ev .m { word-break: break-word; }
+/* The DPI auto-pilot block moved from the Blocking bypass page (Ф7.1) —
+ * same visual language, the wiz-* classes live here now too. */
+.wiz-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; }
+.wiz-note { font-size: .88em; opacity: .8; margin: 8px 0; }
 `;
 
 function injectStyle() {
@@ -284,26 +312,34 @@ return view.extend({
 		hp.uiShell();
 
 		const m = new form.Map('homeproxy');
-		const s = m.section(form.NamedSection, 'automation', 'homeproxy', _('Auto blocked-site detection'));
+		/* Ф7.1/U4: TWO sections over the SAME UCI section — the master switch
+		 * stays visible on the level, every other knob is EXPERT (collapsed
+		 * into a <details> after render). The geo/RU-protection options moved
+		 * to the Connection page card (Ф7.2 — a routing invariant, not an
+		 * automation setting; the UCI keys stay automation.*). */
+		const s = m.section(form.NamedSection, 'automation', 'homeproxy', '');
 
 		let o = s.option(form.Flag, 'enabled', _('Enable automation'),
 			_('Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br>'
-			+ '<b>Mode notes:</b> active only in "Bypass blocking". Automatically paused in "Everything through node" (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in "Direct" mode (all mechanisms are off). After toggling, press "Restart service" on the Overview tab.'));
+			+ '<b>Mode notes:</b> active only in "Bypass blocking". Automatically paused in "Everything through node" (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in "Direct" mode (all mechanisms are off).'));
 		o.rmempty = false;
 
-		o = s.option(form.ListValue, 'mode', _('Mode'));
+		/* The expert section: SAME UCI section, every knob hidden by default. */
+		const sx = m.section(form.NamedSection, 'automation', 'homeproxy', _('Expert settings'));
+
+		o = sx.option(form.ListValue, 'mode', _('Mode'));
 		o.value('balanced', _('Balanced'));
 		o.value('aggressive', _('Aggressive (also re-verifies learned sites)'));
 		o.default = 'balanced';
 
-		o = s.option(form.ListValue, 'performance', _('Performance profile'),
+		o = sx.option(form.ListValue, 'performance', _('Performance profile'),
 			_('eco: serial probing for weak routers (still uses the native probe_pool batch when the helper is installed, capped at 8 concurrent probes). perf: up to 64 domains / 32 IPs per pass in parallel batches (16 at once) — for multi-core routers (e.g. GL.iNet Flint 2). auto: detected from CPU cores and memory.'));
 		o.value('auto', _('Auto (detect by hardware)'));
 		o.value('eco', _('Eco — serial, weak routers'));
 		o.value('perf', _('Performance — parallel, strong routers'));
 		o.default = 'auto';
 
-		o = s.option(form.MultiValue, 'discover', _('Discover candidates from'),
+		o = sx.option(form.MultiValue, 'discover', _('Discover candidates from'),
 			_('Domain-name sources to watch for candidates. Raw-IP destinations are a separate switch below (“Learn IP destinations”).'));
 		o.value('dns', _('DNS query log (captures domain at DNS time — most transparent)'));
 		o.value('clash', _('Clash API (connections, domain names)'));
@@ -321,7 +357,7 @@ return view.extend({
 			return v.filter(function(x) { return [ 'dns', 'clash', 'sni' ].includes(x); });
 		};
 
-		o = s.option(form.Value, 'max_entries', _('Maximum learned entries'));
+		o = sx.option(form.Value, 'max_entries', _('Maximum learned entries'));
 		o.datatype = 'uinteger';
 		o.placeholder = '2000';
 
@@ -330,11 +366,11 @@ return view.extend({
 		 * CDN exclusion, HTTP/2 probing — all are autonomous now). Only the
 		 * genuinely behavioral choices remain. */
 
-		o = s.option(form.Value, 'reeval_interval', _('Re-evaluate learned interval (seconds)'));
+		o = sx.option(form.Value, 'reeval_interval', _('Re-evaluate learned interval (seconds)'));
 		o.datatype = 'uinteger';
 		o.placeholder = '3600';
 
-		o = s.option(form.TextValue, 'exclude', _('Never auto-learn'),
+		o = sx.option(form.TextValue, 'exclude', _('Never auto-learn'),
 			_('Domains / IPs excluded from learning (substring & domain match). One entry per line or comma-separated; lines starting with # are comments, blank lines allowed - organize the list as you like.') + ' '
 			+ _('Defaults when empty: localhost, local, lan, in-addr.arpa, ip6.arpa.'));
 		o.placeholder = 'localhost\nlocal\nlan\n# my own notes:\n# example.com\nin-addr.arpa,ip6.arpa';
@@ -342,53 +378,41 @@ return view.extend({
 		o.monospace = true;
 		o.wrap = false;
 
-		o = s.option(form.Flag, 'ip_learn', _('Learn IP destinations'),
+		o = sx.option(form.Flag, 'ip_learn', _('Learn IP destinations'),
 			_('Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps.'));
 		o.default = o.disabled;
 
-		o = s.option(form.Flag, 'poison_verify', _('Verify DNS-poison verdicts by the plain answer'),
+		o = sx.option(form.Flag, 'poison_verify', _('Verify DNS-poison verdicts by the plain answer'),
 			_('Before a plain-vs-DoH mismatch is treated as DNS poisoning, the direct probe answer from the plain-view IP must be a real site response (no block/stub page, no TLS anomaly, no cross-host redirect). Anycast/geo divergence on CDN hosts (github.com, google.com, dl.google.com…) then no longer produces false “Blocked (DNS)” verdicts, while a real ISP stub — which never answers cleanly — is still learned instantly. Applied after Restart service.'));
 		o.default = o.enabled;
 		o.rmempty = false;
 
-		o = s.option(form.Flag, 'poison_asn_check', _('Cymru origin-ASN check (second layer)'),
+		o = sx.option(form.Flag, 'poison_asn_check', _('Cymru origin-ASN check (second layer)'),
 			_('For mismatches the first layers cannot classify: the plain-view IP is looked up via Team Cymru origin ASN (TXT over DoH through the tunnel) and cached by network prefix — one answer covers the whole range. If the ASN belongs to a CDN/anycast network (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), the mismatch is not poisoning. Adds an external lookup only for candidates that stayed ambiguous; extend the list via /etc/homeproxy/resources/cdn_asn.txt (one ASN number per line). Applied after Restart service.'));
 		o.default = o.disabled;
 
-		o = s.option(form.Flag, 'geo_protect', _('RU-protect: Russian internet never via proxy'),
-			_('Hard guard: traffic matching the RU-geo databases (networks + domains, see the “RU-geo databases” tab) and .ru/.su/.рф domains is always routed DIRECT, even if it matches a learned or static proxy list entry. RU services (banks, marketplaces, delivery) flag VPN exits — this keeps them off the tunnel.'));
-		o.default = o.enabled;
-		o.rmempty = false;
-
-		o = s.option(form.Value, 'sni_sniffer_interface', _('SNI capture interface'),
+		o = sx.option(form.Value, 'sni_sniffer_interface', _('SNI capture interface'),
 			_('Network interface the SNI capture (native sniffer or tcpdump) listens on.'));
 		o.datatype = 'string';
 		o.placeholder = 'br-lan';
 
-		o = s.option(form.Flag, 'geo_auto_update', _('Update RU-geo databases automatically'),
-			_('The engine daemon checks the database age hourly and re-downloads it in the background when it is older than the interval below. Manual updates are always available on the “RU-geo databases” tab.'));
-		o.default = o.disabled;
-
-		o = s.option(form.Value, 'geo_update_hours', _('RU-geo update interval (hours)'));
-		o.datatype = 'uinteger';
-		o.placeholder = '24';
-		o.depends('geo_auto_update', '1');
-
 		/* NOTE: legacy UCI keys reload_interval / flush_min_entries are intentionally
 		 * NOT exposed: learned entries hot-reload into the running core with no restart
 		 * and no dropped connections, so batching windows serve no purpose. The daemon
-		 * keeps honoring the defaults for old configs. */
+		 * keeps honoring the defaults for old configs.
+		 * NOTE (Ф7.2): geo_protect / geo_auto_update / geo_update_hours moved to the
+		 * RU-protection card on the Connection page (a routing invariant — the UCI
+		 * keys stay homeproxy.automation.*, only the UI home changed). */
 
 		/* ── Custom tabbed UI ──────────────────────────────────────────── */
 
 		injectStyle();
 
+		/* Ф7.1: THREE logical levels instead of the settings zoo (U4). */
 		const TABS = [
-			[ 'overview', _('Overview') ],
-			[ 'list', _('Sites') ],
-			[ 'geo', _('RU-geo databases') ],
-			[ 'settings', _('Settings') ],
-			[ 'log', _('Engine log') ]
+			[ 'engine', _('Auto-bypass') ],
+			[ 'dpi', _('DPI auto-pilot') ],
+			[ 'logs', _('Logs') ]
 		];
 
 		const panes = {};
@@ -411,13 +435,14 @@ return view.extend({
 			});
 			tabBar.appendChild(b);
 		}
-		panes.overview.classList.add('active');
+		panes.engine.classList.add('active');
 
 		const state = { data: null, search: '', filter: 'all', sortKey: 'added', sortDir: -1, sig: null,
-			stats: null, statsRun: false, statsFresh: false, engSig: null, evSig: null, kdSig: null };
+			stats: null, statsRun: false, statsFresh: false, engSig: null, evSig: null, kdSig: null,
+			apSig: null, feedSig: null };
 
 		const pauseReasons = {
-			disabled: _('Automation is disabled — enable it in Settings to start learning.'),
+			disabled: _('Automation is disabled — turn on the switch above to start learning.'),
 			custom: _('Automation is paused: a legacy custom routing mode is active — the engine has no preset pools to learn from. Switch to "Bypass blocking" to resume.'),
 			global: _('Automation is paused: "Everything through node" tunnels everything — there is nothing left to learn. Switch to "Bypass blocking" to resume.'),
 			direct_mode: _('Automation is paused: "Direct" mode is on — all bypass mechanisms are off. Switch back to "Bypass blocking" to resume.'),
@@ -452,15 +477,18 @@ return view.extend({
 			return null;
 		}
 
-		/* ── Overview pane ─────────────────────────────────────────────── */
+		/* ── Engine level: status + sites (Ф7.1 merge of Overview+Sites) ── */
 		const ovCards = E('div', { 'class': 'hpauto-cards' });
 		const pauseEl = E('div', { 'class': 'hpauto-banner', style: 'display:none' });
 		const geoLine = E('div', { 'class': 'hpauto-hint' });
 		const helperLine = E('div', { 'class': 'hpauto-hint' });
-		panes.overview.appendChild(ovCards);
-		panes.overview.appendChild(pauseEl);
-		panes.overview.appendChild(geoLine);
-		panes.overview.appendChild(helperLine);
+		panes.engine.appendChild(ovCards);
+		panes.engine.appendChild(pauseEl);
+		panes.engine.appendChild(geoLine);
+		panes.engine.appendChild(helperLine);
+		/* The Sites table (the RESULT of learning) follows the status. */
+		const sitesBox = E('div', {});
+		panes.engine.appendChild(sitesBox);
 
 		/* ── Engine overview panel (Ф5, ч.77) — the graphical engine view
 		 * that replaced the removed exit-health card (decision D2). Cards +
@@ -528,9 +556,9 @@ return view.extend({
 			E('div', { 'class': 'hpauto-eng-note', style: 'font-weight:600; margin-top:10px' }, [ _('Recent events') ]),
 			engEvents
 		]);
-		panes.overview.appendChild(engPanel);
+		panes.engine.appendChild(engPanel);
 
-		panes.overview.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
+		const engActions = E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Test now'), function() { return callTestNow().then(refresh); }),
 			btn(_('Install helpers'), function() {
 				return callHelpersInstall().then(function(r) {
@@ -552,13 +580,14 @@ return view.extend({
 					if (!r || (r.result === false && !r.op_id))
 						return ui.addNotification(null, E('p', {},
 							_('Restart failed: ') + ((r && r.error) || _('rpc error'))), 'error');
-					return applyLearnedOp({ op_id: r.op_id }, function() {},
-						_('Service restarted and verified.'));
-				});
-			})
-		]));
+				return applyLearnedOp({ op_id: r.op_id }, function() {},
+					_('Service restarted and verified.'));
+			});
+		})
+		]);
+		panes.engine.appendChild(engActions);
 
-		/* ── List pane ─────────────────────────────────────────────────── */
+		/* ── Sites (the RESULT of learning — inside the engine level) ──── */
 		const searchEl = E('input', { type: 'text', placeholder: _('Search by name or IP…'), 'class': 'cbi-input-text' });
 		searchEl.addEventListener('input', function() {
 			state.search = this.value.toLowerCase();
@@ -622,14 +651,14 @@ return view.extend({
 
 		const tableEl = E('div', {});
 		const tableMeta = E('div', { 'class': 'hpauto-hint' });
-		panes.list.appendChild(E('div', { 'class': 'hpauto-toolbar' }, [
+		sitesBox.appendChild(E('div', { 'class': 'hpauto-toolbar' }, [
 			searchEl, filterEl,
 			E('span', { style: 'flex:1' }),
 			addInput, addAction, addBtn
 		]));
-		panes.list.appendChild(tableEl);
-		panes.list.appendChild(tableMeta);
-		panes.list.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
+		sitesBox.appendChild(tableEl);
+		sitesBox.appendChild(tableMeta);
+		sitesBox.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Backup list'), function() {
 				return callBackup().then(function(r) {
 					if (!r || r.result === false) {
@@ -663,37 +692,247 @@ return view.extend({
 				});
 			})
 		]));
-		panes.list.appendChild(fileInput);
-		panes.list.appendChild(E('p', { 'class': 'hpauto-hint' },
+		sitesBox.appendChild(fileInput);
+		sitesBox.appendChild(E('p', { 'class': 'hpauto-hint' },
 			[ _('Manual status: “Always via proxy” keeps the site on the proxy and protects it from automatic un-learning; “Always direct” removes it from the learned lists and forces the direct path; “Auto” returns the entry to the engine. A deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that.') ]));
 		/* U6 (Ф4.3): the honest scope of a pin — exactly this host, not the
 		 * whole service; a pin is also NOT a block-circumvention guarantee. */
-		panes.list.appendChild(E('p', { 'class': 'hpauto-hint' },
+		sitesBox.appendChild(E('p', { 'class': 'hpauto-hint' },
 			[ _('A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Diagnostics page, "Route explanation"). A pin is also not a guarantee: "Always via proxy" rides the main node, "Always direct" rides the direct path — both follow the general rule priority.') ]));
 
-		/* ── Geo pane ──────────────────────────────────────────────────── */
-		const geoCards = E('div', { 'class': 'hpgeo-cards' });
-		panes.geo.appendChild(geoCards);
-		panes.geo.appendChild(E('div', { 'class': 'automation-actions' }, [
-			btn(_('Update now'), function() {
-				return callGeoUpdate().then(function(r) {
-					if (r && r.result === false)
-						ui.addNotification('error', _('Update failed to start: ') + (r.error || ''));
-					else
-						ui.addNotification('info', _('RU-geo update started in the background — this page will show the new date in a minute.'));
-					return refresh();
-				});
-			})
-		]));
-		panes.geo.appendChild(E('p', { 'class': 'hpauto-hint' },
-			[ _('The databases list all Russian networks and the domains of major RU services (whitelist of the Ministry of Digital Development + banks, marketplaces, Yandex/VK/Mail.ru stacks). They exclude the whole Russian internet from learning and proxying (RU-protect) and purge poisoned entries. Sources: GrimbirdUsers/ru-routing-dat via GitHub / jsDelivr mirrors, ipdeny.com fallback.') ]));
-
-		/* ── Log pane ──────────────────────────────────────────────────── */
+		/* ── Logs level (Ф7.1): the engine log + the automation-family
+		 * Event Bus feed (Ф7.3 — the same journal the Health center renders,
+		 * filtered to the automation family: learn/heal/outage, Hot Swap
+		 * switches, URLTest watchdog, DPI auto-pilot decisions). ───────── */
 		const logEl = E('pre', { 'class': 'hpauto-log' });
-		panes.log.appendChild(logEl);
-		panes.log.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
+		panes.logs.appendChild(E('h4', {}, [ _('Engine log') ]));
+		panes.logs.appendChild(logEl);
+		panes.logs.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
 			btn(_('Clear log'), function() { return callClearLog().then(refresh); })
 		]));
+		panes.logs.appendChild(E('h4', { style: 'margin-top:16px' }, [ _('Automation events') ]));
+		const feedEl = E('div', { 'class': 'hpauto-feed' });
+		panes.logs.appendChild(feedEl);
+		panes.logs.appendChild(E('p', { 'class': 'hpauto-hint' },
+			[ _('The shared event journal of the automation family — learning, self-heals, Hot Swap switches, the URLTest watchdog and the DPI auto-pilot. The full feed of every subsystem lives on the Health center page.') ]));
+
+		/* ── DPI auto-pilot level (Ф7.1): the scheduled strategy auto-pilot
+		 * moved here from the Blocking bypass page — an always-on keeper is
+		 * automation, not a strategy-setting. Same RPCs, same save contract;
+		 * the one-click auto-pick and the Strategy Lab stay on the bypass
+		 * page (they belong to measuring). ────────────────────────────── */
+		const apBadge = (cls, text) => E('span', { 'class': 'hpui-badge ' + cls }, [ text ]);
+		const apRes = { youtube: E('input', { type: 'checkbox' }),
+			discord: E('input', { type: 'checkbox' }),
+			telegram: E('input', { type: 'checkbox' }),
+			general: E('input', { type: 'checkbox' }) };
+		const apEnabled = E('input', { type: 'checkbox' });
+		const apRules = E('input', { type: 'checkbox', checked: '' });
+		const apMode = E('select', { 'class': 'cbi-input-select', style: 'width:auto' });
+		[ ['quick', _('Quick fuzz')], ['full', _('Full fuzz')] ]
+			.forEach(function(o) { apMode.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
+		const apInterval = E('input', { type: 'number', min: '1', max: '168', 'class': 'cbi-input-text', style: 'width:70px', value: '6' });
+		const apCheck = E('input', { type: 'number', min: '5', max: '180', 'class': 'cbi-input-text', style: 'width:70px', value: '15' });
+		const apWin = E('input', { type: 'text', 'class': 'cbi-input-text', style: 'width:150px',
+			placeholder: _('empty — any time') });
+		/* Ф6.7: ночной автоподбор (01:00–06:00, только если лучше) — опция. */
+		const apNight = E('input', { type: 'checkbox' });
+		const apSave = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' }, [ _('Save auto-pilot') ]);
+		const apAlive = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
+		const apNames = { youtube: _('YouTube'), discord: _('Discord'),
+			telegram: _('Telegram'), general: _('General (best overall)') };
+		const apStatus = E('div', {});
+		const apSaveMsg = E('div', { 'class': 'wiz-note', style: 'margin:4px 0 0 0' }, [ '' ]);
+		const apHead = E('div', { 'class': 'wiz-row', style: 'margin-top:8px' },
+			[ E('strong', {}, [ _('Auto-pilot (scheduled)') ]), apAlive ]);
+		const apRow1 = E('div', { 'class': 'wiz-row' },
+			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer; font-weight:600' },
+				[ apEnabled, ' ' + _('Enable the auto-pilot') ]), apSave ]);
+		const apResWrap = E('div', { 'class': 'wiz-row' });
+		/* The Telegram checkbox is the frequent confusion (issue feedback):
+		 * a Zapret strategy serves a resource ONLY through its rule → Zapret,
+		 * and Telegram is served by the tg-ws bridge whenever it is enabled. */
+		const apHints = {
+			telegram: _('A Zapret strategy serves Telegram only when its rule leads to Zapret. With the tg-ws bridge Telegram is served by the bridge and the auto-pilot leaves it alone — the checkbox can stay off. Without the bridge it works the same way as for YouTube, which only helps where the provider\'s Telegram block is DPI-shaped rather than a hard cut.')
+		};
+		[ ['youtube', _('YouTube')], ['discord', _('Discord')],
+		  ['telegram', _('Telegram')], ['general', _('General (best overall)')] ]
+			.forEach(function(o) {
+				apResWrap.appendChild(E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer',
+					title: apHints[o[0]] || '' },
+					[ apRes[o[0]], ' ' + o[1] ]));
+			});
+		const apRow3 = E('div', { 'class': 'wiz-row' },
+			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+				[ apRules, ' ' + _('Keep the rules on Zapret') ]),
+			  apMode,
+			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('Re-rank every') ]),
+			  apInterval, E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ 'h' ]),
+			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('check every') ]),
+			  apCheck, E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ 'min' ]),
+			  E('label', { 'class': 'wiz-note', style: 'margin:0' }, [ _('apply in window') ]),
+			  apWin,
+			  E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer',
+				title: _('Night auto-pick (01:00–06:00): a scheduled re-rank is allowed at night even outside the maintenance window — it applies only a strategy that is measurably better.') },
+				[ apNight, ' ' + _('Night auto-pick') ]) ]);
+		panes.dpi.appendChild(E('p', { 'class': 'hpauto-hint' },
+			[ _('The DPI auto-pilot keeps the bypass strategies working without attention: on schedule it re-ranks the tested strategies and applies the best one per resource; when a resource stops answering, the next alternative applies immediately. Every apply takes a server snapshot (Restore stays available) and verifies the resource live. One-click picks and fresh measurements live on the Blocking bypass page — the Strategy Lab.') ]));
+		panes.dpi.appendChild(E('div', { 'class': 'automation-actions' }, [
+			E('a', { 'class': 'btn cbi-button', 'href': L.url('admin/services/homeproxy/bypass') },
+				[ _('Strategy Lab and one-click auto-pick') ])
+		]));
+		panes.dpi.appendChild(E('div', { style: 'margin-top:10px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
+			[ apHead, apRow1, apResWrap, apRow3, apSaveMsg, E('p', { 'class': 'wiz-note' },
+				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The "apply in window" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
+		let apDirty = false;
+		for (let k in apRes)
+			apRes[k].addEventListener('change', function() { apDirty = true; });
+		apEnabled.addEventListener('change', function() { apDirty = true; });
+		apRules.addEventListener('change', function() { apDirty = true; });
+		apMode.addEventListener('change', function() { apDirty = true; });
+		apInterval.addEventListener('input', function() { apDirty = true; });
+		apCheck.addEventListener('input', function() { apDirty = true; });
+		apWin.addEventListener('input', function() { apDirty = true; });
+		apNight.addEventListener('change', function() { apDirty = true; });
+		apSave.addEventListener('click', function() {
+			const res = [];
+			for (let k in apRes)
+				if (apRes[k].checked)
+					res.push(k);
+			if (apEnabled.checked && !res.length) {
+				ui.addNotification(null, E('p', {}, _('Select at least one resource for the auto-pilot.')), 'error');
+				return;
+			}
+			const turningOn = apEnabled.checked;
+			const doSave = function() {
+				apSave.disabled = true;
+				L.resolveDefault(callAutoPilotSet(
+					apEnabled.checked ? '1' : '0', res.join(' '),
+					apRules.checked ? '1' : '0',
+					String(parseInt(apInterval.value, 10) || 6),
+					String(parseInt(apCheck.value, 10) || 15),
+					apWin.value || '', apMode.value || 'quick',
+					'2', apNight.checked ? '1' : '0'), {}).then(function(r) {
+					apSave.disabled = false;
+					if (!r || r.result !== true) {
+						apSaveMsg.textContent = _('Auto-pilot save failed: %s').format((r && r.error) || _('rpc error'));
+						return;
+					}
+					apDirty = false;
+					state.apSig = null;   /* refill from the saved config */
+					apSaveMsg.textContent = (turningOn)
+						? _('Auto-pilot enabled — the daemon picks it up within a minute (first re-rank right away).')
+						: _('Auto-pilot settings saved — the daemon reads them on its next tick.');
+					refresh();
+				});
+			};
+			if (turningOn) {
+				hp.confirmModal(_('Enable auto-pilot'),
+					_('Enable the strategy auto-pilot? It will manage the Zapret strategies of the selected resources automatically (scheduled re-ranks, immediate re-picks on failures) and — with the rules option — keep their rules on Zapret.'), _('Enable'))
+					.then(function(ok) { if (ok) doSave(); });
+				return;
+			}
+			doSave();
+		});
+
+		function renderAutoPilot(data) {
+			const cfg = (data && data.config) || null;
+			const st = (data && data.status) || null;
+			const ok = !!(data && data.daemon_ok);
+			apAlive.textContent = ok ? '' : '— ' + _('daemon is not responding');
+			if (cfg && (state.apSig == null || (!apDirty && state.apSig !== JSON.stringify(cfg)))) {
+				state.apSig = JSON.stringify(cfg);
+				apEnabled.checked = !!cfg.enabled;
+				apRules.checked = (cfg.set_rules !== false);
+				apMode.value = (cfg.fuzz_mode === 'full') ? 'full' : 'quick';
+				for (let k in apRes)
+					apRes[k].checked = ((cfg.resources || '').split(/\s+/).indexOf(k) >= 0);
+				apInterval.value = cfg.interval_h || 6;
+				apCheck.value = cfg.check_min || 15;
+				apWin.value = cfg.window || '';
+				apNight.checked = (cfg.night_pick === true);
+			}
+			apStatus.textContent = '';
+			if (!ok) {
+				apStatus.appendChild(E('div', { 'class': 'wiz-note' },
+					[ '— ' + _('no data (the daemon is not responding)') ]));
+				return;
+			}
+			const head = E('div', { 'class': 'wiz-row', style: 'margin-top:4px' });
+			const stMap = { idle: _('idle'), watch: _('watching'), fuzz: _('re-ranking the corpus…'),
+				rule: _('setting the rules…'), apply: _('applying…'), verify: _('verifying…'),
+				resume: _('resuming after a restart…'), error: _('error') };
+			head.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; font-weight:600' },
+				[ (st && st.enabled) ? _('active') : _('disabled'), ' · ',
+				  (stMap[st && st.stage] || (st && st.stage) || '—') ]));
+			if (st && st.stage_note)
+				head.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; opacity:.8' },
+					[ ' · ' + st.stage_note ]));
+			apStatus.appendChild(head);
+			if (st && st.manual_hold)
+				apStatus.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' },
+					[ '✋ ' + _('Manual composition hold is active (Hot Swap): the scheduled re-rank is suspended — live checks and dead-resource repairs continue.') ]));
+			if (st && st.resources) {
+				const grid = E('div', { style: 'margin:4px 0 0 12px' });
+				for (let rk in apRes) {
+					const r = st.resources[rk];
+					if (!r)
+						continue;
+					const line = E('div', { 'class': 'wiz-note' });
+					const w = r.winner || {};
+					line.appendChild(document.createTextNode(
+						apNames[rk] + ': ' + ((st.enabled && r.mgmt === false && rk !== 'general')
+							? _('not managed (the rule does not lead to Zapret)')
+							: (w.name || '—'))));
+					if (w.name)
+						line.appendChild(document.createTextNode(
+							(w.tls_ms > 0 ? ' · ' + _('~%d ms TLS').format(w.tls_ms) : '') +
+							(w.stream > 0 ? ' · ' + Math.round(w.stream / 1024) + ' KB/s' : '') +
+							(w.start_ms > 0 ? ' · ' + _('start ~%d ms').format(w.start_ms) : '')));
+					const p = r.probe || {};
+					if (p && p.ts) {
+						/* ч.127 three-state: green = alive, amber = degraded
+						 * (slow but working — NO switch happens), red = dead.
+						 * The raw note carries the measured detail. */
+						line.appendChild(p.ok
+							? apBadge('hpui-b-green', '✓ ' + (p.code || '') + ((p.tsec != null) ? (' · ' + p.tsec + ' s') : ''))
+							: (p.slow
+								? E('span', { 'class': 'hpui-badge hpui-b-amber', title: (p.note || '') },
+									[ '⚠ ' + (p.code || '') + ((p.tsec != null) ? (' · ' + p.tsec + ' s') : '') + (p.speed > 0 ? (' · ' + Math.round(p.speed / 1024) + ' KB/s') : '') ])
+								: apBadge('hpui-b-red', '✗ ' + (p.code || '000'))));
+					}
+					if (r.strikes > 0)
+						line.appendChild(apBadge('hpui-b-red', '⚠ ' + _('%d failed check(s)').format(r.strikes)));
+					if (r.rule_node != null && rk !== 'general')
+						line.appendChild(document.createTextNode(
+							' · ' + _('rule: %s').format(r.rule_node || _('none'))));
+					grid.appendChild(line);
+					/* Ф6.7: объяснимый вердикт решения (не чёрный ящик). */
+					if (r.explain && r.explain.text)
+						grid.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:1px 0 0 12px; opacity:.75' },
+							[ '↳ ' + r.explain.text ]));
+				}
+				apStatus.appendChild(grid);
+			}
+			const times = [];
+			if (st && st.next_cycle_ts > 0)
+				times.push(_('next re-rank: %s').format(new Date(st.next_cycle_ts * 1000).toLocaleString()));
+			if (st && st.next_check_ts > 0)
+				times.push(_('next check: %s').format(new Date(st.next_check_ts * 1000).toLocaleTimeString()));
+			if (times.length)
+				apStatus.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' }, [ times.join(' · ') ]));
+			if (st && st.log && st.log.length) {
+				const rows = st.log.slice(-6).reverse().map(function(l) {
+					const d = new Date(Number(l.ts) * 1000);
+					const fmt = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+					return E('div', { style: 'margin:1px 0' }, [ fmt + ' · ' + l.m ]);
+				});
+				apStatus.appendChild(E('details', { style: 'margin:4px 0 0 12px' }, [
+					E('summary', { style: 'cursor:pointer' }, [ _('Last events') ]),
+					E('div', { style: 'margin:4px 0 0 12px' }, rows)
+				]));
+			}
+		}
 
 		/* ── Table rendering ───────────────────────────────────────────── */
 
@@ -906,41 +1145,8 @@ return view.extend({
 			wrap.scrollTop = scrollTop;
 		}
 
-		/* ── Geo cards ─────────────────────────────────────────────────── */
-
-		function renderGeo(geo) {
-			geoCards.innerHTML = '';
-			const stale = (!geo.updated || (Date.now() / 1000 - Number(geo.updated)) > 30 * 86400);
-			const ageEl = geo.updated
-				? E('span', { 'class': stale ? 'hpgeo-age-stale' : 'hpgeo-age-fresh' }, [ fmtAge(geo.updated) || '—' ])
-				: E('span', { 'class': 'hpgeo-age-stale' }, [ _('never updated') ]);
-
-			const mkCard = (title, lines) => {
-				const c = E('div', { 'class': 'hpgeo-card' }, [ E('h4', {}, [ title ]) ]);
-				for (let it in lines)
-					c.appendChild(E('div', { 'class': 'hpgeo-meta' }, [ lines[it] ]));
-				return c;
-			};
-			const entryLine = (n) => (geo.installed
-				? E('span', {}, [ _('Entries') + ': ' + (n || 0) ])
-				: E('span', { 'class': 'hpgeo-age-stale' }, [ _('not downloaded') ]));
-
-			geoCards.appendChild(mkCard(_('RU networks (geoip)'), [
-				entryLine(geo.geoip),
-				E('span', {}, [ geo.installed ? ('IPv4: ' + (geo.geoip_v4 || 0) + ' · IPv6: ' + (geo.geoip_v6 || 0)) : '' ]),
-				ageEl
-			]));
-			geoCards.appendChild(mkCard(_('RU domains (geosite)'), [
-				entryLine(geo.geosite),
-				E('span', {}, [ geo.installed ? (_('categories') + ': ' + (geo.categories || 0)) : '' ]),
-				ageEl.cloneNode ? ageEl.cloneNode(true) : ageEl
-			]));
-			geoCards.appendChild(mkCard(_('RU-protect'), [
-				E('span', { 'class': 'hpbadge ' + (geo.protect === '0' ? 'hpb-mdirect' : 'hpb-direct') },
-					[ geo.protect === '0' ? _('disabled (switch in Settings)') : _('enabled') ]),
-				E('span', {}, [ geo.updating ? ' · ' + _('updating…') : '' ])
-			]));
-		}
+		/* ── Geo cards: REMOVED (Ф7.2) — the RU-protection card (guarantee +
+		 * databases + update) lives on the Connection page now. ───────── */
 
 		/* ── Engine overview panel rendering (Ф5) ──────────────────────── */
 
@@ -1160,6 +1366,13 @@ return view.extend({
 		function refresh() {
 			/* Engine counters ride the same 5 s poll (light RPC, ≤5 s — D5). */
 			refreshStats();
+			/* Ф7.1: the DPI auto-pilot rides the same poll. */
+			L.resolveDefault(callAutoPilotStatus(), {}).then(renderAutoPilot);
+			/* Ф7.3: the automation-family Event Bus feed (the journal is a
+			 * tmpfs readfile, not a fork-heavy RPC). The limit travels as a
+			 * STRING — rpcd rejects a native number for a string typehint
+			 * (lessons 105/132; the Health center does the same). */
+			L.resolveDefault(callEvents('60'), {}).then(renderFeed);
 			return callStatus().then(function(st) {
 				state.data = st;
 				const c = st.counts || {};
@@ -1183,10 +1396,19 @@ return view.extend({
 					pauseEl.classList.add('hpauto-banner-ok');
 				}
 				const g = st.geo || {};
-				geoLine.innerHTML = _('RU-geo databases:') + ' ' + (g.installed
+				/* Ф7.2: the RU-protection card (guarantee + databases + update)
+				 * lives on the Connection page now — this line only points
+				 * there honestly. */
+				geoLine.textContent = '';
+				geoLine.appendChild(document.createTextNode(_('RU-protect') + ': '));
+				geoLine.appendChild(E('b', {}, [ g.installed
 					? _('networks %s, domains %s, %s').format(g.geoip || 0, g.geosite || 0, fmtAge(g.updated) || '—')
-					: _('not installed — update on the “RU-geo databases” tab'))
-					+ (g.updating ? ' · <b>' + _('updating…') + '</b>' : '');
+					: _('databases not installed') ]));
+				if (g.updating)
+					geoLine.appendChild(document.createTextNode(' · ' + _('updating…')));
+				geoLine.appendChild(document.createTextNode(' — '));
+				geoLine.appendChild(E('a', { 'href': L.url('admin/services/homeproxy/client') },
+					[ _('the RU-protection card on the Connection page') ]));
 				/* Native helpers + engine profile (like the mosdns card on Core
 				 * & Tools, but inline where the engine is configured). probe_pool
 				 * is a one-shot batch prober — only presence applies; sni_sniffer
@@ -1205,25 +1427,74 @@ return view.extend({
 					: (h.sni_sniffer ? hspan(null, _('stopped')) : hspan(false, _('not installed'))));
 				helperLine.appendChild(document.createTextNode('.'));
 				renderTable();
-				renderGeo(g);
 				logEl.textContent = st.log || '';
 			}).catch(function(e) {
 				ovCards.textContent = _('Status unavailable: ') + e;
 			});
 		}
 
+		/* ── Event Bus feed (Журналы level, Ф7.3) ──────────────────────── */
+		const FEED_SOURCES = { automation: _('Auto-bypass'), hotswap: 'Hot Swap',
+			urltest: 'URLTest', autopilot: _('DPI auto-pilot') };
+		function renderFeed(r) {
+			const evs = ((r && r.events) || []).filter(function(ev) {
+				return !!FEED_SOURCES[ev.src];
+			});
+			const sig = evs.length ? ('' + evs[0].ts + ':' + evs.length) : 'none';
+			if (sig === state.feedSig)
+				return;
+			state.feedSig = sig;
+			feedEl.textContent = '';
+			const show = evs.slice(-30).reverse();
+			for (let i = 0; i < show.length; i++) {
+				const ev = show[i];
+				const d = new Date(Number(ev.ts) * 1000);
+				const fmt = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+				feedEl.appendChild(E('div', { 'class': 'hpauto-feed-ev' }, [
+					E('span', { 'class': 't' }, [ fmt ]),
+					E('span', { 'class': 'hpbadge hpb-type' }, [ FEED_SOURCES[ev.src] ]),
+					E('span', { 'class': 'm' }, [
+						E('b', {}, [ (ev.who || ev.type || '') ]),
+						document.createTextNode(((ev.who && ev.type) ? ' · ' : ' ') + (ev.detail || ''))
+					])
+				]));
+			}
+			if (!show.length)
+				feedEl.appendChild(E('span', { 'class': 'hpauto-cap' }, [ _('no events yet') ]));
+		}
+
 		poll.add(refresh, 5);
 		refresh();
 
-		return Promise.all([ m.render(), Promise.resolve(panes) ]).then(function(nodes) {
-			const mapNode = nodes[0];
-			const ps = nodes[1];
-			/* The UCI form lives on its own tab. */
-			ps.settings.appendChild(mapNode);
+		/* Ф7.1/U4: the expert knobs collapse into a <details> — the level
+		 * shows the master switch and the RESULTS by default. The expert
+		 * section node is moved into the details after the map renders
+		 * (the form save flow is untouched — one map, one Save & Apply). */
+		const expertDetails = E('details', { 'class': 'hpauto-expert' }, [
+			E('summary', {}, [ _('Expert settings') + ' · ' + _('hidden by default — open only if needed') ])
+		]);
+		panes.engine.appendChild(expertDetails);
+
+		return m.render().then(function(mapNode) {
+			/* Locate the expert NamedSection (its title is unique) and move
+			 * it into the details; the master switch stays at the top of the
+			 * level. LuCI relocates the map footer to the page bottom itself
+			 * (known behavior). */
+			const sections = mapNode.querySelectorAll('.cbi-section');
+			for (let i = 0; i < sections.length; i++) {
+				const hd = sections[i].querySelector('.cbi-section-title') ||
+					sections[i].querySelector('h3');
+				if (hd && hd.textContent.indexOf(_('Expert settings')) === 0) {
+					expertDetails.appendChild(sections[i]);
+					break;
+				}
+			}
+			/* The remaining map node (master switch + footer) leads the level. */
+			panes.engine.insertBefore(mapNode, panes.engine.firstChild);
 			return E('div', {}, [
 				hp.pageIntro(_('Auto-bypass'),
-					_('The engine learns which sites your provider blocks and sends them around the block automatically: traffic that fails directly but works through the proxy is added to the lists. The Overview tab shows what it does, the Sites tab is the result, the Settings tab tunes how aggressively it learns.')),
-				tabBar, ps.overview, ps.list, ps.geo, ps.settings, ps.log
+					_('The engine learns which sites your provider blocks and sends them around the block automatically: traffic that fails directly but works through the proxy is added to the lists. Three levels: this one is the site learning itself, the DPI auto-pilot keeps the bypass strategies fresh on its own, the Logs level shows the engine log and the automation event journal.')),
+				tabBar, panes.engine, panes.dpi, panes.logs
 			]);
 		});
 	}

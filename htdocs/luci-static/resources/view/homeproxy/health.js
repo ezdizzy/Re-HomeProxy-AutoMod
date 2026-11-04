@@ -74,7 +74,8 @@ const evColors = { down: 'hpui-c-red', degraded: 'hpui-c-amber', repair: 'hpui-c
 	unblocked: 'hpui-c-green', recovered: 'hpui-c-green' };
 const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'),
 	hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health'),
-	sentinel: 'Sentinel', recovery: 'Recovery', init: _('Service') };
+	sentinel: 'Sentinel', recovery: 'Recovery', init: _('Service'),
+	autopilot: _('DPI auto-pilot') };
 
 function fmtClock(ts) {
 	const t = new Date(ts * 1000);

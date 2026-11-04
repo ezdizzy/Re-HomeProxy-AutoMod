@@ -3453,6 +3453,17 @@ echo done > "$PRE.done"
 	let mode_paused = (rmode === 'custom' || rmode === 'custom_json' || rmode === 'direct');
 	if (mode_paused || rmode === 'global' || main_is_direct) {
 		if (dns_log_on) {
+			/* Ф7.3: the pause is a PROBLEM the user can fix — the bus event
+			 * carries the fix proposal (U4 «с ПРЕДЛОЖЕНИЕМ исправления»).
+			 * Edge-only (dns_log_on flip) — no per-cycle spam. */
+			const pause_reason = (mode_paused ? ('routing mode ' + rmode) :
+				(rmode === 'global' ? 'Global mode' : 'main node is Direct'));
+			const pause_fix = (rmode === 'global')
+				? 'предложение: вернитесь в режим «Обход блокировок» на странице Подключение — обучение возобновится автоматически'
+				: (rmode === 'direct' || rmode === 'custom' || rmode === 'custom_json')
+					? 'предложение: включите режим «Обход блокировок» на странице Подключение — обучение возобновится автоматически'
+					: 'предложение: выберите узел или URLTest как Главный узел на странице Подключение — обучение возобновится автоматически';
+			ev_auto('pause', 'обучение приостановлено: ' + pause_reason, pause_fix);
 			if (has('dns')) disable_dns_log();
 			dns_log_on = false;
 			log('learning paused (' + (mode_paused ? ('routing mode ' + rmode) :
@@ -3468,6 +3479,9 @@ echo done > "$PRE.done"
 			dns_log_on = true;
 			log('learning resumed - dnsmasq query logging enabled.');
 			eng_event('resume', discover_str);
+			/* Ф7.3: the resume edge mirrors the pause event. */
+			ev_auto('resume', 'обучение возобновлено',
+				'движок снова учит заблокированные сайты (режим «Обход блокировок» активен)');
 		}
 		/* Ф5: fresh per-pass counters (paused passes leave it null - the
 		 * stats flush reports zeros for that cycle). */

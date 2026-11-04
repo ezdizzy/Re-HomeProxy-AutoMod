@@ -777,7 +777,9 @@ return view.extend({
 				: _('disabled');
 			dnsChipState.setAttribute('title', mdEnabled ? _('RU: %d · Secure: %d').format(mdRu, mdSec) : '—');
 
-			/* Auto-bypass (concern card 3). */
+			/* Auto-bypass (concern card 3) + the automation-family monitors
+			 * (Ф7.4): the health-doc pass-through gives the live status of
+			 * the four automation services — data here, polish in Ф9. */
 			const auEnabled = (uci.get('homeproxy', 'automation', 'enabled') === '1');
 			const auRunning = !!sys.automation_running;
 			const learned = (last && last.learned != null) ? Math.floor(last.learned) : null;
@@ -786,6 +788,17 @@ return view.extend({
 				? ((auRunning ? _('running') : _('enabled, not running'))
 					+ ((learned != null) ? (' · ' + _('Learned sites: %d').format(learned)) : ''))
 				: _('disabled');
+			const fam = sys.automation_family || null;
+			if (fam) {
+				const words = { ok: _('running'), off: _('off'), down: _('down'), degraded: _('degraded') };
+				/* The autopilot daemon idles by design when disabled — the
+				 * card must show the FUNCTION, not the idle process. */
+				const apOn = (uci.get('homeproxy', 'autopilot', 'enabled') === '1');
+				const bit = (k) => (fam[k] ? (words[fam[k].status] || '—') : '—');
+				hub.learn.state.textContent += ' · ' + _('DPI auto-pilot') + ': ' +
+					(apOn ? bit('autopilot') : _('off')) +
+					' · Hot Swap: ' + bit('hotswap') + ' · URLTest: ' + bit('urltest');
+			}
 
 			/* Home devices + Parental control (concern cards 4-5, Control
 			 * engine summary). */

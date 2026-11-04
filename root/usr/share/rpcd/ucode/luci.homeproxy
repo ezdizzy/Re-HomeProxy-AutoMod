@@ -7788,11 +7788,25 @@ const methods = {
 							? hrd.data.entries[hn].status : 'off');
 						if (hcounts[hst] != null)
 							hcounts[hst]++;
-					}
+						}
 					reply.health = { fresh: true, age: hage,
 						overall: '' + (hrd.data.overall || 'off'),
 						counts: hcounts };
 				}
+			}
+
+			/* Ф7.4: the automation-family monitors for the Main page — the
+			 * SAME health doc the Health center renders, pass-through of the
+			 * four automation services (no forks, no recompute: the doc is
+			 * already read above). No fresh doc → the field stays absent and
+			 * the hub shows what it has. */
+			if (reply.health.fresh) {
+				const fam = {};
+				for (let fk in [ 'automation', 'autopilot', 'urltest', 'hotswap' ]) {
+					const fe = hrd.data.entries[fk];
+					fam[fk] = { status: '' + ((fe != null && fe.status != null) ? fe.status : 'off') };
+				}
+				reply.automation_family = fam;
 			}
 			return reply;
 		}
@@ -8841,6 +8855,62 @@ const methods = {
 	automation_geo_status: {
 		call: function(req) {
 			return { meta: ru_geo_read_meta() };
+		}
+	},
+
+	/* Ф7.2: the RU-protection card on the Connection page — the guard is a
+	 * ROUTING invariant ("RU traffic never goes via proxy"), its card lives
+	 * there, not in the automation settings. Sets the three homeproxy.automation.*
+	 * keys and, when the GUARD itself changed, spawns the tracked
+	 * generate+reload (the guard sits in the generated core config; the
+	 * auto-update knobs are daemon-hot and need no reload). */
+	automation_geo_protect_set: {
+		args: { protect: 'protect', auto_update: 'auto_update', hours: 'hours' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const flag = (v) => {
+				const s = trim((v == null) ? '' : '' + v);
+				if (s === '1' || s === 'true') return '1';
+				if (s === '0' || s === 'false' || s === '') return '0';
+				return null;
+			};
+			const protect = flag(a.protect);
+			if (protect == null)
+				return { result: false, error: 'некорректное значение защиты' };
+			const auto_update = flag(a.auto_update);
+			if (auto_update == null)
+				return { result: false, error: 'некорректное значение автообновления' };
+			let hours = null;
+			if (auto_update === '1') {
+				hours = int(trim('' + (a.hours || '24'))) || 24;
+				if (hours < 1 || hours > 720)
+					return { result: false, error: 'некорректный интервал (1..720 часов)' };
+			}
+			const c = cursor();
+			if (!c.get_all('homeproxy', 'automation'))
+				c.set('homeproxy', 'automation', 'homeproxy');
+			const cur_protect = '' + (c.get('homeproxy', 'automation', 'geo_protect') == null
+				? '1' : c.get('homeproxy', 'automation', 'geo_protect'));
+			const cur_auto = '' + (c.get('homeproxy', 'automation', 'geo_auto_update') == null
+				? '0' : c.get('homeproxy', 'automation', 'geo_auto_update'));
+			const cur_hours = '' + (c.get('homeproxy', 'automation', 'geo_update_hours') == null
+				? '24' : c.get('homeproxy', 'automation', 'geo_update_hours'));
+			/* Honest unchanged path: identical values → NO commit at all —
+			 * an innocent save must not churn the UCI file (md5 discipline). */
+			const hours_same = (auto_update === '0') ||
+				('' + hours === cur_hours);
+			if (cur_protect === protect && cur_auto === auto_update && hours_same)
+				return { result: true, unchanged: true };
+			c.set('homeproxy', 'automation', 'geo_protect', protect);
+			c.set('homeproxy', 'automation', 'geo_auto_update', auto_update);
+			if (hours != null)
+				c.set('homeproxy', 'automation', 'geo_update_hours', '' + hours);
+			c.commit('homeproxy');
+			/* The daemon re-reads the auto-update knobs on its own hourly
+			 * check — only a GUARD change regenerates the core config. */
+			if (cur_protect === protect)
+				return { result: true, unchanged: true };
+			return op_spawn('reload', 'RU-protect apply (guard changed)');
 		}
 	},
 

@@ -11592,7 +11592,7 @@ msgid "Servers"
 msgstr "Серверы"
 
 msgid "Auto-bypass"
-msgstr "Автообход сайтов"
+msgstr "Автообход блокировок"
 
 msgid "Parental control"
 msgstr "Родительский контроль"
@@ -13099,3 +13099,111 @@ msgstr "Ночной автоподбор"
 
 msgid "Manual composition hold is active (Hot Swap): the scheduled re-rank is suspended — live checks and dead-resource repairs continue."
 msgstr "Действует удержа ручной композиции (Hot Swap): плановая переразметка приостановлена — живые проверки и ремонт умершего ресурса продолжаются."
+
+msgid "Expert settings"
+msgstr "Экспертные настройки"
+
+msgid "DPI auto-pilot"
+msgstr "Автопилот DPI"
+
+msgid "Logs"
+msgstr "Журналы"
+
+msgid "Automation is disabled — turn on the switch above to start learning."
+msgstr "Автоматизация выключена — включите переключатель выше, чтобы начать обучение."
+
+msgid "Automation events"
+msgstr "События автоматизации"
+
+msgid "The shared event journal of the automation family — learning, self-heals, Hot Swap switches, the URLTest watchdog and the DPI auto-pilot. The full feed of every subsystem lives on the Health center page."
+msgstr "Общий журнал событий семейства автоматизации — обучение, самолечение, переключения Hot Swap, сторож URLTest и автопилот DPI. Полная лента всех подсистем — в Центре здоровья."
+
+msgid "The DPI auto-pilot keeps the bypass strategies working without attention: on schedule it re-ranks the tested strategies and applies the best one per resource; when a resource stops answering, the next alternative applies immediately. Every apply takes a server snapshot (Restore stays available) and verifies the resource live. One-click picks and fresh measurements live on the Blocking bypass page — the Strategy Lab."
+msgstr "Автопилот DPI держит стратегии обхода рабочими без вашего участия: по расписанию переразмечает проверенные стратегии и применяет лучшую для каждого ресурса; когда ресурс перестаёт отвечать — сразу применяет следующую альтернативу. Каждое применение делает серверный снимок (Restore остаётся доступным) и проверяет ресурс вживую. Подбор в один клик и свежие замеры — на странице «Обход блокировок», в Стратегии-лаборатории."
+
+msgid "Strategy Lab and one-click auto-pick"
+msgstr "Стратегия-лаборатория и подбор в один клик"
+
+msgid "databases not installed"
+msgstr "базы не установлены"
+
+msgid "the RU-protection card on the Connection page"
+msgstr "карточка «RU-защита» на странице Подключение"
+
+msgid "hidden by default — open only if needed"
+msgstr "по умолчанию скрыты — открывайте при необходимости"
+
+msgid "The engine learns which sites your provider blocks and sends them around the block automatically: traffic that fails directly but works through the proxy is added to the lists. Three levels: this one is the site learning itself, the DPI auto-pilot keeps the bypass strategies fresh on its own, the Logs level shows the engine log and the automation event journal."
+msgstr "Движок сам узнаёт, какие сайты блокирует ваш провайдер, и автоматически отправляет их в обход блокировки: трафик, который напрямую не проходит, а через прокси работает, попадает в списки. Три уровня: здесь — само обучение сайтов, «Автопилот DPI» сам держит стратегии обхода свежими, «Журналы» — журнал движка и лента событий автоматизации."
+
+msgid "One click keeps a resource working: the auto-pick ranks the strategies and applies the best one for a single resource with a server snapshot and a live check. The SCHEDULED auto-pilot (always-on re-ranks and repairs) is configured on the Auto-bypass page — an always-on keeper belongs to automation."
+msgstr "Один клик — и ресурс снова работает: автоподбор ранжирует стратегии и применяет лучшую для одного ресурса, с серверным снимком и живой проверкой. ПЛАНОВЫЙ автопилот (постоянные переразметка и ремонт) настраивается на странице «Автообход блокировок» — постоянный сторож относится к автоматизации."
+
+msgid "The scheduled auto-pilot (enable, resources, re-rank interval, night auto-pick) lives on the Auto-bypass page, \"DPI auto-pilot\" level — an always-on keeper belongs to automation. The daemon hot-reads its settings every tick."
+msgstr "Плановый автопилот (включение, ресурсы, интервал переразметки, ночной автоподбор) живёт на странице «Автообход блокировок», уровень «Автопилот DPI» — постоянный сторож относится к автоматизации. Демон перечитывает настройки на каждом тике."
+
+msgid "Open the DPI auto-pilot settings"
+msgstr "Открыть настройки автопилота DPI"
+
+msgid "The change is applied and verified."
+msgstr "Изменение применено и проверено."
+
+msgid "Save RU-protection"
+msgstr "Сохранить RU-защиту"
+
+msgid "Update databases now"
+msgstr "Обновить базы сейчас"
+
+msgid "RU traffic does NOT go through the proxy"
+msgstr "RU-трафик не пойдёт через прокси"
+
+msgid "RU-geo databases auto-update"
+msgstr "Автообновление баз RU-geo"
+
+msgid "Update the RU-geo databases automatically"
+msgstr "Обновлять базы RU-geo автоматически"
+
+msgid "every"
+msgstr "каждые"
+
+msgid "The daemon checks the database age hourly and re-downloads it in the background when it is older than the interval. The databases list all Russian networks and the domains of major RU services (banks, marketplaces, Yandex/VK/Mail.ru stacks); sources: GrimbirdUsers/ru-routing-dat via GitHub / jsDelivr mirrors, ipdeny.com fallback."
+msgstr "Демон проверяет возраст баз каждый час и в фоне перекачивает их, когда они старше интервала. Базы перечисляют все российские сети и домены крупных российских сервисов (банки, маркетплейсы, экосистемы Яндекса/VK/Mail.ru); источники: GrimbirdUsers/ru-routing-dat через GitHub / зеркала jsDelivr, запасной ipdeny.com."
+
+msgid "Saved — the auto-update settings are re-read by the daemon on its own hourly check."
+msgstr "Сохранено — настройки автообновления демон перечитает сам на ближайшей часовой проверке."
+
+msgid "Applying — the core config regenerates…"
+msgstr "Применяю — конфигурация ядра перегенерируется…"
+
+msgid "RU-protection is ON and verified — RU traffic stays direct."
+msgstr "RU-защита ВКЛЮЧЕНА и проверена — RU-трафик идёт напрямую."
+
+msgid "RU-protection is OFF and verified — RU traffic may follow the lists."
+msgstr "RU-защита ВЫКЛЮЧЕНА и проверена — RU-трафик может идти по спискам."
+
+msgid "The RU-geo update started in the background — the status line shows the new date in a minute."
+msgstr "Обновление RU-geo запущено в фоне — строка статуса покажет новую дату через минуту."
+
+msgid "Update failed: "
+msgstr "Не удалось обновить: "
+
+msgid "Guard is on"
+msgstr "Защита включена"
+
+msgid "Guard is off"
+msgstr "Защита выключена"
+
+msgid "networks %s, domains %s"
+msgstr "сети %s, домены %s"
+
+msgid "not downloaded — press \"Update databases now\""
+msgstr "не скачаны — нажмите «Обновить базы сейчас»"
+
+msgid "RU-protection"
+msgstr "RU-защита"
+
+msgid "RU traffic does NOT go through the proxy: Russian networks and domains (the RU-geo databases, .ru/.su/.рф) are always routed DIRECT — even when a resource sits in the learned, static or your own proxy lists. RU services (banks, marketplaces, government portals) flag VPN exits — the guard keeps them off the tunnel. The check order: service rules → your \"Direct\" lists → RU-protection → your \"Proxy\" lists → learned lists."
+msgstr "RU-трафик не пойдёт через прокси: российские сети и домены (базы RU-geo, .ru/.su/.рф) всегда идут НАПРЯМУЮ — даже если ресурс попал в выученные, статические или ваши списки прокси. Российские сервисы (банки, маркетплейсы, госсервисы) помечают VPN-выходы — защита держит их вне туннеля. Порядок проверки: правила сервисов → ваши списки «Напрямую» → RU-защита → ваши списки «Через прокси» → выученные списки."
+
+msgid "down"
+msgstr "Не работает"

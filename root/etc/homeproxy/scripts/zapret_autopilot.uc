@@ -88,6 +88,10 @@ import {
  * автопилота; сигнатуры блок-страниц больше НЕ копируются сюда (аудит 72:
  * один классификатор вместо нескольких несовместимых). */
 import { classify_path } from '/etc/homeproxy/scripts/diag_core.uc';
+/* Ф7.3: решения автопилота — события в общей шине (центр событий LuCI и
+ * лента «Журналы» на странице автоматизации). Best-effort: сломанная шина
+ * никогда не роняет демона (тот же контракт, что у log()). */
+import { emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const STATE = RUN_DIR + '/zapret_autopilot.json';
@@ -201,6 +205,13 @@ function log_once(key, msg) {
 		return;
 	S[k] = '' + msg;
 	log(msg);
+}
+
+/* Ф7.3: событие шины по КРАЮ решения (не по тику). who/detail — русские
+ * строки в исходнике (правило бэкенд-строк). Вызывается ПОСЛЕ wstat-точек
+ * принятия решения — detail объясняет, что произошло и что с этим делать. */
+function ap_emit(type, who, detail) {
+	try { ev_emit('autopilot', type, who || '', detail || ''); } catch (e) { /* best-effort */ }
 }
 
 function once_clear(key) {
@@ -929,6 +940,8 @@ function resume() {
 	}
 	if (length(regressed)) {
 		log('проверка после применения ПРОВАЛЕНА для: ' + join(', ', regressed) + ' — откатываю (снапшот Restore)');
+		ap_emit('rollback', 'проверка после применения провалена: ' + join(', ', regressed),
+			'автопилот откатил композицию по снапшоту Restore — стратегии вернулись к прежним, живые проверки продолжаются');
 		compose_rollback();
 		wait_core(CORE_WAIT_MAX);
 		for (let res in regressed) {
@@ -963,6 +976,8 @@ function resume() {
 		if (p.general_winner)
 			push(names, 'general → ' + p.general_winner.name);
 		log('применено: ' + join(' · ', names));
+		ap_emit('applied', 'автопилот применил стратегии',
+			join(' · ', names) + '; снимок Restore доступен, следующая переразметка по расписанию');
 	}
 	S.pending = null;
 	S.next_cycle_ts = time() + ((S.config && S.config.interval_h) ? S.config.interval_h : 6) * 3600;
@@ -1239,6 +1254,10 @@ function repair(cfg, res) {
 	log(res + ': стратегия перестала работать (' + ((res === 'general') ? S.general.strikes : S.resources[res].strikes) +
 		' неудачных проверок подряд) — переключаюсь на ' + alt.name +
 		(hold_active() ? ' — удержа (Hot Swap 9) снята: ресурс МЁРТВ, ремонт важнее удержи' : ''));
+	ap_emit('repair', res + ': стратегия перестала работать (' +
+		((res === 'general') ? S.general.strikes : S.resources[res].strikes) + ' неудачных проверок подряд)',
+		'переключаюсь на «' + alt.name + '»' + (hold_active() ? '; удержа снята — ремонт важнее удержи' : '') +
+		'; снимок Restore доступен');
 	/* Ф6.7: ремонт снимает удержу — мёртвый ресурс ремонтируется даже при
 	 * ручном пике (иначе пользователь остаётся на сломанной стратегии). */
 	S.manual_hold = null;
@@ -1400,8 +1419,11 @@ function health(cfg) {
 		const st = (res === 'general') ? S.general : S.resources[res];
 		st.probe = pr;
 		if (pr.ok) {
-			if (int(st.strikes || 0) > 0)
+			if (int(st.strikes || 0) > 0) {
 				log(res + ': снова в норме (' + pr.code + ')');
+				ap_emit('recovered', res + ': снова в норме',
+					'живая проверка прошла (' + pr.code + ') — стратегия продолжает работать');
+			}
 			st.strikes = 0;
 			st.slow = false;
 			st.note = '';
@@ -1469,6 +1491,7 @@ function adopt_manual() {
 	if (m == null || type(m) !== 'object' || type(m.resources) !== 'object')
 		return;
 	let any = false;
+	let adopted = [];
 	for (let res in keys(m.resources)) {
 		const w = m.resources[res];
 		if (RESOURCES[res] == null || type(w) !== 'object' || !length('' + (w.args || '')))
@@ -1480,12 +1503,15 @@ function adopt_manual() {
 		S.resources[res].strikes = 0;
 		explain(res, 'ручной выбор принят (Hot Swap 9): плановая переразметка не заменит его; живые проверки продолжаются');
 		log('ручной выбор из Лаборатории стратегий принят для ' + res + ': ' + (w.name || 'кастомные аргументы'));
+		push(adopted, res);
 		any = true;
 	}
 	if (any) {
 		/* Ф6.7: ручной пик ставит удержу плановой переразметки. */
 		S.manual_hold = { ts: time(), src: 'lab' };
 		wstat();
+		ap_emit('manual_pick', 'принят ручной выбор из Лаборатории: ' + join(', ', adopted),
+			'плановая переразметка удержана (Hot Swap 9) — ваш выбор старше измерения; живые проверки и ремонт продолжаются');
 	}
 	system(`rm -f ${sq(MANUAL_FILE)} 2>/dev/null`);
 }
@@ -1576,6 +1602,8 @@ function tick() {
 			S.last_apply.zapret = curz;   /* not re-armed by the same change */
 			S.manual_hold = { ts: time(), src: 'external' };
 			log('обнаружена внешняя/ручная композиция — плановая переразметка удержана (Hot Swap 9); живые проверки и ремонт продолжаются');
+			ap_emit('manual_hold', 'обнаружена внешняя/ручная смена композиции',
+				'плановая переразметка удержана (Hot Swap 9) — ваш выбор старше измерения; живые проверки и ремонт продолжаются');
 			wstat();
 		}
 	}
@@ -1631,6 +1659,8 @@ function main() {
 			S.error = '' + e;
 			stage('error', 'внутренняя ошибка: ' + S.error);
 			log('внутренняя ошибка: ' + S.error);
+			ap_emit('error', 'внутренняя ошибка автопилота',
+				S.error + '; демон продолжит работу со следующего тика — при повторе смотрите журнал на странице автоматизации');
 		}
 		sleep(TICK * 1000);
 	}
