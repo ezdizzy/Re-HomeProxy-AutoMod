@@ -79,6 +79,22 @@
  *     egress with DNS/firewall kept, unlike the «Direct» mode), /doctor
  *     (Recovery/Sentinel status), /repair (manual repair requests),
  *     /update (app self-update + core install + engine packages).
+ *
+ * Ф8.5 Extensions (ч.189):
+ *   - Alert Manager: EVERY push rides one pipeline (send_push) — per-kind
+ *     dedup, a unified rate threshold for NORMAL alerts, silence (mute +
+ *     category toggles). CRITICAL alerts (sev='crit': core down, subscribe
+ *     abort/rollback, recovery blocked, sentinel loop) pass ALWAYS — the
+ *     safety invariant; suppressed normal alerts are counted and honestly
+ *     reported on the next delivered push of the same kind.
+ *   - Audit Log: every chat action (command, button tap, confirmation,
+ *     RBAC denial, pairing) is emitted to the Event Bus (src='tg');
+ *     /audit [N] [word] (admin+) merges them with src='control' mutations
+ *     newest-first, with a substring filter.
+ *   - /diagnostics (admin+): a FAST targeted bundle — daemon registry +
+ *     liveness, engines/core, rpcd statuses (telegram/core-install/
+ *     health), subsystem log tails — as text or a file; an extension of
+ *     /logs (the full sanitized support bundle).
  */
 
 'use strict';
@@ -96,13 +112,16 @@ import { client_states, main_opt } from '/etc/homeproxy/scripts/control.uc';
  * accepted a foreign mosdns and cannot see ucode scripts at all). */
 import {
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
-	reg_get as pm_reg_get, entry_alive as pm_entry_alive, find_daemons as pm_find
+	reg_get as pm_reg_get, reg_load as pm_reg_load,
+	entry_alive as pm_entry_alive, find_daemons as pm_find
 } from '/etc/homeproxy/scripts/pmgr.uc';
 /* Event Bus (Ф2.4): the informer subscribes to the shared journal with a
  * durable cursor (survives daemon restarts within one boot; a reboot wipes
- * the journal and the cursor together). */
+ * the journal and the cursor together). Ф8.5: the bot ALSO emits its own
+ * audit stream (src='tg') — every chat command/tap/confirmation/denial. */
 import {
 	tail as bus_tail, last_id as bus_head,
+	emit as bus_emit,
 	cursor_get as bus_cursor_get, cursor_set as bus_cursor_set
 } from '/etc/homeproxy/scripts/eventbus.uc';
 
@@ -129,6 +148,9 @@ const MODE_RU = {
 	global: 'Всё через узел',
 	direct: 'Напрямую (все механизмы выключены)'
 };
+/* RU-статусы здоровья (доктор + /diagnostics). Объявлен ВЫШЕ вызовов —
+ * no hoisting: имя, объявленное позже, вызывающему невидимо (урок ч.118). */
+const ST_RU = { ok: '✅ норма', degraded: '⚠️ деградация', down: '⛔ недоступен', off: '⚪ выключен' };
 
 /* Module-level state (module scope is safe for closures; ucode lesson 44/45
  * only bites function-locals declared AFTER the closure). */
@@ -152,10 +174,11 @@ let cfg = {
 let seen = {
 	core_ok: null
 };
-let last_push = {};   /* kind -> { text, ts } dedup */
 let bus_id = 0;       /* Ф2.4: Event Bus cursor (last consumed event_id) */
 let bus_saved = 0;    /* id already persisted to the durable cursor */
 let bus_ready = false;/* baseline done (never re-baseline mid-boot) */
+/* Ф8.5 Alert Manager: per-kind alert state { text, ts, times[], suppressed } */
+let alert_state = {};
 
 /* ── basics ───────────────────────────────────────────────────────────── */
 
@@ -332,6 +355,20 @@ function ensure_owner_seed() {
 			((r && r.error) ? r.error : 'rpcd недоступен') + ') — legacy access stays');
 }
 
+/* ── Ф8.5: аудит действий из чата (Audit Log) ───────────────────────────
+ * Каждое действие из чата — команда, тап кнопки, подтверждение, отказ
+ * RBAC, привязка — попадает в Event Bus (src='tg'), откуда /audit читает
+ * его владельцу. Best-effort: аудит никогда не роняет обработку апдейта.
+ * Журнал живёт в tmpfs — после ребута пуст (честно указано в /audit). */
+function audit(uid, role, type, detail) {
+	try {
+		let d = '' + (detail || '');
+		if (length(d) > 200)
+			d = substr(d, 0, 200) + '…';
+		bus_emit('tg', '' + type, 'tg:' + (uid != null ? uid : '?') + (role ? ('/' + role) : ''), d);
+	} catch (e) { /* аудит не роняет бота */ }
+}
+
 /* Entities are split so no tooling decodes them back (lesson 51 family). */
 const AMP_E = '&' + 'amp;';
 const LT_E = '&' + 'lt;';
@@ -438,6 +475,17 @@ function tg_send_html(chat_id, text, kb) {
 	return tg_call('sendMessage', body);
 }
 
+/* PLAIN message (no parse_mode): for /diagnostics and /audit — raw log
+ * lines and journal details must never fight the HTML parser (a single
+ * unescaped '<' kills the whole message). */
+function tg_send_plain(chat_id, text) {
+	let t = '' + text;
+	if (length(t) > MAXMSG)
+		t = substr(t, 0, MAXMSG) + '…';
+	send_gap();
+	return tg_call('sendMessage', sprintf('{"chat_id":%d,"text":"%s"}', chat_id, jesc(t)));
+}
+
 /* Document upload (Р4 /logs): multipart/form-data через curl -F.
  * Возвращает true при ok:true в ответе Bot API. */
 function tg_send_document(chat_id, path, caption) {
@@ -516,21 +564,28 @@ function pair_try(chat_id, uid, text) {
 	const role = (ROLE_RANK[r.role] != null) ? r.role : 'viewer';
 	read_cfg();   /* fresh RBAC mirror (the daemon re-reads UCI each loop anyway) */
 	log('pairing: user ' + uid + ' paired as ' + role);
+	audit(uid, null, 'pair', 'привязка выполнена, роль ' + role);
 	tg_send_html(chat_id, `✅ Пользователь привязан (роль: <b>${role}</b>). /help — список команд.`, null);
 	return true;
 }
 
 /* Unknown user: a polite refusal in private chats (a foreign chat cannot
  * receive our message anyway — Telegram returns «chat not found», which is
- * harmless and logged); in the bound group chat — silent (no spam). */
+ * harmless and logged); in the bound group chat — silent (no spam).
+ * Ф8.5: refusals in PRIVATE chats are audited (security events); group
+ * noise from strangers is not. */
 function deny_unknown(chat_id, uid, ctype) {
 	log('RBAC: unknown user ' + uid + ' in chat ' + chat_id + ' (' + ctype + ') — denied');
-	if (ctype === 'private')
+	if (ctype === 'private') {
+		audit(uid, null, 'deny', 'неизвестный пользователь, доступ отклонён (private)');
 		tg_send_html(chat_id, '⛔ Нет доступа. Попросите владельца сгенерировать код привязки на странице «Telegram-бот» в LuCI и отправьте его мне.', null);
+	}
 }
 
-function deny_role(chat_id, role, need) {
+/* Denial with the audit trail (Ф8.5): who tried what and what was required. */
+function deny_role(chat_id, role, need, uid, what) {
 	log('RBAC: action denied for role ' + role + ' (needs ' + need + ')');
+	audit(uid, role, 'deny', '' + (what || 'действие') + ' — отклонено (роль «' + role + '», нужно «' + need + '»)');
 	tg_send_html(chat_id, '⛔ Недостаточно прав: ваша роль «' + role + '», действие требует «' + need + '».', null);
 }
 
@@ -840,6 +895,116 @@ function cmd_logs(chat_id) {
 	}
 }
 
+/* ── /diagnostics (Ф8.5): прицельный диагностический бандл — расширение
+ * /logs. НЕ полный support-бандл (тот собирается 10–30 с и уходит файлом),
+ * а быстрая сводка для разбора инцидента прямо в чате: реестр демонов
+ * (pmgr, живость identity + свежесть heartbeat), движки/ядро, статусы
+ * RPC (rpcd: telegram/core-install/health), хвосты журналов подсистем и
+ * health-док одной строкой. Больше одного сообщения — уходит файлом
+ * (tmpfs, удаляется после отправки). Секунды, не десятки секунд. ────── */
+const DIAG_LOGS = [
+	[ '/var/run/homeproxy/telegram.log', 12 ],
+	[ '/var/run/homeproxy/hotswap.log', 10 ],
+	[ '/var/run/homeproxy/urltest_watchdog.log', 10 ],
+	[ '/var/run/homeproxy/health.log', 10 ],
+	[ '/var/run/homeproxy/sentinel.log', 10 ],
+	[ '/var/run/homeproxy/recovery.log', 10 ],
+	[ '/var/run/homeproxy/automation.log', 10 ],
+	[ '/var/run/homeproxy/control.log', 10 ],
+	[ '/var/run/homeproxy/multidns/multidns.log', 8 ],
+	[ '/var/run/homeproxy/homeproxy.log', 12 ],
+	[ '/var/run/homeproxy/hiddify-c.log', 8 ]
+];
+
+/* PLAIN text (no HTML): raw log lines must not fight the parser. */
+function cmd_diag_text() {
+	let out = '🧾 ДИАГНОСТИКА RAVNEX · ' + fmt_dur(time() - boot_ts) + ' аптайм бота\n';
+	/* 1) Демоны: реестр pmgr + живость identity (не pidof) + свежесть hb. */
+	const reg = pm_reg_load();
+	out += '\n── ДЕМОНЫ ─\n';
+	let any = false;
+	for (let name in reg.daemons) {
+		const e = reg.daemons[name];
+		const alive = pm_entry_alive(e);
+		const hb = (int(e.hb) > 0) ? max(0, time() - int(e.hb)) : -1;
+		out += sprintf('%s %s (pid %d, hb %s)\n', alive ? 'жив' : 'МЁРТВ',
+			name, int(e.pid || 0), (hb >= 0) ? (hb + ' с назад') : 'нет');
+		any = true;
+	}
+	if (!any)
+		out += 'реестр пуст\n';
+	/* 2) Движки и ядро. */
+	out += '\n── ДВИЖКИ / ЯДРО ─\n';
+	out += 'Ядро (Clash API): ' + ((clash_get('/version') != null) ? 'живо' : 'НЕ ОТВЕЧАЕТ') + '\n';
+	out += 'Zapret: ' + (proc_up('nfqws2') ? 'вкл' : 'выкл') +
+		' · ByeDPI: ' + (proc_up('ciadpi') ? 'вкл' : 'выкл') +
+		' · MultiDNS: ' + (proc_up('mosdns') ? 'вкл' : 'выкл') + '\n';
+	/* 3) RPC-статусы (rpcd). */
+	out += '\n── RPC (rpcd) ─\n';
+	const ts = ubus_call('telegram_status', {}, 10);
+	if (ts != null)
+		out += 'telegram_status: ok (enabled=' + (ts.enabled ? '1' : '0') +
+			', muted=' + (ts.muted ? '1' : '0') + ')\n';
+	else
+		out += 'telegram_status: НЕ ОТВЕТИЛ\n';
+	const cis = ubus_call('core_install_status', {}, 10);
+	if (cis != null)
+		out += 'core_install_status: ' + ((cis.running === true)
+			? ('идёт установка (' + (cis.stage || '?') + ')') : 'ok') + '\n';
+	else
+		out += 'core_install_status: НЕ ОТВЕТИЛ\n';
+	const hx = ubus_call('health_explain', {}, 30);
+	if (hx && hx.result === true && hx.health && hx.health.data) {
+		const h = hx.health.data;
+		let bad = 0;
+		const ents = (h.entries != null) ? h.entries : {};
+		for (let k in ents)
+			if (('' + (ents[k].status || '')) !== 'ok' && ('' + (ents[k].status || '')) !== 'off')
+				bad++;
+		out += 'health_explain: ' + (ST_RU['' + h.overall] || ('' + h.overall)) +
+			' · проблем: ' + bad + ' · fresh=' + ((hx.health.fresh === true) ? 'да' : 'пересчитан') + '\n';
+	} else
+		out += 'health_explain: НЕ ОТВЕТИЛ (rpcd или демоны?)\n';
+	/* 4) Хвосты журналов подсистем. */
+	out += '\n── ЖУРНАЛЫ (хвосты) ─\n';
+	for (let i = 0; i < length(DIAG_LOGS); i++) {
+		const p = DIAG_LOGS[i][0];
+		/* substr, не replace(): строковые паттерны в ucode ненадёжны (урок 26). */
+		out += '· ' + substr(p, length('/var/run/homeproxy/')) + '\n';
+		if (access(p)) {
+			const t = trim(capture(`tail -n ${DIAG_LOGS[i][1]} ${shellquote(p)} 2>/dev/null`));
+			out += (length(t) ? t : '(пуст)') + '\n';
+		} else
+			out += '(нет файла)\n';
+	}
+	return out;
+}
+
+function cmd_diagnostics(chat_id) {
+	tg_send_html(chat_id, '🧾 Собираю прицельную диагностику… (несколько секунд)', null);
+	const out = cmd_diag_text();
+	if (length(out) > MAXMSG) {
+		/* Большой отчёт — файлом (tmpfs, сразу после отправки удаляется). */
+		const path = RUN_DIR + '/tg_diag.txt';
+		let ok = false;
+		try {
+			writefile(path, out);
+			ok = tg_send_document(chat_id, path, 'Диагностика Ravnex · ' + int(length(out) / 1024) + ' КБ');
+		} catch (e) { log('diag file: ' + e); }
+		system(`rm -f ${shellquote(path)}`);
+		if (ok)
+			return;
+		/* Фолбэк: текст кусками. */
+		let rest = out;
+		while (length(rest) > 0) {
+			tg_send_plain(chat_id, substr(rest, 0, MAXMSG));
+			rest = substr(rest, MAXMSG);
+		}
+		return;
+	}
+	tg_send_plain(chat_id, out);
+}
+
 /* /nodes pagination (audit 42): NODES_PAGE nodes per page, the numbering
  * stays GLOBAL across pages so /switch N keeps its meaning; the page rides
  * in the callback data (stable — audit 20), never in an index of a live
@@ -994,6 +1159,8 @@ const HELP = '<b>Команды</b>\n' +
 	'/snapshot — снапшот конфигурации\n' +
 	'/status_engine — Zapret/ByeDPI статус\n' +
 	'/logs — отчёт для поддержки (архив файлом, секреты вычищены)\n' +
+	'/diagnostics — прицельная диагностика: демоны, RPC, хвосты журналов\n' +
+	'/audit [N] [слово] — журнал действий из чата и контроля (админ+)\n' +
 	'/mute · /unmute — пуш-уведомления вкл/выкл\n' +
 	'/users — пользователи и роли (админ+)\n' +
 	'/restart — перезапуск службы\n' +
@@ -1011,6 +1178,62 @@ function cmd_users() {
 	}
 	if (users_count() === 0)
 		out += '\nПользователей нет — выдайте доступ кодом привязки из LuCI.';
+	return out;
+}
+
+/* ── /audit (Ф8.5): читаемый журнал действий бота/владельца ─────────────
+ * Объединяет два потока шины: src='tg' (команды/тапы/подтверждения/отказы
+ * RBAC/привязки из чата) и src='control' (мутации контроля из UI и бота —
+ * та же RPC-дверь, hc_add_event). Свежие сверху, N по умолчанию 20
+ * (макс 50), фильтр — подстрока без учёта регистра по src/type/who/detail.
+ * PLAIN-текст: детали журнала не должны бороться с HTML-парсером. ────── */
+const AUDIT_SRC_TAG = { tg: '💬 чат', control: '🛡 контр.' };
+
+function audit_hhmmss(ts) {
+	const d = localtime(int(ts));
+	return sprintf('%02d:%02d:%02d', d.hour, d.min, d.sec);
+}
+
+function cmd_audit(rest) {
+	const parts = split(trim(rest || ''), ' ');
+	let n = 20;
+	let filter = '';
+	if (length(parts) > 0 && match(trim(parts[0]), /^[0-9]+$/) != null) {
+		n = int(parts[0]);
+		for (let i = 1; i < length(parts); i++)
+			filter += (length(filter) ? ' ' : '') + trim(parts[i]);
+	} else {
+		for (let i = 0; i < length(parts); i++)
+			filter += (length(filter) ? ' ' : '') + trim(parts[i]);
+	}
+	if (n < 1) n = 1;
+	if (n > 50) n = 50;
+	filter = lc(trim(filter));
+	const evs = bus_tail(800, 0);
+	const rows = [];
+	for (let i = length(evs) - 1; i >= 0 && length(rows) < n; i--) {
+		const ev = evs[i];
+		const tag = AUDIT_SRC_TAG[ev.src];
+		if (tag == null)
+			continue;
+		const hay = lc((ev.src + ' ' + ev.type + ' ' + ev.who + ' ' + ev.detail));
+		if (length(filter) && index(hay, filter) < 0)
+			continue;
+		let det = trim('' + (ev.detail || ''));
+		if (length(det) > 160)
+			det = substr(det, 0, 160) + '…';
+		push(rows, sprintf('%s · %s · %s · %s%s', audit_hhmmss(ev.ts), tag,
+			(ev.type || '?'), (ev.who || '—'), (length(det) ? (': ' + det) : '')));
+	}
+	if (!length(rows))
+		return 'Журнал действий пуст' +
+			(length(filter) ? (' (фильтр: «' + filter + '» — совпадений нет)') : '') +
+			'.\nЖурнал живёт в tmpfs — после перезагрузки роутера он пуст.';
+	let out = '🧾 ЖУРНАЛ ДЕЙСТВИЙ — последние ' + length(rows) +
+		(length(filter) ? (' (фильтр: «' + filter + '»)') : '') + ':\n';
+	for (let i = 0; i < length(rows); i++)
+		out += rows[i] + '\n';
+	out += '💬 чат — команды/кнопки/подтверждения · 🛡 контр. — мутации контроля (UI и бот)';
 	return out;
 }
 
@@ -1057,21 +1280,69 @@ function push_enabled(kind) {
 	return false;
 }
 
-/* Push with optional ACTION BUTTONS (Ф8.4): a notification carries what
- * happened + a one-tap reaction (reverse action / related view). The kb is
- * a ready-built reply_markup (kb_rows), same as direct replies. */
-function send_push(kind, text, kb) {
-	/* Dedup: identical text per kind within DEDUP_SEC is dropped. */
+/* ── Ф8.5: Alert Manager — ЕДИНЫЙ конвейер алертов ──────────────────────
+ * Каждый пуш (шина событий, статусы, «Контроль» через api.push, exec)
+ * проходит одну точку: дедуп по (категория, текст), единый порог частоты
+ * для ОБЫЧНЫХ алертов и тишина (mute + категорийный тумблер).
+ * КРИТИЧЕСКИЕ (sev='crit') проходят ВСЕГДА — инвариант безопасности:
+ * порог, тишина и категорийный тумблер их не глушат, остаётся только
+ * короткий дедуп против флуда (CRIT_DEDUP). Подавленные порогом обычные
+ * алерты СЧИТАЮТСЯ и честно показываются в следующем доставленном пуше
+ * той же категории — ничего не теряется молча. Задел Ф8.7 (тихие часы,
+ * персонализация): классы критичности устоят до редизайна. */
+const ALERT_RATE = 6;       /* обычных пушей на категорию за окно */
+const ALERT_WINDOW = 300;   /* окно порога, с */
+const CRIT_DEDUP = 60;      /* дедуп критических (против флуда), с */
+
+/* Push with optional ACTION BUTTONS (Ф8.4) + severity (Ф8.5): a
+ * notification carries what happened + a one-tap reaction. The kb is a
+ * ready-built reply_markup (kb_rows), same as direct replies; sev='crit'
+ * marks safety-critical alerts. */
+/* Prefix for suppressed normal alerts (pure — harness-testable). */
+function alert_text(sup, text) {
+	return (int(sup) > 0)
+		? ('⚠ Подавлено фоновых уведомлений за 5 мин: ' + sup + '\n' + text)
+		: text;
+}
+
+function send_push(kind, text, kb, sev) {
+	const crit = (sev === 'crit');
 	const now = time();
-	const prev = last_push[kind];
-	if (prev && prev.text === text && (now - prev.ts) < DEDUP_SEC) {
-		last_push[kind] = { text: text, ts: now };
+	let s = alert_state[kind];
+	if (s == null) {
+		s = { text: '', ts: 0, times: [], suppressed: 0 };
+		alert_state[kind] = s;
+	}
+	/* Dedup: identical text per kind within the window is dropped
+	 * (criticals get a SHORT window — a repeat after 60 s goes through). */
+	if (s.text === text && (now - s.ts) < (crit ? CRIT_DEDUP : DEDUP_SEC)) {
+		s.ts = now;
 		return;
 	}
-	last_push[kind] = { text: text, ts: now };
-	if (!push_enabled(kind))
-		return;   /* baselines already advanced — unmute will not replay */
-	tg_send_html(allowed_chat, text, kb || null);
+	s.text = text;
+	s.ts = now;
+	if (!crit) {
+		/* Тишина: mute + категорийный тумблер (критические их обходят). */
+		if (!push_enabled(kind))
+			return;   /* baselines already advanced — unmute will not replay */
+		/* Единый порог обычных алертов: ≤ ALERT_RATE за ALERT_WINDOW. */
+		const fresh = [];
+		for (let i = 0; i < length(s.times); i++)
+			if ((now - s.times[i]) < ALERT_WINDOW)
+				push(fresh, s.times[i]);
+		if (length(fresh) >= ALERT_RATE) {
+			s.times = fresh;
+			s.suppressed = int(s.suppressed) + 1;
+			return;
+		}
+		push(fresh, now);
+		s.times = fresh;
+	}
+	/* Честный счётчик подавленных — показывается в следующем доставленном
+	 * пуше ЭТОЙ категории (и критическом тоже — окно одно на категорию). */
+	const sup = int(s.suppressed);
+	s.suppressed = 0;
+	tg_send_html(allowed_chat, alert_text(sup, text), kb || null);
 }
 
 /* ── Ф2.4: Event Bus subscription (one cursor, hotswap/urltest/automation) ──
@@ -1117,8 +1388,10 @@ function bus_push(ev) {
 		if (ev.type === 'recovered')
 			return { text: '✅ <b>Сторож</b>: ' + esc_html(who || '') + ' — больше не наблюдается', kb: KB_PUSH_DOCTOR };
 		if (ev.type === 'loop')
+			/* Критическое (Ф8.5): цикл восстановления = ремонт петляет,
+			 * автоматика беспомощна — проходит даже тишину. */
 			return { text: '🔁 <b>Сторож — цикл восстановления</b>' +
-				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP };
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP, sev: 'crit' };
 		return { text: '🛡 <b>Сторож</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
 			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
@@ -1129,8 +1402,10 @@ function bus_push(ev) {
 			return { text: '🛠 <b>Recovery — ремонт</b>: ' + esc_html(who || 'ремонт') +
 				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP };
 		if (ev.type === 'blocked')
+			/* Критическое (Ф8.5): авто-ремонт приостановлен — система
+			 * сама проблему уже не решит; проходит даже тишину. */
 			return { text: '🔁 <b>Recovery — авто-ремонт приостановлен</b>' +
-				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP };
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP, sev: 'crit' };
 		if (ev.type === 'unblocked')
 			return { text: '✅ <b>Recovery</b>: ' + esc_html(who || '') + ' — кампания возобновлена', kb: KB_PUSH_DOCTOR };
 		if (ev.type === 'manual')
@@ -1149,17 +1424,22 @@ function bus_push(ev) {
 			(length(who) ? '\nТеперь: <b>' + esc_html(who) + '</b>' : '') +
 			(length(detail) ? '\nПричина: ' + esc_html(detail) : ''), kb: KB_PUSH_SERVERS };
 	}
-	/* Ф5.1/Ф5.2: подписки и rule-set'ы (service-класс). */
+	/* Ф5.1/Ф5.2: подписки и rule-set'ы (service-класс). Отказ/откат
+	 * подписки — критические события (Ф8.5): конфигурация узлов не
+	 * применена или откачена, пользователь должен знать всегда. */
 	if (ev.src === 'subscribe') {
 		if (ev.type === 'done')
 			return { text: '✅ <b>Подписки обновлены</b>' +
 				(length(detail) ? '\n' + esc_html(detail) : ''), kb: null };
 		if (ev.type === 'aborted')
 			return { text: '⚠️ <b>Подписки: обновление отклонено</b> — узлы не тронуты' +
-				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR, sev: 'crit' };
 		if (ev.type === 'rolled_back')
 			return { text: '↩️ <b>Подписки: откат</b> — узлы восстановлены из бекапа' +
-				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR, sev: 'crit' };
+		if (ev.type === 'failed')
+			return { text: '❌ <b>Подписки: обновление не удалось</b>' +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR, sev: 'crit' };
 		return { text: '❗ <b>Подписки</b>' + (length(detail) ? ': ' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
 	if (ev.src === 'rulesets') {
@@ -1221,11 +1501,17 @@ function push_bus() {
 		}
 		bus_id = ev.id;
 		const kind = BUS_SRC_KIND[ev.src];
-		if (kind == null || !push_enabled(kind))
-			continue;   /* baseline advances regardless of toggles — unmute never replays */
+		if (kind == null)
+			continue;
 		const p = bus_push(ev);
+		/* Ф8.5 (инвариант безопасности): критические события проходят
+		 * ВСЕГДА — даже при выключенном категорийном тумблере; обычные
+		 * гейтятся как раньше (baseline всё равно двигается — unmute
+		 * никогда не переигрывает). */
+		if (p.sev !== 'crit' && !push_enabled(kind))
+			continue;
 		sent++;
-		send_push(kind, p.text, p.kb);
+		send_push(kind, p.text, p.kb, p.sev);
 	}
 	if (bus_id !== bus_saved) {
 		bus_cursor_set('telegram-bus', bus_id);
@@ -1240,7 +1526,7 @@ function push_service() {
 	if (ok === seen.core_ok) return;
 	seen.core_ok = ok;
 	if (!ok)
-		send_push('service', '⛔ <b>Ядро не отвечает</b> (Clash API недоступен).', KB_PUSH_DOCTOR);
+		send_push('service', '⛔ <b>Ядро не отвечает</b> (Clash API недоступен).', KB_PUSH_DOCTOR, 'crit');
 	else
 		send_push('service', '✅ <b>Ядро снова отвечает</b>.', KB_PUSH_STATUS);
 }
@@ -1379,7 +1665,7 @@ function rep_unb_title(prefix, key) {
 		: ('Разблокировать кампанию «' + key + '»?');
 }
 
-function confirm_resolve(key, chat_id, role, cbid) {
+function confirm_resolve(key, chat_id, role, cbid, uid) {
 	const c = confirms[key];
 	if (c == null) {
 		tg_answer_cb(cbid, 'Срок подтверждения истёк');
@@ -1392,10 +1678,14 @@ function confirm_resolve(key, chat_id, role, cbid) {
 	}
 	if (!role_ok(role, c.role)) {
 		log('RBAC: confirm denied for role ' + role + ' (needs ' + c.role + ')');
+		audit(uid, role, 'deny', 'подтверждение «' + c.kind + '» — отклонено (роль «' + role + '», нужно «' + c.role + '»)');
 		tg_answer_cb(cbid, 'Недостаточно прав');
 		tg_send_html(chat_id, '⛔ Подтверждение отклонено: ваша роль «' + role + '», действие требует «' + c.role + '».', null);
 		return;
 	}
+	/* Ф8.5: исполнение тяжёлого действия — в журнале действий отдельной
+	 * записью (kind + payload, ~половина строки) помимо тапа 'cb'. */
+	audit(uid, role, 'confirm', c.kind + ' ' + substr('' + (c.payload || ''), 0, 150));
 	confirm_exec(c, chat_id, cbid);
 }
 
@@ -1530,8 +1820,6 @@ function push_scan() {
 	try { push_service(); } catch (e) { log('push service: ' + e); }
 	try { ctrl.push_scan(ctrl_api); } catch (e) { log('push control: ' + e); }
 }
-
-const ST_RU = { ok: '✅ норма', degraded: '⚠️ деградация', down: '⛔ недоступен', off: '⚪ выключен' };
 
 function cmd_mode_text() {
 	const cur = uci_cfg_snap('routing_mode') || 'proxy_banned_ru';
@@ -1711,6 +1999,7 @@ const CMD_MIN = {
 	switch: 'operator', close: 'operator', mute: 'operator', unmute: 'operator',
 	pause: 'operator', resume: 'operator',
 	service: 'admin', restart: 'admin', snapshot: 'admin', logs: 'admin',
+	diagnostics: 'admin', audit: 'admin',
 	blocksite: 'admin', unblocksite: 'admin', users: 'admin', repair: 'admin',
 	mode: 'owner', update: 'owner', cmd: 'owner'
 };
@@ -1719,16 +2008,18 @@ function cmd_need(cmd) {
 	return CMD_MIN[cmd] || 'viewer';
 }
 
-function handle_command(chat_id, text, role) {
+function handle_command(chat_id, text, role, uid) {
 	const m = match(text, /^\/([a-z_]+)(@[A-Za-z0-9_]*)?(.*)$/);
 	if (!m) return;
 	const cmd = m[1];
 	const rest = trim(m[3] || '');
 	const need = cmd_need(cmd);
 	if (!role_ok(role, need)) {
-		deny_role(chat_id, role, need);
+		deny_role(chat_id, role, need, uid, '/' + cmd);
 		return;
 	}
+	/* Ф8.5: каждая команда из чата — в журнале действий (src='tg'). */
+	audit(uid, role, 'cmd', substr(text, 0, 200));
 	/* «Контроль» commands (/control /devices /sites /blocksite /unblocksite
 	 * /pause /resume /wifi) — the module answers them itself (already gated
 	 * by the CMD_MIN check above). Ф8.2: the module sees the ASKER's role
@@ -1770,13 +2061,25 @@ function handle_command(chat_id, text, role) {
 		else
 			tg_send_html(chat_id, nodes_text(nodes, 0), nodes_kb(nodes, 0));
 	} else if (cmd === 'users') {
-		tg_send_html(chat_id, cmd_users(), kb_rows([ [ '🏠 Главная', 'act:menu' ] ]));
+		tg_send_html(chat_id, cmd_users(), kb_rows([ [ [ '🧾 Аудит', 'act:audit' ], [ '🏠 Главная', 'act:menu' ] ] ]));
 	} else if (cmd === 'switch') {
 		tg_send_html(chat_id, cmd_switch(rest, chat_id), null);
 	} else if (cmd === 'snapshot') {
 		tg_send_html(chat_id, cmd_snapshot(), null);
 	} else if (cmd === 'logs') {
 		cmd_logs(chat_id);
+	} else if (cmd === 'diagnostics') {
+		cmd_diagnostics(chat_id);
+	} else if (cmd === 'audit') {
+		const a = cmd_audit(rest);
+		if (length(a) > MAXMSG) {
+			let r2 = a;
+			while (length(r2) > 0) {
+				tg_send_plain(chat_id, substr(r2, 0, MAXMSG));
+				r2 = substr(r2, MAXMSG);
+			}
+		} else
+			tg_send_plain(chat_id, a);
 	} else if (cmd === 'status_engine') {
 		tg_send_html(chat_id, cmd_status_engine(), kb_rows([ [ '🔄 Обновить', 'act:engine' ], [ '🏠 Главная', 'act:menu' ] ]));
 	} else if (cmd === 'mute') {
@@ -1800,7 +2103,7 @@ function handle_command(chat_id, text, role) {
 	} else if (cmd === 'safeoff') {
 		cmd_safeoff(chat_id);
 	} else if (cmd === 'doctor') {
-		tg_send_html(chat_id, doctor_text(), kb_rows([ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ], [ '🏠 Главная', 'act:menu' ] ]));
+		tg_send_html(chat_id, doctor_text(), kb_rows([ [ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ] ], [ [ '🧾 Диагностика', 'act:diag' ], [ '🏠 Главная', 'act:menu' ] ] ]));
 	} else if (cmd === 'repair') {
 		const rv = repair_view();
 		tg_send_html(chat_id, rv.text, rv.kb);
@@ -1831,6 +2134,7 @@ const CB_MIN_PREFIX = [
 	[ 'woff:', 'admin' ],
 	[ 'act:snapshot', 'admin' ], [ 'act:restart', 'admin' ],
 	[ 'act:repair', 'admin' ], [ 'act:mode', 'owner' ], [ 'act:update', 'owner' ],
+	[ 'act:diag', 'admin' ], [ 'act:audit', 'admin' ],
 	[ 'act:safe', 'operator' ],
 	[ 'sw:', 'operator' ],
 	[ 'wton:', 'operator' ],
@@ -1911,7 +2215,7 @@ function handle_update(u) {
 			return;
 		}
 		if (length(text))
-			handle_command(chat_id, text, role);
+			handle_command(chat_id, text, role, uid);
 		return;
 	}
 	const cb = u.callback_query;
@@ -1930,9 +2234,14 @@ function handle_update(u) {
 		const need = cb_need(data);
 		if (role == null || !role_ok(role, need)) {
 			log('RBAC: callback denied for user ' + uid + ' (need ' + need + ')');
+			audit(uid, role, 'deny', 'кнопка ' + substr(data, 0, 100) +
+				' — отклонено (нужно «' + need + '»)');
 			tg_answer_cb(cbid, 'Недостаточно прав');
 			return;
 		}
+		/* Ф8.5: каждый тап кнопки — в журнале действий (исполнения тяжёлых
+		 * действий дополнительно попадают в 'confirm' при подтверждении). */
+		audit(uid, role, 'cb', substr(data, 0, 100));
 		if (match(data, /^sw:/) != null) {
 			const tag = substr(data, 3);
 			let lbl = tag;
@@ -1969,7 +2278,21 @@ function handle_update(u) {
 				'Активные соединения оборвутся (~10 с). Это последний шанс отменить.');
 		} else if (data === 'act:doctor') {
 			tg_answer_cb(cbid, 'Доктор');
-			tg_send_html(chat_id, doctor_text(), kb_rows([ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ], [ '🏠 Главная', 'act:menu' ] ]));
+			tg_send_html(chat_id, doctor_text(), kb_rows([ [ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ] ], [ [ '🧾 Диагностика', 'act:diag' ], [ '🏠 Главная', 'act:menu' ] ] ]));
+		} else if (data === 'act:diag') {
+			tg_answer_cb(cbid, 'Диагностика');
+			cmd_diagnostics(chat_id);
+		} else if (data === 'act:audit') {
+			tg_answer_cb(cbid, 'Аудит');
+			const a = cmd_audit('');
+			if (length(a) > MAXMSG) {
+				let r2 = a;
+				while (length(r2) > 0) {
+					tg_send_plain(chat_id, substr(r2, 0, MAXMSG));
+					r2 = substr(r2, MAXMSG);
+				}
+			} else
+				tg_send_plain(chat_id, a);
 		} else if (data === 'act:repair') {
 			tg_answer_cb(cbid, 'Ремонт');
 			const rv = repair_view();
@@ -1989,7 +2312,7 @@ function handle_update(u) {
 			if (substr(data, 0, 4) === 'cfx:')
 				confirm_drop(key, chat_id, cbid);
 			else
-				confirm_resolve(key, chat_id, role, cbid);
+				confirm_resolve(key, chat_id, role, cbid, uid);
 		} else if (substr(data, 0, 4) === 'saf:') {
 			tg_answer_cb(cbid, 'Возврат узла');
 			cmd_safeoff(chat_id);
