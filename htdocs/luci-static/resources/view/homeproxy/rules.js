@@ -11,8 +11,6 @@
 'require uci';
 'require ui';
 'require view';
-'require form';
-'require validation';
 'require homeproxy as hp';
 
 const callPresetList = rpc.declare({
@@ -67,17 +65,84 @@ const callAiNodesCheck = rpc.declare({
 	expect: { '': {} }
 });
 
-const callAclListRead = rpc.declare({
+const callPresetDelete = rpc.declare({
 	object: 'luci.homeproxy',
-	method: 'acllist_read',
-	params: [ 'type' ],
+	method: 'wizard_preset_delete',
+	params: [ 'section_id' ],
 	expect: { '': {} }
 });
 
-const callAclListWrite = rpc.declare({
+/* Ф4.2 (U7): the "add a rule" master — ALWAYS creates a NEW rule section
+ * (an extra exit for the same service is a legitimate shape). */
+const callPresetAdd = rpc.declare({
 	object: 'luci.homeproxy',
-	method: 'acllist_write',
-	params: [ 'type', 'content' ],
+	method: 'wizard_preset_add',
+	params: [ 'source', 'node', 'urltest_nodes' ],
+	expect: { '': {} }
+});
+
+/* ── User lists (менеджер списков, U7) ─────────────────────────────────── */
+const callListsList = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'lists_list',
+	expect: { '': {} }
+});
+const callListCreate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_create',
+	params: [ 'name', 'kind', 'ctype', 'node', 'urltest_nodes', 'content' ],
+	expect: { '': {} }
+});
+const callListRead = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_read',
+	params: [ 'id' ],
+	expect: { '': {} }
+});
+const callListWrite = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_write',
+	params: [ 'id', 'content', 'mode' ],
+	expect: { '': {} }
+});
+const callListImport = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_import',
+	params: [ 'id', 'url', 'mode' ],
+	expect: { '': {} }
+});
+const callListUpdate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_update',
+	params: [ 'id', 'name', 'node', 'enabled', 'urltest_nodes' ],
+	expect: { '': {} }
+});
+const callListDelete = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_delete',
+	params: [ 'id' ],
+	expect: { '': {} }
+});
+const callListExport = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_export',
+	params: [ 'id' ],
+	expect: { '': {} }
+});
+const callListBackupList = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_backup_list',
+	expect: { '': {} }
+});
+const callListBackupCreate = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_backup_create',
+	expect: { '': {} }
+});
+const callListBackupRestore = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'list_backup_restore',
+	params: [ 'dir' ],
 	expect: { '': {} }
 });
 
@@ -147,20 +212,6 @@ const CSS = `
 .wiz-group:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
 `;
 
-/* Minimal validation stub (same as client.js) for the node label builder. */
-let stubValidator = {
-	factory: validation,
-	apply(type, value, args) {
-		if (value != null)
-			this.value = value;
-
-		return validation.types[type].apply(this, args);
-	},
-	assert(condition) {
-		return !!condition;
-	}
-};
-
 function nodeText(node) {
 	if (node === 'main-out') return _('Same as main node');
 	if (node === 'byedpi-out') return 'ByeDPI';
@@ -180,9 +231,11 @@ function ruleStateText(rule, count) {
 	if (rule.node === 'urltest' && rule.urltest_nodes && rule.urltest_nodes.length)
 		parts.push(E('span', { 'class': 'wiz-note', style: 'margin:0' },
 			[ _('pool: %d node(s)').format(rule.urltest_nodes.length) ]));
+	/* Ф4.2: extra exits are shown in-row now — the stale "see the manual
+	 * editor" pointer is gone. */
 	if (count > 1)
 		parts.push(E('span', { 'class': 'wiz-note', style: 'margin:0' },
-			[ _('+%d more rule(s) of this service — see the manual editor').format(count - 1) ]));
+			[ _('+%d more rule(s) of this service — shown below').format(count - 1) ]));
 	return E('span', {}, parts);
 }
 
@@ -288,73 +341,446 @@ return view.extend({
 		const presetRows = E('div', {});
 		const checkResult = E('div', {});
 
-		/* ── Expert zone: manual domain lists ─────────────────────────── */
-		const dListProxy = E('textarea', {
-			'rows': '6', 'spellcheck': 'false',
-			'style': 'width:100%; font-family:monospace; font-size:.85em'
-		});
-		const dListDirect = E('textarea', {
-			'rows': '6', 'spellcheck': 'false',
-			'style': 'width:100%; font-family:monospace; font-size:.85em'
-		});
-		const dListSave = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
-			[ _('Save domain lists') ]);
-		/* Ф1.1b: the direct-list save spawns a tracked reload operation —
-		 * poll app_op_status until the honest verified verdict; a hot apply
-		 * (proxy list file sync) resolves at once. */
-		function pollListApply(desc, okText, failText) {
-			if (!desc || desc.hot || !desc.op_id) {
-				dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ okText ]));
-				return;
-			}
-			const deadline = Date.now() + 150000;
-			const tick = function() {
-				return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st) {
-					const op = st && st.op;
-					if (op && op.status !== 'completed' && op.status !== 'failed') {
-						if (Date.now() > deadline) {
-							dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-								[ _('The apply operation is still running — check the operation journal on the Diagnostics page.') ]));
-							return;
-						}
-						window.setTimeout(tick, 2000);
+	/* ── User lists (Ф4.2 менеджер списков) ──────────────────────────────
+	 * The former two static textareas (proxy/direct) grow into a full list
+	 * manager: named lists created with their kind (proxy/direct) and content
+	 * type (domains/IPs) and an ACTION picked at creation — a list without a
+	 * rule is a dead list (U6 honesty). Entries are validated and normalized
+	 * through the ONE classifier at input; import sources (URL with an honest
+	 * HTML-gate, pasted text, file) dedup and report accepted/dropped counts;
+	 * snapshots live outside the snapshot-* rotation. */
+	const listsZone = E('div', {});
+	const listsResult = E('div', {});
+	const listsState = { env: null, nodes: [], data: [], editId: null };
+
+	function listArea(text) {
+		dom.content(listsResult, E('p', { 'class': 'hpui-hint' }, [ text ]));
+	}
+
+	/* One result area for the whole lists zone: every action replaces the
+	 * previous verdict here (ui.action_buttons_result_placement). */
+	function pollListOp(desc, okText, failText) {
+		if (!desc || desc.hot || !desc.op_id) {
+			listArea(okText);
+			return;
+		}
+		const deadline = Date.now() + 150000;
+		const tick = function() {
+			return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st) {
+				const op = st && st.op;
+				if (op && op.status !== 'completed' && op.status !== 'failed') {
+					if (Date.now() > deadline) {
+						listArea(_('The apply operation is still running — check the operation journal on the Diagnostics page.'));
 						return;
 					}
-					const ok = !!op && op.status === 'completed' && op.verified;
-					dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [
-						ok ? okText : (failText + ((op && op.detail) ? (' — ' + op.detail) : ''))
-					]));
-				});
-			};
-			tick();
-		}
-
-		dListSave.addEventListener('click', function() {
-			dListSave.disabled = true;
-			dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Saving…') ]));
-			Promise.all([
-				L.resolveDefault(callAclListWrite('proxy_list', dListProxy.value || ''), {}),
-				L.resolveDefault(callAclListWrite('direct_list', dListDirect.value || ''), {})
-			]).then(function(res) {
-				const bad = (!res[0] || res[0].result === false || !res[1] || res[1].result === false);
-				if (bad) {
-					dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Saving the domain lists failed.') ]));
+					window.setTimeout(tick, 2000);
 					return;
 				}
-				/* The direct-list write carries the tracked reload op; the
-				 * proxy list rides the watched-file hot sync. */
-				pollListApply((res[1] && res[1].apply) || (res[0] && res[0].apply),
-					_('Domain lists saved and applied — the core is running the new lists.'),
-					_('Domain lists saved, but the apply failed'));
-			}).finally(function() { dListSave.disabled = false; });
+				const ok = !!op && op.status === 'completed' && op.verified;
+				listArea(ok ? okText : (failText + ((op && op.detail) ? (' — ' + op.detail) : '')));
+			});
+		};
+		tick();
+	}
+
+	function listCounterLine(accepted, dropped) {
+		let s = _('Entries accepted: %s').format('' + accepted);
+		if (dropped > 0)
+			s += ' · ' + _('rejected: %s (not a valid domain/IP for this list type)').format('' + dropped);
+		return s;
+	}
+
+	function listExitLabel(node) {
+		if (node === 'main-out') return _('Same as main node');
+		if (node === 'direct-out') return _('Direct (no bypass engine)');
+		if (node === 'byedpi-out') return 'ByeDPI';
+		if (node === 'zapret-out') return 'Zapret';
+		if (node === 'urltest') return _('URLTest pool');
+		return resolveTag(node);
+	}
+
+	/* Exit <select> for a list kind: proxy lists ride a real exit (main node /
+	 * URLTest pool / a node); direct lists ride direct-out or an engine
+	 * (desync WITHOUT the VPN). Dead exits are not offered (the RPC re-checks). */
+	function listExitSelect(kind, current, poolChecks, poolBox) {
+		const sel = E('select', { 'class': 'cbi-input-select' });
+		const env = listsState.env || {};
+		if (kind === 'proxy') {
+			if (!env.main_is_direct)
+				sel.appendChild(E('option', { value: 'main-out' }, [ _('Same as main node') ]));
+			sel.appendChild(E('option', { value: 'urltest' }, [ _('URLTest pool') ]));
+			for (let n in (listsState.nodes || []))
+				if (listsState.nodes[n].type !== 'direct')
+					sel.appendChild(E('option', { value: listsState.nodes[n].id },
+						[ listsState.nodes[n].label ]));
+		} else {
+			sel.appendChild(E('option', { value: 'direct-out' }, [ _('Direct (no bypass engine)') ]));
+			if (env.zapret_enabled)
+				sel.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
+			if (env.byedpi_enabled)
+				sel.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
+		}
+		sel.value = current || sel.options[0].value;
+		if (sel.selectedIndex < 0)
+			sel.value = sel.options[0].value;
+		sel.addEventListener('change', function() {
+			if (poolBox)
+				poolBox.style.display = (sel.value === 'urltest') ? 'flex' : 'none';
 		});
-		L.resolveDefault(callAclListRead('proxy_list'), {}).then(function(r) {
-			dListProxy.value = (r && r.content) ? String(r.content) : '';
+		return sel;
+	}
+
+	function listPoolPicker(currentNodes) {
+		const box = E('div', { 'class': 'wiz-pool', style: 'display:none; flex-wrap:wrap' });
+		const checks = [];
+		for (let n in (listsState.nodes || [])) {
+			if (listsState.nodes[n].type === 'direct')
+				continue;
+			const cb = E('input', { type: 'checkbox', value: listsState.nodes[n].id });
+			cb.checked = (currentNodes || []).indexOf(listsState.nodes[n].id) >= 0;
+			checks.push(cb);
+			box.appendChild(E('label', {}, [ cb, ' ' + listsState.nodes[n].label ]));
+		}
+		box.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; flex-basis:100%' },
+			[ _('For a resilient secondary route pick a pool of at least 2 nodes.') ]));
+		box._checks = checks;
+		return box;
+	}
+
+	/* The lists zone: table + create master + editor + snapshots. */
+	function renderListsZone() {
+		listsZone.innerHTML = '';
+		const data = listsState.data || [];
+		const env = listsState.env || {};
+
+		/* Table of existing lists. */
+		const tbl = E('table', { 'class': 'hpui-table', style: 'margin:8px 0' });
+		tbl.appendChild(E('thead', {}, [ E('tr', {}, [
+			E('th', {}, [ _('Name') ]),
+			E('th', {}, [ _('Direction') ]),
+			E('th', {}, [ _('Entries') ]),
+			E('th', {}, [ _('Action') ]),
+			E('th', {}, [ _('Source') ]),
+			E('th', {}, [ _('Actions') ])
+		]) ]));
+		const tb = E('tbody', {});
+		for (let i = 0; i < data.length; i++) {
+			const l = data[i];
+			const tr = E('tr', {});
+			tr.appendChild(E('td', {}, [ (l.enabled ? '' : '⏸ ') + (l.name || l.id) ]));
+			tr.appendChild(E('td', {}, [
+				E('span', { 'class': 'hpui-badge ' + (l.kind === 'direct' ? 'hpui-b-grey' : 'hpui-b-blue') },
+					[ l.kind === 'direct' ? _('direct') : _('via proxy') ]),
+				' ' + (l.ctype === 'ips' ? _('IP addresses') : _('domains'))
+			]));
+			tr.appendChild(E('td', {}, [
+				'' + l.entries +
+					((l.dropped > 0) ? (' · ' + _('rejected: %s').format('' + l.dropped)) : '')
+			]));
+			tr.appendChild(E('td', {}, [ listExitLabel(l.node) ]));
+			tr.appendChild(E('td', { style: 'font-size:.85em' }, [ l.source_url || '—' ]));
+			const btns = E('td', {}, [ E('span', { 'class': 'wiz-svc-btns' }, (function() {
+				const arr = [];
+				const eb = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Edit') ]);
+				eb.addEventListener('click', function() { listsState.editId = l.id; renderListsZone(); });
+				arr.push(eb);
+				const tb2 = E('button', { 'class': 'btn cbi-button', type: 'button' },
+					[ l.enabled ? _('Disable') : _('Enable') ]);
+				tb2.addEventListener('click', function() {
+					tb2.disabled = true;
+					listArea(_('Applying…'));
+					L.resolveDefault(callListUpdate(l.id, '', '', l.enabled ? '0' : '1', ''), {})
+						.then(function(r) {
+							if (!r || r.result === false)
+								listArea(_('Failed: ') + ((r && r.error) || _('RPC error')));
+							else if (r.unchanged)
+								listArea(_('Nothing to change.'));
+							else
+								pollListOp(r.apply, _('The list state is applied.'), _('The list state failed to apply'));
+							refreshLists();
+						}).finally(function() { tb2.disabled = false; });
+				});
+				arr.push(tb2);
+				const xb = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Export') ]);
+				xb.addEventListener('click', function() {
+					xb.disabled = true;
+					L.resolveDefault(callListExport(l.id), {}).then(function(r) {
+						if (!r || r.result === false) {
+							listArea(_('Export failed: ') + ((r && r.error) || _('RPC error')));
+							return;
+						}
+						const blob = new Blob([ r.content || '' ], { type: 'text/plain;charset=utf-8' });
+						const a = E('a', { href: URL.createObjectURL(blob),
+							download: 'ravnex-list-' + l.id + '.txt' });
+						document.body.appendChild(a);
+						a.click();
+						document.body.removeChild(a);
+						window.setTimeout(function() { URL.revokeObjectURL(a.href); }, 5000);
+						listArea(_('The list is exported (what actually routes, with a source comment).'));
+					}).finally(function() { xb.disabled = false; });
+				});
+				arr.push(xb);
+				const db = E('button', { 'class': 'btn cbi-button cbi-button-negative', type: 'button' },
+					[ _('Delete') ]);
+				db.addEventListener('click', function() {
+					hp.confirmModal(_('Delete list'), _('Delete the list "%s"? A snapshot is taken automatically before the deletion.').format(l.name || l.id), _('Delete'))
+						.then(function(ok) {
+							if (!ok) return;
+							db.disabled = true;
+							listArea(_('Deleting…'));
+							L.resolveDefault(callListDelete(l.id), {}).then(function(r) {
+								if (!r || r.result === false)
+									listArea(_('Failed: ') + ((r && r.error) || _('RPC error')));
+								else
+									pollListOp(r.apply, _('The list is deleted (a snapshot was taken first).'), _('The list deletion failed to apply'));
+								refreshLists();
+							}).finally(function() { db.disabled = false; });
+						});
+				});
+				arr.push(db);
+				return arr;
+			})()) ]);
+			tr.appendChild(btns);
+			tb.appendChild(tr);
+		}
+		if (!data.length)
+			tb.appendChild(E('tr', {}, [ E('td', { colspan: '6', style: 'opacity:.7' },
+				[ _('No lists yet — create one below (a single domain or IP is enough).') ]) ]));
+		tbl.appendChild(tb);
+		listsZone.appendChild(tbl);
+
+		/* Editor (opened by Edit). */
+		if (listsState.editId) {
+			const cur = null;
+			for (let i = 0; i < data.length; i++)
+				if (data[i].id === listsState.editId)
+					listsState.editData = data[i];
+			const ed = listsState.editData;
+			if (!ed) {
+				listsState.editId = null;
+			} else {
+				const card = E('div', { 'class': 'wiz-svc', style: 'margin:10px 0' });
+				card.appendChild(E('div', { 'class': 'wiz-title', style: 'margin-bottom:6px' },
+					[ _('Edit list: %s').format(ed.name || ed.id) ]));
+				const nameIn = E('input', { type: 'text', 'class': 'cbi-input-text',
+					value: ed.name || '', style: 'width:280px' });
+				const selRow = E('div', { 'class': 'wiz-row', style: 'margin:6px 0' }, [
+					E('span', { 'class': 'wiz-title', style: 'flex:none; width:160px' }, [ _('Name') ]), nameIn ]);
+				card.appendChild(selRow);
+				const poolBox2 = listPoolPicker(null);
+				const exitSel = listExitSelect(ed.kind, ed.node, null, poolBox2);
+				exitSel.value = ed.node || exitSel.value;
+				card.appendChild(E('div', { 'class': 'wiz-row', style: 'margin:6px 0' }, [
+					E('span', { 'class': 'wiz-title', style: 'flex:none; width:160px' }, [ _('Action') ]), exitSel ]));
+				card.appendChild(poolBox2);
+				const ta = E('textarea', { rows: '8', spellcheck: 'false',
+					style: 'width:100%; font-family:monospace; font-size:.85em' });
+				ta.value = _('Loading…');
+				L.resolveDefault(callListRead(ed.id), {}).then(function(r) {
+					ta.value = (r && r.content != null) ? String(r.content) : '';
+				});
+				card.appendChild(ta);
+				/* Import row: URL (replace / append) + local file. */
+				const urlIn = E('input', { type: 'text', 'class': 'cbi-input-text',
+					placeholder: 'https://…', style: 'flex:1 1 260px; min-width:200px' });
+				const impRep = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Replace from URL') ]);
+				const impApp = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Append from URL') ]);
+				const fileIn = E('input', { type: 'file', 'class': 'cbi-input-file' });
+				fileIn.addEventListener('change', function() {
+					const f = fileIn.files && fileIn.files[0];
+					if (!f) return;
+					const rd = new FileReader();
+					rd.onload = function() {
+						ta.value = String(rd.result || '');
+						listArea(_('File loaded into the editor — press Save to apply (entries are validated at save).'));
+					};
+					rd.readAsText(f);
+				});
+				function doImport(mode) {
+					if (!urlIn.value) {
+						listArea(_('Enter the source URL first.'));
+						return;
+					}
+					impRep.disabled = true; impApp.disabled = true;
+					listArea(_('Importing…'));
+					L.resolveDefault(callListImport(ed.id, urlIn.value, mode), {}).then(function(r) {
+						if (!r || r.result === false) {
+							listArea(_('Import failed: ') + ((r && r.error) || _('RPC error')));
+							return;
+						}
+							listArea(listCounterLine(r.accepted, r.dropped) + ' · ' + (r.apply && r.apply.hot ? _('applied live (hot reload).') : _('Applying…')));
+						pollListOp(r.apply, listCounterLine(r.accepted, r.dropped) + ' · ' + _('applied — the core runs the updated list.'),
+							_('The import failed to apply'));
+						refreshLists();
+					}).finally(function() { impRep.disabled = false; impApp.disabled = false; });
+				}
+				impRep.addEventListener('click', function() { doImport('replace'); });
+				impApp.addEventListener('click', function() { doImport('append'); });
+				card.appendChild(E('div', { 'class': 'wiz-row', style: 'margin:6px 0' }, [
+					E('span', { 'class': 'wiz-title', style: 'flex:none; width:160px' }, [ _('Import') ]),
+					urlIn, impRep, impApp, fileIn ]));
+				card.appendChild(E('div', { 'class': 'wiz-note' },
+					[ _('One host per line; # lines are comments. Entries are validated and normalized at input: a /33 or garbage is rejected with a counter, a bare IP is accepted and normalized (/32, /128). Import never applies an empty/HTML answer.') ]));
+				const saveBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+					[ _('Save list') ]);
+				saveBtn.addEventListener('click', function() {
+					saveBtn.disabled = true;
+					listArea(_('Saving…'));
+					L.resolveDefault(callListUpdate(ed.id, nameIn.value, exitSel.value, '', ''), {}).then(function(r1) {
+						if (!r1 || r1.result === false) {
+							listArea(_('Failed: ') + ((r1 && r1.error) || _('RPC error')));
+							return null;
+						}
+						return L.resolveDefault(callListWrite(ed.id, ta.value, 'replace'), {}).then(function(r2) {
+							if (!r2 || r2.result === false) {
+								listArea(_('Failed: ') + ((r2 && r2.error) || _('RPC error')));
+								return;
+							}
+							listArea(listCounterLine(r2.accepted, r2.dropped) + ' · ' + (r2.apply && r2.apply.hot ? _('applied live (hot reload).') : _('Applying…')));
+							pollListOp(r2.apply, listCounterLine(r2.accepted, r2.dropped) + ' · ' + _('applied — the core runs the updated list.'),
+								_('The list save failed to apply'));
+							refreshLists();
+						});
+					}).finally(function() { saveBtn.disabled = false; });
+				});
+				const closeBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Close') ]);
+				closeBtn.addEventListener('click', function() { listsState.editId = null; renderListsZone(); });
+				card.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ saveBtn, closeBtn ]));
+				listsZone.appendChild(card);
+			}
+		}
+
+		/* Create master — the action is picked HERE, at creation. */
+		const mk = E('div', { 'class': 'wiz-svc', style: 'margin:10px 0' });
+		mk.appendChild(E('div', { 'class': 'wiz-title' }, [ _('Create a list') ]));
+		const nameIn2 = E('input', { type: 'text', 'class': 'cbi-input-text',
+			placeholder: _('List name'), style: 'width:220px' });
+		const kindSel = E('select', { 'class': 'cbi-input-select' });
+		kindSel.appendChild(E('option', { value: 'proxy' }, [ _('via proxy') ]));
+		kindSel.appendChild(E('option', { value: 'direct' }, [ _('direct') ]));
+		const ctypeSel = E('select', { 'class': 'cbi-input-select' });
+		ctypeSel.appendChild(E('option', { value: 'domains' }, [ _('domains') ]));
+		ctypeSel.appendChild(E('option', { value: 'ips' }, [ _('IP addresses') ]));
+		const poolBox3 = listPoolPicker(null);
+		const exitSel3 = listExitSelect('proxy', '', null, poolBox3);
+		kindSel.addEventListener('change', function() {
+			const nv = kindSel.value;
+			const nb = listExitSelect(nv, '', null, poolBox3);
+			exitSel3.parentNode.replaceChild(nb, exitSel3);
+			exitSel3 = nb;
+			poolBox3.style.display = (nv === 'proxy' && nb.value === 'urltest') ? 'flex' : 'none';
 		});
-		L.resolveDefault(callAclListRead('direct_list'), {}).then(function(r) {
-			dListDirect.value = (r && r.content) ? String(r.content) : '';
+		mk.appendChild(E('div', { 'class': 'wiz-row', style: 'margin:6px 0' }, [
+			nameIn2, kindSel, ctypeSel, exitSel3 ]));
+		mk.appendChild(poolBox3);
+		const ta2 = E('textarea', { rows: '4', spellcheck: 'false',
+			placeholder: _('Entries — one per line (optional; you can import later)'),
+			style: 'width:100%; font-family:monospace; font-size:.85em' });
+		mk.appendChild(ta2);
+		const createBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			[ _('Create') ]);
+		createBtn.addEventListener('click', function() {
+			const name = (nameIn2.value || '').trim();
+			if (!name) {
+				listArea(_('Enter the list name first.'));
+				return;
+			}
+			const ids = [];
+			for (let c in poolBox3._checks)
+				if (poolBox3._checks[c].checked)
+					ids.push(poolBox3._checks[c].value);
+			createBtn.disabled = true;
+			listArea(_('Creating…'));
+			L.resolveDefault(callListCreate(name, kindSel.value, ctypeSel.value, exitSel3.value,
+				JSON.stringify(exitSel3.value === 'urltest' ? ids : []), ta2.value), {}).then(function(r) {
+				if (!r || r.result === false) {
+					const ERRS = {
+						main_is_direct: _('Main node is Direct — a proxy list would have no effect. Pick Zapret/ByeDPI for a direct list, or choose a real main node.'),
+						byedpi_disabled: _('ByeDPI is not enabled — enable it on the Connection page first.'),
+						zapret_disabled: _('Zapret is not enabled — enable it on the Connection page first.'),
+						urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
+						'unknown node': _('Unknown node — refresh the page.')
+					};
+					listArea(_('Creation failed: ') + (ERRS[(r && r.error)] || ((r && r.error) || _('RPC error'))));
+					return;
+				}
+				listArea(listCounterLine(r.accepted, r.dropped));
+				pollListOp(r.apply, _('The list is created and applied — route_explain and real traffic can verify it.'),
+					_('The list creation failed to apply'));
+				refreshLists();
+			}).finally(function() { createBtn.disabled = false; });
 		});
+		mk.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ createBtn ]));
+		mk.appendChild(E('div', { 'class': 'wiz-note' },
+			[ _('A list is created WITH its action — a list without a rule would be a dead list. Proxy lists route AFTER the RU-protection guard (a RU domain in a proxy list stays direct — the invariant holds); direct lists are checked right after the per-service rules.') ]));
+		listsZone.appendChild(mk);
+
+		/* Snapshots: manual snapshot + restore (a dated family outside the
+		 * snapshot-* rotation — user snapshots are never evicted). */
+		const snapRow = E('div', { 'class': 'wiz-row', style: 'margin:6px 0' });
+		const snapSel = E('select', { 'class': 'cbi-input-select', style: 'max-width:420px' });
+		snapSel.appendChild(E('option', { value: '' }, [ _('Snapshots: none yet') ]));
+		L.resolveDefault(callListBackupList(), {}).then(function(r) {
+			const snaps = (r && r.snapshots) || [];
+			snapSel.innerHTML = '';
+			if (!snaps.length) {
+				snapSel.appendChild(E('option', { value: '' }, [ _('Snapshots: none yet') ]));
+				return;
+			}
+			for (let i = 0; i < snaps.length; i++)
+				snapSel.appendChild(E('option', { value: snaps[i].dir },
+					[ snaps[i].dir + (snaps[i].reason ? (' — ' + snaps[i].reason) : '') + ' (' + snaps[i].counts + ')' ]));
+		});
+		const snapBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Snapshot all lists') ]);
+		snapBtn.addEventListener('click', function() {
+			snapBtn.disabled = true;
+			listArea(_('Taking a snapshot…'));
+			L.resolveDefault(callListBackupCreate(), {}).then(function(r) {
+				if (!r || r.result === false)
+					listArea(_('Snapshot failed: ') + ((r && r.error) || _('RPC error')));
+				else
+					listArea(_('Snapshot saved: %s').format(r.dir));
+				refreshLists();
+			}).finally(function() { snapBtn.disabled = false; });
+		});
+		const restBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Restore') ]);
+		restBtn.addEventListener('click', function() {
+			if (!snapSel.value) {
+				listArea(_('Pick a snapshot to restore first.'));
+				return;
+			}
+			hp.confirmModal(_('Restore lists'), _('Restore all lists from the snapshot %s? The CURRENT state is snapshotted first.').format(snapSel.value), _('Restore'))
+				.then(function(ok) {
+					if (!ok) return;
+					restBtn.disabled = true;
+					listArea(_('Restoring…'));
+					L.resolveDefault(callListBackupRestore(snapSel.value), {}).then(function(r) {
+						if (!r || r.result === false)
+							listArea(_('Restore failed: ') + ((r && r.error) || _('RPC error')));
+						else {
+							listArea(_('Restored %s list(s) from %s.').format('' + r.restored, snapSel.value));
+							pollListOp(r.apply, _('The restore is applied — the core runs the restored lists.'),
+								_('The restore failed to apply'));
+						}
+						refreshLists();
+					}).finally(function() { restBtn.disabled = false; });
+				});
+		});
+		snapRow.appendChild(snapSel);
+		snapRow.appendChild(snapBtn);
+		snapRow.appendChild(restBtn);
+		listsZone.appendChild(snapRow);
+	}
+
+	function refreshLists() {
+		return L.resolveDefault(callListsList(), {}).then(function(r) {
+			listsState.env = (r && r.env) || {};
+			listsState.nodes = (r && r.env && r.env.proxy_nodes) || [];
+			listsState.data = (r && r.lists) || [];
+			renderListsZone();
+		});
+	}
+	refreshLists();
 
 		function renderPresets(list) {
 			/* Rebuild the rows ONLY when the underlying state changed: a 4s
@@ -391,6 +817,9 @@ return view.extend({
 			function buildServiceRow(preset) {
 				const rule = (list.rules || {})[preset.source];
 				const count = (list.rule_counts || {})[preset.source] || 0;
+				/* Ф4.2: extra rules (2nd..Nth exit of the same service) render
+				 * INSIDE the preset row — there is no duplicate editor below. */
+				const extras = ((list.rule_extras || {})[preset.source]) || [];
 
 				/* A card with the fixed control grid on top (name | state |
 				 * select | buttons) and the hints/pool as sub-rows below. */
@@ -534,6 +963,34 @@ return view.extend({
 				/* Pool picker + hints live BELOW the grid line. */
 				wrap.appendChild(poolBox);
 
+				/* Extra exits of the same service (added by the master) —
+				 * shown here with their own remove buttons. */
+				for (let e in extras) {
+					const ex = extras[e];
+					const exRow = E('div', { 'class': 'wiz-note', style: 'margin:2px 0 0 12px' });
+					exRow.appendChild(document.createTextNode(
+						_('Also routed through %s').format(nodeText(ex.node)) +
+						(ex.enabled ? '' : (' (' + _('disabled') + ')')) + '  '));
+					const exDel = E('button', {
+						'class': 'btn cbi-button cbi-button-negative', type: 'button'
+					}, [ _('Delete') ]);
+					exDel.addEventListener('click', function() {
+						exDel.disabled = true;
+						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting…') ]));
+						L.resolveDefault(callPresetDelete(ex.section_id), {}).then(function(r) {
+							if (!r || r.result === false)
+								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+									[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
+							else
+								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+									[ _('The extra rule is deleted.') ]));
+							refresh();
+						}).finally(function() { exDel.disabled = false; });
+					});
+					exRow.appendChild(exDel);
+					wrap.appendChild(exRow);
+				}
+
 				/* A2: a row without its own rule is still covered by the mass
 				 * lists — name what covers it and that a rule here overrides. */
 				if (!rule) {
@@ -576,6 +1033,100 @@ return view.extend({
 				for (let p in items)
 					presetRows.appendChild(buildServiceRow(items[p]));
 			}
+
+			/* Ф4.2: the "add a rule" master — the preset rows are the ONE place
+			 * rules live; the master ADDS a new (extra) rule and the row shows
+			 * it. No duplicated editor grid below. */
+			const mBtn = E('button', { 'class': 'btn cbi-button', type: 'button', style: 'margin-top:10px' },
+				[ _('Add a rule') ]);
+			const mForm = E('div', { 'class': 'wiz-svc', style: 'display:none; margin:8px 0' });
+			const mSrc = E('select', { 'class': 'cbi-input-select', style: 'min-width:220px' });
+			const mSources = [];
+			for (let g2 in GROUPS)
+				for (let p2 in GROUPS[g2][1])
+					push_master_src(mSources, GROUPS[g2][1][p2].source, GROUPS[g2][1][p2].title);
+			mSources.sort(function(a, b) { return (a.title < b.title) ? -1 : (a.title > b.title) ? 1 : 0; });
+			for (let s2 in mSources)
+				mSrc.appendChild(E('option', { value: mSources[s2].source }, [ mSources[s2].title ]));
+			const mPool = E('div', { 'class': 'wiz-pool', style: 'display:none; flex-wrap:wrap' });
+			const mChecks = [];
+			for (let n in (list.nodes || [])) {
+				if (list.nodes[n].type === 'direct')
+					continue;
+				const cb = E('input', { type: 'checkbox', value: list.nodes[n].id });
+				mChecks.push(cb);
+				mPool.appendChild(E('label', {}, [ cb, ' ' + list.nodes[n].label ]));
+			}
+			const mNode = E('select', { 'class': 'cbi-input-select', style: 'min-width:190px' });
+			if (!env.main_is_direct)
+				mNode.appendChild(E('option', { value: 'main-out' }, [ _('Same as main node') ]));
+			mNode.appendChild(E('option', { value: 'urltest' }, [ _('URLTest pool') ]));
+			for (let n in (list.nodes || []))
+				if (list.nodes[n].type !== 'direct')
+					mNode.appendChild(E('option', { value: list.nodes[n].id }, [ list.nodes[n].label ]));
+			if (env.byedpi_enabled)
+				mNode.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
+			if (env.zapret_enabled)
+				mNode.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
+			mNode.addEventListener('change', function() {
+				mPool.style.display = (mNode.value === 'urltest') ? 'flex' : 'none';
+			});
+			const mAdd = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+				[ _('Add') ]);
+			mAdd.addEventListener('click', function() {
+				const ids = [];
+				for (let c in mChecks)
+					if (mChecks[c].checked)
+						ids.push(mChecks[c].value);
+				if (mNode.value === 'urltest' && !ids.length) {
+					ui.addNotification(null, E('p', {}, _('Pick at least one node for the URLTest pool.')), 'error');
+					return;
+				}
+				mAdd.disabled = true;
+				dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Adding…') ]));
+				callPresetAdd(mSrc.value, String(mNode.value || ''), JSON.stringify(mNode.value === 'urltest' ? ids : []))
+					.then(function(r) {
+						if (!r || r.result === false) {
+							const ERRS = {
+								main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
+								byedpi_disabled: _('ByeDPI is not enabled — enable it on the Connection page first.'),
+								zapret_disabled: _('Zapret is not enabled — enable it on the Connection page first.'),
+								urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
+								'unknown node': _('Unknown node — refresh the page.'),
+								'unknown source': _('Unknown service.'),
+								'duplicate rule': _('This exact rule already exists.')
+							};
+							dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+								[ ERRS[(r && r.error)] || ((r && r.error) || _('RPC error')) ]));
+							return;
+						}
+						dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+							[ _('The rule is added — it now shows in its service row. The apply is running…') ]));
+						state.pendingCheck = null;
+						pollListOp((r.apply && r.apply.op_id) ? { op_id: r.apply.op_id } : null,
+							_('The rule is applied.'), _('The rule apply failed'));
+						refresh();
+					}).finally(function() { mAdd.disabled = false; });
+			});
+			mForm.appendChild(E('div', { 'class': 'wiz-row' }, [
+				E('span', { 'class': 'wiz-title', style: 'flex:none; width:110px' }, [ _('Source') ]), mSrc,
+				E('span', { 'class': 'wiz-title', style: 'flex:none; width:110px' }, [ _('Node') ]), mNode ]));
+			mForm.appendChild(mPool);
+			mForm.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ mAdd ]));
+			mBtn.addEventListener('click', function() {
+				mForm.style.display = (mForm.style.display === 'none') ? 'block' : 'none';
+			});
+			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
+				[ _('Rules live ONLY in the rows above — this master just adds a new one (e.g. a second exit for the same service); the row shows it right away.') ]));
+			presetRows.appendChild(mBtn);
+			presetRows.appendChild(mForm);
+		}
+
+		function push_master_src(arr, src, title) {
+			for (let i = 0; i < arr.length; i++)
+				if (arr[i].source === src)
+					return;
+			arr.push({ source: src, title: title });
 		}
 
 		/* ── Live checks (results in ONE place below the presets) ──────── */
@@ -759,232 +1310,14 @@ return view.extend({
 		poll.add(refresh, 4);
 		refresh();
 
-		/* ── Expert zone: the manual rule editor (moved from the Client
-		 * page) + the manual domain lists, collapsed so the everyday flow
-		 * stays clean. The grid reads uci at page open — after applying
-		 * presets offer an explicit reload so it never saves stale state. */
-		const m = new form.Map('homeproxy');
-		const s = m.section(form.TypedSection, 'proxy_ru_rule', null);
-		s.addremove = true;
-		s.anonymous = true;
-		s.sortable = true;
-		s.nodescriptions = true;
-		s.description = _('Default route is Direct. Added rules are proxied, with automatic priority:<br>1. Smaller lists (YouTube, Discord etc.)<br>2. <b>Russia Inside</b> (1000+ domains, itdoginfo) — the in-Russia must-have set (YouTube, Discord, Telegram, Meta…) routed through the proxy<br>3. <b>Re-filter</b> (60000+ domains + 25000+ IPs) — community blocklist of domains and IPs banned in Russia (Roskomnadzor)<br><br><em>Note: the Zapret installer may add a "YouTube → Zapret" rule here automatically. Combining engines works by rules: "YouTube → Zapret" + everything else on the Main node, or Main node = Direct with only some services via an engine.</em>');
-		/* Honest-state hint: with Main node = Direct every "Same as main node"
-		 * rule still matches but egresses directly — say so, hide the pointless
-		 * option for NEW rules, and point at the engines. */
-		if (uci.get('homeproxy', 'config', 'main_node') === 'direct-out')
-			s.description += '<br><b>' + _('Main node is Direct: rules pointing at "Same as main node" currently egress directly (no tunnel). Switch them to Zapret/ByeDPI, or choose a real main node / URLTest.') + '</b>';
-
-		/* Per-rule Delete placement: LuCI renders each remove button on its own
-		 * line ABOVE the rule block — visually detached from the rule it removes.
-		 * Relocate it into the rule's first option row, right next to the
-		 * "Enable" checkbox, so the association is obvious. Pure DOM reshuffle:
-		 * the button (with its LuCI click handler) is moved as-is and the
-		 * now-empty .cbi-section-remove wrapper is dropped; the stock layout is
-		 * kept as fallback if the expected nodes are not found. */
-		const origRenderContents = s.renderContents;
-		s.renderContents = function(cfgsections, nodes) {
-			const relocate = function(sectionEl) {
-				for (const sid of cfgsections) {
-					const btn = sectionEl.querySelector('.cbi-section-remove button[data-section-id="%s"]'.format(sid));
-					if (!btn)
-						continue;
-					const wrap = btn.closest('.cbi-section-remove');
-					const nodeEl = sectionEl.querySelector('.cbi-section-node[data-section-id="%s"]'.format(sid));
-					const field = nodeEl ? nodeEl.querySelector('.cbi-value-field') : null;
-					if (!field)
-						continue;
-					btn.classList.add('hp-rule-delete');
-					field.appendChild(btn);
-					wrap.parentNode.removeChild(wrap);
-				}
-				return sectionEl;
-			};
-			const res = origRenderContents.apply(this, arguments);
-			return (res && typeof res.then === 'function') ? res.then(relocate) : relocate(res);
-		};
-
-		/* Cache all configured proxy nodes (same wording as the Client
-		 * page grids). */
-		let proxy_nodes = {};
-		uci.sections('homeproxy', 'node', function(res) {
-			let nodeaddr = ((res.type === 'direct') ? res.override_address : res.address) || '',
-			    nodeport = ((res.type === 'direct') ? res.override_port : res.port) || '';
-
-			proxy_nodes[res['.name']] =
-				String.format('[%s] %s', res.type, res.label || ((stubValidator.apply('ip6addr', nodeaddr) ?
-					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport));
-		});
-
-		let so = null;
-		so = s.option(form.Flag, 'enabled', _('Enable'));
-		so.default = so.enabled;
-		so.rmempty = false;
-		so.editable = true;
-
-		so = s.option(form.ListValue, 'source', _('Source') + ' ⤵️');
-		/* Russia bulk lists are RU-forward only; CN/IR get geosite/geoip baked into the
-		 * engine baseline, so here they only need per-service overrides. Built in
-		 * .load() so a mode switch (silent-save + re-render) refreshes the list
-		 * IMMEDIATELY — reading persisted UCI at view-render time left Re-filter
-		 * missing until the user manually reloaded the page. */
-		so.load = function(section_id) {
-			delete this.keylist;
-			delete this.vallist;
-			if (uci.get('homeproxy', 'config', 'routing_mode') === 'proxy_banned_ru') {
-				this.value('refilter', _('Re-filter (Russia blocklist: 60000+ banned domains + 25000+ IPs)'));
-				this.value('russia-inside', _('itdoginfo/allow-domains - Russia Inside (1000+ entries)'));
-			}
-			this.value('block', _('Block (core RKN-blocked resources)'));
-			this.value('russia-outside', _('Russia Outside (RU-only services — for use abroad)'));
-			this.value('ukraine-inside', _('Ukraine Inside (resources blocked in UA)'));
-			this.value('youtube', _('YouTube'));
-			this.value('twitter', _('Twitter/X'));
-			this.value('tiktok', _('TikTok'));
-			this.value('telegram', _('Telegram'));
-			this.value('roblox', _('Roblox'));
-			this.value('porn', _('Adult content'));
-			this.value('ovh', _('OVH (France cloud hosting)'));
-			this.value('news', _('International news sites'));
-			this.value('meta', _('Meta (Facebook, Instagram)'));
-			this.value('hodca', _('HODCA'));
-			this.value('hetzner', _('Hetzner (Germany cloud hosting)'));
-			this.value('hdrezka', _('HDRezka'));
-			this.value('google_ai', _('Google AI services'));
-			this.value('google-meet', _('Google Meet'));
-			this.value('google_play', _('Google Play'));
-			this.value('geoblock', _('GeoBlock services'));
-			this.value('anime', _('Anime streaming'));
-			this.value('cloudflare', _('Cloudflare CDN'));
-			this.value('cloudfront', _('CloudFront CDN'));
-			this.value('discord', _('Discord'));
-			this.value('digitalocean', _('DigitalOcean cloud hosting'));
-			/* W4: MetaCubeX geosite sources + b4geoip gaming IP sets (the
-			 * generator's SOURCE_URL_MAP / SOURCE_IP_MAP consume these). */
-			this.value('openai', _('OpenAI (ChatGPT)'));
-			this.value('anthropic', _('Claude / Anthropic'));
-			this.value('whatsapp', _('WhatsApp'));
-			this.value('twitch', _('Twitch'));
-			this.value('valve', _('Valve / Steam'));
-			this.value('epicgames', _('Epic Games'));
-			this.value('riot', _('Riot Games'));
-			this.value('sony', _('Sony / PlayStation'));
-			this.value('electronicarts', _('EA / Electronic Arts'));
-			this.value('ubisoft', _('Ubisoft'));
-			this.value('blizzard', _('Blizzard'));
-			this.value('nintendo', _('Nintendo'));
-			this.value('wargaming', _('Wargaming'));
-			this.value('xbox', _('Xbox'));
-			return this.super('load', section_id);
-		};
-		so.rmempty = false;
-		so.editable = true;
-		/* The source validator needs the sibling `node` option; it is assigned right
-		 * after the node option is created below. */
-		let ruleNodeOption = null;
-		const validateSourceUnique = function(section_id, value) {
-			for (const sid of this.section.cfgsections()) {
-				if (sid === section_id) continue;
-				/* Compare against PENDING form values first: two freshly added
-				 * duplicates must be caught before save, not after. Only an
-				 * identical (source, node) PAIR is a real duplicate — the same
-				 * source via different outbounds (e.g. YouTube via Zapret AND
-				 * YouTube via the VPN) is a legitimate combination. */
-				let other;
-				try { other = this.formvalue(sid); } catch(e) {}
-				if (other == null)
-					other = this.cfgvalue(sid);
-				if (other !== value)
-					continue;
-				if (!ruleNodeOption)
-					return _('Duplicate rule — a rule with the same service and target already exists');
-				let otherNode, myNode;
-				try { otherNode = ruleNodeOption.formvalue(sid); } catch(e) {}
-				if (otherNode == null) otherNode = ruleNodeOption.cfgvalue(sid);
-				try { myNode = ruleNodeOption.formvalue(section_id); } catch(e) {}
-				if (myNode == null) myNode = ruleNodeOption.cfgvalue(section_id);
-				if (otherNode === myNode || otherNode == null || myNode == null)
-					return _('Duplicate rule — a rule with the same service and target already exists');
-			}
-			return true;
-		};
-		so.validate = validateSourceUnique;
-
-		so = s.option(form.ListValue, 'node', _('Node') + ' 🔗');
-		/* Dynamic for the same reason as `source`: silent-saved main node / engine
-		 * toggles must reflect here without a manual page reload. "Same as main
-		 * node" is hidden while the main node is Direct — it would just egress
-		 * directly; engines appear only while enabled. */
-		so.load = function(section_id) {
-			delete this.keylist;
-			delete this.vallist;
-			if (uci.get('homeproxy', 'config', 'main_node') !== 'direct-out')
-				this.value('main-out', _('Same as main node'));
-			else if (section_id && uci.get('homeproxy', section_id, 'node') === 'main-out')
-				/* Direct mode: keep main-out selectable ONLY for rules that already
-				 * store it — hiding it entirely made those rules render a blank
-				 * selection while UCI still said main-out. */
-				this.value('main-out', _('Same as main node'));
-			this.value('urltest', _('Separate URLTest'));
-			for (let i in proxy_nodes)
-				this.value(i, proxy_nodes[i]);
-			if (uci.get('homeproxy', 'config', 'byedpi_enabled') === '1')
-				this.value('byedpi-out', _('ByeDPI'));
-			if (uci.get('homeproxy', 'config', 'zapret_enabled') === '1')
-				this.value('zapret-out', _('Zapret'));
-			return this.super('load', section_id);
-		};
-		ruleNodeOption = so;
-		so.rmempty = false;
-		so.editable = true;
-
-		so = s.option(hp.CBIStaticList, 'urltest_nodes', _('URLTest nodes'),
-			_('List of nodes to test.'));
-		for (let i in proxy_nodes)
-			so.value(i, proxy_nodes[i]);
-		so.depends('node', 'urltest');
-		so.rmempty = false;
-		so.modalonly = true;
-
-		so = s.option(form.Value, 'urltest_interval', _('Test interval'),
-			_('The test interval in seconds.'));
-		so.datatype = 'uinteger';
-		so.placeholder = '180';
-		so.depends('node', 'urltest');
-		so.modalonly = true;
-
-		so = s.option(form.Value, 'urltest_tolerance', _('Test tolerance'),
-			_('The test tolerance in milliseconds.'));
-		so.datatype = 'uinteger';
-		so.placeholder = '150';
-		so.depends('node', 'urltest');
-		so.modalonly = true;
-
-		const expertDetails = E('details', { style: 'margin:14px 0' }, [
-			E('summary', { style: 'cursor:pointer; font-weight:600' },
-				[ _('Advanced: manual rules and domain lists') ]),
-			E('p', { 'class': 'hpui-hint' },
-				[ _('The manual editor works with the same rules as the presets above (one page, one store). Use it for shapes the presets do not build — e.g. the same service through two different exits, or custom port/process matches.') ]),
-			E('div', { 'class': 'wiz-row' }, [
-				E('span', { 'class': 'wiz-title' }, [ _('Proxy domains') ]),
-				dListProxy
-			]),
-			E('div', { 'class': 'wiz-row' }, [
-				E('span', { 'class': 'wiz-title' }, [ _('Direct domains') ]),
-				dListDirect
-			]),
-			E('div', { 'class': 'wiz-toolbar' }, [ dListSave ]),
-			E('p', { 'class': 'hpui-hint' },
-				[ _('One host per line. The proxy list is merged with the engine-learned records (one watched rule-set); the direct list wins over the proxy list for matching domains. These are the manual routing inputs — presets above cover the known services.') ]),
-			E('p', { 'class': 'hpui-hint' },
-				[ _('The editor reads the rules when the page opens — after applying presets reload the page so it shows the fresh list.') ])
+		/* ── Мой списки (Ф4.2): the former two static textareas are now the
+		 * full user-list manager; the duplicate proxy_ru_rule editor grid is
+		 * GONE — rules live only in the preset rows above, new ones are added
+		 * by the master button. */
+		const listsIntro = E('div', {}, [
+			E('p', { 'class': 'hpui-hint', style: 'margin:2px 0' },
+				[ _('Your own lists: named, with the direction (proxy/direct), the content type (domains/IPs) and the ACTION picked at creation — a single domain or IP is enough. Import from a URL (an HTML answer is never applied), pasted text or a file; entries are validated at input; snapshots outside the rotation; export shows what actually routes.') ])
 		]);
-		/* form.Map.render() is ASYNC — embed the finished node when it lands. */
-		m.render().then(function(node) {
-			if (node)
-				expertDetails.appendChild(node);
-		});
 
 		return E('div', {}, [
 			E('h2', {}, _('Service rules')),
@@ -994,7 +1327,10 @@ return view.extend({
 			presetRows,
 			E('h4', { style: 'margin-top:14px' }, [ _('Check results') ]),
 			checkResult,
-			expertDetails
+			E('h4', { style: 'margin-top:14px' }, [ _('My lists') ]),
+			listsIntro,
+			listsZone,
+			listsResult
 		]);
 	}
 });

@@ -6898,3 +6898,219 @@ msgstr ""
 
 msgid "No rule"
 msgstr ""
+
+msgid "+%d more rule(s) of this service — shown below"
+msgstr ""
+
+msgid "Entries accepted: %s"
+msgstr ""
+
+msgid "rejected: %s (not a valid domain/IP for this list type)"
+msgstr ""
+
+msgid "Direct (no bypass engine)"
+msgstr ""
+
+msgid "Direction"
+msgstr ""
+
+msgid "via proxy"
+msgstr ""
+
+msgid "IP addresses"
+msgstr ""
+
+msgid "domains"
+msgstr ""
+
+msgid "rejected: %s"
+msgstr ""
+
+msgid "Edit"
+msgstr ""
+
+msgid "Applying…"
+msgstr ""
+
+msgid "Failed: "
+msgstr ""
+
+msgid "Nothing to change."
+msgstr ""
+
+msgid "The list state is applied."
+msgstr ""
+
+msgid "The list state failed to apply"
+msgstr ""
+
+msgid "Export"
+msgstr ""
+
+msgid "Export failed: "
+msgstr ""
+
+msgid "The list is exported (what actually routes, with a source comment)."
+msgstr ""
+
+msgid "Delete list"
+msgstr ""
+
+msgid "Delete the list \"%s\"? A snapshot is taken automatically before the deletion."
+msgstr ""
+
+msgid "Deleting…"
+msgstr ""
+
+msgid "The list is deleted (a snapshot was taken first)."
+msgstr ""
+
+msgid "The list deletion failed to apply"
+msgstr ""
+
+msgid "No lists yet — create one below (a single domain or IP is enough)."
+msgstr ""
+
+msgid "Edit list: %s"
+msgstr ""
+
+msgid "Loading…"
+msgstr ""
+
+msgid "Replace from URL"
+msgstr ""
+
+msgid "Append from URL"
+msgstr ""
+
+msgid "File loaded into the editor — press Save to apply (entries are validated at save)."
+msgstr ""
+
+msgid "Enter the source URL first."
+msgstr ""
+
+msgid "Importing…"
+msgstr ""
+
+msgid "applied live (hot reload)."
+msgstr ""
+
+msgid "applied — the core runs the updated list."
+msgstr ""
+
+msgid "The import failed to apply"
+msgstr ""
+
+msgid "One host per line; # lines are comments. Entries are validated and normalized at input: a /33 or garbage is rejected with a counter, a bare IP is accepted and normalized (/32, /128). Import never applies an empty/HTML answer."
+msgstr ""
+
+msgid "The list save failed to apply"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "Create a list"
+msgstr ""
+
+msgid "List name"
+msgstr ""
+
+msgid "Entries — one per line (optional; you can import later)"
+msgstr ""
+
+msgid "Create"
+msgstr ""
+
+msgid "Enter the list name first."
+msgstr ""
+
+msgid "Creating…"
+msgstr ""
+
+msgid "Main node is Direct — a proxy list would have no effect. Pick Zapret/ByeDPI for a direct list, or choose a real main node."
+msgstr ""
+
+msgid "Creation failed: "
+msgstr ""
+
+msgid "The list is created and applied — route_explain and real traffic can verify it."
+msgstr ""
+
+msgid "The list creation failed to apply"
+msgstr ""
+
+msgid "A list is created WITH its action — a list without a rule would be a dead list. Proxy lists route AFTER the RU-protection guard (a RU domain in a proxy list stays direct — the invariant holds); direct lists are checked right after the per-service rules."
+msgstr ""
+
+msgid "Snapshots: none yet"
+msgstr ""
+
+msgid "Snapshot all lists"
+msgstr ""
+
+msgid "Taking a snapshot…"
+msgstr ""
+
+msgid "Snapshot failed: "
+msgstr ""
+
+msgid "Snapshot saved: %s"
+msgstr ""
+
+msgid "Pick a snapshot to restore first."
+msgstr ""
+
+msgid "Restore lists"
+msgstr ""
+
+msgid "Restore all lists from the snapshot %s? The CURRENT state is snapshotted first."
+msgstr ""
+
+msgid "Restoring…"
+msgstr ""
+
+msgid "Restored %s list(s) from %s."
+msgstr ""
+
+msgid "The restore is applied — the core runs the restored lists."
+msgstr ""
+
+msgid "The restore failed to apply"
+msgstr ""
+
+msgid "Also routed through %s"
+msgstr ""
+
+msgid "The extra rule is deleted."
+msgstr ""
+
+msgid "Add a rule"
+msgstr ""
+
+msgid "Add"
+msgstr ""
+
+msgid "Adding…"
+msgstr ""
+
+msgid "This exact rule already exists."
+msgstr ""
+
+msgid "The rule is added — it now shows in its service row. The apply is running…"
+msgstr ""
+
+msgid "The rule is applied."
+msgstr ""
+
+msgid "The rule apply failed"
+msgstr ""
+
+msgid "Rules live ONLY in the rows above — this master just adds a new one (e.g. a second exit for the same service); the row shows it right away."
+msgstr ""
+
+msgid "Your own lists: named, with the direction (proxy/direct), the content type (domains/IPs) and the ACTION picked at creation — a single domain or IP is enough. Import from a URL (an HTML answer is never applied), pasted text or a file; entries are validated at input; snapshots outside the rotation; export shows what actually routes."
+msgstr ""
+
+msgid "My lists"
+msgstr ""

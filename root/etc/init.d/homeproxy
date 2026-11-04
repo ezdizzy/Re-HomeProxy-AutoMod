@@ -454,6 +454,20 @@ start_service() {
 		rm -f "$RUN_DIR/migrate_rm.err"
 	fi
 
+	# Ф4.2 (U7): one-shot migration of the legacy static textareas
+	# (proxy_list.txt / direct_list.txt) into NAMED user lists. Runs BEFORE
+	# config generation, so the new list rules are picked up by THIS start;
+	# snapshot-first, fail closed (a failed snapshot delays the migration to
+	# the next start — the legacy files keep working until then).
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/migrate_user_lists.uc" ]; then
+		_mig="$(/usr/bin/ucode "$HP_DIR/scripts/migrate_user_lists.uc" 2>"$RUN_DIR/migrate_ul.err")"
+		[ -n "$_mig" ] && log "user lists migration: $_mig"
+		if [ -s "$RUN_DIR/migrate_ul.err" ]; then
+			log "user lists migration stderr: $(cat "$RUN_DIR/migrate_ul.err")"
+		fi
+		rm -f "$RUN_DIR/migrate_ul.err"
+	fi
+
 	config_load "$CONF"
 
 	local preferred_core

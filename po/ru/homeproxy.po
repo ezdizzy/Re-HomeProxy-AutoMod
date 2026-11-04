@@ -12454,3 +12454,219 @@ msgstr "«Нет правила» — это НЕ «напрямую в росс
 
 msgid "No rule"
 msgstr "Нет правила"
+
+msgid "+%d more rule(s) of this service — shown below"
+msgstr "+%d других правил этого сервиса — показаны ниже"
+
+msgid "Entries accepted: %s"
+msgstr "Принято записей: %s"
+
+msgid "rejected: %s (not a valid domain/IP for this list type)"
+msgstr "отклонено: %s (не является доменом/IP для этого типа списка)"
+
+msgid "Direct (no bypass engine)"
+msgstr "Напрямую (без движка обхода)"
+
+msgid "Direction"
+msgstr "Направление"
+
+msgid "via proxy"
+msgstr "через прокси"
+
+msgid "IP addresses"
+msgstr "IP-адреса"
+
+msgid "domains"
+msgstr "домены"
+
+msgid "rejected: %s"
+msgstr "отклонено: %s"
+
+msgid "Edit"
+msgstr "Править"
+
+msgid "Applying…"
+msgstr "Применяю…"
+
+msgid "Failed: "
+msgstr "Ошибка: "
+
+msgid "Nothing to change."
+msgstr "Изменений нет."
+
+msgid "The list state is applied."
+msgstr "Состояние списка применено."
+
+msgid "The list state failed to apply"
+msgstr "Не удалось применить состояние списка"
+
+msgid "Export"
+msgstr "Экспорт"
+
+msgid "Export failed: "
+msgstr "Ошибка экспорта: "
+
+msgid "The list is exported (what actually routes, with a source comment)."
+msgstr "Список выгружен (то, что реально маршрутизируется, с комментарием источника)."
+
+msgid "Delete list"
+msgstr "Удалить список"
+
+msgid "Delete the list \"%s\"? A snapshot is taken automatically before the deletion."
+msgstr "Удалить список «%s»? Перед удалением автоматически создаётся снимок."
+
+msgid "Deleting…"
+msgstr "Удаляю…"
+
+msgid "The list is deleted (a snapshot was taken first)."
+msgstr "Список удалён (сначала создан снимок)."
+
+msgid "The list deletion failed to apply"
+msgstr "Не удалось применить удаление списка"
+
+msgid "No lists yet — create one below (a single domain or IP is enough)."
+msgstr "Списков пока нет — создайте ниже (достаточно одного домена или IP)."
+
+msgid "Edit list: %s"
+msgstr "Правка списка: %s"
+
+msgid "Loading…"
+msgstr "Загрузка…"
+
+msgid "Replace from URL"
+msgstr "Заменить из URL"
+
+msgid "Append from URL"
+msgstr "Добавить из URL"
+
+msgid "File loaded into the editor — press Save to apply (entries are validated at save)."
+msgstr "Файл загружен в редактор — нажмите «Сохранить», чтобы применить (записи проверяются при сохранении)."
+
+msgid "Enter the source URL first."
+msgstr "Сначала укажите URL источника."
+
+msgid "Importing…"
+msgstr "Импортирую…"
+
+msgid "applied live (hot reload)."
+msgstr "применено сразу (горячая перезагрузка)."
+
+msgid "applied — the core runs the updated list."
+msgstr "применено — ядро работает с обновлённым списком."
+
+msgid "The import failed to apply"
+msgstr "Не удалось применить импорт"
+
+msgid "One host per line; # lines are comments. Entries are validated and normalized at input: a /33 or garbage is rejected with a counter, a bare IP is accepted and normalized (/32, /128). Import never applies an empty/HTML answer."
+msgstr "Один хост в строке; строки с # — комментарии. Записи проверяются и нормализуются при вводе: /33 и мусор отклоняются со счётчиком, голый IP принимается и нормализуется (/32, /128). Импорт никогда не применяет пустой/HTML-ответ."
+
+msgid "The list save failed to apply"
+msgstr "Не удалось применить сохранение списка"
+
+msgid "Close"
+msgstr "Закрыть"
+
+msgid "Create a list"
+msgstr "Создать список"
+
+msgid "List name"
+msgstr "Имя списка"
+
+msgid "Entries — one per line (optional; you can import later)"
+msgstr "Записи — по одной в строке (необязательно; можно импортировать позже)"
+
+msgid "Create"
+msgstr "Создать"
+
+msgid "Enter the list name first."
+msgstr "Сначала укажите имя списка."
+
+msgid "Creating…"
+msgstr "Создаю…"
+
+msgid "Main node is Direct — a proxy list would have no effect. Pick Zapret/ByeDPI for a direct list, or choose a real main node."
+msgstr "Основной узел — «Напрямую»: прокси-список не будет иметь эффекта. Выберите Zapret/ByeDPI для списка «напрямую» или назначьте реальный основной узел."
+
+msgid "Creation failed: "
+msgstr "Ошибка создания: "
+
+msgid "The list is created and applied — route_explain and real traffic can verify it."
+msgstr "Список создан и применён — проверить можно через трассировку маршрута и реальным трафиком."
+
+msgid "The list creation failed to apply"
+msgstr "Не удалось применить создание списка"
+
+msgid "A list is created WITH its action — a list without a rule would be a dead list. Proxy lists route AFTER the RU-protection guard (a RU domain in a proxy list stays direct — the invariant holds); direct lists are checked right after the per-service rules."
+msgstr "Список создаётся СРАЗУ с действием — список без правила был бы мёртвым. Прокси-списки стоят ПОСЛЕ RU-защиты (RU-домен в прокси-списке останется прямым — инвариант держится); списки «напрямую» проверяются сразу после правил сервисов."
+
+msgid "Snapshots: none yet"
+msgstr "Снимки: пока нет"
+
+msgid "Snapshot all lists"
+msgstr "Снимок всех списков"
+
+msgid "Taking a snapshot…"
+msgstr "Создаю снимок…"
+
+msgid "Snapshot failed: "
+msgstr "Ошибка снимка: "
+
+msgid "Snapshot saved: %s"
+msgstr "Снимок сохранён: %s"
+
+msgid "Pick a snapshot to restore first."
+msgstr "Сначала выберите снимок для восстановления."
+
+msgid "Restore lists"
+msgstr "Восстановить списки"
+
+msgid "Restore all lists from the snapshot %s? The CURRENT state is snapshotted first."
+msgstr "Восстановить все списки из снимка %s? ТЕКУЩЕЕ состояние сначала уйдёт в снимок."
+
+msgid "Restoring…"
+msgstr "Восстанавливаю…"
+
+msgid "Restored %s list(s) from %s."
+msgstr "Восстановлено списков: %s (из %s)."
+
+msgid "The restore is applied — the core runs the restored lists."
+msgstr "Восстановление применено — ядро работает с восстановленными списками."
+
+msgid "The restore failed to apply"
+msgstr "Не удалось применить восстановление"
+
+msgid "Also routed through %s"
+msgstr "Также через %s"
+
+msgid "The extra rule is deleted."
+msgstr "Дополнительное правило удалено."
+
+msgid "Add a rule"
+msgstr "Добавить правило"
+
+msgid "Add"
+msgstr "Добавить"
+
+msgid "Adding…"
+msgstr "Добавляю…"
+
+msgid "This exact rule already exists."
+msgstr "Такое правило уже существует."
+
+msgid "The rule is added — it now shows in its service row. The apply is running…"
+msgstr "Правило добавлено — оно уже видно в строке сервиса. Идёт применение…"
+
+msgid "The rule is applied."
+msgstr "Правило применено."
+
+msgid "The rule apply failed"
+msgstr "Не удалось применить правило"
+
+msgid "Rules live ONLY in the rows above — this master just adds a new one (e.g. a second exit for the same service); the row shows it right away."
+msgstr "Правила живут ТОЛЬКО в строках выше — мастер лишь добавляет новое (например, второй выход для того же сервиса); строка покажет его сразу."
+
+msgid "Your own lists: named, with the direction (proxy/direct), the content type (domains/IPs) and the ACTION picked at creation — a single domain or IP is enough. Import from a URL (an HTML answer is never applied), pasted text or a file; entries are validated at input; snapshots outside the rotation; export shows what actually routes."
+msgstr "Свои списки: именованные, с направлением (прокси/напрямую), типом записей (домены/IP) и ДЕЙСТВИЕМ, которое выбирается при создании — достаточно одного домена или IP. Импорт из URL (ответ в виде HTML никогда не применяется), вставки текста или файла; записи проверяются при вводе; снимки вне ротации; экспорт показывает то, что реально маршрутизируется."
+
+msgid "My lists"
+msgstr "Мои списки"

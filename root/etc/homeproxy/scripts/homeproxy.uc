@@ -347,8 +347,18 @@ function read_list_entries(res, name) {
  *
  *   resources/proxy_domain.json  = static proxy_list.txt  +  learned auto_proxy_list.txt
  *                                   (domain_keyword)  -> referenced by the 'proxy-domain' ruleset
- *   resources/auto_ip.json       = learned auto_proxy_ip.txt (ip_cidr)
+ *   resources/manual_ip.json     = B6.3: MANUAL IP entries — IP-shaped lines of the static
+ *                                   proxy_list.txt + manual_proxy.txt (ip_cidr)
+ *                                   -> referenced by the 'manual-ip' ruleset
+ *   resources/auto_ip.json       = learned auto_proxy_ip.txt (ip_cidr) ONLY now
  *                                   -> referenced by the 'auto-ip' ruleset
+ *
+ * B6.3: the IP set used to mix manual entries (static proxy_list + manual pins) with
+ * automation-learned IPs in ONE file whose rule the generator emitted ONLY when
+ * automation_enabled='1' — a manual IP pin simply did not route with Automation off.
+ * Manual IP entries now live in their OWN watched file ('manual-ip' rule is emitted
+ * unconditionally, an empty rule-set is a no-op), so hand-pinned IPs route regardless
+ * of the Automation toggle, while learned IPs stay behind the Automation gate.
  *
  * Called by generate_client.uc (so the files always exist when the core starts) and by
  * automation.uc on every learn (the hot path — rewrite the file, the core picks it up). */
@@ -367,11 +377,11 @@ export function sync_learned_rulesets(res_dir) {
 	 * IP-shaped lines of the static list are EXTRACTED to the IP set: an IP can
 	 * never match as a domain substring keyword — a dead entry today, a routed
 	 * ip_cidr entry after classification. */
-	let domains = [], learned_domains = [], ips = {};
+	let domains = [], learned_domains = [], manual_ips = {}, auto_ips = {};
 	for (let d in read_list_entries(res, 'proxy_list.txt')) {
 		let c = classify_entry(d);
 		if (c && c.kind !== 'domain') {
-			ips[c.value] = true;
+			manual_ips[c.value] = true;
 			continue;
 		}
 		push(domains, d);
@@ -389,7 +399,7 @@ export function sync_learned_rulesets(res_dir) {
 		if (c.kind === 'domain')
 			push(learned_domains, c.value);
 		else
-			ips[c.value] = true;
+			manual_ips[c.value] = true;
 	}
 	/* Learned hosts keep the permissive domain path (the automation pipeline
 	 * already filters candidates upstream; an odd-but-present entry must not
@@ -398,7 +408,7 @@ export function sync_learned_rulesets(res_dir) {
 	for (let d in read_list_entries(res, 'auto_proxy_list.txt')) {
 		let c = classify_entry(d);
 		if (c && c.kind !== 'domain') {
-			ips[c.value] = true;
+			auto_ips[c.value] = true;
 			continue;
 		}
 		push(learned_domains, d);
@@ -414,12 +424,13 @@ export function sync_learned_rulesets(res_dir) {
 			drops++;
 			continue;
 		}
-		ips[c.value] = true;
+		auto_ips[c.value] = true;
 	}
 
-	/* Both rules live in ONE watched rule-set file so a single hot-reload applies
-	 * static and learned entries together. Manual proxy pins ride with learned
-	 * (domain-shaped lines as suffixes; IP-shaped lines already went to `ips`). */
+	/* Manual proxy-domain entries (static keywords + learned suffixes) live in ONE
+	 * watched rule-set file so a single hot-reload applies static and learned
+	 * entries together. Manual proxy pins ride with learned (domain-shaped lines
+	 * as suffixes; IP-shaped lines already went to `manual_ips`). */
 	/* ч.63: a learned/pinned 'www.X' host implicitly owns the X site. OAuth and
 	 * SSO redirect layers bounce through the APEX and sibling subdomains that
 	 * never appear in a DNS/SNI capture (tinkercad.com realm redirects,
@@ -435,10 +446,13 @@ export function sync_learned_rulesets(res_dir) {
 	for (let a in keys(apexes))
 		if (index(learned_domains, a) < 0)
 			push(learned_domains, a);
-	let ip_arr = [];
-	for (let v in keys(ips))
-		push(ip_arr, v);
-	sort(ip_arr, (a, b) => (a < b) ? -1 : (a > b) ? 1 : 0);
+	let mip_arr = [], aip_arr = [];
+	for (let v in keys(manual_ips))
+		push(mip_arr, v);
+	for (let v in keys(auto_ips))
+		push(aip_arr, v);
+	sort(mip_arr, (a, b) => (a < b) ? -1 : (a > b) ? 1 : 0);
+	sort(aip_arr, (a, b) => (a < b) ? -1 : (a > b) ? 1 : 0);
 	let rules = [];
 	if (length(domains))
 		push(rules, { domain_keyword: domains });
@@ -448,12 +462,66 @@ export function sync_learned_rulesets(res_dir) {
 		version: 1,
 		rules: rules
 	});
+	/* B6.3: MANUAL IPs in their own watched file — the generator emits the
+	 * 'manual-ip' rule unconditionally (independent of automation_enabled),
+	 * so a hand-pinned IP routes with Automation off too. */
+	write_ruleset_file(res + '/manual_ip.json', {
+		version: 1,
+		rules: length(mip_arr) ? [ { ip_cidr: mip_arr } ] : []
+	});
 	write_ruleset_file(res + '/auto_ip.json', {
 		version: 1,
-		rules: length(ip_arr) ? [ { ip_cidr: ip_arr } ] : []
+		rules: length(aip_arr) ? [ { ip_cidr: aip_arr } ] : []
 	});
 
-	return { domains: length(domains) + length(learned_domains), ips: length(ip_arr), dropped: drops };
+	return { domains: length(domains) + length(learned_domains),
+		manual_ips: length(mip_arr), auto_ips: length(aip_arr), dropped: drops };
+};
+
+/* ── Ф4.2 (U7) User list sync ────────────────────────────────────────────────
+ * One watched rule-set file PER user list: resources/lists/<sid>.json is
+ * rewritten from resources/lists/<sid>.txt. The generator emits the rule-set
+ * declaration + a routing rule with the list's own outbound; editing the
+ * content then hot-reloads without touching the rule. The source .txt holds
+ * NORMALIZED values (what the RPC accepted through classify_entry), so the
+ * txt and the JSON agree and an export is exactly what routes.
+ *
+ * ctype selects what a line must be:
+ *   'domains' → domain entries → domain_suffix (a host + its subdomains);
+ *   'ips'     → ipv4/ipv6/cidr4/cidr6 → ip_cidr.
+ * Everything else is DROPPED AND COUNTED (never silent). sid is validated
+ * against /^ul_[A-Za-z0-9_]{1,64}$/ — the path can never escape lists/. */
+export function sync_user_list(res_dir, sid, ctype) {
+	let res = res_dir || (HP_DIR + '/resources');
+	if (type(sid) !== 'string' || !match(sid, /^ul_[A-Za-z0-9_]{1,64}$/))
+		return { accepted: 0, dropped: 0, error: 'bad list id' };
+	if (ctype !== 'ips' && ctype !== 'domains')
+		return { accepted: 0, dropped: 0, error: 'bad list type' };
+	system('mkdir -p ' + shellQuote(res) + '/lists');
+	let vals = {}, drops = 0;
+	for (let d in read_list_entries(res + '/lists', sid + '.txt')) {
+		let c = classify_entry(d);
+		if (!c) { drops++; continue; }
+		if (ctype === 'ips') {
+			if (c.kind === 'domain') { drops++; continue; }
+			vals[c.value] = true;
+		} else {
+			if (c.kind !== 'domain') { drops++; continue; }
+			vals[c.value] = true;
+		}
+	}
+	let arr = [];
+	for (let v in keys(vals))
+		push(arr, v);
+	sort(arr, (a, b) => (a < b) ? -1 : (a > b) ? 1 : 0);
+	let rules = [];
+	if (length(arr))
+		push(rules, (ctype === 'ips') ? { ip_cidr: arr } : { domain_suffix: arr });
+	write_ruleset_file(res + '/lists/' + sid + '.json', {
+		version: 1,
+		rules: rules
+	});
+	return { accepted: length(arr), dropped: drops };
 };
 
 /* Manual "always direct" pins (Automation table): watched local rule-set consumed by
@@ -870,24 +938,42 @@ export function selftest() {
 		writefile(dir + '/auto_proxy_ip.txt', '93.184.216.34\n2001:db8::1\n1.2.3.4/33\nnot-an-ip\n# comment\n\n');
 		let r1 = sync_learned_rulesets(dir);
 		let j1 = rj('auto_ip.json');
-		ok('B6.1 counts', r1.ips === 2 && r1.dropped === 2);
+		ok('B6.1 counts', r1.auto_ips === 2 && r1.dropped === 2);
 		ok('B6.1 json cidr /32+/128', j1 && j1.rules[0] &&
 			index(j1.rules[0].ip_cidr, '93.184.216.34/32') >= 0 &&
 			index(j1.rules[0].ip_cidr, '2001:db8::1/128') >= 0);
 
-		/* B6.2: ручной IP → ip_cidr (НИКОГДА domain_suffix), домен → suffix,
-		 * мусор отброшен с счётчиком */
+		/* B6.3: ручные IP (proxy_list + manual_proxy) → manual_ip.json,
+		 * выученные → auto_ip.json — два отдельных набора */
+		writefile(dir + '/proxy_list.txt', 'youtube\n93.184.216.34\n');
+		writefile(dir + '/manual_proxy.txt', '8.8.8.8\nexample.com\n');
+		writefile(dir + '/auto_proxy_ip.txt', '1.1.1.1\n');
+		let r10 = sync_learned_rulesets(dir);
+		let jm = rj('manual_ip.json');
+		let ja = rj('auto_ip.json');
+		ok('B6.3 split counts', r10.manual_ips === 2 && r10.auto_ips === 1);
+		ok('B6.3 manual json', jm && jm.rules[0] &&
+			index(jm.rules[0].ip_cidr, '93.184.216.34/32') >= 0 &&
+			index(jm.rules[0].ip_cidr, '8.8.8.8/32') >= 0);
+		ok('B6.3 auto json isolated', ja && ja.rules[0] &&
+			length(ja.rules[0].ip_cidr) === 1 && ja.rules[0].ip_cidr[0] === '1.1.1.1/32');
+
+		/* B6.2: ручной IP → ip_cidr (НИКОГДА domain_suffix) и — B6.3 — в
+		 * MANUAL набор (manual_ip.json), а не в выученный (auto_ip.json);
+		 * домен → suffix, мусор отброшен с счётчиком */
 		writefile(dir + '/proxy_list.txt', '');
 		writefile(dir + '/auto_proxy_list.txt', '');
 		writefile(dir + '/auto_proxy_ip.txt', '');
 		writefile(dir + '/manual_proxy.txt', 'example.com\n1.2.3.4\nbad..entry\n');
 		let r2 = sync_learned_rulesets(dir);
 		let j2 = rj('proxy_domain.json');
-		let j3 = rj('auto_ip.json');
-		ok('B6.2 manual split', r2.domains === 1 && r2.ips === 1 && r2.dropped === 1);
+		let j3 = rj('manual_ip.json');
+		let j3a = rj('auto_ip.json');
+		ok('B6.2 manual split', r2.domains === 1 && r2.manual_ips === 1 && r2.dropped === 1);
 		ok('B6.2 suffix only domain', j2 && j2.rules[0] && j2.rules[0].domain_suffix &&
 			length(j2.rules[0].domain_suffix) === 1 && j2.rules[0].domain_suffix[0] === 'example.com');
-		ok('B6.2 ip in cidr', j3 && j3.rules[0] && index(j3.rules[0].ip_cidr, '1.2.3.4/32') >= 0);
+		ok('B6.2 ip in manual cidr', j3 && j3.rules[0] && index(j3.rules[0].ip_cidr, '1.2.3.4/32') >= 0);
+		ok('B6.3 auto set untouched', j3a && type(j3a.rules) === 'array' && length(j3a.rules) === 0);
 
 		/* «Напрямую»-пины: тот же расклад для manual_direct */
 		writefile(dir + '/manual_direct.txt', '4.3.2.1\nexample.org\ngarbage@@\n');
@@ -898,14 +984,15 @@ export function selftest() {
 			j4.rules[0].domain_suffix[0] === 'example.org' &&
 			index(j4.rules[1].ip_cidr, '4.3.2.1/32') >= 0);
 
-		/* статический keyword-список: семантика сохранена, IP-строки извлечены */
+		/* статический keyword-список: семантика сохранена, IP-строки извлечены
+		 * В РУЧНОЙ набор (manual_ip.json — B6.3) */
 		writefile(dir + '/proxy_list.txt', 'youtube\n93.184.216.34\nt.co\n');
 		writefile(dir + '/manual_proxy.txt', '');
 		writefile(dir + '/auto_proxy_list.txt', '');
 		writefile(dir + '/auto_proxy_ip.txt', '');
 		let r5 = sync_learned_rulesets(dir);
 		let j5 = rj('proxy_domain.json');
-		let j6 = rj('auto_ip.json');
+		let j6 = rj('manual_ip.json');
 		ok('static keywords kept', j5 && j5.rules[0] && j5.rules[0].domain_keyword &&
 			length(j5.rules[0].domain_keyword) === 2 &&
 			j5.rules[0].domain_keyword[0] === 'youtube' && j5.rules[0].domain_keyword[1] === 't.co');
@@ -918,6 +1005,34 @@ export function selftest() {
 		let j7 = rj('auto_direct.json');
 		ok('damaged list survives', r7.dropped === 1 && j7 && j7.rules[0] &&
 			index(j7.rules[0].ip_cidr, '4.3.2.1/32') >= 0);
+
+		/* Ф4.2 user list: домены → domain_suffix, дедуп, мусор отброшен и
+		 * посчитан; IP-тип → ip_cidr; домен в IP-списке отброшен; битый id и
+		 * битый ctype отвергнуты БЕЗ записи файлов */
+		system('mkdir -p ' + shellQuote(dir + '/lists'));
+		writefile(dir + '/lists/ul_t1.txt', 'Example.COM.\nwww.example.com\nbad..entry\n1.2.3.4\n# note\nExample.com\n');
+		let r11 = sync_user_list(dir, 'ul_t1', 'domains');
+		let j11 = rj('lists/ul_t1.json');
+		ok('user list domains', r11.accepted === 2 && r11.dropped === 2);
+		ok('user list json', j11 && j11.rules[0] && j11.rules[0].domain_suffix &&
+			length(j11.rules[0].domain_suffix) === 2 &&
+			j11.rules[0].domain_suffix[0] === 'example.com' &&
+			j11.rules[0].domain_suffix[1] === 'www.example.com');
+		writefile(dir + '/lists/ul_t2.txt', '10.0.0.0/8\n2001:db8::/32\nexample.org\n10.0.0.0/8\n');
+		let r12 = sync_user_list(dir, 'ul_t2', 'ips');
+		let j12 = rj('lists/ul_t2.json');
+		ok('user list ips', r12.accepted === 2 && r12.dropped === 1);
+		ok('user list ip json', j12 && j12.rules[0] &&
+			index(j12.rules[0].ip_cidr, '10.0.0.0/8') >= 0 &&
+			index(j12.rules[0].ip_cidr, '2001:db8::/32') >= 0);
+		ok('user list bad id', sync_user_list(dir, 'evil/../../x', 'domains').error === 'bad list id' &&
+			!access(dir + '/lists/evil'));
+		ok('user list bad ctype', sync_user_list(dir, 'ul_t1', 'mixed').error === 'bad list type');
+		writefile(dir + '/lists/ul_t3.txt', 'garbage@@\n');
+		let r13 = sync_user_list(dir, 'ul_t3', 'domains');
+		let j13 = rj('lists/ul_t3.json');
+		ok('user list empty json valid', r13.accepted === 0 && r13.dropped === 1 &&
+			j13 && type(j13.rules) === 'array' && length(j13.rules) === 0);
 
 		/* oauth: только домены; IP/мусор отброшены */
 		writefile(dir + '/oauth_stable.txt', 'clerk.com\n1.2.3.4\n# c\n');

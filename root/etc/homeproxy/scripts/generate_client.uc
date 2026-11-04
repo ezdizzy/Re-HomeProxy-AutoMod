@@ -16,7 +16,7 @@ import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
 	removeBlankAttrs, validation, HP_DIR, RUN_DIR,
 	sync_learned_rulesets, sync_manual_direct_ruleset, sync_ru_geo_rulesets,
-	sync_oauth_ruleset, sync_auto_auth_ruleset, classify_entry
+	sync_oauth_ruleset, sync_auto_auth_ruleset, sync_user_list, classify_entry
 } from 'homeproxy';
 
 /* Process Manager (Ф1.4b): ownership-grade mosdns liveness — a bare pidof
@@ -2399,6 +2399,111 @@ if (mdns_proxy_in) {
 }
 
 /* Routing rules */
+/* Ф4.2 (U7): user-defined lists — enabled sections of type 'user_list'.
+ * kind 'direct' rules sit right after the per-service rules (explicit user
+ * intent, engines allowed — same tier as the service rules); kind 'proxy'
+ * rules sit AFTER the RU-protect guard, so the "RU never via proxy" invariant
+ * stays ironclad for proxy lists (a RU domain in a proxy list routes direct).
+ * Only sections named ul_<id> are ours; foreign sections never break
+ * generation. */
+let user_lists = [];
+uci.foreach(uciconfig, 'user_list', (s) => {
+	const sid = '' + s['.name'];
+	if (!match(sid, /^ul_[A-Za-z0-9_]{1,64}$/))
+		return;
+	push(user_lists, {
+		sid,
+		on: (s.enabled === '1'),
+		kind: (s.kind === 'direct') ? 'direct' : 'proxy',
+		ctype: (s.ctype === 'ips') ? 'ips' : 'domains',
+		node: '' + (s.node || ''),
+		urltest_nodes: (type(s.urltest_nodes) === 'array') ? s.urltest_nodes : []
+	});
+});
+
+/* Ф4.2: the effective outbound of a user list. Engine availability mirrors the
+ * per-service rules exactly (a disabled engine falls back like a rule does):
+ * direct lists fall back to direct-out, proxy lists to main-out. A real node
+ * must be a node section; anything else rides the default exit of the kind. */
+const user_list_outbound = (l) => {
+	if (l.kind === 'direct') {
+		if (l.node === 'zapret-out')
+			return (zapret_enabled === '1') ? 'zapret-out' : 'direct-out';
+		if (l.node === 'byedpi-out')
+			return (byedpi_enabled === '1') ? 'byedpi-out' : 'direct-out';
+		return 'direct-out';
+	}
+	if (l.node === 'byedpi-out')
+		return (byedpi_enabled === '1') ? 'byedpi-out' : 'main-out';
+	if (l.node === 'zapret-out')
+		return (zapret_enabled === '1') ? 'zapret-out' : 'main-out';
+	if (l.node === 'urltest')
+		return 'user-' + l.sid + '-out';
+	const nc = uci.get_all(uciconfig, l.node);
+	return (nc && nc['.type'] === 'node') ? 'cfg-' + l.node + '-out' : 'main-out';
+};
+
+/* Ф4.2: prepare ONE user list — build the outbound (reusing existing tags),
+ * declare the watched local rule-set file, and return the outbound tag
+ * (null = the list must not emit, e.g. an empty urltest pool). */
+const user_list_rs_seen = {};
+const user_list_prepare = (l) => {
+	let ob = user_list_outbound(l);
+	if (l.kind === 'proxy' && l.node === 'urltest') {
+		const tag = 'user-' + l.sid + '-out';
+		const ut_nodes = usable_nodes(l.urltest_nodes);
+		if (!length(ut_nodes))
+			return null;
+		if (!has_outbound(tag)) {
+			push(config.outbounds, {
+				type: 'urltest',
+				tag,
+				outbounds: map(ut_nodes, (k) => `cfg-${k}-out`),
+				interval: strToTime(uci.get(uciconfig, l.sid, 'urltest_interval') || '180'),
+				tolerance: strToInt(uci.get(uciconfig, l.sid, 'urltest_tolerance') || '150'),
+				idle_timeout: '1800s'
+			});
+			for (let n in ut_nodes) {
+				if (has_outbound('cfg-' + n + '-out')) continue;
+				const nc = uci.get_all(uciconfig, n);
+				if (!nc) continue;
+				if (nc.type in ['wireguard', 'amneziawg']) {
+					push(config.endpoints, generate_endpoint(nc));
+					config.endpoints[length(config.endpoints)-1].tag = 'cfg-' + n + '-out';
+				} else {
+					push_outbound(config.outbounds, nc);
+					config.outbounds[length(config.outbounds)-1].tag = 'cfg-' + n + '-out';
+				}
+			}
+		}
+		ob = tag;
+	} else if (l.kind === 'proxy' && match(ob, /^cfg-/)) {
+		/* The outbound tag carries the node section — make sure it exists. */
+		if (!has_outbound(ob)) {
+			const nc = uci.get_all(uciconfig, l.node);
+			if (!nc) {
+				return 'main-out';
+			} else if (nc.type in ['wireguard', 'amneziawg']) {
+				push(config.endpoints, generate_endpoint(nc));
+				config.endpoints[length(config.endpoints)-1].tag = ob;
+			} else {
+				push_outbound(config.outbounds, nc);
+				config.outbounds[length(config.outbounds)-1].tag = ob;
+			}
+		}
+	}
+	if (!user_list_rs_seen['user-' + l.sid]) {
+		user_list_rs_seen['user-' + l.sid] = true;
+		push(config.route.rule_set, {
+			type: 'local',
+			tag: 'user-' + l.sid,
+			format: 'source',
+			path: HP_DIR + '/resources/lists/' + l.sid + '.json'
+		});
+	}
+	return ob;
+};
+
 if (!isEmpty(main_node)) {
 	/* Avoid DNS loop */
 	/* sing-box-extended supports action object; hiddify-core (standard sing-box 1.12) expects a string tag. */
@@ -2512,6 +2617,20 @@ if (!isEmpty(main_node)) {
 			format: 'source',
 			path: HP_DIR + '/resources/auto_ip.json'
 		});
+
+	/* B6.3: MANUAL IP entries (static proxy_list + manual "always proxy" pins)
+	 * in their OWN watched rule-set file, emitted UNCONDITIONALLY (empty is a
+	 * no-op) — a hand-pinned IP must route with Automation off too. The
+	 * matching rule is emitted after the proxy-domain rule below. */
+	push(config.route.rule_set, {
+		type: 'local',
+		tag: 'manual-ip',
+		format: 'source',
+		path: HP_DIR + '/resources/manual_ip.json'
+	});
+
+	/* Ф4.2 (U7): user list rule-set files (watched, one per list) — declared
+	 * in user_list_prepare() at rule emission time below. */
 
 	/* RU-geo databases (RU-protect): watched local rule-set files refreshed by
 	 * ru_geo_update.sh. Always emitted (possibly empty) so the geo_update path
@@ -2949,6 +3068,24 @@ if (!isEmpty(main_node)) {
 			warn('homeproxy: OAuth stability - providers + auth families + login infra ride the main exit with the service.\n');
 		}
 
+		/* Ф4.2 (U7): user DIRECT lists — right after the per-service rules,
+		 * BEFORE the RU-protect guard. A direct list is the user's explicit
+		 * "not through the node" intent (pure direct-out or through an
+		 * engine), the same tier as the service rules above. The watched
+		 * rule-set files were declared in user_list_prepare. */
+		for (let l in user_lists) {
+			if (l.kind !== 'direct' || !l.on)
+				continue;
+			const ob = user_list_prepare(l);
+			if (ob === null)
+				continue;
+			push(config.route.rules, {
+				rule_set: 'user-' + l.sid,
+				action: 'route',
+				outbound: ob
+			});
+		}
+
 		/* RU-protect ("Russian internet never via proxy"): the downloaded RU-geo
 		 * databases (watched local rule-sets resources/ru_geoip.json + ru_geosite.json,
 		 * refreshed by ru_geo_update.sh) are matched BEFORE the proxy lists, so a
@@ -2963,6 +3100,23 @@ if (!isEmpty(main_node)) {
 				outbound: 'direct-out'
 			});
 
+		/* Ф4.2 (U7): user PROXY lists — AFTER the RU-protect guard (the
+		 * "RU never via proxy" invariant stays ironclad for proxy lists: a RU
+		 * domain put into a proxy list routes direct, exactly like the mass
+		 * lists and learned records), BEFORE the proxy-domain rule. */
+		for (let l in user_lists) {
+			if (l.kind !== 'proxy')
+				continue;
+			const ob = user_list_prepare(l);
+			if (ob === null)
+				continue;
+			push(config.route.rules, {
+				rule_set: 'user-' + l.sid,
+				action: 'route',
+				outbound: ob
+			});
+		}
+
 		/* Custom proxy list → main-out. The learned sites share this rule-set via the
 		 * watched local file, so they hot-reload without a restart. Always emitted
 		 * (empty rule-set is a no-op) so hot reloads work even from an empty list.
@@ -2970,6 +3124,18 @@ if (!isEmpty(main_node)) {
 		 * never outrank an explicit user rule (see comment at their old position). */
 		push(config.route.rules, {
 			rule_set: 'proxy-domain',
+			action: 'route',
+			outbound: 'main-out'
+		});
+
+		/* B6.3: MANUAL IP entries (static proxy_list + manual "always proxy"
+		 * pins) → main-out. The 'manual-ip' rule is emitted UNCONDITIONALLY
+		 * (empty rule-set is a no-op): a hand-pinned IP must route regardless
+		 * of the Automation toggle — it used to be swallowed by the same
+		 * ruleset/rule as the learned IPs, which only existed when
+		 * automation_enabled='1'. The watched file (manual_ip.json) hot-reloads. */
+		push(config.route.rules, {
+			rule_set: 'manual-ip',
 			action: 'route',
 			outbound: 'main-out'
 		});
@@ -3101,8 +3267,9 @@ system('mkdir -p ' + RUN_DIR);
  * exist before the core starts. Automation rewrites them on every learn → hot reload.
  * Also the manual "always direct" pins (auto_direct.json), the RU-geo rule-set files
  * (ru_geoip.json / ru_geosite.json — stale-only rewrite, see sync_ru_geo_rulesets),
- * and the OAuth stability list (oauth_domain.json, ч.59). Ф4.1: invalid list
- * entries are dropped AND counted by the classifier — never silent. */
+ * the OAuth stability list (oauth_domain.json, ч.59), and the Ф4.2 user list
+ * files (resources/lists/<sid>.json — one watched rule-set per user list).
+ * Ф4.1: invalid list entries are dropped AND counted by the classifier — never silent. */
 {
 	let cls_dropped = 0;
 	let rr = sync_learned_rulesets();        cls_dropped += rr.dropped || 0;
@@ -3110,6 +3277,12 @@ system('mkdir -p ' + RUN_DIR);
 	rr = sync_ru_geo_rulesets();             cls_dropped += rr.dropped || 0;
 	rr = sync_oauth_ruleset();               cls_dropped += rr.dropped || 0;
 	rr = sync_auto_auth_ruleset();           cls_dropped += rr.dropped || 0;
+	/* Ф4.2: every user list (incl. DISABLED ones — the file must exist, the
+	 * core's hot-reload watch may already reference it from a previous start). */
+	for (let ul in user_lists) {
+		rr = sync_user_list(HP_DIR + '/resources', ul.sid, ul.ctype);
+		cls_dropped += rr.dropped || 0;
+	}
 	if (cls_dropped > 0)
 		warn('homeproxy: classify_entry dropped ' + cls_dropped + ' invalid list entries (Ф4.1 validation — see /etc/homeproxy/resources/*.txt)\n');
 }

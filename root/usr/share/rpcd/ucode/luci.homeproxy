@@ -14,8 +14,12 @@ import {
 	sync_manual_direct_ruleset,
 	sync_ru_geo_rulesets,
 	sync_auto_auth_ruleset,
+	sync_user_list,
 	classify_entry,
-	ipv6_hextets
+	ipv6_hextets,
+	getTime,
+	wGET,
+	isBinary
 } from '/etc/homeproxy/scripts/homeproxy.uc';
 import {
 	RUN_DIR as HC_RUN_DIR, LOG_PATH as HC_LOG_PATH,
@@ -467,6 +471,211 @@ function auto_entry_type(e) {
 	if (!c || c.kind === 'domain')
 		return 'domain';
 	return 'ip';
+}
+
+/* ── Ф4.2 (U7) user lists helpers ────────────────────────────────────────────
+ * A user list = a UCI section of type 'user_list' named ul_<id> + a source
+ * text file resources/lists/<sid>.txt (NORMALIZED entries — what the classifier
+ * accepted) + a watched rule-set resources/lists/<sid>.json (sync_user_list).
+ * kind picks the rule tier in the generator (proxy lists ride AFTER the
+ * RU-protect guard, direct lists right after the per-service rules); ctype
+ * picks what a line must be (domains → domain_suffix, ips → ip_cidr). */
+
+const LISTS_DIR = HP_DIR + '/resources/lists';
+const LISTS_BK = HP_DIR + '/backups';
+
+function list_capture(cmd) {
+	const fd = popen(cmd);
+	let out = '';
+	if (fd) { out = fd.read('all') || ''; fd.close(); }
+	return out;
+}
+
+function list_sid_ok(sid) {
+	return !!(type(sid) === 'string' && match(sid, /^ul_[A-Za-z0-9_]{1,64}$/));
+}
+
+function list_section(c, sid) {
+	const s = c.get_all('homeproxy', sid);
+	return (s && s['.type'] === 'user_list') ? s : null;
+}
+
+/* Parse list content: every line through classify_entry, dedup on the
+ * normalized value, '#' comment lines are KEPT as comments. Returns the
+ * lines to store (normalized), plus honest accepted/dropped counters. */
+function list_content_parse(content, ctype) {
+	const out = [];
+	const seen = {};
+	let accepted = 0, dropped = 0;
+	const lines = split(replace('' + (content ?? ''), /\r\n?/g, '\n'), '\n');
+	for (let l in lines) {
+		l = trim(l);
+		if (!length(l))
+			continue;
+		if (substr(l, 0, 1) === '#') {
+			push(out, l);
+			continue;
+		}
+		const c = classify_entry(l);
+		if (!c) { dropped++; continue; }
+		let v;
+		if (ctype === 'ips') {
+			if (c.kind === 'domain') { dropped++; continue; }
+			v = c.value;
+		} else {
+			if (c.kind !== 'domain') { dropped++; continue; }
+			v = c.value;
+		}
+		if (seen[v])
+			continue;
+		seen[v] = true;
+		push(out, v);
+		accepted++;
+	}
+	return { lines: out, accepted: accepted, dropped: dropped };
+}
+
+/* Write the source txt (normalized) + hot-sync the watched rule-set JSON +
+ * store the honest counters in the section. Returns the sync result. */
+function list_store_content(sid, ctype, content) {
+	const parsed = list_content_parse(content, ctype);
+	const txt = length(parsed.lines) ? join('\n', parsed.lines) + '\n' : '';
+	system('mkdir -p ' + shellquote(LISTS_DIR));
+	atomic_write(LISTS_DIR + '/' + sid + '.txt', txt);
+	const sr = sync_user_list(HP_DIR + '/resources', sid, ctype);
+	const c = cursor();
+	if (list_section(c, sid)) {
+		c.set('homeproxy', sid, 'entries', '' + (sr.accepted ?? 0));
+		c.set('homeproxy', sid, 'dropped', '' + (sr.dropped ?? 0));
+		c.save('homeproxy');
+		c.commit('homeproxy');
+	}
+	return { accepted: parsed.accepted, dropped: parsed.dropped,
+		entries: sr.accepted ?? 0, sync_error: sr.error ?? '' };
+}
+
+/* Snapshot every user list before a destructive action / on demand — a dated
+ * family OUTSIDE the snapshot-* rotation (routing_mode-migration recipe,
+ * session 89: .tmp dir + mv, a partial snapshot never gets the final name). */
+function list_backup_snapshot(reason) {
+	const c = cursor();
+	const sids = [];
+	c.foreach('homeproxy', 'user_list', (s) => {
+		if (list_sid_ok('' + s['.name']))
+			push(sids, '' + s['.name']);
+	});
+	/* Two snapshots inside the SAME second collide on the dated name — retry
+	 * on the next second (up to 3); a same-name mv would nest/miss silently. */
+	let ts = trim(list_capture('date +%Y%m%d-%H%M%S 2>/dev/null'));
+	if (!length(ts))
+		return { error: 'no timestamp' };
+	let dir = LISTS_BK + '/user-lists-' + ts;
+	let tries = 0;
+	while (access(dir) && tries < 3) {
+		system('sleep 1');
+		ts = trim(list_capture('date +%Y%m%d-%H%M%S 2>/dev/null'));
+		if (!length(ts))
+			return { error: 'no timestamp' };
+		dir = LISTS_BK + '/user-lists-' + ts;
+		tries++;
+	}
+	if (access(dir))
+		return { error: 'snapshot name collision' };
+	const tmp = LISTS_BK + '/.ul-bak-' + ts + '.tmp';
+	system('mkdir -p ' + shellquote(LISTS_BK) + ' ' + shellquote(tmp));
+	let saved = 0;
+	const meta = { ts: ts, reason: reason || 'manual', lists: [] };
+	for (let sid in sids) {
+		const sec = list_section(c, sid);
+		if (!sec)
+			continue;
+		const txt = access(LISTS_DIR + '/' + sid + '.txt')
+			? readfile(LISTS_DIR + '/' + sid + '.txt') : '';
+		writefile(tmp + '/' + sid + '.txt', txt ?? '');
+		push(meta.lists, {
+			sid: sid,
+			name: '' + (sec.name ?? ''),
+			kind: '' + (sec.kind ?? 'proxy'),
+			ctype: '' + (sec.ctype ?? 'domains'),
+			node: '' + (sec.node ?? ''),
+			enabled: '' + (sec.enabled ?? '1')
+		});
+		saved++;
+	}
+	writefile(tmp + '/meta.json', sprintf('%.J\n', meta));
+	system('mv ' + shellquote(tmp) + ' ' + shellquote(dir));
+	if (!access(dir + '/meta.json'))
+		return { error: 'snapshot verify failed' };
+	return { dir: dir, saved: saved };
+}
+
+/* Fetch a list over HTTP(S) with the Ф5-class honest gates: an empty body,
+ * an HTML page or binary junk NEVER replaces a list. */
+function list_fetch_url(url) {
+	url = trim('' + (url ?? ''));
+	if (!length(url) || (!match(url, /^https?:\/\//)))
+		return { error: 'неверный URL (нужен http/https)' };
+	const body = wGET(url);
+	if (body === null || !length(trim(body)))
+		return { error: 'пустой ответ — список не применён' };
+	const head = lc(substr(body, 0, 512));
+	if (index(head, '<!doctype') >= 0 || index(head, '<html') >= 0 ||
+	    index(head, '<head') >= 0 || index(head, '<body') >= 0 ||
+	    index(head, '<script') >= 0 || index(head, '<title') >= 0)
+		return { error: 'сервер вернул HTML вместо списка — список не применён' };
+	if (isBinary(body))
+		return { error: 'сервер вернул двоичные данные вместо списка — список не применён' };
+	return { text: body };
+}
+
+/* Validate a list exit (kind + node) with the same honesty as
+ * wizard_preset_apply: no dead exits offered. Returns null when OK,
+ * otherwise an error code string. */
+function list_node_check(c, kind, node) {
+	node = trim('' + (node ?? ''));
+	if (kind === 'direct') {
+		if (node === 'direct-out' || node === '' )
+			return null;
+		if (node === 'byedpi-out')
+			return (c.get('homeproxy', 'config', 'byedpi_enabled') === '1')
+				? null : 'byedpi_disabled';
+		if (node === 'zapret-out')
+			return (c.get('homeproxy', 'config', 'zapret_enabled') === '1')
+				? null : 'zapret_disabled';
+		return 'bad node for a direct list';
+	}
+	/* proxy list */
+	const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+	if (node === 'main-out' || node === '') {
+		if (main_node === 'direct-out' || main_node === '' || main_node === 'nil')
+			return 'main_is_direct';
+		return null;
+	}
+	if (node === 'urltest')
+		return null;
+	if (node === 'byedpi-out')
+		return (c.get('homeproxy', 'config', 'byedpi_enabled') === '1')
+			? null : 'byedpi_disabled';
+	if (node === 'zapret-out')
+		return (c.get('homeproxy', 'config', 'zapret_enabled') === '1')
+			? null : 'zapret_disabled';
+	const nc = c.get_all('homeproxy', node);
+	if (!nc || nc['.type'] !== 'node')
+		return 'unknown node';
+	return null;
+}
+
+/* Node list for the lists UI — a plain function, NOT an arrow IIFE (lesson 63:
+ * nested arrows inside this ucode build do not bind the outer callable's
+ * captures reliably). */
+function list_proxy_nodes(c) {
+	const arr = [];
+	c.foreach('homeproxy', 'node', function(n) {
+		push(arr, { id: '' + n['.name'],
+			label: '' + (n.label ?? ('' + n['.name'])),
+			type: '' + (n.type ?? '') });
+	});
+	return arr;
 }
 
 /* "Listening ports" (Core & Tools + diagnostics report): busybox
@@ -5678,6 +5887,10 @@ const methods = {
 			const c = cursor();
 			const rules = {};
 			const counts = {};
+			/* Ф4.2: extra rules (the 2nd..Nth rule of a source — a legitimate
+			 * "same service through two exits" shape) are shown INSIDE the
+			 * preset row, not in a duplicate editor below. */
+			const extras = {};
 			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
 				const src = '' + (s.source || '');
 				if (!length(src)) return;
@@ -5691,6 +5904,15 @@ const methods = {
 							r.urltest_nodes = pool;
 					}
 					rules[src] = r;
+					extras[src] = [];
+				} else {
+					const ex = { section_id: s['.name'], enabled: (s.enabled !== '0'), node: ('' + (s.node || 'main-out')) };
+					if (ex.node === 'urltest') {
+						const epool = c.get('homeproxy', s['.name'], 'urltest_nodes');
+						if (type(epool) === 'array')
+							ex.urltest_nodes = epool;
+					}
+					push(extras[src], ex);
 				}
 			});
 			const nodes = [];
@@ -5729,6 +5951,7 @@ const methods = {
 				},
 				nodes: nodes,
 				rules: rules,
+				rule_extras: extras,
 				rule_counts: counts
 			};
 		}
@@ -5923,6 +6146,550 @@ const methods = {
 			 * generate+reload inside rpcd). */
 			const ap = op_spawn('reload', 'routing rule delete');
 			return { result: true, action: 'removed', section_id: sid,
+				apply: { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true,
+					error: ap.error || '' } };
+		}
+	},
+
+	/* ── Ф4.2 (U7): user lists (менеджер списков) ────────────────────────────
+	 * A list is a UCI 'user_list' section + resources/lists/<sid>.txt
+	 * (normalized source of truth) + a watched rule-set <sid>.json. Content
+	 * edits hot-reload; create/update/delete go through the opman door (the
+	 * rule set itself changes). All args are strings (rpcd string-policy). */
+
+	lists_list: {
+		call: function(req) {
+			/* Ф4.2 one-shot migration of the legacy textareas: if the service
+			 * has not restarted since the upgrade yet, run the migrator HERE
+			 * (idempotent, marker-protected; fail-closed without a snapshot)
+			 * and follow with a full reload through the opman door — the
+			 * legacy files are blanked by the migrator, so the new list rules
+			 * must be in the running config before the UI shows anything. */
+			let migration = null;
+			if (!access(HP_DIR + '/resources/.lists_migrated')) {
+				const out = list_capture('/usr/bin/ucode /etc/homeproxy/scripts/migrate_user_lists.uc 2>&1');
+				if (match('' + out, /user lists migration: /)) {
+					const ap = op_spawn('reload', 'user lists migration (legacy textareas)');
+					migration = { done: true, log: trim('' + out),
+						apply: { hot: false, result: ap.result === true,
+							op_id: ap.op_id || '', busy: ap.busy === true,
+							error: ap.error || '' } };
+				} else if (length(trim('' + out))) {
+					migration = { done: false, log: trim('' + out) };
+				}
+			}
+			const c = cursor();
+			const out = [];
+			c.foreach('homeproxy', 'user_list', (s) => {
+				const sid = '' + s['.name'];
+				if (!list_sid_ok(sid))
+					return;
+				/* push() is a GLOBAL in ucode — never a method (lesson 20). */
+				push(out, {
+					id: sid,
+					name: '' + (s.name ?? ''),
+					kind: (s.kind === 'direct') ? 'direct' : 'proxy',
+					ctype: (s.ctype === 'ips') ? 'ips' : 'domains',
+					node: '' + (s.node ?? ''),
+					enabled: (s.enabled === '1'),
+					entries: int(s.entries ?? '0') || 0,
+					dropped: int(s.dropped ?? '0') || 0,
+					source_url: '' + (s.source_url ?? ''),
+					source_ts: int(s.source_ts ?? '0') || 0
+				});
+			});
+			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			return {
+				lists: out,
+				migration: migration,
+				env: {
+					main_is_direct: (main_node === 'direct-out' || main_node === '' || main_node === 'nil'),
+					byedpi_enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1'),
+					zapret_enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1'),
+					proxy_nodes: list_proxy_nodes(c)
+				}
+			};
+		}
+	},
+
+	list_create: {
+		args: { name: 'name', kind: 'kind', ctype: 'ctype', node: 'node',
+			urltest_nodes: 'urltest_nodes', content: 'content' },
+		call: function(req) {
+			const name = trim('' + ((req && req.args && req.args.name) ?? ''));
+			const kind = trim('' + ((req && req.args && req.args.kind) ?? 'proxy'));
+			const ctype = trim('' + ((req && req.args && req.args.ctype) ?? 'domains'));
+			const node = trim('' + ((req && req.args && req.args.node) ?? ''));
+			const content = '' + ((req && req.args && req.args.content) ?? '');
+			if (!length(name) || length(name) > 64)
+				return { result: false, error: 'укажите имя списка (до 64 символов)' };
+			if (kind !== 'proxy' && kind !== 'direct')
+				return { result: false, error: 'bad kind' };
+			if (ctype !== 'domains' && ctype !== 'ips')
+				return { result: false, error: 'bad ctype' };
+
+			const c = cursor();
+			const nerr = list_node_check(c, kind, node);
+			if (nerr)
+				return { result: false, error: nerr };
+			let pool = [];
+			if (node === 'urltest') {
+				pool = hp_json_arg(req?.args?.urltest_nodes) || [];
+				if (!length(pool))
+					return { result: false, error: 'urltest_pool_empty' };
+				for (let n in pool) {
+					const nc = c.get_all('homeproxy', '' + n);
+					if (!nc || nc['.type'] !== 'node')
+						return { result: false, error: 'unknown node' };
+				}
+			}
+
+			/* Generate a unique section id (ul_<unix-ts>[_n]) — the file names
+			 * and the ruleset tags derive from it. */
+			let sid = '';
+			for (let attempt = 0; attempt < 100; attempt++) {
+				const cand = 'ul_' + time() + (attempt ? ('_' + attempt) : '');
+				if (!c.get_all('homeproxy', cand)) { sid = cand; break; }
+			}
+			if (!sid)
+				return { result: false, error: 'cannot allocate list id' };
+
+			/* UCI named section — `uci set <conf>.<sid>=<type>` (busybox uci add
+			 * is anonymous-only; the section id is derived from the timestamp
+			 * and pre-checked against the cursor). */
+			const rc = system(`uci -q set homeproxy.${sid}=user_list`);
+			if (rc !== 0)
+				return { result: false, error: 'cannot create the list section' };
+			system(`uci -q set homeproxy.${sid}.name=${shellquote(name)}`);
+			system(`uci -q set homeproxy.${sid}.kind=${shellquote(kind)}`);
+			system(`uci -q set homeproxy.${sid}.ctype=${shellquote(ctype)}`);
+			system(`uci -q set homeproxy.${sid}.node=${shellquote(node || (kind === 'direct' ? 'direct-out' : 'main-out'))}`);
+			system(`uci -q set homeproxy.${sid}.enabled=1`);
+			if (node === 'urltest') {
+				for (let n in pool)
+					system(`uci add_list homeproxy.${sid}.urltest_nodes=${shellquote('' + n)}`);
+			}
+			system('uci -q commit homeproxy');
+
+			/* Content (optional at create) + the watched JSON must exist even
+			 * when empty — the generator always references the file. */
+			const wr = list_store_content(sid, ctype, content);
+			if (length(wr.sync_error))
+				return { result: false, error: wr.sync_error };
+
+			/* A list adds/removes a routing RULE — full generate+reload
+			 * through the opman door, the descriptor rides the reply. */
+			const ap = op_spawn('reload', 'user list create (' + name + ')');
+			return { result: true, id: sid,
+				accepted: wr.accepted, dropped: wr.dropped,
+				apply: { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true,
+					error: ap.error || '' } };
+		}
+	},
+
+	list_read: {
+		args: { id: 'id' },
+		call: function(req) {
+			const sid = trim('' + ((req && req.args && req.args.id) ?? ''));
+			if (!list_sid_ok(sid))
+				return { result: false, error: 'bad list id' };
+			const c = cursor();
+			if (!list_section(c, sid))
+				return { result: false, error: 'no such list' };
+			return { result: true,
+				content: access(LISTS_DIR + '/' + sid + '.txt')
+					? readfile(LISTS_DIR + '/' + sid + '.txt') : '' };
+		}
+	},
+
+	list_write: {
+		args: { id: 'id', content: 'content', mode: 'mode' },
+		call: function(req) {
+			const sid = trim('' + ((req && req.args && req.args.id) ?? ''));
+			if (!list_sid_ok(sid))
+				return { result: false, error: 'bad list id' };
+			const c = cursor();
+			const sec = list_section(c, sid);
+			if (!sec)
+				return { result: false, error: 'no such list' };
+			const ctype = (sec.ctype === 'ips') ? 'ips' : 'domains';
+			const content = '' + ((req && req.args && req.args.content) ?? '');
+			const mode = trim('' + ((req && req.args && req.args.mode) ?? 'replace'));
+			let body = content;
+			if (mode === 'append') {
+				const cur = access(LISTS_DIR + '/' + sid + '.txt')
+					? readfile(LISTS_DIR + '/' + sid + '.txt') : '';
+				body = (cur ?? '') + '\n' + content;
+			}
+			const wr = list_store_content(sid, ctype, body);
+			if (length(wr.sync_error))
+				return { result: false, error: wr.sync_error };
+			/* Content-only change → hot reload when the running config already
+			 * references the watched file (the .learned_hotreload marker proves
+			 * a full pass happened at least once); otherwise the opman door. */
+			let apply;
+			if (access('/var/run/homeproxy/.learned_hotreload')) {
+				apply = { hot: true };
+			} else {
+				const ap = op_spawn('reload', 'user list apply (generate+reload)');
+				apply = { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true, error: ap.error || '' };
+			}
+			return { result: true, accepted: wr.accepted, dropped: wr.dropped,
+				entries: wr.entries, apply: apply };
+		}
+	},
+
+	list_import: {
+		args: { id: 'id', url: 'url', mode: 'mode' },
+		call: function(req) {
+			const sid = trim('' + ((req && req.args && req.args.id) ?? ''));
+			if (!list_sid_ok(sid))
+				return { result: false, error: 'bad list id' };
+			const c = cursor();
+			const sec = list_section(c, sid);
+			if (!sec)
+				return { result: false, error: 'no such list' };
+			const ctype = (sec.ctype === 'ips') ? 'ips' : 'domains';
+			const fr = list_fetch_url((req && req.args && req.args.url) ?? '');
+			if (fr.error)
+				return { result: false, error: fr.error };
+			const mode = trim('' + ((req && req.args && req.args.mode) ?? 'replace'));
+			let body = fr.text;
+			if (mode === 'append') {
+				const cur = access(LISTS_DIR + '/' + sid + '.txt')
+					? readfile(LISTS_DIR + '/' + sid + '.txt') : '';
+				body = (cur ?? '') + '\n' + fr.text;
+			}
+			const parsed = list_content_parse(body, ctype);
+			/* Ф5-class honesty: a source that yields ZERO entries never replaces
+			 * the list (a broken mirror must not blank the routing). */
+			if (!parsed.accepted && mode !== 'append')
+				return { result: false,
+					error: 'в ответе нет ни одной распознанной записи — список не применён' };
+			if (!parsed.accepted && !parsed.dropped)
+				return { result: false, error: 'в ответе нет записей — список не применён' };
+			const wr = list_store_content(sid, ctype, body);
+			c.set('homeproxy', sid, 'source_url', trim('' + ((req && req.args && req.args.url) ?? '')));
+			c.set('homeproxy', sid, 'source_ts', '' + time());
+			c.save('homeproxy');
+			c.commit('homeproxy');
+			let apply;
+			if (access('/var/run/homeproxy/.learned_hotreload')) {
+				apply = { hot: true };
+			} else {
+				const ap = op_spawn('reload', 'user list import (generate+reload)');
+				apply = { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true, error: ap.error || '' };
+			}
+			return { result: true, accepted: wr.accepted, dropped: wr.dropped,
+				entries: wr.entries, apply: apply };
+		}
+	},
+
+	list_update: {
+		args: { id: 'id', name: 'name', node: 'node', enabled: 'enabled',
+			urltest_nodes: 'urltest_nodes' },
+		call: function(req) {
+			const sid = trim('' + ((req && req.args && req.args.id) ?? ''));
+			if (!list_sid_ok(sid))
+				return { result: false, error: 'bad list id' };
+			const c = cursor();
+			const sec = list_section(c, sid);
+			if (!sec)
+				return { result: false, error: 'no such list' };
+			const kind = (sec.kind === 'direct') ? 'direct' : 'proxy';
+			let changed = false;
+			if ((req?.args?.name ?? '') !== '') {
+				const name = trim('' + req.args.name);
+				if (!length(name) || length(name) > 64)
+					return { result: false, error: 'имя списка — до 64 символов' };
+				if (name !== '' + (sec.name ?? '')) {
+					system(`uci -q set homeproxy.${sid}.name=${shellquote(name)}`);
+					changed = true;
+				}
+			}
+			if ((req?.args?.node ?? '') !== '') {
+				const node = trim('' + req.args.node);
+				const nerr = list_node_check(c, kind, node);
+				if (nerr)
+					return { result: false, error: nerr };
+				if (node !== '' + (sec.node ?? '')) {
+					system(`uci -q set homeproxy.${sid}.node=${shellquote(node)}`);
+					changed = true;
+				}
+			}
+			if ((req?.args?.enabled ?? '') !== '') {
+				const en = ('' + req.args.enabled === '1') ? '1' : '0';
+				if (en !== '' + (sec.enabled ?? '1')) {
+					system(`uci -q set homeproxy.${sid}.enabled=${en}`);
+					changed = true;
+				}
+			}
+			if (trim('' + ((req?.args?.urltest_nodes) ?? '')) !== '') {
+				const pool = hp_json_arg(req?.args?.urltest_nodes) || [];
+				for (let n in pool) {
+					const nc = c.get_all('homeproxy', '' + n);
+					if (!nc || nc['.type'] !== 'node')
+						return { result: false, error: 'unknown node' };
+				}
+				system(`uci -q delete homeproxy.${sid}.urltest_nodes`);
+				for (let n in pool)
+					system(`uci add_list homeproxy.${sid}.urltest_nodes=${shellquote('' + n)}`);
+				changed = true;
+			}
+			if (!changed)
+				return { result: true, unchanged: true };
+			system('uci -q commit homeproxy');
+			const ap = op_spawn('reload', 'user list update');
+			return { result: true,
+				apply: { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true,
+					error: ap.error || '' } };
+		}
+	},
+
+	list_delete: {
+		args: { id: 'id' },
+		call: function(req) {
+			const sid = trim('' + ((req && req.args && req.args.id) ?? ''));
+			if (!list_sid_ok(sid))
+				return { result: false, error: 'bad list id' };
+			const c = cursor();
+			const sec = list_section(c, sid);
+			if (!sec)
+				return { result: false, error: 'no such list' };
+			/* Auto-backup BEFORE the destructive action (restore is possible
+			 * through list_backup_read + list_write). */
+			const bk = list_backup_snapshot('delete: ' + ('' + (sec.name ?? sid)));
+			c.delete('homeproxy', sid);
+			c.commit('homeproxy');
+			system('rm -f ' + shellquote(LISTS_DIR + '/' + sid + '.txt') +
+				' ' + shellquote(LISTS_DIR + '/' + sid + '.json'));
+			const ap = op_spawn('reload', 'user list delete');
+			return { result: true, backup: bk.dir ?? '',
+				apply: { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true,
+					error: ap.error || '' } };
+		}
+	},
+
+	list_export: {
+		args: { id: 'id' },
+		call: function(req) {
+			const sid = trim('' + ((req && req.args && req.args.id) ?? ''));
+			if (!list_sid_ok(sid))
+				return { result: false, error: 'bad list id' };
+			const c = cursor();
+			const sec = list_section(c, sid);
+			if (!sec)
+				return { result: false, error: 'no such list' };
+			const kind = (sec.kind === 'direct') ? 'direct' : 'proxy';
+			const ctype = (sec.ctype === 'ips') ? 'ips' : 'domains';
+			const url = trim('' + (sec.source_url ?? ''));
+			const head =
+				'# Ravnex — экспорт списка (то, что реально маршрутизируется)\n' +
+				'# имя: ' + ('' + (sec.name ?? sid)) + '\n' +
+				'# направление: ' + (kind === 'direct' ? 'напрямую' : 'через прокси') + '\n' +
+				'# тип записей: ' + (ctype === 'ips' ? 'IP-адреса/сети' : 'домены') + '\n' +
+				'# действие: ' + ('' + (sec.node ?? '')) + '\n' +
+				'# источник: ' + (length(url) ? url : 'ручной ввод') + '\n' +
+				'# выгружено: ' + getTime() + '\n';
+			const body = access(LISTS_DIR + '/' + sid + '.txt')
+				? readfile(LISTS_DIR + '/' + sid + '.txt') : '';
+			return { result: true, content: head + (body ?? '') };
+		}
+	},
+
+	list_backup_list: {
+		call: function(req) {
+			const out = [];
+			const fd = popen(`ls -1 ${shellquote(LISTS_BK)} 2>/dev/null`);
+			if (fd) {
+				for (let line = fd.read('line'); length(line); line = fd.read('line')) {
+					const name = trim(line);
+					if (!match(name, /^user-lists-[0-9]{8}-[0-9]{6}$/))
+						continue;
+					const mf = LISTS_BK + '/' + name + '/meta.json';
+					let meta = null;
+					if (access(mf)) {
+						try { meta = json(readfile(mf) || '{}'); } catch (e) { meta = null; }
+					}
+					push(out, {
+						dir: name,
+						ts: (meta && meta.ts) ? '' + meta.ts : name,
+						reason: (meta && meta.reason) ? '' + meta.reason : '',
+						counts: (meta && meta.lists) ? length(meta.lists) : 0
+					});
+				}
+				fd.close();
+			}
+			/* Newest first (sort() is a GLOBAL in ucode — never a method, lesson 20). */
+			sort(out, (a, b) => (a.dir < b.dir) ? 1 : (a.dir > b.dir) ? -1 : 0);
+			return { result: true, snapshots: out };
+		}
+	},
+
+	list_backup_create: {
+		call: function(req) {
+			const bk = list_backup_snapshot('manual');
+			if (bk.error)
+				return { result: false, error: bk.error };
+			return { result: true, dir: bk.dir, saved: bk.saved };
+		}
+	},
+
+	list_backup_read: {
+		args: { dir: 'dir', id: 'id' },
+		call: function(req) {
+			const dir = trim('' + ((req && req.args && req.args.dir) ?? ''));
+			const sid = trim('' + ((req && req.args && req.args.id) ?? ''));
+			if (!match(dir, /^user-lists-[0-9]{8}-[0-9]{6}$/) || !list_sid_ok(sid))
+				return { result: false, error: 'bad snapshot request' };
+			const file = LISTS_BK + '/' + dir + '/' + sid + '.txt';
+			if (!access(file))
+				return { result: false, error: 'no such snapshot entry' };
+			return { result: true, content: readfile(file) ?? '' };
+		}
+	},
+
+	list_backup_restore: {
+		args: { dir: 'dir' },
+		call: function(req) {
+			const dir = trim('' + ((req && req.args && req.args.dir) ?? ''));
+			if (!match(dir, /^user-lists-[0-9]{8}-[0-9]{6}$/))
+				return { result: false, error: 'bad snapshot dir' };
+			const metaf = LISTS_BK + '/' + dir + '/meta.json';
+			if (!access(metaf))
+				return { result: false, error: 'no such snapshot' };
+			let meta = null;
+			try { meta = json(readfile(metaf) || '{}'); } catch (e) { meta = null; }
+			if (!meta || type(meta.lists) !== 'array')
+				return { result: false, error: 'broken snapshot meta' };
+			/* Safety net: the CURRENT state is snapshotted before the restore. */
+			const pre = list_backup_snapshot('pre-restore');
+			const c = cursor();
+			let restored = 0, created = 0;
+			for (let item in meta.lists) {
+				const sid = '' + (item.sid ?? '');
+				if (!list_sid_ok(sid))
+					continue;
+				const src = LISTS_BK + '/' + dir + '/' + sid + '.txt';
+				if (!access(src))
+					continue;
+				const txt = readfile(src) ?? '';
+				const sec = list_section(c, sid);
+				if (!sec) {
+					/* Recreate the section from the snapshot meta. */
+					const rc = system(`uci -q set homeproxy.${sid}=user_list`);
+					if (rc !== 0)
+						continue;
+					system(`uci -q set homeproxy.${sid}.name=${shellquote('' + (item.name ?? sid))}`);
+					system(`uci -q set homeproxy.${sid}.kind=${shellquote('' + (item.kind ?? 'proxy'))}`);
+					system(`uci -q set homeproxy.${sid}.ctype=${shellquote('' + (item.ctype ?? 'domains'))}`);
+					system(`uci -q set homeproxy.${sid}.node=${shellquote('' + (item.node ?? ''))}`);
+					system(`uci -q set homeproxy.${sid}.enabled=${shellquote('' + (item.enabled ?? '1'))}`);
+					system('uci -q commit homeproxy');
+					created++;
+				}
+				const ctype = ('' + (item.ctype ?? 'domains') === 'ips') ? 'ips' : 'domains';
+				list_store_content(sid, ctype, txt);
+				restored++;
+			}
+			if (!restored)
+				return { result: false, error: 'в снимке нет восстановимых списков' };
+			const ap = op_spawn('reload', 'user lists restore from ' + dir);
+			return { result: true, restored: restored, created: created,
+				pre_backup: pre.dir ?? '',
+				apply: { hot: false, result: ap.result === true,
+					op_id: ap.op_id || '', busy: ap.busy === true,
+					error: ap.error || '' } };
+		}
+	},
+
+	/* Ф4.2: the "add a rule" master — ALWAYS creates a NEW rule section (the
+	 * preset rows above rewrite the FIRST rule of a source; an extra exit for
+	 * the same service is a legitimate shape and needs its own section). */
+	wizard_preset_add: {
+		args: { source: 'source', node: 'node', urltest_nodes: 'urltest_nodes' },
+		call: function(req) {
+			const src = trim('' + ((req && req.args && req.args.source) ?? ''));
+			const node = trim('' + ((req && req.args && req.args.node) ?? ''));
+			const SOURCES = {
+				'refilter': true, 'russia-inside': true, 'russia-outside': true,
+				'ukraine-inside': true, 'block': true,
+				'youtube': true, 'twitter': true,
+				'tiktok': true, 'telegram': true, 'roblox': true, 'porn': true, 'ovh': true,
+				'news': true, 'meta': true, 'hodca': true, 'hetzner': true, 'hdrezka': true,
+				'google_ai': true, 'google-meet': true, 'google_play': true, 'geoblock': true,
+				'anime': true, 'cloudflare': true, 'cloudfront': true, 'discord': true,
+				'digitalocean': true,
+				'openai': true, 'anthropic': true, 'whatsapp': true, 'twitch': true,
+				'valve': true, 'epicgames': true, 'riot': true, 'sony': true,
+				'electronicarts': true, 'ubisoft': true, 'blizzard': true, 'nintendo': true,
+				'wargaming': true, 'xbox': true
+			};
+			if (!SOURCES[src])
+				return { result: false, error: 'unknown source' };
+			const c = cursor();
+			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			if (node === 'main-out' && (main_node === 'direct-out' || main_node === '' || main_node === 'nil'))
+				return { result: false, error: 'main_is_direct' };
+			if (node !== '' && node !== 'main-out' && node !== 'byedpi-out' &&
+			    node !== 'zapret-out' && node !== 'urltest') {
+				const nc = c.get_all('homeproxy', node);
+				if (!nc || nc['.type'] !== 'node')
+					return { result: false, error: 'unknown node' };
+			}
+			if (node === 'byedpi-out' && c.get('homeproxy', 'config', 'byedpi_enabled') !== '1')
+				return { result: false, error: 'byedpi_disabled' };
+			if (node === 'zapret-out' && c.get('homeproxy', 'config', 'zapret_enabled') !== '1')
+				return { result: false, error: 'zapret_disabled' };
+			let pool = [];
+			if (node === 'urltest') {
+				pool = hp_json_arg(req?.args?.urltest_nodes) || [];
+				if (!length(pool))
+					return { result: false, error: 'urltest_pool_empty' };
+				for (let n in pool) {
+					const nc = c.get_all('homeproxy', '' + n);
+					if (!nc || nc['.type'] !== 'node')
+						return { result: false, error: 'unknown node' };
+				}
+			}
+			/* Duplicate guard: the exact same (source, node) pair twice is a
+			 * mistake — the generator dedups the ruleset but emits two identical
+			 * rules, and the UI already shows the same exit in the main row. */
+			let dup = false;
+			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+				if (('' + (s.source ?? '')) === src && ('' + (s.node ?? '')) === node)
+					dup = true;
+			});
+			if (dup)
+				return { result: false, error: 'duplicate rule' };
+			/* Anonymous section via the proven popen path (lesson 185): uci add
+			 * prints the generated section name on stdout. */
+			const fd = popen('uci -q add homeproxy proxy_ru_rule');
+			const target = fd ? trim((fd.read('line') || '')) : '';
+			if (fd)
+				fd.close();
+			if (!length(target) || !ctrl_valid_name(target))
+				return { result: false, error: 'uci add failed' };
+			const cw = cursor();
+			cw.set('homeproxy', target, 'enabled', '1');
+			cw.set('homeproxy', target, 'source', src);
+			cw.set('homeproxy', target, 'node', node);
+			cw.save('homeproxy');
+			cw.commit('homeproxy');
+			if (node === 'urltest') {
+				system(`uci -q delete homeproxy.${target}.urltest_nodes`);
+				for (let n in pool)
+					system(`uci add_list homeproxy.${target}.urltest_nodes=${shellquote('' + n)}`);
+				system('uci -q commit homeproxy');
+			}
+			const ap = op_spawn('reload', 'routing rule add (master)');
+			return { result: true, action: 'added', section_id: target,
 				apply: { hot: false, result: ap.result === true,
 					op_id: ap.op_id || '', busy: ap.busy === true,
 					error: ap.error || '' } };
