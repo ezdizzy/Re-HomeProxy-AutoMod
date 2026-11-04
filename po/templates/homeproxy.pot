@@ -7267,3 +7267,51 @@ msgstr ""
 
 msgid "The core refreshed its rule-set cache %s (per-tag detail is not exposed by the core)."
 msgstr ""
+
+msgid "Partial picture — not all paths were measured"
+msgstr ""
+
+msgid "Cause: the provider cuts the connection (DPI)"
+msgstr ""
+
+msgid "Cause: the origin refuses the region (geo)"
+msgstr ""
+
+msgid "Cause: origin WAF/protection challenge"
+msgstr ""
+
+msgid "Cause: origin IP/ASN policy"
+msgstr ""
+
+msgid "Cause: DNS tampering"
+msgstr ""
+
+msgid "Cause: own rules/lists"
+msgstr ""
+
+msgid "Cause: remote-side failure"
+msgstr ""
+
+msgid "Cause not established"
+msgstr ""
+
+msgid "high confidence"
+msgstr ""
+
+msgid "medium confidence"
+msgstr ""
+
+msgid "low confidence"
+msgstr ""
+
+msgid "Rate limited (429)"
+msgstr ""
+
+msgid "Server error (5xx)"
+msgstr ""
+
+msgid "WAF challenge"
+msgstr ""
+
+msgid "Checks a set of test services (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) through your real paths. The VERDICT speaks about your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served; the Direct column is reference: it shows whether the resource could open with no VPN at all. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini \"something went wrong\") is not either. When a refusal is about the remote region rather than the local provider, the verdict says so (geo-block) — a routing strategy cannot fix a region refusal, a node with a supported region can. RU services (rutube, gosuslugi) are control hosts — they must always open directly. The Cause line under the verdict explains WHY the resource fails (provider DPI, origin geo/WAF, DNS tampering, own rules) with a confidence level — hover it for the measured evidence."
+msgstr ""

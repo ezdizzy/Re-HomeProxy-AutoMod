@@ -12823,3 +12823,51 @@ msgstr "категорий %s · сетей %s · доменов %s · обно�
 
 msgid "The core refreshed its rule-set cache %s (per-tag detail is not exposed by the core)."
 msgstr "Ядро обновляло свой кэш rule-set %s (по-теговая свежесть ядром не раскрывается)."
+
+msgid "Partial picture — not all paths were measured"
+msgstr "Частичная картина — измерены не все пути"
+
+msgid "Cause: the provider cuts the connection (DPI)"
+msgstr "Причина: провайдер режет соединение (DPI)"
+
+msgid "Cause: the origin refuses the region (geo)"
+msgstr "Причина: геоограничение источника"
+
+msgid "Cause: origin WAF/protection challenge"
+msgstr "Причина: WAF/защита источника"
+
+msgid "Cause: origin IP/ASN policy"
+msgstr "Причина: политика источника к IP/ASN"
+
+msgid "Cause: DNS tampering"
+msgstr "Причина: подмена DNS"
+
+msgid "Cause: own rules/lists"
+msgstr "Причина: собственные правила/списки"
+
+msgid "Cause: remote-side failure"
+msgstr "Причина: сбой на удалённой стороне"
+
+msgid "Cause not established"
+msgstr "Причина не установлена"
+
+msgid "high confidence"
+msgstr "высокая уверенность"
+
+msgid "medium confidence"
+msgstr "средняя уверенность"
+
+msgid "low confidence"
+msgstr "низкая уверенность"
+
+msgid "Rate limited (429)"
+msgstr "Ограничение частоты (429)"
+
+msgid "Server error (5xx)"
+msgstr "Ошибка сервера (5xx)"
+
+msgid "WAF challenge"
+msgstr "WAF-challenge"
+
+msgid "Checks a set of test services (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) through your real paths. The VERDICT speaks about your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served; the Direct column is reference: it shows whether the resource could open with no VPN at all. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini \"something went wrong\") is not either. When a refusal is about the remote region rather than the local provider, the verdict says so (geo-block) — a routing strategy cannot fix a region refusal, a node with a supported region can. RU services (rutube, gosuslugi) are control hosts — they must always open directly. The Cause line under the verdict explains WHY the resource fails (provider DPI, origin geo/WAF, DNS tampering, own rules) with a confidence level — hover it for the measured evidence."
+msgstr "Проверяет набор тестовых сервисов (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) через ваши реальные пути. ВЕРДИКТ говорит о НАСТРОЕННОЙ маршрутизации (правила, выученные списки и десинк Zapret/ByeDPI) — как LAN-клиентам реально подаётся ресурс; колонка Direct — справочная: показывает, открылся бы ресурс вовсе без VPN. Ответ, чья цепочка редиректов оборвана сбросом, — не успех, и 200 с отказом на уровне приложения (гео, «something went wrong» у Gemini) — тоже не успех. Когда отказ про удалённый регион, а не про локального провайдера, вердикт так и говорит (гео-блок) — стратегия маршрутизации не чинит отказ региона, чинит узел в поддерживаемом регионе. RU-сервисы (rutube, gosuslugi) — контрольные: должны открываться напрямую. Строка «Причина» под вердиктом объясняет, ПОЧЕМУ ресурс недоступен (DPI провайдера, гео/WAF источника, подмена DNS, свои правила) — с уровнем уверенности; наведите курсор для измеренных улик."

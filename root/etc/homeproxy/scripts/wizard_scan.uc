@@ -39,7 +39,8 @@
  *   - body checks: RU block pages, geo-refusal phrases and per-service
  *     geo markers (Gemini serves 200 with "Something went wrong" outside
  *     supported regions) turn an HTTP success into a refusal.
- *   - transport failures classify by curl rc (tls_dpi/tcp/timeout/resolve).
+ *   - transport failures classify by curl rc (tls_dpi/tcp/timeout/resolve) —
+ *     the unified classification lives in diag_core.uc (Ф6.1).
  *
  * Verdicts (per host, Ф8-W2): opens_direct / works_live / needs_proxy /
  * needs_strategy / dns_poison / geo_blocked / main_path_fail /
@@ -55,6 +56,18 @@
  *   switch the node).
  *   config_broken — both bare paths work but the LIVE configured path
  *   fails: the rule/strategy points the wrong way.
+ *
+ * Ф6.1 Diagnostic Core: the ROUTING verdict (above) is now SEPARATE from the
+ * CAUSE verdict — every row additionally carries `cause` =
+ * { type, confidence, evidence[] } with the ONE taxonomy
+ * (isp_interference / origin_geo_restriction / origin_waf / origin_ip_policy /
+ * dns_interference / client_filtering / remote_failure / inconclusive).
+ * Differential discipline: direct TLS-reset + working proxy = confirmed ISP
+ * interference (needs_strategy basis); BOTH paths failing the same way is
+ * inconclusive ("cause not established") — no more needs_strategy from a
+ * single tls_dpi. A bare 403/406 without markers is NOT DPI/geo proof.
+ * A TLS trust probe (curl WITHOUT -k) on suspicious direct answers
+ * distinguishes an injected page (bad cert = MITM) from an origin answer.
  *
  * Each probe carries a seconds float; a slow but working path (regional
  * throttling) surfaces in the UI as a "slow" hint.
@@ -81,6 +94,11 @@
 import { access, readfile, writefile, popen } from 'fs';
 import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { cursor } from 'uci';
+/* Ф6.1 Diagnostic Core: ЕДИНАЯ классификация пути и причин — этот сканер
+ * измеряет (mechanics) и передаёт факты в diag_cause(); сигнатуры-списки
+ * (block/geo/WAF) импортируются, не копируются. */
+import { classify_path, diag_cause, code_class, trust_kind }
+	from '/etc/homeproxy/scripts/diag_core.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const STATUS = RUN_DIR + '/wizard_scan.json';
@@ -91,13 +109,16 @@ const DIRECT_PORT = 5336;   /* auto-direct-in → direct-out (pinned) */
 const PROXY_PORT  = 5337;   /* auto-proxy-in  → main-out   (pinned) */
 const PROBE_TMO   = 7;      /* curl --max-time seconds */
 const LIVE_TMO    = 9;      /* live-path probe (router output rules) */
-const SLOW_SEC    = 2.0;    /* a working path slower than this hints throttling */
 
 /* Test corpus (Ф8-W2, R4). svc feeds the recommendation text; ru_control hosts
  * must NEVER be recommended for proxying (RU services flag VPN exits, RU-protect
  * keeps them direct) — a failed control host is an internet/RU-protect anomaly.
  * New svc groups: whatsapp (WhatsApp web), anthropic (Claude web + API),
- * twitch (streaming — the HTTP probe sees the page, not the video stream). */
+ * twitch (streaming — the HTTP probe sees the page, not the video stream).
+ * 🔴 gemini.google.com УДАЛЁН из корпуса (урок 205, РЕШЕНИЕ ПОЛЬЗОВАТЕЛЯ):
+ * автоматические пробы gemini кормят анти-абьюз Google (инцидент временного
+ * бана ч.157); полная проверка Google AI остаётся РУЧНОЙ кнопкой на странице
+ * «Правила для сервисов». */
 const CORPUS = [
 	{ host: 'www.youtube.com',      svc: 'youtube' },
 	{ host: 'i.ytimg.com',          svc: 'youtube' },
@@ -105,7 +126,6 @@ const CORPUS = [
 	{ host: 'gateway.discord.gg',   svc: 'discord' },
 	{ host: 'web.telegram.org',     svc: 'telegram' },
 	{ host: 'web.whatsapp.com',     svc: 'whatsapp' },
-	{ host: 'gemini.google.com',    svc: 'google_ai' },
 	{ host: 'chatgpt.com',          svc: 'openai' },
 	{ host: 'api.openai.com',       svc: 'openai' },
 	{ host: 'claude.ai',            svc: 'anthropic' },
@@ -117,29 +137,9 @@ const CORPUS = [
 	{ host: 'gosuslugi.ru',         svc: 'ru_control' }
 ];
 
-/* 200/3xx page whose body matches one of these is an operator block page
- * (same list as the engine's BLOCK_SIGNATURES — keep in sync). */
-const BLOCK_SIGNATURES = [
-	'access denied', 'access forbidden', 'forbidden', 'доступ ограничен',
-	'доступ запрещен', 'заблокир', 'заблокиров', 'blocked by', 'block page',
-	'the site is blocked', 'сайт заблокирован', 'err_blocked', 'доступ к ресурсу',
-	'blocked site', 'не доступен', 'resource is limited', 'request blocked'
-];
-
-/* Geo-refusal phrases (same list as the engine's GEO_REFUSAL_PATTERNS): a 200
- * that refuses the region at application level is NOT a success. */
-const GEO_REFUSAL_PATTERNS = [
-	"isn't currently supported in your country",
-	'not supported in your country',
-	'not available in your country',
-	'is not supported in your country',
-	'unavailable in your region',
-	'not available in your region',
-	'unsupported_country_region_territory',
-	'страна не поддерживается',
-	'не поддерживается в вашей стране',
-	'недоступен в вашей стране'
-];
+/* Сигнатуры-списки (block/geo/WAF) — в diag_core.uc (Ф6.1, единый источник);
+ * этот сканер передаёт свои per-service маркеры в classify_path как
+ * extra_markers. */
 
 /* Per-service geo/refusal markers: services that answer 200 with an
  * application-level error page instead of a refusal code. Gemini serves
@@ -164,15 +164,6 @@ const GOOGLE_AI_API_PROBE = 'generativelanguage.googleapis.com/v1beta/models';
  * the region guard and points the user at the full check. */
 const AI_EXIT_BLOCKLIST = [ 'RU', 'BY', 'CN', 'HK', 'MO', 'IR', 'KP' ];
 
-/* Strong WAF/challenge markers (engine's WAF_SIGNATURES_STRONG): a 4xx page
- * carrying one of these means the request REACHED the real service — the path
- * is open, the client shape is the problem. Not a censorship verdict. */
-const WAF_SIGNATURES_STRONG = [
-	'just a moment', 'attention required', 'checking your browser',
-	'cf-chl', 'challenge-platform', 'cf-mitigated', 'cf-turnstile',
-	'are you a robot', 'bot protection', 'ddos protection', 'captcha'
-];
-
 /* Plain public resolvers for the direct-side DNS view, in fallback order —
  * TCP/53 is ISP-blocked here but UDP works; 8.8.8.8 alone proved flaky
  * (the engine falls back the same way). */
@@ -191,52 +182,23 @@ function write_status(obj) {
 	atomic_write(STATUS, sprintf('%.J', obj) + '\n');
 }
 
-function body_sig(body, svc) {
-	if (!body || length(body) > 32768)
-		return null;
-	const b = lc(body);
-	for (let s in BLOCK_SIGNATURES)
-		if (index(b, s) >= 0) return 'sigpage';
-	for (let s in GEO_REFUSAL_PATTERNS)
-		if (index(b, s) >= 0) return 'geo_refused';
-	const extra = SVC_REFUSAL_PATTERNS[svc];
-	if (extra)
-		for (let s in extra)
-			if (index(b, s) >= 0) return 'geo_refused';
-	return null;
-}
+/* body_sig / body_waf / code_class / rc_transport_kind — в diag_core.uc
+ * (Ф6.1, единый классификатор; импортированы выше). */
 
-function body_waf(body) {
-	if (!body || length(body) > 32768)
-		return false;
-	const b = lc(body);
-	for (let s in WAF_SIGNATURES_STRONG)
-		if (index(b, s) >= 0) return true;
-	return false;
-}
-
-/* HTTP-code class: 'ok' (2xx/3xx), 'block' (4xx/5xx), 'fail' (no response). */
-function code_class(code) {
-	const c = trim('' + (code || '000'));
-	if (c === '' || c === '000') return 'fail';
-	const n = int(c);
-	if (n >= 200 && n < 400) return 'ok';
-	if (n >= 400 && n <= 599) return 'block';
-	return 'fail';
-}
-
-/* curl exit code → transport-level block kind. rc 35/56 = TLS handshake reset
- * right after ClientHello (classic SNI DPI) or a reset mid-redirect-chain;
- * rc 7 = TCP connect refused/unreachable (IP block when the IP was pinned,
- * DNS gap otherwise); rc 28 = total timeout (DPI drop or filtered route);
- * rc 5/6 = resolution failure. */
-function rc_kind(rc, had_pin) {
-	if (rc === 35 || rc === 56) return 'tls_dpi';
-	if (rc === 7) return had_pin ? 'tcp' : 'resolve';
-	if (rc === 28) return 'timeout';
-	if (rc === 5 || rc === 6) return 'resolve';
-	if (rc === 0) return null;
-	return 'transport';
+/* TLS trust probe (65): curl БЕЗ -k через тот же путь — нужен только rc.
+ * Проверка доверия к цепочке отличает подменённую страницу (чужой сертификат →
+ * rc 60/19/51/82 = перехват TLS) от честного ответа источника (rc 0). Запускается
+ * ТОЛЬКО для подозрительных прямых ответов (не на каждый хост — бюджет проб,
+ * урок 197). */
+function trust_probe(host, port, socks_h, pin_ip) {
+	const px = `socks5${socks_h ? 'h' : ''}://127.0.0.1:${port}`;
+	const pin = (!socks_h && pin_ip) ? ` --resolve ${sq(host + ':443:' + pin_ip)}` : '';
+	const bf = RUN_DIR + '/wiz_probe.body';
+	system(`rm -f ${sq(bf)} 2>/dev/null`);
+	const cmd = `curl -sL --max-redirs 3 -o ${sq(bf)} --connect-timeout 4 --max-time ${PROBE_TMO} -x ${px}${pin} ${sq('https://' + host)} >/dev/null 2>&1`;
+	const rc = system(cmd, PROBE_TMO * 1000 + 3000);
+	system(`rm -f ${sq(bf)} 2>/dev/null`);
+	return rc;
 }
 
 /* Router-resolver answer (what LAN clients get): single server, no fallback —
@@ -322,61 +284,11 @@ function parse_cwt(out) {
 	return { code: code, tsec: tsec };
 }
 
-/* Shared reachability classification (lesson 41 — diagnostics, not the
- * engine's learning rules): any FULL HTTP answer means the TCP+TLS path is
- * OPEN. A response whose redirect chain / body was reset mid-way (rc != 0)
- * is NOT a success — censorship shows up exactly there on YouTube/Discord.
- * `svc` feeds per-service refusal markers. */
-function classify(svc, r, had_pin) {
-	const cls = code_class(r.code);
-	let ok = false;
-	let use_kind = rc_kind(r.rc, had_pin);
-	if (r.rc !== 0 && cls === 'ok') {
-		/* Got headers, then the chain died — the DPI reset between hops or
-		 * cut the body. Definitive failure with the transport reason. */
-		return { code: r.code, rc: r.rc, tsec: r.tsec, ok: false,
-			kind: use_kind || 'transport', geo_refused: false };
-	}
-	if (cls === 'ok') {
-		const sig = body_sig(r.body, svc);
-		if (sig === 'sigpage') {
-			use_kind = 'sigpage';
-		} else if (sig === 'geo_refused') {
-			ok = false;
-			use_kind = use_kind || 'geo';
-			return { code: r.code, rc: r.rc, tsec: r.tsec, ok: false,
-				kind: use_kind, geo_refused: true };
-		} else {
-			ok = true;
-			use_kind = null;
-		}
-	} else if (cls === 'block') {
-		const sig = body_sig(r.body, svc);
-		if (body_waf(r.body)) {
-			ok = true;
-			use_kind = 'waf';
-		} else if (sig === 'geo_refused') {
-			/* A refusal carried in a 4xx error body (API-level geo block). */
-			ok = false;
-			return { code: r.code, rc: r.rc, tsec: r.tsec, ok: false,
-				kind: 'geo', geo_refused: true };
-		} else if (r.code === '403' || r.code === '406' || r.code === '451') {
-			ok = false;
-			use_kind = 'hardcode';
-		} else {
-			/* 404 on a CDN root, 421 from an API, 5xx app errors — the PATH
-			 * itself works; the service-level verdicts come from the
-			 * service check RPC, not from this scan. */
-			ok = true;
-			use_kind = null;
-		}
-	}
-	const tsec = (r.tsec != null) ? ('' + r.tsec) : null;
-	const slow = !!(ok && tsec != null && (tsec + 0.0) > SLOW_SEC);
-	return { code: r.code, rc: r.rc, tsec: tsec, ok: ok, kind: use_kind, geo_refused: false, slow: slow };
-}
+/* Классификация сырого замера — classify_path() из diag_core.uc (Ф6.1):
+ * единая форма пути { code, rc, tsec, ok, net, app_state, kind, geo_refused,
+ * geo_via, waf, trust, slow } для ВСЕХ потребителей диагностики. */
 
-/* One HTTPS probe through a loopback inbound. Returns the classify() shape.
+/* One HTTPS probe through a loopback inbound. Returns the classify_path shape.
  * `socks_h` selects socks5h (resolve at the tunnel end — main path) vs plain
  * socks5 (resolve locally — direct path, pin the plain-view answer). */
 function probe(host, port, socks_h, pin_ip, svc) {
@@ -384,6 +296,7 @@ function probe(host, port, socks_h, pin_ip, svc) {
 	const pin = (!socks_h && pin_ip) ? ` --resolve ${sq(host + ':443:' + pin_ip)}` : '';
 	const bf = RUN_DIR + '/wiz_probe.body';
 	const cf = RUN_DIR + '/wiz_probe.code';
+	const markers = SVC_REFUSAL_PATTERNS[svc];
 
 	const attempt = (scheme) => {
 		system(`rm -f ${sq(bf)} ${sq(cf)} 2>/dev/null`);
@@ -407,7 +320,7 @@ function probe(host, port, socks_h, pin_ip, svc) {
 			r = r2;
 		}
 	}
-	return classify(svc, r, !!pin);
+	return classify_path(r, !!pin, markers);
 }
 
 /* LIVE probe: plain router-originated HTTPS — rides the app's own output
@@ -422,7 +335,8 @@ function probe_live(host, svc) {
 	const rc = system(cmd, LIVE_TMO * 1000 + 3000);
 	const cwt = parse_cwt(readfile(cf));
 	const body = readfile(bf) || '';
-	return classify(svc, { code: cwt.code, tsec: cwt.tsec, rc: rc, body: body }, false);
+	return classify_path({ code: cwt.code, tsec: cwt.tsec, rc: rc, body: body },
+		false, SVC_REFUSAL_PATTERNS[svc]);
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────── */
@@ -539,7 +453,9 @@ for (let item in hosts) {
 	} else {
 		/* Plain DNS silent → the browser cannot resolve either: report a
 		 * DNS-side gap, not a routing verdict. */
-		res.direct = { code: '000', rc: 6, ok: false, kind: 'resolve', geo_refused: false };
+		res.direct = { code: '000', rc: 6, tsec: null, ok: false, net: false,
+			app_state: null, kind: 'resolve', geo_refused: false, geo_via: null,
+			waf: null, trust: null, slow: false };
 	}
 
 	/* MAIN path probe — socks5h (resolve at the tunnel end). The pinned
@@ -575,101 +491,36 @@ for (let item in hosts) {
 		res.dns_poison = !via_router.ok;
 	}
 
-	/* ── Verdict (Ф8-W2 taxonomy, 13-RESEARCH §12) ──
-	 * The verdict is about the CONFIGURED path; the direct probe is the
-	 * reference. Geo verdicts carry geo_side: 'remote' (the service refuses
-	 * the RU region — a node with a supported region fixes it), 'both'
-	 * (provider + remote), 'exit' (the configured exit node's region is
-	 * refused — switch the node). Recommendation order: direct > DPI > node. */
-	const d_ok = !!(res.direct && res.direct.ok);
-	const p_ok = !!(res.proxy && res.proxy.ok);
-	const l_ok = !!(res.live && res.live.ok);
-	const d_geo = !!(res.direct && res.direct.geo_refused);
-	const p_geo = !!(res.proxy && res.proxy.geo_refused);
-	/* RU controls: a bot-WAF refusal (rutube 403 to curl) is still an HTTP
-	 * ANSWER — DNS+TCP+TLS all worked; the network path is proven. Only a
-	 * transport failure / no answer means the RU path is broken. */
-	const d_answered = !!(res.direct && res.direct.code !== '000');
-	const l_answered = !!(res.live && res.live.code !== '000');
-
-	if (svc === 'ru_control') {
-		/* RU services must stay direct on the live path. */
-		res.verdict = (d_answered && l_answered) ? 'opens_direct' : 'control_fail';
-	} else if (exit_cc && index(AI_EXIT_BLOCKLIST, exit_cc) >= 0 && svc === 'google_ai') {
-		/* The configured exit is on the Google AI blocklist — no routing
-		 * rule inside the app can fix a region refusal. */
-		res.verdict = 'geo_blocked';
-		res.geo_side = 'exit';
-	} else if (res.api_geo && res.api_geo.geo_refused) {
-		/* The configured exit is refused by the Google AI API — a node
-		 * problem no routing rule inside the app can fix. */
-		res.verdict = 'geo_blocked';
-		res.geo_side = 'exit';
-	} else if (l_ok) {
-		/* The configured routing delivers the resource — the honest "works".
-		 * When a rule points at a node the UI shows it as "works via the
-		 * configured path (→ node)"; the bare opens_direct stays for the
-		 * no-rule case (the client remaps with the rule info). */
-		res.verdict = d_ok ? 'opens_direct' : 'works_live';
-	} else if (!direct_in && !proxy_in && !mixed_in) {
-		/* Custom mode: only the live path was measurable. */
-		res.verdict = 'down';
-	} else if (d_geo && p_geo) {
-		/* Refused by region from BOTH sides — the provider is not the main
-		 * problem (the path is open both ways); the exit region decides. */
-		res.verdict = 'geo_blocked';
-		res.geo_side = 'both';
-	} else if (p_geo) {
-		/* Direct is fine, the probed exit (main node) region is refused —
-		 * switch the node. */
-		res.verdict = 'geo_blocked';
-		res.geo_side = 'exit';
-	} else if (d_geo) {
-		/* The path is open but the service refuses the RU region — a node
-		 * with a supported region fixes it. */
-		res.verdict = 'geo_blocked';
-		res.geo_side = 'remote';
-	} else if (d_ok && p_ok) {
-		/* Bare paths work but the configured path does not: the rule or the
-		 * strategy points the wrong way. */
-		res.verdict = 'config_broken';
-	} else if (d_ok && !p_ok) {
-		/* Direct works but the user's main path does not: dead node/misconfig. */
-		res.verdict = 'main_path_fail';
-	} else if (!direct_in) {
-		res.verdict = 'partial';       /* only the proxy side was measurable */
-	} else if (!d_ok && p_ok) {
-		if (res.dns_poison || (res.direct.kind === 'resolve' && res.plain_ip))
-			res.verdict = 'dns_poison';
-		else
-			res.verdict = 'needs_proxy';
-	} else if (!d_ok && !p_ok) {
-		if ((res.direct.kind === 'tls_dpi') || (res.proxy && res.proxy.kind === 'tls_dpi'))
-			res.verdict = 'needs_strategy';
-		else
-			res.verdict = 'down';
-	} else {
-		res.verdict = 'unknown';
+	/* TLS trust probe (Ф6.1, урок 65): подозрительный ПРЯМОЙ ответ с HTTP-телом
+	 * (заглушка/отказ/challenge) — одна доп. проба БЕЗ -k: чужой сертификат =
+	 * перехват (MITM), валидный = ответ настоящего источника. Только rc.
+	 * Бюджет: только строки с поднозрительным прямым ответом, не каждый хост. */
+	if (res.direct && res.direct.rc === 0 && res.direct.code !== '000' &&
+	    (!res.direct.ok || res.direct.waf)) {
+		res.direct.trust = trust_kind(trust_probe(host, DIRECT_PORT, false,
+			(!literal && res.plain_ip) ? res.plain_ip : null));
 	}
 
-	/* Recommendation for the Wizard UI (server-side so JS stays dumb). The
-	 * "configured" column (rule per service, attached by the RPC) refines
-	 * rule/strategy advice on the client. */
-	switch (res.verdict) {
-	case 'opens_direct':   res.recommend = (svc === 'google_ai') ? 'ai_full' : null; break;
-	case 'works_live':     res.recommend = (svc === 'google_ai') ? 'ai_full' : null; break;
-	case 'dns_poison':     res.recommend = 'dns'; break;
-	case 'needs_proxy':    res.recommend = 'rule'; break;
-	case 'needs_strategy': res.recommend = 'strategy'; break;
-	case 'geo_blocked':
-		res.recommend = (res.geo_side === 'exit') ? 'node_exit'
-			: (res.geo_side === 'both') ? 'node_both' : 'node';
-		break;
-	case 'main_path_fail': res.recommend = 'main_path'; break;
-	case 'config_broken':  res.recommend = 'config_broken'; break;
-	case 'control_fail':   res.recommend = 'anomaly'; break;
-	default:               res.recommend = 'none'; break;
-	}
+	/* ── Verdict + Cause (Ф6.1 Diagnostic Core) ──
+	 * Роутинг-вердикт (таксономия Ф8-W2) и причина (единая таксономия) теперь
+	 * РАЗДЕЛЬНЫ и считаются ОДНИМ кодом в diag_core.uc — классификатор общий
+	 * с Automation/Autopilot (Ф6.6/Ф6.7 подключат его же). Рекомендация —
+	 * server-side, JS остаётся тупым. */
+	const verdict = diag_cause({
+		svc: svc,
+		dns: { differs: res.dns_differs, poison: res.dns_poison, plain_ip: res.plain_ip },
+		direct: res.direct,
+		proxy: res.proxy,
+		live: res.live,
+		api_geo: res.api_geo,
+		exit_blocked: !!(exit_cc && svc === 'google_ai' &&
+			index(AI_EXIT_BLOCKLIST, uc(exit_cc)) >= 0),
+		inbounds: { direct: direct_in, proxy: proxy_in, mixed: mixed_in }
+	});
+	res.verdict = verdict.verdict;
+	res.geo_side = verdict.geo_side;
+	res.recommend = verdict.recommend;
+	res.cause = verdict.cause;
 
 	push(results, res);
 	done++;

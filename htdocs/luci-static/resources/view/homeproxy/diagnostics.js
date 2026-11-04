@@ -228,9 +228,39 @@ const PROV_VERDICTS = {
 	config_broken:  [ 'hpui-b-amber', _('Configured path fails — check the rule/strategy') ],
 	control_fail:   [ 'hpui-b-red', _('RU site unreachable directly — anomaly') ],
 	down:           [ 'hpui-b-grey', _('Unreachable both ways') ],
-	partial:        [ 'hpui-b-grey', _('Only the main path was measured') ],
+	partial:        [ 'hpui-b-grey', _('Partial picture — not all paths were measured') ],
 	unknown:        [ 'hpui-b-grey', _('No data') ]
 };
+
+/* Ф6.1 Diagnostic Core: the ONE cause taxonomy (backend diag_core.uc).
+ * The routing verdict above says WHICH path is better; the cause line says
+ * WHY the resource is unavailable — with an explicit confidence level. */
+const PROV_CAUSES = {
+	isp_interference:       _('Cause: the provider cuts the connection (DPI)'),
+	origin_geo_restriction: _('Cause: the origin refuses the region (geo)'),
+	origin_waf:             _('Cause: origin WAF/protection challenge'),
+	origin_ip_policy:       _('Cause: origin IP/ASN policy'),
+	dns_interference:       _('Cause: DNS tampering'),
+	client_filtering:       _('Cause: own rules/lists'),
+	remote_failure:         _('Cause: remote-side failure'),
+	inconclusive:           _('Cause not established')
+};
+const PROV_CONF = {
+	high:   _('high confidence'),
+	medium: _('medium confidence'),
+	low:    _('low confidence')
+};
+
+function causeLine(r) {
+	const c = r.cause;
+	if (!c || !c.type)
+		return null;
+	const base = PROV_CAUSES[c.type] || c.type;
+	const conf = PROV_CONF[c.confidence] || '';
+	const evj = (c.evidence && c.evidence.length) ? c.evidence.join('\n') : '';
+	return E('div', { 'class': 'wiz-note', style: 'margin:2px 0 0', title: evj },
+		[ base + (conf ? (' · ' + conf) : '') ]);
+}
 
 /* The scanner sees no rules; the client remaps the verdict to what the
  * user configured (Ф8-W2). */
@@ -255,7 +285,11 @@ function verdictCell(r, rule) {
 		else
 			label = _('Blocked on the remote side (geo)');
 	}
-	return E('span', { 'class': 'hpui-badge ' + spec[0] }, [ label ]);
+	const badge = E('span', { 'class': 'hpui-badge ' + spec[0] }, [ label ]);
+	/* Ф6.1: причина (почему недоступен) живёт РЯДОМ с routing-вердиктом —
+	 * одно место, без отдельных колонок. */
+	const cl = causeLine(r);
+	return cl ? E('div', {}, [ badge, cl ]) : badge;
 }
 
 const PROV_KINDS = {
@@ -266,6 +300,8 @@ const PROV_KINDS = {
 	sigpage:   _('Block page served as 200'),
 	hardcode:  _('Refusal code (403/406/451)'),
 	waf:       _('WAF challenge (path is open)'),
+	waf_rl:    _('Rate limited (429)'),
+	server:    _('Server error (5xx)'),
 	transport: _('Transport error')
 };
 
@@ -310,8 +346,17 @@ function probeCell(p) {
 	const title = ((p.tsec != null) ? (String(p.tsec) + ' s') : '') +
 		(p.kind ? (' · ' + p.kind) : '');
 	const slowHint = p.slow ? (' ' + _('slow %s s').format(String(p.tsec || '?'))) : '';
-	if (p.ok)
+	if (p.ok) {
+		/* Ф6.1: путь открыт — но приложение не отдало контент (challenge/5xx):
+		 * жёлтый честный бейдж вместо зелёного «работает». */
+		if (p.waf === 'waf_challenge')
+			return E('span', { title: title }, [ E('span', { 'class': 'hpui-badge hpui-b-amber' }, [ _('WAF challenge') ]) ]);
+		if (p.waf === 'waf_rate_limit')
+			return E('span', { title: title }, [ E('span', { 'class': 'hpui-badge hpui-b-amber' }, [ _('Rate limited (429)') ]) ]);
+		if (p.app_state === 'server_error')
+			return E('span', { title: title }, [ E('span', { 'class': 'hpui-badge hpui-b-amber' }, [ '✓ ' + _('Server error (5xx)') + ' (' + (p.code || '') + ')' ]) ]);
 		return E('span', { title: title }, [ E('span', { 'class': 'hpui-badge hpui-b-green' }, [ '✓ ' + (p.code || '') ]), slowHint ]);
+	}
 	const why = p.geo_refused ? _('geo-refused') : (PROV_KINDS[p.kind] || (p.kind || 'fail'));
 	return E('span', { 'class': 'hpui-badge hpui-b-red' }, [ '✗ ' + why + ' (' + (p.code || '000') + ')' ]);
 }
@@ -516,7 +561,7 @@ function buildProviderSection() {
 	return {
 		el: sectionCard(_('Provider'), 'diag-provider', [
 			E('p', { 'class': 'hpui-hint' },
-				[ _('Checks a set of test services (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) through your real paths. The VERDICT speaks about your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served; the Direct column is reference: it shows whether the resource could open with no VPN at all. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini "something went wrong") is not either. When a refusal is about the remote region rather than the local provider, the verdict says so (geo-block) — a routing strategy cannot fix a region refusal, a node with a supported region can. RU services (rutube, gosuslugi) are control hosts — they must always open directly.') ]),
+				[ _('Checks a set of test services (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) through your real paths. The VERDICT speaks about your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served; the Direct column is reference: it shows whether the resource could open with no VPN at all. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini "something went wrong") is not either. When a refusal is about the remote region rather than the local provider, the verdict says so (geo-block) — a routing strategy cannot fix a region refusal, a node with a supported region can. RU services (rutube, gosuslugi) are control hosts — they must always open directly. The Cause line under the verdict explains WHY the resource fails (provider DPI, origin geo/WAF, DNS tampering, own rules) with a confidence level — hover it for the measured evidence.') ]),
 			E('div', { 'class': 'diag-row' }, [ customHosts, startBtn ]),
 			E('div', { 'class': 'diag-row' }, [
 				E('span', { 'class': 'wiz-note', style: 'margin:0' },
