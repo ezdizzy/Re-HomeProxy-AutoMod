@@ -264,7 +264,8 @@ function panel_kb() {
 		[ 'Устройства', 'ctl:dev:0' ], [ 'Правила', 'ctl:sites' ],
 		[ 'Wi-Fi', 'ctl:wifi' ],
 		[ paused ? '▶ Продолжить' : '⏸ Пауза', paused ? 'ctl:resume' : 'ctl:pause' ],
-		[ '🔄 Обновить', 'ctl:refresh' ]
+		[ '🔄 Обновить', 'ctl:refresh' ],
+		[ '🏠 Главная', 'act:menu' ]
 	]);
 }
 
@@ -322,6 +323,7 @@ function devices_kb(page) {
 	if (length(nav))
 		push(rows, nav);
 	push(rows, [ '🔄 Обновить', 'ctl:dev:' + page ]);
+	push(rows, [ '🏠 Главная', 'act:menu' ]);
 	return kb(rows);
 }
 
@@ -404,6 +406,7 @@ function device_menu_kb(ref) {
 	if (d.configured)
 		push(rows, [ '↩ Снять временный', 'ctl:tunb:' + ref ]);
 	push(rows, [ '⬅ Устройства', 'ctl:dev:0' ]);
+	push(rows, [ '🏠 Главная', 'act:menu' ]);
 	return kb(rows);
 }
 
@@ -520,6 +523,7 @@ function sites_kb() {
 		push(rows, [ '✖ ' + tg, 'sdel:' + r.id ]);
 	}
 	push(rows, [ '🔄 Обновить', 'ctl:sites' ]);
+	push(rows, [ '🏠 Главная', 'act:menu' ]);
 	return kb(rows);
 }
 
@@ -723,6 +727,7 @@ function wifi_kb() {
 			(w.dis ? 'wton:' : 'woff:') + w.id ]);
 	}
 	push(rows, [ '🔄 Обновить', 'ctl:wifi' ]);
+	push(rows, [ '🏠 Главная', 'act:menu' ]);
 	return kb(rows);
 }
 
@@ -1169,6 +1174,9 @@ export function push_scan(api) {
 		 * for a short window — the direct reply is the single result place.
 		 * The cursor advances regardless (a suppressed event never replays). */
 		const quiet_now = (api.quiet && int(api.quiet.until || 0) > time());
+		/* Ф8.4: кнопки обратного действия на пушах. */
+		const KB_CTL_PANEL = kb([ [ '🛡 Контроль', 'ctl:menu' ] ]);
+		const KB_EXEC_STATUS = kb([ [ '📊 Статус', 'act:refresh' ] ]);
 		for (let i = 0; i < length(evs); i++) {
 			const ev = evs[i];
 			if (ev.id <= ev_last_id || ev.src !== 'control')
@@ -1176,12 +1184,26 @@ export function push_scan(api) {
 			ev_last_id = ev.id;
 			if (quiet_now)
 				continue;
-			const icon = (ev.type in EV_ICON) ? EV_ICON[ev.type] : '•';
 			const who = trim('' + (ev.who || ''));
 			const detail = trim('' + (ev.detail || ''));
+			/* Ф8.3/Ф8.4: exec-события — СВОЯ категория (UCI push_exec), не
+			 * безликий «• Контроль». Запрос (who = tg:<chat>|tg) и финал
+			 * (who = id) форматируются честно; бот-инициированные гасятся
+			 * quiet-окном выше. */
+			if (ev.type === 'exec') {
+				const req_ev = (match(who, /^tg(:|$)/) != null);
+				api.push('exec',
+					(req_ev ? '⌨ <b>Произвольная команда — запрос</b>'
+						: '⌨ <b>Произвольная команда — результат</b>') +
+					(length(detail) ? '\n' + esc(detail) : '') +
+					(length(who) && !req_ev ? '\n(id ' + esc(who) + ')' : ''),
+					req_ev ? null : KB_EXEC_STATUS);
+				continue;
+			}
+			const icon = (ev.type in EV_ICON) ? EV_ICON[ev.type] : '•';
 			api.push('control',
 				icon + ' <b>Контроль</b>' + (length(who) ? ': ' + esc(who) : '') +
-				(length(detail) ? '\n' + esc(detail) : ''));
+				(length(detail) ? '\n' + esc(detail) : ''), KB_CTL_PANEL);
 		}
 		if (ev_last_id !== ev_saved_id) {
 			ev_cursor_set('telegram-ctrl', ev_last_id);
@@ -1216,7 +1238,8 @@ export function push_scan(api) {
 			}
 			api.push('control',
 				'🔌 <b>Новое устройство в сети</b>:\n' + join('\n', lines) +
-				'\n/devices — управление.');
+				'\n/devices — управление.',
+				kb([ [ [ '🛡 Устройства', 'ctl:dev:0' ], [ '🏠 Главная', 'act:menu' ] ] ]));
 		}
 	}
 };

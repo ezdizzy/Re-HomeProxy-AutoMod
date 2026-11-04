@@ -36,7 +36,7 @@ const callTelegramSet = rpc.declare({
 	method: 'telegram_set',
 	params: [
 		'enabled', 'token', 'chat_id', 'mute',
-		'push_hotswap', 'push_watchdog', 'push_learn', 'push_service', 'push_control',
+		'push_hotswap', 'push_watchdog', 'push_learn', 'push_service', 'push_control', 'push_exec',
 		'poll_timeout', 'push_interval'
 	],
 	expect: { '': {} }
@@ -178,6 +178,7 @@ return view.extend({
 		const tgPushLr = E('input', { type: 'checkbox' });
 		const tgPushSv = E('input', { type: 'checkbox' });
 		const tgPushCt = E('input', { type: 'checkbox' });
+		const tgPushEx = E('input', { type: 'checkbox' });
 		const tgPoll = E('input', { type: 'number', min: '5', max: '60', style: 'width:110px', 'class': 'cbi-input-text' });
 		const tgPival = E('input', { type: 'number', min: '1', max: '30', style: 'width:110px', 'class': 'cbi-input-text' });
 
@@ -201,6 +202,7 @@ return view.extend({
 		tgPushLr.checked = tgB('push_learn', '1');
 		tgPushSv.checked = tgB('push_service', '1');
 		tgPushCt.checked = tgB('push_control', '1');
+		tgPushEx.checked = tgB('push_exec', '1');
 		tgPoll.value = tgU('poll_timeout', '25');
 		tgPival.value = tgU('push_interval', '2');
 		tgChat.value = tgU('chat_id', '');
@@ -294,7 +296,8 @@ return view.extend({
 				E('label', { 'class': 'tg-check' }, [ tgPushWd, E('span', {}, [ _('URLTest dead nodes') ]) ]),
 				E('label', { 'class': 'tg-check' }, [ tgPushLr, E('span', {}, [ _('Automation learned blocks') ]) ]),
 				E('label', { 'class': 'tg-check' }, [ tgPushSv, E('span', {}, [ _('Service faults') ]) ]),
-				E('label', { 'class': 'tg-check' }, [ tgPushCt, E('span', {}, [ _('Control: blocks, schedules, Wi-Fi, new devices') ]) ])
+				E('label', { 'class': 'tg-check' }, [ tgPushCt, E('span', {}, [ _('Control: blocks, schedules, Wi-Fi, new devices') ]) ]),
+			E('label', { 'class': 'tg-check' }, [ tgPushEx, E('span', {}, [ _('Arbitrary commands (/cmd) results') ]) ])
 			]),
 			E('div', { 'class': 'tg-inline', style: 'margin-top:10px' }, [
 				E('span', { 'class': 'tg-sub' }, [ _('Min gap between pushes, s') ]),
@@ -733,8 +736,9 @@ return view.extend({
 				tgPushWd.checked ? '1' : '0',
 				tgPushLr.checked ? '1' : '0',
 				tgPushSv.checked ? '1' : '0',
-				tgPushCt.checked ? '1' : '0',
-				String(tgPoll.value || '25'),
+			tgPushCt.checked ? '1' : '0',
+			tgPushEx.checked ? '1' : '0',
+			String(tgPoll.value || '25'),
 				String(tgPival.value || '2')
 			).then(function(r) {
 				dom.content(tgResult, E('p', { 'class': 'hpui-hint' },

@@ -5823,6 +5823,9 @@ msgstr ""
 msgid "Control: blocks, schedules, Wi-Fi, new devices"
 msgstr ""
 
+msgid "Arbitrary commands (/cmd) results"
+msgstr ""
+
 #: htdocs/luci-static/resources/view/homeproxy/telegram.js
 
 msgid "Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Parental control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat."

@@ -7822,7 +7822,7 @@ const methods = {
 			const reply = {
 				enabled: false, running: false, chat_id: null, muted: false,
 				token_set: false, poll_timeout: 25, push_interval: 2,
-				pushes: { hotswap: true, watchdog: true, learn: true, service: true, control: true }
+				pushes: { hotswap: true, watchdog: true, learn: true, service: true, control: true, exec: true }
 			};
 			const c = cursor();
 			const g = (opt, def) => {
@@ -7842,6 +7842,7 @@ const methods = {
 			reply.pushes.learn = (g('push_learn', '1') === '1');
 			reply.pushes.service = (g('push_service', '1') === '1');
 			reply.pushes.control = (g('push_control', '1') === '1');
+			reply.pushes.exec = (g('push_exec', '1') === '1');
 			/* Daemon liveness: Ф1.4b — the Process Manager (registry
 			 * heartbeat first, then the exact script-element scan; busybox
 			 * pidof does NOT match ucode script names, lesson 23/58). */
@@ -7873,7 +7874,7 @@ const methods = {
 			enabled: 'enabled', token: 'token', chat_id: 'chat_id', mute: 'mute',
 			push_hotswap: 'push_hotswap', push_watchdog: 'push_watchdog',
 			push_learn: 'push_learn', push_service: 'push_service',
-			push_control: 'push_control',
+			push_control: 'push_control', push_exec: 'push_exec',
 			poll_timeout: 'poll_timeout', push_interval: 'push_interval'
 		},
 		call: function(req) {
@@ -7901,7 +7902,7 @@ const methods = {
 			if (mute == null)
 				return { result: false, error: 'bad mute' };
 			const pushes = {};
-			for (let k in [ 'push_hotswap', 'push_watchdog', 'push_learn', 'push_service', 'push_control' ]) {
+			for (let k in [ 'push_hotswap', 'push_watchdog', 'push_learn', 'push_service', 'push_control', 'push_exec' ]) {
 				const v = flag(a[k]);
 				if (v == null)
 					return { result: false, error: 'bad ' + k };
@@ -7937,6 +7938,7 @@ const methods = {
 			c.set('homeproxy', 'telegram', 'push_learn', pushes.push_learn);
 			c.set('homeproxy', 'telegram', 'push_service', pushes.push_service);
 			c.set('homeproxy', 'telegram', 'push_control', pushes.push_control);
+			c.set('homeproxy', 'telegram', 'push_exec', pushes.push_exec);
 			c.set('homeproxy', 'telegram', 'poll_timeout', sprintf('%d', poll));
 			c.set('homeproxy', 'telegram', 'push_interval', sprintf('%d', pival));
 			c.commit('homeproxy');
@@ -8025,7 +8027,8 @@ const methods = {
 			const key = trim('' + (a.key == null ? '' : a.key));
 			const val = trim('' + (a.value == null ? '' : a.value));
 			const keys = { mute: true, push_hotswap: true, push_watchdog: true,
-				push_learn: true, push_service: true, push_control: true };
+				push_learn: true, push_service: true, push_control: true,
+				push_exec: true };
 			if (keys[key] == null)
 				return { result: false, error: 'bad key' };
 			if (val !== '0' && val !== '1')
@@ -9324,7 +9327,7 @@ const methods = {
 			const en = (req.args?.enabled === true || req.args?.enabled === '1') ? '1' : '0';
 			ctrl_set('main', 'enabled', en);
 			ctrl_commit();
-			hc_add_event('system', '', (en === '1') ? 'control enabled' : 'control disabled');
+			hc_add_event('system', '', (en === '1') ? 'контроль включён' : 'контроль выключен');
 			ctrl_apply_async();
 			return { result: true, enabled: en === '1' };
 		}
@@ -9336,7 +9339,7 @@ const methods = {
 			const p = (req.args?.paused === true || req.args?.paused === '1') ? '1' : '0';
 			ctrl_set('main', 'paused', p);
 			ctrl_commit();
-			hc_add_event('system', '', (p === '1') ? 'enforcement paused (allow everything)' : 'enforcement resumed');
+			hc_add_event('system', '', (p === '1') ? 'контроль на паузе (всё разрешено)' : 'контроль возобновлён');
 			ctrl_apply_async();
 			return { result: true, paused: p === '1' };
 		}
@@ -9381,7 +9384,7 @@ const methods = {
 				opts.ip = ip;
 			if (!ctrl_apply_map(newid, opts))
 				return { result: false, error: 'uci set failed' };
-			hc_add_event('system', name || ip || mac, 'client added');
+			hc_add_event('system', name || ip || mac, 'устройство добавлено в контроль');
 			ctrl_apply_async();
 			/* provisional id (lesson 18) — the UI re-reads the status */
 			return { result: true, id: newid };
@@ -9407,7 +9410,7 @@ const methods = {
 			uc.save(HC_CONF);
 			uc.commit(HC_CONF);
 			hc_bump_cursor();
-			hc_add_event('system', c.name || id, 'client deleted');
+			hc_add_event('system', c.name || id, 'устройство удалено из контроля');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9427,7 +9430,7 @@ const methods = {
 				return { result: false, error: 'name too long (max 128)' };
 			ctrl_set(id, 'name', name);
 			ctrl_commit();
-			hc_add_event('system', name, 'alias updated');
+			hc_add_event('system', name, 'имя устройства обновлено');
 			return { result: true };
 		}
 	},
@@ -9445,7 +9448,7 @@ const methods = {
 			ctrl_set(id, 'blocked', b);
 			ctrl_commit();
 			hc_add_event((b === '1') ? 'block' : 'allow', c.name || id,
-				(b === '1') ? 'blocked manually' : 'unblocked');
+				(b === '1') ? 'заблокирован вручную' : 'разблокирован');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9472,7 +9475,7 @@ const methods = {
 			if (length(c.ip || ''))
 				temps[c.ip] = { until: until, mode: 'block' };
 			hc_write_temps(temps);
-			hc_add_event('temp', c.name || id, `temporary block for ${mins} min`);
+			hc_add_event('temp', c.name || id, `временный блок на ${mins} мин`);
 			ctrl_apply_async();
 			return { result: true, until: until };
 		}
@@ -9502,7 +9505,7 @@ const methods = {
 			if (length(c.ip || ''))
 				temps[c.ip] = { until: until, mode: 'allow' };
 			hc_write_temps(temps);
-			hc_add_event('temp', c.name || id, `temporary ALLOW for ${mins} min`);
+			hc_add_event('temp', c.name || id, `временное разрешение на ${mins} мин`);
 			ctrl_apply_async();
 			return { result: true, until: until };
 		}
@@ -9523,7 +9526,7 @@ const methods = {
 			ctrl_set(id, 'wifi_blocked', b);
 			ctrl_commit();
 			hc_add_event((b === '1') ? 'block' : 'allow', c.name || id,
-				(b === '1') ? 'Wi-Fi blocked (wired stays online)' : 'Wi-Fi block removed');
+				(b === '1') ? 'Wi-Fi заблокирован (кабель работает)' : 'Wi-Fi-блок снят');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9543,7 +9546,7 @@ const methods = {
 			if (length(c.ip || ''))
 				delete temps[c.ip];
 			hc_write_temps(temps);
-			hc_add_event('temp', c.name || id, 'temporary block/allow removed');
+			hc_add_event('temp', c.name || id, 'временный блок/разрешение сняты');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9626,7 +9629,7 @@ const methods = {
 			if (!ctrl_apply_map(newid, opts))
 				return { result: false, error: 'uci set failed' };
 			hc_add_event('system', name || targets[0],
-				`site rule added (${rtype}, ${length(cids_ok) ? length(cids_ok) + ' client(s)' : 'whole network'})`);
+				`правило сайтов добавлено (${rtype}, ${length(cids_ok) ? length(cids_ok) + ' клиент(ов)' : 'вся сеть'})`);
 			ctrl_apply_async();
 			return { result: true, id: newid };
 		}
@@ -9645,7 +9648,7 @@ const methods = {
 			c.save(HC_CONF);
 			c.commit(HC_CONF);
 			hc_bump_cursor();
-			hc_add_event('system', id, 'site rule deleted');
+			hc_add_event('system', id, 'правило сайтов удалено');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9662,7 +9665,7 @@ const methods = {
 				return { result: false, error: 'bad rule id' };
 			if (en === '1')
 				ctrl_del_opt(id, 'disabled_until');
-			hc_add_event('system', id, (en === '1') ? 'site rule enabled' : 'site rule disabled');
+			hc_add_event('system', id, (en === '1') ? 'правило сайтов включено' : 'правило сайтов выключено');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9681,7 +9684,7 @@ const methods = {
 			const until = time() + mins * 60;
 			if (!ctrl_set(id, 'disabled_until', '' + until))
 				return { result: false, error: 'bad rule id' };
-			hc_add_event('temp', id, `rule paused for ${mins} min`);
+			hc_add_event('temp', id, `правило на паузе ${mins} мин`);
 			ctrl_apply_async();
 			return { result: true, until: until };
 		}
@@ -9695,7 +9698,7 @@ const methods = {
 				return { result: false, error: 'unknown rule id' };
 			if (!ctrl_del_opt(id, 'disabled_until'))
 				return { result: false, error: 'bad rule id' };
-			hc_add_event('temp', id, 'rule resumed');
+			hc_add_event('temp', id, 'правило возобновлено');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9779,7 +9782,7 @@ const methods = {
 				opts.wifi_ids = wids_ok;
 			if (!ctrl_apply_map(newid, opts))
 				return { result: false, error: 'uci set failed' };
-			hc_add_event('system', name || stype, 'schedule added');
+			hc_add_event('system', name || stype, 'расписание добавлено');
 			ctrl_apply_async();
 			return { result: true, id: newid };
 		}
@@ -9796,7 +9799,7 @@ const methods = {
 			c.save(HC_CONF);
 			c.commit(HC_CONF);
 			hc_bump_cursor();
-			hc_add_event('system', id, 'schedule deleted');
+			hc_add_event('system', id, 'расписание удалено');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9811,7 +9814,7 @@ const methods = {
 			const en = (req.args?.enabled === true || req.args?.enabled === '1') ? '1' : '0';
 			if (!ctrl_set(id, 'enabled', en))
 				return { result: false, error: 'bad schedule id' };
-			hc_add_event('system', id, (en === '1') ? 'schedule enabled' : 'schedule disabled');
+			hc_add_event('system', id, (en === '1') ? 'расписание включено' : 'расписание выключено');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9834,11 +9837,11 @@ const methods = {
 			const c = cursor();
 			if (dis === '1') {
 				c.set('wireless', iface, 'disabled', '1');
-				hc_add_event('wifi', iface, 'turned off');
+				hc_add_event('wifi', iface, 'Wi-Fi выключен');
 			} else {
 				c.delete('wireless', iface, 'disabled');
 				system(`rm -f '${HC_RUN_DIR}/wifi.off.${iface}'`);
-				hc_add_event('wifi', iface, 'turned on');
+				hc_add_event('wifi', iface, 'Wi-Fi включён');
 			}
 			c.save('wireless');
 			c.commit('wireless');
@@ -9858,7 +9861,7 @@ const methods = {
 			if (mins < 1 || mins > 60 * 24 * 30)
 				return { result: false, error: 'bad minutes' };
 			hc_wifi_temp_set(iface, time() + mins * 60);
-			hc_add_event('wifi', iface, `temporarily off for ${mins} min`);
+			hc_add_event('wifi', iface, `выключен на ${mins} мин`);
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9871,7 +9874,7 @@ const methods = {
 			if (!iface || match(iface, /^[A-Za-z0-9_]+$/) == null)
 				return { result: false, error: 'bad iface' };
 			hc_wifi_temp_clear(iface);
-			hc_add_event('wifi', iface, 'temporary off removed');
+			hc_add_event('wifi', iface, 'временное выключение снято');
 			ctrl_apply_async();
 			return { result: true };
 		}
@@ -9903,7 +9906,7 @@ const methods = {
 	control_events_clear: {
 		call: function(req) {
 			ev_clear();
-			hc_add_event('system', '', 'events journal cleared');
+			hc_add_event('system', '', 'журнал событий очищен');
 			return { result: true };
 		}
 	},

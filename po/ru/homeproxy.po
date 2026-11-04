@@ -11152,6 +11152,9 @@ msgstr "Пуши наблюдают за файлами-стейтами роу�
 msgid "Control: blocks, schedules, Wi-Fi, new devices"
 msgstr "Контроль: блокировки, расписания, Wi-Fi, новые устройства"
 
+msgid "Arbitrary commands (/cmd) results"
+msgstr "Результаты произвольных команд (/cmd)"
+
 msgid "Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Parental control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat."
 msgstr "Управление из вашего Telegram-чата. Роутер: /status, /nodes, /switch N (переключение выхода без рестарта), /service, /snapshot, /status_engine, /connections, /close. Родительский контроль: /menu (всё в кнопках), /devices (блок / временный блок / временное разрешение / блок Wi-Fi), /blocksite, /pause, /resume, /wifi. Пуш-уведомления следят за файлами состояния роутера; демон всегда запущен и сам перечитывает эти настройки — сохранение не перезапускает службу. Токен — от @BotFather; первое сообщение боту привязывает ваш чат."
 

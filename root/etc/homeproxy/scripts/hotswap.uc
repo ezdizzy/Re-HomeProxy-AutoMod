@@ -565,7 +565,7 @@ while (true) {
 				if (switch_to(hs.group, target)) {
 					switches = switches + 1;
 					last_switch_ts = now_ts;
-					last_reason = 'primary down: ' + tag_label(active) + ' -> ' + tag_label(target);
+					last_reason = 'основной узел недоступен: ' + tag_label(active) + ' → ' + tag_label(target);
 					log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
 					ev_switch(tag_label(target));
 					health_of(target).fails = 0;
@@ -614,7 +614,7 @@ while (true) {
 						chase = {};
 						switches = switches + 1;
 						last_switch_ts = now_ts;
-						last_reason = 'antiflap: sustained better node: ' + tag_label(last_pinned) + ' -> ' + tag_label(best);
+						last_reason = 'антифлап: найден стабильно лучший узел: ' + tag_label(last_pinned) + ' → ' + tag_label(best);
 						log('ANTIFLAP: ' + last_reason + ' (switch #' + switches + ')');
 						ev_switch(tag_label(best));
 					}
@@ -631,8 +631,8 @@ while (true) {
 				} else if (switch_to(hs.group, fb_target)) {
 					switches = switches + 1;
 					last_switch_ts = now_ts;
-					last_reason = (fb_target === hs.primary) ? ('primary recovered: ' + tag_label(fb_target))
-					                                          : ('failback to the previous node: ' + tag_label(fb_target));
+					last_reason = (fb_target === hs.primary) ? ('основной узел восстановился: ' + tag_label(fb_target))
+					                                          : ('возврат на прежний узел: ' + tag_label(fb_target));
 					log('HOT SWAP: ' + last_reason + ' (switch #' + switches + ')');
 					ev_switch(tag_label(fb_target));
 					health_of(fb_target).oks = 0;

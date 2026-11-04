@@ -122,11 +122,12 @@ const BODY_F = RUN_DIR + '/.tg.body';
 const ROLES = [ 'owner', 'admin', 'operator', 'viewer' ];
 const ROLE_RANK = { owner: 4, admin: 3, operator: 2, viewer: 1 };
 const NODES_PAGE = 8;
-/* RU-имена режимов маршрутизации (D25 /mode; значения — из client.js). */
+/* RU-имена режимов маршрутизации (D25 /mode; формулировки — канон из
+ * client.js/po: «Обход блокировок (по спискам правил)» и т.д.). */
 const MODE_RU = {
-	proxy_banned_ru: 'Обход блокировок',
+	proxy_banned_ru: 'Обход блокировок (по спискам правил)',
 	global: 'Всё через узел',
-	direct: 'Напрямую (всё выключено)'
+	direct: 'Напрямую (все механизмы выключены)'
 };
 
 /* Module-level state (module scope is safe for closures; ucode lesson 44/45
@@ -264,6 +265,7 @@ function read_cfg() {
 	cfg.push_learn    = uci_get('push_learn', '1');
 	cfg.push_service  = uci_get('push_service', '1');
 	cfg.push_control  = uci_get('push_control', '1');
+	cfg.push_exec     = uci_get('push_exec', '1');
 	cfg.users = {
 		owner:    uci_list('owner_user'),
 		admin:    uci_list('admin_user'),
@@ -553,6 +555,36 @@ function node_label(tag) {
 	return (v != null && length(v)) ? v : sid;
 }
 
+/* Special (non-node) values of main_node: honest RU words instead of raw
+ * cfg ids (hotswap.messages_node_names_not_cfg_ids applies to safe-mode
+ * lines and /safeoff results too). */
+function safe_node_name(v) {
+	v = trim('' + (v || ''));
+	if (v === 'urltest') return 'авто-выбор (URLTest)';
+	if (v === 'direct-out') return 'напрямую';
+	return node_label(v);
+}
+
+/* Resolve the CURRENT EXIT: main-out.now may be a GROUP tag (main-out-auto
+ * when the main node is URLTest-auto) — follow one level deeper so the user
+ * sees the human leaf name, never a raw group id. */
+function resolve_exit(group) {
+	let now = '' + ((group && group.now) || '');
+	if (!length(now))
+		return null;
+	for (let i = 0; i < 2 && match(now, /^main-out/) != null; i++) {
+		const g = clash_get(`/proxies/${now}`);
+		if (!g || !g.now || g.now === now)
+			break;
+		now = '' + g.now;
+	}
+	let dl = null;
+	const h = clash_get(`/proxies/${now}/history`);
+	const hist = (h && h.history && length(h.history)) ? h.history[length(h.history) - 1] : null;
+	if (hist && hist.delay > 0) dl = int(hist.delay);
+	return { tag: now, label: node_label(now), delay: dl };
+}
+
 const SKIP_TAG = /^(direct-out|block-out|main-out|main-out-auto|zapret-out|byedpi-out|dns-out)$/;
 const GROUP_TYPE = { Selector: true, URLTest: true, Fallback: true, Direct: true, Block: true, Reject: true, Compatible: true, Pass: true };
 
@@ -575,7 +607,9 @@ function list_nodes() {
 		const h = p.history;
 		if (type(h) === 'array' && length(h)) {
 			const last = h[length(h) - 1];
-			if (last && last.delay > 0) delay = int(last.delay);
+			/* 65535 = the core's FAILED-probe marker, not a delay (shown as
+			 * ⚪ «нет данных» — honest), lesson from the live card render. */
+			if (last && last.delay > 0 && last.delay < 65535) delay = int(last.delay);
 		}
 		push(out, { tag: tag, label: node_label(tag), delay: delay });
 	}
@@ -638,18 +672,15 @@ function cmd_status() {
 	const core_info = trim(readfile(RUN_DIR + '/core.info') || '');
 	let core = 'неизвестно';
 	try { const j = json(core_info || ''); if (j) core = esc_html((j.core_type || '?') + ' ' + (j.version || '')); } catch (e) {}
-	let main_line = 'main-out: ?';
+	let main_line = 'Выход: ?';
 	const main = clash_get('/proxies/main-out');
 	if (main && main.now) {
-		let label = node_label(main.now);
-		let dl = '';
-		const h = clash_get(`/proxies/${main.now}/history`);
-		const hist = (h && h.history && length(h.history)) ? h.history[length(h.history) - 1] : null;
-		if (hist && hist.delay > 0) dl = ` (${hist.delay} ms)`;
-		main_line = `Выход: <b>${esc_html(label)}</b>${dl}`;
+		const ex = resolve_exit(main);
+		let dl = (ex && ex.delay != null) ? ` (${ex.delay} ms)` : '';
+		main_line = `Выход: <b>${esc_html(ex ? ex.label : main.now)}</b>${dl}`;
 	} else if (main == null || !main.now) {
-		/* 404 body ({"message":...}) counts as absent too — custom mode. */
-		main_line = 'Выход: main-out недоступен (custom-режим или ядро лежит)';
+		/* 404 body ({"message":...}) counts as absent too — direct mode. */
+		main_line = 'Выход: main-out недоступен (режим «Напрямую» или ядро лежит)';
 	}
 	const zapret = proc_up('nfqws2') ? 'вкл' : 'выкл';
 	const byedpi = proc_up('ciadpi') ? 'вкл' : 'выкл';
@@ -679,8 +710,8 @@ function cmd_status() {
 	const safe_st = uci_tg_snap('safe');
 	if (safe_st === '1') {
 		const sprev = uci_tg_snap('safe_prev');
-		mode_line += '\n🛡 <b>SAFE MODE</b>: выход = direct' +
-			(length('' + (sprev || '')) ? ' (возврат узла ' + esc_html(sprev) + ': /safeoff)' : ' (возврат: /safeoff)');
+		mode_line += '\n🛡 <b>Safe Mode</b>: выход напрямую' +
+			(length('' + (sprev || '')) ? ' (возврат: ' + esc_html(safe_node_name(sprev)) + ' — /safeoff)' : ' (возврат: /safeoff)');
 	}
 	return `<b>Re:HomeProxy</b>
 Ядро: ${core}
@@ -715,7 +746,7 @@ function cmd_connections() {
 		const c = conns[i];
 		const meta = (c.metadata && c.metadata.host) ? c.metadata.host
 			: ((c.metadata && c.metadata.destinationIP) ? c.metadata.destinationIP : '?');
-		const chain = (c.chains && length(c.chains)) ? c.chains[0] : '?';
+		const chain = (c.chains && length(c.chains)) ? node_label(c.chains[0]) : '?';
 		out += `• ${esc_html(meta)} → ${esc_html(chain)}\n`;
 	}
 	if (length(conns) > n)
@@ -812,7 +843,25 @@ function cmd_logs(chat_id) {
 /* /nodes pagination (audit 42): NODES_PAGE nodes per page, the numbering
  * stays GLOBAL across pages so /switch N keeps its meaning; the page rides
  * in the callback data (stable — audit 20), never in an index of a live
- * list. */
+ * list. Ф8.4: the view is a CARD — current exit on top, delay quality marks
+ * (🟢/🟡/🔴/⚪) + a 5-block mini-bar as the light «графика». */
+
+function delay_dot(dl) {
+	if (dl == null) return '⚪';
+	if (dl <= 100) return '🟢';
+	if (dl <= 250) return '🟡';
+	return '🔴';
+}
+
+function delay_bar(dl) {
+	if (dl == null) return '';
+	const n = (dl <= 80) ? 5 : (dl <= 150) ? 4 : (dl <= 300) ? 3 : (dl <= 600) ? 2 : 1;
+	let s = '';
+	for (let i = 0; i < n; i++) s += '▮';
+	for (let i = n; i < 5; i++) s += '▯';
+	return s;
+}
+
 function nodes_text(nodes, page) {
 	const total = length(nodes);
 	const pages = (total > 0) ? int((total + NODES_PAGE - 1) / NODES_PAGE) : 1;
@@ -820,11 +869,19 @@ function nodes_text(nodes, page) {
 		page = 0;
 	const p0 = page * NODES_PAGE;
 	const n = (p0 + NODES_PAGE < total) ? (p0 + NODES_PAGE) : total;
-	let out = sprintf('<b>Узлы</b> (стр. %d/%d, номер = /switch N):\n', page + 1, pages);
+	let out = sprintf('<b>📡 Серверы</b> (стр. %d/%d, номер = /switch N):\n', page + 1, pages);
+	const main = clash_get('/proxies/main-out');
+	const ex = (main && main.now) ? resolve_exit(main) : null;
+	if (ex)
+		out += sprintf('Сейчас: <b>%s</b> %s%s %s\n\n', esc_html(ex.label), delay_dot(ex.delay),
+			(ex.delay != null) ? sprintf(' %d ms', ex.delay) : '', delay_bar(ex.delay));
+	else
+		out += 'Сейчас: main-out недоступен (режим «Напрямую» или ядро лежит)\n\n';
 	for (let i = p0; i < n; i++) {
 		const nd = nodes[i];
-		out += sprintf('%d. %s%s\n', i + 1, esc_html(nd.label),
-			nd.delay ? ` — ${nd.delay} ms` : ' — —');
+		out += sprintf('%d. %s %s%s%s\n', i + 1, delay_dot(nd.delay), esc_html(nd.label),
+			nd.delay ? sprintf(' · %d ms', nd.delay) : '',
+			nd.delay ? ' ' + delay_bar(nd.delay) : '');
 	}
 	if (n === p0)
 		out += '(узлов нет)';
@@ -841,8 +898,8 @@ function nodes_kb(nodes, page) {
 	for (let i = p0; i < (p0 + NODES_PAGE) && i < total; i += 2) {
 		const row = [];
 		for (let j = i; j < i + 2 && j < total; j++) {
-			let lbl = nodes[j].label;
-			if (length(lbl) > 22) lbl = substr(lbl, 0, 21) + '…';
+			let lbl = (delay_dot(nodes[j].delay) + ' ' + nodes[j].label);
+			if (length(lbl) > 24) lbl = substr(lbl, 0, 23) + '…';
 			/* Telegram callback_data is capped at 64 bytes — skip overlong tags. */
 			if (length('sw:' + nodes[j].tag) > 60)
 				continue;
@@ -859,6 +916,7 @@ function nodes_kb(nodes, page) {
 		push(nav, [ '➡', 'act:nodes:' + (page + 1) ]);
 	push(rows, nav);
 	push(rows, [ '🔄 Обновить', 'act:nodes:' + page ]);
+	push(rows, [ '🏠 Главная', 'act:menu' ]);
 	return kb_rows(rows);
 }
 
@@ -877,7 +935,7 @@ function do_switch_tag(tag, label) {
 	const raw = capture(`curl -s -m 8 ${shellquote(API + '/proxies/' + tag + '/delay?timeout=5000&url=' + PROBE_URL)} 2>/dev/null`);
 	const m = match(raw || '', /"delay": *([0-9]+)/);
 	let probe = '';
-	if (m) probe = sprintf('\nПроба: %d ms — узел жив.', int(m[1]));
+	if (m && int(m[1]) > 0 && int(m[1]) < 65535) probe = sprintf('\nПроба: %d ms — узел жив.', int(m[1]));
 	else probe = '\n⚠ Проба не прошла — узел может быть недоступен.';
 	log('switched main-out to ' + tag + ' via Telegram');
 	return `✅ Выход переключён: <b>${esc_html(label)}</b>${probe}
@@ -886,9 +944,9 @@ function do_switch_tag(tag, label) {
 
 function cmd_switch(arg, chat_id) {
 	const main = clash_get('/proxies/main-out');
-	/* 404 body ({"message":...}) counts as absent — custom-mode gate (ч.74). */
+	/* 404 body ({"message":...}) counts as absent — direct-mode gate (ч.74). */
 	if (main == null || !main.now)
-		return 'main-out не существует (режим Custom / ядро лежит) — переключение невозможно.';
+		return 'main-out недоступен (режим «Напрямую» или ядро лежит) — переключение невозможно.';
 	if (!length(trim(arg)))
 		return 'использование: /switch <номер из /nodes> или <начало имени>';
 	const nodes = list_nodes();
@@ -915,7 +973,7 @@ function cmd_switch(arg, chat_id) {
 const HELP = '<b>Команды</b>\n' +
 	'/menu — инлайн-меню (всё в кнопках)\n' +
 	'/status — ядро, выход, движки, контроль\n' +
-	'/nodes — узлы и задержки\n' +
+	'/nodes — серверы: список, задержки, переключение\n' +
 	'/switch N — переключить выход (без рестарта)\n' +
 	'/control — контроль (родительский): панель\n' +
 	'/devices — устройства сети (блок / ⏱ временный / ✅ разрешить / 📶 Wi-Fi-блок)\n' +
@@ -956,15 +1014,28 @@ function cmd_users() {
 	return out;
 }
 
-/* Main inline menu (plan 15): every feature one tap away — no need to
- * remember command names. */
+/* Main inline menu (plan 15 + Ф8.4): a live header card (exit + mode) and
+ * every feature one tap away — no need to remember command names. */
 function main_menu_text() {
-	return '<b>Re:HomeProxy — меню</b>\nЯдро, узлы, контроль, доктор и Safe Mode — в кнопках ниже.';
+	const main = clash_get('/proxies/main-out');
+	const ex = (main && main.now) ? resolve_exit(main) : null;
+	const rmode = uci_cfg_snap('routing_mode') || 'proxy_banned_ru';
+	const safe_st = uci_tg_snap('safe');
+	let head = '<b>Re:HomeProxy — меню</b>\n';
+	if (safe_st === '1')
+		head += '🛡 <b>Safe Mode активен</b> — выход напрямую (/safeoff вернёт узел)\n';
+	head += (ex && ex.label)
+		? sprintf('Выход: <b>%s</b>%s\n', esc_html(ex.label),
+			(ex.delay != null) ? sprintf(' · %d ms', ex.delay) : '')
+		: 'Выход: недоступен (режим «Напрямую» или ядро лежит)\n';
+	head += 'Режим: ' + esc_html(MODE_RU[rmode] || rmode) + '\n';
+	head += 'Выберите раздел — всё в кнопках ниже.';
+	return head;
 }
 
 function main_menu_kb() {
 	return kb_rows([
-		[ [ '📊 Статус', 'act:refresh' ], [ '📡 Узлы', 'act:nodes' ] ],
+		[ [ '📊 Статус', 'act:refresh' ], [ '📡 Серверы', 'act:nodes' ] ],
 		[ [ '🛡 Контроль', 'ctl:menu' ], [ '📶 Wi-Fi', 'ctl:wifi' ] ],
 		[ [ '🩺 Доктор', 'act:doctor' ], [ '🛠 Ремонт', 'act:repair' ] ],
 		[ [ '🆘 Safe Mode', 'act:safe' ], [ '🎚 Режим', 'act:mode' ] ],
@@ -982,10 +1053,14 @@ function push_enabled(kind) {
 	if (kind === 'learn') return cfg.push_learn === '1';
 	if (kind === 'service') return cfg.push_service === '1';
 	if (kind === 'control') return cfg.push_control === '1';
+	if (kind === 'exec') return cfg.push_exec === '1';
 	return false;
 }
 
-function send_push(kind, text) {
+/* Push with optional ACTION BUTTONS (Ф8.4): a notification carries what
+ * happened + a one-tap reaction (reverse action / related view). The kb is
+ * a ready-built reply_markup (kb_rows), same as direct replies. */
+function send_push(kind, text, kb) {
 	/* Dedup: identical text per kind within DEDUP_SEC is dropped. */
 	const now = time();
 	const prev = last_push[kind];
@@ -996,7 +1071,7 @@ function send_push(kind, text) {
 	last_push[kind] = { text: text, ts: now };
 	if (!push_enabled(kind))
 		return;   /* baselines already advanced — unmute will not replay */
-	tg_send_html(allowed_chat, text, null);
+	tg_send_html(allowed_chat, text, kb || null);
 }
 
 /* ── Ф2.4: Event Bus subscription (one cursor, hotswap/urltest/automation) ──
@@ -1014,98 +1089,112 @@ function send_push(kind, text) {
  * service-класс. */
 const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn', sentinel: 'service', recovery: 'service', init: 'service', subscribe: 'service', rulesets: 'service' };
 
-function bus_text(ev) {
+/* Action-button sets for pushes (Ф8.4): honest one-tap reactions, all
+ * callbacks are the already-gated prefixes (act:… — RBAC re-checked at the
+ * tap). */
+const KB_PUSH_STATUS   = kb_rows([ [ '📊 Статус', 'act:refresh' ] ]);
+const KB_PUSH_SERVERS  = kb_rows([ [ [ '📡 Серверы', 'act:nodes' ], [ '📊 Статус', 'act:refresh' ] ] ]);
+const KB_PUSH_DOC_REP  = kb_rows([ [ [ '🩺 Доктор', 'act:doctor' ], [ '🛠 Ремонт', 'act:repair' ] ] ]);
+const KB_PUSH_DOCTOR   = kb_rows([ [ '🩺 Доктор', 'act:doctor' ] ]);
+
+/* Ф8.4: структурированные уведомления «что произошло → почему → что сделано
+ * → результат → кнопки». Источники шины уже пишут who/detail по-русски и с
+ * человекочитаемыми именами узлов (constraint) — здесь заголовок события,
+ * живая строка фактов и ЧЕСТНЫЕ кнопки обратного действия. */
+function bus_push(ev) {
 	const who = trim('' + (ev.who || ''));
 	const detail = trim('' + (ev.detail || ''));
 	if (ev.src === 'init') {
 		/* Ф3.4: старта службы — честные события конфигурации (миграция
 		 * routing_mode со снимком; откат — вручную из снимка). */
-		return '⚙️ <b>Служба</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
-			(length(detail) ? '\n' + esc_html(detail) : '');
+		return { text: '⚙️ <b>Служба</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
 	if (ev.src === 'sentinel') {
 		if (ev.type === 'repair')
-			return '🛠 <b>Сторож</b>: ' + esc_html(who || 'ремонт') +
-				(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '🛠 <b>Сторож — автоматический ремонт</b>: ' + esc_html(who || 'ремонт') +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP };
 		if (ev.type === 'recovered')
-			return '✅ <b>Сторож</b>: ' + esc_html(who || '') + ' — больше не наблюдается';
+			return { text: '✅ <b>Сторож</b>: ' + esc_html(who || '') + ' — больше не наблюдается', kb: KB_PUSH_DOCTOR };
 		if (ev.type === 'loop')
-			return '🔁 <b>Сторож</b>: цикл восстановления' +
-				(length(detail) ? '\n' + esc_html(detail) : '');
-		return '🛡 <b>Сторож</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
-			(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '🔁 <b>Сторож — цикл восстановления</b>' +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP };
+		return { text: '🛡 <b>Сторож</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
 	if (ev.src === 'recovery') {
 		/* Ф2.3: координатор восстановления — ремонты, блокировки, ручные
 		 * заявки и предложения (U4: оповещение С ПРЕДЛОЖЕНИЕМ исправления). */
 		if (ev.type === 'repair')
-			return '🛠 <b>Recovery</b>: ' + esc_html(who || 'ремонт') +
-				(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '🛠 <b>Recovery — ремонт</b>: ' + esc_html(who || 'ремонт') +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP };
 		if (ev.type === 'blocked')
-			return '🔁 <b>Recovery</b>: авто-ремонт приостановлен' +
-				(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '🔁 <b>Recovery — авто-ремонт приостановлен</b>' +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP };
 		if (ev.type === 'unblocked')
-			return '✅ <b>Recovery</b>: ' + esc_html(who || '') + ' — кампания возобновлена' +
-				(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '✅ <b>Recovery</b>: ' + esc_html(who || '') + ' — кампания возобновлена', kb: KB_PUSH_DOCTOR };
 		if (ev.type === 'manual')
-			return '🖐 <b>Recovery</b>: ' + esc_html(who || 'ручное действие') +
-				(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '🖐 <b>Recovery — ручное действие</b>: ' + esc_html(who || 'ручное действие') +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 		if (ev.type === 'proposal')
-			return '💡 <b>Recovery</b>: предложение' +
-				(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '💡 <b>Recovery — предложение</b>' +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOC_REP };
 		if (ev.type === 'recovered')
-			return '✅ <b>Recovery</b>: ' + esc_html(who || '') + ' — проблема ушла';
-		return '🩺 <b>Recovery</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
-			(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '✅ <b>Recovery</b>: ' + esc_html(who || '') + ' — проблема ушла', kb: KB_PUSH_DOCTOR };
+		return { text: '🩺 <b>Recovery</b>' + (length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
-	if (ev.src === 'hotswap')
-		return '🔄 <b>Hot Swap</b>' +
-			(length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
-			(length(detail) ? '\n' + esc_html(detail) : '');
+	if (ev.src === 'hotswap') {
+		return { text: '🔄 <b>Hot Swap — смена выхода</b>' +
+			(length(who) ? '\nТеперь: <b>' + esc_html(who) + '</b>' : '') +
+			(length(detail) ? '\nПричина: ' + esc_html(detail) : ''), kb: KB_PUSH_SERVERS };
+	}
 	/* Ф5.1/Ф5.2: подписки и rule-set'ы (service-класс). */
 	if (ev.src === 'subscribe') {
 		if (ev.type === 'done')
-			return '✅ <b>Подписки обновлены</b>' +
-				(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '✅ <b>Подписки обновлены</b>' +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: null };
 		if (ev.type === 'aborted')
-			return '⚠️ <b>Подписки: обновление отклонено</b> — узлы не тронуты' +
-				(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '⚠️ <b>Подписки: обновление отклонено</b> — узлы не тронуты' +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 		if (ev.type === 'rolled_back')
-			return '↩️ <b>Подписки: откат</b> — узлы восстановлены из бекапа' +
-				(length(detail) ? '\n' + esc_html(detail) : '');
-		return '❗ <b>Подписки</b>' + (length(detail) ? ': ' + esc_html(detail) : '');
+			return { text: '↩️ <b>Подписки: откат</b> — узлы восстановлены из бекапа' +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+		return { text: '❗ <b>Подписки</b>' + (length(detail) ? ': ' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
 	if (ev.src === 'rulesets') {
 		if (ev.type === 'seed_done')
-			return '✅ <b>Rule-sets</b>: ' + esc_html(detail || 'локальные копии обновлены');
+			return { text: '✅ <b>Rule-sets</b>: ' + esc_html(detail || 'локальные копии обновлены'), kb: null };
 		if (ev.type === 'seed_failed')
-			return '⚠️ <b>Rule-sets</b>: ' + esc_html(detail || 'загрузка копий с ошибками');
+			return { text: '⚠️ <b>Rule-sets</b>: ' + esc_html(detail || 'загрузка копий с ошибками'), kb: KB_PUSH_DOCTOR };
 		if (ev.type === 'geo_done')
-			return '✅ <b>База RU-geo обновлена</b>: ' + esc_html(detail || '');
+			return { text: '✅ <b>База RU-geo обновлена</b>: ' + esc_html(detail || ''), kb: null };
 		if (ev.type === 'geo_failed')
-			return '⚠️ <b>База RU-geo</b>: ' + esc_html(detail || 'обновление не применено');
-		return '📦 <b>Rule-sets</b>' + (length(detail) ? ': ' + esc_html(detail) : '');
+			return { text: '⚠️ <b>База RU-geo</b>: ' + esc_html(detail || 'обновление не применено'), kb: KB_PUSH_DOCTOR };
+		return { text: '📦 <b>Rule-sets</b>' + (length(detail) ? ': ' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
 	if (ev.src === 'urltest') {
 		if (ev.type === 'recovered')
-			return '✅ <b>URLTest</b>: узел восстановился' +
-				(length(who) ? ': ' + esc_html(who) : '');
+			return { text: '✅ <b>URLTest — узел восстановился</b>' +
+				(length(who) ? '\nУзел: <b>' + esc_html(who) + '</b>' : ''), kb: null };
 		if (ev.type === 'reload')
-			return '♻️ <b>URLTest</b>' + (length(detail) ? ': ' + esc_html(detail) : '');
-		return '⛔ <b>URLTest</b>: узел помечен мёртвым' +
-			(length(who) ? ': ' + esc_html(who) : '') +
-			(length(detail) ? '\n' + esc_html(detail) : '');
+			return { text: '♻️ <b>URLTest — перезагрузка службы</b>' +
+				(length(who) ? '\nУзел: <b>' + esc_html(who) + '</b>' : '') +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+		return { text: '⛔ <b>URLTest — узел недоступен</b>' +
+			(length(who) ? '\nУзел: <b>' + esc_html(who) + '</b>' : '') +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_SERVERS };
 	}
 	/* automation */
 	if (ev.type === 'outage')
-		return '⚠️ <b>Автоматизация</b>: ' + esc_html(detail || 'авария: обучение приостановлено');
+		return { text: '⚠️ <b>Автоматизация — авария</b>: ' + esc_html(detail || 'авария: обучение приостановлено'), kb: KB_PUSH_STATUS };
 	if (ev.type === 'outage_end')
-		return '✅ <b>Автоматизация</b>: ' + esc_html(detail || 'авария завершена');
+		return { text: '✅ <b>Автоматизация — авария завершена</b>: ' + esc_html(detail || 'авария завершена'), kb: KB_PUSH_STATUS };
 	if (ev.type === 'heal')
-		return '✅ <b>Автоматизация</b>: самолечение' +
-			(length(detail) ? ':\n' + esc_html(detail) : '');
-	return '🧠 <b>Автоматизация</b>' + (length(who) ? ': ' + esc_html(who) : '') +
-		(length(detail) ? '\n' + esc_html(detail) : '');
+		return { text: '✅ <b>Автоматизация — самолечение</b>' +
+			(length(detail) ? ':\n' + esc_html(detail) : ''), kb: KB_PUSH_STATUS };
+	return { text: '🧠 <b>Автоматизация</b>' + (length(who) ? ': ' + esc_html(who) : '') +
+		(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_STATUS };
 }
 
 function push_bus() {
@@ -1134,8 +1223,9 @@ function push_bus() {
 		const kind = BUS_SRC_KIND[ev.src];
 		if (kind == null || !push_enabled(kind))
 			continue;   /* baseline advances regardless of toggles — unmute never replays */
+		const p = bus_push(ev);
 		sent++;
-		send_push(kind, bus_text(ev));
+		send_push(kind, p.text, p.kb);
 	}
 	if (bus_id !== bus_saved) {
 		bus_cursor_set('telegram-bus', bus_id);
@@ -1150,9 +1240,9 @@ function push_service() {
 	if (ok === seen.core_ok) return;
 	seen.core_ok = ok;
 	if (!ok)
-		send_push('service', '⛔ <b>Ядро не отвечает</b> (Clash API недоступен).');
+		send_push('service', '⛔ <b>Ядро не отвечает</b> (Clash API недоступен).', KB_PUSH_DOCTOR);
 	else
-		send_push('service', '✅ <b>Ядро снова отвечает</b>.');
+		send_push('service', '✅ <b>Ядро снова отвечает</b>.', KB_PUSH_STATUS);
 }
 
 /* ── подтверждения второй кнопкой (Ф8.2/D25) ────────────────────────────
@@ -1485,7 +1575,8 @@ function cmd_safeoff(chat_id) {
 		tg_send_html(chat_id, '⚠ Не выполнено: ' +
 			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
 	else
-		tg_send_html(chat_id, '✅ Главный узел возвращён (' + esc_html('' + (r.restored || '?')) + '); /status покажет живой выход.', null);
+		tg_send_html(chat_id, '✅ Главный узел возвращён (' +
+			esc_html(safe_node_name('' + (r.restored || '?'))) + '); /status покажет живой выход.', null);
 }
 
 /* ДОКТОР (Ф8.2): статусы/ремонт/лечение как интерфейс к Recovery/Sentinel —
@@ -1650,7 +1741,7 @@ function handle_command(chat_id, text, role) {
 		log('control cmd: ' + e);
 	}
 	if (cmd === 'status') {
-		tg_send_html(chat_id, cmd_status(), kb_rows([ [ 'Узлы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ] ]));
+		tg_send_html(chat_id, cmd_status(), kb_rows([ [ '📡 Серверы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ], [ '🏠 Главная', 'act:menu' ] ]));
 	} else if (cmd === 'ping') {
 		tg_send_html(chat_id, cmd_ping(), null);
 	} else if (cmd === 'connections') {
@@ -1679,7 +1770,7 @@ function handle_command(chat_id, text, role) {
 		else
 			tg_send_html(chat_id, nodes_text(nodes, 0), nodes_kb(nodes, 0));
 	} else if (cmd === 'users') {
-		tg_send_html(chat_id, cmd_users(), null);
+		tg_send_html(chat_id, cmd_users(), kb_rows([ [ '🏠 Главная', 'act:menu' ] ]));
 	} else if (cmd === 'switch') {
 		tg_send_html(chat_id, cmd_switch(rest, chat_id), null);
 	} else if (cmd === 'snapshot') {
@@ -1687,7 +1778,7 @@ function handle_command(chat_id, text, role) {
 	} else if (cmd === 'logs') {
 		cmd_logs(chat_id);
 	} else if (cmd === 'status_engine') {
-		tg_send_html(chat_id, cmd_status_engine(), kb_rows([ [ '🔄 Обновить', 'act:engine' ] ]));
+		tg_send_html(chat_id, cmd_status_engine(), kb_rows([ [ '🔄 Обновить', 'act:engine' ], [ '🏠 Главная', 'act:menu' ] ]));
 	} else if (cmd === 'mute') {
 		const r = ubus_call('telegram_flag_set', { key: 'mute', value: '1' }, 10);
 		if (r && r.result === true) {
@@ -1709,7 +1800,7 @@ function handle_command(chat_id, text, role) {
 	} else if (cmd === 'safeoff') {
 		cmd_safeoff(chat_id);
 	} else if (cmd === 'doctor') {
-		tg_send_html(chat_id, doctor_text(), kb_rows([ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ] ]));
+		tg_send_html(chat_id, doctor_text(), kb_rows([ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ], [ '🏠 Главная', 'act:menu' ] ]));
 	} else if (cmd === 'repair') {
 		const rv = repair_view();
 		tg_send_html(chat_id, rv.text, rv.kb);
@@ -1848,7 +1939,7 @@ function handle_update(u) {
 			const main0 = clash_get('/proxies/main-out');
 			if (main0 == null || !main0.now) {
 				tg_answer_cb(cbid, 'main-out недоступен');
-				tg_send_html(chat_id, 'main-out не существует (режим Custom / ядро лежит) — переключение невозможно.', null);
+				tg_send_html(chat_id, 'main-out недоступен (режим «Напрямую» или ядро лежит) — переключение невозможно.', null);
 				return;
 			}
 			const nodes = list_nodes();
@@ -1867,7 +1958,7 @@ function handle_update(u) {
 				tg_send_html(chat_id, nodes_text(nodes, page), nodes_kb(nodes, page));
 		} else if (data === 'act:engine') {
 			tg_answer_cb(cbid, 'Статус движков');
-			tg_send_html(chat_id, cmd_status_engine(), kb_rows([ [ '🔄 Обновить', 'act:engine' ] ]));
+			tg_send_html(chat_id, cmd_status_engine(), kb_rows([ [ '🔄 Обновить', 'act:engine' ], [ '🏠 Главная', 'act:menu' ] ]));
 		} else if (data === 'act:snapshot') {
 			tg_answer_cb(cbid, 'Снапшот');
 			tg_send_html(chat_id, cmd_snapshot(), null);
@@ -1878,7 +1969,7 @@ function handle_update(u) {
 				'Активные соединения оборвутся (~10 с). Это последний шанс отменить.');
 		} else if (data === 'act:doctor') {
 			tg_answer_cb(cbid, 'Доктор');
-			tg_send_html(chat_id, doctor_text(), kb_rows([ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ] ]));
+			tg_send_html(chat_id, doctor_text(), kb_rows([ [ '🛠 Ремонт', 'act:repair' ], [ '🔄 Обновить', 'act:doctor' ], [ '🏠 Главная', 'act:menu' ] ]));
 		} else if (data === 'act:repair') {
 			tg_answer_cb(cbid, 'Ремонт');
 			const rv = repair_view();
@@ -1928,7 +2019,7 @@ function handle_update(u) {
 			tg_send_html(chat_id, main_menu_text(), main_menu_kb());
 		} else if (data === 'act:refresh') {
 			tg_answer_cb(cbid, 'Обновляю');
-			tg_send_html(chat_id, cmd_status(), kb_rows([ [ 'Узлы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ] ]));
+			tg_send_html(chat_id, cmd_status(), kb_rows([ [ '📡 Серверы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ], [ '🏠 Главная', 'act:menu' ] ]));
 		} else {
 			/* «Контроль» callbacks — device actions first, then the panel
 			 * views; an unconsumed callback is acknowledged silently.
@@ -2092,6 +2183,26 @@ function main() {
 				off_loaded_for = bot_id;
 				try { last_update_id = int(trim(readfile(off_file()) || '0') || '0') || 0; }
 				catch (e) { last_update_id = 0; }
+				/* Offset-file loss (tmpfs cleanup, lost state) must not replay
+				 * a day of updates on EVERY restart: with offset 0 every real
+				 * update id is «too far ahead» (the +1000 guard — lesson 271),
+				 * so the offset could never advance again and unconfirmed
+				 * updates would reprocess after each done-journal expiry.
+				 * The done journal (1 h ring) records what THIS boot already
+				 * handled — seed the offset from it when the file is gone.
+				 * A reboot wipes both files together (the old behavior). */
+				if (last_update_id === 0) {
+					let mx = 0;
+					for (let k in done) {
+						const v = int(k);
+						if (v > mx) mx = v;
+					}
+					if (mx > 0) {
+						last_update_id = mx;
+						try { writefile(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
+						log('offset restored from the done-journal (' + mx + ')');
+					}
+				}
 			}
 			/* Honest rate-limit state (audit 1.4): while a fresh 429 window
 			 * is running, skip polling entirely (the send side handles its
