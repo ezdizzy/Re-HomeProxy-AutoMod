@@ -7930,8 +7930,14 @@ const methods = {
 				c.set('homeproxy', 'telegram', 'token', token);
 			else
 				c.delete('homeproxy', 'telegram', 'token');
+			/* An EMPTY chat_id UNBINDS (delete the option — the UI placeholder
+			 * promises exactly this: «leave empty — the first message pins
+			 * the chat»). Ignoring the empty value here kept the old binding
+			 * alive and made re-binding impossible (caught by the user, ч.190). */
 			if (length(chat_id))
 				c.set('homeproxy', 'telegram', 'chat_id', chat_id);
+			else
+				c.delete('homeproxy', 'telegram', 'chat_id');
 			c.set('homeproxy', 'telegram', 'mute', mute);
 			c.set('homeproxy', 'telegram', 'push_hotswap', pushes.push_hotswap);
 			c.set('homeproxy', 'telegram', 'push_watchdog', pushes.push_watchdog);
@@ -8345,7 +8351,11 @@ const methods = {
 				return { result: false, bot_username: bot_username, error: 'bad chat_id' };
 			const body = sprintf('{"chat_id":%s,"text":"%s","parse_mode":"HTML"}',
 				chat_raw, 'Тестовое сообщение Ravnex — связь с ботом работает.');
-			writefile(cfgf, 'url = "https://api.telegram.org/bot' + token + '/sendMessage"\nmax-time = 10\n');
+			/* JSON body needs the explicit header (see the daemon's tg_call,
+			 * ч.190): without it --data-binary rides form-urlencoded and
+			 * Telegram answers 400 «message text is empty». */
+			writefile(cfgf, 'url = "https://api.telegram.org/bot' + token + '/sendMessage"\n' +
+				'header = "Content-Type: application/json"\nmax-time = 10\n');
 			chmod(cfgf, 384);
 			writefile(bodyf, body);
 			chmod(bodyf, 384);

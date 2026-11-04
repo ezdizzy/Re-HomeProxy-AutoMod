@@ -424,6 +424,11 @@ function tg_call(method, params, retried) {
 			out = capture(`curl -s -K ${shellquote(CURL_F)} 2>/dev/null`);
 		} else {
 			c += 'max-time = 15\n';
+			/* JSON body needs the explicit header: --data-binary defaults to
+			 * form-urlencoded and Telegram answers 400 «message text is
+			 * empty» (the v1 header was lost in the ч.184 security refactor —
+			 * every reply/push failed silently until caught live ч.190). */
+			c += 'header = "Content-Type: application/json"\n';
 			writefile(BODY_F, params);
 			chmod(BODY_F, 384);
 			writefile(CURL_F, c);
@@ -438,6 +443,13 @@ function tg_call(method, params, retried) {
 		return null;
 	let j = null;
 	try { j = json(out); } catch (e) { j = null; }
+	/* Honest delivery (ч.190): a failed send or an API refusal must never
+	 * vanish again — the missing Content-Type hid EVERY reply for a day
+	 * because callers ignore the return value and this log stayed empty. */
+	if (j && j.ok === false && j.error_code !== 429)
+		log('tg_call ' + method + ': API ' + j.error_code + ' — ' + (j.description || '?'));
+	if (params != null && !j)
+		log('tg_call ' + method + ': нет ответа (сеть/таймаут)');
 	if (j && j.ok === false && j.error_code === 429 && j.parameters &&
 	    j.parameters.retry_after != null) {
 		const raw = '' + j.parameters.retry_after;
