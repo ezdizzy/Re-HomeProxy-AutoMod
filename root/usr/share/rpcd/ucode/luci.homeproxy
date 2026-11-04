@@ -8213,6 +8213,99 @@ const methods = {
 		}
 	},
 
+	/* Произвольные команды (Ф8.3/D15, только владелец TG): rpcd НЕ исполняет
+	 * команду сам и НЕ блокируется — пишет cmd.sh в /tmp (tmpfs), спавнит
+	 * воркер в СОБСТВЕННОМ сеансе (setsid; свип по SID вычищает всё дерево —
+	 * урок 112) и сразу возвращается; результат бот поллит control_exec_status.
+	 * Метод намеренно НЕ в ACL: исполнение произвольных команд — не веб-API
+	 * (веб-сессии его не видят; бот зовёт через ubus CLI). Аудит: событие на
+	 * КАЖДЫЙ запрос; финал пишет control_exec_status ровно один раз. */
+	control_exec: {
+		args: { cmd: 'cmd', timeout: 'timeout', by: 'by' },
+		call: function(req) {
+			const cmd = '' + ((req && req.args && req.args.cmd) || '');
+			const by = trim('' + ((req && req.args && req.args.by) || ''));
+			const raw_t = trim('' + ((req && req.args && req.args.timeout) || ''));
+			if (!length(trim(cmd)))
+				return { result: false, error: 'пустая команда' };
+			if (length(cmd) > 512)
+				return { result: false, error: 'команда длиннее 512 символов' };
+			if (match(cmd, /[\n\r]/) != null)
+				return { result: false, error: 'только одна строка (без переводов строки)' };
+			let t = (match(raw_t, /^[0-9]+$/) != null) ? int(raw_t) : 20;
+			if (t < 5)
+				t = 5;
+			if (t > 120)
+				t = 120;
+			const fd = popen('command -v setsid 2>/dev/null');
+			const sp = (fd) ? trim(fd.read('all') || '') : '';
+			if (fd)
+				fd.close();
+			if (!length(sp))
+				return { result: false, error: 'setsid недоступен — произвольные команды запрещены' };
+			const tsf = '/tmp/hp-exec.ts';
+			system('date +%Y%m%d-%H%M%S > ' + shellquote(tsf));
+			const id = trim(readfile(tsf) || '');
+			system('rm -f ' + shellquote(tsf));
+			if (match(id, /^[0-9]+-[0-9]+$/) == null)
+				return { result: false, error: 'date failed' };
+			const D = '/tmp/hp-exec/' + id;
+			if (access(D))
+				return { result: false, error: 'exec id занят — повторите' };
+			system('mkdir -p /tmp/hp-exec ' + shellquote(D));
+			writefile(D + '/cmd.sh', (match(cmd, /\n$/) ? cmd : cmd + '\n'));
+			if (!access(D + '/cmd.sh'))
+				return { result: false, error: 'не удалось записать cmd.sh (/tmp полон?)' };
+			chmod(D + '/cmd.sh', 448);
+			/* 1000>&- — не наследовать procd-лок в спавн (уроки 100/111). */
+			system('setsid sh ' + shellquote(HP_DIR + '/scripts/exec_worker.sh') + ' ' +
+				shellquote(id) + ' ' + int(t) + ' >/dev/null 2>&1 </dev/null 1000>&- &');
+			const who = (match(by, /^-?[0-9]+$/) != null) ? ('tg:' + by) : 'tg';
+			hc_add_event('exec', who, id + ': ' + substr(cmd, 0, 200));
+			return { result: true, id: id, timeout: t };
+		}
+	},
+
+	/* Статус/результат произвольной команды (Ф8.3/D15). Неблокирующий:
+	 * running, пока воркер не положил done-маркер (атомарный mv последним).
+	 * Финальное событие аудита — ровно один раз, под маркером audited. */
+	control_exec_status: {
+		args: { id: 'id' },
+		call: function(req) {
+			const id = trim('' + ((req && req.args && req.args.id) || ''));
+			if (match(id, /^[0-9]+-[0-9]+$/) == null)
+				return { result: false, error: 'bad id' };
+			const D = '/tmp/hp-exec/' + id;
+			if (!access(D))
+				return { result: false, error: 'exec не найден (ребут или старше 2 ч)' };
+			if (!access(D + '/done'))
+				return { result: true, state: 'running' };
+			if (!access(D + '/audited')) {
+				writefile(D + '/audited', '1\n');
+				const rc0 = trim(readfile(D + '/rc') || '');
+				const dur0 = trim(readfile(D + '/dur') || '');
+				hc_add_event('exec', id, (rc0 === 'timeout')
+					? 'таймаут — убито вместе с потомками'
+					: (rc0 === 'overflow')
+						? 'остановлено: вывод превысил 256 КБ'
+						: 'завершено, код ' + (length(rc0) ? rc0 : '?') + ' за ' +
+							(length(dur0) ? dur0 : '?') + ' с');
+			}
+			let out = '';
+			if (access(D + '/out')) {
+				const raw = readfile(D + '/out') || '';
+				out = (length(raw) > 4096) ? substr(raw, length(raw) - 4096, 4096) : raw;
+			}
+			return {
+				result: true,
+				state: 'done',
+				rc: trim(readfile(D + '/rc') || ''),
+				dur: trim(readfile(D + '/dur') || ''),
+				output: out
+			};
+		}
+	},
+
 	/* On-demand connectivity check (D6): getMe resolves the bot identity,
 	 * then a test message goes straight to the bound chat — works even
 	 * while the daemon itself is idle/disabled.

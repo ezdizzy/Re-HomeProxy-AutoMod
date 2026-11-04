@@ -928,6 +928,7 @@ const HELP = '<b>Команды</b>\n' +
 	'/safeoff — вернуть прежний узел\n' +
 	'/mode — режим маршрутизации (владелец)\n' +
 	'/update — обновления: приложение, ядро, пакеты (владелец)\n' +
+	'/cmd [-t сек] команда — произвольная команда роутеру (владелец)\n' +
 	'/ping — аптайм, load, память\n' +
 	'/connections — активные соединения\n' +
 	'/close — закрыть все соединения\n' +
@@ -1395,6 +1396,14 @@ function confirm_exec(c, chat_id, cbid) {
 			tg_send_html(chat_id, 'неизвестная цель обновления', null);
 		return;
 	}
+	if (kind === 'exec') {
+		/* Ф8.3/D15: the whole exec flow lives in the «Контроль» module (an
+		 * import is visible everywhere — a locally declared function would
+		 * NOT be visible from here: no hoisting in this ucode dialect). */
+		try { ctrl.exec_run(ctrl_api, c.chat, c.payload, cbid); }
+		catch (e) { log('exec run: ' + e); }
+		return;
+	}
 	tg_answer_cb(cbid, '');
 }
 
@@ -1422,7 +1431,8 @@ const ctrl_api = {
 	 * own actions must not echo back into the same chat). */
 	confirm_ask: confirm_ask,
 	role: 'viewer',
-	quiet: { until: 0 }
+	quiet: { until: 0 },
+	maxmsg: MAXMSG
 };
 
 function push_scan() {
@@ -1611,7 +1621,7 @@ const CMD_MIN = {
 	pause: 'operator', resume: 'operator',
 	service: 'admin', restart: 'admin', snapshot: 'admin', logs: 'admin',
 	blocksite: 'admin', unblocksite: 'admin', users: 'admin', repair: 'admin',
-	mode: 'owner', update: 'owner'
+	mode: 'owner', update: 'owner', cmd: 'owner'
 };
 
 function cmd_need(cmd) {

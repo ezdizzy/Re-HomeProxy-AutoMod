@@ -754,11 +754,170 @@ export function wifi_toggle(api, chat_id, iface, disable, cbid) {
 	}
 };
 
+/* ── Ф8.3/D15: произвольные команды роутеру (только владелец) ────────────
+ * Единственный владелец исполняет ЛЮБУЮ одну-строчную команду: предпросмотр
+ * + вторая кнопка (confirm_ask — механизм Ф8.2), исполнение ЧЕРЕЗ Control
+ * API (control_exec): rpcd пишет cmd.sh в /tmp, спавнит воркер в собственном
+ * сеансе и СРАЗУ возвращается (rpcd не блокируется), результат — поллинг
+ * control_exec_status. Таймаут/переполнение вывода гасит воркер свипом ПО
+ * СЕАНСУ (setsid + SID: прямой kill ловит только прямого ребёнка — урок 112;
+ * kill — часть самого воркера, не отдельный диагностический шаг). Аудит:
+ * событие на запрос (control_exec) и на финал (control_exec_status, один
+ * раз). Результат — в тот же чат, эхо-пуш событий глушится окном quiet
+ * (прямой ответ — единственное место результата). */
+
+const EXEC_T_DEF = 20;
+const EXEC_T_MIN = 5;
+const EXEC_T_MAX = 120;
+const EXEC_LEN_MAX = 512;
+
+function exec_usage(api, chat_id) {
+	api.send_html(chat_id,
+		'⌨ <b>Произвольная команда</b>\n' +
+		'Формат: <code>/cmd команда</code> или <code>/cmd -t 60 команда</code>.\n' +
+		'Таймаут 5–120 с (по умолчанию 20). Одна строка, до 512 символов, без интерактива.\n' +
+		'Результат: код выхода + последние ~4 КБ вывода. Выполняется с правами root.\n' +
+		'Примеры: <code>uptime</code> · <code>ps w</code> · <code>logread | tail -n 20</code>', null);
+};
+
+export function exec_ask(api, chat_id, rest) {
+	API = api;
+	const raw = trim('' + (rest || ''));
+	if (!length(raw)) {
+		exec_usage(api, chat_id);
+		return;
+	}
+	if (match(raw, /[\n\r]/) != null) {
+		api.send_html(chat_id, '⚠ Только одна строка — без переводов строки.', null);
+		return;
+	}
+	let t = EXEC_T_DEF;
+	let text = raw;
+	const m = match(text, /^-t ([0-9]{1,3}) (.+)$/);
+	if (m) {
+		t = int(m[1]);
+		text = trim(m[2]);
+	}
+	if (!length(text)) {
+		exec_usage(api, chat_id);
+		return;
+	}
+	if (length(text) > EXEC_LEN_MAX) {
+		api.send_html(chat_id, '⚠ Команда длиннее ' + EXEC_LEN_MAX + ' символов — укоротите.', null);
+		return;
+	}
+	if (t < EXEC_T_MIN)
+		t = EXEC_T_MIN;
+	if (t > EXEC_T_MAX)
+		t = EXEC_T_MAX;
+	/* Честный риск в карточке: команда может уронить службу/бота/сеть —
+	 * тогда результат не придёт никогда (это НЕ ошибка механики). */
+	const danger = (match(text, /(init\.d\/homeproxy|reboot|poweroff|halt|killall|(^| )kill |wifi)/) != null);
+	api.confirm_ask(chat_id, 'owner', 'exec', { cmd: text, t: t },
+		'Выполнить команду на роутере?',
+		'Команда: ' + text +
+		'\nПрава root · таймаут ' + t + ' с · неинтерактивно · вывод — последние ~4 КБ.' +
+		(danger ? '\n⚠ Похоже, команда может уронить службу/сеть — ответ может не вернуться (потом проверьте /status).' : ''));
+};
+
+function exec_text_head(rc, dur) {
+	if (rc === 'timeout')
+		return '⚠ Превышен таймаут — процесс и его потомки убиты.';
+	if (rc === 'overflow')
+		return '⚠ Вывод превысил 256 КБ — выполнение остановлено.';
+	if (rc === '0')
+		return '✅ Завершено за ' + dur + ' с, код выхода 0.';
+	if (rc === '?' || !length(rc))
+		return '⚠ Завершено за ' + dur + ' с, код выхода неизвестен.';
+	return '⚠️ Код выхода ' + rc + ' за ' + dur + ' с.';
+};
+
+/* Режем хвост ПОСЛЕ esc/ascii-очистки: обе строки чистый ASCII, значит
+ * byte-обрезка не может разорвать UTF-8; и никогда не режем ВНУТРИ сборки —
+ * обрезка tg_send_html на maxmsg разорвала бы <pre>, а TG отвергает
+ * незакрытую разметку (сообщение не дойдёт вовсе). */
+function exec_body(cmd, s, maxmsg, ascii) {
+	const rc = trim('' + (s.rc || ''));
+	const dur = trim('' + (s.dur || '?'));
+	const head = exec_text_head(rc, dur);
+	let cdisp = ascii ? replace('' + cmd, /[^\t-~]/g, '?') : esc(cmd);
+	if (length(cdisp) > 400)
+		cdisp = substr(cdisp, 0, 400) + '…';
+	let out = ascii ? replace(trim('' + (s.output || '')), /[^\t-~]/g, '?')
+		: esc(trim('' + (s.output || '')));
+	if (!length(out))
+		out = '(нет вывода)';
+	const budget = ((maxmsg && maxmsg > 0) ? maxmsg : 3800) - length(cdisp) - length(head) - 120;
+	if (length(out) > budget) {
+		if (budget > 200)
+			out = '…' + substr(out, length(out) - budget, budget);
+		else
+			out = substr(out, 0, 200);
+	}
+	return '⌨ <code>' + cdisp + '</code>\n' + head + '\n<pre>' + out + '</pre>';
+};
+
+export function exec_run(api, chat_id, payload, cbid) {
+	API = api;
+	const cmd = '' + ((payload && payload.cmd) || '');
+	let t = (payload && payload.t != null) ? int(payload.t) : EXEC_T_DEF;
+	if (t < EXEC_T_MIN)
+		t = EXEC_T_MIN;
+	if (t > EXEC_T_MAX)
+		t = EXEC_T_MAX;
+	api.answer_cb(cbid, 'Выполняю');
+	quiet_touch(api);
+	const r = ubus_call('control_exec', { cmd: cmd, timeout: '' + t, by: '' + chat_id }, 15);
+	if (r == null || r.result !== true) {
+		api.send_html(chat_id, '⚠ Команду выполнить невозможно: ' +
+			esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), null);
+		return;
+	}
+	const id = '' + (r.id || '');
+	api.send_html(chat_id, '⏳ Выполняю (id ' + esc(id) + ', таймаут ' + int(r.timeout || t) + ' с)…', null);
+	/* Поллинг блокирует цикл демона — осознанно (как живые стадии /update):
+	 * очередь обновлений durable, ничего не теряется. */
+	const deadline = time() + int(r.timeout || t) + 20;
+	while (time() < deadline) {
+		sleep(2000);
+		quiet_touch(api);
+		const s = ubus_call('control_exec_status', { id: id }, 10);
+		if (s == null)
+			continue;
+		if (s.state === 'done') {
+			const resp = api.send_html(chat_id, exec_body(cmd, s, api.maxmsg, false), null);
+			if (!(resp && resp.ok === true))
+				api.send_html(chat_id, exec_body(cmd, s, api.maxmsg, true), null);
+			/* Результат доставлен: держим тихое окно шире одного цикла
+			 * опроса (~25–30 с), иначе оба события (запрос+финал) эхом
+			 * продублируют уже доставленный ответ. */
+			api.quiet.until = time() + 45;
+			return;
+		}
+		if (s.result === false) {
+			api.quiet.until = 0;
+			api.send_html(chat_id, '⚠ Результат потерян: ' +
+				esc((s.error != null) ? '' + s.error : '?') +
+				'. Процессы могли остаться — проверка: /cmd ps w', null);
+			return;
+		}
+	}
+	/* Окно вышло: тихое окно СНИМАЕМ — если команда всё же завершится,
+	 * финальное событие из журнала дойдёт в чат как честное позднее уведомление. */
+	api.quiet.until = 0;
+	api.send_html(chat_id, '⚠ Не дождался завершения (id ' + esc(id) +
+		'). Если команда завершится — финал придёт из журнала событий; процессы: /cmd ps w', null);
+};
+
 /* ── command / callback entry points (called by telegram.uc) ─────────── */
 
 /* Handle a /command. Returns true when consumed. */
 export function handle_command(api, chat_id, cmd, rest) {
 	API = api;
+	if (cmd === 'cmd') {
+		exec_ask(api, chat_id, rest);
+		return true;
+	}
 	if (cmd === 'control') {
 		api.send_html(chat_id, panel_text(), panel_kb());
 		return true;
