@@ -53,6 +53,11 @@ import {
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
 	proc_info as pm_proc_info
 } from '/etc/homeproxy/scripts/pmgr.uc';
+/* Ф6.2 Discovery Engine: ЕДИНЫЙ сбор обнаружения. conntrack теперь парсится
+ * через discovery.uc — ТОЛЬКО оригинальный tuple (B5.1: клиентские адреса
+ * больше не съедают лимит), UDP/IPv6 учитываются явно; проверка приватных
+ * адресов — полный реестр IANA Special-Purpose (B5.3). */
+import { conntrack_flows, is_special_ip } from '/etc/homeproxy/scripts/discovery.uc';
 
 const HP_DIR = '/etc/homeproxy';
 const RUN_DIR = '/var/run/homeproxy';
@@ -871,8 +876,12 @@ function probe(host, via_proxy, timeout) {
 	return { code: ok ? '200' : '000', ok: ok, block: false, geo: false, fp: '', ip: null };
 }
 
+/* Ф6.2/B5.3: полный реестр IANA Special-Purpose живёт в discovery.uc
+ * (единый источник для всех модулей); сюда делегируется — прежний список
+ * покрывал часть реестра (не было CGNAT 100.64/10, benchmarking 198.18/15,
+ * TEST-NET). Возвращают true и пустые/кривые значения — не кандидаты. */
 function is_private_ip(ip) {
-	return match(ip, /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/) || match(ip, /^fc00:|^fe80:/) || ip === '0.0.0.0';
+	return is_special_ip(ip);
 }
 
 function is_shared_cdn_ip(ip) {
@@ -1421,13 +1430,24 @@ function discover_clash(timeout) {
 }
 
 function discover_conntrack() {
-	/* Only WEB flows (tcp dport 80/443): those are what the HTTP/TLS probe can
-	 * actually judge. Unfiltered conntrack fed the learner DNS (udp/53), NTP and
-	 * self-traffic destinations — a DNS server "fails" every HTTPS probe by
-	 * design and then gets learned as BLOCKED. */
-	let raw = capture(`( conntrack -L -p tcp --dport 80 2>/dev/null; conntrack -L -p tcp --dport 443 2>/dev/null ) | awk '/ESTABLISHED/ { for (i=1;i<=NF;i++) if ($i ~ /^dst=/) { sub("dst=", "", $i); print $i } }' | head -300`);
-	if (!raw) return [];
-	return split(trim(raw), /\n/);
+	/* Ф6.2 Discovery Engine: сбор через discovery.uc — ОДНА команда conntrack
+	 * с лимитом строк, парсинг ТОЛЬКО оригинального tuple (B5.1: ответное
+	 * направление больше не подмешивает клиентские адреса). Здесь фильтр
+	 * «веб-потоков»: TCP/80+443, IPv4 (B5.2: IPv6 в IP-learning исключён),
+	 * публичный адрес назначения. Дубликаты СОХРАНЯЮТСЯ — по ним считается
+	 * seen-порог повторяемости адреса за проход. */
+	const flows = conntrack_flows(400);
+	const dst = [];
+	for (let f in flows) {
+		if (f.proto !== 'tcp' || (f.dport !== 80 && f.dport !== 443))
+			continue;
+		if (f.v6 || is_private_ip(f.dst))
+			continue;
+		push(dst, f.dst);
+		if (length(dst) >= 300)
+			break;
+	}
+	return dst;
 }
 
 /* Ф1.4: HUP the MAIN dnsmasq only (its own pidfile, exe-verified) — the old

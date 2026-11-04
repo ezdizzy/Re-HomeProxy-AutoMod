@@ -7315,3 +7315,105 @@ msgstr ""
 
 msgid "Checks a set of test services (YouTube, Discord, Telegram, WhatsApp, Google AI, OpenAI, Claude, Twitch…) through your real paths. The VERDICT speaks about your CONFIGURED routing (rules, learned lists and Zapret/ByeDPI desync) — the way LAN clients are actually served; the Direct column is reference: it shows whether the resource could open with no VPN at all. A response whose redirect chain is reset mid-way is not a success, and a 200 with an application-level refusal (geo, Gemini \"something went wrong\") is not either. When a refusal is about the remote region rather than the local provider, the verdict says so (geo-block) — a routing strategy cannot fix a region refusal, a node with a supported region can. RU services (rutube, gosuslugi) are control hosts — they must always open directly. The Cause line under the verdict explains WHY the resource fails (provider DPI, origin geo/WAF, DNS tampering, own rules) with a confidence level — hover it for the measured evidence."
 msgstr ""
+
+msgid "All profiles"
+msgstr ""
+
+msgid "Games and launchers"
+msgstr ""
+
+msgid "Run check"
+msgstr ""
+
+msgid "Checking %d of %d…"
+msgstr ""
+
+msgid "No profile results yet — press \"Run check\"."
+msgstr ""
+
+msgid "components work"
+msgstr ""
+
+msgid "degraded (path is open)"
+msgstr ""
+
+msgid "refused by the origin"
+msgstr ""
+
+msgid "not delivered"
+msgstr ""
+
+msgid "not probed"
+msgstr ""
+
+msgid "works"
+msgstr ""
+
+msgid "degraded"
+msgstr ""
+
+msgid "unusable"
+msgstr ""
+
+msgid "broken"
+msgstr ""
+
+msgid "Video quality: %s (%s)"
+msgstr ""
+
+msgid "Component"
+msgstr ""
+
+msgid "Details"
+msgstr ""
+
+msgid "Battery from %s · probes: %s (the base battery stays within the Keenetic probe budget; the differential of a failing component adds up to two more)."
+msgstr ""
+
+msgid "Service profiles"
+msgstr ""
+
+msgid "Checks the SERVICE, not the front page: YouTube (web/API/CDN/real video stream/QUIC), Discord (web/API/gateway WebSocket/CDN/Voice UDP/STUN/stability), Telegram (web/MTProto datacenters), games and launchers. The video level is judged bitrate-relative — from 360p to 4K — not by a fixed speed bar. The QUIC component is passive observation (the Discovery engine); active HTTP/3 probing stays off. Not-probed is never reported as passed."
+msgstr ""
+
+msgid "Take snapshot"
+msgstr ""
+
+msgid "Taking a passive snapshot…"
+msgstr ""
+
+msgid "Snapshot failed — the Discovery engine is unavailable."
+msgstr ""
+
+msgid "No snapshot yet — press \"Take snapshot\"."
+msgstr ""
+
+msgid "Flows: %s (TCP %s · UDP %s · QUIC %s · STUN %s · other UDP %s) · IPv4 %s · IPv6 %s · LAN/self %s"
+msgstr ""
+
+msgid "Clash connections: %s (UDP %s) · SNI hosts (tail): %s · IP↔DNS pairs: %s"
+msgstr ""
+
+msgid "Destination"
+msgstr ""
+
+msgid "Host (IP↔DNS)"
+msgstr ""
+
+msgid "Flows"
+msgstr ""
+
+msgid "No public destinations in this snapshot — LAN traffic only, or conntrack is unavailable."
+msgstr ""
+
+msgid "Recent SNI: %s"
+msgstr ""
+
+msgid "Passive snapshot from %s · zero probes spent · budgets: conntrack ≤ %s lines, Clash API %s s, SNI tail %s."
+msgstr ""
+
+msgid "Discovery"
+msgstr ""
+
+msgid "What the router SEES right now: live flows (conntrack, TCP and UDP — including QUIC and STUN classes, IPv6 explicitly), Clash connections with hostnames, recent TLS SNI names, and the IP↔DNS mapping. This is the shared source the automation engine learns from and the Service profiles use for passive QUIC observation. Blind zones are listed honestly below the snapshot."
+msgstr ""

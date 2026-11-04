@@ -51,6 +51,10 @@ import {
 	RECOVERY_PATH as RC_PATH, request_manual as rc_request_manual
 } from '/etc/homeproxy/scripts/recovery.uc';
 import { compose as explain_compose } from '/etc/homeproxy/scripts/explain.uc';
+/* Ф6.2 Discovery Engine: снимок обнаружения собирается этим модулем
+ * (единый источник — automation.uc собирает тем же кодом кандидатов). */
+import { write_snapshot as discovery_write_snapshot }
+	from '/etc/homeproxy/scripts/discovery.uc';
 
 /* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
  * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
@@ -5869,6 +5873,57 @@ const methods = {
 				}
 			}
 			return { result: true, count: count, status: s };
+		}
+	},
+
+	/* Ф6.3 Service Profiles: запуск батареи одного профиля (или всех) —
+	 * одноразовый фоновый прогон (service_profile_run.uc), результаты в
+	 * service_profile_result.json. Один прогон за раз; умерший посреди
+	 * прогона перестаёт блокировать через 15 минут (тот же stale-guard,
+	 * что у сканера провайдера). Имя профиля валидируется жёстко. */
+	wizard_service_profile_run: {
+		args: { profile: 'profile' },
+		call: function(req) {
+			const st = RUN_DIR + '/service_profile.json';
+			let prev = null;
+			if (access(st)) {
+				try { prev = json(readfile(st) || ''); } catch (e) { prev = null; }
+			}
+			if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
+				return { result: false, error: 'a profile battery is already running' };
+			const valid = { youtube: true, discord: true, telegram: true, games: true, all: true };
+			const p = lc(trim('' + ((req && req.args && req.args.profile) || 'all')));
+			if (!valid[p])
+				return { result: false, error: 'unknown profile: ' + p };
+			writefile(RUN_DIR + '/service_profile_task.txt', p + '\n');
+			system(`ucode ${shellquote(HP_DIR + '/scripts/service_profile_run.uc')} >/dev/null 2>&1 &`);
+			return { result: true, profile: p };
+		}
+	},
+
+	wizard_service_profile_status: {
+		call: function(req) {
+			const st = RUN_DIR + '/service_profile.json';
+			const rs = RUN_DIR + '/service_profile_result.json';
+			let status = null, result = null;
+			if (access(st)) {
+				try { status = json(readfile(st) || ''); } catch (e) { status = null; }
+			}
+			if (access(rs)) {
+				try { result = json(readfile(rs) || ''); } catch (e) { result = null; }
+			}
+			return { status: status, result: result };
+		}
+	},
+
+	/* Ф6.2 Discovery Engine: пассивный снимок обнаружения (conntrack
+	 * TCP+UDP с оригинальным tuple, Clash-соединения, SNI-хвост, QUIC/STUN
+	 * классификация, IPv4/IPv6 явно, словарь IP↔DNS). Активных проб НЕТ —
+	 * один conntrack + один curl к Clash API с таймаутом 3 с. */
+	discovery_snapshot: {
+		call: function(req) {
+			const snap = discovery_write_snapshot();
+			return { result: true, snapshot: snap };
 		}
 	},
 

@@ -575,6 +575,260 @@ function buildProviderSection() {
 	};
 }
 
+/* ── Ф6.3 Service Profiles: проверяется СЕРВИС, а не главная страница
+ * (аудит 62/74). Батарея компонентов одного профиля через LIVE-путь;
+ * классификация — Diagnostic Core на сервере, причины — та же таксономия
+ * Ф6.1. Один результат в одном месте. ─────────────────────────────────── */
+
+const callProfileRun = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_service_profile_run',
+	params: [ 'profile' ],
+	expect: { '': {} }
+});
+
+const callProfileStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_service_profile_status',
+	expect: { '': {} }
+});
+
+/* Ф6.2 Discovery Engine: пассивный снимок обнаружения (без проб). */
+const callDiscovery = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'discovery_snapshot',
+	expect: { '': {} }
+});
+
+const PROFILE_STATE = {
+	working:  [ 'hpui-b-green', '✓ ' ],
+	degraded: [ 'hpui-b-amber', '~ ' ],
+	unusable: [ 'hpui-b-amber', '~ ' ],
+	refused:  [ 'hpui-b-red',   '✗ ' ],
+	broken:   [ 'hpui-b-red',   '✗ ' ],
+	unprobed: [ 'hpui-b-grey',  '' ]
+};
+
+function buildProfilesSection() {
+	const profState = { sig: null };
+	const profBanner = E('div', { 'class': 'hpui-banner', style: 'display:none' });
+	const profResult = E('div', {});
+
+	const sel = E('select', { 'class': 'cbi-input-select', style: 'min-width:14em' }, [
+		E('option', { value: 'all' }, [ _('All profiles') ]),
+		E('option', { value: 'youtube' }, [ 'YouTube' ]),
+		E('option', { value: 'discord' }, [ 'Discord' ]),
+		E('option', { value: 'telegram' }, [ 'Telegram' ]),
+		E('option', { value: 'games' }, [ _('Games and launchers') ])
+	]);
+	const runBtn = E('button', {
+		'class': 'btn cbi-button cbi-button-action', type: 'button'
+	}, [ _('Run check') ]);
+	runBtn.addEventListener('click', function() {
+		runBtn.disabled = true;
+		callProfileRun(String(sel.value || 'all')).then(function(r) {
+			if (!r || r.result === false)
+				ui.addNotification(null, E('p', {}, _('Check failed to start: ') + ((r && r.error) || '')), 'error');
+			return pollProfiles();
+		}).finally(function() { runBtn.disabled = false; });
+	});
+
+	function renderProfiles(status, result) {
+		profBanner.style.display = (status && status.running) ? 'block' : 'none';
+		if (status && status.running) {
+			profBanner.textContent = _('Checking %d of %d…').format(status.done || 0, status.total || 0) +
+				(status.current ? (' ' + status.current) : '');
+			return;
+		}
+		const sig = result ? ('' + (result.ts || 0)) : 'none';
+		if (sig === profState.sig)
+			return;
+		profState.sig = sig;
+		profResult.innerHTML = '';
+		if (!result || !result.components || !result.components.length) {
+			profResult.appendChild(E('p', { 'class': 'hpui-hint' },
+				[ _('No profile results yet — press "Run check".') ]));
+			return;
+		}
+		/* Сводные карточки — те же состояния, что в таблице. */
+		const s = result.summary || {};
+		const cards = E('div', { 'class': 'hpui-cards' });
+		const mk = (num, cap, cls) => E('div', { 'class': 'hpui-card' }, [
+			E('div', { 'class': 'hpui-num ' + (cls || '') }, [ String(num) ]),
+			E('div', { 'class': 'hpui-cap' }, [ cap ])
+		]);
+		cards.appendChild(mk(s.working || 0, _('components work'), 'hpui-c-green'));
+		cards.appendChild(mk(s.degraded || 0, _('degraded (path is open)'), 'hpui-c-amber'));
+		cards.appendChild(mk(s.refused || 0, _('refused by the origin'), 'hpui-c-red'));
+		cards.appendChild(mk(s.broken || 0, _('not delivered'), 'hpui-c-red'));
+		cards.appendChild(mk(s.unprobed || 0, _('not probed'), ''));
+		profResult.appendChild(cards);
+
+		let lastProfile = null;
+		const tbody = E('tbody', {});
+		for (let i in result.components) {
+			const r = result.components[i];
+			if (r.profile !== lastProfile) {
+				lastProfile = r.profile;
+				tbody.appendChild(E('tr', { 'class': 'hpui-group' }, [
+					E('td', { colspan: '3', style: 'font-weight:600; opacity:.85' },
+						[ String(r.profile || '') ])
+				]));
+			}
+			const spec = PROFILE_STATE[r.state] || PROFILE_STATE.unprobed;
+			const badge = E('span', { 'class': 'hpui-badge ' + spec[0] },
+				[ spec[1] + (r.state === 'working' ? _('works') :
+					r.state === 'degraded' ? _('degraded') :
+					r.state === 'unusable' ? _('unusable') :
+					r.state === 'refused' ? _('refused') :
+					r.state === 'broken' ? _('broken') : _('not probed')) ]);
+			const level = (r.level) ? E('div', { 'class': 'wiz-note', style: 'margin:0' },
+				[ _('Video quality: %s (%s)').format(r.level, r.plays || '') +
+					(r.speed_bps ? (' · ' + Math.round(r.speed_bps / 125) + ' kbit/s') : '') ]) : null;
+			const cl = causeLine(r);
+			const main = E('div', {}, [ badge ]);
+			if (level) main.appendChild(level);
+			if (cl) main.appendChild(cl);
+			tbody.appendChild(E('tr', {}, [
+				E('td', { style: 'font-weight:600' }, [ String(r.label || r.id) ]),
+				E('td', {}, [ main ]),
+				E('td', { 'class': 'wiz-note', style: 'margin:0' },
+					[ String(r.note || '') + ((r.code && r.code !== '000') ? (' · HTTP ' + r.code) : '') ])
+			]));
+		}
+		const wrap = E('div', { 'class': 'hpui-wrap' });
+		wrap.appendChild(E('table', { 'class': 'hpui-table' }, [
+			E('thead', {}, E('tr', {}, [
+				E('th', {}, [ _('Component') ]),
+				E('th', {}, [ _('Verdict') ]),
+				E('th', {}, [ _('Details') ])
+			])), tbody
+		]));
+		profResult.appendChild(wrap);
+		profResult.appendChild(E('p', { 'class': 'hpui-hint' },
+			[ _('Battery from %s · probes: %s (the base battery stays within the Keenetic probe budget; the differential of a failing component adds up to two more).')
+				.format(new Date(Number(result.ts) * 1000).toLocaleString(), String(result.probes_used || 0)) ]));
+	}
+
+	function pollProfiles() {
+		return L.resolveDefault(callProfileStatus(), {}).then(function(d) {
+			renderProfiles(d.status, d.result);
+		});
+	}
+	poll.add(pollProfiles, 4);
+	pollProfiles();
+
+	return {
+		el: sectionCard(_('Service profiles'), 'diag-profiles', [
+			E('p', { 'class': 'hpui-hint' },
+				[ _('Checks the SERVICE, not the front page: YouTube (web/API/CDN/real video stream/QUIC), Discord (web/API/gateway WebSocket/CDN/Voice UDP/STUN/stability), Telegram (web/MTProto datacenters), games and launchers. The video level is judged bitrate-relative — from 360p to 4K — not by a fixed speed bar. The QUIC component is passive observation (the Discovery engine); active HTTP/3 probing stays off. Not-probed is never reported as passed.') ]),
+			E('div', { 'class': 'diag-row' }, [ sel, runBtn ]),
+			profBanner,
+			profResult
+		]),
+		run: function() { return pollProfiles(); }
+	};
+}
+
+/* ── Ф6.2 Discovery Engine: пассивный снимок обнаружения — conntrack
+ * (TCP+UDP, оригинальный tuple, IPv4/IPv6 явно), Clash-соединения, SNI,
+ * QUIC/STUN классификация, словарь IP↔DNS. Слепые зоны названы честно. ── */
+
+function buildDiscoverySection() {
+	const discResult = E('div', {});
+	const discBtn = E('button', {
+		'class': 'btn cbi-button cbi-button-action', type: 'button'
+	}, [ _('Take snapshot') ]);
+	discBtn.addEventListener('click', function() {
+		discBtn.disabled = true;
+		discResult.innerHTML = '';
+		discResult.appendChild(E('p', { 'class': 'hpui-hint' }, [ _('Taking a passive snapshot…') ]));
+		callDiscovery().then(function(r) {
+			renderDiscovery(r && r.snapshot);
+		}).catch(function() {
+			discResult.innerHTML = '';
+			discResult.appendChild(E('p', { 'class': 'diag-fail' },
+				[ _('Snapshot failed — the Discovery engine is unavailable.') ]));
+		}).finally(function() { discBtn.disabled = false; });
+	});
+
+	function renderDiscovery(snap) {
+		discResult.innerHTML = '';
+		if (!snap || !snap.counts) {
+			discResult.appendChild(E('p', { 'class': 'hpui-hint' },
+				[ _('No snapshot yet — press "Take snapshot".') ]));
+			return;
+		}
+		const c = snap.counts;
+		discResult.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:0 0 .4em' },
+			[ _('Flows: %s (TCP %s · UDP %s · QUIC %s · STUN %s · other UDP %s) · IPv4 %s · IPv6 %s · LAN/self %s')
+				.format(String(c.flows || 0), String(c.tcp || 0), String(c.udp || 0),
+					String(c.udp_quic || 0), String(c.udp_stun || 0), String(c.udp_other || 0),
+					String(c.v4 || 0), String(c.v6 || 0), String(c.local || 0)) ]));
+		if (snap.clash)
+			discResult.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:0 0 .4em' },
+				[ _('Clash connections: %s (UDP %s) · SNI hosts (tail): %s · IP↔DNS pairs: %s')
+					.format(String(snap.clash.conns || 0), String(snap.clash.udp || 0),
+						String((snap.sni || []).length), String(((snap.maps || {}).clash_pairs || 0) + ((snap.maps || {}).state_pairs || 0))) ]));
+		const top = snap.top || [];
+		if (top.length) {
+			const tbody = E('tbody', {});
+			for (let i in top) {
+				const f = top[i];
+				tbody.appendChild(E('tr', {}, [
+					E('td', { style: 'font-family:monospace' }, [ String(f.ip) ]),
+					E('td', {}, [ f.host ? String(f.host) : E('span', { style: 'opacity:.5' }, [ _('—') ]) ]),
+					E('td', {}, [ (f.v6 ? 'IPv6 ' : 'IPv4 ') + String(f.proto) +
+						(f.udp_kind && f.udp_kind !== 'other' ? (' · ' + f.udp_kind) : '') ]),
+					E('td', {}, [ String(f.dport || '') ]),
+					E('td', {}, [ String(f.hits || 0) ])
+				]));
+			}
+			const wrap = E('div', { 'class': 'hpui-wrap' });
+			wrap.appendChild(E('table', { 'class': 'hpui-table' }, [
+				E('thead', {}, E('tr', {}, [
+					E('th', {}, [ _('Destination') ]),
+					E('th', {}, [ _('Host (IP↔DNS)') ]),
+					E('th', {}, [ _('Transport') ]),
+					E('th', {}, [ _('Port') ]),
+					E('th', {}, [ _('Flows') ])
+				])), tbody
+			]));
+			discResult.appendChild(wrap);
+		} else {
+			discResult.appendChild(E('p', { 'class': 'hpui-hint' },
+				[ _('No public destinations in this snapshot — LAN traffic only, or conntrack is unavailable.') ]));
+		}
+		const sni = snap.sni || [];
+		if (sni.length)
+			discResult.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:.4em 0 0' },
+				[ _('Recent SNI: %s').format(sni.join(', ')) ]));
+		const bz = snap.blind_zones || [];
+		if (bz.length) {
+			const ul = E('ul', { 'class': 'wiz-note', style: 'margin:.4em 0 0 1.2em' });
+			for (let b in bz)
+				ul.appendChild(E('li', {}, [ String(bz[b]) ]));
+			discResult.appendChild(ul);
+		}
+		discResult.appendChild(E('p', { 'class': 'hpui-hint' },
+			[ _('Passive snapshot from %s · zero probes spent · budgets: conntrack ≤ %s lines, Clash API %s s, SNI tail %s.')
+				.format(new Date(Number(snap.ts) * 1000).toLocaleString(),
+					String((snap.budgets || {}).conntrack_lines || ''),
+					String((snap.budgets || {}).clash_timeout_s || ''),
+					String((snap.budgets || {}).sni_tail || '')) ]));
+	}
+
+	return {
+		el: sectionCard(_('Discovery'), 'diag-discovery', [
+			E('p', { 'class': 'hpui-hint' },
+				[ _('What the router SEES right now: live flows (conntrack, TCP and UDP — including QUIC and STUN classes, IPv6 explicitly), Clash connections with hostnames, recent TLS SNI names, and the IP↔DNS mapping. This is the shared source the automation engine learns from and the Service profiles use for passive QUIC observation. Blind zones are listed honestly below the snapshot.') ]),
+			E('div', { 'class': 'diag-row' }, [ discBtn ]),
+			discResult
+		]),
+		run: function() { return Promise.resolve(); }
+	};
+}
+
 /* ── DOM helpers ──────────────────────────────────────────────────────── */
 
 function statusBadge(ok, text) {
@@ -1340,6 +1594,8 @@ return view.extend({
 		const conn   = buildConnectivitySection(this, features.core_type || null);
 		const report = buildSupportSection(this);
 		const prov   = buildProviderSection();
+		const profs  = buildProfilesSection();
+		const disc   = buildDiscoverySection();
 
 		dns.run();
 		mdns.run();
@@ -1357,6 +1613,7 @@ return view.extend({
 		const TABS = [
 			[ 'overview', _('Overview') ],
 			[ 'provider', _('Provider') ],
+			[ 'services', _('Services') ],
 			[ 'config',   _('Configuration') ],
 			[ 'dns',      _('DNS') ],
 			[ 'network',  _('Network') ],
@@ -1388,6 +1645,8 @@ return view.extend({
 		panes.overview.appendChild(core.el);
 		panes.overview.appendChild(conn.el);
 		panes.provider.appendChild(prov.el);
+		panes.services.appendChild(profs.el);
+		panes.services.appendChild(disc.el);
 		panes.config.appendChild(config.el);
 		panes.dns.appendChild(dns.el);
 		panes.dns.appendChild(mdns.el);
@@ -1409,6 +1668,7 @@ return view.extend({
 			tabBar,
 			panes.overview,
 			panes.provider,
+			panes.services,
 			panes.config,
 			panes.dns,
 			panes.network,

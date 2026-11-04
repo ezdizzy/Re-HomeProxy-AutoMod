@@ -83,6 +83,11 @@ import {
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
 	find_daemons as pm_find, entry_alive as pm_entry_alive, reg_get as pm_reg_get
 } from '/etc/homeproxy/scripts/pmgr.uc';
+/* Ф6.1 Diagnostic Core: классификация пути живёт в ЕДИНОМ классификаторе —
+ * probe_live ниже приспосабливает форму classify_path к трёхсостоянию
+ * автопилота; сигнатуры блок-страниц больше НЕ копируются сюда (аудит 72:
+ * один классификатор вместо нескольких несовместимых). */
+import { classify_path } from '/etc/homeproxy/scripts/diag_core.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const STATE = RUN_DIR + '/zapret_autopilot.json';
@@ -137,10 +142,9 @@ const STUB_HOSTS = [
 	'warningrt.ru', 'rkn.gov.ru', 'blocklist.rkn.gov.ru', 'eais.rkn.gov.ru',
 	'blocked.tele2.ru', 'blocked.megafon.ru', 'block.domru.ru', 'warning.ttk.ru'
 ];
-const BLOCK_SIGS = [
-	'access denied', 'доступ ограничен', 'доступ запрещен', 'заблокир',
-	'blocked by', 'the site is blocked', 'сайт заблокирован', 'err_blocked'
-];
+/* Подписи блок-страниц больше НЕ копируются сюда: единый источник —
+ * BLOCK_SIGNATURES в diag_core.uc (Ф6.1), probe_live классифицирует через
+ * classify_path (аудит 72). */
 
 /* ── module state (persisted through wstat) ─────────────────────────── */
 let S = {
@@ -393,8 +397,47 @@ function probe_live(url) {
 	const code = (length(parts) && match(parts[0], /^[0-9]{3}$/)) ? parts[0] : '000';
 	const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
 	const eff = (length(parts) > 2) ? ('' + parts[2]) : '';
-	let dead = (code === '000');
-	let note = dead ? 'нет HTTP-ответа' : '';
+	/* Ф6.3 (63/86): классификация — через ЕДИНЫЙ Diagnostic Core. Гео-отказ
+	 * в HTTP 200 (маркеры в теле) и 451 теперь СТАВЯТ dead — раньше такой
+	 * ответ читался успехом и автопилот бесконечно держал стратегию, которая
+	 * ресурс не доставляет. Голый 403/406 БЕЗ маркеров — НЕ dead (55: origin
+	 * может отказать легально; доказательства DPI/гео нет) — честная
+	 * деградация с пояснением, не «неудачная проверка». WAF-challenge/429/5xx
+	 * — путь открыт, приложение не обслуживает (деградация). */
+	const cp = classify_path({ code: code, tsec: tsec, rc: rc, body: readfile(bf) || '' },
+		false, null);
+	let dead = false;
+	let refused = false;
+	let note = '';
+	if (cp.app_state === 'blockpage') {
+		dead = true;
+		note = 'страница-заглушка (стиль блокировки)';
+	} else if (cp.app_state === 'geo_refused') {
+		dead = true;
+		refused = true;
+		note = (cp.geo_via === '451')
+			? 'юридический гео-отказ источника (451) — регион выхода не обслуживается'
+			: 'гео-отказ источника (регион выхода не обслуживается)';
+	} else if (cp.app_state === 'waf_challenge') {
+		note = 'challenge-страница WAF — путь открыт, клиентская форма запроса не проходит';
+	} else if (cp.app_state === 'waf_rate_limit') {
+		note = 'источник ограничивает частоту (429) — путь открыт';
+	} else if (cp.app_state === 'waf_origin_denied') {
+		note = 'отказ ' + (code || '?') + ' без маркеров гео/WAF — политика источника к выходу, не доказательство блокировки';
+	} else if (cp.app_state === 'server_error') {
+		note = 'источник отвечает ' + (code || '?') + ' — путь открыт, сервис не обслуживает';
+	} else if (cp.app_state === 'ok') {
+		const n = int(code) || 0;
+		if (n >= 400) {
+			/* 404/421: путь открыт, но ресурс не отдаёт контент — для
+			 * автопилота это деградация, не успех. */
+			note = 'путь открыт, ресурс отвечает ' + code + ' без контента';
+		}
+	} else {
+		/* cls fail: ответа нет — транспортная причина в kind. */
+		dead = true;
+		note = 'нет HTTP-ответа (' + (cp.kind || 'транспорт') + ')';
+	}
 	if (!dead && length(eff)) {
 		const oh = url_host(url), eh = url_host(eff);
 		if (length(oh) && length(eh) && oh !== eh && is_stub_host(eh)) {
@@ -402,22 +445,11 @@ function probe_live(url) {
 			note = 'редирект на заглушку оператора (' + eh + ')';
 		}
 	}
-	if (!dead && code === '200') {
-		const body = readfile(bf) || '';
-		if (length(body) > 0 && length(body) < 65536) {
-			const lb = lc(body);
-			for (let sig in BLOCK_SIGS) {
-				if (index(lb, sig) >= 0) {
-					dead = true;
-					note = 'подпись блок-страницы («' + sig + '»)';
-					break;
-				}
-			}
-		}
-	}
-	const ok = (!dead && int(code) >= 200 && int(code) < 400);
+	/* ok = ресурс ДОСТАВЛЕН (2xx/3xx без маркеров отказа) — не «путь открыт». */
+	const ok = (!dead && cp.app_state === 'ok' && (int(code) || 0) >= 200 && (int(code) || 0) < 400);
 	const slow = (ok && (((tsec != null) && (tsec + 0) >= SLOW_T) || rc != 0));
-	return { code: code, tsec: tsec, ok: ok, dead: dead, slow: slow, note: note, ts: time() };
+	return { code: code, tsec: tsec, ok: ok, dead: dead, refused: refused,
+		waf: cp.waf, slow: slow, note: note, ts: time() };
 }
 
 /* ч.116: the SUSTAINED-FLOW throughput probe (the LIVE path, the shared
@@ -797,13 +829,16 @@ function compose_rollback() {
 /* Probes BEFORE an apply — the honest was_ok baseline for the regression
  * check (a resource that already fails cannot "regress"). Only MANAGED
  * resources are probed: the others are served by their own paths (e.g.
- * tg-ws), the auto-pilot does not touch them. */
+ * tg-ws), the auto-pilot does not touch them.
+ * Ф6.3 (аудит 64): baseline — ПОЛНАЯ ресурсная матрица (та же, что в
+ * resume() после применения): потеря видео/медиа-компонента теперь тоже
+ * регрессия, и откат сравнивает равные величины. */
 function preapply_probe(cfg) {
 	const was = {};
 	for (let res in cfg.resources) {
 		if (res !== 'general' && !S.resources[res].mgmt)
 			continue;
-		was[res] = probe_live(RESOURCES[res].url).ok;
+		was[res] = resource_matrix(res, RESOURCES[res]).ok;
 	}
 	return was;
 }
@@ -851,7 +886,9 @@ function resume() {
 	const winners = p.winners || {};
 	const regressed = [];
 	for (let res in (p.was_ok || {})) {
-		const pr = probe_live(RESOURCES[res].url);
+		/* Ф6.3 (аудит 64): та же матрица, что в baseline — видео/медиа
+		 * входят в regression-проверку. */
+		const pr = resource_matrix(res, RESOURCES[res]);
 		if (res === 'general')
 			S.general.probe = pr;
 		else
@@ -1135,6 +1172,70 @@ function repair(cfg, res) {
 
 /* ── per-tick probe + repair gate ───────────────────────────────────── */
 
+/* Ресурсная матрица (аудит 64): страница + deep-хосты (+ видео-поток для
+ * youtube) — ОДНА И ТА ЖЕ матрица используется health(), preapply_probe()
+ * (до применения) и resume() (после): откат срабатывает при потере ЛЮБОГО
+ * критичного компонента (видео/медиа-хосты), а не только главной страницы,
+ * и «regression» сравнивает равные величины. */
+function resource_matrix(res, meta) {
+	const pr = probe_live(meta.url);
+	let ok_all = pr.ok;
+	let dead_hit = pr.dead;
+	let slow_hit = pr.slow;
+	let fail_note = pr.note || '';
+	if (meta.deep != null && length(meta.deep)) {
+		for (let du in meta.deep) {
+			const dpr = probe_live(du);
+			/* the video-stream edge legitimately answers 404 on its root —
+			 * ANY HTTP answer there means the DPI let the host through
+			 * (caught live ч.116: the honest 404 failed the check and
+			 * churned repairs; decide by the code alone). */
+			const d_ok = (index(du, 'redirector.googlevideo.com') >= 0)
+				? !dpr.dead
+				: dpr.ok;
+			if (ok_all && !d_ok) {
+				ok_all = false;
+				if (dpr.dead)
+					dead_hit = true;
+				else
+					slow_hit = true;
+				fail_note = 'медиа-хост не отвечает (' + dpr.code +
+					(dpr.note ? (' — ' + dpr.note) : '') + '): ' + du;
+			}
+		}
+	}
+	if (res === 'youtube') {
+		const fp = probe_flow();
+		if (fp == null)
+			log_once('ytflow', 'проба sustained-потока не выполнялась (нет файла с id)');
+		else {
+			once_clear('ytflow');
+			pr.speed = fp.speed;
+			pr.start_ms = fp.start_ms;
+			const fdead = (int(fp.code || 0) === 0 || int(fp.bytes || 0) === 0 ||
+				int(fp.fetched || 0) === 0);
+			if (ok_all && fdead) {
+				ok_all = false;
+				dead_hit = true;
+				fail_note = 'видео-поток мёртв (код ' + (fp.code || '0') + ', ' +
+					int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') + ' с)';
+			} else if (ok_all && !fp.ok) {
+				ok_all = false;
+				slow_hit = true;
+				fail_note = 'видео-поток медленный (' + int((fp.speed || 0) / 1024) + ' КБ/с, ' +
+					int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') +
+					' с) — деградация, не смерть';
+			}
+		}
+	}
+	pr.ok = ok_all;
+	pr.dead = dead_hit;
+	pr.slow = (!dead_hit && slow_hit);
+	if (length(fail_note))
+		pr.note = fail_note;
+	return pr;
+}
+
 function health(cfg) {
 	if (access(RELOAD_MARK))
 		return;
@@ -1158,7 +1259,8 @@ function health(cfg) {
 			continue;
 		}
 		const meta = RESOURCES[res];
-		const pr = probe_live(meta.url);
+		/* Ф6.3 (аудит 64): та же ресурсная матрица, что до/после применения. */
+		const pr = resource_matrix(res, meta);
 		/* ч.116: the whole-resource check. For YouTube the page alone
 		 * passes while the media hosts fail or the video stream is
 		 * throttled — the honest «ресурс работает» verdict needs them all;
@@ -1176,56 +1278,6 @@ function health(cfg) {
 		let dead_hit = pr.dead;
 		let slow_hit = pr.slow;
 		let fail_note = pr.note || '';
-		if (meta.deep != null && length(meta.deep)) {
-			for (let du in meta.deep) {
-				const dpr = probe_live(du);
-				/* the video-stream edge legitimately answers 404 on its root —
-				 * ANY HTTP answer there means the DPI let the host through
-				 * (caught live ч.116: the honest 404 failed the check and
-				 * churned repairs; decide by the code alone). */
-				const d_ok = (index(du, 'redirector.googlevideo.com') >= 0)
-					? !dpr.dead
-					: dpr.ok;
-				if (ok_all && !d_ok) {
-					ok_all = false;
-					if (dpr.dead)
-						dead_hit = true;
-					else
-						slow_hit = true;
-					fail_note = 'медиа-хост не отвечает (' + dpr.code +
-						(dpr.note ? (' — ' + dpr.note) : '') + '): ' + du;
-				}
-			}
-		}
-		if (res === 'youtube') {
-			const fp = probe_flow();
-			if (fp == null)
-				log_once('ytflow', 'проба sustained-потока не выполнялась (нет файла с id)');
-			else {
-				once_clear('ytflow');
-				pr.speed = fp.speed;
-				pr.start_ms = fp.start_ms;
-				const fdead = (int(fp.code || 0) === 0 || int(fp.bytes || 0) === 0 ||
-					int(fp.fetched || 0) === 0);
-				if (ok_all && fdead) {
-					ok_all = false;
-					dead_hit = true;
-					fail_note = 'видео-поток мёртв (код ' + (fp.code || '0') + ', ' +
-						int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') + ' с)';
-				} else if (ok_all && !fp.ok) {
-					ok_all = false;
-					slow_hit = true;
-					fail_note = 'видео-поток медленный (' + int((fp.speed || 0) / 1024) + ' КБ/с, ' +
-						int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') +
-						' с) — деградация, не смерть';
-				}
-			}
-		}
-		pr.ok = ok_all;
-		pr.dead = dead_hit;
-		pr.slow = (!dead_hit && slow_hit);
-		if (length(fail_note))
-			pr.note = fail_note;
 		const st = (res === 'general') ? S.general : S.resources[res];
 		st.probe = pr;
 		if (pr.ok) {
