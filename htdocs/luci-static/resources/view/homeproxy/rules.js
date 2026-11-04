@@ -333,8 +333,23 @@ return view.extend({
 			{ source: 'xbox', title: _('Xbox') }
 		];
 
-		const state = { presetsSig: null, pendingCheck: null };
+		/* D27: preset rows are NOT always visible. A row shows when it has a
+		 * rule (main or extra), when it is Re-filter and any VPN node exists,
+		 * or when it was revealed via the catalog; the user may hide any row
+		 * (per-browser localStorage) — hiding never touches the rule itself. */
+		const HIDE_KEY = 'hp_rules_hidden_presets';
+		const state = { presetsSig: null, pendingCheck: null, lastList: null, visRev: 0, revealed: {} };
 		let lastEnv = null;
+		function hiddenPresets() {
+			try {
+				const v = JSON.parse(window.localStorage.getItem(HIDE_KEY) || '[]');
+				return Array.isArray(v) ? v.filter(function(x) { return typeof x === 'string'; }) : [];
+			} catch (e) { return []; }
+		}
+		function setHiddenPresets(arr) {
+			try { window.localStorage.setItem(HIDE_KEY, JSON.stringify(arr)); } catch (e) {}
+			state.visRev++;
+		}
 
 		/* ── Base zone: presets ───────────────────────────────────────── */
 		const envBanners = E('div', {});
@@ -788,8 +803,9 @@ return view.extend({
 			 * with (a form-ish row must not). */
 			const env = (list && list.env) || {};
 			lastEnv = env;
+			state.lastList = list;
 			const sig = JSON.stringify([ env, list.rules || {}, list.rule_counts || {},
-				((list.nodes || []).map(function(n) { return n.id; })) ]);
+				((list.nodes || []).map(function(n) { return n.id; })), state.visRev ]);
 			if (sig === state.presetsSig)
 				return;
 			state.presetsSig = sig;
@@ -804,6 +820,27 @@ return view.extend({
 			if (!env.proxy_in && !env.direct_in)
 				envBanners.appendChild(E('div', { 'class': 'hpui-banner' },
 					[ _('The pinned diagnostic inbounds are not listening (the core is off or in "Direct" mode) — path checks are limited.') ]));
+
+			/* D27: which rows show on the page — see the comment at `state`.
+			 * The YouTube/Discord "installed and configured strategy" gates
+			 * are a separate plan item; for now a no-rule row shows only via
+			 * the catalog reveal (Re-filter — via the VPN-node check). */
+			const hidden = hiddenPresets();
+			const hasVpnNode = (list.nodes || []).some(function(n) { return n.type !== 'direct'; });
+			const hasRuleOf = function(src) {
+				const r = (list.rules || {})[src];
+				const ex = (list.rule_extras || {})[src] || [];
+				return !!(r || ex.length);
+			};
+			const rowVisible = function(src) {
+				if (hidden.indexOf(src) >= 0)
+					return false;
+				if (hasRuleOf(src))
+					return true;
+				if (src === 'refilter')
+					return hasVpnNode;
+				return !!state.revealed[src];
+			};
 
 			presetRows.innerHTML = '';
 			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
@@ -957,6 +994,39 @@ return view.extend({
 					});
 					btns.appendChild(checkBtn);
 				}
+				/* D27: a rule-bearing row can grow a SECOND exit of the same
+				 * service (rpcd wizard_preset_add is unchanged) — the form
+				 * opens in the row; the catalog no longer creates rules. */
+				let exZone = null;
+				if (rule) {
+					exZone = E('div', {});
+					const exBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+						[ _('Add a second exit') ]);
+					exBtn.addEventListener('click', function() {
+						if (exZone.childNodes.length)
+							exZone.innerHTML = '';
+						else
+							exZone.appendChild(buildExtraForm(preset));
+					});
+					btns.appendChild(exBtn);
+				}
+
+				/* D27: hide the ROW from the page (per-browser preference).
+				 * The rule itself is NOT touched — the catalog brings the row
+				 * back, and hiding is the way to keep the page clean when a
+				 * list is not used. */
+				const hideBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+					[ _('Hide') ]);
+				hideBtn.addEventListener('click', function() {
+					const arr = hiddenPresets();
+					if (arr.indexOf(preset.source) < 0)
+						arr.push(preset.source);
+					setHiddenPresets(arr);
+					dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+						[ _('The row is hidden — the rule keeps working; the catalog brings the row back.') ]));
+					renderPresets(state.lastList);
+				});
+				btns.appendChild(hideBtn);
 				row.appendChild(btns);
 				wrap.appendChild(row);
 
@@ -1014,7 +1084,83 @@ return view.extend({
 					wrap.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
 						[ _('tg-ws (transparent) lets Telegram work WITHOUT a VPN — it is not a direct connection: messaging rides a local WS bridge (no proxy setup on devices) and falls back to the node automatically if the bridge dies; calls (UDP) stay on the VPN. Telegram will show the bridge relay\'s country instead of your home IP — expected for such a path. The rule routes both Telegram domains and MTProto DC IPs.') ]));
 
+				if (exZone)
+					wrap.appendChild(exZone);
+
 				return wrap;
+			}
+
+			/* D27: the form for a SECOND exit of the same service — the old
+			 * add-master moved into the row; the RPC and the validation are
+			 * unchanged. */
+			function buildExtraForm(preset) {
+				const poolBox = E('div', { 'class': 'wiz-pool', style: 'display:none; flex-wrap:wrap' });
+				const mChecks = [];
+				for (let n in (list.nodes || [])) {
+					if (list.nodes[n].type === 'direct')
+						continue;
+					const cb = E('input', { type: 'checkbox', value: list.nodes[n].id });
+					mChecks.push(cb);
+					poolBox.appendChild(E('label', {}, [ cb, ' ' + list.nodes[n].label ]));
+				}
+				const mNode = E('select', { 'class': 'cbi-input-select', style: 'min-width:190px' });
+				if (!env.main_is_direct)
+					mNode.appendChild(E('option', { value: 'main-out' }, [ _('Same as main node') ]));
+				mNode.appendChild(E('option', { value: 'urltest' }, [ _('URLTest pool') ]));
+				for (let n in (list.nodes || []))
+					if (list.nodes[n].type !== 'direct')
+						mNode.appendChild(E('option', { value: list.nodes[n].id }, [ list.nodes[n].label ]));
+				if (env.byedpi_enabled)
+					mNode.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
+				if (env.zapret_enabled)
+					mNode.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
+				mNode.addEventListener('change', function() {
+					poolBox.style.display = (mNode.value === 'urltest') ? 'flex' : 'none';
+				});
+				const mAdd = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+					[ _('Add') ]);
+				mAdd.addEventListener('click', function() {
+					const ids = [];
+					for (let c in mChecks)
+						if (mChecks[c].checked)
+							ids.push(mChecks[c].value);
+					if (mNode.value === 'urltest' && !ids.length) {
+						ui.addNotification(null, E('p', {}, _('Pick at least one node for the URLTest pool.')), 'error');
+						return;
+					}
+					mAdd.disabled = true;
+					dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Adding…') ]));
+					callPresetAdd(preset.source, String(mNode.value || ''), JSON.stringify(mNode.value === 'urltest' ? ids : []))
+						.then(function(r) {
+							if (!r || r.result === false) {
+								const ERRS = {
+									main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
+									byedpi_disabled: _('ByeDPI is not enabled — enable it on the Connection page first.'),
+									zapret_disabled: _('Zapret is not enabled — enable it on the Connection page first.'),
+									urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
+									'unknown node': _('Unknown node — refresh the page.'),
+									'unknown source': _('Unknown service.'),
+									'duplicate rule': _('This exact rule already exists.')
+								};
+								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+									[ ERRS[(r && r.error)] || ((r && r.error) || _('RPC error')) ]));
+								return;
+							}
+							dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+								[ _('The rule is added — it now shows in its service row. The apply is running…') ]));
+							state.pendingCheck = null;
+							pollListOp((r.apply && r.apply.op_id) ? { op_id: r.apply.op_id } : null,
+								_('The rule is applied.'), _('The rule apply failed'));
+							refresh();
+						}).finally(function() { mAdd.disabled = false; });
+				});
+				const box = E('div', { 'class': 'wiz-note', style: 'margin:2px 0 0 12px' });
+				box.appendChild(E('div', { 'class': 'wiz-row' }, [
+					E('span', { 'class': 'wiz-title', style: 'flex:none; width:110px' }, [ _('Node') ]),
+					mNode ]));
+				box.appendChild(poolBox);
+				box.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ mAdd ]));
+				return box;
 			}
 
 			const GROUPS = [
@@ -1025,108 +1171,84 @@ return view.extend({
 				[ _('CDN and hosting'), CDN_PRESETS ],
 				[ _('Other'), MISC_PRESETS ]
 			];
+
+			/* D27: the "add a rule" master becomes the CATALOG of lists —
+			 * picking a list reveals its row on the page. Rules are still
+			 * created and edited IN the row; a second exit of the same
+			 * service is added by the button inside its row (rpcd
+			 * wizard_preset_add is unchanged). */
+			const mBtn = E('button', { 'class': 'btn cbi-button', type: 'button', style: 'margin:2px 0' },
+				[ _('Add a rule') ]);
+			const mForm = E('div', { 'class': 'wiz-svc', style: 'display:none; margin:8px 0' });
+			const mSrc = E('select', { 'class': 'cbi-input-select', style: 'min-width:260px' });
+			const mShow = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+				[ _('Show') ]);
+			const fillCatalog = function() {
+				dom.content(mSrc, [ E('option', { value: '' }, [ _('Pick a list…') ]) ]);
+				let any = false;
+				for (let g2 in GROUPS) {
+					const opts = [];
+					for (let p2 in GROUPS[g2][1]) {
+						const it = GROUPS[g2][1][p2];
+						if (rowVisible(it.source))
+							continue;
+						any = true;
+						opts.push(E('option', { value: it.source },
+							[ it.title + (hasRuleOf(it.source)
+								? (' — ' + _('the rule exists, the row is hidden'))
+								: (' — ' + _('no rule'))) ]));
+					}
+					if (opts.length)
+						mSrc.appendChild(E('optgroup', { label: GROUPS[g2][0] }, opts));
+				}
+				if (!any)
+					mSrc.appendChild(E('option', { value: '' }, [ _('All lists are already on the page.') ]));
+				mShow.disabled = !any;
+			};
+			mShow.addEventListener('click', function() {
+				const src = String(mSrc.value || '');
+				if (!src)
+					return;
+				const arr = hiddenPresets();
+				const i = arr.indexOf(src);
+				if (i >= 0) {
+					arr.splice(i, 1);
+					setHiddenPresets(arr);
+				} else {
+					state.revealed[src] = true;
+					state.visRev++;
+				}
+				mForm.style.display = 'none';
+				dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+					[ _('The row is on the page.') ]));
+				renderPresets(state.lastList);
+			});
+			mBtn.addEventListener('click', function() {
+				if (mForm.style.display === 'none') {
+					fillCatalog();
+					mForm.style.display = 'block';
+				} else
+					mForm.style.display = 'none';
+			});
+			mForm.appendChild(E('div', { 'class': 'wiz-row' }, [ mSrc, mShow ]));
+			presetRows.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0 0 4px' },
+				[ _('Pick a list in the catalog — its row appears on the page. Hiding a row does not delete its rule; a row without a rule disappears after a reload.') ]));
+			presetRows.appendChild(mBtn);
+			presetRows.appendChild(mForm);
+
 			for (let g in GROUPS) {
+				const items = [];
+				for (let p in GROUPS[g][1])
+					if (rowVisible(GROUPS[g][1][p].source))
+						items.push(GROUPS[g][1][p]);
+				if (!items.length)
+					continue;
 				presetRows.appendChild(E('div', { 'class': 'wiz-group' }, [ GROUPS[g][0] ]));
 				if (GROUPS[g][2])
 					presetRows.appendChild(E('div', { 'class': 'wiz-note' }, [ GROUPS[g][2] ]));
-				const items = GROUPS[g][1];
-				for (let p in items)
-					presetRows.appendChild(buildServiceRow(items[p]));
+				for (let p2 in items)
+					presetRows.appendChild(buildServiceRow(items[p2]));
 			}
-
-			/* Ф4.2: the "add a rule" master — the preset rows are the ONE place
-			 * rules live; the master ADDS a new (extra) rule and the row shows
-			 * it. No duplicated editor grid below. */
-			const mBtn = E('button', { 'class': 'btn cbi-button', type: 'button', style: 'margin-top:10px' },
-				[ _('Add a rule') ]);
-			const mForm = E('div', { 'class': 'wiz-svc', style: 'display:none; margin:8px 0' });
-			const mSrc = E('select', { 'class': 'cbi-input-select', style: 'min-width:220px' });
-			const mSources = [];
-			for (let g2 in GROUPS)
-				for (let p2 in GROUPS[g2][1])
-					push_master_src(mSources, GROUPS[g2][1][p2].source, GROUPS[g2][1][p2].title);
-			mSources.sort(function(a, b) { return (a.title < b.title) ? -1 : (a.title > b.title) ? 1 : 0; });
-			for (let s2 in mSources)
-				mSrc.appendChild(E('option', { value: mSources[s2].source }, [ mSources[s2].title ]));
-			const mPool = E('div', { 'class': 'wiz-pool', style: 'display:none; flex-wrap:wrap' });
-			const mChecks = [];
-			for (let n in (list.nodes || [])) {
-				if (list.nodes[n].type === 'direct')
-					continue;
-				const cb = E('input', { type: 'checkbox', value: list.nodes[n].id });
-				mChecks.push(cb);
-				mPool.appendChild(E('label', {}, [ cb, ' ' + list.nodes[n].label ]));
-			}
-			const mNode = E('select', { 'class': 'cbi-input-select', style: 'min-width:190px' });
-			if (!env.main_is_direct)
-				mNode.appendChild(E('option', { value: 'main-out' }, [ _('Same as main node') ]));
-			mNode.appendChild(E('option', { value: 'urltest' }, [ _('URLTest pool') ]));
-			for (let n in (list.nodes || []))
-				if (list.nodes[n].type !== 'direct')
-					mNode.appendChild(E('option', { value: list.nodes[n].id }, [ list.nodes[n].label ]));
-			if (env.byedpi_enabled)
-				mNode.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
-			if (env.zapret_enabled)
-				mNode.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
-			mNode.addEventListener('change', function() {
-				mPool.style.display = (mNode.value === 'urltest') ? 'flex' : 'none';
-			});
-			const mAdd = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
-				[ _('Add') ]);
-			mAdd.addEventListener('click', function() {
-				const ids = [];
-				for (let c in mChecks)
-					if (mChecks[c].checked)
-						ids.push(mChecks[c].value);
-				if (mNode.value === 'urltest' && !ids.length) {
-					ui.addNotification(null, E('p', {}, _('Pick at least one node for the URLTest pool.')), 'error');
-					return;
-				}
-				mAdd.disabled = true;
-				dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Adding…') ]));
-				callPresetAdd(mSrc.value, String(mNode.value || ''), JSON.stringify(mNode.value === 'urltest' ? ids : []))
-					.then(function(r) {
-						if (!r || r.result === false) {
-							const ERRS = {
-								main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
-								byedpi_disabled: _('ByeDPI is not enabled — enable it on the Connection page first.'),
-								zapret_disabled: _('Zapret is not enabled — enable it on the Connection page first.'),
-								urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
-								'unknown node': _('Unknown node — refresh the page.'),
-								'unknown source': _('Unknown service.'),
-								'duplicate rule': _('This exact rule already exists.')
-							};
-							dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-								[ ERRS[(r && r.error)] || ((r && r.error) || _('RPC error')) ]));
-							return;
-						}
-						dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-							[ _('The rule is added — it now shows in its service row. The apply is running…') ]));
-						state.pendingCheck = null;
-						pollListOp((r.apply && r.apply.op_id) ? { op_id: r.apply.op_id } : null,
-							_('The rule is applied.'), _('The rule apply failed'));
-						refresh();
-					}).finally(function() { mAdd.disabled = false; });
-			});
-			mForm.appendChild(E('div', { 'class': 'wiz-row' }, [
-				E('span', { 'class': 'wiz-title', style: 'flex:none; width:110px' }, [ _('Source') ]), mSrc,
-				E('span', { 'class': 'wiz-title', style: 'flex:none; width:110px' }, [ _('Node') ]), mNode ]));
-			mForm.appendChild(mPool);
-			mForm.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ mAdd ]));
-			mBtn.addEventListener('click', function() {
-				mForm.style.display = (mForm.style.display === 'none') ? 'block' : 'none';
-			});
-			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
-				[ _('Rules live ONLY in the rows above — this master just adds a new one (e.g. a second exit for the same service); the row shows it right away.') ]));
-			presetRows.appendChild(mBtn);
-			presetRows.appendChild(mForm);
-		}
-
-		function push_master_src(arr, src, title) {
-			for (let i = 0; i < arr.length; i++)
-				if (arr[i].source === src)
-					return;
-			arr.push({ source: src, title: title });
 		}
 
 		/* ── Live checks (results in ONE place below the presets) ──────── */

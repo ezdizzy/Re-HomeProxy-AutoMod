@@ -12670,3 +12670,30 @@ msgstr "Свои списки: именованные, с направление
 
 msgid "My lists"
 msgstr "Мои списки"
+
+msgid "Add a second exit"
+msgstr "Добавить второй выход"
+
+msgid "Hide"
+msgstr "Скрыть"
+
+msgid "The row is hidden — the rule keeps working; the catalog brings the row back."
+msgstr "Строка скрыта — правило продолжает работать; каталог вернёт её на страницу."
+
+msgid "Show"
+msgstr "Показать"
+
+msgid "Pick a list…"
+msgstr "Выберите список…"
+
+msgid "the rule exists, the row is hidden"
+msgstr "правило есть, строка скрыта"
+
+msgid "All lists are already on the page."
+msgstr "Все списки уже на странице."
+
+msgid "The row is on the page."
+msgstr "Строка добавлена на страницу."
+
+msgid "Pick a list in the catalog — its row appears on the page. Hiding a row does not delete its rule; a row without a rule disappears after a reload."
+msgstr "Выберите список в каталоге — его строка появится на странице. Скрытие строки не удаляет правило; строка без правила пропадёт после перезагрузки страницы."

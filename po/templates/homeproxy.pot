@@ -7114,3 +7114,30 @@ msgstr ""
 
 msgid "My lists"
 msgstr ""
+
+msgid "Add a second exit"
+msgstr ""
+
+msgid "Hide"
+msgstr ""
+
+msgid "The row is hidden — the rule keeps working; the catalog brings the row back."
+msgstr ""
+
+msgid "Show"
+msgstr ""
+
+msgid "Pick a list…"
+msgstr ""
+
+msgid "the rule exists, the row is hidden"
+msgstr ""
+
+msgid "All lists are already on the page."
+msgstr ""
+
+msgid "The row is on the page."
+msgstr ""
+
+msgid "Pick a list in the catalog — its row appears on the page. Hiding a row does not delete its rule; a row without a rule disappears after a reload."
+msgstr ""
