@@ -1754,9 +1754,65 @@ return view.extend({
 			else
 				box.appendChild(E('div', { 'class': 'wiz-note', style: 'font-weight:600' },
 					[ _('No strategy passes the distinguishing hosts — try the full fuzz, the strategy generator, or check your ISP blocking.') ]));
+			/* Ф6.4 (аудит 84): baseline-СЕРИЯ — дрейф между первым и
+			 * контрольным проходом показывается честно. */
+			if (res.baseline_series && res.baseline_series.drift && res.baseline_series.drift.length)
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' },
+					[ _('Baseline drift detected on: %s — the free-pass credit requires BOTH baseline passes (conservative).').format(
+						res.baseline_series.drift.map(function(d) { return d.tag; }).join(', ')) ]));
+			/* Ф6.4 (аудит 58/83): расхождение наборов DNS — честно, без
+			 * «подмены» без дифференциальной пробы. */
+			if (res.dns_sets) {
+				const dnsParts = Object.keys(res.dns_sets).map(function(t) {
+					const d = res.dns_sets[t];
+					return t + ': ' + (d.verdict || '?');
+				}).join(' · ');
+				const dnsBad = Object.keys(res.dns_sets).filter(function(t) {
+					return res.dns_sets[t] && res.dns_sets[t].verdict === 'divergence';
+				});
+				if (dnsBad.length)
+					box.appendChild(E('div', { 'class': 'wiz-note', title: _('Sets compared: the device resolver path vs independent resolvers (direct UDP 8.8.8.8 / 1.1.1.1 and independent DoH). A divergence is geo-balancing/anycast/CDN policy — NOT a proof of poisoning without the differential probe.') },
+						[ badge('hpui-b-amber', _('DNS sets diverge')), ' ' + dnsParts ]));
+			}
+			/* Ф6.4 (аудит 67/92): вердикты ресурсов — NO VIABLE STRATEGY
+			 * называет, ЧТО не работает; best_available — только вручную. */
+			if (res.verdicts) {
+				const RESL = { youtube: _('YouTube'), discord: _('Discord'), telegram: _('Telegram'), general: _('General') };
+				Object.keys(res.verdicts).forEach(function(rn) {
+					const v = res.verdicts[rn];
+					if (!v || !v.verdict)
+						return;
+					if (v.verdict === 'no_candidate') {
+						box.appendChild(E('div', { 'class': 'wiz-note', style: 'color:var(--hp-danger,#c00)' }, [
+							badge('hpui-b-red', _('NO VIABLE STRATEGY')),
+							' ' + (RESL[rn] || rn) + ': ' +
+							((v.what_failed && v.what_failed.length)
+								? v.what_failed.join(' · ')
+								: _('no strategy passes the mandatory checks'))
+						]));
+					} else if (v.verdict === 'best_available') {
+						box.appendChild(E('div', { 'class': 'wiz-note' }, [
+							badge('hpui-b-amber', _('BEST AVAILABLE (manual only)')),
+							' ' + (RESL[rn] || rn) + ': ' + ((v.chosen && v.chosen.name) || '') + ' — ' +
+							_('the handshake passes but the mandatory component tests are unconfirmed; auto-pick will NOT apply it — pick it manually if it suits you.')
+						]));
+					} else if (v.verdict === 'best_verified' && v.chosen && v.chosen.name) {
+						box.appendChild(E('div', { 'class': 'wiz-note' }, [
+							badge('hpui-b-green', _('BEST VERIFIED')),
+							' ' + (RESL[rn] || rn) + ': ' + v.chosen.name
+						]));
+					}
+					(v.notes || []).forEach(function(nn) {
+						box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' }, [ '· ' + nn ]));
+					});
+				});
+			}
 			/* ч.123: the sweep-level QUIC verdict — measured UDP/443
-			 * passability to the YouTube video edge, once per sweep. */
-			if (res.quic && res.quic.verdict != null) {
+			 * passability to the YouTube video edge, once per sweep. Ф6.4:
+			 * only the three honest verdicts render — a garbage token
+			 * (the live «NaN» fact) reads as unmeasured, no badge. */
+			if (res.quic && res.quic.verdict != null &&
+				[ 'vn', 'icmp', 'silence' ].indexOf('' + res.quic.verdict) >= 0) {
 				const qv = '' + res.quic.verdict;
 				const qtxt = (qv === 'vn')
 					? _('QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — the browser may pick QUIC for some flows; strategies without fake-QUIC leave those attempts unserved.')
@@ -1799,10 +1855,25 @@ return view.extend({
 			res.strategies.slice(0, 15).forEach(function(s, i) {
 				const hostsTip = (s.hosts || []).map(function(h) {
 					return (h.label || h.tag) + ' ' +
-						(h.ok ? '✓ ' + h.votes + '/' + h.rounds + ' · ' + (h.tls_ms || 0) + ' ms'
+						(h.ok ? '✓ ' + h.votes + '/' + h.rounds + ' · median ' + (h.median_ms || 0) + ' ms · jitter ' + (h.jitter_ms || 0) + ' ms'
 						      : '✗ ' + (h.reason || 'fail')) +
-						(h.dist ? '' : ' (' + _('free pass') + ')');
+						(h.dist ? '' : ' (' + _('free pass') + ')') +
+						(h.ip2 ? (h.alt_ok ? ' · IP2 ✓' : ' · IP2 ✗ ' + (h.alt_reason || 'fail')) : '');
 				}).join(' · ');
+				/* Ф6.4 (аудит 92): вердикт стратегии по ресурсам — бейджем у
+				 * имени (проверен/доступен), как назвал Strategy Lab v3. */
+				let vBadge = null;
+				if (res.verdicts) {
+					Object.keys(res.verdicts).forEach(function(rn) {
+						const v = res.verdicts[rn];
+						if (v && v.chosen && v.chosen.args && v.chosen.args === s.args) {
+							if (v.verdict === 'best_verified')
+								vBadge = badge('hpui-b-green', _('verified'));
+							else if (v.verdict === 'best_available' && !vBadge)
+								vBadge = badge('hpui-b-amber', _('available'));
+						}
+					});
+				}
 				/* ч.109 (user request): pick THIS strategy for ONE resource —
 				 * the rule/apply/verify chain of the auto-pick runs for the
 				 * chosen resource with the table's strategy (no re-fuzz). */
@@ -1940,7 +2011,8 @@ return view.extend({
 						[ s.name || s.args, ' ',
 						  quicCapable
 							? badge('hpui-b-green', 'QUIC')
-							: E('span', { 'class': 'hpui-badge', style: 'opacity:.7' }, [ 'TCP' ]) ]),
+							: E('span', { 'class': 'hpui-badge', style: 'opacity:.7' }, [ 'TCP' ]) ]
+							.concat(vBadge ? [ ' ', vBadge ] : [])),
 					E('td', { style: 'white-space:nowrap' }, [ '%d / %d'.format(s.ok || 0, s.total || 0) ]),
 					E('td', {}, [ String(s.avg_tls_ms || 0) ]),
 					flowTd,

@@ -7417,3 +7417,33 @@ msgstr ""
 
 msgid "What the router SEES right now: live flows (conntrack, TCP and UDP — including QUIC and STUN classes, IPv6 explicitly), Clash connections with hostnames, recent TLS SNI names, and the IP↔DNS mapping. This is the shared source the automation engine learns from and the Service profiles use for passive QUIC observation. Blind zones are listed honestly below the snapshot."
 msgstr ""
+
+msgid "Baseline drift detected on: %s — the free-pass credit requires BOTH baseline passes (conservative)."
+msgstr ""
+
+msgid "Sets compared: the device resolver path vs independent resolvers (direct UDP 8.8.8.8 / 1.1.1.1 and independent DoH). A divergence is geo-balancing/anycast/CDN policy — NOT a proof of poisoning without the differential probe."
+msgstr ""
+
+msgid "DNS sets diverge"
+msgstr ""
+
+msgid "NO VIABLE STRATEGY"
+msgstr ""
+
+msgid "no strategy passes the mandatory checks"
+msgstr ""
+
+msgid "BEST AVAILABLE (manual only)"
+msgstr ""
+
+msgid "the handshake passes but the mandatory component tests are unconfirmed; auto-pick will NOT apply it — pick it manually if it suits you."
+msgstr ""
+
+msgid "BEST VERIFIED"
+msgstr ""
+
+msgid "verified"
+msgstr ""
+
+msgid "available"
+msgstr ""

@@ -34,6 +34,24 @@ TMP=/tmp/zapret_fuzz.$$
 [ -f "$CAND" ] || { echo '{"running":false,"done":0,"total":0,"error":"no candidates file"}' > "$STATUS"; exit 0; }
 command -v ucode >/dev/null 2>&1 || { echo '{"running":false,"error":"ucode missing"}' > "$STATUS"; exit 0; }
 
+# Ф6.4 Test Resource Manager (audit 80): the sweep OWNS its temp queue for the
+# whole run — an import/generate started in parallel can no longer kill this
+# nfqws2 instance (each task gets its own qnum from the pool, kills are
+# ownership-checked). Release runs on EVERY exit path via the trap.
+RQNUM=$(ucode -e 'import {acquire} from "/etc/homeproxy/scripts/test_resmgr.uc"; print(sprintf("%.J", acquire("fuzz")));' 2>/dev/null | sed -n 's/.*"qnum":[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+case "$RQNUM" in ''|*[!0-9]*)
+	# the acquire SUCCEEDED-then-mis-parsed case would leak the queue —
+	# release by task name regardless (idempotent for the owner only).
+	ucode -e 'import {status, release} from "/etc/homeproxy/scripts/test_resmgr.uc"; let st = status(); for (let q in keys(st.queues)) if (st.queues[q] != null && st.queues[q].task === "fuzz") release(q, "fuzz");' >/dev/null 2>&1
+	echo '{"running":false,"done":0,"total":0,"error":"no free test queue (209-212) - another lab task is running"}' > "$STATUS"
+	exit 0 ;;
+esac
+release_resmgr() {
+	[ -n "$RQNUM" ] && ucode -e "import {release} from '/etc/homeproxy/scripts/test_resmgr.uc'; release($RQNUM, 'fuzz');" >/dev/null 2>&1
+	return 0
+}
+trap release_resmgr EXIT INT TERM
+
 # One ucode pass → "name<TAB>group<TAB>args" lines (TAB cannot occur inside
 # any field). ч.129: the GROUP rides along — the deep battery selection must
 # measure the best IMPORTED and GENERATED strategies too, not only the top
@@ -48,7 +66,10 @@ TOTAL=$(printf '%s\n' "$PAIRS" | grep -c '[^[:space:]]')
 
 echo '{"running":true,"done":0,"total":'$TOTAL',"rounds":'$ROUNDS',"current":"resolving test hosts…"}' > "$STATUS"
 
-# zapret_resolve.sh prints {"ok":1,"ips":{"yt":"…",…}} — flatten to "tag=ip …".
+# zapret_resolve.sh prints {"ok":1,"ips":{…},"ips2":{…},"dns":{…}} —
+# flatten the primary IPs to "tag=ip …"; the SECOND IPs (audit 85: finalists
+# on a different edge) and the DNS-SETS comparison (audit 58) ride into the
+# merge THROUGH FILES (never shell-injected — the JSON carries quotes).
 RJSON=$(sh /etc/homeproxy/scripts/zapret_resolve.sh 2>/dev/null)
 IPS=$(printf '%s' "$RJSON" | ucode -e '
 import {readfile} from "fs";
@@ -63,6 +84,24 @@ print(join(" ", parts));
 if [ -z "$IPS" ]; then
 	echo '{"running":false,"done":0,"total":'$TOTAL',"error":"could not resolve test hosts (DNS not ready?)"}' > "$STATUS"
 	exit 0
+fi
+printf '%s' "$RJSON" > "$TMP/resolve.json" 2>/dev/null || { mkdir -p "$TMP"; printf '%s' "$RJSON" > "$TMP/resolve.json"; }
+IPS2=$(ucode -e '
+import {readfile} from "fs";
+let j = json(readfile("'$TMP'/resolve.json") || "");
+if (j == null || type(j.ips2) != "object") exit(0);
+let parts = [];
+for (let k in keys(j.ips2 || {}))
+	if (j.ips2[k]) push(parts, k + "=" + j.ips2[k]);
+print(join(" ", parts));
+' 2>/dev/null)
+# Ф6.4 QUIC baseline (audit 61): the sweep-level UDP/443 verdict measured
+# BEFORE any candidate runs on our queue — the per-strategy A/B below is
+# compared against THIS, not against a guess.
+YIP=$(printf '%s\n' "$IPS" | tr ' ' '\n' | sed -n 's/^yt=//p' | head -n 1)
+if [ -n "$YIP" ] && [ -x /usr/bin/probe_pool ]; then
+	sh /etc/homeproxy/scripts/zapret_test.sh --quic "" "yt=$YIP" 2>/dev/null > "$TMP/quic_base.json"
+	grep -q '^{"ok"' "$TMP/quic_base.json" 2>/dev/null || rm -f "$TMP/quic_base.json"
 fi
 
 mkdir -p "$TMP"
@@ -104,6 +143,7 @@ done < "$TMP/pairs.tsv"
 echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"rank","current":"ranking…"}' > "$STATUS"
 ucode -e '
 import {readfile, writefile, access} from "fs";
+import { samples_stats } from "/etc/homeproxy/scripts/strategy_lab.uc";
 const TMP = "'$TMP'", ROUNDS = int('$ROUNDS'), MAJ = int('$MAJ'), TOTAL = int('$TOTAL');
 /* ч.123: the CURRENT strategy comes from the file the shell wrote — with
  * the shell-quoting already stripped there (see the tr above). */
@@ -136,8 +176,12 @@ if (bj && type(bj.results) == "array")
 const strategies = [];
 for (let n = 0; n < length(pairs); n++) {
 	const idx = n + 1;
-	/* collect per-host across rounds (results keep the fixed HOSTS order) */
-	let per = null;          /* tag → {label, host, ip, votes, tls_min, last_reason} */
+	/* collect per-host across rounds (results keep the fixed HOSTS order).
+	 * Ф6.4 (аудит 66): the rating uses the SERIES (median/P90/success rate/
+	 * jitter) instead of the best single measurement — the round samples are
+	 * kept per tag and reduced by strategy_lab.samples_stats (ONE stats
+	 * implementation for the whole project). */
+	let per = null;          /* tag → {label, host, ip, votes, tls_min, last_reason, times, oks} */
 	let order = [];
 	let total = 0;
 	for (let rd = 1; rd <= ROUNDS; rd++) {
@@ -151,13 +195,16 @@ for (let n = 0; n < length(pairs); n++) {
 				if (type(r) == "object" && r.tag) {
 					push(order, r.tag);
 					per[r.tag] = { label: r.label || r.tag, host: r.host || "", ip: r.ip || "",
-					               votes: 0, tls_min: 0, last_reason: "" };
+					               votes: 0, tls_min: 0, last_reason: "", times: [], oks: [] };
 				}
 		}
 		for (let r in j.results) {
 			if (type(r) != "object" || !r.tag || !per[r.tag]) continue;
 			const tls = ("" + r.tls) * 1.0;
-			if (r.ok == 1) {
+			const oksv = (r.ok == 1) ? 1 : 0;
+			push(per[r.tag].times, tls * 1000.0);
+			push(per[r.tag].oks, oksv);
+			if (oksv == 1) {
 				per[r.tag].votes++;
 				const ms = int(tls * 1000);
 				if (ms > 0 && (per[r.tag].tls_min == 0 || ms < per[r.tag].tls_min))
@@ -173,6 +220,14 @@ for (let n = 0; n < length(pairs); n++) {
 		const p = per[t];
 		const host_ok = (p.votes >= MAJ);
 		const dist = (bres[t] == null || !bres[t].ok);
+		/* Ф6.4 (аудит 66): the series stats per host — ONE implementation
+		 * (strategy_lab.samples_stats); tls_ms keeps the historical min for
+		 * the compatibility readers, median_ms is the honest rating value.
+		 * The RAW round samples ride along for dims_of in the merge. */
+		const sst = samples_stats(p.times, p.oks);
+		const rr = [];
+		for (let ri = 0; ri < length(p.times); ri++)
+			push(rr, { ok: p.oks[ri], tls_ms: p.times[ri] });
 		if (host_ok) {
 			ok++;
 			tls_sum += p.tls_min; tls_n++;
@@ -181,6 +236,9 @@ for (let n = 0; n < length(pairs); n++) {
 		if (dist) dist_total++;
 		push(hosts, { tag: t, label: p.label, host: p.host, ok: host_ok,
 		              votes: p.votes, rounds: ROUNDS, tls_ms: p.tls_min,
+		              median_ms: int(sst.median), p90_ms: int(sst.p90),
+		              jitter_ms: int(sst.jitter), ok_rate: sst.ok_rate,
+		              samples: rr,
 		              reason: host_ok ? "" : (p.last_reason || "fail"), dist: dist });
 	}
 	/* score: distinguishing successes weigh 1000, already-free hosts 100,
@@ -388,23 +446,46 @@ print(ok ? "0" : "1");' 2>/dev/null)
 	YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i.json"
 done
 
-# ч.123: the sweep-level QUIC (UDP/443) verdict — a Version-Negotiation
-# probe through the same path (probe_pool ≥ 1.6.0). Strategy-independent
-# (it is stored ONCE for the sweep, not per strategy): vn = the UDP path
-# carries 443 end-to-end (a real QUIC server answered), icmp = an on-path
-# rejection, silence = no answer (typically a silent TSPU cut). The UI uses
-# it to explain QUIC-vs-TCP YouTube behavior honestly.
-QIP=$(printf '%s\n' "$IPS" | tr ' ' '\n' | sed -n 's/^yt=//p' | head -n 1)
-if [ -n "$QIP" ] && [ -x /usr/bin/probe_pool ]; then
-	# ч.123: the probe answer crosses to the merge pass THROUGH A FILE (the
-	# JSON carries double quotes — a shell-injected string would break the
-	# ucode quoting of the merge pass).
-	/usr/bin/probe_pool -quic-check "$QIP" -quic-host redirector.googlevideo.com 2>/dev/null | head -n 1 > "$TMP/quic_probe.json"
-	grep -q '^{"ok"' "$TMP/quic_probe.json" 2>/dev/null || rm -f "$TMP/quic_probe.json"
+# Ф6.4 (audit 84): CONTROL baseline — the baseline is a SERIES, not a single
+# measurement: a host passing baseline #1 but failing the control (or vice
+# versa) is DRIFT, and the free-pass credit requires BOTH passes (the merge
+# recomputes dist conservatively and reports the drift honestly).
+echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"control","current":"контрольный baseline…"}' > "$STATUS"
+sh /etc/homeproxy/scripts/zapret_test.sh --baseline "" "$IPS" 2>/dev/null > "$TMP/control.json"
+
+# Ф6.4 (audit 85): the finalists on the SECOND edge/IP — one IP per sweep
+# made the whole ranking a single-CDN measurement. Plain handshake pass per
+# deep-tested strategy on the alternative addresses.
+if [ -n "$IPS2" ]; then
+	i=0
+	while [ "$i" -lt "$TOPN" ]; do
+		i=$((i + 1))
+		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
+		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
+		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"alt-ip","done2":'$i',"total2":'$TOPN',"current":"второй IP '"$i"'/'"$TOPN"'"}' > "$STATUS"
+		sh /etc/homeproxy/scripts/zapret_test.sh "$ARGS" "$IPS2" 2>/dev/null > "$TMP/a$i.json"
+	done
+fi
+
+# Ф6.4 (audit 61): QUIC A/B per finalist carrying a UDP profile — the
+# strategy's own mangling on the temp queue vs the sweep baseline verdict
+# (quic_base.json, measured before any candidate ran). A strategy WITHOUT a
+# UDP profile honestly skips the A/B (it does not touch QUIC at all).
+if [ -n "$YIP" ]; then
+	i=0
+	while [ "$i" -lt "$TOPN" ]; do
+		i=$((i + 1))
+		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
+		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
+		case "$ARGS" in *--filter-udp=443*) ;; *) continue ;; esac
+		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"quic","done2":'$i',"total2":'$TOPN',"current":"QUIC A/B '"$i"'/'"$TOPN"'"}' > "$STATUS"
+		sh /etc/homeproxy/scripts/zapret_test.sh --quic "$ARGS" "yt=$YIP" 2>/dev/null > "$TMP/q$i.json"
+	done
 fi
 
 ucode -e '
 import {readfile, writefile, access} from "fs";
+import { samples_stats, dims_of, resource_verdict, strategy_verdict, engine_can } from "/etc/homeproxy/scripts/strategy_lab.uc";
 const TMP = "'$TMP'", RESULT = "'$RESULT'", HISTORY = "'$HISTORY'";
 const ROUNDS = int('$ROUNDS'), MAJ = int('$MAJ');
 const now = time();
@@ -443,14 +524,20 @@ for (let i = 1; i <= length(dlist_items); i++) {
 	push(drawn, { s: ent_s, results: d.results });
 	deepN++;
 }
-/* ч.123: the sweep-level QUIC verdict (probe_pool -quic-check, yt edge),
- * read from the FILE the shell wrote (never shell-injected — the JSON
- * carries double quotes). */
+/* Ф6.4: the sweep-level QUIC baseline verdict — measured BEFORE any
+ * candidate ran on our queue (zapret_test.sh --quic with no strategy),
+ * read from the FILE the shell wrote (never shell-injected). Shape kept
+ * compatible for the readers: {verdict: 'vn'|'icmp'|'silence'|''}. */
 let quic = null;
-if (access(TMP + "/quic_probe.json")) {
-	try { quic = json(readfile(TMP + "/quic_probe.json") || ""); } catch (e) { quic = null; }
-	if (quic != null && (type(quic) !== "object" || quic.verdict == null))
-		quic = null;
+if (access(TMP + "/quic_base.json")) {
+	const qb = parse(TMP + "/quic_base.json");
+	if (qb != null && type(qb) === "object" && qb.quic != null) {
+		const qvs = '' + qb.quic;
+		/* Ф6.4 defensive (live fact): ucode json() accepts a bare NaN token —
+		 * only the three honest verdicts pass; anything else = unmeasured. */
+		if (qvs === "vn" || qvs === "icmp" || qvs === "silence")
+			quic = { verdict: qvs };
+	}
 }
 const probe_cnt = {};
 for (let r in drawn)
@@ -477,7 +564,7 @@ for (let r in drawn) {
 	let dok = 0, dtot = 0, hosts = [];
 	for (let res in r.results) {
 		if (type(res) != "object" || res.tag == null) continue;
-		let hdok = 0, dtot_h = 0, stream = 0, start_ms = 0;
+		let hdok = 0, dtot_h = 0, stream = 0, start_ms = 0, stream2 = 0, vstart = 0;
 		for (let it in (res.deep || [])) {
 			if (type(it) != "object" || it.id == null) continue;
 			/* the sustained-flow speed (ytv batch / yts real stream) — the
@@ -493,6 +580,13 @@ for (let r in drawn) {
 			 * не стартует») the user pinpointed. */
 			if (it.id == "ytv" && int(it.ttfb || 0) > start_ms)
 				start_ms = int(it.ttfb || 0);
+			/* Ф6.4 (замер пользователя 2026-11-04): the VIDEO edge has its
+			 * own START (yts/yts2 ttfb) and its OWN second-edge speed
+			 * (yts2) — the preview metrics do not cover it. */
+			if ((it.id == "yts" || it.id == "yts2") && int(it.ttfb || 0) > vstart)
+				vstart = int(it.ttfb || 0);
+			if (it.id == "yts2" && int(it.speed || 0) > stream2)
+				stream2 = int(it.speed || 0);
 			if (!diff_ids[it.id]) continue;
 			dtot_h++;
 			if (it.ok == 1) hdok++;
@@ -503,14 +597,86 @@ for (let r in drawn) {
 			deep_ok: (dtot_h > 0 && hdok == dtot_h),
 			deep_pass: hdok, deep_total: dtot_h,
 			deep_total_raw: int(res.deep_total) || 0,
-			stream: stream, start_ms: start_ms, items: res.deep || [] });
+			stream: stream, start_ms: start_ms,
+			stream2: stream2, stream_start_ms: vstart, items: res.deep || [] });
 		if (res.tag == "yt") {
 			s.stream = stream;
 			s.start_ms = start_ms;
+			if (stream2 > 0) s.stream2 = stream2;
+			if (vstart > 0) s.stream_start_ms = vstart;
 		}
 	}
 	s.deep = { ok: dok, total: dtot, hosts: hosts };
 }
+/* ── Ф6.4 v3: измерения, второй IP, QUIC A/B, вердикты ─────────────────── */
+
+/* (аудит 84) baseline-СЕРИЯ: контрольный проход после прогона; хост,
+ * расходящийся между двумя baseline, — ДРЕЙФ и теряет бесплатный зачёт
+ * (консервативно: dist = хост НЕ прошёл ХОТЯ БЫ один из двух baseline;
+ * free-pass требует ОБОИХ). */
+const base1 = parse(TMP + "/baseline.json");
+const ctrl = parse(TMP + "/control.json");
+const b1map = {}, c2map = {};
+if (base1 && type(base1.results) == "array")
+	for (let r in base1.results)
+		if (type(r) == "object" && r.tag) b1map[r.tag] = (r.ok == 1);
+const drift = [];
+if (ctrl && type(ctrl.results) == "array")
+	for (let r in ctrl.results)
+		if (type(r) == "object" && r.tag) {
+			c2map[r.tag] = (r.ok == 1);
+			if (b1map[r.tag] != null && b1map[r.tag] !== c2map[r.tag])
+				push(drift, { tag: r.tag, first: (b1map[r.tag] == true), control: (c2map[r.tag] == true) });
+		}
+for (let s in strategies)
+	for (let h in s.hosts) {
+		const b1 = (b1map[h.tag] != null) ? b1map[h.tag] : false;
+		const b2 = (c2map[h.tag] != null) ? c2map[h.tag] : false;
+		h.dist = !(b1 && b2);
+	}
+
+/* (аудит 85) второй IP финалистов: ручной проход по альтернативным адресам
+ * подливается в host-записи (ip2/alt-статистика) — рейтинг больше не
+ * измерение одного-единственного CDN-края. */
+for (let i = 1; i <= length(dlist_items); i++) {
+	const ent = dlist_items[i - 1];
+	const s = (ent && ent.idx > 0) ? strategies[ent.idx - 1] : null;
+	if (s == null) continue;
+	const aj = parse(TMP + "/a" + i + ".json");
+	if (aj && type(aj.results) == "array")
+		for (let r in aj.results) {
+			if (type(r) != "object" || r.tag == null) continue;
+			for (let h in s.hosts)
+				if (h.tag == r.tag) {
+					h.ip2 = r.ip || "";
+					h.alt_ok = (r.ok == 1);
+					h.alt_tls_ms = int((("" + r.tls) * 1.0) * 1000);
+					h.alt_reason = (r.ok == 1) ? "" : (r.reason || "fail");
+				}
+		}
+	/* (аудит 61) QUIC A/B: стратегия с UDP-профилем на очереди против
+	 * sweep-baseline; стратегии без UDP-профиля честно не участвуют. */
+	if (match(s.args || "", /--filter-udp=443/)) {
+		const qj = parse(TMP + "/q" + i + ".json");
+		if (qj != null && type(qj) === "object" && qj.quic != null)
+			s.quic_ab = { strategy: '' + qj.quic,
+				baseline: (quic != null && quic.verdict != null) ? quic.verdict : "" };
+	}
+}
+
+/* ЧЕТЫРЕ ИЗМЕРЕНИЯ (аудит 66/71) на каждую стратегию и ресурс — одним
+ * кодом (strategy_lab.dims_of; сырые раунды уже в rank.json-хостах). */
+for (let s in strategies) {
+	s.dims = {};
+	for (let h in s.hosts) {
+		let deep_h = null;
+		if (s.deep && type(s.deep.hosts) === "array")
+			for (let dh in s.deep.hosts)
+				if (dh.tag === h.tag) deep_h = dh;
+		s.dims[h.tag] = dims_of(h.samples || [], deep_h, "zapret");
+	}
+}
+
 /* Final order: deep-tested strategies first (deep ratio, then handshake
  * score), the rest keep their handshake rank order. */
 const tested = [], rest = [];
@@ -536,6 +702,16 @@ sort(tested, (a, b) => {
 		if (hi - lo > int(hi / 4))
 			return ta - tb;
 	}
+	/* Ф6.4 (замер пользователя 2026-11-04): the VIDEO-edge START (yts/yts2
+	 * ttfb) decides next at the same >25% margin — the preview START does
+	 * not cover the videoplayback edges (the user: «на Hostfakesplit видео
+	 * открывается быстро, на победителе — долго»). */
+	const va = int(a.stream_start_ms || 0), vb = int(b.stream_start_ms || 0);
+	if (va > 0 && vb > 0 && va != vb) {
+		const hi = (va > vb) ? va : vb, lo = (va > vb) ? vb : va;
+		if (hi - lo > int(hi / 4))
+			return va - vb;
+	}
 	const sa = int(a.stream || 0), sb = int(b.stream || 0);
 	if (sa != sb) {
 		if (sa > 0 && sb > 0) {
@@ -550,6 +726,46 @@ sort(tested, (a, b) => {
 const final = [];
 for (let s in tested) push(final, s);
 for (let s in rest) push(final, s);
+/* Финалисты получают ВЕРДИКТ по каждому ресурсу (аудит 92):
+ * best_verified / best_available / no_candidate. */
+const RES_TAGS = { youtube: "yt", discord: "dc", telegram: "tg", general: null };
+const udp_any = (function () {
+	for (let s in strategies)
+		if (match(s.args || "", /--filter-udp=443/)) return true;
+	return false;
+})();
+const qv = (quic != null && quic.verdict != null) ? quic.verdict : "";
+/* Verdicts walk the FINAL order (deep-tested first, the visible table
+ * head) — chosen must match what the user sees on top, not the raw
+ * handshake rank. */
+const verdicts = {};
+const rn_keys = keys(RES_TAGS);
+for (let ri = 0; ri < length(rn_keys); ri++) {
+	const resname = rn_keys[ri];
+	const tag = RES_TAGS[resname];
+	const entries = [];
+	for (let s in final) {
+		let reach_ok = false;
+		let deep_items = null;
+		if (tag == null) {
+			for (let h in s.hosts)
+				if (h.ok && h.dist) reach_ok = true;
+			/* general has no service battery: the MANDATORY check IS the
+			 * distinguishing handshake — expressed as a synthetic deep
+			 * item so best_verified stays reachable (аудит 92 без лжи:
+			 * «проверено» = рукопожатие различающих хостов). */
+			deep_items = [ { id: 'reach', ok: reach_ok ? 1 : 0 } ];
+		} else {
+			for (let h in s.hosts)
+				if (h.tag == tag) reach_ok = (h.ok && h.dist);
+			if (s.deep && type(s.deep.hosts) === "array")
+				for (let dh in s.deep.hosts)
+					if (dh.tag == tag) deep_items = dh.items || [];
+		}
+		push(entries, { name: s.name, args: s.args, reach_ok: reach_ok, deep_items: deep_items });
+	}
+	verdicts[resname] = resource_verdict(entries, (qv != "") ? qv : null, udp_any);
+}
 
 const bnote = [];
 const bj = parse(TMP + "/baseline.json");
@@ -557,12 +773,24 @@ if (bj && type(bj.results) == "array")
 	for (let r in bj.results)
 		if (type(r) == "object")
 			push(bnote, { tag: r.tag, label: r.label || r.tag, host: r.host || "", ok: (r.ok == 1) });
+const cnote = [];
+if (ctrl && type(ctrl.results) == "array")
+	for (let r in ctrl.results)
+		if (type(r) == "object")
+			push(cnote, { tag: r.tag, label: r.label || r.tag, host: r.host || "", ok: (r.ok == 1) });
+/* Ф6.4 (аудит 58/83): наборы DNS четырёх взглядов — из resolver-файла. */
+const rj = parse(TMP + "/resolve.json");
+const dns_sets = (rj != null && type(rj) === "object" && type(rj.dns) === "object") ? rj.dns : null;
 
 writefile(RESULT, sprintf("%.J\n", {
 	running: false, done: length(final), total: length(final),
 	rounds: ROUNDS, majority: MAJ, ts: now, baseline: bnote, strategies: final,
 	deep_count: deepN, deep_selected: length(dlist_items),
 	deep_failed: deep_failed, deep_skipped: skipped_ids, quic: quic,
+	lab: "v3",
+	baseline_series: { first: bnote, control: cnote, drift: drift },
+	dns_sets: dns_sets,
+	verdicts: verdicts,
 	deep_note: "top " + deepN + " of " + length(dlist_items) + " selected deep-checked: family-diverse leaders + imported/generated bests + the current strategy; failed: " + ((length(deep_failed)) ? join(", ", deep_failed) : "none") + "; probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank"
 }));
 

@@ -12973,3 +12973,33 @@ msgstr "Обнаружение"
 
 msgid "What the router SEES right now: live flows (conntrack, TCP and UDP — including QUIC and STUN classes, IPv6 explicitly), Clash connections with hostnames, recent TLS SNI names, and the IP↔DNS mapping. This is the shared source the automation engine learns from and the Service profiles use for passive QUIC observation. Blind zones are listed honestly below the snapshot."
 msgstr "Что роутер ВИДИТ прямо сейчас: живые потоки (conntrack, TCP и UDP — включая классы QUIC и STUN, IPv6 явно), соединения Clash с именами хостов, недавние TLS SNI и словарь IP↔DNS. Это общий источник, из которого учится движок автоматизации и которым профили сервисов пользуются для пассивного QUIC-наблюдения. Слепые зоны перечислены честно под снимком."
+
+msgid "Baseline drift detected on: %s — the free-pass credit requires BOTH baseline passes (conservative)."
+msgstr "Дрейф baseline на: %s — бесплатный зачёт требует ОБОИХ проходов baseline (консервативно)."
+
+msgid "Sets compared: the device resolver path vs independent resolvers (direct UDP 8.8.8.8 / 1.1.1.1 and independent DoH). A divergence is geo-balancing/anycast/CDN policy — NOT a proof of poisoning without the differential probe."
+msgstr "Сравниваются наборы: путь резолвера устройства против независимых (прямой UDP 8.8.8.8 / 1.1.1.1 и независимый DoH). Расхождение — гео-балансировка/anycast/CDN-политика, НЕ доказательство подмены без дифференциальной пробы."
+
+msgid "DNS sets diverge"
+msgstr "DNS-наборы расходятся"
+
+msgid "NO VIABLE STRATEGY"
+msgstr "НЕТ ПРИГОДНОЙ СТРАТЕГИИ"
+
+msgid "no strategy passes the mandatory checks"
+msgstr "ни одна стратегия не проходит обязательные проверки"
+
+msgid "BEST AVAILABLE (manual only)"
+msgstr "ДОСТУПНА (только вручную)"
+
+msgid "the handshake passes but the mandatory component tests are unconfirmed; auto-pick will NOT apply it — pick it manually if it suits you."
+msgstr "рукопожатие проходит, но обязательные проверки компонентов не подтверждены; автоподбор её НЕ применит — выберите вручную, если устраивает."
+
+msgid "BEST VERIFIED"
+msgstr "ПОДТВЕРЖДЕНА"
+
+msgid "verified"
+msgstr "проверена"
+
+msgid "available"
+msgstr "доступна"

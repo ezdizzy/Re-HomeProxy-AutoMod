@@ -20,14 +20,27 @@
 # which still protects the zapret-marked flows (the worst breakage).
 #
 # Usage:  zapret_test.sh [--baseline] [--deep] "<strategy opts>" [tag=ip tag=ip …]
-# Output: a single JSON line:  {"ok":N,"total":M,"results":[{tag,label,host,ip,tls,ok,reason},…]}
-#         with --deep each result also carries code/bytes/deep_ok (a content
-#         fetch through the same temp queue) — «сайт открывается» is not the
-#         verdict, the resource must load its media hosts too (user report:
-#         a strategy can pass the TLS handshake and still stall the video).
+#         zapret_test.sh --quic "<strategy opts>" "tag=ip …"   (UDP/443 contour)
+# Output: a single JSON line:  {"ok":N,"total":M,"results":[{tag,label,host,ip,code,tls,redirect,rc,ok,reason},…]}
+#         with --deep each result also carries deep_ok/deep items with the
+#         UNIFIED probe record (audit 82): {id,code,sec,bytes,speed,rc,ttfb,
+#         ok,app_state,kind,geo_refused,waf} — app_state/kind/geo/waf come
+#         from diag_core.classify_path on the SAVED body (one classification
+#         implementation for the whole project, Ф6.1); a bare curl and a
+#         browser-like fingerprint profile (audit 90) are measured separately
+#         (ids with the "f" suffix: ytpf/tgpf/dcpf/stpf — a DIFFERENT verdict
+#         between the two profiles is client filtering / WAF, not DPI).
+#         --quic runs the UDP/443 contour: the candidate strategy (its UDP
+#         profile) on the temp queue + a REAL QUIC probe (probe_pool
+#         -quic-check) as the daemon user → {"ok":1,"quic":"vn|icmp|silence"}.
+#         A real HTTP/3 handshake is NOT possible on this hardware (§2.5:
+#         quic-go does not build on mipsle) — VN-level A/B is the honest
+#         ceiling, everything above stays unprobed.
 #
-# Pass signal = curl time_appconnect > 0 (the TLS handshake completed = the desync
-# got the ClientHello past the DPI). HTTP status is irrelevant.
+# Pass signal (audit 82, hardened): TLS handshake completed (time_appconnect
+# > 0) AND curl exit 0 — «handshake прошёл, поток порван посередине»
+# (rc != 0 при tls > 0) больше НЕ считается успехом, это отдельная причина
+# flow_reset; HTTP-код и redirect_url сохраняются в каждой пробе.
 #
 # --baseline (ч.70): run the SAME probes WITHOUT any desync (no nfqws2 on the
 # temp queue — NFQUEUE bypass passes packets unchanged when nothing listens).
@@ -43,18 +56,33 @@
 
 BASELINE=0
 DEEP=0
-if [ "$1" = "--baseline" ]; then
-	BASELINE=1
+QUIC=0
+# Ф6.4: order-insensitive flag parsing — the old two `if`s made
+# "--deep --baseline" silently treat "--baseline" as the STRATEGY args.
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--baseline) BASELINE=1 ;;
+		--deep) DEEP=1 ;;
+		--quic) QUIC=1 ;;
+		*) break ;;
+	esac
 	shift
-fi
-if [ "$1" = "--deep" ]; then
-	DEEP=1
-	shift
-fi
+done
 
 STRAT="$1"
 IPS_ARG="$2"                   # optional pre-resolved "tag=ip tag=ip …"
-QNUM=209                       # temp queue, distinct from the live 200
+# Ф6.4 Test Resource Manager (audit 80): the queue belongs to ONE task —
+# callers acquire a qnum from the pool (test_resmgr.uc) and hand it over in
+# TEST_QNUM; a bare call defaults to 209. The production queue is refused:
+# a tester on the live queue would mangle REAL traffic.
+QNUM="${TEST_QNUM:-209}"
+case "$QNUM" in ''|*[!0-9]*) QNUM=209 ;; esac
+PROD_QNUM=$(uci -q get homeproxy.config.zapret_qnum 2>/dev/null)
+[ -n "$PROD_QNUM" ] || PROD_QNUM=200
+if [ "$QNUM" = "$PROD_QNUM" ]; then
+	echo '{"ok":0,"total":0,"error":"TEST_QNUM equals the production queue - refused"}'
+	exit 0
+fi
 DMARK=0x40000000               # nfqws2 DESYNC_MARK (its reinjected fakes)
 NFQWS=/opt/zapret2/nfq2/nfqws2
 LUA="--lua-init=@/opt/zapret2/lua/zapret-lib.lua --lua-init=@/opt/zapret2/lua/zapret-antidpi.lua --lua-init=@/opt/zapret2/lua/zapret-auto.lua"
@@ -81,19 +109,50 @@ HOSTS="yt|YouTube|redirector.googlevideo.com tg|Telegram|telegram.org dc|Discord
 # yt_stream_probe.uc) when the upstream hands one out (often bot-gated —
 # then the probe is honestly absent).
 # id|url  (the yt edge reuses the yt handshake host/IP; id ytr = edge probe;
-# id ytv = sustained-flow throughput; id yts = real video stream)
+# id ytv = sustained-flow throughput; id yts = real video stream;
+# ids with the "f" suffix = the SAME page probe under a browser-like
+# fingerprint profile (audit 90) — bare-curl vs browser verdicts differing
+# is client filtering / WAF, not DPI; bodies are saved for diag_core)
 DEEP_PROBES=""
 YTV_URLS=""
 if [ "$DEEP" = "1" ]; then
-	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytr|https://redirector.googlevideo.com/ ytv|BATCH tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/"
+	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytr|https://redirector.googlevideo.com/ ytv|BATCH tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/ ytpf|https://www.youtube.com/ tgpf|https://web.telegram.org/ dcpf|https://discord.com/ stpf|https://www.speedtest.net/"
 	if [ -f /etc/homeproxy/resources/yt_probe_ids.txt ]; then
-		for vid in $(grep -vE '^\s*(#|$)' /etc/homeproxy/resources/yt_probe_ids.txt); do
+		# Ф6.4: cap the batch at 12 URLs (6 videos × 2 thumbs) — the ≥8-pass
+		# bar stays reachable while the WORST-CASE window (every fetch timing
+		# out at the connect cap) stays bounded instead of 24 × connect-timeout.
+		for vid in $(grep -vE '^\s*(#|$)' /etc/homeproxy/resources/yt_probe_ids.txt | head -n 6); do
 			YTV_URLS="$YTV_URLS https://i.ytimg.com/vi/$vid/mqdefault.jpg https://i.ytimg.com/vi/$vid/hq720.jpg"
 		done
 	fi
 	if [ -n "$YTV_URL" ]; then
 		DEEP_PROBES="$DEEP_PROBES yts|$YTV_URL"
+		# Ф6.4 (audit 85 + the user's live report 2026-11-04): videos live on
+		# DIFFERENT googlevideo edges — the real stream is measured on the
+		# SECOND resolved edge too (yts2); one edge lied before.
+		DEEP_PROBES="$DEEP_PROBES yts2|$YTV_URL"
 	fi
+	# Browser-like fingerprint probe (audit 90): the stock curl fingerprint is
+	# NOT a browser's — a strategy/WAF can pass the bare probe and challenge
+	# the browser-shaped one (or vice versa). One shared script, su-safe.
+	# (mkdir first: this block runs BEFORE the shared mkdir below.)
+	mkdir -p "$TMP" 2>/dev/null
+	cat > "$TMP/fp_flow.sh" <<'FPFLOW'
+#!/bin/sh
+# browser-like fingerprint profile probe → "code secs bytes speed ttfb rc"
+# (Ф6.4: the 6th unified field — ttfb rides along like the content probes)
+pin="$1"; url="$2"; body="$3"
+curl -sL --max-redirs 3 --resolve "$pin" \
+	-A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' \
+	-H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8' \
+	-H 'Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7' \
+	-H 'Upgrade-Insecure-Requests: 1' \
+	--compressed -o "$body" \
+	-w '%{http_code} %{time_total} %{size_download} %{speed_download} %{time_starttransfer}' \
+	--connect-timeout 4 --max-time 9 -k "$url" 2>/dev/null
+echo " $?"
+FPFLOW
+	chmod 755 "$TMP/fp_flow.sh" 2>/dev/null
 fi
 
 NFQ_PID=""
@@ -162,17 +221,39 @@ if [ "$DEEP" = "1" ]; then
 	for dp in $DEEP_PROBES; do
 		did=${dp%%|*}; durl=${dp#*|}
 		dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
-		if [ "$did" = "ytr" ]; then
-			cp "$TMP/ip_yt" "$TMP/dip_$did" 2>/dev/null
-		elif [ "$did" = "ytv" ]; then
-			# the sustained-flow batch rides the SAME host+IP as the yti probe
-			cp "$TMP/dip_yti" "$TMP/dip_$did" 2>/dev/null
-			echo "i.ytimg.com" > "$TMP/dhost_$did"
+	if [ "$did" = "ytr" ]; then
+		cp "$TMP/ip_yt" "$TMP/dip_$did" 2>/dev/null
+	elif [ "$did" = "ytv" ]; then
+		# the sustained-flow batch rides the SAME host+IP as the yti probe
+		cp "$TMP/dip_yti" "$TMP/dip_$did" 2>/dev/null
+		echo "i.ytimg.com" > "$TMP/dhost_$did"
+	elif [ "$did" = "yts2" ]; then
+		# Ф6.4: the SECOND real-stream edge — a DIFFERENT public A of the same
+		# host (the user's live report: videos live on different edges; one
+		# edge lied). Falls back to the yts IP when the resolver has one A.
+		nslookup "redirector.googlevideo.com" 2>/dev/null \
+			| grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+			| grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' \
+			| sort -u > "$TMP/yt2_ips"
+		nyts=$(wc -l < "$TMP/yt2_ips" 2>/dev/null)
+		if [ "$nyts" -ge 2 ]; then
+			sed -n '2p' "$TMP/yt2_ips" > "$TMP/dip_$did"
 		else
-			dip=$(nslookup "$dhost" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^127\.' | tail -1)
-			echo "$dip" > "$TMP/dip_$did"
-			echo "$dhost" > "$TMP/dhost_$did"
+			cp "$TMP/dip_yts" "$TMP/dip_$did" 2>/dev/null
 		fi
+		echo "redirector.googlevideo.com" > "$TMP/dhost_$did"
+	elif [ "${did%f}" != "$did" ]; then
+		# Ф6.4 fingerprint variant: the SAME page under the browser-like
+		# profile — the base id's resolution is REUSED (no second DNS hit).
+		base=${did%f}
+		cp "$TMP/dip_$base" "$TMP/dip_$did" 2>/dev/null
+		dh=$(cat "$TMP/dhost_$base" 2>/dev/null)
+		[ -n "$dh" ] && echo "$dh" > "$TMP/dhost_$did"
+	else
+		dip=$(nslookup "$dhost" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^127\.' | tail -1)
+		echo "$dip" > "$TMP/dip_$did"
+		echo "$dhost" > "$TMP/dhost_$did"
+	fi
 		dep=$(cat "$TMP/dip_$did" 2>/dev/null)
 		[ -n "$dep" ] && case ",$IPSET," in *",$dep,"*) ;; *) IPSET="$IPSET,$dep";; esac
 	done
@@ -187,6 +268,59 @@ if command -v su >/dev/null 2>&1; then
 	PROBE_UID=$(id -u daemon 2>/dev/null)
 	case "$PROBE_UID" in ''|*[!0-9]*) PROBE_UID="" ;; esac
 	[ -n "$PROBE_UID" ] && ! su -s /bin/sh daemon -c true >/dev/null 2>&1 && PROBE_UID=""
+fi
+
+# ── Ф6.4: UDP/QUIC contour (audit 61) ────────────────────────────────────
+# --quic: the candidate strategy's UDP profile (or none = baseline) on the
+# temp queue + a REAL QUIC probe (probe_pool -quic-check) as the daemon user
+# → {"ok":1,"quic":"vn|icmp|silence|absent","strategy":0|1}. A real HTTP/3
+# handshake is NOT possible on this hardware (§2.5: quic-go does not build on
+# mipsle) — the Version-Negotiation A/B is the honest ceiling here; STUN/Voice
+# UDP has no probe tool on this router (no nc -u, no socat) and stays honestly
+# unprobed (audit 60/91 — service_profiles.uc carries that component).
+if [ "$QUIC" = "1" ]; then
+	QIP=""
+	for kv in $IPS_ARG; do
+		case "$kv" in yt=*) QIP=${kv#yt=} ;; esac
+	done
+	[ -z "$QIP" ] && fail "quic contour needs the yt=ip argument"
+	[ -x /usr/bin/probe_pool ] || { echo '{"ok":0,"error":"probe_pool not installed"}'; exit 0; }
+	QSTRAT="false"
+	[ "$BASELINE" != "1" ] && [ -n "$(printf '%s' "$STRAT" | tr -d '[:space:]')" ] && QSTRAT="true"
+	if nft list chain inet fw4 homeproxy_output_redir >/dev/null 2>&1; then
+		nft insert rule inet fw4 homeproxy_output_redir ip daddr "{ $QIP }" udp dport 443 counter return comment "\"$CMT\"" 2>/dev/null
+	fi
+	nft add table inet "$TABLE" 2>/dev/null
+	if [ -n "$PROBE_UID" ]; then
+		nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
+		nft add rule  inet "$TABLE" out "meta skuid $PROBE_UID meta mark and $DMARK == 0 ip daddr { $QIP } udp dport 443 ct original packets 1-3 counter queue num $QNUM bypass" 2>/dev/null
+		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
+	else
+		nft add chain inet "$TABLE" pre "{ type filter hook postrouting priority mangle; policy accept; }" 2>/dev/null
+		nft add rule  inet "$TABLE" pre "meta mark 0 ip daddr { $QIP } udp dport 443 ct original packets 1-3 counter queue num $QNUM bypass" 2>/dev/null
+		nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
+		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
+	fi
+	if [ "$QSTRAT" = "true" ]; then
+		$NFQWS --qnum=$QNUM --user=daemon --fwmark=$DMARK $LUA $STRAT >/dev/null 2>&1 &
+		NFQ_PID=$!
+		sleep 1
+		ucode /etc/homeproxy/scripts/pmgr_cli.uc find "$NFQWS" "--qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 did not start - check strategy"
+	fi
+	QOUT="$TMP/quic_out.json"
+	if [ -n "$PROBE_UID" ]; then
+		su -s /bin/sh daemon -c "/usr/bin/probe_pool -quic-check '$QIP' -quic-host redirector.googlevideo.com > '$QOUT' 2>/dev/null" >/dev/null 2>&1
+	else
+		/usr/bin/probe_pool -quic-check "$QIP" -quic-host redirector.googlevideo.com > "$QOUT" 2>/dev/null
+	fi
+	QV=$(grep -oE '"verdict":"[a-z]+"' "$QOUT" 2>/dev/null | head -n 1 | cut -d'"' -f4)
+	# Ф6.4 defensive (live fact): a stray token the ucode json() parser turns
+	# into a bare NaN must never reach the result — only the three honest
+	# verdicts pass; anything else reads as "unknown" (honest unmeasured).
+	case "$QV" in vn|icmp|silence) : ;; *) QV="unknown" ;; esac
+	[ -n "$QV" ] || QV="unknown"
+	echo "{\"ok\":1,\"quic\":\"$QV\",\"strategy\":$QSTRAT}"
+	exit 0
 fi
 
 # 2. Surgically send ONLY the test IPs' TCP/443 direct (return from output_redir,
@@ -222,21 +356,24 @@ if [ "$BASELINE" != "1" ]; then
 fi
 
 # 5. Probe every host in parallel: curl forced to the resolved IP, write
-#    "time_appconnect curl_exit". Collect by POLLING the r_<tag> files
-#    (signal-immune; each curl is capped by --max-time 10, so 25s is a ceiling).
-#    In skuid mode each probe runs as `daemon` (the queue rule matches that
-#    uid only); the temp dir must then accept the daemon's result files.
+#    "http_code time_appconnect redirect_url curl_exit" — the UNIFIED record
+#    (audit 82): the exit code and the HTTP answer are now part of the
+#    verdict, «handshake прошёл, поток порван» больше не выглядит успехом.
+#    Collect by POLLING the r_<tag> files (signal-immune; each curl is capped
+#    by --max-time 10, so 25s is a ceiling). In skuid mode each probe runs as
+#    `daemon` (the queue rule matches that uid only); the temp dir must then
+#    accept the daemon's result files.
 [ -n "$PROBE_UID" ] && chmod 777 "$TMP" 2>/dev/null
 for h in $HOSTS; do
 	tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
 	ip=$(cat "$TMP/ip_$tag" 2>/dev/null)
-	if [ -z "$ip" ]; then echo "0 6" > "$TMP/r_$tag"; continue; fi
+	if [ -z "$ip" ]; then echo "000 0 - 6" > "$TMP/r_$tag"; continue; fi
 	if [ -n "$PROBE_UID" ]; then
 		# tag/host/ip are tester-owned constants (fixed labels, resolved
 		# numeric IPs, /tmp path with PID) — safe to inline in the body.
-		su -s /bin/sh daemon -c "out=\$(curl -s --resolve '${host}:443:${ip}' -o /dev/null -w '%{time_appconnect}' --connect-timeout 4 --max-time 10 'https://${host}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/r_${tag}'" >/dev/null 2>&1 &
+		su -s /bin/sh daemon -c "out=\$(curl -s --resolve '${host}:443:${ip}' -o /dev/null -w '%{http_code} %{time_appconnect} %{redirect_url}' --connect-timeout 4 --max-time 10 'https://${host}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/r_${tag}'" >/dev/null 2>&1 &
 	else
-		( out=$(curl -s --resolve "${host}:443:${ip}" -o /dev/null -w '%{time_appconnect}' --connect-timeout 4 --max-time 10 "https://${host}" 2>/dev/null); echo "$out $?" > "$TMP/r_$tag" ) >/dev/null 2>&1 &
+		( out=$(curl -s --resolve "${host}:443:${ip}" -o /dev/null -w '%{http_code} %{time_appconnect} %{redirect_url}' --connect-timeout 4 --max-time 10 "https://${host}" 2>/dev/null); echo "$out $?" > "$TMP/r_$tag" ) >/dev/null 2>&1 &
 	fi
 done
 n=0
@@ -263,11 +400,17 @@ if [ "$DEEP" = "1" ]; then
 		dhost=$(cat "$TMP/dhost_$did" 2>/dev/null)
 		[ -z "$dhost" ] && dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
 		dip=$(cat "$TMP/dip_$did" 2>/dev/null)
-		if [ -z "$dip" ]; then echo "000 0 0 0 6" > "$TMP/d_$did"; continue; fi
+		if [ -z "$dip" ]; then echo "000 0 0 0 0 6" > "$TMP/d_$did"; continue; fi
 		# ч.116: the stream probe downloads a ranged 4 MB of the REAL video —
 		# the speed_download field is the honest verdict metric.
+		# Ф6.4: flow-THROUGHPUT probes measure the path THROUGH a strategy —
+		# in --baseline (no desync) they are meaningless by construction and
+		# would only hang the pass on DPI-blocked connects: honest absence.
+		if [ "$BASELINE" = "1" ]; then
+			case "$did" in ytv|yts|yts2) continue ;; esac
+		fi
 		DRANGE=""
-		[ "$did" = "yts" ] && DRANGE="-r 0-4194303"
+		case "$did" in yts|yts2) DRANGE="-r 0-4194303" ;; esac
 		if [ "$did" = "ytv" ]; then
 			# SUSTAINED-FLOW throughput: real thumbnails over keep-alive
 			# flows (--max-time caps EACH window; curl exits 28 on a
@@ -349,10 +492,23 @@ YTVFLOW
 			fi
 			continue
 		fi
+		# Ф6.4 (audit 82): content probes SAVE the body for diag_core
+		# classification (yts keeps /dev/null — its verdict is speed-based);
+		# fingerprint variants (ids with "f") run the browser-like profile.
+		DBODY="$TMP/b_$did"
+		case "$did" in yts|yts2) DBODY="/dev/null" ;; esac
+		if [ "${did%f}" != "$did" ]; then
+			if [ -n "$PROBE_UID" ]; then
+				su -s /bin/sh daemon -c "sh '${TMP}/fp_flow.sh' '${dhost}:443:${dip}' '${durl}' '${TMP}/b_${did}' > '${TMP}/d_${did}'" >/dev/null 2>&1 &
+			else
+				sh "$TMP/fp_flow.sh" "${dhost}:443:${dip}" "$durl" "$TMP/b_$did" > "$TMP/d_$did" 2>/dev/null &
+			fi
+			continue
+		fi
 		if [ -n "$PROBE_UID" ]; then
-			su -s /bin/sh daemon -c "out=\$(curl -sL $DRANGE --max-redirs 3 --resolve '${dhost}:443:${dip}' -o /dev/null -w '%{http_code} %{time_total} %{size_download} %{speed_download}' --connect-timeout 4 --max-time 9 -k '${durl}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/d_${did}'" >/dev/null 2>&1 &
+			su -s /bin/sh daemon -c "out=\$(curl -sL $DRANGE --max-redirs 3 --resolve '${dhost}:443:${dip}' -o '${DBODY}' -w '%{http_code} %{time_total} %{size_download} %{speed_download} %{time_starttransfer}' --connect-timeout 4 --max-time 9 -k '${durl}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/d_${did}'" >/dev/null 2>&1 &
 		else
-			( out=$(curl -sL $DRANGE --max-redirs 3 --resolve "${dhost}:443:${dip}" -o /dev/null -w '%{http_code} %{time_total} %{size_download} %{speed_download}' --connect-timeout 4 --max-time 9 -k "$durl" 2>/dev/null); echo "$out $?" > "$TMP/d_$did" ) >/dev/null 2>&1 &
+			( out=$(curl -sL $DRANGE --max-redirs 3 --resolve "${dhost}:443:${dip}" -o "$DBODY" -w '%{http_code} %{time_total} %{size_download} %{speed_download} %{time_starttransfer}' --connect-timeout 4 --max-time 9 -k "$durl" 2>/dev/null); echo "$out $?" > "$TMP/d_$did" ) >/dev/null 2>&1 &
 		fi
 	done
 	dn=0
@@ -362,117 +518,60 @@ YTVFLOW
 			did=${dp%%|*}
 			[ -s "$TMP/d_$did" ] || all=0
 		done
-		[ "$all" = 1 ] && break
-		sleep 1
-		dn=$((dn + 1))
-	done
-	# attach the deep results to the owning main tag: yt ← ytp,yti,ytr,ytv,yts; tg ← tgp; dc ← dcp; st ← stp
-	for h in $HOSTS; do
-		tag=${h%%|*}
-		case "$tag" in
-			yt) OWNER="ytp yti ytr ytv yts" ;;
-			tg) OWNER="tgp" ;;
-			dc) OWNER="dcp" ;;
-			st) OWNER="stp" ;;
-		esac
-		DJSON=""
-		DOK=0; DTOT=0
-		for did in $OWNER; do
-			raw=$(cat "$TMP/d_$did" 2>/dev/null)
-			# An ABSENT probe (e.g. no real-stream URL this sweep) is not a
-			# failure — emitting empty fields produced INVALID JSON (caught
-			# live ч.116: "bytes":, broke the fuzzer's json() parse) and the
-			# whole deep verdict was lost. Absent = skipped entirely.
-			[ -n "$raw" ] || continue
-			dcode=$(printf '%s' "$raw" | awk '{print $1}')
-			dsec=$(printf '%s' "$raw" | awk '{print $2}')
-			dbytes=$(printf '%s' "$raw" | awk '{print $3}')
-			dspeed=$(printf '%s' "$raw" | awk '{print $4}')
-			# ч.129 hardening: a truncated curl line must never render as an
-			# EMPTY JSON number ("bytes":, breaks the fuzzer's json() parse
-			# and silently drops the whole deep verdict — the live deep_count
-			# 4-of-7 fact). Missing fields default to honest zeros.
-			[ -n "$dcode" ] || dcode="000"
-			case "$dsec" in ''|*[!0-9.]*) dsec="0" ;; esac
-			case "$dbytes" in ''|*[!0-9]*) dbytes="0" ;; esac
-			case "$dspeed" in ''|*[!0-9.]*) dspeed="0" ;; esac
-			# curl prints speed_download as a double ("9563726.000") — busybox
-			# test needs an integer: truncate at the decimal point.
-			dspeed=${dspeed%%.*}
-			drc=$(printf '%s' "$raw" | awk '{print $5}')
-			# ч.127: the ytv batch adds a 6th field — the averaged
-			# time_starttransfer of each window's FIRST transfer (a fresh
-			# connection each) in seconds; the deep item carries it as
-			# "ttfb" milliseconds — the hover-preview START metric.
-			dtfbms=0
-			if [ "$did" = "ytv" ]; then
-				dtfbms=$(printf '%s' "$raw" | awk '{printf "%d", ($6+0)*1000}')
-				[ -n "$dtfbms" ] || dtfbms=0
-			fi
-			DTOT=$((DTOT+1))
-			case "$dcode" in ''|000|0) dok=0;; *)
-			dok=1
-			case "$dcode" in 2*|3*) : ;; *) dok=0 ;; esac
-			# edge probe: ANY HTTP answer proves the DPI let the host through
-			case "$did" in ytr) [ "$dcode" != "000" ] && dok=1 ;; esac
-			# ч.116 ytv (sustained-flow batch): ≥8 real thumbnails fetched AND
-			# ≥128 KB/s over ONE keep-alive flow AND ≥0.4 MB total — the
-			# «превью грузятся вечность» case fails here honestly.
-			case "$did" in ytv)
-				case "$dcode" in 200) : ;; *) dok=0 ;; esac
-				[ "$dspeed" -ge 131072 ] 2>/dev/null || dok=0
-				[ "$dbytes" -ge 409600 ] 2>/dev/null || dok=0
-			;; esac
-			# ч.116 yts (real video stream): 2xx AND ≥128 KB/s AND ≥0.5 MB.
-			case "$did" in yts)
-				case "$dcode" in 200|206) : ;; *) dok=0 ;; esac
-				[ "$dspeed" -ge 131072 ] 2>/dev/null || dok=0
-				[ "$dbytes" -ge 524288 ] 2>/dev/null || dok=0
-			;; esac
-			[ "$dcode" = "204" ] || [ "$dbytes" -gt 0 ] 2>/dev/null || dok=0
-			;; esac
-			[ "$dok" = 1 ] && DOK=$((DOK+1))
-			[ -n "$DJSON" ] && DJSON="$DJSON,"
-			# ч.127: ytv carries "ttfb" (ms) — the rest keep the old shape.
-			if [ "$did" = "ytv" ]; then
-				DJSON="$DJSON{\"id\":\"$did\",\"code\":\"$dcode\",\"sec\":\"$dsec\",\"bytes\":$dbytes,\"speed\":$dspeed,\"ttfb\":$dtfbms,\"ok\":$dok}"
-			else
-				DJSON="$DJSON{\"id\":\"$did\",\"code\":\"$dcode\",\"sec\":\"$dsec\",\"bytes\":$dbytes,\"speed\":$dspeed,\"ok\":$dok}"
-			fi
-		done
-		eval "D_${tag}_OK=$DOK"
-		eval "D_${tag}_TOT=$DTOT"
-		eval "D_${tag}_JSON='$DJSON'"
-		DJSON_ALL="$DJSON_ALL $tag:$DOK/$DTOT"
-	done
+	[ "$all" = 1 ] && break
+	sleep 1
+	dn=$((dn + 1))
+done
 fi
 
-# 6. Build JSON (the temp dir survives watchdog teardowns now).
-JSON=""; OKC=0; TOT=0; ALLOK=0; ALLTOT=0
-for h in $HOSTS; do
-	tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
-	ip=$(cat "$TMP/ip_$tag" 2>/dev/null)
-	raw=$(cat "$TMP/r_$tag" 2>/dev/null); tls=${raw%% *}; rc=${raw##* }
-	TOT=$((TOT+1))
-	ok=0; case "$tls" in 0|0.000000|"") ok=0;; *) ok=1;; esac
-	[ "$ok" = 1 ] && OKC=$((OKC+1))
-	reason=""
-	if [ "$ok" = 0 ]; then
-		case "$rc" in 6) reason=dns;; 7) reason=refused;; 28) reason=timeout;; 35|51|53|56|58|59|60) reason=tls;; *) reason=fail;; esac
-	fi
-	DEEPJSON=""
-	if [ "$DEEP" = "1" ]; then
-		eval "dok=\$D_${tag}_OK"; eval "dtot=\$D_${tag}_TOT"; eval "dj=\$D_${tag}_JSON"
-		ALLOK=$((ALLOK+dok)); ALLTOT=$((ALLTOT+dtot))
-		DEEPJSON=",\"deep_ok\":$dok,\"deep_total\":$dtot,\"deep\":[$dj]"
-	fi
-	[ -n "$JSON" ] && JSON="$JSON,"
-	JSON="$JSON{\"tag\":\"$tag\",\"label\":\"$label\",\"host\":\"$host\",\"ip\":\"$ip\",\"tls\":\"$tls\",\"ok\":$ok,\"reason\":\"$reason\"$DEEPJSON}"
-done
-
+# 5c. Ф6.4: classification + unified result build (audit 82) — ONE ucode pass:
+# diag_core.classify_path over the saved bodies + the honest speed gates
+# (ytv/yts) + the full result JSON. The manifest rides stdin (lesson 8: ARGV
+# unreliable on this build); the builder prints the final line.
 if [ "$DEEP" = "1" ]; then
-	echo "{\"ok\":$OKC,\"total\":$TOT,\"deep_ok\":$ALLOK,\"deep_total\":$ALLTOT,\"results\":[$JSON]}"
+	{
+		printf '{"tmp":"%s","deep":true,"hosts":[' "$TMP"
+		firsth=1
+		for h in $HOSTS; do
+			tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
+			[ "$firsth" = 1 ] || printf ','
+			firsth=0
+			printf '["%s","%s","%s"]' "$tag" "$label" "$host"
+		done
+		printf '],"owners":{"yt":["ytp","ytpf","yti","ytr","ytv","yts","yts2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf"],"st":["stp","stpf"]}}\n'
+	} > "$TMP/manifest.json"
+	ucode /etc/homeproxy/scripts/zapret_deep_build.uc < "$TMP/manifest.json"
 else
+	# plain build: the same unified record (code/tls/redirect/rc), no deep.
+	JSON=""; OKC=0; TOT=0
+	for h in $HOSTS; do
+		tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
+		ip=$(cat "$TMP/ip_$tag" 2>/dev/null)
+		raw=$(cat "$TMP/r_$tag" 2>/dev/null)
+		set -- $raw
+		dcode=${1:-000}; tls=${2:-0}; rc=${3:-1}; redir="-"
+		case "$tls" in ''|*[!0-9.]*) tls=0 ;; esac
+		if [ "$#" -ge 4 ]; then
+			redir="$3"
+			case "$redir" in http*) : ;; *) redir="-" ;; esac
+			rc=$4
+		fi
+		case "$rc" in ''|*[!0-9]*) rc=1 ;; esac
+		TOT=$((TOT+1))
+		tlsok=0; case "$tls" in 0|0.000000|"") tlsok=0;; *) tlsok=1;; esac
+		ok=0; [ "$tlsok" = 1 ] && [ "$rc" = 0 ] && ok=1
+		[ "$ok" = 1 ] && OKC=$((OKC+1))
+		reason=""
+		if [ "$ok" = 0 ]; then
+			if [ "$tlsok" = 1 ]; then
+				reason=flow_reset
+			else
+				case "$rc" in 6) reason=dns;; 7) reason=refused;; 28) reason=timeout;; 35|51|53|56|58|59|60) reason=tls;; *) reason=fail;; esac
+			fi
+		fi
+		[ -n "$JSON" ] && JSON="$JSON,"
+		JSON="$JSON{\"tag\":\"$tag\",\"label\":\"$label\",\"host\":\"$host\",\"ip\":\"$ip\",\"code\":\"$dcode\",\"tls\":\"$tls\",\"redirect\":\"$redir\",\"rc\":$rc,\"ok\":$ok,\"reason\":\"$reason\"}"
+	done
 	echo "{\"ok\":$OKC,\"total\":$TOT,\"results\":[$JSON]}"
 fi
 rm -rf "$TMP" 2>/dev/null

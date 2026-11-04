@@ -48,7 +48,9 @@
 'use strict';
 
 import { access, readfile, writefile, popen, lstat } from 'fs';
-import { kill_matched as pm_kill_matched, find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
+import { find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
+import { acquire as resmgr_acquire, release as resmgr_release,
+	kill_own as resmgr_kill_own, lab_unlock as resmgr_lab_unlock } from '/etc/homeproxy/scripts/test_resmgr.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const STATUS = RUN_DIR + '/wizard_strategies.json';
@@ -61,7 +63,11 @@ const TMP = '/tmp/wizard_strategies';
 const NFQWS = '/opt/zapret2/nfq2/nfqws2';
 const FAKE_DIR = '/opt/zapret2/files/fake';
 const LUA_ARGS = '--lua-init=@/opt/zapret2/lua/zapret-lib.lua --lua-init=@/opt/zapret2/lua/zapret-antidpi.lua --lua-init=@/opt/zapret2/lua/zapret-auto.lua';
-const SMOKE_QNUM = '209';   /* the same temp queue zapret_test.sh uses */
+/* Ф6.4 Test Resource Manager (audit 80): the smoke tests no longer share the
+ * fuzzer's queue — the validate stage OWNS a qnum from the pool for its whole
+ * run, and signals only its own instance (kill_own). Until acquire() ran,
+ * smoke validation is simply impossible (honest error, not a shared queue). */
+let SMOKE_QNUM = null;
 
 const SRC_MAIN = 'https://raw.githubusercontent.com/StressOzz/Zapret-Manager/main/Strategies.md';
 const SRC_YT = 'https://raw.githubusercontent.com/StressOzz/Zapret-Manager/main/Strategies_For_Youtube.md';
@@ -520,10 +526,10 @@ function parse_md_blocks(text, prefix) {
 
 function kill_temp_nfqws() {
 	/* Ф1.4b: identity kill — the exact binary whose --qnum element is OUR
-	 * temp queue. The old pgrep+cmdline-grep walked every nfqws2 by hand;
-	 * pmgr re-verifies (pid, start) before each signal and never kills the
-	 * production queue (its --qnum element differs). */
-	pm_kill_matched({ exe: 'nfqws2', arg_all: [ '--qnum=' + SMOKE_QNUM ] }, 2000);
+	 * temp queue, AND ownership-checked (test_resmgr): a signal goes out
+	 * only when THIS task still owns the queue (audit 80 — the import may
+	 * never kill the fuzzer's instance again). */
+	resmgr_kill_own(SMOKE_QNUM, 'smoke');
 }
 
 /* Spawn nfqws2 on the temp queue for ~1 s: a strategy whose args the binary
@@ -532,12 +538,34 @@ function kill_temp_nfqws() {
 function smoke_ok(args) {
 	if (!access(NFQWS))
 		return { ok: false, error: 'zapret2 not installed' };
+	if (SMOKE_QNUM == null)
+		return { ok: false, error: 'no owned test queue (acquire first)' };
 	kill_temp_nfqws();
 	system(`${NFQWS} --qnum=${SMOKE_QNUM} --user=daemon --fwmark=0x40000000 ${LUA_ARGS} ${args} >/dev/null 2>&1 &`);
 	system('sleep 1');
 	const alive = length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + SMOKE_QNUM ] })) > 0;
 	kill_temp_nfqws();
 	return { ok: alive };
+}
+
+/* Ф6.4: acquire the smoke queue for the whole validate stage; an honest
+ * failure means the validate stage cannot run AT ALL (another lab task
+ * owns every pool queue) — the caller reports it, nothing is killed. */
+function smoke_acquire() {
+	const r = resmgr_acquire('smoke');
+	if (r != null && r.ok === true) {
+		SMOKE_QNUM = '' + int(r.qnum);
+		return true;
+	}
+	SMOKE_QNUM = null;
+	return false;
+}
+
+function smoke_release() {
+	if (SMOKE_QNUM != null) {
+		resmgr_release(SMOKE_QNUM, 'smoke');
+		SMOKE_QNUM = null;
+	}
 }
 
 /* ═══════════════════════ IMPORT mode ══════════════════════════════════ */
@@ -605,7 +633,14 @@ function do_import() {
 			wstat({ running: true, mode: 'import', stage: 'convert', done: n, total: length(blocks) });
 	}
 
-	/* Smoke validation: only strategies that may enter the corpus. */
+	/* Smoke validation: only strategies that may enter the corpus. The
+	 * validate stage owns a pool queue (audit 80) — without one it aborts
+	 * honestly instead of killing a concurrent fuzzer's instance. */
+	if (!smoke_acquire()) {
+		wstat({ running: false, mode: 'import', stage: 'error',
+			error: 'нет свободной тестовой очереди (209–212) — другая задача лаборатории ещё работает; повторите позже' });
+		return;
+	}
 	const keep = [];
 	let v = 0;
 	for (let c in candidates) {
@@ -618,6 +653,7 @@ function do_import() {
 		else
 			push(dropped, { name: c.name, reason: 'nfqws2 rejected the converted args' });
 	}
+	smoke_release();
 
 	writefile(PREVIEW + '.tmp', sprintf("%.J\n", {
 		running: false, source: 'stressozz', ts: time(),
@@ -788,6 +824,11 @@ function do_generate() {
 	}
 
 	wstat({ running: true, mode: 'generate', stage: 'validate', total: length(fresh), done: 0 });
+	if (!smoke_acquire()) {
+		wstat({ running: false, mode: 'generate', stage: 'error',
+			error: 'нет свободной тестовой очереди (209–212) — другая задача лаборатории ещё работает; повторите позже' });
+		return;
+	}
 	const keep = [];
 	let v = 0;
 	for (let c in fresh) {
@@ -796,6 +837,7 @@ function do_generate() {
 		const s = smoke_ok(c.args);
 		if (s.ok) push(keep, c);
 	}
+	smoke_release();
 
 	/* Replace the previous 'generated' group entirely (mutations of stale
 	 * seeds have no value), keep everything else untouched. */
@@ -832,3 +874,8 @@ if (mode === 'generate')
 	do_generate();
 else
 	do_import();
+/* Ф6.4 (аудит 81): the lab lock was acquired by the RPC before the mode file
+ * was written — THIS worker owns releasing it on EVERY path (success, honest
+ * error, early return). A crashed worker leaves it to the 18-min staleness
+ * breaker inside lab_lock(). */
+resmgr_lab_unlock('wizard_strategies');

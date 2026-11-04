@@ -302,6 +302,13 @@ function main() {
 			}
 			fz = w.fz;
 		} else if (!fresh) {
+			/* Ф6.4 (аудит 81, симметричный гвард): фаззинг не стартует поверх
+			 * идущего импорта/генерации стратегий. */
+			const wst = read_json(RUN_DIR + '/wizard_strategies.json');
+			if (wst != null && wst.running === true && (time() - int(wst.ts || 0)) < 900) {
+				fuzz_fail(res, 'идёт импорт/генерация стратегий — подбор повторите после его завершения');
+				return;
+			}
 			note(res, 'Запускаю ' + ((mode === 'full') ? 'полный' : 'быстрый') +
 				' фаззинг (прошлого рейтинга нет или он старше 6 ч)…');
 			wstat(res);
@@ -321,7 +328,14 @@ function main() {
 			note(res, 'Использую существующий рейтинг фаззинга (моложе 6 ч).');
 		}
 
-		/* 2. PICK — resource-tag ranking (majority pass, non-free-pass host). */
+		/* 2. PICK — Ф6.4 (аудит 92): вердикт ресурса из Strategy Lab v3 —
+		 * ОДНА реализация гейта (strategy_lab.resource_verdict в merge).
+		 * Автоприменяется ТОЛЬКО best_verified; best_available (рукопожатие
+		 * прошло, обязательные тесты не подтверждены) НЕ применяется
+		 * автоматически — решение вручную; no_candidate — честный отказ
+		 * со списком ЧТО не работает. Для результата старого формата
+		 * (без verdicts) — прежний отбор по тегу, но рейтинг по МЕДИАНЕ
+		 * (аудит 66), а не по лучшему одиночному замеру. */
 		res.stage = 'pick';
 		wstat(res);
 		let chosen = null;
@@ -331,7 +345,71 @@ function main() {
 		let chosen_stream = 0;
 		let chosen_start = 0;
 		const runners = [];
-		if (meta.tag == null) {
+		const labv = (fz.verdicts != null && type(fz.verdicts) === 'object') ? fz.verdicts[resource] : null;
+		const find_by_args = (args) => {
+			for (let s in fz.strategies)
+				if (type(s) === 'object' && s.args === args)
+					return s;
+			return null;
+		};
+		if (labv != null && type(labv) === 'object' && labv.verdict != null) {
+			if (labv.verdict === 'best_verified') {
+				const s = (labv.chosen != null && labv.chosen.args != null)
+					? find_by_args('' + labv.chosen.args) : null;
+				if (s != null) {
+					chosen = s;
+					for (let x in s.hosts)
+						if (x.tag === meta.tag) {
+							chosen_deep = deep_ratio_of(s, meta.tag);
+							if (s.deep && type(s.deep.hosts) === 'array')
+								for (let dh in s.deep.hosts)
+									if (type(dh) === 'object' && dh.tag === meta.tag) {
+										chosen_deep_pass = int(dh.deep_pass || 0);
+										chosen_deep_total = int(dh.deep_total || 0);
+										chosen_stream = int(dh.stream || 0);
+										chosen_start = int(dh.start_ms || 0);
+									}
+						}
+					let rank = 0;
+					for (let s2 in fz.strategies) {
+						rank++;
+						if (s2 === s) break;
+					}
+					for (let i = rank; i < length(fz.strategies) && i < rank + 3; i++) {
+						const h2 = fz.strategies[i];
+						if (type(h2) === 'object' && int(h2.ok || 0) > 0)
+							push(runners, (h2.name || '') + ' (' + int(h2.avg_tls_ms || 0) + ' ms)');
+					}
+				} else {
+					/* verdict назвал стратегию, которой нет в списке —
+					 * честный отказ, гадать нельзя */
+					chosen = null;
+					labv.verdict = 'no_candidate';
+				}
+			} else if (labv.verdict === 'best_available') {
+				res.running = false; res.stage = 'done';
+				res.verdict = 'best_available';
+				res.applied = false;
+				res.chosen = null;
+				note(res, 'Автоприменение ОТКЛОНЕНО: подтверждённого победителя нет — доступна только стратегия с пройденным рукопожатием без полного подтверждения компонентов (аудит 92). Примените её вручную из Лаборатории стратегий, если она устраивает.');
+				for (let nn in (labv.notes || []))
+					note(res, '' + nn);
+				wstat(res);
+				system(`rm -f ${sq(REQ)}`);
+				return;
+			} else {
+				res.running = false; res.stage = 'error';
+				res.verdict = 'no_candidate';
+				res.error = 'ни одна стратегия корпуса не прошла обязательные проверки ресурса';
+				for (let nn in (labv.notes || []))
+					note(res, '' + nn);
+				for (let wf in (labv.what_failed || []))
+					note(res, 'Не работает: ' + wf);
+				wstat(res);
+				system(`rm -f ${sq(REQ)}`);
+				return;
+			}
+		} else if (meta.tag == null) {
 			/* general: the global ranking head (score order already encodes
 			 * distinguishing successes minus handshake cost). */
 			for (let s in fz.strategies) {
@@ -356,7 +434,9 @@ function main() {
 							stm = int(dh.stream || 0);
 							stms = int(dh.start_ms || 0);
 						}
-				push(elig, { s: s, ms: int(h.tls_ms) || 0, deep: dr,
+				/* Ф6.4 (аудит 66): рейтинг по МЕДИАНЕ серии, не по лучшему
+				 * одиночному замеру; медианы нет (старый формат) — tls_ms. */
+				push(elig, { s: s, ms: (int(h.median_ms || 0) || int(h.tls_ms || 0)), deep: dr,
 					deep_pass: dp, deep_total: dt, stream: stm, start: stms });
 			}
 		}
@@ -415,6 +495,7 @@ function main() {
 	}
 		if (chosen == null) {
 			res.running = false; res.stage = 'error';
+			res.verdict = 'no_candidate';
 			res.error = (meta.tag == null)
 				? 'ни одна стратегия не прошла различающие хосты'
 				: 'ни одна стратегия корпуса не прошла проверку ресурса — попробуйте полный фаззинг или генератор стратегий';
@@ -427,12 +508,20 @@ function main() {
 			wstat(res);
 			return;
 		}
-		res.chosen = {
-			name: chosen.name || '', args: chosen.args || '',
-			score: int(chosen.score) || 0, avg_tls_ms: int(chosen.avg_tls_ms) || 0,
-			stream: int(chosen_stream || 0), start_ms: int(chosen_start || 0),
-			runners: runners
-		};
+	res.chosen = {
+		name: chosen.name || '', args: chosen.args || '',
+		score: int(chosen.score) || 0, avg_tls_ms: int(chosen.avg_tls_ms) || 0,
+		stream: int(chosen_stream || 0), start_ms: int(chosen_start || 0),
+		runners: runners
+	};
+	/* Ф6.4: честный вердикт выбранного (92) — подтверждён только тогда,
+	 * когда ВСЕ обязательные компоненты ресурса прошли deep-батарею. */
+	res.verdict = ((chosen_deep_total != null && int(chosen_deep_total) > 0 &&
+		int(chosen_deep_pass || 0) === int(chosen_deep_total)) ||
+		(chosen_deep == null && resource === 'general'))
+		? 'best_verified' : 'best_available';
+	if (res.verdict === 'best_available')
+		note(res, 'Внимание: победитель НЕ подтверждён полностью (deep-батарея не пройдена целиком или не проводилась) — применяю по вашей явной команде автоподбора.');
 		/* ч.116: the resource's own deep verdict (pass/total of THIS
 		 * resource's probes), not the global mix across all resources. */
 		if (chosen_deep_total != null && int(chosen_deep_total) > 0)
