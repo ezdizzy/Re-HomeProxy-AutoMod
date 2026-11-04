@@ -39,6 +39,7 @@
 import { access, readfile, writefile, rename, mkdir, rmdir, stat, unlink, popen } from 'fs';
 import { begin as op_begin, heartbeat as op_heartbeat, stage as op_stage, finish as op_finish } from '/etc/homeproxy/scripts/opman.uc';
 import { kill_tree as pm_kill_tree, kill_entry as pm_kill_entry, find_daemons as pm_find, proc_info as pm_proc_info } from '/etc/homeproxy/scripts/pmgr.uc';
+import { emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
 
 const CORE_MGMT = '/usr/share/homeproxy/scripts/core_mgmt.uc';
 const RUN_FILE = '/var/run/homeproxy/core_install.json';
@@ -168,6 +169,19 @@ function lite_recovery_note() {
 	return 'installed; the installer was killed after the binary swap (health-check hang) — the service was restarted';
 }
 
+/* Ф8.7 (D30): честное событие шины о ФИНАЛЕ фоновой установки ядра
+ * (категория update, UCI push_update) — установка идёт в фоне и без
+ * события её исход не виден ни в чате, ни где-либо ещё. Best-effort:
+ * событие никогда не роняет установку. Синхронные установки (приложение/
+ * пакеты движков) актёр видит сразу — события туда не пишутся. */
+function uev(ok, core, variant, detail) {
+	try {
+		ev_emit('update', ok ? 'done' : 'failed',
+			'ядро ' + core + (length(variant) ? ' (' + variant + ')' : ''),
+			'' + (detail || ''));
+	} catch (e) { /* best-effort */ }
+}
+
 function main() {
 	/* ARGV[0] = the first script argument (ucode convention, same as
 	 * core_mgmt.uc's `const action = ARGV[0]`). */
@@ -214,6 +228,7 @@ function main() {
 	const prep = run_action('prepare_install', [core, variant], null, op_id);
 	if (prep.error || prep.result === false) {
 		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: prep.error || 'prepare failed', started: started, finished: time(), op_id: op_id });
+		uev(false, core, variant, 'стадия prepare: ' + (prep.error || 'prepare failed'));
 		if (op_id) {
 			try { op_finish(op_id, false, false, 'prepare: ' + (prep.error || 'prepare failed')); } catch (e) { /* journal hiccup */ }
 		}
@@ -225,6 +240,7 @@ function main() {
 	const dl_url = prep.dl_url || prep.installer_url;
 	if (!dl_url || !prep.tmp_path) {
 		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: 'prepare returned no download URL', started: started, finished: time(), op_id: op_id });
+		uev(false, core, variant, 'стадия prepare: нет ссылки на загрузку');
 		if (op_id) {
 			try { op_finish(op_id, false, false, 'prepare returned no download URL'); } catch (e) { /* journal hiccup */ }
 		}
@@ -240,6 +256,7 @@ function main() {
 	const dl = run_action('download_pkg', [core, dl_url, prep.tmp_path], null, op_id);
 	if (!dl.result) {
 		wstatus({ running: false, ok: false, core: core, stage: 'download', error: dl.error || 'download failed', started: started, finished: time(), op_id: op_id });
+		uev(false, core, variant, 'стадия download: ' + (dl.error || 'download failed'));
 		if (op_id) {
 			try { op_finish(op_id, false, false, 'download: ' + (dl.error || 'download failed')); } catch (e) { /* journal hiccup */ }
 		}
@@ -270,6 +287,8 @@ function main() {
 				warning: (kr && kr.result === true) ? null : 'kmod install failed',
 				kmods_ok: (kr && kr.result === true) ? true : false
 			});
+			uev(true, core, variant, 'бинарник заменён, но установщик был убит после подмены (завис health-check) — служба перезапущена' +
+				((kr && kr.result === true) ? '' : '; kmod-установка не удалась (не фатально)'));
 			if (op_id) {
 				try { op_finish(op_id, true, false, note); } catch (e) { /* journal hiccup */ }
 			}
@@ -278,6 +297,7 @@ function main() {
 			return;
 		}
 		wstatus({ running: false, ok: false, core: core, stage: 'install', error: inst.error || 'installation failed', started: started, finished: time(), op_id: op_id });
+		uev(false, core, variant, 'стадия install: ' + (inst.error || 'installation failed'));
 		if (op_id) {
 			try { op_finish(op_id, false, false, 'install: ' + (inst.error || 'installation failed')); } catch (e) { /* journal hiccup */ }
 		}
@@ -306,6 +326,8 @@ function main() {
 		kmods_ok: (kmods && kmods.result === true) ? true : false,
 		op_id: op_id
 	});
+	uev(true, core, variant, (length(detail) ? detail : 'установлено') +
+		((kmods && kmods.result === true) ? '' : '; kmod-установка не удалась (не фатально)'));
 	if (op_id) {
 		try { op_finish(op_id, true, false, detail); } catch (e) { /* journal hiccup */ }
 	}

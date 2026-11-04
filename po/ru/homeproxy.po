@@ -13252,3 +13252,60 @@ msgstr "Доступ (RBAC)"
 
 msgid "Roles from top to bottom: Owner (everything) → Admin (service, snapshots, rules) → Operator (nodes, pause, temporary actions) → Viewer (status only). Every command and button is checked against the sender's user_id; groups and channels are denied by default. Pairing: generate a one-time 60 s code here, the user sends it to the bot from a private chat."
 msgstr "Роли сверху вниз: Владелец (всё) → Админ (служба, снапшоты, правила) → Оператор (узлы, пауза, временные действия) → Наблюдатель (только статус). Каждая команда и кнопка проверяются по user_id отправителя; группы и каналы по умолчанию запрещены. Привязка: сгенерируйте здесь одноразовый код на 60 с — пользователь отправляет его боту из личного чата."
+
+msgid "Safe Mode"
+msgstr "Safe Mode"
+
+msgid "Updates"
+msgstr "Обновления"
+
+msgid "Security"
+msgstr "Безопасность"
+
+msgid "Send a sample push of this category to your chat"
+msgstr "Прислать пример пуша этой категории в ваш чат"
+
+msgid "Sample"
+msgstr "Пример"
+
+msgid "Sample failed: "
+msgstr "Пример не отправлен: "
+
+msgid "Sample sent — check your chat."
+msgstr "Пример отправлен — проверьте чат."
+
+msgid "Sample NOT sent: "
+msgstr "Пример НЕ отправлен: "
+
+msgid "Health & watchdog: subsystem statuses, Sentinel repairs, Recovery"
+msgstr "Здоровье и сторож: статусы подсистем, ремонты Sentinel, Recovery"
+
+msgid "Auto-pilot strategy decisions"
+msgstr "Решения автопилота (стратегии)"
+
+msgid "Safe Mode on/off (egress to direct)"
+msgstr "Safe Mode вкл/выкл (выход напрямую)"
+
+msgid "Update results (background core install)"
+msgstr "Результаты обновлений (фоновая установка ядра)"
+
+msgid "Security: pairing codes, RBAC changes"
+msgstr "Безопасность: коды привязки, изменения RBAC"
+
+msgid "Quiet hours"
+msgstr "Тихие часы"
+
+msgid "Window start (HH:MM)"
+msgstr "Начало окна (ЧЧ:ММ)"
+
+msgid "Window end (HH:MM)"
+msgstr "Конец окна (ЧЧ:ММ)"
+
+msgid "(local router time)"
+msgstr "(местное время роутера)"
+
+msgid "During the window normal pushes of ALL categories are held back and counted; they are reported on the next delivered push. CRITICAL alerts (core down, subscription rollback, recovery blocked) always break through — the safety invariant. Equal from/to = window off."
+msgstr "В окне обычные пуши ВСЕХ категорий удерживаются и считаются; счёт показывается в следующем доставленном пуше. Критические алерты (ядро недоступно, откат подписки, ремонт приостановлен) проходят всегда — инвариант безопасности. Начало = конец: окно выключено."
+
+msgid "Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a \"Sample\" button. \"Mute\" silences pushes only — commands keep working."
+msgstr "Пуши: смены узлов Hot Swap, недоступные узлы URLTest (и восстановления), обучение и самолечение автоматизации, сбои ядра — и всё родительского контроля (блокировки, временные блоки/разрешения, окна расписаний, Wi-Fi, новые устройства в сети). Категории также покрывают ремонты здоровья и сторожа, решения автопилота, вкл/выкл Safe Mode, результаты фоновых обновлений и события безопасности привязки/RBAC — у каждой категории свой тумблер и кнопка «Пример». «Без звука» глушит только пуши — команды работают."

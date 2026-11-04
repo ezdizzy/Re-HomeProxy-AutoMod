@@ -37,6 +37,8 @@ const callTelegramSet = rpc.declare({
 	params: [
 		'enabled', 'token', 'chat_id', 'mute',
 		'push_hotswap', 'push_watchdog', 'push_learn', 'push_service', 'push_control', 'push_exec',
+		'push_health', 'push_autopilot', 'push_safe', 'push_update', 'push_security',
+		'quiet_enabled', 'quiet_from', 'quiet_to',
 		'poll_timeout', 'push_interval'
 	],
 	expect: { '': {} }
@@ -45,6 +47,14 @@ const callTelegramSet = rpc.declare({
 const callTelegramTest = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'telegram_test',
+	expect: { '': {} }
+});
+
+/* Ф8.7: «прислать пример» категории — rpcd sends an honest sample push. */
+const callTelegramPreview = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'telegram_preview',
+	params: [ 'category' ],
 	expect: { '': {} }
 });
 
@@ -118,6 +128,9 @@ const CSS = `
 	.tg-toggle input { width: 17px; height: 17px; cursor: pointer; }
 	.tg-check { display: flex; align-items: flex-start; gap: 7px; cursor: pointer; line-height: 1.35; padding: 3px 0; }
 	.tg-check input { margin-top: 2px; cursor: pointer; flex: none; }
+	.tg-push-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+	.tg-push-row .tg-check { flex: 1 1 auto; min-width: 0; }
+	.tg-prev-btn { flex: none; padding: 2px 10px; font-size: .86em; }
 	.tg-sub { opacity: .75; font-size: .86em; margin-top: 3px; }
 	.tg-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 	.tg-inline .cbi-input-text { width: 110px; }
@@ -179,6 +192,15 @@ return view.extend({
 		const tgPushSv = E('input', { type: 'checkbox' });
 		const tgPushCt = E('input', { type: 'checkbox' });
 		const tgPushEx = E('input', { type: 'checkbox' });
+		/* Ф8.7: новые категории + окно тихих часов. */
+		const tgPushHl = E('input', { type: 'checkbox' });
+		const tgPushAp = E('input', { type: 'checkbox' });
+		const tgPushSf = E('input', { type: 'checkbox' });
+		const tgPushUp = E('input', { type: 'checkbox' });
+		const tgPushSc = E('input', { type: 'checkbox' });
+		const tgQuietEn = E('input', { type: 'checkbox' });
+		const tgQFrom = E('input', { type: 'text', 'class': 'cbi-input-text', style: 'width:90px', placeholder: '23:00' });
+		const tgQTo = E('input', { type: 'text', 'class': 'cbi-input-text', style: 'width:90px', placeholder: '08:00' });
 		const tgPoll = E('input', { type: 'number', min: '5', max: '60', style: 'width:110px', 'class': 'cbi-input-text' });
 		const tgPival = E('input', { type: 'number', min: '1', max: '30', style: 'width:110px', 'class': 'cbi-input-text' });
 
@@ -203,6 +225,15 @@ return view.extend({
 		tgPushSv.checked = tgB('push_service', '1');
 		tgPushCt.checked = tgB('push_control', '1');
 		tgPushEx.checked = tgB('push_exec', '1');
+		/* Ф8.7: новые категории (по умолчанию включены) + тихие часы. */
+		tgPushHl.checked = tgB('push_health', '1');
+		tgPushAp.checked = tgB('push_autopilot', '1');
+		tgPushSf.checked = tgB('push_safe', '1');
+		tgPushUp.checked = tgB('push_update', '1');
+		tgPushSc.checked = tgB('push_security', '1');
+		tgQuietEn.checked = tgB('quiet_enabled', '0');
+		tgQFrom.value = tgU('quiet_from', '23:00');
+		tgQTo.value = tgU('quiet_to', '08:00');
 		tgPoll.value = tgU('poll_timeout', '25');
 		tgPival.value = tgU('push_interval', '2');
 		tgChat.value = tgU('chat_id', '');
@@ -284,26 +315,72 @@ return view.extend({
 			])
 		]);
 
-		/* ── pushes card ────────────────────────────────────────────── */
-		const pushesCard = E('div', { 'class': 'tg-card' }, [
-			E('div', { 'class': 'tg-card-title' }, [
-				_('Push notifications'),
-				E('span', { 'class': 'hpui-hint', style: 'font-weight:400' }, [ _('Pushes watch the router state files; "Mute" silences pushes only — commands keep working.') ])
-			]),
-			E('label', { 'class': 'tg-toggle' }, [ tgMute, E('span', {}, [ _('Mute push notifications') ]) ]),
-			E('div', { 'class': 'tg-grid', style: 'margin-top:10px' }, [
-				E('label', { 'class': 'tg-check' }, [ tgPushHs, E('span', {}, [ _('Hot Swap node changes / failback') ]) ]),
-				E('label', { 'class': 'tg-check' }, [ tgPushWd, E('span', {}, [ _('URLTest dead nodes') ]) ]),
-				E('label', { 'class': 'tg-check' }, [ tgPushLr, E('span', {}, [ _('Automation learned blocks') ]) ]),
-				E('label', { 'class': 'tg-check' }, [ tgPushSv, E('span', {}, [ _('Service faults') ]) ]),
-				E('label', { 'class': 'tg-check' }, [ tgPushCt, E('span', {}, [ _('Control: blocks, schedules, Wi-Fi, new devices') ]) ]),
-			E('label', { 'class': 'tg-check' }, [ tgPushEx, E('span', {}, [ _('Arbitrary commands (/cmd) results') ]) ])
-			]),
-			E('div', { 'class': 'tg-inline', style: 'margin-top:10px' }, [
-				E('span', { 'class': 'tg-sub' }, [ _('Min gap between pushes, s') ]),
-				tgPival
-			])
+	/* ── pushes card ──────────────────────────────────────────────
+	 * Ф8.7: 11 категорий, у каждой — «Пример» (честный образец пуша
+	 * уходит в чат). Результат действий карточки — в pshResult (одно
+	 * место, заменяет предыдущий). Критические алерты проходят любой
+	 * тумблер и тихие часы — инвариант безопасности. */
+	const pshResult = E('div', {});
+
+	function pushRow(cb, cat, label, hint) {
+		const btn = E('button', {
+			'class': 'btn cbi-button cbi-button-apply tg-prev-btn',
+			type: 'button', title: _('Send a sample push of this category to your chat')
+		}, [ _('Sample') ]);
+		btn.addEventListener('click', function() {
+			btn.disabled = true;
+			L.resolveDefault(callTelegramPreview(cat), {}).then(function(r) {
+				dom.content(pshResult, E('p', { 'class': 'hpui-hint' },
+					(!r || r.result === false)
+						? [ E('span', { 'class': 'hpui-c-red' }, [ _('Sample failed: ') + ((r && r.error) || _('rpc error')) ]) ]
+						: (r.sent === true)
+							? [ E('span', { 'class': 'hpui-c-green' }, [ _('Sample sent — check your chat.') ]) ]
+							: [ E('span', { 'class': 'hpui-c-amber' }, [ _('Sample NOT sent: ') + ((r && r.error) || '?') ]) ]));
+			}).finally(function() { btn.disabled = false; });
+		});
+		return E('div', { 'class': 'tg-push-row' }, [
+			E('label', { 'class': 'tg-check' }, [ cb, E('span', {}, [ label ]) ]),
+			btn
 		]);
+	}
+
+	const pushesCard = E('div', { 'class': 'tg-card' }, [
+		E('div', { 'class': 'tg-card-title' }, [
+			_('Push notifications'),
+			E('span', { 'class': 'hpui-hint', style: 'font-weight:400' }, [ _('Pushes watch the router state files; "Mute" silences pushes only — commands keep working.') ])
+		]),
+		E('label', { 'class': 'tg-toggle' }, [ tgMute, E('span', {}, [ _('Mute push notifications') ]) ]),
+		E('div', { 'class': 'tg-grid', style: 'margin-top:10px' }, [
+			pushRow(tgPushHs, 'hotswap', _('Hot Swap node changes / failback')),
+			pushRow(tgPushWd, 'watchdog', _('URLTest dead nodes')),
+			pushRow(tgPushLr, 'learn', _('Automation learned blocks')),
+			pushRow(tgPushSv, 'service', _('Service faults')),
+			pushRow(tgPushCt, 'control', _('Control: blocks, schedules, Wi-Fi, new devices')),
+			pushRow(tgPushEx, 'exec', _('Arbitrary commands (/cmd) results')),
+			pushRow(tgPushHl, 'health', _('Health & watchdog: subsystem statuses, Sentinel repairs, Recovery')),
+			pushRow(tgPushAp, 'autopilot', _('Auto-pilot strategy decisions')),
+			pushRow(tgPushSf, 'safe', _('Safe Mode on/off (egress to direct)')),
+			pushRow(tgPushUp, 'update', _('Update results (background core install)')),
+			pushRow(tgPushSc, 'security', _('Security: pairing codes, RBAC changes'))
+		]),
+		E('div', { 'class': 'tg-inline', style: 'margin-top:10px' }, [
+			E('span', { 'class': 'tg-sub' }, [ _('Min gap between pushes, s') ]),
+			tgPival
+		]),
+		E('div', { 'class': 'tg-quiet', style: 'margin-top:14px; border-top:1px solid var(--hp-panel-line); padding-top:12px' }, [
+			E('label', { 'class': 'tg-toggle' }, [ tgQuietEn, E('span', {}, [ _('Quiet hours') ]) ]),
+			E('div', { 'class': 'tg-inline', style: 'margin-top:8px' }, [
+				E('span', { 'class': 'tg-sub' }, [ _('Window start (HH:MM)') ]),
+				tgQFrom,
+				E('span', { 'class': 'tg-sub' }, [ _('Window end (HH:MM)') ]),
+				tgQTo,
+				E('span', { 'class': 'tg-sub' }, [ _('(local router time)') ])
+			]),
+			E('p', { 'class': 'hpui-hint tg-sub', style: 'margin-top:6px' },
+				[ _('During the window normal pushes of ALL categories are held back and counted; they are reported on the next delivered push. CRITICAL alerts (core down, subscription rollback, recovery blocked) always break through — the safety invariant. Equal from/to = window off.') ])
+		]),
+		pshResult
+	]);
 
 		/* ── access card (Ф8.1): pairing + RBAC users ────────────────────
 		 * One result area (rbResult) for both actions; the live code and
@@ -736,9 +813,18 @@ return view.extend({
 				tgPushWd.checked ? '1' : '0',
 				tgPushLr.checked ? '1' : '0',
 				tgPushSv.checked ? '1' : '0',
-			tgPushCt.checked ? '1' : '0',
-			tgPushEx.checked ? '1' : '0',
-			String(tgPoll.value || '25'),
+				tgPushCt.checked ? '1' : '0',
+				tgPushEx.checked ? '1' : '0',
+				/* Ф8.7: новые категории + окно тихих часов. */
+				tgPushHl.checked ? '1' : '0',
+				tgPushAp.checked ? '1' : '0',
+				tgPushSf.checked ? '1' : '0',
+				tgPushUp.checked ? '1' : '0',
+				tgPushSc.checked ? '1' : '0',
+				tgQuietEn.checked ? '1' : '0',
+				String(tgQFrom.value || '').trim(),
+				String(tgQTo.value || '').trim(),
+				String(tgPoll.value || '25'),
 				String(tgPival.value || '2')
 			).then(function(r) {
 				dom.content(tgResult, E('p', { 'class': 'hpui-hint' },
@@ -791,7 +877,7 @@ return view.extend({
 			E('p', { 'class': 'hpui-hint' },
 				[ _('Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Parental control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat.') ]),
 			E('p', { 'class': 'hpui-hint' },
-				[ _('Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). "Mute" silences pushes only — commands keep working.') ])
+				[ _('Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a "Sample" button. "Mute" silences pushes only — commands keep working.') ])
 		]);
 
 		return E('div', {}, [

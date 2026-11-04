@@ -87,6 +87,23 @@
  *     abort/rollback, recovery blocked, sentinel loop) pass ALWAYS — the
  *     safety invariant; suppressed normal alerts are counted and honestly
  *     reported on the next delivered push of the same kind.
+ * Ф8.7 Personalization (D30, ч.191):
+ *   - ELEVEN push categories (hotswap/watchdog/learn/service/control/exec/
+ *     health/autopilot/safe/update/security); Sentinel/Recovery/Health
+ *     moved OUT of 'service' into their own 'health' category; autopilot
+ *     decisions (src=autopilot) were previously UNMAPPED and silently
+ *     skipped; safe-mode on/off rides src=safe from the Control API
+ *     (rpcd control_safe_set) with an in-chat echo suppressor; background
+ *     update results (core_install_runner) ride src=update; pairing/RBAC
+ *     events (rpcd) ride src=security.
+ *   - Quiet hours (UCI quiet_enabled/quiet_from/quiet_to, LOCAL router
+ *     time): NORMAL pushes of ALL categories are suppressed inside the
+ *     window (counted honestly per category in a separate qsup counter,
+ *     shown on the next delivered push); CRITICALS pass the window too —
+ *     same invariant as mute. from == to = a zero-length window (fail-open).
+ *   - Preview («прислать пример»): the UI calls telegram_preview, rpcd
+ *     sends an honest sample of the category (user-requested → bypasses
+ *     mute/quiet/threshold by design, like telegram_test).
  *   - Audit Log: every chat action (command, button tap, confirmation,
  *     RBAC denial, pairing) is emitted to the Event Bus (src='tg');
  *     /audit [N] [word] (admin+) merges them with src='control' mutations
@@ -168,7 +185,12 @@ let cfg = {
 	enabled: '0', token: '', chat_id: '', mute: '0',
 	poll: '25', push_interval: '2',
 	push_hotswap: '1', push_watchdog: '1', push_learn: '1', push_service: '1',
-	push_control: '1',
+	push_control: '1', push_exec: '1',
+	/* Ф8.7 (D30): новые категории — здоровье/сторож (health), автопилот,
+	 * Safe Mode, обновления, безопасность (pairing/RBAC); тихие часы. */
+	push_health: '1', push_autopilot: '1', push_safe: '1', push_update: '1',
+	push_security: '1',
+	quiet_enabled: '0', quiet_from: '23:00', quiet_to: '08:00',
 	users: { owner: [], admin: [], operator: [], viewer: [] }
 };
 let seen = {
@@ -200,6 +222,9 @@ let egress_down = {};         /* индекс(строка) -> ts: пауза п
 let egress_note = {};         /* индекс(строка) -> честная причина отказа пробы */
 let egress_pending = '';      /* текст пуша о переключении — доставит main-цикл */
 let egress_all_dead = false;  /* чтобы «все каналы недоступны» не спамило журнал */
+/* Ф8.7: эхо-подавление safe-пушей после действия ИЗ ЧАТА (прямой ответ —
+ * единственное место результата; событие consume'ится, курсор идёт вперёд). */
+let safe_quiet_until = 0;
 
 /* ── basics ───────────────────────────────────────────────────────────── */
 
@@ -322,6 +347,15 @@ function read_cfg() {
 	cfg.push_service  = uci_get('push_service', '1');
 	cfg.push_control  = uci_get('push_control', '1');
 	cfg.push_exec     = uci_get('push_exec', '1');
+	/* Ф8.7: новые категории + окно тихих часов (hot reload, как всё UCI). */
+	cfg.push_health    = uci_get('push_health', '1');
+	cfg.push_autopilot = uci_get('push_autopilot', '1');
+	cfg.push_safe      = uci_get('push_safe', '1');
+	cfg.push_update    = uci_get('push_update', '1');
+	cfg.push_security  = uci_get('push_security', '1');
+	cfg.quiet_enabled  = uci_get('quiet_enabled', '0');
+	cfg.quiet_from     = uci_get('quiet_from', '23:00');
+	cfg.quiet_to       = uci_get('quiet_to', '08:00');
 	/* Ф8.6: канал tg-ws существует, только когда включён мост (hot reload). */
 	cfg.tgws_enabled  = uci_cfg_snap('tgws_enabled');
 	cfg.tgws_port     = uci_cfg_snap('tgws_port');
@@ -1365,6 +1399,12 @@ function push_enabled(kind) {
 	if (kind === 'service') return cfg.push_service === '1';
 	if (kind === 'control') return cfg.push_control === '1';
 	if (kind === 'exec') return cfg.push_exec === '1';
+	/* Ф8.7: новые категории (health = Sentinel/Recovery/Health-статусы). */
+	if (kind === 'health') return cfg.push_health === '1';
+	if (kind === 'autopilot') return cfg.push_autopilot === '1';
+	if (kind === 'safe') return cfg.push_safe === '1';
+	if (kind === 'update') return cfg.push_update === '1';
+	if (kind === 'security') return cfg.push_security === '1';
 	return false;
 }
 
@@ -1376,8 +1416,14 @@ function push_enabled(kind) {
  * порог, тишина и категорийный тумблер их не глушат, остаётся только
  * короткий дедуп против флуда (CRIT_DEDUP). Подавленные порогом обычные
  * алерты СЧИТАЮТСЯ и честно показываются в следующем доставленном пуше
- * той же категории — ничего не теряется молча. Задел Ф8.7 (тихие часы,
- * персонализация): классы критичности устоят до редизайна. */
+ * той же категории — ничего не теряется молча.
+ * Ф8.7 (D30): «тихие часы» — окно молчания для ОБЫЧНЫХ пушей всех
+ * категорий; критические проходят и его (тот же инвариант). Подавленные
+ * часами считаются ОТДЕЛЬНЫМ счётчиком (qsup) и честно показываются
+ * в следующем доставленном пуше категории. Категорийная модель — 11
+ * видов (hotswap/watchdog/learn/service/control/exec/health/autopilot/
+ * safe/update/security); классы критичности ч.189 устояли; канал
+ * доставки (Ф8.6) от категорий не зависит. */
 const ALERT_RATE = 6;       /* обычных пушей на категорию за окно */
 const ALERT_WINDOW = 300;   /* окно порога, с */
 const CRIT_DEDUP = 60;      /* дедуп критических (против флуда), с */
@@ -1386,11 +1432,37 @@ const CRIT_DEDUP = 60;      /* дедуп критических (против �
  * notification carries what happened + a one-tap reaction. The kb is a
  * ready-built reply_markup (kb_rows), same as direct replies; sev='crit'
  * marks safety-critical alerts. */
-/* Prefix for suppressed normal alerts (pure — harness-testable). */
-function alert_text(sup, text) {
-	return (int(sup) > 0)
-		? ('⚠ Подавлено фоновых уведомлений за 5 мин: ' + sup + '\n' + text)
-		: text;
+/* Prefixes for suppressed normal alerts (pure — harness-testable):
+ * sup = превышение порога частоты, qsup = тихие часы. */
+function alert_text(sup, qsup, text) {
+	let head = '';
+	if (int(sup) > 0)
+		head = '⚠ Подавлено фоновых уведомлений за 5 мин: ' + int(sup);
+	if (int(qsup) > 0)
+		head += (length(head) ? '\n' : '') +
+			'🌙 Подавлено тихими часами: ' + int(qsup);
+	return (length(head) ? head + '\n' : '') + text;
+}
+
+/* Тихие часы (Ф8.7): окно «HH:MM–HH:MM» в МЕСТНОМ времени роутера.
+ * from == to = окно нулевой длины (тишина НЕ включается — честный
+ * fail-open: случайные одинаковые значения не глусят сутки). */
+function hhmm_ok(s) {
+	return (match('' + s, /^([01][0-9]|2[0-3]):[0-5][0-9]$/) != null);
+}
+
+function quiet_active(now) {
+	if (cfg.quiet_enabled !== '1')
+		return false;
+	if (!hhmm_ok(cfg.quiet_from) || !hhmm_ok(cfg.quiet_to))
+		return false;
+	const fm = int(substr(cfg.quiet_from, 0, 2)) * 60 + int(substr(cfg.quiet_from, 3, 2));
+	const tm = int(substr(cfg.quiet_to, 0, 2)) * 60 + int(substr(cfg.quiet_to, 3, 2));
+	if (fm === tm)
+		return false;
+	const lt = localtime(now);
+	const cur = lt.hour * 60 + lt.min;
+	return (fm < tm) ? (cur >= fm && cur < tm) : (cur >= fm || cur < tm);
 }
 
 function send_push(kind, text, kb, sev) {
@@ -1398,7 +1470,7 @@ function send_push(kind, text, kb, sev) {
 	const now = time();
 	let s = alert_state[kind];
 	if (s == null) {
-		s = { text: '', ts: 0, times: [], suppressed: 0 };
+		s = { text: '', ts: 0, times: [], suppressed: 0, qsup: 0 };
 		alert_state[kind] = s;
 	}
 	/* Dedup: identical text per kind within the window is dropped
@@ -1413,6 +1485,13 @@ function send_push(kind, text, kb, sev) {
 		/* Тишина: mute + категорийный тумблер (критические их обходят). */
 		if (!push_enabled(kind))
 			return;   /* baselines already advanced — unmute will not replay */
+		/* Ф8.7: тихие часы — обычные пуши молча не пропадают: они
+		 * СЧИТЫВАЮТСЯ в qsup категории и показываются в следующем
+		 * доставленном пуше. Критические часы обходят (инвариант). */
+		if (quiet_active(now)) {
+			s.qsup = int(s.qsup) + 1;
+			return;
+		}
 		/* Единый порог обычных алертов: ≤ ALERT_RATE за ALERT_WINDOW. */
 		const fresh = [];
 		for (let i = 0; i < length(s.times); i++)
@@ -1429,8 +1508,10 @@ function send_push(kind, text, kb, sev) {
 	/* Честный счётчик подавленных — показывается в следующем доставленном
 	 * пуше ЭТОЙ категории (и критическом тоже — окно одно на категорию). */
 	const sup = int(s.suppressed);
+	const qsup = int(s.qsup);
 	s.suppressed = 0;
-	tg_send_html(allowed_chat, alert_text(sup, text), kb || null);
+	s.qsup = 0;
+	tg_send_html(allowed_chat, alert_text(sup, qsup, text), kb || null);
 }
 
 /* ── Ф8.6: машинерия egress-фейловера (D22) ─────────────────────────────
@@ -1537,10 +1618,20 @@ function egress_tick() {
  * journal + cursor together → baseline at the head. */
 
 /* Ф3.4: src=init (события старта службы — миграция routing_mode) идёт в
- * service-класс (toggle push_service), как сторожевые источники. Ф5.1/Ф5.2:
- * обновления подписок (src=subscribe) и rule-set'ов (src=rulesets) — тоже
- * service-класс. */
-const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn', sentinel: 'service', recovery: 'service', init: 'service', subscribe: 'service', rulesets: 'service' };
+ * service-класс (toggle push_service), как события подписок/rule-set'ов
+ * (Ф5.1/Ф5.2).
+ * Ф8.7 (D30): Sentinel/Recovery/Health-статусы — СВОЯ категория «health»
+ * (были в service); решения автопилота (src=autopilot, Ф7.3) — «autopilot»;
+ * Safe Mode вкл/выкл (rpcd control_safe_set) — «safe»; результаты
+ * фоновых обновлений (core_install_runner) — «update»; события
+ * pairing и RBAC (rpcd telegram_pair_generate/consume, user_remove) —
+ * «security». */
+const BUS_SRC_KIND = {
+	hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn',
+	health: 'health', sentinel: 'health', recovery: 'health',
+	autopilot: 'autopilot', safe: 'safe', update: 'update', security: 'security',
+	init: 'service', subscribe: 'service', rulesets: 'service'
+};
 
 /* Action-button sets for pushes (Ф8.4): honest one-tap reactions, all
  * callbacks are the already-gated prefixes (act:… — RBAC re-checked at the
@@ -1549,6 +1640,11 @@ const KB_PUSH_STATUS   = kb_rows([ [ '📊 Статус', 'act:refresh' ] ]);
 const KB_PUSH_SERVERS  = kb_rows([ [ [ '📡 Серверы', 'act:nodes' ], [ '📊 Статус', 'act:refresh' ] ] ]);
 const KB_PUSH_DOC_REP  = kb_rows([ [ [ '🩺 Доктор', 'act:doctor' ], [ '🛠 Ремонт', 'act:repair' ] ] ]);
 const KB_PUSH_DOCTOR   = kb_rows([ [ '🩺 Доктор', 'act:doctor' ] ]);
+/* Ф8.7: кнопки новых категорий. Safe ON → честный выход («Вернуть узел» —
+ * тот же префикс saf:, роль перепроверяется в тапе). Update → /update
+ * (владелец). Security/autopilot — текст самодостаточен, кнопок нет. */
+const KB_PUSH_SAFE     = kb_rows([ [ [ '🩺 Доктор', 'act:doctor' ], [ '↩ Вернуть узел', 'saf:0' ] ] ]);
+const KB_PUSH_UPD      = kb_rows([ [ '⬆ Обновления', 'act:update' ] ]);
 
 /* Ф8.4: структурированные уведомления «что произошло → почему → что сделано
  * → результат → кнопки». Источники шины уже пишут who/detail по-русски и с
@@ -1647,6 +1743,77 @@ function bus_push(ev) {
 			(length(who) ? '\nУзел: <b>' + esc_html(who) + '</b>' : '') +
 			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_SERVERS };
 	}
+	/* Ф8.7: Здоровье/сторож — СВОЯ категория (были в service). health.uc
+	 * пишет переходы статусов (down/degraded/recovered; off-переходы не
+	 * алармят); who = имя подсистемы, detail = причина. */
+	if (ev.src === 'health') {
+		if (ev.type === 'down')
+			return { text: '⛔ <b>Здоровье — подсистема недоступна</b>: ' + esc_html(who) +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+		if (ev.type === 'degraded')
+			return { text: '⚠️ <b>Здоровье — деградация</b>: ' + esc_html(who) +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+		if (ev.type === 'recovered')
+			return { text: '✅ <b>Здоровье</b>: ' + esc_html(who) + ' — снова в норме', kb: null };
+		return { text: '🩺 <b>Здоровье</b>: ' + esc_html(who) +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+	}
+	/* Ф8.7: решения автопилота (Ф7.3 — события по КРАЮ решения, who/detail
+	 * уже русские и человекочитаемые). Классы критичности ч.189 не тронуты:
+	 * автопилот продолжает работать сам — обычная категория. */
+	if (ev.src === 'autopilot') {
+		const AP_HEAD = {
+			applied: '🧭 <b>Автопилот — применил стратегии</b>',
+			rollback: '↩️ <b>Автопилот — откат к прежней стратегии</b>',
+			repair: '🛠 <b>Автопилот — смена стратегии</b>',
+			recovered: '✅ <b>Автопилот — снова в норме</b>',
+			manual_pick: '🖐 <b>Автопилот — принят ручной выбор</b>',
+			manual_hold: '⏸ <b>Автопилот — пауза</b>',
+			error: '❌ <b>Автопилот — ошибка</b>'
+		};
+		return { text: (AP_HEAD[ev.type] || '🧭 <b>Автопилот</b>') +
+			(length(who) ? '\n' + esc_html(who) : '') +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: null };
+	}
+	/* Ф8.7: Safe Mode вкл/выкл (rpcd control_safe_set — UI и бот ходят через
+	 * одну дверь). Типы safe_on/safe_off (самодокументируемые в журнале);
+	 * who = источник ('ui'|'tg'); detail честно называет прежний/
+	 * возвращённый узел и путь снапшота. */
+	if (ev.src === 'safe') {
+		const src = (who === 'tg') ? 'из чата (бот)' : 'из веб-интерфейса';
+		if (ev.type === 'safe_on')
+			return { text: '🛡 <b>Safe Mode включён</b> (' + src + ')' +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_SAFE };
+		return { text: '🔓 <b>Safe Mode выключен</b> (' + src + ')' +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+	}
+	/* Ф8.7: результаты фоновых обновлений (сейчас — core_install_runner:
+	 * установка ядра идёт В ФОНЕ и без этой категории её финал никто
+	 * не увидел бы). Синхронные установки (приложение/пакеты) актёр видит
+	 * сразу — туда события не пишутся (честная граница). */
+	if (ev.src === 'update') {
+		if (ev.type === 'failed')
+			return { text: '❌ <b>Обновление не удалось</b>' +
+				(length(who) ? '\n' + esc_html(who) : '') +
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_UPD };
+		return { text: '⬆ <b>Обновление установлено</b>' +
+			(length(who) ? ': ' + esc_html(who) : '') +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_UPD };
+	}
+	/* Ф8.7: безопасность — pairing/RBAC (rpcd): код сгенерирован, привязка
+	 * выполнена/отклонена, пользователь удалён. Редкие и значимые события;
+	 * отказы RBAC в чате остаются в /audit (спам-гейт). */
+	if (ev.src === 'security') {
+		const SEC_HEAD = {
+			code_gen: '🔑 <b>Безопасность — код привязки сгенерирован</b>',
+			pair_ok: '🔐 <b>Безопасность — пользователь привязан</b>',
+			pair_fail: '⛔ <b>Безопасность — привязка отклонена</b>',
+			user_del: '🗑 <b>Безопасность — пользователь удалён</b>'
+		};
+		return { text: (SEC_HEAD[ev.type] || '🔐 <b>Безопасность</b>') +
+			(length(who) ? '\nКто: <code>' + esc_html(who) + '</code>' : '') +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: null };
+	}
 	/* automation */
 	if (ev.type === 'outage')
 		return { text: '⚠️ <b>Автоматизация — авария</b>: ' + esc_html(detail || 'авария: обучение приостановлено'), kb: KB_PUSH_STATUS };
@@ -1684,6 +1851,11 @@ function push_bus() {
 		bus_id = ev.id;
 		const kind = BUS_SRC_KIND[ev.src];
 		if (kind == null)
+			continue;
+		/* Ф8.7: safe-пуш, вызванный действием ИЗ ЧАТА, гасится коротким
+		 * окном — прямой ответ уже доставлен (курсор всё равно идёт вперёд).
+		 * Действие из UI всегда доходит пушем. */
+		if ((ev.src === 'safe') && (time() < safe_quiet_until))
 			continue;
 		const p = bus_push(ev);
 		/* Ф8.5 (инвариант безопасности): критические события проходят
@@ -2030,23 +2202,30 @@ function cmd_mode_ask(chat_id, role, mode) {
  * is one tap to safety); DNS/firewall/engines stay up by construction. */
 function cmd_safe(chat_id) {
 	tg_send_html(chat_id, '🛡 Включаю Safe Mode: выход пойдёт напрямую, а MultiDNS/zapret/firewall остаются включёнными. Служба перезапустится (~30 с); /status подтвердит.', null);
-	const r = ubus_call('control_safe_set', { enable: '1' }, 15);
+	const r = ubus_call('control_safe_set', { enable: '1', by: 'tg' }, 15);
 	if (r == null || r.result !== true)
 		tg_send_html(chat_id, '⚠ Safe Mode не включён: ' +
 			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
-	else if (r.unchanged === true)
-		tg_send_html(chat_id, 'Выход уже прямой — Safe Mode не требуется.', null);
+	else {
+		/* Ф8.7: событие шины уже написано rpcd — гасим эхо-пуш (прямой
+		 * ответ — единственное место результата в чате). */
+		safe_quiet_until = time() + 25;
+		if (r.unchanged === true)
+			tg_send_html(chat_id, 'Выход уже прямой — Safe Mode не требуется.', null);
+	}
 }
 
 function cmd_safeoff(chat_id) {
 	tg_send_html(chat_id, '↩ Выхожу из Safe Mode: возвращаю прежний главный узел. Служба перезапустится (~30 с).', null);
-	const r = ubus_call('control_safe_set', { enable: '0' }, 15);
+	const r = ubus_call('control_safe_set', { enable: '0', by: 'tg' }, 15);
 	if (r == null || r.result !== true)
 		tg_send_html(chat_id, '⚠ Не выполнено: ' +
 			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
-	else
+	else {
+		safe_quiet_until = time() + 25;
 		tg_send_html(chat_id, '✅ Главный узел возвращён (' +
 			esc_html(safe_node_name('' + (r.restored || '?'))) + '); /status покажет живой выход.', null);
+	}
 }
 
 /* ДОКТОР (Ф8.2): статусы/ремонт/лечение как интерфейс к Recovery/Sentinel —

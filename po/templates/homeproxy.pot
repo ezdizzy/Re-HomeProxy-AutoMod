@@ -7696,3 +7696,60 @@ msgstr ""
 
 msgid "Roles from top to bottom: Owner (everything) → Admin (service, snapshots, rules) → Operator (nodes, pause, temporary actions) → Viewer (status only). Every command and button is checked against the sender's user_id; groups and channels are denied by default. Pairing: generate a one-time 60 s code here, the user sends it to the bot from a private chat."
 msgstr ""
+
+msgid "Safe Mode"
+msgstr ""
+
+msgid "Updates"
+msgstr ""
+
+msgid "Security"
+msgstr ""
+
+msgid "Send a sample push of this category to your chat"
+msgstr ""
+
+msgid "Sample"
+msgstr ""
+
+msgid "Sample failed: "
+msgstr ""
+
+msgid "Sample sent — check your chat."
+msgstr ""
+
+msgid "Sample NOT sent: "
+msgstr ""
+
+msgid "Health & watchdog: subsystem statuses, Sentinel repairs, Recovery"
+msgstr ""
+
+msgid "Auto-pilot strategy decisions"
+msgstr ""
+
+msgid "Safe Mode on/off (egress to direct)"
+msgstr ""
+
+msgid "Update results (background core install)"
+msgstr ""
+
+msgid "Security: pairing codes, RBAC changes"
+msgstr ""
+
+msgid "Quiet hours"
+msgstr ""
+
+msgid "Window start (HH:MM)"
+msgstr ""
+
+msgid "Window end (HH:MM)"
+msgstr ""
+
+msgid "(local router time)"
+msgstr ""
+
+msgid "During the window normal pushes of ALL categories are held back and counted; they are reported on the next delivered push. CRITICAL alerts (core down, subscription rollback, recovery blocked) always break through — the safety invariant. Equal from/to = window off."
+msgstr ""
+
+msgid "Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a \"Sample\" button. \"Mute\" silences pushes only — commands keep working."
+msgstr ""

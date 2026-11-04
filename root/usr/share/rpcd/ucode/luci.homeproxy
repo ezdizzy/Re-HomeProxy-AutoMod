@@ -34,7 +34,7 @@ import {
 	bump_cursor as hc_bump_cursor
 } from '/etc/homeproxy/scripts/control.uc';
 import { read_state as ss_read_state, atomic_write as ss_atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
-import { tail as ev_tail, clear as ev_clear } from '/etc/homeproxy/scripts/eventbus.uc';
+import { tail as ev_tail, clear as ev_clear, emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
 import {
 	begin as op_begin, get_op as op_get, list_ops as op_list,
 	get_revision as op_revision
@@ -7843,6 +7843,17 @@ const methods = {
 			reply.pushes.service = (g('push_service', '1') === '1');
 			reply.pushes.control = (g('push_control', '1') === '1');
 			reply.pushes.exec = (g('push_exec', '1') === '1');
+			/* Ф8.7: новые категории + окно тихих часов (местное время). */
+			reply.pushes.health = (g('push_health', '1') === '1');
+			reply.pushes.autopilot = (g('push_autopilot', '1') === '1');
+			reply.pushes.safe = (g('push_safe', '1') === '1');
+			reply.pushes.update = (g('push_update', '1') === '1');
+			reply.pushes.security = (g('push_security', '1') === '1');
+			reply.quiet = {
+				enabled: (g('quiet_enabled', '0') === '1'),
+				from: g('quiet_from', '23:00'),
+				to: g('quiet_to', '08:00')
+			};
 			/* Daemon liveness: Ф1.4b — the Process Manager (registry
 			 * heartbeat first, then the exact script-element scan; busybox
 			 * pidof does NOT match ucode script names, lesson 23/58). */
@@ -7875,6 +7886,10 @@ const methods = {
 			push_hotswap: 'push_hotswap', push_watchdog: 'push_watchdog',
 			push_learn: 'push_learn', push_service: 'push_service',
 			push_control: 'push_control', push_exec: 'push_exec',
+			push_health: 'push_health', push_autopilot: 'push_autopilot',
+			push_safe: 'push_safe', push_update: 'push_update',
+			push_security: 'push_security',
+			quiet_enabled: 'quiet_enabled', quiet_from: 'quiet_from', quiet_to: 'quiet_to',
 			poll_timeout: 'poll_timeout', push_interval: 'push_interval'
 		},
 		call: function(req) {
@@ -7902,12 +7917,29 @@ const methods = {
 			if (mute == null)
 				return { result: false, error: 'bad mute' };
 			const pushes = {};
-			for (let k in [ 'push_hotswap', 'push_watchdog', 'push_learn', 'push_service', 'push_control', 'push_exec' ]) {
+			for (let k in [ 'push_hotswap', 'push_watchdog', 'push_learn', 'push_service', 'push_control', 'push_exec',
+				'push_health', 'push_autopilot', 'push_safe', 'push_update', 'push_security' ]) {
 				const v = flag(a[k]);
 				if (v == null)
 					return { result: false, error: 'bad ' + k };
 				pushes[k] = v;
 			}
+			/* Ф8.7: окно тихих часов — строгий HH:MM (пустое = значение по
+			 * умолчанию); from == to демоном трактуется как нулевое окно. */
+			const hhmm = (s) => (match('' + s, /^([01][0-9]|2[0-3]):[0-5][0-9]$/) != null);
+			const qen = flag(a.quiet_enabled);
+			if (qen == null)
+				return { result: false, error: 'bad quiet_enabled' };
+			let qfrom = trim('' + (a.quiet_from == null ? '' : a.quiet_from));
+			let qto = trim('' + (a.quiet_to == null ? '' : a.quiet_to));
+			if (length(qfrom) && !hhmm(qfrom))
+				return { result: false, error: 'bad quiet_from (HH:MM)' };
+			if (length(qto) && !hhmm(qto))
+				return { result: false, error: 'bad quiet_to (HH:MM)' };
+			if (!length(qfrom))
+				qfrom = '23:00';
+			if (!length(qto))
+				qto = '08:00';
 			let poll = int((a.poll_timeout == null || !length(trim('' + a.poll_timeout))) ? '25' : trim('' + a.poll_timeout));
 			if (poll < 5 || poll > 60)
 				return { result: false, error: 'bad poll_timeout' };
@@ -7945,6 +7977,15 @@ const methods = {
 			c.set('homeproxy', 'telegram', 'push_service', pushes.push_service);
 			c.set('homeproxy', 'telegram', 'push_control', pushes.push_control);
 			c.set('homeproxy', 'telegram', 'push_exec', pushes.push_exec);
+			/* Ф8.7: новые категории + окно тихих часов. */
+			c.set('homeproxy', 'telegram', 'push_health', pushes.push_health);
+			c.set('homeproxy', 'telegram', 'push_autopilot', pushes.push_autopilot);
+			c.set('homeproxy', 'telegram', 'push_safe', pushes.push_safe);
+			c.set('homeproxy', 'telegram', 'push_update', pushes.push_update);
+			c.set('homeproxy', 'telegram', 'push_security', pushes.push_security);
+			c.set('homeproxy', 'telegram', 'quiet_enabled', qen);
+			c.set('homeproxy', 'telegram', 'quiet_from', qfrom);
+			c.set('homeproxy', 'telegram', 'quiet_to', qto);
 			c.set('homeproxy', 'telegram', 'poll_timeout', sprintf('%d', poll));
 			c.set('homeproxy', 'telegram', 'push_interval', sprintf('%d', pival));
 			c.commit('homeproxy');
@@ -7976,6 +8017,10 @@ const methods = {
 			c.set('homeproxy', 'telegram', 'pair_until', sprintf('%d', time() + 60));
 			c.set('homeproxy', 'telegram', 'pair_role', role);
 			c.commit('homeproxy');
+			/* Ф8.7: security-событие — владелец должен знать, что кто-то
+			 * на этой странице открыл окно привязки (и под какой ролью). */
+			try { ev_emit('security', 'code_gen', role,
+				'сгенерирован одноразовый код привязки (срок 60 с)'); } catch (e) { /* best-effort */ }
 			return { result: true, code: code, role: role, expires_in: 60 };
 		}
 	},
@@ -8015,6 +8060,12 @@ const methods = {
 			}
 			if (changed)
 				c.commit('homeproxy');
+			/* Ф8.7: удаление из RBAC — security-событие (когда что-то
+			 * реально изменилось; идемпотентный вызов не спамит). */
+			if (changed) {
+				try { ev_emit('security', 'user_del', user,
+					'удалён из всех ролей (записей: ' + removed + ')'); } catch (e) { /* best-effort */ }
+			}
 			return { result: true, removed: removed };
 		}
 	},
@@ -8034,7 +8085,9 @@ const methods = {
 			const val = trim('' + (a.value == null ? '' : a.value));
 			const keys = { mute: true, push_hotswap: true, push_watchdog: true,
 				push_learn: true, push_service: true, push_control: true,
-				push_exec: true };
+				push_exec: true,
+				push_health: true, push_autopilot: true, push_safe: true,
+				push_update: true, push_security: true, quiet_enabled: true };
 			if (keys[key] == null)
 				return { result: false, error: 'bad key' };
 			if (val !== '0' && val !== '1')
@@ -8100,8 +8153,12 @@ const methods = {
 			const role = trim('' + (c.get('homeproxy', 'telegram', 'pair_role') || 'owner'));
 			const roles = { owner: 1, admin: 1, operator: 1, viewer: 1 };
 			if (!length(stored) || stored !== code || time() > until ||
-			    roles[role] == null)
+			    roles[role] == null) {
+				/* Ф8.7: отказ привязки — security-событие (кто пытался). */
+				try { ev_emit('security', 'pair_fail', uid,
+					'код неверен, истёк или привязка уже не активна'); } catch (e) { /* best-effort */ }
 				return { result: false, error: 'wrong or expired code' };
+			}
 			const opt = role + '_user';
 			const arr = c.get('homeproxy', 'telegram', opt);
 			const cur = (type(arr) === 'array') ? arr : [];
@@ -8116,6 +8173,9 @@ const methods = {
 			c.delete('homeproxy', 'telegram', 'pair_until');
 			c.delete('homeproxy', 'telegram', 'pair_role');
 			c.commit('homeproxy');
+			/* Ф8.7: успешная привязка — security-событие (роль видна). */
+			try { ev_emit('security', 'pair_ok', uid,
+				'привязан по одноразовому коду, роль: ' + role); } catch (e) { /* best-effort */ }
 			return { result: true, role: role };
 		}
 	},
@@ -8175,10 +8235,13 @@ const methods = {
 	 * /safe off восстанавливает точный прежний main_node после любого
 	 * рестарта демонов. */
 	control_safe_set: {
-		args: { enable: 'enable' },
+		args: { enable: 'enable', by: 'by' },
 		call: function(req) {
 			const on = ((req && req.args && (req.args.enable === true ||
 				req.args.enable === '1')) === true);
+			/* Ф8.7: источник события — 'tg' (бот) или 'ui' (веб-интерфейс);
+			 * бот передаёт by='tg', UI вызывает без by. */
+			const by = (trim('' + ((req && req.args && req.args.by) || '')) === 'tg') ? 'tg' : 'ui';
 			const c = cursor();
 			if (!on) {
 				const prev = trim('' + (c.get('homeproxy', 'telegram', 'safe_prev') || ''));
@@ -8190,6 +8253,11 @@ const methods = {
 				c.delete('homeproxy', 'telegram', 'safe');
 				c.delete('homeproxy', 'telegram', 'safe_prev');
 				c.commit('homeproxy');
+				/* Ф8.7: честное событие шины (категория safe) — владелец
+				 * узнаёт о возврате узла даже если действие шло из UI.
+				 * Тип safe_off — самодокументируемый в журнале. */
+				try { ev_emit('safe', 'safe_off', by,
+					'возвращён узел: ' + prev + '; служба перезапускается'); } catch (e) { /* best-effort */ }
 				system(`/etc/init.d/homeproxy restart >/dev/null 2>&1 &`);
 				return { result: true, restored: prev };
 			}
@@ -8217,6 +8285,14 @@ const methods = {
 			c.set('homeproxy', 'telegram', 'safe', '1');
 			c.set('homeproxy', 'telegram', 'safe_prev', cur);
 			c.commit('homeproxy');
+			/* Ф8.7: событие шины ДО рестарта (durable-курсор бота доставит
+			 * пуш, когда ответит какой-нибудь канал доставки; честная
+			 * граница D33b: в Safe Mode цепочка ушла в direct — прямой
+			 * HTTPS до Telegram у провайдера зарезан, пуш догонит после
+			 * восстановления — очередь и offset целы). */
+			try { ev_emit('safe', 'safe_on', by,
+				'выход напрямую (был узел: ' + cur + '); DNS/firewall не тронуты; снапшот: safe-mode-' + ts);
+			} catch (e) { /* best-effort */ }
 			system(`/etc/init.d/homeproxy restart >/dev/null 2>&1 &`);
 			return { result: true, prev: cur, snapshot: dir };
 		}
@@ -8371,6 +8447,89 @@ const methods = {
 				system('rm -f ' + shellquote(f));
 			}
 			return { result: true, bot_username: bot_username, sent: sent };
+		}
+	},
+
+	/* Ф8.7 (D30): «прислать пример» категории пушей. Прямая отправка из
+	 * rpcd (как telegram_test) — ЯВНОЕ действие пользователя, поэтому
+	 * mute/тихие часы/порог не применяются (это не фоновое уведомление).
+	 * Образец честно показывает, как выглядит пуш категории. Тело — через
+	 * --data-binary @файл С заголовком Content-Type (урок 283: без него
+	 * Telegram отвечает 400 «message text is empty»). */
+	telegram_preview: {
+		args: { category: 'category' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const cat = trim('' + (a.category == null ? '' : a.category));
+			/* JSON-escape строки тела (кавычки/обратный слэш/переводы строк). */
+			const jstr = (s) => {
+				s = '' + s;
+				let out = '';
+				for (let i = 0; i < length(s); i++) {
+					const ch = substr(s, i, 1);
+					if (ch === '"') out += '\\"';
+					else if (ch === '\\') out += '\\\\';
+					else if (ch === '\n') out += '\\n';
+					else if (ch === '\r') out += '\\r';
+					else if (ch === '\t') out += '\\t';
+					else out += ch;
+				}
+				return out;
+			};
+			const PREVIEW_RU = {
+				hotswap: 'Hot Swap', watchdog: 'Сторож узлов', learn: 'Автоматизация',
+				service: 'Служба', control: 'Контроль', exec: 'Команды',
+				health: 'Здоровье и сторож', autopilot: 'Автопилот', safe: 'Safe Mode',
+				update: 'Обновления', security: 'Безопасность'
+			};
+			const SAMPLES = {
+				hotswap: '🔄 <b>Hot Swap — смена выхода</b>\nТеперь: <b>Hysteria — Германия TLS</b>\nПричина: узел не отвечал 3 пробы подряд',
+				watchdog: '⛔ <b>URLTest — узел недоступен</b>\nУзел: <b>Vless — Финляндия</b>\n0/3 проб успешны — узел исключён из авто-выбора',
+				learn: '🧠 <b>Автоматизация — самолечение</b>:\nexample.ru добавлен в список обхода (ошибка соединения)',
+				service: '✅ <b>Подписки обновлены</b>\n4 узла, изменений: 1',
+				control: '🔒 <b>Контроль</b>: Планшет (192.168.1.50)\nзаблокирован вручную',
+				exec: '⌨ <b>Произвольная команда — результат</b>\nuptime — завершено, код 0 за 1 с',
+				health: '🩺 <b>Здоровье — деградация</b>: MultiDNS\nне отвечает один из резолверов пула',
+				autopilot: '🧭 <b>Автопилот — применил стратегии</b>\nкомпозиция S3 применена и проверена',
+				safe: '🛡 <b>Safe Mode включён</b> (из веб-интерфейса)\nвыход напрямую; прежний узел сохранён для возврата',
+				update: '⬆ <b>Обновление установлено</b>: ядро hiddify\nза 84 с; служба перезапущена',
+				security: '🔐 <b>Безопасность — пользователь привязан</b>\nКто: 123456789\nпо одноразовому коду, роль admin'
+			};
+			if (SAMPLES[cat] == null)
+				return { result: false, error: 'bad category' };
+			const c = cursor();
+			const token = trim('' + (c.get('homeproxy', 'telegram', 'token') || ''));
+			const chat_raw = trim('' + (c.get('homeproxy', 'telegram', 'chat_id') || ''));
+			if (!length(token) || match(token, /^[0-9]+:[A-Za-z0-9_-]+$/) == null)
+				return { result: false, error: 'no token' };
+			if (!length(chat_raw))
+				return { result: true, sent: false, error: 'no chat yet' };
+			if (match(chat_raw, /^-?[0-9]+$/) == null)
+				return { result: false, error: 'bad chat_id' };
+			const text = '🔔 <b>Пример — категория «' + PREVIEW_RU[cat] + '»</b>\n\n' +
+				SAMPLES[cat] + '\n\n<i>Настоящий пуш этой категории выглядит так же, без плашки «Пример».</i>';
+			const cfgf = RUN_DIR + '/.tg.curl.prev';
+			const bodyf = RUN_DIR + '/.tg.body.prev';
+			const f = RUN_DIR + '/tg_preview.json';
+			const body = sprintf('{"chat_id":%s,"text":"%s","parse_mode":"HTML"}',
+				chat_raw, jstr(text));
+			writefile(cfgf, 'url = "https://api.telegram.org/bot' + token + '/sendMessage"\n' +
+				'header = "Content-Type: application/json"\nmax-time = 10\n');
+			chmod(cfgf, 384);
+			writefile(bodyf, body);
+			chmod(bodyf, 384);
+			system('rm -f ' + shellquote(f));
+			system('curl -s -K ' + shellquote(cfgf) + ' --data-binary @' + shellquote(bodyf) +
+				' -o ' + shellquote(f) + ' 2>/dev/null');
+			system('rm -f ' + shellquote(cfgf) + ' ' + shellquote(bodyf));
+			let sent = false;
+			if (access(f)) {
+				let r = null;
+				try { r = json(readfile(f) || ''); } catch (e) { r = null; }
+				sent = !!(r && r.ok === true);
+				system('rm -f ' + shellquote(f));
+			}
+			return { result: true, sent: sent };
 		}
 	},
 
