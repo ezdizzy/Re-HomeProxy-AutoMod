@@ -15,6 +15,7 @@
 
 import { readfile } from 'fs';
 import { cursor } from 'uci';
+import { validate_node_config } from '/etc/homeproxy/scripts/homeproxy.uc';
 
 const uciconfig = 'homeproxy';
 
@@ -104,6 +105,20 @@ if (isAWG) {
 	for (let k in awg)
 		if (awg[k] != null && awg[k] !== '')
 			node[k] = awg[k];
+}
+
+/* Ф5.3 (аудит 51): PersistentKeepalive больше не теряется — поле читал
+ * только генератор (wireguard_persistent_keepalive_interval), а оба
+ * импортёра (.conf и браузерный) его молча выбрасывали. */
+if (peer.PersistentKeepalive)
+	node.wireguard_persistent_keepalive_interval = peer.PersistentKeepalive;
+
+/* Ф5.3: единый валидатор ДО записи в UCI — честная ошибка вместо
+ * сломанного узла (ключи/порт/адрес по тем же правилам, что у подписок). */
+const verrs = validate_node_config(node);
+if (verrs) {
+	emit({ error: 'узел не прошёл валидацию: ' + join('; ', verrs) });
+	exit(1);
 }
 
 /* ---- write the node section (idempotent: same file → same section name) ---- */

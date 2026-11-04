@@ -20,6 +20,7 @@
 					"app_status", "app_check_update", "app_op_status", "app_op_list", "app_snapshot_list",
 					"health_status", "sentinel_status", "recovery_status", "health_explain",
 					"app_rulesets_local_status", "zapret_fuzz_status", "wizard_compose_status", "wizard_compose_build",
+					"app_subscription_status",
 					"wizard_autopilot_status", "wizard_auto_pick_status", "automation_status", "automation_stats",
 					"route_explain", "wizard_scan_status", "wizard_dpidetect_status", "wizard_service_check",
 					"wizard_preset_list", "wizard_dpi_status", "wizard_strategy_list", "wizard_strategy_status",

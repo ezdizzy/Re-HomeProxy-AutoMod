@@ -7162,3 +7162,108 @@ msgstr ""
 
 msgid "probable winning rule"
 msgstr ""
+
+msgid "адрес отсутствует или невалиден"
+msgstr ""
+
+msgid "порт отсутствует или вне диапазона 1–65535"
+msgstr ""
+
+msgid "wireguard: private_key не base64-ключ (44 символа)"
+msgstr ""
+
+msgid "wireguard: public_key пира не base64-ключ (44 символа)"
+msgstr ""
+
+msgid "wireguard: pre_shared_key не base64-ключ (44 символа)"
+msgstr ""
+
+msgid "wireguard: локальный адрес должен быть списком IP/подсетей"
+msgstr ""
+
+msgid "wireguard: persistent_keepalive «%s» не число 0–65535"
+msgstr ""
+
+msgid "Node failed validation: %s"
+msgstr ""
+
+msgid "Nodes updated"
+msgstr ""
+
+msgid "Update declined — nodes untouched"
+msgstr ""
+
+msgid "Update rolled back — nodes restored from the backup"
+msgstr ""
+
+msgid "Update failed"
+msgstr ""
+
+msgid "server returned an HTML page — skipped"
+msgstr ""
+
+msgid "no valid node in the response — skipped"
+msgstr ""
+
+msgid "fetch failed — skipped"
+msgstr ""
+
+msgid "Update finished (no status report — it was produced before this feature existed)."
+msgstr ""
+
+msgid "Nodes: %s before, %s after (+%s/−%s; kept unchanged: %s)"
+msgstr ""
+
+msgid "%s · %s → %s (+%s/−%s, unchanged %s)"
+msgstr ""
+
+msgid "Backup"
+msgstr ""
+
+msgid "The service was not restarted — new nodes apply on the next restart."
+msgstr ""
+
+msgid "Reload page"
+msgstr ""
+
+msgid "%d min ago"
+msgstr ""
+
+msgid "%d h ago"
+msgstr ""
+
+msgid "%d d ago"
+msgstr ""
+
+msgid "%s — release %s%s"
+msgstr ""
+
+msgid "%s — %s"
+msgstr ""
+
+msgid "GitHub unreachable at the last check"
+msgstr ""
+
+msgid "no release info"
+msgstr ""
+
+msgid "Upstream releases"
+msgstr ""
+
+msgid "checked %s"
+msgstr ""
+
+msgid "%d (not downloaded: %d)"
+msgstr ""
+
+msgid "%d, 0 errors"
+msgstr ""
+
+msgid "RU-geo base"
+msgstr ""
+
+msgid "categories %s · networks %s · domains %s · updated %s"
+msgstr ""
+
+msgid "The core refreshed its rule-set cache %s (per-tag detail is not exposed by the core)."
+msgstr ""

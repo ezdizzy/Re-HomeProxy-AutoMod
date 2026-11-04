@@ -718,8 +718,10 @@ function send_push(kind, text) {
  * journal + cursor together → baseline at the head. */
 
 /* Ф3.4: src=init (события старта службы — миграция routing_mode) идёт в
- * service-класс (toggle push_service), как сторожевые источники. */
-const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn', sentinel: 'service', recovery: 'service', init: 'service' };
+ * service-класс (toggle push_service), как сторожевые источники. Ф5.1/Ф5.2:
+ * обновления подписок (src=subscribe) и rule-set'ов (src=rulesets) — тоже
+ * service-класс. */
+const BUS_SRC_KIND = { hotswap: 'hotswap', urltest: 'watchdog', automation: 'learn', sentinel: 'service', recovery: 'service', init: 'service', subscribe: 'service', rulesets: 'service' };
 
 function bus_text(ev) {
 	const who = trim('' + (ev.who || ''));
@@ -769,6 +771,30 @@ function bus_text(ev) {
 		return '🔄 <b>Hot Swap</b>' +
 			(length(who) ? ': <b>' + esc_html(who) + '</b>' : '') +
 			(length(detail) ? '\n' + esc_html(detail) : '');
+	/* Ф5.1/Ф5.2: подписки и rule-set'ы (service-класс). */
+	if (ev.src === 'subscribe') {
+		if (ev.type === 'done')
+			return '✅ <b>Подписки обновлены</b>' +
+				(length(detail) ? '\n' + esc_html(detail) : '');
+		if (ev.type === 'aborted')
+			return '⚠️ <b>Подписки: обновление отклонено</b> — узлы не тронуты' +
+				(length(detail) ? '\n' + esc_html(detail) : '');
+		if (ev.type === 'rolled_back')
+			return '↩️ <b>Подписки: откат</b> — узлы восстановлены из бекапа' +
+				(length(detail) ? '\n' + esc_html(detail) : '');
+		return '❗ <b>Подписки</b>' + (length(detail) ? ': ' + esc_html(detail) : '');
+	}
+	if (ev.src === 'rulesets') {
+		if (ev.type === 'seed_done')
+			return '✅ <b>Rule-sets</b>: ' + esc_html(detail || 'локальные копии обновлены');
+		if (ev.type === 'seed_failed')
+			return '⚠️ <b>Rule-sets</b>: ' + esc_html(detail || 'загрузка копий с ошибками');
+		if (ev.type === 'geo_done')
+			return '✅ <b>База RU-geo обновлена</b>: ' + esc_html(detail || '');
+		if (ev.type === 'geo_failed')
+			return '⚠️ <b>База RU-geo</b>: ' + esc_html(detail || 'обновление не применено');
+		return '📦 <b>Rule-sets</b>' + (length(detail) ? ': ' + esc_html(detail) : '');
+	}
 	if (ev.src === 'urltest') {
 		if (ev.type === 'recovered')
 			return '✅ <b>URLTest</b>: узел восстановился' +

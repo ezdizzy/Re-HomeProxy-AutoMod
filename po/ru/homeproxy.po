@@ -12718,3 +12718,108 @@ msgstr "В игре remote-списки — точное сопоставлен�
 
 msgid "probable winning rule"
 msgstr "вероятное победившее правило"
+
+msgid "адрес отсутствует или невалиден"
+msgstr "адрес отсутствует или невалиден"
+
+msgid "порт отсутствует или вне диапазона 1–65535"
+msgstr "порт отсутствует или вне диапазона 1–65535"
+
+msgid "wireguard: private_key не base64-ключ (44 символа)"
+msgstr "wireguard: private_key не base64-ключ (44 символа)"
+
+msgid "wireguard: public_key пира не base64-ключ (44 символа)"
+msgstr "wireguard: public_key пира не base64-ключ (44 символа)"
+
+msgid "wireguard: pre_shared_key не base64-ключ (44 символа)"
+msgstr "wireguard: pre_shared_key не base64-ключ (44 символа)"
+
+msgid "wireguard: локальный адрес должен быть списком IP/подсетей"
+msgstr "wireguard: локальный адрес должен быть списком IP/подсетей"
+
+msgid "wireguard: persistent_keepalive «%s» не число 0–65535"
+msgstr "wireguard: persistent_keepalive «%s» не число 0–65535"
+
+msgid "Node failed validation: %s"
+msgstr "Узел не прошёл валидацию: %s"
+
+msgid "Nodes updated"
+msgstr "Узлы обновлены"
+
+msgid "Update declined — nodes untouched"
+msgstr "Обновление отклонено — узлы не тронуты"
+
+msgid "Update rolled back — nodes restored from the backup"
+msgstr "Обновление откачено — узлы восстановлены из бекапа"
+
+msgid "Update failed"
+msgstr "Обновление завершилось ошибкой"
+
+msgid "server returned an HTML page — skipped"
+msgstr "сервер вернул HTML вместо списка — пропущено"
+
+msgid "no valid node in the response — skipped"
+msgstr "в ответе нет ни одного валидного узла — пропущено"
+
+msgid "fetch failed — skipped"
+msgstr "не удалось загрузить — пропущено"
+
+msgid "Update finished (no status report — it was produced before this feature existed)."
+msgstr "Обновление завершено (отчёта нет — он появился позже этой функции)."
+
+msgid "Nodes: %s before, %s after (+%s/−%s; kept unchanged: %s)"
+msgstr "Узлов: было %s, стало %s (+%s/−%s; без изменений: %s)"
+
+msgid "%s · %s → %s (+%s/−%s, unchanged %s)"
+msgstr "%s · %s → %s (+%s/−%s, без изменений %s)"
+
+msgid "Backup"
+msgstr "Бекап"
+
+msgid "The service was not restarted — new nodes apply on the next restart."
+msgstr "Сервис не перезапускался — новые узлы применятся при следующем рестарте."
+
+msgid "Reload page"
+msgstr "Обновить страницу"
+
+msgid "%d min ago"
+msgstr "%d мин назад"
+
+msgid "%d h ago"
+msgstr "%d ч назад"
+
+msgid "%d d ago"
+msgstr "%d дн назад"
+
+msgid "%s — release %s%s"
+msgstr "%s — релиз %s%s"
+
+msgid "%s — %s"
+msgstr "%s — %s"
+
+msgid "GitHub unreachable at the last check"
+msgstr "GitHub был недоступен при последней проверке"
+
+msgid "no release info"
+msgstr "нет данных о релизе"
+
+msgid "Upstream releases"
+msgstr "Версии апстрима"
+
+msgid "checked %s"
+msgstr "проверено %s"
+
+msgid "%d (not downloaded: %d)"
+msgstr "%d (не скачано: %d)"
+
+msgid "%d, 0 errors"
+msgstr "%d, 0 ошибок"
+
+msgid "RU-geo base"
+msgstr "База RU-geo"
+
+msgid "categories %s · networks %s · domains %s · updated %s"
+msgstr "категорий %s · сетей %s · доменов %s · обновлено %s"
+
+msgid "The core refreshed its rule-set cache %s (per-tag detail is not exposed by the core)."
+msgstr "Ядро обновляло свой кэш rule-set %s (по-теговая свежесть ядром не раскрывается)."

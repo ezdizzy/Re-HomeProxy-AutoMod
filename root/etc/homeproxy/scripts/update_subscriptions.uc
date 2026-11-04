@@ -16,8 +16,12 @@ import { init_action } from 'luci.sys';
 
 import {
 	wGET, decodeBase64Str, getTime, isEmpty, parseURL,
-	validation, HP_DIR, RUN_DIR
+	validation, validate_node_config, shellQuote, HP_DIR, RUN_DIR
 } from 'homeproxy';
+
+import { access, stat, popen } from 'fs';
+
+import { emit as ev_emit } from 'eventbus';
 
 /* Single shared share-link parser (also used by import_link.uc) — replacing the
  * drifted embedded copy that used to lose new features (e.g. hysteria2 port
@@ -108,6 +112,168 @@ function log(...args) {
 	const logfile = open(`${RUN_DIR}/homeproxy.log`, 'a');
 	logfile.write(`${getTime()} [SUBSCRIBE] ${join(' ', args)}\n`);
 	logfile.close();
+}
+
+/* ── Ф5.1 (аудит «подписки и rule-set»): безопасный цикл обновления ────────
+ * Статус-файл /var/run/homeproxy/subscription_update.json (атомарно tmp+mv,
+ * полируется RPC app_subscription_status и UI), бекап подписочных узлов
+ * ПЕРЕД мутацией (ротация 5), гвард «обновление не имеет права оставить
+ * НОЛЬ подписочных узлов» и пост-верификация старта с откатом UCI из бекапа
+ * (LKG-механика Ф1.2 — init.d сам откатывает живой конфиг, здесь откатываем
+ * UCI, чтобы следующий рестарт не воспроизводил битый набор узлов). */
+const ST_FILE = `${RUN_DIR}/subscription_update.json`;
+const BK_DIR = `${HP_DIR}/backups`;
+const CORE_INSTANCE = 'hiddify-c';
+
+function wstatus(o) {
+	const tmp = ST_FILE + '.tmp';
+	const fd = open(tmp, 'w');
+	if (fd) {
+		fd.write(sprintf('%J\n', o));
+		fd.close();
+	}
+	system(`mv -f ${shellQuote(tmp)} ${shellQuote(ST_FILE)}`);
+}
+
+/* Snapshot of every subscription node section (grouphash) + the config node
+ * pointers, BEFORE any mutation. Atomically written JSON; restore recreates
+ * the SAME section names and fields (the cursor's set() writes arrays as
+ * list options — the shipped update loop already relies on that). */
+function backup_nodes() {
+	const sections = [];
+	uci.foreach(uciconfig, ucinode, (cfg) => {
+		if (!cfg.grouphash)
+			return null;
+		const copy = {};
+		map(keys(cfg), (k) => {
+			const v = cfg[k];
+			copy[k] = (type(v) === 'array') ? map(v, (x) => '' + x) : v;
+		});
+		push(sections, copy);
+	});
+	if (!length(sections))
+		return null;
+	const lt = localtime(time());
+	const stamp = sprintf('%d%02d%02d-%02d%02d%02d',
+		lt.year, lt.mon, lt.mday, lt.hour, lt.min, lt.sec);
+	const doc = {
+		created: time(),
+		main_node: uci.get(uciconfig, ucimain, 'main_node'),
+		main_udp_node: uci.get(uciconfig, ucimain, 'main_udp_node'),
+		main_urltest_nodes: uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [],
+		main_udp_urltest_nodes: uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [],
+		main_urltest_preferred: uci.get(uciconfig, ucimain, 'main_urltest_preferred'),
+		main_udp_urltest_preferred: uci.get(uciconfig, ucimain, 'main_udp_urltest_preferred'),
+		sections: sections
+	};
+	system(`mkdir -p ${shellQuote(BK_DIR)}`);
+	const path = `${BK_DIR}/sub-nodes-${stamp}.json`;
+	const tmp = path + '.tmp';
+	const fd = open(tmp, 'w');
+	if (!fd)
+		return null;
+	fd.write(sprintf('%.J\n', doc));
+	fd.close();
+	system(`mv -f ${shellQuote(tmp)} ${shellQuote(path)}`);
+	if (!access(path))
+		return null;
+	/* Rotate: keep the newest 5 sub-nodes backups. */
+	const lfd = popen(`ls -1t ${shellQuote(BK_DIR)}/sub-nodes-*.json 2>/dev/null`);
+	if (lfd) {
+		const lines = filter(split(lfd.read('all') || '', '\n'), (x) => length(trim(x)));
+		lfd.close();
+		for (let i = 5; i < length(lines); i++)
+			system(`rm -f ${shellQuote(lines[i])}`);
+	}
+	return path;
+}
+
+function restore_nodes(path) {
+	let doc = null;
+	const fd = open(path, 'r');
+	if (!fd)
+		return false;
+	try { doc = json(fd.read('all') || ''); } catch (e) { doc = null; }
+	fd.close();
+	if (!doc || type(doc.sections) !== 'array')
+		return false;
+	/* Remove every CURRENT subscription node (they are the suspect set), then
+	 * recreate the backup verbatim. User-created nodes (no grouphash) are
+	 * never touched. */
+	uci.foreach(uciconfig, ucinode, (cfg) => {
+		if (cfg.grouphash)
+			uci.delete(uciconfig, cfg['.name']);
+		return null;
+	});
+	for (let s in doc.sections) {
+		const sid = '' + (s['.name'] || '');
+		if (!length(sid) || !match(sid, /^[A-Za-z0-9_]+$/))
+			continue;   /* uci -q silently rejects names with '-' (lesson 248) */
+		uci.set(uciconfig, sid, 'node');
+		for (let k in s) {
+			if (substr(k, 0, 1) === '.')
+				continue;
+			if (k === 'grouphash' || k === 'isExisting')
+				continue;
+			const v = s[k];
+			if (v != null && ('' + v) !== '')
+				uci.set(uciconfig, sid, k, v);
+		}
+	}
+	const ptrs = [
+		['main_node', 'main_node'], ['main_udp_node', 'main_udp_node'],
+		['main_urltest_preferred', 'main_urltest_preferred'],
+		['main_udp_urltest_preferred', 'main_udp_urltest_preferred']
+	];
+	for (let p in ptrs) {
+		if (doc[p[0]] != null)
+			uci.set(uciconfig, ucimain, p[1], '' + doc[p[0]]);
+	}
+	const lists = [['main_urltest_nodes'], ['main_udp_urltest_nodes']];
+	for (let l in lists) {
+		uci.delete(uciconfig, ucimain, l[0]);
+		if (type(doc[l[0]]) === 'array')
+			map(doc[l[0]], (x) => uci.set(uciconfig, ucimain, l[0], '' + x));
+	}
+	uci.commit(uciconfig);
+	return true;
+}
+
+/* Core alive check — same primitive hp_instance_running uses: the service
+ * list instance object carries "running". */
+function core_running() {
+	const res = ubus.call('service', 'list', {});
+	const inst = (res && res[uciconfig] && res[uciconfig].instances)
+		? res[uciconfig].instances[CORE_INSTANCE] : null;
+	return !!(inst && inst.running);
+}
+
+/* Post-start verification (Ф5.1): poll the core up to ~40 s (outlasts the
+ * init.d LKG verifier's 8 s cycle + its restart). Returns
+ * 'ok' | 'lkg_rollback' | 'dead'. */
+function verify_core(deadline_s) {
+	const started = time();
+	let alive = false;
+	while (time() - started < deadline_s) {
+		system('sleep 2');
+		if (core_running()) { alive = true; break; }
+	}
+	if (alive) {
+		/* LKG rollback marker newer than our start = the NEW config failed
+		 * validation and init.d restored the previous one. */
+		const marker = `${RUN_DIR}/.lkg_rollback`;
+		const st = access(marker) ? stat(marker) : null;
+		if (st && st.mtime >= started - 2)
+			return 'lkg_rollback';
+		return 'ok';
+	}
+	return 'dead';
+}
+
+/* Per-group bookkeeping — one entry per subscription URL. */
+function new_group(gid, url) {
+	return { hash: gid, url: url, before: 0, parsed: 0, invalid: 0,
+		added: 0, removed: 0, kept: 0, status: 'pending' };
 }
 
 function parse_singbox_outbound(ob, companion_map) {
@@ -271,7 +437,11 @@ function parse_singbox_outbound(ob, companion_map) {
 		break;
 	case 'wireguard':
 		config.wireguard_private_key = ob.private_key || null;
-		config.wireguard_public_key = ob.peer_public_key || null;
+		/* Ф5.3 (аудит 51): the generator reads PEER public key from
+		 * wireguard_peer_public_key — the old wireguard_public_key name was
+		 * silently ignored by the schema (peer key lost on every imported WG
+		 * subscription node; stale field is dropped by the update loop). */
+		config.wireguard_peer_public_key = ob.peer_public_key || null;
 		config.wireguard_pre_shared_key = ob.pre_shared_key || null;
 		config.wireguard_local_address = ob.local_address || null;
 		config.wireguard_mtu = (ob.mtu != null) ? '' + ob.mtu : null;
@@ -521,11 +691,30 @@ function parse_xray_config(cfg) {
 	return parse_xray_outbound(chosen, cfg.remarks);
 }
 
+const ST = { running: true, ts: time(), action: 'running', reason: '',
+	groups: [], totals: null, backup: null, verify: null };
+const group_index = {};
+
 function main() {
+	/* Per-group «before» counts — read-only, BEFORE any mutation (Ф5.1 diff). */
+	const before_by_group = {};
+	let before_total = 0;
+	uci.foreach(uciconfig, ucinode, (cfg) => {
+		if (!cfg.grouphash)
+			return null;
+		const g = '' + cfg.grouphash;
+		before_by_group[g] = (before_by_group[g] || 0) + 1;
+		before_total++;
+		return null;
+	});
+
+	let service_was_stopped = false;
 	if (via_proxy !== '1') {
 		log('Stopping service...');
 		init_action('homeproxy', 'stop');
+		service_was_stopped = true;
 	}
+	wstatus(ST);
 
 	for (let url in subscription_urls) {
 		url = replace(url, /#.*$/, '');
@@ -543,6 +732,16 @@ function main() {
 
 		const groupHash = strhash(url);
 		node_cache[groupHash] = {};
+		/* Ф5.1: честная книжка группы — до/после, статусы ответа. */
+		let grp = group_index[groupHash];
+		if (!grp) {
+			grp = { hash: groupHash, url: url,
+				before: before_by_group[groupHash] || 0,
+				parsed: 0, invalid: 0, added: 0, removed: 0, kept: 0,
+				status: 'fetch_failed', full_replace: false };
+			group_index[groupHash] = grp;
+			push(ST.groups, grp);
+		}
 
 		/* Try Hiddify JSON format first: User-Agent triggers sing-box JSON on Hiddify Manager servers */
 		let res = wGET(url, 'HiddifyNext/2.0.0');
@@ -598,6 +797,7 @@ function main() {
 
 			if (isEmpty(res)) {
 				log(sprintf('Failed to fetch resources from %s.', url));
+				grp.status = 'fetch_failed';
 				continue;
 			}
 
@@ -633,6 +833,7 @@ function main() {
 			}
 		}
 
+		const res_html = !isEmpty(res) && match(res, /^\s*</);
 		let count = 0;
 		for (let node in nodes) {
 			let config;
@@ -640,6 +841,19 @@ function main() {
 				config = parse_uri(node, log);
 			if (isEmpty(config))
 				continue;
+
+			/* Ф5.3 (аудит 51): единый валидатор — битый узел отбрасывается
+			 * С ПРИЧИНОЙ (адрес/порт/ключи), а не молча попадает в UCI,
+			 * откуда он валит валидацию конфига ядра. */
+			const verrs = validate_node_config(config);
+			if (verrs) {
+				grp.invalid++;
+				log(sprintf('Skipping invalid node (%s): %s.',
+					join('; ', verrs),
+					(type(config.label) === 'string' && length(config.label)) ?
+						config.label : (config.address || '?')));
+				continue;
+			}
 
 			/* Normalize: some parsers yield label:null — string concat with null
 			 * is a fatal in this ucode build. */
@@ -671,6 +885,8 @@ function main() {
 			}
 		}
 
+		grp.parsed = count;
+		grp.status = (count > 0) ? 'ok' : (res_html ? 'html' : 'no_valid');
 		if (count == 0)
 			log(sprintf('No valid node found in %s.', url));
 		else
@@ -679,16 +895,25 @@ function main() {
 
 	if (isEmpty(node_result)) {
 		log('Failed to update subscriptions: no valid node found.');
-
-		if (via_proxy !== '1') {
+		/* Ф5.1: мутаций не было — существующие подписочные узлы нетронуты. */
+		ST.action = 'aborted';
+		ST.reason = 'ни одна подписка не дала ни одного валидного узла — UCI не изменялся';
+		ST.totals = { before: before_total, after: before_total,
+			kept: before_total, added: 0, removed: 0 };
+		ST.running = false;
+		if (service_was_stopped) {
 			log('Starting service...');
 			init_action('homeproxy', 'start');
 		}
-
+		wstatus(ST);
+		try { ev_emit('subscribe', 'aborted', '',
+			'обновление отклонено: ни один узел не распознан — узлы не тронуты'); } catch (e) {}
 		return false;
 	}
 
-	let added = 0, removed = 0;
+	/* Ф5.1 pass 1 (read-only): план удалений и число выживающих. */
+	let kept_total = 0, removed_total = 0;
+	const plan_remove = [];
 	uci.foreach(uciconfig, ucinode, (cfg) => {
 		/* Nodes created by the user */
 		if (!cfg.grouphash)
@@ -699,26 +924,89 @@ function main() {
 			return null;
 
 		if (!node_cache[cfg.grouphash] || !node_cache[cfg.grouphash][cfg['.name']]) {
-			uci.delete(uciconfig, cfg['.name']);
-			removed++;
-
-			log(sprintf('Removing node: %s.', cfg.label || cfg['name']));
+			push(plan_remove, { sid: cfg['.name'],
+				label: cfg.label || cfg.name || cfg['.name'],
+				ghash: '' + cfg.grouphash });
+			removed_total++;
+			const gr = group_index['' + cfg.grouphash];
+			if (gr) gr.removed++;
 		} else {
-			const cached = node_cache[cfg.grouphash][cfg['.name']];
-			const user_fields = ['bind_interface'];
-			map(keys(cfg), (v) => {
-				if (v in cached)
-					uci.set(uciconfig, cfg['.name'], v, cached[v]);
-				else if (!(v in user_fields))
-					uci.delete(uciconfig, cfg['.name'], v);
-			});
-			/* Also push new fields added by updated parsers to existing nodes */
-			map(keys(cached), (v) => {
-				if (!(v in cfg) && cached[v] !== null)
-					uci.set(uciconfig, cfg['.name'], v, cached[v]);
-			});
-			cached.isExisting = true;
+			node_cache[cfg.grouphash][cfg['.name']].isExisting = true;
+			kept_total++;
+			const gr = group_index['' + cfg.grouphash];
+			if (gr) gr.kept++;
 		}
+		return null;
+	});
+	let added_total = 0;
+	for (let nodes in node_result)
+		map(nodes, (node) => {
+			if (!node.isExisting)
+				added_total++;
+			return null;
+		});
+
+	/* 🔴 Ф5.1: обновление НИКОГДА не имеет права оставить ноль подписочных
+	 * узлов при ненулевом «до» — применить НЕТ (бекап даже не нужен: до
+	 * мутаций дело не доходит). */
+	if (before_total > 0 && kept_total === 0 && added_total === 0) {
+		log(sprintf('ABORT: the update would leave 0 of %d subscription nodes.', before_total));
+		ST.action = 'aborted';
+		ST.reason = sprintf('обновление удалило бы все %d подписочных узлов — применено НЕТ', before_total);
+		ST.totals = { before: before_total, after: before_total,
+			kept: before_total, added: 0, removed: 0 };
+		ST.running = false;
+		if (service_was_stopped) {
+			log('Starting service...');
+			init_action('homeproxy', 'start');
+		}
+		wstatus(ST);
+		try { ev_emit('subscribe', 'aborted', '',
+			'обновление отклонено: остался бы 0 узлов подписок'); } catch (e) {}
+		return false;
+	}
+
+	/* Бекап ПЕРЕД мутацией (Ф5.1): датированный снимок подписочных секций. */
+	ST.backup = backup_nodes();
+	if (ST.backup)
+		log(sprintf('Backup written: %s.', ST.backup));
+	else if (before_total > 0)
+		log('Backup FAILED — continuing without a rollback copy');
+
+	/* Pass 2: мутации (план уже сверен гвардом). */
+	let added = 0, removed = 0;
+	for (let r in plan_remove) {
+		uci.delete(uciconfig, r.sid);
+		removed++;
+		const grp2 = group_index[r.ghash];
+		if (grp2) grp2.removed++;
+		log(sprintf('Removing node: %s.', r.label));
+	}
+	uci.foreach(uciconfig, ucinode, (cfg) => {
+		/* Nodes created by the user */
+		if (!cfg.grouphash)
+			return null;
+
+		/* Empty object - failed to fetch nodes */
+		if (length(node_cache[cfg.grouphash]) === 0)
+			return null;
+
+		if (!node_cache[cfg.grouphash] || !node_cache[cfg.grouphash][cfg['.name']])
+			return null;
+
+		const cached = node_cache[cfg.grouphash][cfg['.name']];
+		const user_fields = ['bind_interface'];
+		map(keys(cfg), (v) => {
+			if (v in cached)
+				uci.set(uciconfig, cfg['.name'], v, cached[v]);
+			else if (!(v in user_fields))
+				uci.delete(uciconfig, cfg['.name'], v);
+		});
+		/* Also push new fields added by updated parsers to existing nodes */
+		map(keys(cached), (v) => {
+			if (!(v in cfg) && cached[v] !== null)
+				uci.set(uciconfig, cfg['.name'], v, cached[v]);
+		});
 	});
 	for (let nodes in node_result)
 		map(nodes, (node) => {
@@ -738,6 +1026,8 @@ function main() {
 			map(keys(node), (v) => uci.set(uciconfig, nameHash, v, node[v]));
 
 			added++;
+			const grp3 = group_index[ghash];
+			if (grp3) grp3.added++;
 			log(sprintf('Adding node: %s.', node.label));
 		});
 	uci.commit(uciconfig);
@@ -832,14 +1122,58 @@ function main() {
 		}
 	}
 
+	let verify = null;
 	if (need_restart) {
-		log('Restarting service...');
-		init_action('homeproxy', 'stop');
+		/* Двойной stop — шум «Not found» в логе: сервис уже стоит, если мы
+		 * сами его остановили в начале (via_proxy!=='1'). */
+		if (!service_was_stopped) {
+			log('Stopping service...');
+			init_action('homeproxy', 'stop');
+		}
+		log('Starting service...');
 		init_action('homeproxy', 'start');
+		/* Ф5.1 пост-верификация: ядро обязано подняться на новом наборе
+		 * узлов; lkg_rollback = init.d уже вернул прошлый конфиг (битый
+		 * набор узлов отвергнут валидацией ядра), dead = не поднялось вовсе. */
+		verify = verify_core(40);
+		ST.verify = { restarted: true, verdict: verify };
+		if (verify !== 'ok') {
+			log(sprintf('Verification: %s — restoring node sections from the backup.', verify));
+			const rb = ST.backup ? restore_nodes(ST.backup) : false;
+			log(rb ? 'Node sections restored from the backup.'
+			       : 'Restore FAILED (no/failed backup) — check the node list manually.');
+			if (verify === 'dead' && rb) {
+				log('Restarting the service with the restored node set...');
+				init_action('homeproxy', 'stop');
+				init_action('homeproxy', 'start');
+			}
+			ST.action = 'rolled_back';
+		}
+	} else {
+		/* via_proxy=1 без смены главного узла: рестарта не было — новые узлы
+		 * вступят в силу при следующем рестарте; верифицировать нечего. */
+		ST.verify = { restarted: false, verdict: null,
+			note: 'сервис не перезапускался — новые узлы применятся при следующем рестарте' };
 	}
 
 	log(sprintf('%s nodes added, %s removed.', added, removed));
 	log('Successfully updated subscriptions.');
+
+	ST.totals = { before: before_total, after: kept_total + added_total,
+		kept: kept_total, added: added, removed: removed };
+	if (ST.action !== 'rolled_back')
+		ST.action = 'applied';
+	ST.running = false;
+	wstatus(ST);
+	const ev_sum = sprintf('узлов: было %d, стало %d (+%d/−%d)',
+		before_total, kept_total + added_total, added, removed);
+	if (ST.action === 'rolled_back')
+		try { ev_emit('subscribe', 'rolled_back', '',
+			ev_sum + ' — новый набор узлов не прошёл проверку старта, узлы восстановлены из бекапа'); } catch (e) {}
+	else
+		try { ev_emit('subscribe', 'done', '',
+			ev_sum + ((ST.verify && ST.verify.restarted === false) ?
+				' (применится при следующем рестарте)' : '')); } catch (e) {}
 }
 
 if (!isEmpty(subscription_urls))
@@ -849,6 +1183,13 @@ if (!isEmpty(subscription_urls))
 		log('[FATAL ERROR] An error occurred during updating subscriptions:');
 		log(sprintf('%s: %s', e.type, e.message));
 		log(e.stacktrace[0].context);
+
+		ST.running = false;
+		ST.action = 'failed';
+		ST.reason = sprintf('%s: %s', e.type, e.message);
+		wstatus(ST);
+		try { ev_emit('subscribe', 'failed', '',
+			'ошибка обновления подписок: ' + sprintf('%s: %s', e.type, e.message)); } catch (x) {}
 
 		log('Restarting service...');
 		init_action('homeproxy', 'stop');

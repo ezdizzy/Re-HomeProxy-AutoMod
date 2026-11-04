@@ -1195,6 +1195,13 @@ function buildRulesetsCard() {
 	let pollTimer = null;
 
 	const fmtSize = (n) => (n != null && n >= 1024) ? (n / 1024).toFixed(0) + ' KB' : (n != null ? n + ' B' : '');
+	/* Ф5.2: возраст локальной копии — «N мин / N ч / N дн назад». */
+	const fmtAge = (sec) => {
+		if (sec == null) return '';
+		if (sec < 3600) return _('%d min ago').format(Math.max(1, Math.floor(sec / 60)));
+		if (sec < 86400) return _('%d h ago').format(Math.floor(sec / 3600));
+		return _('%d d ago').format(Math.floor(sec / 86400));
+	};
 
 	const render = (r) => {
 		listEl.innerHTML = '';
@@ -1215,6 +1222,13 @@ function buildRulesetsCard() {
 		}
 		for (let i in sets) {
 			const s = sets[i];
+			const meta = [];
+			if (s.exists) {
+				meta.push(fmtSize(s.size));
+				if (s.age != null)
+					meta.push(fmtAge(s.age));
+				meta.push(s.tag + '.srs');
+			}
 			const line = E('div', { style: 'margin:2px 0' }, [
 				E('span', { style: 'color:' + (s.exists ? '#3fbf5f' : '#d99a1b'), 'font-weight': 'bold' },
 					[ s.exists ? '✓' : '○' ]),
@@ -1222,7 +1236,7 @@ function buildRulesetsCard() {
 				E('span', { style: 'font-family:monospace' }, [ s.tag ]),
 				' ',
 				E('span', { style: 'opacity:.7' },
-					[ s.exists ? (fmtSize(s.size) + ' · ' + s.tag + '.srs') : _('local copy missing') ])
+					[ s.exists ? meta.join(' · ') : _('local copy missing') ])
 			]);
 			line.setAttribute('title', s.url);
 			listEl.appendChild(line);
@@ -1230,6 +1244,51 @@ function buildRulesetsCard() {
 		if (seed && seed.running)
 			listEl.appendChild(E('em', { style: 'color:#d99a1b' },
 				[ _('Downloading: %d of %d…').format(seed.done || 0, seed.total || sets.length) ]));
+
+		/* Ф5.2: версии апстрима (GitHub releases; обновляются в фоне). */
+		const fresh = r.fresh;
+		if (fresh) {
+			const rel = [];
+			const repos = fresh.repos || {};
+			for (const repo in repos) {
+				const fr = repos[repo];
+				if (fr && fr.tag) {
+					const d = fr.published_at ? fr.published_at.slice(0, 10) : '';
+					rel.push(_('%s — release %s%s').format(repo, fr.tag, d ? ' (' + d + ')' : ''));
+				} else {
+					rel.push(_('%s — %s').format(repo, (fr && fr.error) ? _('GitHub unreachable at the last check') : _('no release info')));
+				}
+			}
+			if (rel.length) {
+				const ageTxt = fresh.ts ? fmtAge(fresh.age) : '';
+				listEl.appendChild(E('div', { style: 'margin:6px 0 2px; font-size:.9em' }, [
+					E('span', { style: 'font-weight:bold' }, _('Upstream releases') + ': '),
+					E('span', { style: 'opacity:.85' }, rel.join(' · ')),
+					' ', E('span', { style: 'opacity:.55' },
+						[ ageTxt ? '(' + _('checked %s').format(ageTxt) + ')' : '' ])
+				]));
+			}
+		}
+
+		/* Ф5.2: манифест базы RU-geo — честно, с нескачанными категориями. */
+		const geo = r.ru_geo;
+		if (geo && geo.installed) {
+			const catTxt = geo.categories_failed
+				? _('%d (not downloaded: %d)').format(geo.categories, geo.categories_failed)
+				: _('%d, 0 errors').format(geo.categories);
+			const when = geo.updated ? new Date(geo.updated * 1000).toLocaleString() : '—';
+			listEl.appendChild(E('div', { style: 'margin:2px 0; font-size:.9em' }, [
+				E('span', { style: 'font-weight:bold' }, _('RU-geo base') + ': '),
+				E('span', { style: 'opacity:.85' },
+					_('categories %s · networks %s · domains %s · updated %s').format(
+						catTxt, geo.geoip, geo.geosite, when))
+			]));
+		}
+		/* Глобальный маркер: когда ядро последний раз трогало свой кэш rule-set'ов
+		 * (по тегам свежесть знать нельзя — cache.db непрозрачен, урок 203). */
+		if (r.cache_db_age != null)
+			listEl.appendChild(E('div', { style: 'margin:2px 0; font-size:.85em; opacity:.55' },
+				[ _('The core refreshed its rule-set cache %s (per-tag detail is not exposed by the core).').format(fmtAge(r.cache_db_age)) ]));
 	};
 
 	const refresh = () => L.resolveDefault(callRulesetsLocalStatus(), {}).then((r) => { render(r); return r; });

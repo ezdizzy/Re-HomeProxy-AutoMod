@@ -796,8 +796,135 @@ export function validation(datatype, data) {
 	const ret = system(`/sbin/validate_data ${shellQuote(datatype)} ${shellQuote(data)} 2>/dev/null`);
 	return (ret === 0);
 };
-/* String helper end */
 
+/* ── Ф5.3 (аудит 51): ЕДИНЫЙ валидатор узлов для всех импортёров ─────────────
+ * Подписки (update_subscriptions), share-link (import_link), .conf-импорт
+ * (import_conf.uc) и браузерный parseWireGuardConf пропускают узел через
+ * ЭТУ функцию ДО записи в UCI: адрес/порт/ключи проверяются по одним правилам,
+ * битый узел отбрасывается С ПРИЧИНОЙ, а не молча попадает в генерируемый
+ * конфиг (где ядро падает на валидации, а LKG откатывает старт целиком).
+ * Возвращает null (узел валиден) либо МАССИВ строк с причинами (русские —
+ * строки идут в лог/UI/TG без _()). Экспортируется для вызова из скриптов. */
+function hp_key_b64(s) {
+	/* WireGuard/Amnezia ключ = 44 символа base64 (43 + '='). Допускаем
+	 * url-safe алфавит ('-'/'_'), как decodeBase64Str. */
+	if (type(s) !== 'string' || length(s) !== 44)
+		return false;
+	return match(replace(replace(s, '-', '+'), '_', '/'), /^[A-Za-z0-9+/]{43}=$/) != null;
+}
+
+function hp_uuid_ok(s) {
+	return (type(s) === 'string' &&
+		match(s, /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/) != null);
+}
+
+function hp_addr_ok(s) {
+	if (type(s) !== 'string' || !length(trim(s)))
+		return false;
+	const a = trim(s);
+	if (validateHostname(a))
+		return true;
+	/* IPv4/IPv6 — тем же разбором, что classify_entry (без CIDR-суффикса). */
+	if (ipv4_parts_ok(a))
+		return true;
+	const hx = ipv6_hextets(a);
+	return (hx != null);
+}
+
+function hp_port_ok(s, lo) {
+	if (type(s) !== 'string' || !match(s, /^\d+$/))
+		return false;
+	const p = int(s);
+	const min = (lo == null) ? 1 : lo;   /* 🔴 не «lo || 1»: 0 валиден для keepalive */
+	return (p >= min && p <= 65535);
+};
+
+export function validate_node_config(cfg) {
+	if (type(cfg) !== 'object')
+		return [ 'узел: конфиг не объект' ];
+
+	const t = cfg.type;
+	const TYPES = ['vless', 'vmess', 'trojan', 'shadowsocks', 'naive', 'tuic',
+		'hysteria', 'hysteria2', 'wireguard', 'amneziawg', 'ssh', 'mieru',
+		'anytls', 'trusttunnel', 'socks', 'http'];
+	if (type(t) !== 'string' || !(t in TYPES))
+		return [ 'неизвестный тип узла: ' + ((t == null) ? '—' : '' + t) ];
+
+	let errs = [];
+
+	if (!hp_addr_ok(cfg.address))
+		push(errs, 'адрес отсутствует или невалиден');
+	if (t === 'mieru') {
+		/* Генератор силой ставит server_port=0 — порт идёт ТОЛЬКО через
+		 * mieru_port_range "min:max". */
+		if (cfg.port !== '0')
+			push(errs, 'mieru: порт должен быть 0 (диапазон — в mieru_port_range)');
+		const pr = cfg.mieru_port_range;
+		if (type(pr) !== 'string' || !match(pr, /^\d+:\d+$/))
+			push(errs, 'mieru: отсутствует диапазон портов min:max');
+		else {
+			const pp = split(pr, ':');
+			const lo = int(pp[0]), hi = int(pp[1]);
+			if (lo < 1 || hi > 65535 || lo > hi)
+				push(errs, 'mieru: диапазон портов ' + pr + ' вне 1–65535 или перепутан');
+		}
+	} else if (!hp_port_ok(cfg.port, 1)) {
+		push(errs, 'порт отсутствует или вне диапазона 1–65535');
+	}
+
+	if ((t === 'vless' || t === 'vmess' || t === 'tuic') && !hp_uuid_ok(cfg.uuid))
+		push(errs, t + ': UUID отсутствует или невалиден');
+	if ((t === 'trojan' || t === 'anytls') && (type(cfg.password) !== 'string' || !length(cfg.password)))
+		push(errs, t + ': пароль отсутствует');
+	if (t === 'shadowsocks') {
+		if (type(cfg.shadowsocks_encrypt_method) !== 'string' || !length(cfg.shadowsocks_encrypt_method))
+			push(errs, 'shadowsocks: метод шифрования отсутствует');
+		if (type(cfg.password) !== 'string' || !length(cfg.password))
+			push(errs, 'shadowsocks: пароль отсутствует');
+	}
+	if (t === 'ssh' && (type(cfg.ssh_priv_key) !== 'string' || !length(cfg.ssh_priv_key)))
+		push(errs, 'ssh: приватный ключ отсутствует');
+
+	if (t === 'wireguard' || t === 'amneziawg') {
+		if (!hp_key_b64(cfg.wireguard_private_key))
+			push(errs, 'wireguard: private_key не base64-ключ (44 символа)');
+		if (!hp_key_b64(cfg.wireguard_peer_public_key ?? cfg.wireguard_public_key))
+			push(errs, 'wireguard: public_key пира не base64-ключ (44 символа)');
+		if (cfg.wireguard_pre_shared_key && !hp_key_b64(cfg.wireguard_pre_shared_key))
+			push(errs, 'wireguard: pre_shared_key не base64-ключ (44 символа)');
+		const ka = cfg.wireguard_local_address;
+		if (type(ka) === 'array') {
+			for (let i, a in ka) {
+				const c = classify_entry(a);
+				if (!c || c.kind === 'domain')
+					push(errs, 'wireguard: локальный адрес «' + a + '» не IP/подсеть');
+			}
+			if (!length(ka))
+				push(errs, 'wireguard: локальный адрес пуст');
+		} else if (ka != null && length('' + ka)) {
+			push(errs, 'wireguard: локальный адрес должен быть списком IP/подсетей');
+		}
+		/* Аудит 51: PersistentKeepalive не теряется и остаётся числом. */
+		const pk = cfg.wireguard_persistent_keepalive_interval;
+		if (pk != null && ('' + pk) !== '' && !hp_port_ok('' + pk, 0))
+			push(errs, 'wireguard: persistent_keepalive «' + pk + '» не число 0–65535');
+	}
+
+	if (t === 'hysteria2' && cfg.hysteria_hopping_port != null &&
+	    type(cfg.hysteria_hopping_port) === 'array') {
+		for (let i, r in cfg.hysteria_hopping_port) {
+			if (type(r) !== 'string' || !match(r, /^\d+:\d+$/) ||
+			    int(split(r, ':')[0]) < 1 || int(split(r, ':')[1]) > 65535 ||
+			    int(split(r, ':')[0]) > int(split(r, ':')[1]))
+				push(errs, 'hysteria2: диапазон port-hopping «' + r + '» невалиден');
+		}
+	}
+
+	if (cfg.tls_sni && !hp_addr_ok(cfg.tls_sni))
+		push(errs, 'tls_sni невалиден');
+
+	return length(errs) ? errs : null;
+};
 /* String parser start */
 export function decodeBase64Str(str) {
 	if (isEmpty(str))
@@ -959,6 +1086,37 @@ export function selftest() {
 	ok('hextets :: ', hx('::') === '0,0,0,0,0,0,0,0');
 	ok('hextets full form', hx('2001:0db8:0000:0000:0000:0000:0000:0001') === hx('2001:db8::1'));
 
+	/* Ф5.3 (аудит 51): единый валидатор узлов импортёров */
+	let vld = (c) => { let e = validate_node_config(c); return e ? join('|', e) : 'ok'; };
+	ok('vld vless good', vld({ type: 'vless', address: 'a.example.com', port: '443',
+		uuid: '8f2c5e6a-1b2c-3d4e-5f60-7a8b9c0d1e2f' }) === 'ok');
+	ok('vld bad uuid', index(vld({ type: 'vless', address: 'a.example.com', port: '443',
+		uuid: 'xyz' }), 'UUID') >= 0);
+	ok('vld bad port', index(vld({ type: 'trojan', address: '1.2.3.4', port: '70000',
+		password: 'x' }), 'порт') >= 0);
+	ok('vld no address', index(vld({ type: 'trojan', address: null, port: '443',
+		password: 'x' }), 'адрес') >= 0);
+	ok('vld ipv6 address ok', vld({ type: 'socks', address: '2001:db8::1', port: '1080' }) === 'ok');
+	ok('vld ss good', vld({ type: 'shadowsocks', address: 'a.b.c', port: '8388',
+		shadowsocks_encrypt_method: 'aes-128-gcm', password: 'pw' }) === 'ok');
+	ok('vld ss no method', index(vld({ type: 'shadowsocks', address: 'a.b.c', port: '8388',
+		password: 'pw' }), 'метод') >= 0);
+	ok('vld unknown type', index(vld({ type: 'juju', address: 'a.b.c', port: '1' }),
+		'неизвестный тип') >= 0);
+	ok('vld null config', type(validate_node_config(null)) === 'array');
+	ok('vld mieru good', vld({ type: 'mieru', address: 'a.b.c', port: '0',
+		mieru_port_range: '10000:20000' }) === 'ok');
+	ok('vld mieru bad range', index(vld({ type: 'mieru', address: 'a.b.c', port: '0',
+		mieru_port_range: '20000:10000' }), 'диапазон') >= 0);
+	ok('vld mieru nonzero port', index(vld({ type: 'mieru', address: 'a.b.c', port: '8080',
+		mieru_port_range: '10000:20000' }), 'mieru') >= 0);
+	ok('vld hy2 hopping good', vld({ type: 'hysteria2', address: 'a.b.c', port: '443',
+		hysteria_hopping_port: [ '40000:50000' ] }) === 'ok');
+	ok('vld hy2 hopping bad', index(vld({ type: 'hysteria2', address: 'a.b.c', port: '443',
+		hysteria_hopping_port: [ '50000:40000' ] }), 'port-hopping') >= 0);
+	ok('vld tls_sni bad', index(vld({ type: 'vless', address: 'a.b.c', port: '443',
+		uuid: '8f2c5e6a-1b2c-3d4e-5f60-7a8b9c0d1e2f', tls_sni: 'bad sni' }), 'tls_sni') >= 0);
+
 	/* файл-уровень в изоляции */
 	let dir = '/tmp/hp-selftest-' + sprintf('%d', time());
 	system('rm -rf ' + shellQuote(dir));
@@ -1094,6 +1252,25 @@ export function selftest() {
 		writefile(dir + '/oauth_stable.txt', 'clerk.com\n1.2.3.4\n# c\n');
 		let r8 = sync_oauth_ruleset(dir);
 		ok('oauth domains only', r8.domains === 1 && r8.dropped === 1);
+
+		/* wireguard-ключи и PersistentKeepalive (аудит 51: поле не теряется) */
+		const K43A = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+		const K43B = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
+		ok('vld wg good', vld({ type: 'wireguard', address: '1.2.3.4', port: '51820',
+			wireguard_private_key: K43A, wireguard_peer_public_key: K43B,
+			wireguard_local_address: [ '10.0.0.2/32' ],
+			wireguard_persistent_keepalive_interval: '25' }) === 'ok');
+		ok('vld wg short key', index(vld({ type: 'wireguard', address: '1.2.3.4', port: '51820',
+			wireguard_private_key: 'short', wireguard_peer_public_key: K43B }), 'base64') >= 0);
+		ok('vld wg keepalive junk', index(vld({ type: 'wireguard', address: '1.2.3.4', port: '51820',
+			wireguard_private_key: K43A, wireguard_peer_public_key: K43B,
+			wireguard_persistent_keepalive_interval: 'foo' }), 'persistent_keepalive') >= 0);
+		ok('vld wg keepalive zero ok', vld({ type: 'wireguard', address: '1.2.3.4', port: '51820',
+			wireguard_private_key: K43A, wireguard_peer_public_key: K43B,
+			wireguard_persistent_keepalive_interval: '0' }) === 'ok');
+		ok('vld wg bad local addr', index(vld({ type: 'wireguard', address: '1.2.3.4', port: '51820',
+			wireguard_private_key: K43A, wireguard_peer_public_key: K43B,
+			wireguard_local_address: [ 'example.com' ] }), 'локальный адрес') >= 0);
 
 		/* ru_geoip: валидация CIDR апстрима */
 		writefile(dir + '/ru_geoip.txt', '5.61.0.0/16\n2001:db8::/32\n1.2.3.4/33\n');

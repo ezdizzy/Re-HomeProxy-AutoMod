@@ -249,6 +249,9 @@ function parseWireGuardConf(text) {
 		wireguard_pre_shared_key:  peer.PresharedKey || null,
 		wireguard_local_address: iface.Address ? iface.Address.split(',').map(a => a.trim()) : null,
 		wireguard_mtu:           iface.MTU || null,
+		/* Ф5.3 (аудит 51): PersistentKeepalive больше не теряется — зеркало
+		 * import_conf.uc (поле читает генератор). */
+		wireguard_persistent_keepalive_interval: peer.PersistentKeepalive || null,
 	};
 
 	if (isAWG) {
@@ -271,6 +274,59 @@ function parseWireGuardConf(text) {
 	}
 
 	return node;
+}
+
+/* Ф5.3 (аудит 51): зеркало валидатора импортёров для wireguard/amneziawg —
+ * ДЕРЖАТЬ СИНХРОННО с validate_node_config() в homeproxy.uc (ключи — 44
+ * символа base64, порт 1–65535, PersistentKeepalive — число 0–65535,
+ * локальные адреса — IP/подсети). Возвращает null (OK) или массив строк. */
+function validateWireGuardNode(node) {
+	const errs = [];
+	const normB64 = s => String(s).replace(/-/g, '+').replace(/_/g, '/');
+	const b64key = s => typeof s === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(normB64(s));
+	const portOk = (s, lo) => /^\d+$/.test(String(s)) && +s >= (lo || 1) && +s <= 65535;
+	const addrOk = s => {
+		if (!s) return false;
+		if (/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(s)) {
+			const parts = s.split('/')[0].split('.');
+			if (parts.some(p => +p > 255 || (p.length > 1 && p[0] === '0'))) return false;
+			if (s.includes('/')) {
+				const pre = +s.split('/')[1];
+				return pre >= 1 && pre <= 32;
+			}
+			return true;
+		}
+		return /^[a-zA-Z0-9]([a-zA-Z0-9_\-.]*[a-zA-Z0-9])?$/.test(s) && /[^0-9.]/.test(s);
+	};
+
+	if (!addrOk(node.address))
+		errs.push(_('адрес отсутствует или невалиден'));
+	if (!portOk(node.port, 1))
+		errs.push(_('порт отсутствует или вне диапазона 1–65535'));
+	if (!b64key(node.wireguard_private_key))
+		errs.push(_('wireguard: private_key не base64-ключ (44 символа)'));
+	if (!b64key(node.wireguard_peer_public_key))
+		errs.push(_('wireguard: public_key пира не base64-ключ (44 символа)'));
+	if (node.wireguard_pre_shared_key && !b64key(node.wireguard_pre_shared_key))
+		errs.push(_('wireguard: pre_shared_key не base64-ключ (44 символа)'));
+	if (node.wireguard_local_address) {
+		const ok = Array.isArray(node.wireguard_local_address) && node.wireguard_local_address.length > 0 &&
+			node.wireguard_local_address.every(a => {
+				const m = String(a).match(/^(\d{1,3}(?:\.\d{1,3}){3})(?:\/(\d{1,2}))?$/);
+				if (!m) return false;
+				if (m[1].split('.').some(p => +p > 255 || (p.length > 1 && p[0] === '0'))) return false;
+				if (m[2] != null) { const pre = +m[2]; return pre >= 1 && pre <= 32; }
+				return true;
+			});
+		if (!ok)
+			errs.push(_('wireguard: локальный адрес должен быть списком IP/подсетей'));
+	}
+	if (node.wireguard_persistent_keepalive_interval != null &&
+	    String(node.wireguard_persistent_keepalive_interval) !== '' &&
+	    !portOk(node.wireguard_persistent_keepalive_interval, 0))
+		errs.push(_('wireguard: persistent_keepalive «%s» не число 0–65535').format(node.wireguard_persistent_keepalive_interval));
+
+	return errs.length ? errs : null;
 }
 
 function parseShareLink(uri, features) {
@@ -916,6 +972,14 @@ function parseShareLink(uri, features) {
 const callMonitorNodes = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'monitor_nodes',
+	expect: { '': {} }
+});
+
+/* Ф5.1: итог последнего цикла обновления подписок — статус-файл пишет
+ * update_subscriptions.uc, RPC читает его + живую книжку узлов. */
+const callSubscriptionStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_subscription_status',
 	expect: { '': {} }
 });
 
@@ -2242,6 +2306,15 @@ return view.extend({
 									return ui.addNotification(null, E('p', _('No valid WireGuard/AmneziaWG config found.')));
 								}
 
+								/* Ф5.3 (аудит 51): та же планка, что у серверных
+								 * импортёров — битый узел не создаётся. */
+								const verrs = validateWireGuardNode(config);
+								if (verrs) {
+									ui.hideModal();
+									return ui.addNotification(null, E('p',
+										_('Node failed validation: %s').format(verrs.join('; '))));
+								}
+
 								const existingLabels = new Set(
 									uci.sections(data[0], 'node').map(s => s.label).filter(Boolean)
 								);
@@ -2407,8 +2480,55 @@ return view.extend({
 				E('p', { 'class': 'spinning' }, _('Fetching nodes, please wait...'))
 			]);
 
+			/* Ф5.1: результат — в ОДНОМ месте, в этой же модали: итог цикла,
+			 * diff до/после по каждой подписке, причина отказа (если была). */
+			const hostOf = (u) => String(u || '').replace(/^https?:\/\//, '').split(/[#/]/)[0];
+			const ACT = {
+				applied: _('Nodes updated'),
+				aborted: _('Update declined — nodes untouched'),
+				rolled_back: _('Update rolled back — nodes restored from the backup'),
+				failed: _('Update failed')
+			};
+			const GST = {
+				ok: _('OK'),
+				html: _('server returned an HTML page — skipped'),
+				no_valid: _('no valid node in the response — skipped'),
+				fetch_failed: _('fetch failed — skipped'),
+				pending: '…'
+			};
 			return fs.exec_direct('/etc/homeproxy/scripts/update_subscriptions.uc').then(() => {
-				return location.reload();
+				return L.resolveDefault(callSubscriptionStatus(), {});
+			}).then((st) => {
+				const last = (st && st.last) || null;
+				const body = [];
+				if (!last) {
+					body.push(E('p', {}, _('Update finished (no status report — it was produced before this feature existed).')));
+				} else {
+					body.push(E('p', { style: 'font-weight:bold' }, [ ACT[last.action] || last.action ]));
+					if (last.totals)
+						body.push(E('p', {}, _('Nodes: %s before, %s after (+%s/−%s; kept unchanged: %s)')
+							.format(last.totals.before, last.totals.after, last.totals.added, last.totals.removed, last.totals.kept)));
+					for (let g of (last.groups || []))
+						body.push(E('p', { style: 'margin:2px 0; font-size:.9em' }, [
+							_('%s · %s → %s (+%s/−%s, unchanged %s)').format(
+								hostOf(g.url), GST[g.status] || g.status,
+								g.parsed, g.added, g.removed, g.kept)
+						]));
+					if (last.reason)
+						body.push(E('p', { style: 'color:#d99a1b' }, [ last.reason ]));
+					if (last.backup)
+						body.push(E('p', { style: 'font-size:.9em; opacity:.8' }, _('Backup') + ': ' + last.backup));
+					if (last.verify && last.verify.restarted === false)
+						body.push(E('p', { style: 'font-size:.9em; opacity:.8' },
+							[_('The service was not restarted — new nodes apply on the next restart.')]));
+				}
+				body.push(E('div', { class: 'right' }, [
+					E('button', {
+						class: 'btn cbi-button-action',
+						click: () => location.reload()
+					}, [ _('Reload page') ])
+				]));
+				ui.showModal(_('Updating subscriptions'), body);
 			}).catch((err) => {
 				ui.hideModal();
 				ui.addNotification(null, E('p', _('An error occurred during updating subscriptions: %s').format(err)));

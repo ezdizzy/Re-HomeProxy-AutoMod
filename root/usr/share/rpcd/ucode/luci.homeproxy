@@ -942,6 +942,53 @@ function rulesets_remote_list() {
 	return out;
 }
 
+/* ── Ф5.2: мониторинг rule-set — свежесть источников ────────────────────
+ * Upstream-версии репозиториев, откуда ядро тянет remote rule-set'ы
+ * (itdoginfo/allow-domains, Re-filter-lists, b4geoip-forkop). GitHub API
+ * НИКОГДА не вызывается из RPC-потока: detached-раннер rulesets_check.uc
+ * пишет кэш RUN_DIR/rulesets_upstream.json (TTL 6 ч), RPC только читает
+ * его и при протухшем кэше поднимает раннер (не чаще раза в 15 мин).
+ * Честная граница: собственную свежесть cache.db ядра по тегам мы знать
+ * не можем (урок 203) — показываем mtime cache.db как глобальный маркер
+ * «ядро обновляло rule-set'ы» и версии апстрима отдельно. */
+const RS_FRESH_FILE = RUN_DIR + '/rulesets_upstream.json';
+const RS_FRESH_TTL = 6 * 3600;
+
+function rulesets_repo_of(url) {
+	url = '' + (url || '');
+	const m = match(url, /^https?:\/\/[^/]*github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/);
+	return m ? (m[1] + '/' + m[2]) : null;
+}
+
+function rulesets_fresh_status(list) {
+	let fresh = null;
+	if (access(RS_FRESH_FILE)) {
+		try { fresh = json(readfile(RS_FRESH_FILE) || ''); } catch (e) { fresh = null; }
+	}
+	const age = (fresh && fresh.ts) ? (time() - int(fresh.ts)) : null;
+	const stale = (age == null || age > RS_FRESH_TTL);
+	if (stale) {
+		const runf = RUN_DIR + '/rulesets_upstream.running';
+		const rs = access(runf) ? stat(runf) : null;
+		if (!rs || (time() - rs.mtime) > 900) {
+			system(`rm -f ${shellquote(runf)}`);
+			system(`ucode ${shellquote(HP_DIR + '/scripts/rulesets_check.uc')} >/dev/null 2>&1 1000>&- &`);
+		}
+	}
+	const repos = (fresh && type(fresh.repos) === 'object') ? fresh.repos : {};
+	for (let r in list) {
+		const repo = rulesets_repo_of(r.url);
+		r.repo = repo;
+		r.fresh = (repo && repos[repo]) ? {
+			tag: repos[repo].tag || null,
+			published_at: repos[repo].published_at || null,
+			error: repos[repo].error || null
+		} : null;
+	}
+	return { ts: (fresh && fresh.ts) ? int(fresh.ts) : null,
+		age: age, stale: stale, repos: repos };
+}
+
 /* B6.6: does the parseable companion of ONE Master source contain the host
  * (suffix walk over resources/engine_<src>.txt)? Remote .srs sources have no
  * companion — returns null ("cannot be proven or denied locally") rather
@@ -4742,6 +4789,8 @@ const methods = {
 				if (r.exists) {
 					const st = stat(r.local_path);
 					r.size = st ? st.size : null;
+					r.mtime = st ? st.mtime : null;
+					r.age = (st && st.mtime) ? (time() - int(st.mtime)) : null;
 				}
 			}
 			/* Seed progress (the detached runner rewrites the file atomically
@@ -4751,6 +4800,9 @@ const methods = {
 			if (access(sf)) {
 				try { seed = json(readfile(sf) || ''); } catch (e) { seed = null; }
 			}
+			/* Ф5.2: свежесть апстрима + манифест базы RU-geo + маркер кэша ядра. */
+			const fresh = rulesets_fresh_status(list);
+			const cd = stat(RUN_DIR + '/cache.db');
 			return {
 				enabled: enabled,
 				dir: dir,
@@ -4758,7 +4810,10 @@ const methods = {
 				rulesets: list,
 				found: length(filter(list, (r) => r.exists)),
 				total: length(list),
-				seed: seed
+				seed: seed,
+				fresh: fresh,
+				ru_geo: ru_geo_read_meta(),
+				cache_db_age: cd ? (time() - int(cd.mtime)) : null
 			};
 		}
 	},
@@ -4780,6 +4835,33 @@ const methods = {
 			 * take minutes; the UI polls app_rulesets_local_status. */
 			system(`ucode ${shellquote(HP_DIR + '/scripts/rulesets_seed.uc')}${force ? ' force' : ''} >/dev/null 2>&1 1000>&- &`);
 			return { result: true, started: true };
+		}
+	},
+
+	/* Ф5.1: результат последнего цикла обновления подписок (пишет
+	 * update_subscriptions.uc атомарно) + живая книжка подписочных узлов.
+	 * UI показывает итог в ОДНОМ месте — в модале кнопки обновления. */
+	app_subscription_status: {
+		call: function() {
+			let st = null;
+			const sf = RUN_DIR + '/subscription_update.json';
+			if (access(sf)) {
+				try { st = json(readfile(sf) || ''); } catch (e) { st = null; }
+			}
+			const c = cursor();
+			const groups = {};
+			c.foreach('homeproxy', 'node', (s) => {
+				if (!s.grouphash)
+					return null;
+				const g = '' + s.grouphash;
+				groups[g] = (groups[g] || 0) + 1;
+				return null;
+			});
+			let total = 0;
+			for (let k in groups)
+				total += groups[k];
+			return { last: st, node_total: total, groups: groups,
+				auto_update: ('' + (c.get('homeproxy', 'subscription', 'auto_update') || '')) === '1' };
 		}
 	},
 

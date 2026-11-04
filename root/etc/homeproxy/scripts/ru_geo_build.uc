@@ -30,6 +30,7 @@
 
 import { access, readfile, writefile, open, stat } from 'fs';
 import { sync_ru_geo_rulesets } from 'homeproxy';
+import { emit as ev_emit } from 'eventbus';
 
 const RES = '/etc/homeproxy/resources';
 const TMP = '/tmp/ru_geo';
@@ -347,7 +348,7 @@ function do_update() {
 	try { writefile(RELOAD_MARKER, 'geo\n'); } catch (e) { /* tmpfs always writable */ }
 
 	log(`RU-geo database updated: ${v4} v4 + ${v6} v6 networks, ${length(doms)} domain entries from ${cat_count} categories (${cdn_note}).`);
-	return { err: null, geoip: v4 + v6, geosite: length(doms), categories: cat_count };
+	return { err: null, geoip: v4 + v6, geosite: length(doms), categories: cat_count, categories_failed: cat_failed };
 }
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
@@ -371,8 +372,16 @@ function main() {
 	if (r.err) {
 		log('RU-geo update FAILED: ' + r.err);
 		print('RESULT {"result": false, "error": "' + replace(r.err, /"/g, '') + '"}\n');
+		/* Ф5.2: честное событие — при ошибке ПРЕДЫДУЩАЯ база продолжает работать. */
+		try { ev_emit('rulesets', 'geo_failed', '',
+			'обновление НЕ применено (' + r.err + ') — работает предыдущая база'); } catch (e) {}
 	} else {
 		print('RESULT {"result": true, "geoip": ' + sprintf('%d', r.geoip) + ', "geosite": ' + sprintf('%d', r.geosite) + ', "categories": ' + sprintf('%d', r.categories) + '}\n');
+		try { ev_emit('rulesets', 'geo_done', '',
+			sprintf('категорий: %d%s; сетей: %d, доменов: %d',
+				r.categories,
+				r.categories_failed ? sprintf(' (не скачано: %d)', r.categories_failed) : ', ошибок: 0',
+				r.geoip, r.geosite)); } catch (e) {}
 	}
 
 	try { system(`rm -f ${shellq(UPDATING)}`); } catch (e) {}

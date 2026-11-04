@@ -22,6 +22,7 @@
 import { readfile } from 'fs';
 import { cursor } from 'uci';
 import { parse_uri } from 'node_parse';
+import { validate_node_config } from 'homeproxy';
 
 const uciconfig = 'homeproxy';
 
@@ -57,6 +58,7 @@ const uci = cursor();
 
 let imported = [];
 let failed = 0;
+let failed_reasons = [];
 
 for (let line in lines) {
 	line = trim(line);
@@ -66,6 +68,17 @@ for (let line in lines) {
 	const config = parse_uri(line);
 	if (type(config) !== 'object' || !config.type) {
 		failed++;
+		push(failed_reasons, 'строка не распознана как share-link');
+		continue;
+	}
+
+	/* Ф5.3 (аудит 51): единый валидатор — битый узел НЕ попадает в UCI
+	 * с причиной (адрес/порт/ключи), а не молча ломает конфиг ядра. */
+	const verrs = validate_node_config(config);
+	if (verrs) {
+		failed++;
+		push(failed_reasons, (type(config.label) === 'string' && length(config.label)) ?
+			config.label + ': ' + join('; ', verrs) : join('; ', verrs));
 		continue;
 	}
 
@@ -86,4 +99,5 @@ for (let line in lines) {
 if (length(imported))
 	uci.commit(uciconfig);
 
-emit({ result: length(imported) > 0, imported: imported, failed: failed });
+emit({ result: length(imported) > 0, imported: imported, failed: failed,
+	failed_reasons: failed_reasons });

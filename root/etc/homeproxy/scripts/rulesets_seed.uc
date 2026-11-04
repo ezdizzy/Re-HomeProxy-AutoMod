@@ -30,6 +30,7 @@
 
 import { access, readfile, writefile, rename, mkdir, stat, popen } from 'fs';
 import { cursor } from 'uci';
+import { emit as ev_emit } from 'eventbus';
 
 const RUN_DIR = '/var/run/homeproxy';
 const ST_FILE = RUN_DIR + '/rulesets_seed.json';
@@ -160,3 +161,10 @@ wstatus({
 	ok: (failed === 0), failed: failed,
 	done: done, total: length(list), results: results
 });
+
+/* Ф5.2: событие в TG (src=rulesets → класс «Служба») — только по завершении. */
+try {
+	ev_emit('rulesets', failed ? 'seed_failed' : 'seed_done', '',
+		sprintf('локальные копии rule-set: %d из %d%s', done - failed, done,
+			failed ? sprintf(', ошибок: %d (битые копии не заменяли старые)', failed) : ''));
+} catch (e) { /* best effort */ }
