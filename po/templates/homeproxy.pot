@@ -7141,3 +7141,24 @@ msgstr ""
 
 msgid "Pick a list in the catalog — its row appears on the page. Hiding a row does not delete its rule; a row without a rule disappears after a reload."
 msgstr ""
+
+msgid "A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Diagnostics page, \"Route explanation\"). A pin is also not a guarantee: \"Always via proxy\" rides the main node, \"Always direct\" rides the direct path — both follow the general rule priority."
+msgstr ""
+
+msgid "winning rule"
+msgstr ""
+
+msgid "Re-filter (mass list of blocked domains/IPs — a base, coverage is NOT exhaustive)"
+msgstr ""
+
+msgid "Rule priority (first match wins): manual pins \"Always direct\" → advanced custom rules → service rules (UDP/voice/torrents) → per-service lists (Master) → OAuth → your \"Direct\" lists → RU-protection (RU never via proxy) → your \"Proxy\" lists → static + learned lists → manual IPs → learned IPs → everything else — default (direct). DNS follows the same order."
+msgstr ""
+
+msgid "no rule (possibly covered by a mass list)"
+msgstr ""
+
+msgid "Remote lists in play — exact match unavailable locally."
+msgstr ""
+
+msgid "probable winning rule"
+msgstr ""

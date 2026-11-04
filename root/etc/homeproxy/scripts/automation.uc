@@ -1147,11 +1147,11 @@ function tcp_reachable(host, via_proxy, timeout) {
 	let engine_protect = {};
 	/* Ф8-F3: how many Master rules / companion hosts currently protect resources
 	 * from learning (surfaced by the stats flush → Engine overview panel). */
-	let protect_stats = { sources: 0, hosts: 0, direct: 0 };
+	let protect_stats = { sources: 0, hosts: 0, direct: 0, unparsed: 0 };
 	let protect_sig = '';
 	function load_engine_protect() {
 		engine_protect = {};
-		protect_stats = { sources: 0, hosts: 0, direct: 0 };
+		protect_stats = { sources: 0, hosts: 0, direct: 0, unparsed: 0 };
 		/* Hosts covered by an enabled per-service rule of the Master must never
 		 * be learned — for ANY node kind (a real node, main-out, URLTest pool,
 		 * Direct ("works directly" is the user's explicit opt-out), Zapret,
@@ -1161,8 +1161,11 @@ function tcp_reachable(host, via_proxy, timeout) {
 		 * host OUTSIDE the rule's list a learned copy would even take a
 		 * DIFFERENT path than the user configured (learned rules → main-out).
 		 * The parseable host set is the plain-text companion
-		 * (resources/engine_<source>.txt); remote .srs lists cannot be parsed,
-		 * so hosts beyond the companion stay learnable (honest residual). */
+		 * (resources/engine_<source>.txt); remote .srs lists cannot be parsed.
+		 * B6.6: such sources are counted HONESTLY as "coverage unknown" — the
+		 * log (and route_explain's coverage verdict via luci.homeproxy) no
+		 * longer implies the whole service is proven protected when only the
+		 * rule's existence is known. */
 		uci.foreach('homeproxy', 'proxy_ru_rule', (cfg) => {
 			if (cfg.enabled !== '1') return;
 			const src = trim(cfg.source || '');
@@ -1170,6 +1173,10 @@ function tcp_reachable(host, via_proxy, timeout) {
 			if (!engine_protect[src]) protect_stats.sources++;
 			engine_protect[src] = true;
 			if (cfg.node === 'direct-out') protect_stats.direct++;
+			if (!access(RES + '/engine_' + src + '.txt')) {
+				protect_stats.unparsed++;
+				return;
+			}
 			for (let d in read_lines(RES + '/engine_' + src + '.txt')) {
 				d = trim(d);
 				if (length(d) && substr(d, 0, 1) !== '#') {
@@ -1178,11 +1185,16 @@ function tcp_reachable(host, via_proxy, timeout) {
 				}
 			}
 		});
-		const sig = protect_stats.sources + '/' + protect_stats.hosts + '/' + protect_stats.direct;
+		const sig = protect_stats.sources + '/' + protect_stats.hosts + '/' +
+			protect_stats.direct + '/' + protect_stats.unparsed;
 		if (sig !== protect_sig) {
 			protect_sig = sig;
-			log('master-rule protection: ' + protect_stats.sources + ' source(s), ' +
-			    protect_stats.hosts + ' companion host(s), ' + protect_stats.direct + ' direct route(s)');
+			log('master-rule protection: ' + protect_stats.sources + ' source(s)' +
+			    (protect_stats.unparsed
+				    ? (' (' + protect_stats.unparsed + ' without a local companion — coverage unknown)')
+				    : '') +
+			    ', ' + protect_stats.hosts + ' companion host(s), ' +
+			    protect_stats.direct + ' direct route(s)');
 		}
 	}
 	function is_engine_protected(host) {

@@ -942,6 +942,84 @@ function rulesets_remote_list() {
 	return out;
 }
 
+/* B6.6: does the parseable companion of ONE Master source contain the host
+ * (suffix walk over resources/engine_<src>.txt)? Remote .srs sources have no
+ * companion — returns null ("cannot be proven or denied locally") rather
+ * than false. true/false = companion hit/miss (a hit is strong evidence the
+ * remote list matches the host; the companion is the list's base-domain
+ * subset, not a formal proof). */
+function hp_companion_hit(host, src) {
+	const f = HP_DIR + '/resources/engine_' + src + '.txt';
+	if (!access(f))
+		return null;
+	let raw = null;
+	try { raw = readfile(f); } catch (e) { raw = null; }
+	if (raw === null || type(raw) !== 'string')
+		return null;
+	const lines = {};
+	for (let l in split('' + raw, /[\r\n]/)) {
+		l = trim(l);
+		if (length(l) && substr(l, 0, 1) !== '#')
+			lines[l] = true;
+	}
+	for (let h = host;;) {
+		if (lines[h])
+			return true;
+		const dot = index(h, '.');
+		if (dot < 0)
+			return false;
+		h = substr(h, dot + 1);
+	}
+}
+
+/* B6.6 Rule Coverage Resolver (Ф4.3): an HONEST verdict on whether a host is
+ * covered by the Master rules at all. The old protection check trusted the
+ * local companion files only — a source whose rule-set is a REMOTE .srs has
+ * no parseable host list on the box, so its coverage could be neither proven
+ * nor denied. Statuses:
+ *   protected_by_master — a companion file (the locally parseable part of the
+ *                         list) matches the host or one of its parent domains;
+ *   coverage_unknown    — an ENABLED Master source exists but has NO local
+ *                         companion file (remote .srs — the exact host set is
+ *                         not locally parseable, a match can be neither
+ *                         proven nor denied);
+ *   uncovered           — no enabled Master source claims the host.
+ * Consumed by route_explain (the `coverage` field) and surfaced in the
+ * diagnostics UI. Companion files are read per call (small; the same pattern
+ * as the rule-set reads in hp_route_trace). */
+function hp_master_coverage(host) {
+	const out = { status: 'uncovered', sources: [], unknown: [], note: null };
+	host = lc(trim('' + (host || '')));
+	if (!length(host))
+		return out;
+	const ctx = cursor();
+	const seen = {};
+	ctx.foreach('homeproxy', 'proxy_ru_rule', (cfg) => {
+		if (cfg.enabled !== '1')
+			return;
+		const src = trim('' + (cfg.source || ''));
+		if (!length(src) || seen[src])
+			return;
+		seen[src] = true;
+		const hit = hp_companion_hit(host, src);
+		if (hit === null) {
+			push(out.unknown, src);
+			return;
+		}
+		if (hit === true)
+			push(out.sources, src);
+	});
+	if (length(out.sources)) {
+		out.status = 'protected_by_master';
+		out.note = 'защищено master-защитой: ' + join(', ', out.sources);
+	} else if (length(out.unknown)) {
+		out.status = 'coverage_unknown';
+		out.note = 'покрытие неизвестно: ' + join(', ', out.unknown) +
+			' (remote rule-set — точный состав списка недоступен локально)';
+	}
+	return out;
+}
+
 /* route_explain core (ч.69, shared с ч.70): trace WHY a host routes the way it
  * does. Evaluates the route rules of the RUNNING config in order against the
  * given domain/IP, resolving rule_set references to their LOCAL resource
@@ -1113,11 +1191,15 @@ function hp_route_trace(host, conf) {
 	 * - unconditional matches (no network/port qualifiers) decide;
 	 * - a reject scoped to UDP/443 (QUIC-escapes) is a conditional note,
 	 *   the walk continues for the real TCP route;
-	 * - 'unknown_remote' rule-sets are NOT certain matches: they are
-	 *   remembered as "возможно" and the walk continues past them. */
+	 * - 'unknown_remote' rule-sets are NOT certain matches: EVERY one seen
+	 *   before a certain decision is collected as a candidate (B6.5 honesty —
+	 *   the core applies the first list that actually contains the host, and
+	 *   locally we cannot disprove a remote list; naming the FIRST remote
+	 *   rule "the winner" was a lie — www.youtube.com was reported as
+	 *   hp-ru-google_ai only because it came first). */
 	const trace = [];
 	let certain = null;      /* first certain decision */
-	let maybe = null;        /* first remote-possible decision */
+	let remote_cands = [];   /* ordered remote-unknown candidates */
 	let quic_note = null;    /* UDP/443-scoped reject note */
 	let idx = 0;
 	for (let r in (conf.route.rules || [])) {
@@ -1162,9 +1244,10 @@ function hp_route_trace(host, conf) {
 		if (!hit) continue;
 		const remote = !!match(rdesc, /remote/);
 		const act = r.action || 'route';
-		if (remote && !certain && !maybe)
-			maybe = { rule: idx, match: rdesc, action: act, outbound: r.outbound || null, remote: true };
-		else if (!remote) {
+		if (remote) {
+			if (!certain)
+				push(remote_cands, { rule: idx, match: rdesc, action: act, outbound: r.outbound || null });
+		} else {
 			if (scoped && act === 'reject' && !quic_note)
 				quic_note = { rule: idx, match: rdesc + ' (для UDP/443)', action: act, outbound: null };
 			else if (!certain && !scoped) {
@@ -1182,7 +1265,49 @@ function hp_route_trace(host, conf) {
 		}
 	}
 
-	const decided = certain || maybe;
+	/* B6.5/B6.6 honest verdict assembly:
+	 * - no remote candidates before the certain match → the certain rule IS
+	 *   the core's winner (first-match-wins holds);
+	 * - the FIRST remote candidate whose source companion contains the host
+	 *   is the PROBABLE winner (the companion is the list's base-domain
+	 *   subset — strong evidence, marked as such, not a formal proof);
+	 * - otherwise the verdict is an honest ambiguity: the ordered candidate
+	 *   list (+ the certain rule as the tail outcome when nothing matches). */
+	let decided = null;
+	let remote_report = null;
+	if (length(remote_cands)) {
+		remote_report = { candidates: [], confirmed: null };
+		for (let cand in remote_cands) {
+			const tm = match(cand.match, /^rule_set ([^ ]+)/);
+			const tag = tm ? tm[1] : '';
+			const sm = match(tag, /^hp-ru-([a-z0-9_-]+)/);
+			const src = sm ? replace(sm[1], /-(domain|ip)$/, '') : null;
+			/* ANY companion hit marks the candidate as the PROBABLE winner
+			 * (the earliest confirmed one is decided); unconfirmed earlier
+			 * candidates stay listed — the core applies the first list that
+			 * actually matches, and a remote list cannot be disproven
+			 * locally. */
+			const confirmed = (src != null && hp_companion_hit(host, src) === true);
+			push(remote_report.candidates, {
+				rule: cand.rule, tag: tag, outbound: cand.outbound,
+				confirmed: confirmed ? src : null
+			});
+			if (confirmed && remote_report.confirmed == null) {
+				decided = cand;
+				decided.remote_confirmed = src;
+				remote_report.confirmed = cand.rule;
+			}
+		}
+		/* The certain rule (if reached) is the tail outcome. */
+		if (certain)
+			push(remote_report.candidates, {
+				rule: certain.rule, tag: null, outbound: certain.outbound,
+				confirmed: null, tail: true, match: certain.match
+			});
+	}
+	if (!decided && certain && !length(remote_cands))
+		decided = certain;
+
 	let result = null;
 	if (decided) {
 		push(trace, decided);
@@ -1192,11 +1317,44 @@ function hp_route_trace(host, conf) {
 			result = { rule: decided, chain: chain(decided.outbound) };
 		else
 			result = { rule: decided, chain: null };
+		/* The companion-confirmed winner keeps its candidate report so the
+		 * UI can label it "вероятное победившее правило" (not certain). */
+		if (decided.remote_confirmed)
+			result.remote = remote_report;
+	} else if (remote_report) {
+		/* Honest ambiguity (remote lists in play). No outbound is claimed. */
+		const parts = [];
+		/* 🔴 for-in over an array yields the ELEMENTS (lesson 20/31). */
+		for (let c2 in remote_report.candidates) {
+			push(parts, '#' + c2.rule + ' ' + (c2.tag || c2.match || 'правило') +
+				(c2.outbound ? (' → ' + c2.outbound) : '') +
+				(c2.confirmed ? ' (вероятный победитель — companion ' + c2.confirmed + ')' : '') +
+				(c2.tail ? ' (если ни один remote-список не совпадёт)' : ''));
+		}
+		const amb = {
+			rule: null,
+			match: 'победившее правило не определено локально — remote-списки в порядке приоритета: ' +
+				join(' · ', parts),
+			action: 'route',
+			outbound: null
+		};
+		push(trace, amb);
+		if (quic_note)
+			push(trace, quic_note);
+		result = { rule: amb, chain: null, remote: remote_report };
 	} else {
 		const fin = conf.route.final || 'direct-out';
 		push(trace, { rule: null, match: 'ни одно правило не совпало', action: 'route', outbound: fin });
 		result = { rule: trace[0], chain: chain(fin), fallback: true };
 	}
+
+	/* B6.5/B6.6: a companion-confirmed winner is strong evidence, not a
+	 * formal proof (the companion is the list's base-domain subset) — the
+	 * wording says so. */
+	if (decided && decided.remote_confirmed)
+		decided.match = replace(decided.match,
+			'remote — точное сопоставление недоступно, ядро загружает список само',
+			'remote; вероятный победитель — companion источника ' + decided.remote_confirmed + ' содержит хост (не гарантия)');
 
 	return {
 		host: host,
@@ -1207,6 +1365,12 @@ function hp_route_trace(host, conf) {
 		outbound: (result.rule && result.rule.outbound) || null,
 		chain: result.chain || null,
 		fallback: !!result.fallback,
+		/* B6.5/B6.6: the honest remote-ambiguity report rides along (null
+		 * when the verdict is certain). */
+		remote: (result && result.remote) || null,
+		/* B6.6 Rule Coverage Resolver: the honest Master-protection verdict
+		 * rides along with every trace (see hp_master_coverage above). */
+		coverage: hp_master_coverage(host),
 		trace: trace
 	};
 }

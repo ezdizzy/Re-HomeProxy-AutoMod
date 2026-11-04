@@ -377,14 +377,28 @@ export function sync_learned_rulesets(res_dir) {
 	 * IP-shaped lines of the static list are EXTRACTED to the IP set: an IP can
 	 * never match as a domain substring keyword — a dead entry today, a routed
 	 * ip_cidr entry after classification. */
+	/* B6.8: the manual lists are normalized by a PIPELINE at ruleset build
+	 * time (ucode's trim inside a callback never mutates the source array):
+	 * keywords are lowercased (hostnames are lowercase — a mixed-case
+	 * keyword could never match) and deduplicated; learned domains go
+	 * through classify_entry and are written NORMALIZED (c.value), with the
+	 * permissive raw fallback so an odd-but-present learned entry never
+	 * silently loses its route. Keyword semantics of the static list are
+	 * PRESERVED (classify() would reject useful bare keywords like
+	 * "youtube" — single labels — so keywords are lc()'d, not classified). */
 	let domains = [], learned_domains = [], manual_ips = {}, auto_ips = {};
+	let kw_seen = {}, ld_seen = {};
 	for (let d in read_list_entries(res, 'proxy_list.txt')) {
 		let c = classify_entry(d);
 		if (c && c.kind !== 'domain') {
 			manual_ips[c.value] = true;
 			continue;
 		}
-		push(domains, d);
+		let k = lc(d);
+		if (length(k) && !kw_seen[k]) {
+			kw_seen[k] = true;
+			push(domains, k);
+		}
 	}
 	/* manual_proxy.txt holds user-pinned hosts (always via proxy, protected from
 	 * self-healing). B6.2: a manual IPv4 (bare or CIDR) is an IP entry — it goes
@@ -396,9 +410,11 @@ export function sync_learned_rulesets(res_dir) {
 			drops++;
 			continue;
 		}
-		if (c.kind === 'domain')
+		if (c.kind === 'domain' && !ld_seen[c.value]) {
+			ld_seen[c.value] = true;
 			push(learned_domains, c.value);
-		else
+		}
+		else if (c.kind !== 'domain')
 			manual_ips[c.value] = true;
 	}
 	/* Learned hosts keep the permissive domain path (the automation pipeline
@@ -411,7 +427,15 @@ export function sync_learned_rulesets(res_dir) {
 			auto_ips[c.value] = true;
 			continue;
 		}
-		push(learned_domains, d);
+		/* B6.8: normalized when the classifier accepts it, raw fallback
+		 * otherwise (the automation pipeline already filtered candidates
+		 * upstream — an odd-but-present entry must not silently lose its
+		 * route). */
+		let v = (c && c.kind === 'domain') ? c.value : d;
+		if (length(v) && !ld_seen[v]) {
+			ld_seen[v] = true;
+			push(learned_domains, v);
+		}
 	}
 	/* B6.1: the learned IP list is written with BARE IPv4 (the automation learn
 	 * pipeline keys state by the probe host). The old regex required '/plen' and
@@ -559,6 +583,15 @@ export function sync_manual_direct_ruleset(res_dir) {
 	write_ruleset_file(res + '/auto_direct.json', {
 		version: 1,
 		rules: rules
+	});
+	/* B6.5: DOMAIN-ONLY twin for the DNS rule — sing-box 1.14+ rejects DNS
+	 * rules whose rule-set carries ip_cidr entries ("Legacy Address Filter
+	 * Fields", FATAL at config validation), so the manual-exclusion DNS rule
+	 * must reference a ruleset with domain entries ONLY. Always emitted
+	 * (possibly empty) so the watched path is stable for hot reload. */
+	write_ruleset_file(res + '/auto_direct_domain.json', {
+		version: 1,
+		rules: length(doms) ? [ { domain_suffix: doms } ] : []
 	});
 	return { domains: length(doms), ips: length(ip_arr), dropped: drops };
 };
@@ -983,6 +1016,11 @@ export function selftest() {
 		ok('direct cidr+suffix', j4 && length(j4.rules) === 2 &&
 			j4.rules[0].domain_suffix[0] === 'example.org' &&
 			index(j4.rules[1].ip_cidr, '4.3.2.1/32') >= 0);
+		/* B6.5: domain-only twin для DNS-правила (ip_cidr в DNS-правиле —
+		 * FATAL валидации sing-box 1.14+) */
+		let j4b = rj('auto_direct_domain.json');
+		ok('direct domain-only twin', j4b && length(j4b.rules) === 1 &&
+			j4b.rules[0].domain_suffix[0] === 'example.org');
 
 		/* статический keyword-список: семантика сохранена, IP-строки извлечены
 		 * В РУЧНОЙ набор (manual_ip.json — B6.3) */
@@ -997,6 +1035,24 @@ export function selftest() {
 			length(j5.rules[0].domain_keyword) === 2 &&
 			j5.rules[0].domain_keyword[0] === 'youtube' && j5.rules[0].domain_keyword[1] === 't.co');
 		ok('static ip extracted', j6 && j6.rules[0] && index(j6.rules[0].ip_cidr, '93.184.216.34/32') >= 0);
+
+		/* B6.8: конвейер нормализации — keyword-список лоуэркастится и
+		 * дедуплицируется на построении ruleset (исходник не переписывается),
+		 * выученный домен пишется нормализованным (c.value) */
+		writefile(dir + '/proxy_list.txt', 'YouTube\nYOUTUBE\nExample.COM\n');
+		writefile(dir + '/auto_proxy_list.txt', 'WWW.LinkedIn.com\n');
+		writefile(dir + '/manual_proxy.txt', '');
+		writefile(dir + '/auto_proxy_ip.txt', '');
+		let r14 = sync_learned_rulesets(dir);
+		let j14 = rj('proxy_domain.json');
+		ok('B6.8 keyword lc+dedup', j14 && j14.rules[0] && j14.rules[0].domain_keyword &&
+			length(j14.rules[0].domain_keyword) === 2 &&
+			j14.rules[0].domain_keyword[0] === 'youtube' &&
+			j14.rules[0].domain_keyword[1] === 'example.com');
+		ok('B6.8 learned normalized', j14 && j14.rules[1] && j14.rules[1].domain_suffix &&
+			length(j14.rules[1].domain_suffix) === 2 &&
+			j14.rules[1].domain_suffix[0] === 'www.linkedin.com' &&
+			j14.rules[1].domain_suffix[1] === 'linkedin.com');
 
 		/* повреждённый список: sync выживает, JSON остаётся ВАЛИДНЫМ (ядро не
 		 * получает битый rule-set), валидные соседи-строки выживают */

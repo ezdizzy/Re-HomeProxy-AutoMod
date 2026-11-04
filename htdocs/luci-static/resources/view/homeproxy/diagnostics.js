@@ -603,14 +603,30 @@ function buildConnectivitySection(view, coreType) {
 					return;
 				}
 				const parts = [];
-				parts.push(E('div', {}, [
-					E('strong', {}, [ ret.outbound ? resolveTag(ret.outbound) : (ret.action || '?') ]),
-					E('span', { 'class': 'diag-gray' }, ' ← ' + (ret.match || '') +
-						(ret.rule_index ? (' · ' + _('rule') + ' #' + ret.rule_index) : '') +
-						(ret.fallback ? ' · ' + _('default route (no rule matched)') : ''))
-				]));
+				/* B6.5/B6.6: an unresolved remote ambiguity is shown as its own
+				 * honest verdict (the backend's match text lists the ordered
+				 * candidates; no outbound is claimed). A companion-confirmed
+				 * candidate renders like a normal winning rule — its match
+				 * text already marks it "вероятный победитель". */
+				if (ret.remote && ret.remote.confirmed == null) {
+					parts.push(E('div', { 'style': 'color:#d99a1b' }, [ ret.match || _('Remote lists in play — exact match unavailable locally.') ]));
+				} else {
+					const probable = !!(ret.remote && ret.remote.confirmed != null);
+					parts.push(E('div', {}, [
+						E('strong', {}, [ ret.outbound ? resolveTag(ret.outbound) : (ret.action || '?') ]),
+						E('span', { 'class': 'diag-gray' }, ' ← ' + (ret.match || '') +
+							(ret.rule_index ? (' · ' + (probable ? _('probable winning rule') : _('winning rule')) + ' #' + ret.rule_index) : '') +
+							(ret.fallback ? ' · ' + _('default route (no rule matched)') : ''))
+					]));
+				}
 				if (ret.chain)
 					parts.push(E('div', { 'class': 'diag-gray' }, ret.chain));
+				/* B6.6: the honest Master-protection verdict rides with the trace. */
+				const cov = ret.coverage;
+				if (cov && cov.status === 'protected_by_master')
+					parts.push(E('div', { 'style': 'color:#3a9c5c' }, [ cov.note ]));
+				else if (cov && cov.status === 'coverage_unknown')
+					parts.push(E('div', { 'style': 'color:#d99a1b' }, [ cov.note ]));
 				for (let t in (ret.trace || []))
 					if (t.action === 'reject')
 						parts.push(E('div', { 'style': 'color:#d99a1b' },

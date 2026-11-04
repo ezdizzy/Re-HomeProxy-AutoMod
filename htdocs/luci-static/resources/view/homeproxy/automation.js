@@ -666,6 +666,10 @@ return view.extend({
 		panes.list.appendChild(fileInput);
 		panes.list.appendChild(E('p', { 'class': 'hpauto-hint' },
 			[ _('Manual status: “Always via proxy” keeps the site on the proxy and protects it from automatic un-learning; “Always direct” removes it from the learned lists and forces the direct path; “Auto” returns the entry to the engine. A deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that.') ]));
+		/* U6 (Ф4.3): the honest scope of a pin — exactly this host, not the
+		 * whole service; a pin is also NOT a block-circumvention guarantee. */
+		panes.list.appendChild(E('p', { 'class': 'hpauto-hint' },
+			[ _('A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Diagnostics page, "Route explanation"). A pin is also not a guarantee: "Always via proxy" rides the main node, "Always direct" rides the direct path — both follow the general rule priority.') ]));
 
 		/* ── Geo pane ──────────────────────────────────────────────────── */
 		const geoCards = E('div', { 'class': 'hpgeo-cards' });

@@ -271,7 +271,11 @@ return view.extend({
 		/* Service presets over the itdoginfo/allow-domains sources the
 		 * generator already consumes (no new hardcode). `check` selects
 		 * the RPC-backed live check; `hosts` are the route_explain
-		 * targets for the rest. */
+		 * targets for the rest (Ф4.4: every domain-shaped list gets a
+		 * VERIFIED representative host so the live route check works
+		 * right after the rule is applied; IP-only lists — the gaming
+		 * group — get none by design: a hostname cannot match an
+		 * ip_cidr ruleset). */
 		const PRESETS = [
 			{ source: 'google_ai', title: _('Google AI (Gemini, AI Studio)'), check: 'google_ai',
 				hosts: [ 'gemini.google.com', 'generativelanguage.googleapis.com' ] },
@@ -288,24 +292,24 @@ return view.extend({
 				hosts: [ 'www.twitch.tv' ] },
 			{ source: 'meta', title: _('Meta (Facebook, Instagram)'), hosts: [ 'instagram.com' ] },
 			{ source: 'twitter', title: _('Twitter / X'), hosts: [ 'x.com' ] },
-			{ source: 'tiktok', title: _('TikTok'), hosts: [] },
+			{ source: 'tiktok', title: _('TikTok'), hosts: [ 'www.tiktok.com' ] },
 			{ source: 'roblox', title: _('Roblox'), hosts: [ 'roblox.com' ] },
-			{ source: 'google_play', title: _('Google Play'), hosts: [] },
-			{ source: 'google-meet', title: _('Google Meet'), hosts: [] }
+			{ source: 'google_play', title: _('Google Play'), hosts: [ 'play.google.com' ] },
+			{ source: 'google-meet', title: _('Google Meet'), hosts: [ 'meet.google.com' ] }
 		];
 
 		/* A1: every rpcd SOURCE becomes an editable row, grouped. The mass
 		 * lists use the same select/Apply path as presets — the RPC accepts
 		 * any source. */
 		const BULK_PRESETS = [
-			{ source: 'russia-inside', title: _('itdoginfo/allow-domains - Russia Inside (1000+ entries)') },
-			{ source: 'refilter', title: _('Re-filter (Russia blocklist: 60000+ banned domains + 25000+ IPs)') },
-			{ source: 'block', title: _('Block (core RKN-blocked resources)') },
+			{ source: 'russia-inside', title: _('itdoginfo/allow-domains - Russia Inside (1000+ entries)'), hosts: [ '4pda.to' ] },
+			{ source: 'refilter', title: _('Re-filter (mass list of blocked domains/IPs — a base, coverage is NOT exhaustive)'), hosts: [ 'instagram.com' ] },
+			{ source: 'block', title: _('Block (core RKN-blocked resources)'), hosts: [ 'signal.org' ] },
 			{ source: 'russia-outside', title: _('Russia Outside (RU-only services — for use abroad)') },
 			{ source: 'ukraine-inside', title: _('Ukraine Inside (resources blocked in UA)') }
 		];
 		const CDN_PRESETS = [
-			{ source: 'cloudflare', title: _('Cloudflare CDN') },
+			{ source: 'cloudflare', title: _('Cloudflare CDN'), hosts: [ 'www.cloudflare.com' ] },
 			{ source: 'cloudfront', title: _('CloudFront CDN') },
 			{ source: 'digitalocean', title: _('DigitalOcean cloud hosting') },
 			{ source: 'hetzner', title: _('Hetzner (Germany cloud hosting)') },
@@ -313,11 +317,11 @@ return view.extend({
 			{ source: 'hodca', title: _('HODCA') }
 		];
 		const MISC_PRESETS = [
-			{ source: 'news', title: _('International news sites') },
+			{ source: 'news', title: _('International news sites'), hosts: [ 'kasparov.ru' ] },
 			{ source: 'porn', title: _('Adult content') },
 			{ source: 'anime', title: _('Anime streaming') },
 			{ source: 'geoblock', title: _('Geo-blocked services') },
-			{ source: 'hdrezka', title: _('HDRezka') }
+			{ source: 'hdrezka', title: _('HDRezka'), hosts: [ 'hdrezka.ag' ] }
 		];
 		/* W4: b4geoip gaming IP sets — IP-only, no domains. */
 		const GAMING_PRESETS = [
@@ -850,6 +854,11 @@ return view.extend({
 			 * happens: no rule, general routing decides. */
 			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
 				[ _('"No rule" does NOT mean "straight into the Russian internet": it only removes the rule — the domains are not added to any proxy list and follow the GENERAL routing rules (mass lists like Russia Inside / Re-filter and learned records may still send them through the node). Only traffic unmatched by every rule egresses directly.') ]));
+			/* B6.9: the ONE documented priority order (mirrored by the DNS
+			 * rules — B6.5). Kept in sync with generate_client.uc; the first
+			 * match wins in both lists. */
+			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
+				[ _('Rule priority (first match wins): manual pins "Always direct" → advanced custom rules → service rules (UDP/voice/torrents) → per-service lists (Master) → OAuth → your "Direct" lists → RU-protection (RU never via proxy) → your "Proxy" lists → static + learned lists → manual IPs → learned IPs → everything else — default (direct). DNS follows the same order.') ]));
 
 			function buildServiceRow(preset) {
 				const rule = (list.rules || {})[preset.source];
@@ -1184,6 +1193,11 @@ return view.extend({
 			const mShow = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
 				[ _('Show') ]);
 			const fillCatalog = function() {
+				/* B6.6: a list without its own rule may still be covered by an
+				 * enabled mass list — the honest catalog marker says
+				 * "possibly covered" instead of implying the list is dead. */
+				const massCovered = !!((list.rules || {})['russia-inside'] && list.rules['russia-inside'].enabled) ||
+					!!((list.rules || {})['refilter'] && list.rules['refilter'].enabled);
 				dom.content(mSrc, [ E('option', { value: '' }, [ _('Pick a list…') ]) ]);
 				let any = false;
 				for (let g2 in GROUPS) {
@@ -1196,7 +1210,9 @@ return view.extend({
 						opts.push(E('option', { value: it.source },
 							[ it.title + (hasRuleOf(it.source)
 								? (' — ' + _('the rule exists, the row is hidden'))
-								: (' — ' + _('no rule'))) ]));
+								: (massCovered
+									? (' — ' + _('no rule (possibly covered by a mass list)'))
+									: (' — ' + _('no rule')))) ]));
 					}
 					if (opts.length)
 						mSrc.appendChild(E('optgroup', { label: GROUPS[g2][0] }, opts));

@@ -1163,6 +1163,20 @@ if (!isEmpty(ntp_server))
 		domain_resolver: 'default-dns',
 	};
 
+/* B6.5 (Ф4.5): the per-service (Master) rule list is collected ONCE, in the
+ * canonical priority order (specific services → russia-inside → refilter as
+ * the largest list last), and drives BOTH the route rules and the DNS rules —
+ * the DNS policy mirrors the route policy: the same sources, the same order,
+ * and a per-source DNS server consistent with the source's effective outbound
+ * (proxy-family → secure-dns; direct egress → the plain direct pool, i.e. no
+ * DNS rule — the final resolver is already the direct one). The audit found
+ * DNS and route orders drifting apart (a direct-routed host resolving through
+ * the proxy pool and vice versa); one list for both eliminates the drift. */
+const ru_source_priority = (s) => s === 'refilter' ? 2 : s === 'russia-inside' ? 1 : 0;
+let ru_rules = [];
+uci.foreach(uciconfig, ucirurule, (cfg) => { if (cfg.enabled === '1') push(ru_rules, cfg); });
+ru_rules = sort(ru_rules, (a, b) => ru_source_priority(a.source) - ru_source_priority(b.source));
+
 /* DNS start */
 /* Default settings */
 config.dns = {
@@ -1236,10 +1250,60 @@ if (!isEmpty(main_node)) {
 			server: 'secure-dns'
 		});
 
+		/* B6.5: the DNS rules below MIRROR the route rules in the SAME order —
+		 * first match wins in BOTH lists, so a source pair routes and resolves
+		 * together. The audit's split (direct-routed traffic resolving through
+		 * the proxy pool / proxy-routed traffic resolving through the plain
+		 * pool) is gone: per-source DNS follows the source's effective
+		 * outbound class. Manual exclusions go FIRST, exactly where the
+		 * auto-direct rule sits in the route list: a hand-pinned host rides
+		 * direct-out, so it resolves through the PLAIN direct pool
+		 * (russia-dns) even when the same host is also listed in proxy lists
+		 * further down. The dedicated DOMAIN-ONLY ruleset ('auto-direct-
+		 * domain', written by sync_manual_direct_ruleset) is the DNS ruleset
+		 * for manual exclusions — a DNS rule may not reference a ruleset
+		 * carrying ip_cidr entries (sing-box 1.14+ FATAL "Legacy Address
+		 * Filter Fields in DNS rules"). */
+		push(config.dns.rules, {
+			rule_set: 'auto-direct-domain',
+			action: 'route',
+			server: 'russia-dns'
+		});
+
+		/* Per-service sources in the canonical order (ru_rules, collected
+		 * above — the SAME list the route rules iterate). A source whose
+		 * effective outbound is proxy-family (main-out, a URLTest pool, a
+		 * real node or the tg-ws bridge) resolves through the encrypted pool
+		 * (secure-dns); a source that falls back to direct egress (ByeDPI/
+		 * Zapret disabled) gets NO rule — the final resolver is already the
+		 * plain direct pool, matching the direct route. Engines that DIAL
+		 * the resolved IP themselves (ByeDPI/Zapret enabled) need
+		 * poison-proof answers and keep secure-dns. */
+		const ru_dns_target_of = (cfg) => {
+			const n = cfg.node || 'main-out';
+			if (n === 'byedpi-out')
+				return (byedpi_enabled === '1') ? 'secure-dns' : null;
+			if (n === 'zapret-out')
+				return (zapret_enabled === '1') ? 'secure-dns' : null;
+			return 'secure-dns';
+		};
+		for (let cfg in ru_rules) {
+			const dnst = ru_dns_target_of(cfg);
+			if (!dnst)
+				continue;
+			push(config.dns.rules, {
+				rule_set: (cfg.source === 'refilter') ? 'hp-ru-refilter-domain' : ('hp-ru-' + cfg.source),
+				action: 'route',
+				server: dnst
+			});
+		}
+
 		/* OAuth stability (ч.59): auth providers resolve through the encrypted
 		 * pool (consistent, poison-proof) and HTTPS/SVCB records are filtered so
 		 * browsers cannot discover an h3 endpoint and escape into QUIC. Referenced
-		 * rule-set is emitted with the route rules below (proxy_banned_ru). */
+		 * rule-set is emitted with the route rules below (proxy_banned_ru).
+		 * B6.5: placed AFTER the per-service rules — the same position OAuth
+		 * holds in the route list. */
 		if (oauth_stability_opt) {
 			push(config.dns.rules, {
 				rule_set: 'oauth-domain',
@@ -1265,38 +1329,11 @@ if (!isEmpty(main_node)) {
 			});
 		}
 
-		/* Filter out SVCB/HTTPS queries (types 64/65) for proxied domains — same rule
-		 * the bypass/global modes emit. Browsers use HTTPS records to discover
-		 * alternate endpoints and HTTP/3; letting them resolve via plain DNS leaks
-		 * interest in blocked domains and lets clients bypass domain routing via QUIC.
-		 * Placed BEFORE the proxy-domain route rule so reject wins. */
-		push(config.dns.rules, {
-			rule_set: 'proxy-domain',
-			query_type: [64, 65],
-			action: 'reject'
-		});
-
-		/* Custom proxy list → secure-dns (before ru_domain_rulesets for explicit priority) */
-		push(config.dns.rules, {
-			rule_set: 'proxy-domain',
-			action: 'route',
-			server: 'secure-dns'
-		});
-
-		/* Proxy-list domains → secure-dns (Cloudflare DoH via proxy) to prevent DNS leaks */
-		let ru_domain_rulesets = [];
-		uci.foreach(uciconfig, ucirurule, (cfg) => {
-			if (cfg.enabled !== '1') return;
-			const tag = (cfg.source === 'refilter') ? 'hp-ru-refilter-domain' : ('hp-ru-' + cfg.source);
-			if (index(ru_domain_rulesets, tag) < 0)
-				push(ru_domain_rulesets, tag);
-		});
-		if (length(ru_domain_rulesets))
-			push(config.dns.rules, {
-				rule_set: ru_domain_rulesets,
-				action: 'route',
-				server: 'secure-dns'
-			});
+		/* The proxy-domain DNS pair (SVCB reject + secure-dns route) and the
+		 * user-list / RU-protect DNS rules are emitted NEXT TO their route
+		 * rules in the routing section below (B6.5 mirror) — the user-list
+		 * rule-set declarations exist only after user_list_prepare() runs
+		 * there, and the adjacency keeps the two policies reviewable as one. */
 	} else if (is_bypass_mode(routing_mode)) {
 		/* Reverse (bypass) mode: default route is PROXY; region traffic carved out to direct.
 		 * DNS mirrors it -- proxied (default) resolves via DoH-through-tunnel (anti-pollution +
@@ -1341,6 +1378,17 @@ if (!isEmpty(main_node)) {
 		});
 		config.dns.final = 'secure-dns';
 
+		/* B6.5 mirror (same as the RU branch): manual exclusions FIRST —
+		 * auto-direct pins ride direct-out, so they resolve through the
+		 * region-local resolver, never through the tunnel resolver.
+		 * DOMAIN-ONLY ruleset: ip_cidr entries are rejected inside DNS
+		 * rules (sing-box 1.14+). */
+		push(config.dns.rules, {
+			rule_set: 'auto-direct-domain',
+			action: 'route',
+			server: 'region-dns'
+		});
+
 		/* Custom direct list -> region-dns */
 		if (length(direct_domain_list))
 			push(config.dns.rules, {
@@ -1348,13 +1396,6 @@ if (!isEmpty(main_node)) {
 				action: 'route',
 				server: 'region-dns'
 			});
-
-		/* Filter out SVCB/HTTPS queries for proxied custom domains */
-		push(config.dns.rules, {
-			rule_set: 'proxy-domain',
-			query_type: [64, 65],
-			action: 'reject'
-		});
 
 		/* Region domains -> region-dns (local) */
 		push(config.dns.rules, {
@@ -2666,6 +2707,16 @@ if (!isEmpty(main_node)) {
 			format: 'source',
 			path: HP_DIR + '/resources/auto_direct.json'
 		});
+		/* B6.5: the DOMAIN-ONLY twin of auto-direct for the DNS rules (a DNS
+		 * rule may not reference a ruleset carrying ip_cidr entries —
+		 * sing-box 1.14+ "Legacy Address Filter Fields" FATAL). Written by
+		 * sync_manual_direct_ruleset next to auto_direct.json; watched. */
+		push(config.route.rule_set, {
+			type: 'local',
+			tag: 'auto-direct-domain',
+			format: 'source',
+			path: HP_DIR + '/resources/auto_direct_domain.json'
+		});
 		push(config.route.rules, {
 			rule_set: 'auto-direct',
 			action: 'route',
@@ -2764,12 +2815,9 @@ if (!isEmpty(main_node)) {
 		 * user's per-service rules (see ru_rules loop): first-match-wins routing
 		 * means an earlier learned rule HIJACKED service rules — learned YouTube
 		 * shards outranked YouTube→Zapret and the site silently rode the main proxy. */
-		/* Per-rule outbounds and rule sets
-		 * Priority order: specific services first → russia-inside → refilter (largest list last) */
-		const ru_source_priority = (s) => s === 'refilter' ? 2 : s === 'russia-inside' ? 1 : 0;
-		let ru_rules = [];
-		uci.foreach(uciconfig, ucirurule, (cfg) => { if (cfg.enabled === '1') push(ru_rules, cfg); });
-		ru_rules = sort(ru_rules, (a, b) => ru_source_priority(a.source) - ru_source_priority(b.source));
+		/* Per-rule outbounds and rule sets. ru_rules was collected once ABOVE
+		 * the DNS section in the canonical priority order and already drives
+		 * the mirrored DNS rules (B6.5) — do not re-sort here. */
 
 		/* Use direct-out for rule set downloads when the main path isn't startup-safe:
 		 * WireGuard/AmneziaWG endpoints aren't ready yet, and ByeDPI resolves hostnames
@@ -3073,6 +3121,7 @@ if (!isEmpty(main_node)) {
 		 * "not through the node" intent (pure direct-out or through an
 		 * engine), the same tier as the service rules above. The watched
 		 * rule-set files were declared in user_list_prepare. */
+		const direct_dns_pool = (routing_mode === 'proxy_banned_ru') ? 'russia-dns' : 'region-dns';
 		for (let l in user_lists) {
 			if (l.kind !== 'direct' || !l.on)
 				continue;
@@ -3084,6 +3133,16 @@ if (!isEmpty(main_node)) {
 				action: 'route',
 				outbound: ob
 			});
+			/* B6.5 mirror: direct-routed traffic resolves through the DIRECT
+			 * pool (russia-dns / region-dns) — never through the secure
+			 * tunnel pool, and ahead-of-position rules like proxy-domain's
+			 * secure-dns route must not capture a user-excluded host's DNS. */
+			if (l.ctype === 'domains')
+				push(config.dns.rules, {
+					rule_set: 'user-' + l.sid,
+					action: 'route',
+					server: direct_dns_pool
+				});
 		}
 
 		/* RU-protect ("Russian internet never via proxy"): the downloaded RU-geo
@@ -3093,12 +3152,26 @@ if (!isEmpty(main_node)) {
 		 * traffic — RU services' anti-fraud flags VPN exits. Placed AFTER the
 		 * per-service rules (user rules keep priority) and BEFORE the proxy-domain /
 		 * auto-ip learned rules. Toggled by homeproxy.automation.geo_protect (default on). */
-		if ((uci.get(uciconfig, 'automation', 'geo_protect') || '1') !== '0')
+		if ((uci.get(uciconfig, 'automation', 'geo_protect') || '1') !== '0') {
 			push(config.route.rules, {
 				rule_set: [ 'ru-geoip', 'ru-geosite' ],
 				action: 'route',
 				outbound: 'direct-out'
 			});
+			/* B6.5 mirror: RU-protect routes direct → resolve through the
+			 * direct pool. Without this rule a RU domain that is ALSO in the
+			 * proxy lists resolved through the secure tunnel pool while its
+			 * traffic rode direct — the audit's split. Emitted BEFORE the
+			 * user-proxy/proxy-domain DNS rules, exactly where the guard
+			 * sits in the route list. DOMAIN entries only ('ru-geosite';
+			 * 'ru-geoip' carries ip_cidr and is rejected inside DNS rules,
+			 * sing-box 1.14+ — and an IP has no DNS query anyway). */
+			push(config.dns.rules, {
+				rule_set: 'ru-geosite',
+				action: 'route',
+				server: direct_dns_pool
+			});
+		}
 
 		/* Ф4.2 (U7): user PROXY lists — AFTER the RU-protect guard (the
 		 * "RU never via proxy" invariant stays ironclad for proxy lists: a RU
@@ -3115,6 +3188,17 @@ if (!isEmpty(main_node)) {
 				action: 'route',
 				outbound: ob
 			});
+			/* B6.5 mirror: a proxied list resolves through the encrypted pool
+			 * (RU mode: the final resolver is the PLAIN pool — without this
+			 * rule a proxied list resolved plain while riding the tunnel;
+			 * reverse modes: secure-dns is already the final — the explicit
+			 * rule is emitted in RU mode only, no redundant duplicate). */
+			if (l.ctype === 'domains' && routing_mode === 'proxy_banned_ru')
+				push(config.dns.rules, {
+					rule_set: 'user-' + l.sid,
+					action: 'route',
+					server: 'secure-dns'
+				});
 		}
 
 		/* Custom proxy list → main-out. The learned sites share this rule-set via the
@@ -3122,6 +3206,24 @@ if (!isEmpty(main_node)) {
 		 * (empty rule-set is a no-op) so hot reloads work even from an empty list.
 		 * Placed AFTER the per-service rules above: automation-learned entries must
 		 * never outrank an explicit user rule (see comment at their old position). */
+		/* B6.5 mirror (moved from the DNS section): the SVCB/HTTPS reject wins
+		 * BEFORE the proxied route rule, then proxied domains resolve through
+		 * the encrypted pool. Browsers use HTTPS records to discover alternate
+		 * endpoints and HTTP/3; letting them resolve via plain DNS leaks
+		 * interest in blocked domains and lets clients bypass domain routing
+		 * via QUIC. In RU mode this pair sits AFTER the user-direct/RU-protect
+		 * mirrors, so an excluded/RU host resolves direct even when it is also
+		 * listed in the proxy lists (the audit's split — fixed). */
+		push(config.dns.rules, {
+			rule_set: 'proxy-domain',
+			query_type: [64, 65],
+			action: 'reject'
+		});
+		push(config.dns.rules, {
+			rule_set: 'proxy-domain',
+			action: 'route',
+			server: 'secure-dns'
+		});
 		push(config.route.rules, {
 			rule_set: 'proxy-domain',
 			action: 'route',
