@@ -265,7 +265,12 @@ function devices_kb(page) {
 			let lbl = d.alias || d.hostname || d.ip || d.mac;
 			if (length(lbl) > 18)
 				lbl = substr(lbl, 0, 17) + '…';
-			push(row, [ lbl, 'ctl:devi:' + j ]);
+			/* Ф8.1 (audit 20): the button carries the STABLE device ref,
+			 * not an index into a live ARP/DHCP-ordered list. */
+			const ref = 'ctl:devi:' + dev_ref(d);
+			if (length(ref) > 60)
+				continue;
+			push(row, [ lbl, ref ]);
 		}
 		push(rows, row);
 	}
@@ -287,8 +292,43 @@ function dev_by_idx(idx) {
 	return devs[idx];
 }
 
-function device_menu_text(idx) {
-	const d = dev_by_idx(idx);
+/* Ф8.1 (audit 20): buttons carry a STABLE device reference, not an index
+ * into a live list — ARP/DHCP churn reorders list_devices(), so an index
+ * callback could act on the WRONG device. Reference forms (the stable
+ * identity available for that device):
+ *   c:<client section id>   configured device
+ *   m:<lowercase MAC>       unconfigured but seen on the wire
+ *   i:<ip>                  no MAC (rare, e.g. some VPN clients)
+ *   x:<label>               unacteable placeholder (no MAC/IP) */
+function dev_ref(d) {
+	if (d.client_id)
+		return 'c:' + d.client_id;
+	if (d.mac)
+		return 'm:' + lc(d.mac);
+	if (d.ip)
+		return 'i:' + d.ip;
+	return 'x:' + (d.alias || d.hostname || '?');
+}
+
+function dev_by_ref(ref) {
+	const m = match('' + ref, /^([cmi]):(.+)$/);
+	if (!m)
+		return null;
+	const devs = list_devices();
+	for (let i = 0; i < length(devs); i++) {
+		const d = devs[i];
+		if (m[1] === 'c' && d.client_id === m[2])
+			return d;
+		if (m[1] === 'm' && d.mac && lc(d.mac) === m[2])
+			return d;
+		if (m[1] === 'i' && d.ip === m[2])
+			return d;
+	}
+	return null;
+}
+
+function device_menu_text(ref) {
+	const d = dev_by_ref(ref);
 	if (!d)
 		return 'устройство не найдено — /devices обновит список';
 	const stmap = states_map();
@@ -308,28 +348,28 @@ function device_menu_text(idx) {
 	return body;
 }
 
-function device_menu_kb(idx) {
-	const d = dev_by_idx(idx);
+function device_menu_kb(ref) {
+	const d = dev_by_ref(ref);
 	if (!d)
 		return kb([ [ '⬅ Устройства', 'ctl:dev:0' ] ]);
 	const rows = [
-		[ '🔒 Блок', 'ctl:blk:' + idx ], [ '🔓 Разрешить', 'ctl:alw:' + idx ],
-		[ '✅ На 1 ч', 'ctl:tal60:' + idx ], [ '✅ На сутки', 'ctl:tal1440:' + idx ],
-		[ '⏱ 30 мин', 'ctl:t30:' + idx ], [ '⏱ 1 ч', 'ctl:t60:' + idx ],
-		[ '⏱ 2 ч', 'ctl:t120:' + idx ], [ '⏱ Сутки', 'ctl:t1440:' + idx ]
+		[ '🔒 Блок', 'ctl:blk:' + ref ], [ '🔓 Разрешить', 'ctl:alw:' + ref ],
+		[ '✅ На 1 ч', 'ctl:tal60:' + ref ], [ '✅ На сутки', 'ctl:tal1440:' + ref ],
+		[ '⏱ 30 мин', 'ctl:t30:' + ref ], [ '⏱ 1 ч', 'ctl:t60:' + ref ],
+		[ '⏱ 2 ч', 'ctl:t120:' + ref ], [ '⏱ Сутки', 'ctl:t1440:' + ref ]
 	];
 	if (d.configured && d.mac)
 		push(rows, [ d.wifi_blocked ? '📶 Разрешить Wi-Fi' : '📶 Запретить Wi-Fi',
-			(d.wifi_blocked ? 'walm:' : 'wblk:') + idx ]);
+			(d.wifi_blocked ? 'walm:' : 'wblk:') + ref ]);
 	if (d.configured)
-		push(rows, [ '↩ Снять временный', 'ctl:tunb:' + idx ]);
+		push(rows, [ '↩ Снять временный', 'ctl:tunb:' + ref ]);
 	push(rows, [ '⬅ Устройства', 'ctl:dev:0' ]);
 	return kb(rows);
 }
 
 /* Block/unblock/temp for a device (auto-adds unconfigured ones). */
-function dev_action(api, idx, action, cbid, chat_id) {
-	const d = dev_by_idx(idx);
+function dev_action(api, ref, action, cbid, chat_id) {
+	const d = dev_by_ref(ref);
 	if (!d) {
 		api.answer_cb(cbid, 'Список изменился');
 		api.send_html(chat_id, 'устройство не найдено — обновляю', devices_kb(0));
@@ -408,7 +448,7 @@ function dev_action(api, idx, action, cbid, chat_id) {
 	if (ok) {
 		apply_async(api);
 		api.answer_cb(cbid, note);
-		api.send_html(chat_id, '✅ ' + esc(label) + ': ' + note, device_menu_kb(idx));
+		api.send_html(chat_id, '✅ ' + esc(label) + ': ' + note, device_menu_kb(ref));
 	}
 }
 
@@ -686,7 +726,10 @@ export function handle_dev_action(api, chat_id, data, cbid) {
 		'ctl:wblk:': 'wblk', 'ctl:walm:': 'walm' };
 	for (let p in prefixes) {
 		if (substr(data, 0, length(p)) === p) {
-			dev_action(api, int(substr(data, length(p))), prefixes[p], cbid, chat_id);
+			/* Ф8.1 (audit 20): the remainder is the STABLE device reference
+			 * (c:<sid> / m:<mac> / i:<ip>) — resolved against the live list
+			 * at tap time; stale/foreign refs are an honest «not found». */
+			dev_action(api, substr(data, length(p)), prefixes[p], cbid, chat_id);
 			return true;
 		}
 	}
@@ -713,9 +756,9 @@ export function handle_cb(api, chat_id, data, cbid) {
 		return true;
 	}
 	if (substr(data, 0, 9) === 'ctl:devi:') {
-		const idx = int(substr(data, 9));
+		const ref = substr(data, 9);
 		api.answer_cb(cbid, 'Устройство');
-		api.send_html(chat_id, device_menu_text(idx), device_menu_kb(idx));
+		api.send_html(chat_id, device_menu_text(ref), device_menu_kb(ref));
 		return true;
 	}
 	if (data === 'ctl:sites') {

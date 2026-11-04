@@ -13207,3 +13207,45 @@ msgstr "RU-трафик не пойдёт через прокси: россий�
 
 msgid "down"
 msgstr "Не работает"
+
+msgid "Owner — full access"
+msgstr "Владелец — полный доступ"
+
+msgid "Admin — service, snapshots, rules"
+msgstr "Админ — служба, снапшоты, правила"
+
+msgid "Operator — nodes, pause, temporary actions"
+msgstr "Оператор — узлы, пауза, временные действия"
+
+msgid "Viewer — status only"
+msgstr "Наблюдатель — только статус"
+
+msgid "Generate pairing code"
+msgstr "Сгенерировать код привязки"
+
+msgid "Active code: %s · role %s · expires in %d s"
+msgstr "Активный код: %s · роль %s · истекает через %d с"
+
+msgid "No active code — generate one to pair a user."
+msgstr "Активного кода нет — сгенерируйте, чтобы привязать пользователя."
+
+msgid "Removal failed: "
+msgstr "Не удалось удалить: "
+
+msgid "Removed (%d)."
+msgstr "Удалено (%d)."
+
+msgid "No paired users yet — the bound owner chat keeps working (legacy mode)."
+msgstr "Пользователей пока нет — привязанный чат владельца продолжает работать (легаси-режим)."
+
+msgid "Code generation failed: "
+msgstr "Не удалось сгенерировать код: "
+
+msgid "Code %s generated (role %s) — valid 60 s, one-time. The user sends it to the bot as a message: /start %s (or just the code)."
+msgstr "Код %s сгенерирован (роль %s) — действует 60 с, одноразовый. Пользователь отправляет его боту сообщением: /start %s (или просто код)."
+
+msgid "Access (RBAC)"
+msgstr "Доступ (RBAC)"
+
+msgid "Roles from top to bottom: Owner (everything) → Admin (service, snapshots, rules) → Operator (nodes, pause, temporary actions) → Viewer (status only). Every command and button is checked against the sender's user_id; groups and channels are denied by default. Pairing: generate a one-time 60 s code here, the user sends it to the bot from a private chat."
+msgstr "Роли сверху вниз: Владелец (всё) → Админ (служба, снапшоты, правила) → Оператор (узлы, пауза, временные действия) → Наблюдатель (только статус). Каждая команда и кнопка проверяются по user_id отправителя; группы и каналы по умолчанию запрещены. Привязка: сгенерируйте здесь одноразовый код на 60 с — пользователь отправляет его боту из личного чата."

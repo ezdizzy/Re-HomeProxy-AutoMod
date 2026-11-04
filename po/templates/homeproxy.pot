@@ -7651,3 +7651,45 @@ msgstr ""
 
 msgid "down"
 msgstr ""
+
+msgid "Owner — full access"
+msgstr ""
+
+msgid "Admin — service, snapshots, rules"
+msgstr ""
+
+msgid "Operator — nodes, pause, temporary actions"
+msgstr ""
+
+msgid "Viewer — status only"
+msgstr ""
+
+msgid "Generate pairing code"
+msgstr ""
+
+msgid "Active code: %s · role %s · expires in %d s"
+msgstr ""
+
+msgid "No active code — generate one to pair a user."
+msgstr ""
+
+msgid "Removal failed: "
+msgstr ""
+
+msgid "Removed (%d)."
+msgstr ""
+
+msgid "No paired users yet — the bound owner chat keeps working (legacy mode)."
+msgstr ""
+
+msgid "Code generation failed: "
+msgstr ""
+
+msgid "Code %s generated (role %s) — valid 60 s, one-time. The user sends it to the bot as a message: /start %s (or just the code)."
+msgstr ""
+
+msgid "Access (RBAC)"
+msgstr ""
+
+msgid "Roles from top to bottom: Owner (everything) → Admin (service, snapshots, rules) → Operator (nodes, pause, temporary actions) → Viewer (status only). Every command and button is checked against the sender's user_id; groups and channels are denied by default. Pairing: generate a one-time 60 s code here, the user sends it to the bot from a private chat."
+msgstr ""

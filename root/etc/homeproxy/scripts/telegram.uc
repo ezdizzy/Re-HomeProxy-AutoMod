@@ -35,15 +35,40 @@
  *   /mute | /unmute   silence push notifications (commands keep working)
  *
  * Rate limiting / dedup: pushes are spaced >= UCI push_interval seconds,
- * identical push text per kind within 300 s is dropped, 429 retry_after is
- * honored once. ALL dynamic text goes through esc_html (<>&) — lesson ч.69
- * fix. edited and business updates are ignored (the offset still advances);
- * channel_post is served like a normal message.
+ * identical push text per kind within 300 s is dropped. 429 honors
+ * retry_after with backoff+jitter and at most ONE automatic retry per
+ * send call; the polling side never inline-retries (audit 1.4/TG-05).
+ * ALL dynamic text goes through esc_html (<>&) — lesson ч.69 fix. edited
+ * updates are ignored (the offset still advances); channel_post is served
+ * like a normal message only for the exact bound chat — other groups/
+ * channels are denied by default (Ф8.1).
+ *
+ * Ф8.1 Security core (ч.184):
+ *   - RBAC Owner/Admin/Operator/Viewer by Telegram user_id (UCI lists
+ *     homeproxy.telegram.{owner,admin,operator,viewer}_user); checks run
+ *     on commands AND callbacks (audit 1.1/TG-01/02). user_id is compared
+ *     AS A STRING (the ids are ints in JSON, strings in UCI).
+ *   - Pairing: a 6-digit one-time code valid 60 s is generated in LuCI
+ *     (telegram_pair_generate); the first /start <code> (or bare code)
+ *     from an unknown user in a PRIVATE chat binds them under the chosen
+ *     role and burns the code. Bootstrap: with NO users at all and a bound
+ *     PRIVATE chat, the chat owner is seeded as Owner once (live compat).
+ *   - Durable Update Queue (audit 1.2/B0.2/TG-03): every polled update is
+ *     written to /var/run/homeproxy/tg_queue/<id>.json BEFORE handling;
+ *     the offset file advances only AFTER the update is processed; a
+ *     done-journal (1 h ring) makes re-delivery idempotent.
+ *   - The token never appears on a command line (audit 44): every Bot API
+ *     call carries the URL in a curl config file (0600, removed at once),
+ *     POST bodies travel via --data-binary @file.
+ *   - A token change applies at once: api_base is rebuilt and getMe
+ *     resolves the bot id; the offset file is per bot (audit 1.3/TG-04).
+ *   - /nodes is paginated (8 per page, stable global numbering for
+ *     /switch N — audit 42); /users lists the RBAC state (Admin+).
  */
 
 'use strict';
 
-import { access, popen, readfile, open, stat, writefile } from 'fs';
+import { access, popen, readfile, open, stat, writefile, mkdir, chmod, rename } from 'fs';
 /* «Контроль» module (plan 14): the control feature rides the same bot —
  * the module receives the bot primitives (api object) and never touches
  * the daemon internals itself. */
@@ -74,6 +99,14 @@ const API = 'http://127.0.0.1:9090';
 const PROBE_URL = 'http://www.gstatic.com/generate_204';
 const MAXMSG = 3800;      /* Telegram hard limit is 4096 — keep a margin */
 const DEDUP_SEC = 300;
+/* Ф8.1 security core */
+const QUEUE_DIR = RUN_DIR + '/tg_queue';   /* durable update queue (audit 1.2) */
+const DONE_FILE = RUN_DIR + '/tg_done.json';
+const CURL_F = RUN_DIR + '/.tg.curl';     /* the ONLY place the token may appear (0600) */
+const BODY_F = RUN_DIR + '/.tg.body';
+const ROLES = [ 'owner', 'admin', 'operator', 'viewer' ];
+const ROLE_RANK = { owner: 4, admin: 3, operator: 2, viewer: 1 };
+const NODES_PAGE = 8;
 
 /* Module-level state (module scope is safe for closures; ucode lesson 44/45
  * only bites function-locals declared AFTER the closure). */
@@ -82,11 +115,18 @@ let api_base = '';
 let allowed_chat = 0;
 let last_update_id = 0;
 let last_send_ts = 0;
+let token_used = '';    /* token the api_base was built for (audit 1.3) */
+let bot_id = 0;         /* resolved via getMe — the offset file is per bot */
+let rate_until = 0;     /* honest 429 status: skip polling until this time */
+let seeded_owner = false;
+let done = {};          /* idempotency journal: update_id -> ts (1 h ring) */
 let cfg = {
 	enabled: '0', token: '', chat_id: '', mute: '0',
 	poll: '25', push_interval: '2',
 	push_hotswap: '1', push_watchdog: '1', push_learn: '1', push_service: '1',
-	push_control: '1'
+	push_control: '1',
+	pair_code: '', pair_until: 0, pair_role: 'owner',
+	users: { owner: [], admin: [], operator: [], viewer: [] }
 };
 let seen = {
 	core_ok: null
@@ -149,6 +189,21 @@ function uci_get(opt, def) {
 	return (v != null && length(v)) ? v : def;
 }
 
+/* UCI LIST read: busybox `uci get` returns NOTHING for list options
+ * (proven live ч.184) — parse `uci -q show` instead (one line per element,
+ * form: homeproxy.telegram.opt='value'; user ids are digits — safe). */
+function uci_list(opt) {
+	const out = capture(`uci -q show homeproxy.telegram.${opt} 2>/dev/null`);
+	const vals = [];
+	const lines = split(trim(out || ''), '\n');
+	for (let i = 0; i < length(lines); i++) {
+		const m = match(trim(lines[i]), /='([0-9-]+)'$/);
+		if (m && length(m[1]))
+			push(vals, m[1]);
+	}
+	return vals;
+}
+
 /* Hot-reload the whole config from UCI (called every loop iteration — the
  * daemon never needs a service restart after settings changes). */
 function read_cfg() {
@@ -163,10 +218,66 @@ function read_cfg() {
 	cfg.push_learn    = uci_get('push_learn', '1');
 	cfg.push_service  = uci_get('push_service', '1');
 	cfg.push_control  = uci_get('push_control', '1');
+	cfg.pair_code  = trim(uci_get('pair_code', ''));
+	cfg.pair_until = int(uci_get('pair_until', '0') || '0');
+	cfg.pair_role  = uci_get('pair_role', 'owner');
+	cfg.users = {
+		owner:    uci_list('owner_user'),
+		admin:    uci_list('admin_user'),
+		operator: uci_list('operator_user'),
+		viewer:   uci_list('viewer_user')
+	};
 }
 
 function token_ok(t) {
 	return length(t) && match(t, /^[0-9]+:[A-Za-z0-9_-]+$/) != null;
+}
+
+/* ── RBAC (Ф8.1): role resolution by user_id — STRING comparison (the ids
+ * are ints in Telegram JSON, strings in UCI lists). ───────────────────── */
+
+function users_count() {
+	let n = 0;
+	for (let r in cfg.users)
+		n += length(cfg.users[r]);
+	return n;
+}
+
+function role_for(uid) {
+	if (uid == null)
+		return null;
+	const s = '' + uid;
+	for (let i = 0; i < length(ROLES); i++) {
+		const r = ROLES[i];
+		for (let k = 0; k < length(cfg.users[r]); k++)
+			if (cfg.users[r][k] === s)
+				return r;
+	}
+	return null;
+}
+
+function role_ok(role, need) {
+	return (ROLE_RANK[role] || 0) >= (ROLE_RANK[need] || 99);
+}
+
+/* Bootstrap (live compat): with NO users at all and a bound PRIVATE chat,
+ * the chat owner becomes Owner exactly once — RBAC is strict from the
+ * first pairing on. A bound GROUP chat cannot be seeded (its id is not a
+ * user id) — the daemon keeps legacy access there and logs a warning. */
+function ensure_owner_seed() {
+	if (seeded_owner)
+		return;
+	seeded_owner = true;
+	const cid = trim('' + (cfg.chat_id || ''));
+	if (users_count() > 0 || !length(cid) ||
+	    match(cid, /^-?[0-9]+$/) == null || int(cid) < 0) {
+		if (users_count() === 0 && length(cid) && int(cid) < 0)
+			log('RBAC: bound chat is a group — owner cannot be seeded, legacy access applies there');
+		return;
+	}
+	system(`uci -q add_list homeproxy.telegram.owner_user='${cid}'; uci -q commit homeproxy`);
+	push(cfg.users.owner, cid);
+	log('RBAC: owner seeded from the bound private chat (' + cid + ')');
 }
 
 /* Entities are split so no tooling decodes them back (lesson 51 family). */
@@ -199,33 +310,56 @@ function jesc(s) {
 
 /* ── Bot API ──────────────────────────────────────────────────────────── */
 
-/* One POST/GET call. Returns parsed JSON or null. Honors 429 retry_after
- * once (rate limit — the plan §2.5 quality fix). */
-function tg_call(method, params) {
+/* One POST/GET call. Returns parsed JSON or null.
+ * Audit 44 (Ф8.1): the bot token (inside the URL) NEVER appears on a
+ * command line — it lives in a curl config file (0600, removed right
+ * after); POST bodies travel via --data-binary @file (chat text, also
+ * 0600 while it exists).
+ * Audit 1.4/TG-05: a 429 honors retry_after with backoff+jitter and at
+ * most ONE automatic retry per send call; the polling side (params ==
+ * null) never inline-retries — the main loop backs off and skips polling
+ * while rate_until has not passed. rand() is ABSENT on this ucode build
+ * (proven live) — the jitter derives from the wall clock instead. */
+function tg_call(method, params, retried) {
 	const url = `${api_base}/${method}`;
 	let out = '';
-	if (params == null) {
-		const poll = (match(cfg.poll, /^[0-9]+$/) != null) ? int(cfg.poll) : 25;
-		out = capture(`curl -s --max-time ${poll + 5} ${shellquote(url)} 2>/dev/null`);
-	} else {
-		const f = RUN_DIR + '/tg_send.json';
-		system(`rm -f ${shellquote(f)}`);
-		system(`curl -s --max-time 15 -o ${shellquote(f)} -X POST -H 'Content-Type: application/json' -d ${shellquote(params)} ${shellquote(url)} 2>/dev/null`);
-		if (access(f)) { out = readfile(f) || ''; system('rm -f ' + shellquote(f)); }
-	}
+	let cleaned = false;
+	try {
+		let c = 'url = "' + jesc(url) + '"\n';
+		if (params == null) {
+			const poll = (match(cfg.poll, /^[0-9]+$/) != null) ? int(cfg.poll) : 25;
+			c += `max-time = ${poll + 5}\n`;
+			writefile(CURL_F, c);
+			chmod(CURL_F, 384);
+			cleaned = true;
+			out = capture(`curl -s -K ${shellquote(CURL_F)} 2>/dev/null`);
+		} else {
+			c += 'max-time = 15\n';
+			writefile(BODY_F, params);
+			chmod(BODY_F, 384);
+			writefile(CURL_F, c);
+			chmod(CURL_F, 384);
+			cleaned = true;
+			out = capture(`curl -s -K ${shellquote(CURL_F)} --data-binary @${shellquote(BODY_F)} 2>/dev/null`);
+		}
+	} catch (e) { log('tg_call io: ' + e); }
+	if (cleaned)
+		system(`rm -f ${shellquote(CURL_F)} ${shellquote(BODY_F)}`);
 	if (!length(trim(out)))
 		return null;
 	let j = null;
 	try { j = json(out); } catch (e) { j = null; }
 	if (j && j.ok === false && j.error_code === 429 && j.parameters &&
 	    j.parameters.retry_after != null) {
-		const wait = int(j.parameters.retry_after) + 1;
-		if (wait > 0 && wait < 120) {
-			log('rate limited, sleeping ' + wait + ' s');
-			sleep(wait * 1000);
-			if (params == null)
-				return tg_call(method, null);
-			return tg_call(method, params);
+		const raw = '' + j.parameters.retry_after;
+		const ra = (match(raw, /^[0-9]+$/) != null) ? int(raw) : 1;
+		const wait = (ra > 0 && ra < 120) ? ra : 1;
+		rate_until = time() + wait;
+		log('rate limited (429), retry_after=' + wait + ' s, auto-retry: ' +
+			((params != null && !retried) ? 'once' : 'none'));
+		if (params != null && !retried) {
+			sleep((wait + (int(time()) % 3)) * 1000);   /* backoff + jitter */
+			return tg_call(method, params, 1);          /* MAX ONE auto-retry */
 		}
 	}
 	return j;
@@ -258,7 +392,13 @@ function tg_send_document(chat_id, path, caption) {
 	send_gap();
 	const url = `${api_base}/sendDocument`;
 	const cap = length('' + (caption || '')) ? ` -F "caption=${jesc('' + caption)}"` : '';
-	const out = capture(`curl -s --max-time 120 -F "chat_id=${chat_id}"${cap} -F "document=@${path}" ${shellquote(url)} 2>/dev/null`);
+	/* Audit 44: the token stays in the curl config file, not in argv. */
+	try {
+		writefile(CURL_F, 'url = "' + jesc(url) + '"\nmax-time = 120\n');
+		chmod(CURL_F, 384);
+	} catch (e) { log('doc io: ' + e); }
+	const out = capture(`curl -s -K ${shellquote(CURL_F)} -F "chat_id=${chat_id}"${cap} -F "document=@${path}" 2>/dev/null`);
+	system(`rm -f ${shellquote(CURL_F)}`);
 	let j = null;
 	try { j = json(out); } catch (e) { j = null; }
 	if (!j || j.ok !== true)
@@ -297,6 +437,48 @@ function tg_answer_cb(cb_id, text) {
 	if (!length(cb_id)) return;
 	tg_call('answerCallbackQuery', sprintf('{"callback_query_id":"%s","text":"%s"}',
 		jesc(cb_id), jesc(text || '')));
+}
+
+/* ── pairing + RBAC denials (Ф8.1) — need the tg primitives above ─────── */
+
+/* One-time 60 s pairing code (generated in LuCI): /start <code> or a bare
+ * code message from an unknown user in a PRIVATE chat binds them under the
+ * chosen role and burns the code. Returns true when the message was
+ * consumed as a pairing attempt. */
+function pair_try(chat_id, uid, text) {
+	const m = match(text, /^\/start\s+([0-9]{4,8})$/) || match(text, /^([0-9]{4,8})$/);
+	if (!m)
+		return false;
+	const code = trim('' + (cfg.pair_code || ''));
+	if (!length(code) || trim(m[1]) !== code || time() > cfg.pair_until) {
+		log('pairing: wrong/expired code from user ' + uid);
+		tg_send_html(chat_id, '⛔ Код не принят (неверный или истёкший). Сгенерируйте новый на странице «Telegram-бот» в LuCI.', null);
+		return true;
+	}
+	const role = (ROLE_RANK[cfg.pair_role] != null) ? cfg.pair_role : 'owner';
+	system(`uci -q add_list homeproxy.telegram.${role}_user='${uid}'; uci -q commit homeproxy`);
+	push(cfg.users[role], '' + uid);
+	/* burn the code (one-time) */
+	system(`uci -q delete homeproxy.telegram.pair_code; uci -q delete homeproxy.telegram.pair_until; uci -q delete homeproxy.telegram.pair_role; uci -q commit homeproxy`);
+	cfg.pair_code = '';
+	cfg.pair_until = 0;
+	log('pairing: user ' + uid + ' paired as ' + role);
+	tg_send_html(chat_id, `✅ Пользователь привязан (роль: <b>${role}</b>). /help — список команд.`, null);
+	return true;
+}
+
+/* Unknown user: a polite refusal in private chats (a foreign chat cannot
+ * receive our message anyway — Telegram returns «chat not found», which is
+ * harmless and logged); in the bound group chat — silent (no spam). */
+function deny_unknown(chat_id, uid, ctype) {
+	log('RBAC: unknown user ' + uid + ' in chat ' + chat_id + ' (' + ctype + ') — denied');
+	if (ctype === 'private')
+		tg_send_html(chat_id, '⛔ Нет доступа. Попросите владельца сгенерировать код привязки на странице «Telegram-бот» в LuCI и отправьте его мне.', null);
+}
+
+function deny_role(chat_id, role, need) {
+	log('RBAC: action denied for role ' + role + ' (needs ' + need + ')');
+	tg_send_html(chat_id, '⛔ Недостаточно прав: ваша роль «' + role + '», действие требует «' + need + '».', null);
 }
 
 /* ── data sources (the same ones the LuCI pages use) ──────────────────── */
@@ -561,27 +743,38 @@ function cmd_logs(chat_id) {
 	}
 }
 
-function nodes_text(nodes) {
-	let out = '<b>Узлы</b> (номер = /switch N):\n';
-	const cap = 12;
-	const n = (length(nodes) > cap) ? cap : length(nodes);
-	for (let i = 0; i < n; i++) {
+/* /nodes pagination (audit 42): NODES_PAGE nodes per page, the numbering
+ * stays GLOBAL across pages so /switch N keeps its meaning; the page rides
+ * in the callback data (stable — audit 20), never in an index of a live
+ * list. */
+function nodes_text(nodes, page) {
+	const total = length(nodes);
+	const pages = (total > 0) ? int((total + NODES_PAGE - 1) / NODES_PAGE) : 1;
+	if (page == null || page < 0 || page >= pages)
+		page = 0;
+	const p0 = page * NODES_PAGE;
+	const n = (p0 + NODES_PAGE < total) ? (p0 + NODES_PAGE) : total;
+	let out = sprintf('<b>Узлы</b> (стр. %d/%d, номер = /switch N):\n', page + 1, pages);
+	for (let i = p0; i < n; i++) {
 		const nd = nodes[i];
 		out += sprintf('%d. %s%s\n', i + 1, esc_html(nd.label),
 			nd.delay ? ` — ${nd.delay} ms` : ' — —');
 	}
-	if (length(nodes) > n)
-		out += `… и ещё ${length(nodes) - n} (номера продолжаются)`;
+	if (n === p0)
+		out += '(узлов нет)';
 	return out;
 }
 
-function nodes_kb(nodes) {
+function nodes_kb(nodes, page) {
+	const total = length(nodes);
+	const pages = (total > 0) ? int((total + NODES_PAGE - 1) / NODES_PAGE) : 1;
+	if (page == null || page < 0 || page >= pages)
+		page = 0;
+	const p0 = page * NODES_PAGE;
 	const rows = [];
-	const cap = 8;
-	const n = (length(nodes) > cap) ? cap : length(nodes);
-	for (let i = 0; i < n; i += 2) {
+	for (let i = p0; i < (p0 + NODES_PAGE) && i < total; i += 2) {
 		const row = [];
-		for (let j = i; j < i + 2 && j < n; j++) {
+		for (let j = i; j < i + 2 && j < total; j++) {
 			let lbl = nodes[j].label;
 			if (length(lbl) > 22) lbl = substr(lbl, 0, 21) + '…';
 			/* Telegram callback_data is capped at 64 bytes — skip overlong tags. */
@@ -592,7 +785,14 @@ function nodes_kb(nodes) {
 		if (length(row))
 			push(rows, row);
 	}
-	push(rows, [ '🔄 Обновить', 'act:nodes' ]);
+	const nav = [];
+	if (page > 0)
+		push(nav, [ '⬅', 'act:nodes:' + (page - 1) ]);
+	push(nav, [ sprintf('%d/%d', page + 1, pages), 'act:nodes:' + page ]);
+	if (page + 1 < pages)
+		push(nav, [ '➡', 'act:nodes:' + (page + 1) ]);
+	push(rows, nav);
+	push(rows, [ '🔄 Обновить', 'act:nodes:' + page ]);
 	return kb_rows(rows);
 }
 
@@ -664,8 +864,23 @@ const HELP = '<b>Команды</b>\n' +
 	'/status_engine — Zapret/ByeDPI статус\n' +
 	'/logs — отчёт для поддержки (архив файлом, секреты вычищены)\n' +
 	'/mute · /unmute — пуш-уведомления вкл/выкл\n' +
+	'/users — пользователи и роли (админ+)\n' +
 	'/restart — перезапуск службы\n' +
 	'/help — этот список';
+
+/* RBAC state (Ф8.1): who is allowed and with which role (Admin+ view). */
+function cmd_users() {
+	let out = '<b>Пользователи RBAC</b>\n';
+	for (let i = 0; i < length(ROLES); i++) {
+		const r = ROLES[i];
+		const us = cfg.users[r];
+		out += '• <b>' + r + '</b> (' + length(us) + '): ' +
+			(length(us) ? esc_html(join(', ', us)) : '—') + '\n';
+	}
+	if (users_count() === 0)
+		out += '\nПользователей нет — выдайте доступ кодом привязки из LuCI.';
+	return out;
+}
 
 /* Main inline menu (plan 15): every feature one tap away — no need to
  * remember command names. */
@@ -891,13 +1106,35 @@ function push_scan() {
 
 /* ── dispatch ─────────────────────────────────────────────────────────── */
 
-function handle_command(chat_id, text) {
+/* Minimum role per command (Ф8.1, audit 1.1): the gate runs BEFORE any
+ * dispatch — including the «Контроль» module commands. */
+const CMD_MIN = {
+	status: 'viewer', ping: 'viewer', connections: 'viewer', menu: 'viewer',
+	start: 'viewer', help: 'viewer', nodes: 'viewer', status_engine: 'viewer',
+	control: 'viewer', devices: 'viewer', sites: 'viewer', wifi: 'viewer',
+	switch: 'operator', close: 'operator', mute: 'operator', unmute: 'operator',
+	pause: 'operator', resume: 'operator',
+	service: 'admin', restart: 'admin', snapshot: 'admin', logs: 'admin',
+	blocksite: 'admin', unblocksite: 'admin', users: 'admin'
+};
+
+function cmd_need(cmd) {
+	return CMD_MIN[cmd] || 'viewer';
+}
+
+function handle_command(chat_id, text, role) {
 	const m = match(text, /^\/([a-z_]+)(@[A-Za-z0-9_]*)?(.*)$/);
 	if (!m) return;
 	const cmd = m[1];
 	const rest = trim(m[3] || '');
+	const need = cmd_need(cmd);
+	if (!role_ok(role, need)) {
+		deny_role(chat_id, role, need);
+		return;
+	}
 	/* «Контроль» commands (/control /devices /sites /blocksite /unblocksite
-	 * /pause /resume /wifi) — the module answers them itself. */
+	 * /pause /resume /wifi) — the module answers them itself (already gated
+	 * by the CMD_MIN check above). */
 	try {
 		if (ctrl.handle_command(ctrl_api, chat_id, cmd, rest))
 			return;
@@ -922,7 +1159,9 @@ function handle_command(chat_id, text) {
 		if (!nodes || !length(nodes))
 			tg_send_html(chat_id, 'узлы не найдены (ядро лежит?)', null);
 		else
-			tg_send_html(chat_id, nodes_text(nodes), nodes_kb(nodes));
+			tg_send_html(chat_id, nodes_text(nodes, 0), nodes_kb(nodes, 0));
+	} else if (cmd === 'users') {
+		tg_send_html(chat_id, cmd_users(), null);
 	} else if (cmd === 'switch') {
 		tg_send_html(chat_id, cmd_switch(rest, chat_id), null);
 	} else if (cmd === 'snapshot') {
@@ -948,27 +1187,84 @@ function handle_command(chat_id, text) {
 	}
 }
 
+/* Minimum role per callback prefix (Ф8.1): the same gate commands have,
+ * applied to inline buttons (audit 1.1 — checks on callbacks too). Matched
+ * top-down; the plain 'act:' catch-all stays last. */
+const CB_MIN_PREFIX = [
+	[ 'ctl:blk:', 'admin' ], [ 'ctl:alw:', 'admin' ],
+	[ 'ctl:wblk:', 'admin' ], [ 'ctl:walm:', 'admin' ], [ 'sdel:', 'admin' ],
+	[ 'act:snapshot', 'admin' ], [ 'act:restart', 'admin' ],
+	[ 'sw:', 'operator' ],
+	[ 'woff:', 'operator' ], [ 'wton:', 'operator' ],
+	[ 'ctl:pause', 'operator' ], [ 'ctl:resume', 'operator' ],
+	[ 'ctl:t30:', 'operator' ], [ 'ctl:t60:', 'operator' ],
+	[ 'ctl:t120:', 'operator' ], [ 'ctl:t1440:', 'operator' ],
+	[ 'ctl:tunb:', 'operator' ], [ 'ctl:tal60:', 'operator' ], [ 'ctl:tal1440:', 'operator' ],
+	[ 'ctl:devi:', 'viewer' ], [ 'ctl:dev:', 'viewer' ],
+	[ 'ctl:sites', 'viewer' ], [ 'ctl:wifi', 'viewer' ],
+	[ 'ctl:refresh', 'viewer' ], [ 'ctl:menu', 'viewer' ],
+	[ 'act:', 'viewer' ]
+];
+
+function cb_need(data) {
+	for (let i = 0; i < length(CB_MIN_PREFIX); i++)
+		if (substr(data, 0, length(CB_MIN_PREFIX[i][0])) === CB_MIN_PREFIX[i][0])
+			return CB_MIN_PREFIX[i][1];
+	return 'viewer';
+}
+
 function handle_update(u) {
 	const msg = u.message || u.channel_post;
 	if (msg && type(msg.chat) === 'object') {
 		const chat_id = msg.chat.id;
+		const ctype = '' + (msg.chat.type || '');
+		const uid = (msg.from && msg.from.id != null) ? msg.from.id : null;
+		const is_private = (ctype === 'private');
+		/* Groups/channels are denied by default (audit A.3) — EXCEPT the
+		 * exact bound chat (live compat for an already-bound group).
+		 * PRIVATE chats from anyone pass through to the RBAC layer: the
+		 * one-time pairing code arrives exactly from a NOT-yet-paired
+		 * user's own private chat — rejecting foreign chats here would
+		 * make pairing impossible (caught live, ч.184). */
+		if (chat_id !== allowed_chat && !is_private) {
+			log('ignored ' + (length(ctype) ? ctype : 'unknown-type') + ' chat ' + chat_id + ' (groups denied by default)');
+			return;
+		}
 		if (allowed_chat === 0) {
-			/* Pin the first chat that ever talks to us (safe: foreign chats
-			 * are ignored; the plan keeps this v1 behavior). */
+			/* Pin the first PRIVATE chat that ever talks to us; a group or
+			 * channel cannot pin itself (a bound group keeps working only
+			 * when it was already bound). */
+			if (!is_private) {
+				log('ignored ' + ctype + ' chat ' + chat_id + ' pin attempt');
+				return;
+			}
 			allowed_chat = chat_id;
 			system(`uci set homeproxy.telegram.chat_id=${chat_id}; uci commit homeproxy`);
 			cfg.chat_id = '' + chat_id;
 			log('pinned allowed chat: ' + chat_id);
+			if (uid != null) {
+				cfg.users.owner = [ '' + uid ];
+				system(`uci -q add_list homeproxy.telegram.owner_user='${uid}'; uci -q commit homeproxy`);
+				log('RBAC: owner paired at pin (' + uid + ')');
+			}
 			tg_send_html(chat_id, 'Бот привязан к этому чату (Re:HomeProxy). /help — список команд.', null);
 			return;
 		}
-		if (chat_id !== allowed_chat) {
-			log('ignored message from foreign chat ' + chat_id);
+		const text = (type(msg.text) === 'string') ? msg.text : '';
+		/* RBAC by from.id (commands AND callbacks — audit 1.1). With no
+		 * users at all the BOUND chat keeps legacy access until the first
+		 * pairing happens; a foreign private chat goes to pairing. */
+		let role = (uid != null) ? role_for(uid) : null;
+		if (role == null && users_count() === 0 && chat_id === allowed_chat)
+			role = 'owner';
+		if (role == null) {
+			if (is_private && length(text) && pair_try(chat_id, uid, text))
+				return;
+			deny_unknown(chat_id, uid, ctype);
 			return;
 		}
-		const text = (type(msg.text) === 'string') ? msg.text : '';
 		if (length(text))
-			handle_command(chat_id, text);
+			handle_command(chat_id, text, role);
 		return;
 	}
 	const cb = u.callback_query;
@@ -978,6 +1274,16 @@ function handle_update(u) {
 		const cbid = '' + (cb.id || '');
 		if (chat_id !== allowed_chat) {
 			log('ignored callback from foreign chat ' + chat_id);
+			return;
+		}
+		const uid = (cb.from && cb.from.id != null) ? cb.from.id : null;
+		let role = (uid != null) ? role_for(uid) : null;
+		if (role == null && users_count() === 0)
+			role = 'owner';
+		const need = cb_need(data);
+		if (role == null || !role_ok(role, need)) {
+			log('RBAC: callback denied for user ' + uid + ' (need ' + need + ')');
+			tg_answer_cb(cbid, 'Недостаточно прав');
 			return;
 		}
 		if (match(data, /^sw:/) != null) {
@@ -994,13 +1300,15 @@ function handle_update(u) {
 				if (nodes[i].tag === tag) { lbl = nodes[i].label; break; }
 			tg_answer_cb(cbid, 'Переключаю: ' + lbl);
 			tg_send_html(chat_id, do_switch_tag(tag, lbl), null);
-		} else if (data === 'act:nodes') {
+		} else if (match(data, /^act:nodes(:[0-9]+)?$/) != null) {
+			const pm = match(data, /^act:nodes:([0-9]+)$/);
+			const page = pm ? int(pm[1]) : 0;
 			const nodes = list_nodes();
 			tg_answer_cb(cbid, 'Узлы');
 			if (!nodes || !length(nodes))
 				tg_send_html(chat_id, 'узлы не найдены (ядро лежит?)', null);
 			else
-				tg_send_html(chat_id, nodes_text(nodes), nodes_kb(nodes));
+				tg_send_html(chat_id, nodes_text(nodes, page), nodes_kb(nodes, page));
 		} else if (data === 'act:engine') {
 			tg_answer_cb(cbid, 'Статус движков');
 			tg_send_html(chat_id, cmd_status_engine(), kb_rows([ [ '🔄 Обновить', 'act:engine' ] ]));
@@ -1036,12 +1344,125 @@ function handle_update(u) {
 	}
 }
 
+/* ── durable update queue (Ф8.1, audit 1.2/B0.2/TG-03) ──────────────────
+ * Every polled update is written to disk BEFORE handling; the offset file
+ * advances only AFTER the update is processed (a crash can never lose a
+ * command — Telegram re-delivers what was not confirmed); the done journal
+ * (1 h ring, atomic write) makes re-delivery idempotent. */
+
+function off_file() {
+	return (bot_id > 0) ? (RUN_DIR + '/telegram_offset.' + bot_id) : OFF_FILE;
+}
+
+function done_load() {
+	try {
+		const j = json(readfile(DONE_FILE) || '');
+		if (type(j) === 'object')
+			return j;
+	} catch (e) {}
+	return {};
+}
+
+/* Atomic write (temp + rename) — a torn journal would disable idempotency.
+ * NOTE: json() on this build PARSES only (an object argument = «does not
+ * implement read()») — serialization is sprintf('%J', …) (lesson 256). */
+function done_save() {
+	try {
+		const now = time();
+		for (let k in done)
+			if (done[k] + 3600 < now)
+				delete done[k];
+		const tmp = DONE_FILE + '.tmp';
+		writefile(tmp, sprintf('%J', done));
+		rename(tmp, DONE_FILE);
+	} catch (e) { log('done save: ' + e); }
+}
+
+function queue_put(u) {
+	try {
+		mkdir(QUEUE_DIR);
+		writefile(QUEUE_DIR + '/' + u.update_id + '.json', sprintf('%J', { bot: bot_id, u: u }));
+	} catch (e) { log('queue put: ' + e); }
+}
+
+function queue_files() {
+	const out = [];
+	const ls = capture(`ls -1 ${QUEUE_DIR} 2>/dev/null`);
+	const lines = split(trim(ls || ''), '\n');
+	for (let i = 0; i < length(lines); i++) {
+		const f = trim(lines[i]);
+		if (length(f) && match(f, /^[0-9]+\.json$/) != null)
+			push(out, f);
+	}
+	sort(out, (a, b) => (int(a) > int(b)) ? 1 : -1);
+	return out;
+}
+
+function queue_drain() {
+	const files = queue_files();
+	for (let i = 0; i < length(files); i++) {
+		const qid = int(files[i]);
+		const qpath = QUEUE_DIR + '/' + files[i];
+		let rec = null;
+		try { rec = json(readfile(qpath) || ''); } catch (e) { rec = null; }
+		if (rec == null || type(rec.u) !== 'object' || rec.bot !== bot_id) {
+			system(`rm -f ${shellquote(qpath)}`);   /* corrupt or foreign-bot leftover */
+			continue;
+		}
+		if (qid <= last_update_id || done['' + qid] != null) {
+			system(`rm -f ${shellquote(qpath)}`);   /* already confirmed / handled */
+			continue;
+		}
+		try { handle_update(rec.u); } catch (e) { log('update: ' + e); }
+		done['' + qid] = time();
+		done_save();
+		system(`rm -f ${shellquote(qpath)}`);
+		/* The offset advances CONTIGUOUSLY (bounded): a corrupt/stale queue
+		 * file must never catapult the confirmed offset past real updates
+		 * (a jumped offset = commands unfetchable forever). Real Telegram
+		 * batches are contiguous; anything beyond the bound is processed
+		 * and done-marked, but the offset stays (caught live, ч.184 — the
+		 * queue-hardening probe itself jumped the offset to a synthetic
+		 * id). */
+		if (qid > last_update_id && qid <= last_update_id + 1000) {
+			last_update_id = qid;
+			writefile(off_file(), sprintf('%d', last_update_id));
+		} else if (qid > last_update_id) {
+			log('queue: update ' + qid + ' is too far ahead of the confirmed offset (' + last_update_id + ') — processed, offset NOT advanced');
+		}
+	}
+}
+
+/* ── token application (Ф8.1, audit 1.3/TG-04) ────────────────────────── */
+
+/* A token change must apply AT ONCE: api_base is rebuilt and getMe resolves
+ * the bot identity; the offset file is PER BOT (a second bot starts from
+ * its own offset, the legacy file migrates once). */
+function apply_token() {
+	if (cfg.token === token_used && length(api_base))
+		return;
+	token_used = cfg.token;
+	api_base = `https://api.telegram.org/bot${cfg.token}`;
+	bot_id = 0;
+	const me = tg_call('getMe', null);
+	if (me && me.ok === true && me.result && me.result.id != null) {
+		const bid = int(me.result.id);
+		if (bid > 0) {
+			bot_id = bid;
+			const f = off_file();
+			if (!access(f) && access(OFF_FILE)) {
+				try { writefile(f, trim(readfile(OFF_FILE) || '0') || '0'); } catch (e) {}
+			}
+		}
+	}
+	log('token applied (bot_id=' + bot_id + ')');
+}
+
 /* ── main loop ────────────────────────────────────────────────────────── */
 
 function main() {
-	if (access(OFF_FILE)) {
-		try { last_update_id = int(readfile(OFF_FILE) || '0') || 0; } catch (e) { last_update_id = 0; }
-	}
+	done = done_load();
+	let off_loaded_for = -1;   /* bot id the offset was last loaded for */
 	log('telegram bot v2 started (always-on instance; idle until enabled)');
 	/* Ф1.4b: own identity in the daemon registry + a heartbeat every cycle —
 	 * the Sentinel (Ф2), support bundle and status RPCs read liveness here
@@ -1055,15 +1476,26 @@ function main() {
 				/* Idle: the instance stays alive so settings changes never
 				 * need a service restart (procd keeps it, respawn is quiet). */
 				api_base = '';
+				token_used = '';
+				bot_id = 0;
 				sleep(15000);
 				continue;
 			}
-			if (!length(api_base)) {
-				api_base = `https://api.telegram.org/bot${cfg.token}`;
-				allowed_chat = int(cfg.chat_id || '0') || 0;
-				log('telegram polling started (allowed_chat=' + allowed_chat + ')');
-			}
+			ensure_owner_seed();
+			apply_token();
 			allowed_chat = int(cfg.chat_id || '0') || 0;
+			if (off_loaded_for !== bot_id) {
+				off_loaded_for = bot_id;
+				try { last_update_id = int(trim(readfile(off_file()) || '0') || '0') || 0; }
+				catch (e) { last_update_id = 0; }
+			}
+			/* Honest rate-limit state (audit 1.4): while a fresh 429 window
+			 * is running, skip polling entirely (the send side handles its
+			 * own single retry; pushes wait with the loop). */
+			if (time() < rate_until) {
+				sleep(10000);
+				continue;
+			}
 			const poll = (match(cfg.poll, /^[0-9]+$/) != null) ? int(cfg.poll) : 25;
 			if (poll < 5) cfg.poll = '5';
 			const j = tg_call(`getUpdates?timeout=${poll}&offset=${last_update_id + 1}`, null);
@@ -1071,15 +1503,12 @@ function main() {
 				for (let i = 0; i < length(j.result); i++) {
 					const u = j.result[i];
 					if (type(u) !== 'object' || !u.update_id) continue;
-					if (u.update_id > last_update_id) {
-						last_update_id = u.update_id;
-						writefile(OFF_FILE, sprintf('%d', last_update_id));
-					}
-					try { handle_update(u); } catch (e) { log('update: ' + e); }
+					queue_put(u);   /* durable BEFORE handling (audit 1.2) */
 				}
 			}
+			queue_drain();
 			/* Back off on network failure AND on API errors (401 bad token,
-			 * 409 getUpdates conflict, 429 after the single retry) — without
+			 * 409 getUpdates conflict, 429 without an inline retry) — without
 			 * this a rejected long-poll becomes a busy loop hammering the
 			 * Bot API. */
 			if (!j || j.ok === false)

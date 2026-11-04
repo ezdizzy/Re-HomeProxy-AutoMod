@@ -7,7 +7,7 @@
 
 'use strict';
 
-import { access, error, lstat, popen, readfile, writefile, stat, rename, mkdir, open } from 'fs';
+import { access, error, lstat, popen, readfile, writefile, stat, rename, mkdir, open, chmod } from 'fs';
 import { cursor } from 'uci';
 import {
 	sync_learned_rulesets,
@@ -7846,6 +7846,24 @@ const methods = {
 			 * heartbeat first, then the exact script-element scan; busybox
 			 * pidof does NOT match ucode script names, lesson 23/58). */
 			reply.running = pm_script_alive('telegram_bot', 'telegram.uc');
+			/* Ф8.1: RBAC users per role (UCI lists) + the active pairing
+			 * window (the code is admin-page data, shown while it lives). */
+			reply.users = { owner: [], admin: [], operator: [], viewer: [] };
+			const roles = [ 'owner', 'admin', 'operator', 'viewer' ];
+			for (let i = 0; i < length(roles); i++) {
+				const arr = c.get('homeproxy', 'telegram', roles[i] + '_user');
+				if (type(arr) === 'array') {
+					const ids = [];
+					for (let k = 0; k < length(arr); k++)
+						push(ids, '' + arr[k]);
+					reply.users[roles[i]] = ids;
+				}
+			}
+			reply.pair = null;
+			const pc = trim('' + (c.get('homeproxy', 'telegram', 'pair_code') || ''));
+			const pu = int('' + (c.get('homeproxy', 'telegram', 'pair_until') || '0'));
+			if (length(pc) && pu > time())
+				reply.pair = { code: pc, role: g('pair_role', 'owner'), expires_in: pu - time() };
 			return reply;
 		}
 	},
@@ -7927,9 +7945,78 @@ const methods = {
 		}
 	},
 
+	/* Ф8.1 pairing (audit TG-02): a 6-digit ONE-TIME code, valid 60 s,
+	 * binds an unknown Telegram user under the chosen role. The bot burns
+	 * the code at the first /start <code> from a private chat. */
+	telegram_pair_generate: {
+		args: { role: 'role' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const role = trim('' + (a.role == null ? 'owner' : a.role));
+			const roles = { owner: true, admin: true, operator: true, viewer: true };
+			if (!roles[role])
+				return { result: false, error: 'bad role' };
+			/* 6 random digits from /dev/urandom (no rand() on this ucode build). */
+			const fd = popen('tr -dc 0-9 < /dev/urandom | head -c 6');
+			let code = fd ? trim(fd.read('all') || '') : '';
+			if (fd)
+				fd.close();
+			if (match(code, /^[0-9]{6}$/) == null)
+				return { result: false, error: 'entropy unavailable' };
+			const c = cursor();
+			c.set('homeproxy', 'telegram', 'pair_code', code);
+			c.set('homeproxy', 'telegram', 'pair_until', sprintf('%d', time() + 60));
+			c.set('homeproxy', 'telegram', 'pair_role', role);
+			c.commit('homeproxy');
+			return { result: true, code: code, role: role, expires_in: 60 };
+		}
+	},
+
+	/* Ф8.1: remove a paired user from ANY role list (admin page). UCI is
+	 * committed only when something actually changed (idempotent path). */
+	telegram_user_remove: {
+		args: { user: 'user' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const user = trim('' + (a.user == null ? '' : a.user));
+			if (match(user, /^-?[0-9]+$/) == null)
+				return { result: false, error: 'bad user' };
+			const c = cursor();
+			const roles = [ 'owner', 'admin', 'operator', 'viewer' ];
+			let removed = 0;
+			let changed = false;
+			for (let i = 0; i < length(roles); i++) {
+				const opt = roles[i] + '_user';
+				const arr = c.get('homeproxy', 'telegram', opt);
+				if (type(arr) !== 'array')
+					continue;
+				const keep = [];
+				for (let k = 0; k < length(arr); k++) {
+					if ('' + arr[k] === user)
+						removed++;
+					else
+						push(keep, '' + arr[k]);
+				}
+				if (length(keep) !== length(arr)) {
+					changed = true;
+					if (length(keep))
+						c.set('homeproxy', 'telegram', opt, keep);
+					else
+						c.delete('homeproxy', 'telegram', opt);
+				}
+			}
+			if (changed)
+				c.commit('homeproxy');
+			return { result: true, removed: removed };
+		}
+	},
+
 	/* On-demand connectivity check (D6): getMe resolves the bot identity,
 	 * then a test message goes straight to the bound chat — works even
-	 * while the daemon itself is idle/disabled. */
+	 * while the daemon itself is idle/disabled.
+	 * Ф8.1 (audit 44): the token NEVER appears on a command line — both
+	 * calls carry their URL in a curl config file (0600, removed at once),
+	 * the POST body travels via --data-binary @file. */
 	telegram_test: {
 		call: function() {
 			const c = cursor();
@@ -7937,10 +8024,14 @@ const methods = {
 			const chat_raw = trim('' + (c.get('homeproxy', 'telegram', 'chat_id') || ''));
 			if (!length(token) || match(token, /^[0-9]+:[A-Za-z0-9_-]+$/) == null)
 				return { result: false, error: 'no token' };
+			const cfgf = RUN_DIR + '/.tg.curl.test';
+			const bodyf = RUN_DIR + '/.tg.body.test';
 			const f = RUN_DIR + '/tg_test.json';
+			writefile(cfgf, 'url = "https://api.telegram.org/bot' + token + '/getMe"\nmax-time = 10\n');
+			chmod(cfgf, 384);
 			system('rm -f ' + shellquote(f));
-			system('curl -s --max-time 10 -o ' + shellquote(f) + ' ' +
-				shellquote('https://api.telegram.org/bot' + token + '/getMe') + ' 2>/dev/null');
+			system('curl -s -K ' + shellquote(cfgf) + ' -o ' + shellquote(f) + ' 2>/dev/null');
+			system('rm -f ' + shellquote(cfgf));
 			let me = null;
 			if (access(f)) {
 				try { me = json(readfile(f) || ''); } catch (e) { me = null; }
@@ -7956,10 +8047,14 @@ const methods = {
 				return { result: false, bot_username: bot_username, error: 'bad chat_id' };
 			const body = sprintf('{"chat_id":%s,"text":"%s","parse_mode":"HTML"}',
 				chat_raw, 'Тестовое сообщение Ravnex — связь с ботом работает.');
+			writefile(cfgf, 'url = "https://api.telegram.org/bot' + token + '/sendMessage"\nmax-time = 10\n');
+			chmod(cfgf, 384);
+			writefile(bodyf, body);
+			chmod(bodyf, 384);
 			system('rm -f ' + shellquote(f));
-			system('curl -s --max-time 10 -o ' + shellquote(f) + ' -X POST -H \'Content-Type: application/json\' -d ' +
-				shellquote(body) + ' ' +
-				shellquote('https://api.telegram.org/bot' + token + '/sendMessage') + ' 2>/dev/null');
+			system('curl -s -K ' + shellquote(cfgf) + ' --data-binary @' + shellquote(bodyf) +
+				' -o ' + shellquote(f) + ' 2>/dev/null');
+			system('rm -f ' + shellquote(cfgf) + ' ' + shellquote(bodyf));
 			let sent = false;
 			if (access(f)) {
 				let r = null;

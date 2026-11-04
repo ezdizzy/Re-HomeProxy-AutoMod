@@ -48,6 +48,21 @@ const callTelegramTest = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф8.1 security core: one-time 60 s pairing code + RBAC user management. */
+const callTelegramPairGen = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'telegram_pair_generate',
+	params: [ 'role' ],
+	expect: { '': {} }
+});
+
+const callTelegramUserRemove = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'telegram_user_remove',
+	params: [ 'user' ],
+	expect: { '': {} }
+});
+
 /* ── TG WS Proxy (R3 v3b: moved from the Wizard «Advanced» pane) — third-
  * party Telegram bridges: detect / check / install, ONE result area. ──── */
 
@@ -286,6 +301,103 @@ return view.extend({
 				tgPival
 			])
 		]);
+
+		/* ── access card (Ф8.1): pairing + RBAC users ────────────────────
+		 * One result area (rbResult) for both actions; the live code and
+		 * the user table are status views refreshed by the poll. */
+		const tgRole = E('select', { 'class': 'cbi-input-select', style: 'width:auto' });
+		const roleOpts = [
+			[ 'owner', _('Owner — full access') ],
+			[ 'admin', _('Admin — service, snapshots, rules') ],
+			[ 'operator', _('Operator — nodes, pause, temporary actions') ],
+			[ 'viewer', _('Viewer — status only') ]
+		];
+		for (let i = 0; i < roleOpts.length; i++)
+			tgRole.appendChild(E('option', { value: roleOpts[i][0] }, [ roleOpts[i][1] ]));
+		const pairBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			[ _('Generate pairing code') ]);
+		const pairLine = E('span', { 'class': 'wiz-note' });
+		const rbUsersBox = E('div', {});
+		const rbResult = E('div', {});
+
+		function renderRbac(st) {
+			st = st || {};
+			const p = st.pair || null;
+			if (p && p.code)
+				dom.content(pairLine, [
+					document.createTextNode(_('Active code: %s · role %s · expires in %d s')
+						.format(String(p.code), String(p.role || ''), p.expires_in || 0))
+				]);
+			else
+				dom.content(pairLine, [ _('No active code — generate one to pair a user.') ]);
+			const u = st.users || {};
+			const rows = [
+				[ 'owner', u.owner ], [ 'admin', u.admin ],
+				[ 'operator', u.operator ], [ 'viewer', u.viewer ]
+			];
+			const tbl = E('table', { 'class': 'table', style: 'max-width:560px' });
+			let any = false;
+			for (let i = 0; i < rows.length; i++) {
+				const role = rows[i][0];
+				const ids = rows[i][1] || [];
+				for (let k = 0; k < ids.length; k++) {
+					any = true;
+					const idStr = String(ids[k]);
+					const del = E('button', { 'class': 'btn cbi-button cbi-button-remove', type: 'button' }, [ '✖' ]);
+					del.addEventListener('click', function() {
+						del.disabled = true;
+						L.resolveDefault(callTelegramUserRemove(idStr), {}).then(function(r) {
+							dom.content(rbResult, E('p', { 'class': 'hpui-hint' },
+								(!r || r.result === false)
+									? [ E('span', { 'class': 'hpui-c-red' }, [ _('Removal failed: ') + ((r && r.error) || _('rpc error')) ]) ]
+									: [ E('span', { 'class': 'hpui-c-green' }, [ _('Removed (%d).').format(r.removed || 0) ]) ]));
+							return rbRefresh();
+						}).finally(function() { del.disabled = false; });
+					});
+					tbl.appendChild(E('tr', {}, [
+						E('td', {}, [ role ]),
+						E('td', {}, [ idStr ]),
+						E('td', {}, [ del ])
+					]));
+				}
+			}
+			if (!any)
+				tbl.appendChild(E('tr', {}, [
+					E('td', { colspan: '3', style: 'opacity:.75' },
+						[ _('No paired users yet — the bound owner chat keeps working (legacy mode).') ])
+				]));
+			dom.content(rbUsersBox, [ tbl ]);
+		}
+
+		function rbRefresh() {
+			return L.resolveDefault(callTelegramStatus(), {}).then(function(st) {
+				renderTelegramStatus(st || {});
+				renderRbac(st || {});
+			});
+		}
+
+		pairBtn.addEventListener('click', function() {
+			pairBtn.disabled = true;
+			L.resolveDefault(callTelegramPairGen(String(tgRole.value || 'owner')), {}).then(function(r) {
+				if (!r || r.result === false)
+					dom.content(rbResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Code generation failed: ') + ((r && r.error) || _('rpc error')) ]));
+				else
+					dom.content(rbResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Code %s generated (role %s) — valid 60 s, one-time. The user sends it to the bot as a message: /start %s (or just the code).').format(String(r.code), String(r.role || ''), String(r.code)) ]));
+				return rbRefresh();
+			}).finally(function() { pairBtn.disabled = false; });
+		});
+
+		const rbCard = E('div', { 'class': 'tg-card' }, [
+			E('div', { 'class': 'tg-card-title' }, [ _('Access (RBAC)') ]),
+			E('p', { 'class': 'hpui-hint' },
+				[ _('Roles from top to bottom: Owner (everything) → Admin (service, snapshots, rules) → Operator (nodes, pause, temporary actions) → Viewer (status only). Every command and button is checked against the sender\'s user_id; groups and channels are denied by default. Pairing: generate a one-time 60 s code here, the user sends it to the bot from a private chat.') ]),
+			E('div', { 'class': 'wiz-toolbar' }, [ tgRole, pairBtn, pairLine ]),
+			rbUsersBox,
+			rbResult
+		]);
+		renderRbac(st0);
 
 		/* ── Telegram without a proxy (TG WS Proxy) card — R3 v3b: moved
 		 * from the Wizard «Advanced» pane. Third-party bridges (MIT) carry
@@ -588,6 +700,7 @@ return view.extend({
 		}
 		pollTgws();
 		poll.add(pollTgws, 6);
+		poll.add(rbRefresh, 12);
 
 		const twBtnRow = E('div', { 'class': 'wiz-toolbar' },
 			[ twCheckBtn, twLinkBtn, twInstallBtn, twGoInstallBtn, twSyncLabel ]);
@@ -682,6 +795,7 @@ return view.extend({
 			tgStatusCard,
 			connCard,
 			pushesCard,
+			rbCard,
 			twCard,
 			diagCard,
 			cmdPanel

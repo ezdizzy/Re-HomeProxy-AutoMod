@@ -57,7 +57,7 @@
 					"wizard_preset_apply", "wizard_preset_delete", "wizard_strategy_update",
 					"wizard_tgwsp_check", "wizard_tgwsp_install", "wizard_tgwsp_link", "wizard_tgws_install",
 					"wizard_tgws_sync_set", "wizard_strategy_apply", "wizard_corpus_import", "wizard_fuzz_generate",
-					"telegram_set", "telegram_test", "automation_helpers_install",
+					"telegram_set", "telegram_test", "telegram_pair_generate", "telegram_user_remove", "automation_helpers_install",
 					"mosdns_prepare_install", "mosdns_install_pkg", "mosdns_remove",
 					"automation_list_write", "automation_test_now", "automation_restore", "automation_recheck",
 					"automation_entry_add", "automation_entry_delete", "automation_entry_action", "automation_geo_update",
