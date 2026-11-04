@@ -180,6 +180,27 @@ let bus_ready = false;/* baseline done (never re-baseline mid-boot) */
 /* Ф8.5 Alert Manager: per-kind alert state { text, ts, times[], suppressed } */
 let alert_state = {};
 
+/* Ф8.6 egress failover (D22): бот обязан пережить смерть ВСЕЙ прокси-цепочки.
+ * Лестница: 0 = обычная цепочка (curl идёт системной маршрутизацией),
+ * 1 = tg-ws мост (socks5h на loopback-порту — работает без VPN-цепочки),
+ * 2 = прямой (auto-direct-in ядра, прибит к direct-out). Каждая ступень
+ * доказывается ЖИВОЙ пробой getMe перед переключением — машина
+ * транспорт-агностична: у этого провайдера мост говорит только MTProto
+ * (чистый TLS к api.telegram.org он сбрасывает), а прямые Telegram-IP
+ * зарезаны (R3-FIX-2), так что обе запасные сегодня честно «не отвечают»;
+ * если транспорт начнёт отвечать — бот подхватит его без правки кода. */
+const EGRESS_LABEL = [ 'обычная цепочка', 'tg-ws мост (без VPN)', 'прямой (через ядро)' ];
+const EGRESS_FAILS = 2;       /* подряд пустых ответов = канал подозревается */
+const EGRESS_HOLD = 120;      /* мин. секунд на канале до следующего решения */
+const EGRESS_DIRECT_PORT = 5336;   /* auto-direct-in — синхронно с generate_client.uc */
+let egress_idx = 0;
+let egress_fails = 0;
+let egress_switched_ts = 0;
+let egress_down = {};         /* индекс(строка) -> ts: пауза после неудачной пробы */
+let egress_note = {};         /* индекс(строка) -> честная причина отказа пробы */
+let egress_pending = '';      /* текст пуша о переключении — доставит main-цикл */
+let egress_all_dead = false;  /* чтобы «все каналы недоступны» не спамило журнал */
+
 /* ── basics ───────────────────────────────────────────────────────────── */
 
 /* ч.118: shellquote MUST stay ABOVE log() — in this ucode dialect a
@@ -274,6 +295,18 @@ function uci_tg_snap(key) {
 	return (length(v || '')) ? v : null;
 }
 
+/* One config.* UCI value read (the Ф8.6 ladder needs tgws_enabled/port;
+ * declared ABOVE read_cfg — no hoisting, lesson 126). */
+function uci_cfg_snap(key) {
+	const fd = popen(`uci -q get homeproxy.config.${key} 2>/dev/null`);
+	let v = null;
+	if (fd) {
+		v = trim(fd.read('all') || '');
+		fd.close();
+	}
+	return (length(v || '')) ? v : null;
+}
+
 /* Hot-reload the whole config from UCI (called every loop iteration — the
  * daemon never needs a service restart after settings changes). */
 function read_cfg() {
@@ -289,6 +322,9 @@ function read_cfg() {
 	cfg.push_service  = uci_get('push_service', '1');
 	cfg.push_control  = uci_get('push_control', '1');
 	cfg.push_exec     = uci_get('push_exec', '1');
+	/* Ф8.6: канал tg-ws существует, только когда включён мост (hot reload). */
+	cfg.tgws_enabled  = uci_cfg_snap('tgws_enabled');
+	cfg.tgws_port     = uci_cfg_snap('tgws_port');
 	cfg.users = {
 		owner:    uci_list('owner_user'),
 		admin:    uci_list('admin_user'),
@@ -397,6 +433,21 @@ function jesc(s) {
 	return esc;
 }
 
+/* ── Ф8.6 egress failover — plumbing ────────────────────────────────────
+ * Прокси-строка канала для curl-конфига (на цепочке — пусто, curl идёт
+ * системной маршрутизацией). Объявлена РАНОШЕ: tg_call и
+ * tg_send_document зовут её, а hoisting в ucode нет (урок 126). */
+function egress_proxy_line(idx) {
+	if (idx === 1) {
+		const p = '' + (cfg.tgws_port || '');
+		const port = (match(p, /^[0-9]+$/) != null) ? p : '1080';
+		return 'proxy = "socks5h://127.0.0.1:' + port + '"\n';
+	}
+	if (idx === 2)
+		return 'proxy = "socks5h://127.0.0.1:' + EGRESS_DIRECT_PORT + '"\n';
+	return '';
+}
+
 /* ── Bot API ──────────────────────────────────────────────────────────── */
 
 /* One POST/GET call. Returns parsed JSON or null.
@@ -415,6 +466,10 @@ function tg_call(method, params, retried) {
 	let cleaned = false;
 	try {
 		let c = 'url = "' + jesc(url) + '"\n';
+		/* Ф8.6: прокси-строка текущего канала доставки (на цепочке пусто). */
+		const px = egress_proxy_line(egress_idx);
+		if (length(px))
+			c += px;
 		if (params == null) {
 			const poll = (match(cfg.poll, /^[0-9]+$/) != null) ? int(cfg.poll) : 25;
 			c += `max-time = ${poll + 5}\n`;
@@ -439,8 +494,18 @@ function tg_call(method, params, retried) {
 	} catch (e) { log('tg_call io: ' + e); }
 	if (cleaned)
 		system(`rm -f ${shellquote(CURL_F)} ${shellquote(BODY_F)}`);
-	if (!length(trim(out)))
+	/* Ф8.6 учёт канала: ПУСТОЙ ответ = отказ канала (curl пуст: connect
+	 * fail/таймаут/RST) — учитывается ДО раннего выхода, иначе лестница
+	 * фейловера никогда не узнает о смерти канала (поймано живым тестом
+	 * ч.190: за 100 с полного обрыва цепочки не было учтено ни одного
+	 * отказа). Отказы API (400/401/409/429) — проблемы самого запроса:
+	 * смена канала их не лечит, в учёт они не идут. */
+	if (!length(trim(out))) {
+		egress_fails++;
+		if (params != null)
+			log('tg_call ' + method + ': нет ответа (сеть/таймаут)');
 		return null;
+	}
 	let j = null;
 	try { j = json(out); } catch (e) { j = null; }
 	/* Honest delivery (ч.190): a failed send or an API refusal must never
@@ -463,6 +528,10 @@ function tg_call(method, params, retried) {
 			return tg_call(method, params, 1);          /* MAX ONE auto-retry */
 		}
 	}
+	if (j == null)
+		egress_fails++;
+	else if (j.ok === true)
+		egress_fails = 0;
 	return j;
 }
 
@@ -506,7 +575,7 @@ function tg_send_document(chat_id, path, caption) {
 	const cap = length('' + (caption || '')) ? ` -F "caption=${jesc('' + caption)}"` : '';
 	/* Audit 44: the token stays in the curl config file, not in argv. */
 	try {
-		writefile(CURL_F, 'url = "' + jesc(url) + '"\nmax-time = 120\n');
+		writefile(CURL_F, 'url = "' + jesc(url) + '"\nmax-time = 120\n' + egress_proxy_line(egress_idx));
 		chmod(CURL_F, 384);
 	} catch (e) { log('doc io: ' + e); }
 	const out = capture(`curl -s -K ${shellquote(CURL_F)} -F "chat_id=${chat_id}"${cap} -F "document=@${path}" 2>/dev/null`);
@@ -723,18 +792,6 @@ function proc_up(name) {
 	return length(pm_find({ exe: name })) > 0;
 }
 
-/* One UCI value read (the bot reads config through `uci -q get` — the same
- * pattern as uci_get above; a fresh popen per call keeps hot-reload honest). */
-function uci_cfg_snap(key) {
-	const fd = popen(`uci -q get homeproxy.config.${key} 2>/dev/null`);
-	let v = null;
-	if (fd) {
-		v = trim(fd.read('all') || '');
-		fd.close();
-	}
-	return (length(v || '')) ? v : null;
-}
-
 function cmd_status() {
 	const core_info = trim(readfile(RUN_DIR + '/core.info') || '');
 	let core = 'неизвестно';
@@ -780,13 +837,18 @@ function cmd_status() {
 		mode_line += '\n🛡 <b>Safe Mode</b>: выход напрямую' +
 			(length('' + (sprev || '')) ? ' (возврат: ' + esc_html(safe_node_name(sprev)) + ' — /safeoff)' : ' (возврат: /safeoff)');
 	}
+	/* Ф8.6: честный статус канала доставки бота. */
+	let egress_line = 'Канал доставки: ' + EGRESS_LABEL[egress_idx];
+	if (egress_idx !== 0)
+		egress_line += ' (запасной)';
 	return `<b>Re:HomeProxy</b>
 Ядро: ${core}
 ${main_line}
 Zapret: ${zapret} · ByeDPI: ${byedpi} · MultiDNS: ${mosdns}
 Автоматизация: ${learned} записей
 ${esc_html(ctl_line)}
-${mode_line}`;
+${mode_line}
+${esc_html(egress_line)}`;
 }
 
 function cmd_ping() {
@@ -977,6 +1039,20 @@ function cmd_diag_text() {
 			' · проблем: ' + bad + ' · fresh=' + ((hx.health.fresh === true) ? 'да' : 'пересчитан') + '\n';
 	} else
 		out += 'health_explain: НЕ ОТВЕТИЛ (rpcd или демоны?)\n';
+	/* 3.5) Ф8.6: канал доставки бота + честные вердикты запасных.
+	 * БЕЗ вызова egress_available (объявлена ниже — no hoisting, урок 126):
+	 * условие моста инлайнится через cfg.tgws_enabled. */
+	out += '\n── КАНАЛ ДОСТАВКИ (egress) ─\n';
+	out += 'Текущий: ' + EGRESS_LABEL[egress_idx] + '\n';
+	for (let i = 0; i < 3; i++) {
+		if (i === egress_idx)
+			continue;
+		const note = trim('' + (egress_note['' + i] || ''));
+		if (i !== 1 || cfg.tgws_enabled === '1')
+			out += '· ' + EGRESS_LABEL[i] + ': запасной' + (length(note) ? (' — ' + note) : ' (проб не было)') + '\n';
+		else
+			out += '· ' + EGRESS_LABEL[i] + ': недоступен — ' + note + '\n';
+	}
 	/* 4) Хвосты журналов подсистем. */
 	out += '\n── ЖУРНАЛЫ (хвосты) ─\n';
 	for (let i = 0; i < length(DIAG_LOGS); i++) {
@@ -1355,6 +1431,100 @@ function send_push(kind, text, kb, sev) {
 	const sup = int(s.suppressed);
 	s.suppressed = 0;
 	tg_send_html(allowed_chat, alert_text(sup, text), kb || null);
+}
+
+/* ── Ф8.6: машинерия egress-фейловера (D22) ─────────────────────────────
+ * Учёт отказов ведёт tg_call (инлайн), решения принимает main-цикл через
+ * egress_tick(). Каждая ступень доказывается живой пробой getMe (10 с
+ * потолок); не ответивший канал пропускается и остывает 60 с. Блок
+ * объявлен ПОСЛЕ send_push (no hoisting): переключение готовит текст пуша
+ * в egress_pending — доставляет его main-цикл УЖЕ НОВЫМ каналом. */
+
+function egress_available(idx) {
+	/* tg-ws — кандидат только при включённом мосте (UCI, hot reload);
+	 * цепочка и прямой проверяются всегда — мёртвая цель отказывает быстро. */
+	return (idx !== 1) || (cfg.tgws_enabled === '1');
+}
+
+function egress_probe(idx) {
+	if (!length(api_base))
+		return false;
+	let c = 'url = "' + jesc(api_base + '/getMe') + '"\nmax-time = 10\n';
+	const px = egress_proxy_line(idx);
+	if (length(px))
+		c += px;
+	try {
+		writefile(CURL_F, c);
+		chmod(CURL_F, 384);
+	} catch (e) {
+		egress_note['' + idx] = 'проба не прошла (ошибка записи curl-конфига)';
+		return false;
+	}
+	const out = capture(`curl -s -K ${shellquote(CURL_F)} 2>/dev/null`);
+	system(`rm -f ${shellquote(CURL_F)}`);
+	let j = null;
+	try { j = json(out); } catch (e) { j = null; }
+	const ok = !!(j && j.ok === true);
+	/* Честная причина отказа — для /status и /diagnostics. */
+	egress_note['' + idx] = ok ? '' : ('проба не прошла (' +
+		((j && j.description) ? substr('' + j.description, 0, 60) : 'нет ответа') + ')');
+	return ok;
+}
+
+function egress_switch(idx, why) {
+	if (idx === egress_idx)
+		return;
+	const from = EGRESS_LABEL[egress_idx];
+	egress_idx = idx;
+	egress_fails = 0;
+	egress_switched_ts = time();
+	egress_all_dead = false;
+	log('egress: ' + from + ' -> ' + EGRESS_LABEL[idx] + ' (' + why + ')');
+	egress_pending = '🛰 <b>Канал доставки</b>: ' + esc_html(from) + ' → <b>' +
+		esc_html(EGRESS_LABEL[idx]) + '</b>\nПричина: ' + esc_html(why) +
+		'.\nБот остаётся на связи — это сообщение прошло уже новым каналом.';
+}
+
+function egress_tick() {
+	if (!length(api_base) || bot_id === 0)
+		return;
+	const now = time();
+	const held = (now - egress_switched_ts) < EGRESS_HOLD;
+	if (egress_fails >= EGRESS_FAILS && !held) {
+		/* Текущий канал подозревается — пройти лестницу живыми пробами. */
+		egress_fails = 0;
+		let moved = false;
+		for (let step = 1; step <= 2; step++) {
+			const cand = (egress_idx + step) % 3;
+			if (!egress_available(cand)) {
+				egress_note['' + cand] = 'мост выключен настройками (tgws_enabled)';
+				continue;
+			}
+			if ((int(egress_down['' + cand]) || 0) > now)
+				continue;
+			if (egress_probe(cand)) {
+				moved = true;
+				egress_switch(cand, 'канал «' + EGRESS_LABEL[egress_idx] + '» не отвечает');
+				break;
+			}
+			egress_down['' + cand] = now + 60;
+		}
+		if (!moved && !egress_all_dead) {
+			egress_all_dead = true;
+			log('egress: запасные каналы не отвечают — остаюсь на «' +
+				EGRESS_LABEL[egress_idx] + '», очередь и offset целы');
+		}
+		return;
+	}
+	/* Здоровый запасной канал: автопроверка возврата на цепочку — не чаще
+	 * раза в 60 с, чтобы мёртвая цепочка не долбилась пробами. */
+	if (egress_idx !== 0 && egress_fails === 0 && !held &&
+	    (int(egress_down['0']) || 0) <= now) {
+		if (egress_probe(0))
+			egress_switch(0, 'цепочка восстановлена');
+		else
+			egress_down['0'] = now + 60;
+	}
 }
 
 /* ── Ф2.4: Event Bus subscription (one cursor, hotswap/urltest/automation) ──
@@ -2557,6 +2727,14 @@ function main() {
 				}
 			}
 			queue_drain();
+			/* Ф8.6: решения egress-фейловера + честный пуш о переключении —
+			 * доставляется УЖЕ НОВЫМ каналом (сама доставка и есть доказательство). */
+			egress_tick();
+			if (length(egress_pending)) {
+				const msg = egress_pending;
+				egress_pending = '';
+				send_push('service', msg, null);
+			}
 			/* Back off on network failure AND on API errors (401 bad token,
 			 * 409 getUpdates conflict, 429 without an inline retry) — without
 			 * this a rejected long-poll becomes a busy loop hammering the
