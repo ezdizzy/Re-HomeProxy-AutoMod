@@ -619,6 +619,7 @@ function buildProfilesSection() {
 		E('option', { value: 'youtube' }, [ 'YouTube' ]),
 		E('option', { value: 'discord' }, [ 'Discord' ]),
 		E('option', { value: 'telegram' }, [ 'Telegram' ]),
+		E('option', { value: 'whatsapp' }, [ 'WhatsApp' ]),
 		E('option', { value: 'games' }, [ _('Games and launchers') ])
 	]);
 	const runBtn = E('button', {
@@ -721,7 +722,7 @@ function buildProfilesSection() {
 	return {
 		el: sectionCard(_('Service profiles'), 'diag-profiles', [
 			E('p', { 'class': 'hpui-hint' },
-				[ _('Checks the SERVICE, not the front page: YouTube (web/API/CDN/real video stream/QUIC), Discord (web/API/gateway WebSocket/CDN/Voice UDP/STUN/stability), Telegram (web/MTProto datacenters), games and launchers. The video level is judged bitrate-relative — from 360p to 4K — not by a fixed speed bar. The QUIC component is passive observation (the Discovery engine); active HTTP/3 probing stays off. Not-probed is never reported as passed.') ]),
+				[ _('Checks the SERVICE, not the front page: YouTube (web/API/CDN/real video stream/QUIC), Discord (web/API/gateway WebSocket/CDN/Voice UDP/STUN/stability), Telegram (web/MTProto datacenters/calls), WhatsApp (web client/calls), games and launchers. The video level is judged bitrate-relative — from 360p to 4K — not by a fixed speed bar. The QUIC component is passive observation (the Discovery engine); active HTTP/3 probing stays off. Voice calls ride UDP relays that no tool on this router can probe — they are reported as not-probed, never as passed. Not-probed is never reported as passed.') ]),
 			E('div', { 'class': 'diag-row' }, [ sel, runBtn ]),
 			profBanner,
 			profResult
@@ -826,6 +827,218 @@ function buildDiscoverySection() {
 			discResult
 		]),
 		run: function() { return Promise.resolve(); }
+	};
+}
+
+/* ── Ф6.5 Service Path Optimizer: план цепочки Service→Route→Engine→
+ * Strategy→Transport→Exit для КАЖДОГО сервиса независимо (аудит 70).
+ * План читает ТОЛЬКО измеренные факты: вердикты Лаборатории стратегий
+ * (Ф6.4), сводки батарей профилей (Ф6.3), правила и режим. Применение —
+ * существующий автоподбор с ОБЯЗАТЕЛЬНЫМ авто-rollback при провале живой
+ * проверки (аудит 78); best_available применяется только вручную
+ * (аудит 92); матрица движков учитывается ДО подбора (аудит 93). Один
+ * результат в одном месте. ───────────────────────────────────────────── */
+
+const callOptimizerPlan = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'service_optimizer_plan',
+	expect: { '': {} }
+});
+
+const callPickStart = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_auto_pick_start',
+	params: [ 'resource', 'mode', 'set_rule' ],
+	expect: { '': {} }
+});
+
+const callPickStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_auto_pick_status',
+	expect: { '': {} }
+});
+
+const OPT_VERDICT = {
+	ok:           [ 'hpui-b-green', '✓ ' ],
+	apply:        [ 'hpui-b-amber', '▶ ' ],
+	manual_only:  [ 'hpui-b-amber', '✋ ' ],
+	no_candidate: [ 'hpui-b-red',   '✗ ' ],
+	no_lab:       [ 'hpui-b-grey',  '' ],
+	unknown:      [ 'hpui-b-grey',  '' ]
+};
+
+function optVerdictLabel(v) {
+	return v === 'ok' ? _('Served — no changes needed') :
+		v === 'apply' ? _('Verified strategy ready to apply') :
+		v === 'manual_only' ? _('Manual apply only (auto is forbidden)') :
+		v === 'no_candidate' ? _('NO VIABLE STRATEGY') :
+		v === 'no_lab' ? _('Not measured by the Strategy Lab') :
+		_('—');
+}
+
+function optServiceLabel(k) {
+	return k === 'youtube' ? 'YouTube' :
+		k === 'discord' ? 'Discord' :
+		k === 'telegram' ? 'Telegram' :
+		k === 'whatsapp' ? 'WhatsApp' : String(k);
+}
+
+function buildOptimizerSection() {
+	const state = { plan: null, sig: null };
+	const pickBanner = E('div', { 'class': 'hpui-banner', style: 'display:none' });
+	const pickResult = E('div', {});
+	const tableWrap = E('div', {});
+	const pickState = { running: false };
+
+	function chainLine(svc) {
+		const c = svc.chain;
+		if (c != null && c.route != null)
+			return (c.route || '') + (c.engine ? (' · движок: ' + c.engine) : '') +
+				(c.strategy ? (' · «' + c.strategy + '»') : '');
+		return null;
+	}
+
+	function renderPlan(d) {
+		const plan = (d && d.services) ? d.services : null;
+		if (plan == null)
+			return;
+		state.plan = plan;
+		const sig = JSON.stringify(Object.keys(plan).sort().map(function(k) {
+			return [ k, plan[k].verdict, plan[k].chain ? plan[k].chain.strategy : null,
+				plan[k].rule ? plan[k].rule.node : null ];
+		}));
+		if (sig === state.sig)
+			return;
+		state.sig = sig;
+		tableWrap.innerHTML = '';
+		const tbody = E('tbody', {});
+		for (const key of [ 'youtube', 'discord', 'telegram', 'whatsapp' ]) {
+			const svc = plan[key];
+			if (svc == null)
+				continue;
+			const spec = OPT_VERDICT[svc.verdict] || OPT_VERDICT.unknown;
+			const badge = E('span', { 'class': 'hpui-badge ' + spec[0] },
+				[ spec[1] + optVerdictLabel(svc.verdict) ]);
+			const cl = chainLine(svc);
+			const notes = [];
+			for (let i in (svc.reasons || []))
+				notes.push(String(svc.reasons[i]));
+			for (let i in (svc.notes || []))
+				notes.push(String(svc.notes[i]));
+			const detail = notes.length ?
+				E('div', { 'class': 'wiz-note', style: 'margin:0' },
+					[ notes.join(' · ') ]) : null;
+			const main = E('div', {}, [ badge ]);
+			if (detail) main.appendChild(detail);
+			/* Действие: автоподбор — только для сервисов с фаззинг-корпусом;
+			 * WhatsApp лаборатория не измеряет (честно). */
+			let act = null;
+			if (key !== 'whatsapp') {
+				act = E('button', {
+					'class': 'btn cbi-button cbi-button-action', type: 'button'
+				}, [ _('Auto-pick') ]);
+				act.addEventListener('click', function() {
+					act.disabled = true;
+					callPickStart(key, 'quick', '1').then(function(r) {
+						if (!r || r.result === false)
+							ui.addNotification(null, E('p', {},
+								_('Auto-pick failed to start: ') + ((r && r.error) || '')), 'error');
+						pickState.running = true;
+						return pollPick();
+					}).finally(function() { act.disabled = false; });
+				});
+			}
+			tbody.appendChild(E('tr', {}, [
+				E('td', { style: 'font-weight:600' }, [ optServiceLabel(key) ]),
+				E('td', {}, [ main ]),
+				E('td', { 'class': 'wiz-note', style: 'margin:0' }, [ cl || _('—') ]),
+				E('td', {}, [ act || E('span', { style: 'opacity:.5' }, [ _('—') ]) ])
+			]));
+		}
+		const wrap = E('div', { 'class': 'hpui-wrap' });
+		wrap.appendChild(E('table', { 'class': 'hpui-table' }, [
+			E('thead', {}, E('tr', {}, [
+				E('th', {}, [ _('Popular service') ]),
+				E('th', {}, [ _('Verdict') ]),
+				E('th', {}, [ _('Chain (route · engine · strategy)') ]),
+				E('th', {}, [ _('Action') ])
+			])), tbody
+		]));
+		tableWrap.appendChild(wrap);
+		if (d && d.lab_ts)
+			tableWrap.appendChild(E('p', { 'class': 'hpui-hint' },
+				[ _('Lab verdicts from %s · profile battery from %s · plan is read-only: applying runs the auto-pick with a mandatory rollback on a failed live check.')
+					.format(d.lab_ts ? new Date(Number(d.lab_ts) * 1000).toLocaleString() : '—',
+						d.profile_ts ? new Date(Number(d.profile_ts) * 1000).toLocaleString() : '—') ]));
+	}
+
+	function renderPick(st) {
+		pickBanner.style.display = (st && st.running) ? 'block' : 'none';
+		if (st && st.running) {
+			pickBanner.textContent = _('Auto-pick: %s…').format(String(st.stage || ''));
+			return;
+		}
+		if (!st || st.stage == null || st.stage === 'started') {
+			pickResult.innerHTML = '';
+			return;
+		}
+		const lines = [];
+		if (st.error != null && String(st.error).length)
+			lines.push(_('Error: %s').format(String(st.error)));
+		if (st.verdict != null)
+			lines.push(_('Verdict: %s').format(optVerdictLabel(String(st.verdict))));
+		if (st.chosen != null && st.chosen.name != null && String(st.chosen.name).length)
+			lines.push(_('Strategy: %s').format(String(st.chosen.name)));
+		if (st.verify != null)
+			lines.push(_('Live check: %s · %s s · deep %s/%s').format(
+				st.verify.ok ? _('works') : _('failed'),
+				String(st.verify.tsec || '?'),
+				String(st.verify.deep_ok != null ? st.verify.deep_ok : '?'),
+				String(st.verify.deep_total != null ? st.verify.deep_total : '?')));
+		if (st.rolled_back === true)
+			lines.push(_('Rolled back automatically — the previous state is restored.'));
+		else if (st.rolled_back === false)
+			lines.push(_('NOT rolled back — use Restore (the snapshot is kept).'));
+		for (let i in (st.notes || []))
+			lines.push(String(st.notes[i]));
+		pickResult.innerHTML = '';
+		if (!lines.length)
+			return;
+		const ul = E('ul', { 'class': 'wiz-note', style: 'margin:.4em 0 0 1.2em' });
+		for (let i in lines)
+			ul.appendChild(E('li', {}, [ lines[i] ]));
+		pickResult.appendChild(ul);
+	}
+
+	function pollPick() {
+		return L.resolveDefault(callPickStatus(), {}).then(function(d) {
+			const st = d && d.status;
+			pickState.running = !!(st && st.running);
+			renderPick(st);
+			return st;
+		});
+	}
+
+	function pollPlan() {
+		return L.resolveDefault(callOptimizerPlan(), {}).then(function(d) {
+			renderPlan(d);
+		});
+	}
+
+	poll.add(pollPlan, 8);
+	poll.add(pollPick, 4);
+	pollPlan();
+	pollPick();
+
+	return {
+		el: sectionCard(_('Route optimizer'), 'diag-optimizer', [
+			E('p', { 'class': 'hpui-hint' },
+				[ _('Chooses the full chain for EACH popular service independently: route rule → engine (Zapret/ByeDPI/proxy) → strategy → transport → exit. The plan reads only measured facts — the Strategy Lab verdicts, the service profile batteries and your routing rules. An auto-pick applies a VERIFIED strategy with the rule set to Zapret and ROLLS BACK AUTOMATICALLY if the live check fails afterwards; a strategy that only passed the handshake is offered manually with a warning; when nothing works, the plan says WHAT exactly fails. WhatsApp is measured by its profile battery and the provider scan only — the Strategy Lab has no fuzz corpus for it.') ]),
+			tableWrap,
+			pickBanner,
+			pickResult
+		]),
+		run: function() { return Promise.all([ pollPlan(), pollPick() ]); }
 	};
 }
 
@@ -1594,6 +1807,7 @@ return view.extend({
 		const conn   = buildConnectivitySection(this, features.core_type || null);
 		const report = buildSupportSection(this);
 		const prov   = buildProviderSection();
+		const opt    = buildOptimizerSection();
 		const profs  = buildProfilesSection();
 		const disc   = buildDiscoverySection();
 
@@ -1645,6 +1859,7 @@ return view.extend({
 		panes.overview.appendChild(core.el);
 		panes.overview.appendChild(conn.el);
 		panes.provider.appendChild(prov.el);
+		panes.services.appendChild(opt.el);
 		panes.services.appendChild(profs.el);
 		panes.services.appendChild(disc.el);
 		panes.config.appendChild(config.el);

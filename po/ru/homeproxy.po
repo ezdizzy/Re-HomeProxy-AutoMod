@@ -13003,3 +13003,60 @@ msgstr "проверена"
 
 msgid "available"
 msgstr "доступна"
+
+msgid "Checks the SERVICE, not the front page: YouTube (web/API/CDN/real video stream/QUIC), Discord (web/API/gateway WebSocket/CDN/Voice UDP/STUN/stability), Telegram (web/MTProto datacenters/calls), WhatsApp (web client/calls), games and launchers. The video level is judged bitrate-relative — from 360p to 4K — not by a fixed speed bar. The QUIC component is passive observation (the Discovery engine); active HTTP/3 probing stays off. Voice calls ride UDP relays that no tool on this router can probe — they are reported as not-probed, never as passed. Not-probed is never reported as passed."
+msgstr "Проверяется СЕРВИС, а не главная страница: YouTube (веб/API/CDN/реальный видео-поток/QUIC), Discord (веб/API/gateway WebSocket/CDN/Voice UDP/STUN/стабильность), Telegram (веб/MTProto-датацентры/звонки), WhatsApp (веб-клиент/звонки), игры и лаунчеры. Уровень видео считается по битрейту-относительно — от 360p до 4K, не по фиксированной планке скорости. QUIC-компонент — пассивное наблюдение (Discovery); активные HTTP/3-пробы выключены. Звонки идут по UDP-релеям, которые инструментами этого роутера не пробуются — они честно помечаются «не проверено», никогда «пройдено»."
+
+msgid "Served — no changes needed"
+msgstr "Обслуживается — изменения не нужны"
+
+msgid "Verified strategy ready to apply"
+msgstr "Подтверждённая стратегия готова к применению"
+
+msgid "Manual apply only (auto is forbidden)"
+msgstr "Только ручное применение (автоприменение запрещено)"
+
+msgid "Not measured by the Strategy Lab"
+msgstr "Лабораторией стратегий не измеряется"
+
+msgid "Auto-pick"
+msgstr "Автоподбор"
+
+msgid "Auto-pick failed to start: "
+msgstr "Автоподбор не запустился: "
+
+msgid "Popular service"
+msgstr "Популярный сервис"
+
+msgid "Chain (route · engine · strategy)"
+msgstr "Цепочка (маршрут · движок · стратегия)"
+
+msgid "Lab verdicts from %s · profile battery from %s · plan is read-only: applying runs the auto-pick with a mandatory rollback on a failed live check."
+msgstr "Вердикты лаборатории от %s · батарея профилей от %s · план только читает: применение запускает автоподбор с обязательным откатом при провале живой проверки."
+
+msgid "Auto-pick: %s…"
+msgstr "Автоподбор: %s…"
+
+msgid "Error: %s"
+msgstr "Ошибка: %s"
+
+msgid "Verdict: %s"
+msgstr "Вердикт: %s"
+
+msgid "Strategy: %s"
+msgstr "Стратегия: %s"
+
+msgid "Live check: %s · %s s · deep %s/%s"
+msgstr "Живая проверка: %s · %s с · deep %s/%s"
+
+msgid "Rolled back automatically — the previous state is restored."
+msgstr "Откат выполнен автоматически — восстановлено прежнее состояние."
+
+msgid "NOT rolled back — use Restore (the snapshot is kept)."
+msgstr "БЕЗ ОТКАТА — используйте Restore (снимок сохранён)."
+
+msgid "Route optimizer"
+msgstr "Оптимизатор маршрутов"
+
+msgid "Chooses the full chain for EACH popular service independently: route rule → engine (Zapret/ByeDPI/proxy) → strategy → transport → exit. The plan reads only measured facts — the Strategy Lab verdicts, the service profile batteries and your routing rules. An auto-pick applies a VERIFIED strategy with the rule set to Zapret and ROLLS BACK AUTOMATICALLY if the live check fails afterwards; a strategy that only passed the handshake is offered manually with a warning; when nothing works, the plan says WHAT exactly fails. WhatsApp is measured by its profile battery and the provider scan only — the Strategy Lab has no fuzz corpus for it."
+msgstr "Выбирает полную цепочку для КАЖДОГО популярного сервиса независимо: правило маршрута → движок (Zapret/ByeDPI/прокси) → стратегия → транспорт → выход. План читает только измеренные факты — вердикты Лаборатории стратегий, батареи профилей сервисов и ваши правила маршрутизации. Автоподбор применяет ПОДТВЕРЖДЁННУЮ стратегию с правилом на Zapret и ОБЯЗАТЕЛЬНО ОТКАТЫВАЕТ, если живая проверка после применения не прошла; стратегия, прошедшая только рукопожатие, предлагается вручную с предупреждением; когда ничего не работает, план называет, ЧТО именно не работает. WhatsApp измеряется только батареей профиля и сканером провайдера — у Лаборатории стратегий нет корпуса фаззинга для него."

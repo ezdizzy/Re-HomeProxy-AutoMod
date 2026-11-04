@@ -296,12 +296,23 @@ function run_component(comp, prof_key, counters) {
 		row.note = j.note;
 		row.code = '000';
 	} else if (comp.kind === 'stun') {
-		counters.probes++;
-		const r = probe_stun(comp.host, comp.port);
-		const j = judge_stun(r);
-		row.state = j.state;
-		row.note = j.note;
-		row.code = '000';
+		/* Ф6.8: компонент звонков без UDP-цели (звонки TG/WA идут через
+		 * собственные релеи, НЕ публичный STUN) — honest unprobed БЕЗ
+		 * расходования nc-пробы: реальный UDP-путь инструментами роутера
+		 * не измеряется (аудит 60/91, урок 255). */
+		if (!length('' + (comp.host || ''))) {
+			const j0 = judge_stun({ probed: false });
+			row.state = j0.state;
+			row.note = 'звонки идут через собственные UDP-релеи сервиса (не публичный STUN); UDP-инструмента на роутере нет — компонент не проверен, это НЕ отказ';
+			row.code = '000';
+		} else {
+			counters.probes++;
+			const r = probe_stun(comp.host, comp.port);
+			const j = judge_stun(r);
+			row.state = j.state;
+			row.note = j.note;
+			row.code = '000';
+		}
 	} else if (comp.kind === 'quic_passive') {
 		const host_class = (prof_key === 'youtube') ? 'googlevideo' : '';
 		const r = probe_quic(host_class);
@@ -383,7 +394,7 @@ if (access(TASK)) {
 
 const prof_names = [];
 if (profile === 'all') {
-	for (let k in [ 'youtube', 'discord', 'telegram', 'games' ])
+	for (let k in [ 'youtube', 'discord', 'telegram', 'whatsapp', 'games' ])
 		push(prof_names, k);
 } else {
 	push(prof_names, profile);

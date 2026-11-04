@@ -57,10 +57,14 @@
  *      the honest «превью и видео грузятся» metric.
  *
  * Honesty rules: the strategy only serves the resource when its rule leads
- * to zapret-out — the notes always carry the actual rule state; a failed
- * live check does NOT roll back automatically (the fuzz measured the
- * strategy on the isolated queue — the server snapshot + Restore button
- * stay available; an auto-rollback would also undo the user's intent).
+ * to zapret-out — the notes always carry the actual rule state. Ф6.5
+ * (аудит 78): the AUTO pick measures the resource BEFORE the apply (the
+ * same battery as the verify — lesson 64) and ROLLS BACK AUTOMATICALLY
+ * when the live check fails after the apply (обязательный откат
+ * автоподбора); a MANUAL pick (explicit strategy from the ranking table)
+ * reports the result and leaves the decision to the user — Restore stays
+ * available (аудит 78: «ручное применение: результат + решение
+ * пользователя»). The snapshot + Restore button cover both paths.
  *
  * ucode constraints honored (05-doc): popen from fs; sleep() in ms; push()/
  * shift() functions; for-in over arrays yields elements; match() only with
@@ -73,6 +77,9 @@ import { cursor } from 'uci';
 import {
 	find_daemons as pm_find, entry_alive as pm_entry_alive, reg_get as pm_reg_get
 } from '/etc/homeproxy/scripts/pmgr.uc';
+import {
+	SERVICE_NEEDS as OPT_NEEDS, rollback_decision as opt_rollback
+} from '/etc/homeproxy/scripts/service_optimizer.uc';
 
 const RUN_DIR = '/var/run/homeproxy';
 const REQ = RUN_DIR + '/wizard_autopick_req.json';
@@ -172,6 +179,41 @@ function probe_live(url, host) {
 	const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
 	const ok = (rc === 0 && int(code) >= 200 && int(code) < 400);
 	return { code: code, tsec: tsec, rc: rc, ok: ok, host: host };
+}
+
+/* Ф6.5 (аудит 78/64): baseline ресурса ПЕРЕД применением — та же батарея,
+ * что верификация после (одинаковая матрица до/после). YouTube добавляет
+ * sustained-поток (один curl на 24 миниатюры); РЕАЛЬНЫЙ видеопоток
+ * (innertube + ranged) в baseline НЕ входит — дорого и часто bot-gated;
+ * если после применения падает только он, вердикт честно называет это
+ * «не измерялось в baseline», а не регрессией. Бюджет: 1–4 curl. */
+function probe_battery(meta) {
+	const urls = (meta.deep && length(meta.deep)) ? meta.deep : [ 'http://www.gstatic.com/generate_204' ];
+	const items = [];
+	let ok_n = 0;
+	/* for-in over an array yields the ELEMENTS (lesson 20/31) */
+	for (let url in urls) {
+		const pr = probe_live(url, url);
+		if (index('' + url, 'redirector.googlevideo.com') >= 0)
+			pr.ok = (pr.code != '000' && pr.rc == 0);
+		if (pr.ok)
+			ok_n++;
+		push(items, { url: url, code: pr.code, ok: pr.ok });
+	}
+	if (meta.tag === 'yt') {
+		const ff = RUN_DIR + '/wiz_probe_flow.json';
+		system(`sh /etc/homeproxy/scripts/yt_flow_probe.sh > ${sq(ff)} 2>/dev/null`, 30000);
+		const fj = read_json(ff);
+		system(`rm -f ${sq(ff)} 2>/dev/null`);
+		if (fj != null && type(fj) === 'object' && fj.code != null) {
+			const fok = (fj.ok == 1);
+			if (fok)
+				ok_n++;
+			push(items, { url: '(поток видео)', code: '' + (fj.code || '0'), ok: fok });
+		}
+	}
+	return { items: items, ok_n: ok_n, total: length(items),
+		ok_all: (length(items) > 0 && ok_n === length(items)) };
 }
 
 /* Rough seconds-to-finish estimate from a live fuzz status: resolve+baseline
@@ -623,6 +665,15 @@ function main() {
 	 * the global write stays (that IS the general strategy). */
 	res.stage = 'apply';
 	wstat(res);
+	/* Ф6.5 (78/64): baseline ДО применения — пробы идут по ТЕКУЩЕМУ
+	 * конфигу (снапшот пишется следом, стратегия ещё не менялась). */
+	res.baseline = probe_battery(meta);
+	if (res.baseline.ok_all)
+		note(res, 'Baseline: ресурс полностью обслуживался и до применения (' +
+			res.baseline.ok_n + '/' + res.baseline.total + ' проб).');
+	else if (res.baseline != null && res.baseline.total > 0)
+		note(res, 'Baseline: до применения отвечали ' + res.baseline.ok_n +
+			' из ' + res.baseline.total + ' проб ресурса.');
 	const c = cursor();
 	const snap = {
 		ts: time(),
@@ -860,6 +911,53 @@ function main() {
 			' хостов ресурса НЕ отвечают — ресурс НЕ работает целиком (застряли медиа/CDN или видеопоток режется). Возьмите другую стратегию или полный фаззинг.');
 	else
 		note(res, 'Живая проверка ПРОВАЛЕНА (' + res.verify.code + ') — правило/режим может не вести ресурс через Zapret, либо стратегия не держит реальный трафик. Возврат остаётся доступен.');
+
+	/* Ф6.5 (аудит 93): честная заметка о UDP-компонентах сервиса —
+	 * стратегия без UDP-профиля не дезинкнёт звонки/Voice. */
+	if (OPT_NEEDS[resource] != null && OPT_NEEDS[resource].udp_calls === 1 &&
+		!match('' + (res.chosen.args || ''), /--filter-udp/))
+		note(res, 'Звонки/Voice (UDP) этой стратегией не дезинкуются (нет UDP-профиля) — они пойдут без дезинка; реальный UDP-путь инструментами роутера не измеряется (честно не проверено, аудит 60/91).');
+
+	/* Ф6.5 (аудит 78): ОБЯЗАТЕЛЬНЫЙ авто-rollback автоподбора при провале
+	 * живой проверки после применения. Ручное применение (явная стратегия
+	 * из таблицы ранжирования) — результат + решение пользователя. */
+	const after_ok_all = (res.verify.ok && deep_ok == length(res.verify_multi));
+	const rd = opt_rollback(
+		(res.baseline != null) ? res.baseline.ok_all : null, after_ok_all, !fixed);
+	res.rollback_required = rd.rollback;
+	if (rd.reason === 'manual' && !after_ok_all)
+		note(res, rd.note);
+	if (rd.rollback === true) {
+		res.stage = 'rollback';
+		wstat(res);
+		note(res, rd.note);
+		const fd = popen('ubus call luci.homeproxy wizard_compose_rollback 2>/dev/null');
+		let rout = '';
+		if (fd) { rout = trim(fd.read('all') || ''); fd.close(); }
+		let rr = null;
+		try { rr = json(rout || ''); } catch (e) { rr = null; }
+		if (rr && rr.result === true) {
+			res.rolled_back = true;
+			note(res, 'Авто-откат выполнен: прежние аргументы движков восстановлены из снимка, служба перезапускается.');
+			sleep(8000);
+			const rurl = (resource === 'general')
+				? 'http://www.gstatic.com/generate_204'
+				: ('https://' + meta.host);
+			let re = probe_live(rurl, meta.host);
+			if (!re.ok) {
+				sleep(3000);
+				re = probe_live(rurl, meta.host);
+			}
+			res.rollback_verify = re;
+			note(res, 'После отката: ' + meta.host + ' → ' + re.code +
+				((re.tsec != null) ? (' за ' + re.tsec + ' с') : '') +
+				' (восстановлено состояние до применения).');
+		} else {
+			res.rolled_back = false;
+			note(res, 'АВТО-ОТКАТ НЕ УДАЛСЯ: ' + ((rr && rr.error) || 'rollback RPC не ответил') +
+				' — восстановите вручную кнопкой Restore (снимок сохранён).');
+		}
+	}
 
 	res.running = false;
 	res.stage = 'done';

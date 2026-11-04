@@ -30,10 +30,16 @@
 // Стабильность (60): повторная проба ключевого компонента (gateway WS) —
 // два одинаковых успеха = стабильно, разброс = флапает, оба провала = сломан.
 //
-// Бюджеты (урок 197: пакеты проб ≤16 на Keenetic за проход движка; ручной
-// прогон батарее может выходить за бюджет движка, но остаётся ограниченным):
-// youtube 5 · discord ≤7 · telegram 3 · games 2; «все» = 16 базовых проб,
-// дифференциал причины — ≤2 доп. пробы на ОТКАЗАВШИЙ компонент, потолок +8.
+// Бюджеты (урок 197: пакеты проб ≤16 на Keenetic за ПРОХОД ДВИЖКА; ручной
+// прогон батарей может выходить за движковый бюджет, но остаётся
+// ограниченным): youtube 5 · discord 6 · telegram 4 · whatsapp 2 · games 2;
+// «все» = 19 базовых проб, дифференциал причины — ≤2 доп. пробы на
+// ОТКАЗАВШИЙ компонент, потолок +8.
+//
+// Ф6.8: профиль WhatsApp + компоненты звонков TG/WA. Звонки — UDP (STUN/
+// TURN-релеи): nc -u на Keenetic НЕТ (урок 255) — компонент честно
+// unprobed («не проверено» ≠ «пройдено», аудит 91), проверяется ТОЛЬКО
+// транспортный уровень батарей, которые инструменты позволяют.
 //
 // QUIC-компонент YouTube — ПАССИВНОЕ наблюдение (Discovery Engine): активные
 // HTTP/3-пробы НЕ возвращаются без новых данных (§2.5 плана) — отсутствие
@@ -195,12 +201,22 @@ export const PROFILES = {
 	},
 	telegram: {
 		label: 'Telegram',
-		note: 'веб + MTProto-датацентры (TCP-транспорт к известным адресам DC)',
-		probes: 3,
+		note: 'веб + MTProto-датацентры (TCP-транспорт к известным адресам DC) + звонки (UDP-релеи — без UDP-инструмента честно не проверяются)',
+		probes: 4,
 		components: [
 			{ id: 'web', label: 'Веб (web.telegram.org)', kind: 'http', url: 'https://web.telegram.org/', host: 'web.telegram.org' },
 			{ id: 'dc1', label: 'DC2 (149.154.167.51)',   kind: 'tcp', host: '149.154.167.51', port: 443 },
-			{ id: 'dc2', label: 'DC4 (149.154.175.53)',   kind: 'tcp', host: '149.154.175.53', port: 443 }
+			{ id: 'dc2', label: 'DC4 (149.154.175.53)',   kind: 'tcp', host: '149.154.175.53', port: 443 },
+			{ id: 'calls', label: 'Звонки (UDP-релеи)',   kind: 'stun', host: null, port: 0 }
+		]
+	},
+	whatsapp: {
+		label: 'WhatsApp',
+		note: 'веб-клиент + звонки (UDP); медиа-серверы динамические (mmg.*/media-*) — отдельными пробами не проверяются честно, Ф6.8',
+		probes: 2,
+		components: [
+			{ id: 'web',   label: 'Веб-клиент (web.whatsapp.com)', kind: 'http', url: 'https://web.whatsapp.com/', host: 'web.whatsapp.com' },
+			{ id: 'calls', label: 'Звонки (UDP/TURN)',             kind: 'stun', host: null, port: 0 }
 		]
 	},
 	games: {
@@ -214,14 +230,17 @@ export const PROFILES = {
 	}
 };
 
-export const PROFILE_KEYS = [ 'youtube', 'discord', 'telegram', 'games', 'all' ];
+export const PROFILE_KEYS = [ 'youtube', 'discord', 'telegram', 'whatsapp', 'games', 'all' ];
 
 /* Базовый бюджет проб профиля (видео = 2 запроса: innertube + ranged-GET;
- * QUIC-наблюдение пассивное — проб не тратит). */
+ * QUIC-наблюдение пассивное — проб не тратит; звонки без UDP-инструмента —
+ * 0 проб, honest unprobed). «все» = 19 базовых проб: ручной прогон батарей
+ * выходит за движковый бюджет урока 197 (16) осознанно и остаётся
+ * ограниченным — бюджет движка относится к ПРОХОДАМ ДВИЖКА. */
 export function profile_probe_budget(name) {
 	if (name === 'all') {
 		let n = 0;
-		for (let k in [ 'youtube', 'discord', 'telegram', 'games' ])
+		for (let k in [ 'youtube', 'discord', 'telegram', 'whatsapp', 'games' ])
 			n += (PROFILES[k] != null) ? PROFILES[k].probes : 0;
 		return n;
 	}
@@ -321,11 +340,13 @@ export function selftest() {
 	j = judge_quic({ observed: false });
 	t('quic not observed → unprobed, не отказ', j.state === 'unprobed');
 
-	/* Профили структурно целы и в бюджете урока 197 для «all». */
-	t('profiles defined', length(keys(PROFILES)) === 4);
-	for (let pk in [ 'youtube', 'discord', 'telegram', 'games' ])
+	/* Профили структурно целы и бюджет ограничен (урок 197 — бюджеты движка,
+	 * ручные батареи ограничены, но могут его превышать — честно). */
+	t('profiles defined', length(keys(PROFILES)) === 5);
+	for (let pk in [ 'youtube', 'discord', 'telegram', 'whatsapp', 'games' ])
 		t('profile ' + pk + ' has components', PROFILES[pk] != null && length(PROFILES[pk].components) > 0);
-	t('all budget ≤ 16 (урок 197)', profile_probe_budget('all') <= 16);
+	t('all budget bounded (урок 197: ручной прогон, ≤20)', profile_probe_budget('all') <= 20);
+	t('all budget matches sum', profile_probe_budget('all') === 19);
 
 	return { pass: length(pass), fail: length(fail), details: fail };
 };

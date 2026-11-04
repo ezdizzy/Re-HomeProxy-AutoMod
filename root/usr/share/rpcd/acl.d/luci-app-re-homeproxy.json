@@ -23,7 +23,7 @@
 					"app_subscription_status",
 					"wizard_autopilot_status", "wizard_auto_pick_status", "automation_status", "automation_stats",
 					"route_explain", "wizard_scan_status", "wizard_dpidetect_status", "wizard_service_check",
-					"wizard_service_profile_status", "discovery_snapshot",
+					"wizard_service_profile_status", "discovery_snapshot", "service_optimizer_plan",
 					"wizard_preset_list", "wizard_dpi_status", "wizard_strategy_list", "wizard_strategy_status",
 					"wizard_tgwsp_status", "overview_metrics", "overview_sys", "telegram_status", "automation_geo_diag",
 					"mosdns_status", "mosdns_check_update", "multidns_status", "diag_dns_multidns",

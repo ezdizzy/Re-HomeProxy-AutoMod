@@ -61,6 +61,10 @@ import { acquire as resmgr_acquire, release as resmgr_release,
 	lab_lock as resmgr_lab_lock, lab_unlock as resmgr_lab_unlock,
 	status as resmgr_status }
 	from '/etc/homeproxy/scripts/test_resmgr.uc';
+/* Ф6.5 Service Path Optimizer: чистые вычисления плана цепочки
+ * Service→Route→Engine→Strategy→Transport→Exit (аудит 70/78/92/93). */
+import { chain_plan as optimizer_chain_plan, SERVICE_KEYS as OPT_SERVICE_KEYS }
+	from '/etc/homeproxy/scripts/service_optimizer.uc';
 
 /* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
  * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
@@ -5914,7 +5918,7 @@ const methods = {
 			}
 			if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
 				return { result: false, error: 'a profile battery is already running' };
-			const valid = { youtube: true, discord: true, telegram: true, games: true, all: true };
+			const valid = { youtube: true, discord: true, telegram: true, whatsapp: true, games: true, all: true };
 			const p = lc(trim('' + ((req && req.args && req.args.profile) || 'all')));
 			if (!valid[p])
 				return { result: false, error: 'unknown profile: ' + p };
@@ -5936,6 +5940,87 @@ const methods = {
 				try { result = json(readfile(rs) || ''); } catch (e) { result = null; }
 			}
 			return { status: status, result: result };
+		}
+	},
+
+	/* ── Ф6.5 Service Path Optimizer: план цепочки Service→Route→Engine→
+	 * Strategy→Transport→Exit для КАЖДОГО популярного сервиса НЕЗАВИСИМО
+	 * (аудит 70). ТОЛЬКО ЧТЕНИЕ измеренных фактов: вердикты Strategy Lab
+	 * (Ф6.4, zapret_fuzz_result.json), сводки батарей профилей (Ф6.3,
+	 * service_profile_result.json), состояние правил/режима; решение
+	 * собирает ЧИСТЫЙ модуль service_optimizer.uc (аудит 70/78/92/93).
+	 * Проб и мутаций НЕТ — применение выполняет существующий
+	 * wizard_auto_pick_start (одна реализация гейта и отката), батарея —
+	 * wizard_service_profile_run. */
+	service_optimizer_plan: {
+		call: function(req) {
+			const c = cursor();
+			const rules = {};
+			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+				const src = trim('' + (s.source || ''));
+				if (index(OPT_SERVICE_KEYS, src) < 0)
+					return;
+				const en = (s.enabled === '1');
+				if (rules[src] == null || (en && rules[src].enabled !== true))
+					rules[src] = { source: src, node: '' + (s.node || ''), enabled: en };
+			});
+			/* Вердикты Strategy Lab (Ф6.4) из последнего прогона фаззинга. */
+			let lab = null;
+			const lfp = RUN_DIR + '/zapret_fuzz_result.json';
+			if (access(lfp)) {
+				try { lab = json(readfile(lfp) || ''); } catch (e) { lab = null; }
+			}
+			/* Сводки батарей профилей (Ф6.3): строки результата несут
+			 * profile — сводка собирается по каждому сервису отдельно. */
+			let prof = null;
+			const pfp = RUN_DIR + '/service_profile_result.json';
+			if (access(pfp)) {
+				try { prof = json(readfile(pfp) || ''); } catch (e) { prof = null; }
+			}
+			const summaries = {};
+			if (prof != null && type(prof.components) === 'array') {
+				for (let k in OPT_SERVICE_KEYS)
+					summaries[k] = { working: 0, degraded: 0, refused: 0,
+						broken: 0, unprobed: 0, unusable: 0 };
+				/* for-in over an array yields the ELEMENTS (lesson 20/31). */
+				for (let r in prof.components) {
+					if (type(r) !== 'object')
+						continue;
+					const pk = '' + (r.profile || '');
+					if (summaries[pk] == null || type(r.state) !== 'string' ||
+						summaries[pk][r.state] == null)
+						continue;
+					summaries[pk][r.state]++;
+				}
+				/* Батарея не гонялась для сервиса → null (честное отсутствие). */
+				for (let k in OPT_SERVICE_KEYS)
+					if ((int(summaries[k].working) + int(summaries[k].degraded) +
+						int(summaries[k].refused) + int(summaries[k].broken) +
+						int(summaries[k].unprobed) + int(summaries[k].unusable)) === 0)
+						summaries[k] = null;
+			}
+			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || 'nil');
+			const rmode = '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
+			const z_on = (c.get('homeproxy', 'config', 'zapret_enabled') === '1');
+			const services = {};
+			for (let k in OPT_SERVICE_KEYS) {
+				const lv = (lab != null && type(lab.verdicts) === 'object' &&
+					type(lab.verdicts[k]) === 'object') ? lab.verdicts[k] : null;
+				services[k] = optimizer_chain_plan({
+					service: k,
+					lab_verdict: (lv != null) ? ('' + (lv.verdict || '')) : null,
+					lab_chosen: (lv != null && type(lv.chosen) === 'object') ? lv.chosen : null,
+					profile: summaries[k],
+					rule: (rules[k] != null) ? rules[k] : null,
+					main_node: main_node,
+					routing_mode: rmode,
+					zapret_enabled: z_on
+				});
+			}
+			return { result: true, ts: time(), services: services,
+				main_node: main_node, routing_mode: rmode, zapret_enabled: z_on,
+				lab_ts: (lab != null) ? int(lab.ts || 0) : 0,
+				profile_ts: (prof != null) ? int(prof.ts || 0) : 0 };
 		}
 	},
 
