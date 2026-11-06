@@ -2,7 +2,7 @@
 //
 // Ravnex — detached-исполнитель операций применения (Ф1.1; аудит 1.6/1.7/48).
 // Usage: ucode apply_runner.uc <op_id> <action>
-//   actions: restart | reload | engine_restart
+//   actions: restart | reload | engine_restart | fw_refresh
 //
 // Лок уже удержан opman.begin() (rpcd создал операцию и заспавнил руннер).
 // Руннер ведёт стадии Applying→Verifying→Completed/Failed (аудит 48),
@@ -38,8 +38,8 @@ import { find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
 import { access, readfile, popen } from 'fs';
 import { cursor } from 'uci';
 
-const ACTIONS = { restart: 90, reload: 90, engine_restart: 60 };   /* action → system() timeout, s */
-const VERIFY_SEC = { restart: 25, reload: 25, engine_restart: 20 };
+const ACTIONS = { restart: 90, reload: 90, engine_restart: 60, fw_refresh: 30 };   /* action → system() timeout, s */
+const VERIFY_SEC = { restart: 25, reload: 25, engine_restart: 20, fw_refresh: 15 };
 
 function capture(cmd) {
 	const fd = popen(cmd);
@@ -98,6 +98,24 @@ function verify_core(op_id) {
 		ok: false,
 		note: inst ? 'hiddify-c exists but not running' : 'hiddify-c instance absent while enabled'
 	};
+}
+
+/* Ф9.14: firewall-only apply — the interception chains must be PRESENT in
+ * the live ruleset after the fw4 reload (same check the start_service
+ * self-heal pass 2 uses). The fresh render is the whole apply: init.d
+ * fw_refresh returns rc=1 on a render failure, and the runner mirrors it. */
+function verify_nft(op_id) {
+	const deadline = time() + VERIFY_SEC.fw_refresh;
+	while (true) {
+		const t = capture('nft list table inet fw4 2>/dev/null');
+		if (index(t, 'homeproxy_') !== -1)
+			return { ok: true, note: 'homeproxy nft chains present' };
+		if (time() >= deadline)
+			break;
+		heartbeat(op_id);
+		sleep(2000);
+	}
+	return { ok: false, note: 'homeproxy nft chains missing after fw_refresh' };
 }
 
 function verify_engines(op_id) {
@@ -159,7 +177,8 @@ function main() {
 	const action = '' + (ARGV[1] || '');
 	const op = get_op(op_id);
 	if (!op || op.action !== action ||
-	    (action !== 'restart' && action !== 'reload' && action !== 'engine_restart'))
+	    (action !== 'restart' && action !== 'reload' && action !== 'engine_restart' &&
+	     action !== 'fw_refresh'))
 		exit(1);   /* нет записи операции — протоколировать некуда */
 
 	/* 🔴 Урок 169: stderr руннера уходит в /dev/null (spawn из rpcd) — ЛЮБОЕ
@@ -174,7 +193,17 @@ function main() {
 		 * решает верификация; rc попадает в detail при не-нуле. */
 
 		stage(op_id, 'verifying');
-		const v = (action === 'engine_restart') ? verify_engines(op_id) : verify_core(op_id);
+		let v;
+		if (action === 'engine_restart')
+			v = verify_engines(op_id);
+		else if (action === 'fw_refresh')
+			v = verify_nft(op_id);
+		else
+			v = verify_core(op_id);
+		/* fw_refresh: rc=1 (render failure) — честный failed даже при
+		 * живых цепях (они остались старыми). */
+		if (action === 'fw_refresh' && length(rc) && rc != '0')
+			v = { ok: false, note: join('; ', [ 'init.d rc=' + rc, v.note ]) };
 
 		const parts = [];
 		if (length(rc) && rc != '0')

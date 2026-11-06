@@ -2130,6 +2130,128 @@ function ctrl_client_by_id(id) {
 	return null;
 }
 
+/* ── Ф9.14 (D34d): режим прокси на карточке устройства ───────────────────
+ * Карточки устройств несут режим (Auto/Прямой/Прокси/Gaming/Глобальный),
+ * мутации идут в ТЕ ЖЕ UCI-списки, которыми питаются nft-цепи lanac/
+ * redirect/mangle (firewall_post.ut). Идентичность — MAC из реестра, для
+ * устройств без MAC — статический IP. IPv6-списки остаются экспертными.
+ * 🔴 Урок 321: list-опция пишется ТОЛЬКО set'ом С МАССИВОМ (скалярный set
+ * замещает список одним элементом), пустой итог = delete опции. Сравнение
+ * списков — сортированным множеством строк (урок 254). */
+
+const LAN_MODES = [ 'direct', 'proxy', 'gaming', 'global' ];
+
+const LAN_KINDS = [ 'mac', 'ip4', 'ip6' ];
+
+const LAN_LIST_OPTS = {
+	direct: { mac: 'lan_direct_mac_addrs', ip4: 'lan_direct_ipv4_ips', ip6: 'lan_direct_ipv6_ips' },
+	proxy: { mac: 'lan_proxy_mac_addrs', ip4: 'lan_proxy_ipv4_ips', ip6: 'lan_proxy_ipv6_ips' },
+	gaming: { mac: 'lan_gaming_mode_mac_addrs', ip4: 'lan_gaming_mode_ipv4_ips', ip6: 'lan_gaming_mode_ipv6_ips' },
+	global: { mac: 'lan_global_proxy_mac_addrs', ip4: 'lan_global_proxy_ipv4_ips', ip6: 'lan_global_proxy_ipv6_ips' }
+};
+
+const LAN_MODE_LABEL = {
+	auto: 'как у всех (Auto)',
+	direct: 'напрямую',
+	proxy: 'через прокси',
+	gaming: 'gaming (только TCP)',
+	global: 'глобальный прокси'
+};
+
+const LAN_GLOBAL_LABEL = {
+	except_listed: 'все, кроме отмеченных «Напрямую»',
+	listed_only: 'только отмеченные «Прокси»'
+};
+
+function hp_lan_list(c, opt) {
+	return map(c.get('homeproxy', 'control', opt) || [], (v) => '' + v);
+}
+
+/* One array write; returns true only when the value actually changed
+ * (order-insensitive — sorted-set compare, урок 254). 🔴 Урок 20/31:
+ * в ucode join(РАЗДЕЛИТЕЛЬ, массив) — разделитель ПЕРВЫМ. Секция —
+ * 'control': firewall_post.ut читает списки ИМЕННО оттуда (probe live
+ * ч.207: запись в config шаблон не видит). */
+function hp_lan_store(c, opt, arr) {
+	const cur = join('\n', sort(hp_lan_list(c, opt)));
+	const nxt = join('\n', sort(arr));
+	if (cur === nxt)
+		return false;
+	if (length(arr))
+		c.set('homeproxy', 'control', opt, arr);
+	else
+		c.delete('homeproxy', 'control', opt);
+	return true;
+}
+
+/* Drop one (case-insensitive) value from a list option; true on change. */
+function hp_lan_drop(c, opt, val) {
+	const arr = hp_lan_list(c, opt);
+	const kept = filter(arr, (v) => lc(v) !== lc(val));
+	if (length(kept) === length(arr))
+		return false;
+	return hp_lan_store(c, opt, kept);
+}
+
+/* Add one value (dedup, case-insensitive); true on change. */
+function hp_lan_add(c, opt, val) {
+	const arr = hp_lan_list(c, opt);
+	for (let i = 0; i < length(arr); i++)
+		if (lc(arr[i]) === lc(val))
+			return false;
+	push(arr, val);
+	return hp_lan_store(c, opt, arr);
+}
+
+/* The apply descriptor every policy write returns (the op door — Ф1.1b). */
+function hp_lan_apply(ap) {
+	return { hot: false, result: ap.result === true, op_id: ap.op_id || '',
+		busy: ap.busy === true, error: ap.error || '' };
+}
+
+/* The full policy view for the UI mirror: all 12 lists + the effective
+ * global mode (one honest round-trip per write — the client keeps NO
+ * separate cache in sync). */
+function hp_lan_view(c) {
+	const out = {};
+	for (let i = 0; i < length(LAN_MODES); i++) {
+		const mo = LAN_LIST_OPTS[LAN_MODES[i]];
+		for (let k = 0; k < length(LAN_KINDS); k++)
+			out[mo[LAN_KINDS[k]]] = hp_lan_list(c, mo[LAN_KINDS[k]]);
+	}
+	return out;
+}
+
+function hp_lan_global_mode(c) {
+	const m = '' + (c.get('homeproxy', 'control', 'lan_proxy_mode') || 'except_listed');
+	return (m === 'listed_only') ? 'listed_only' : 'except_listed';
+}
+
+/* Resolve which mode/kind owns a list option name (null when not ours). */
+function hp_lan_owner(opt) {
+	for (let i = 0; i < length(LAN_MODES); i++) {
+		const mo = LAN_LIST_OPTS[LAN_MODES[i]];
+		for (let k = 0; k < length(LAN_KINDS); k++)
+			if (mo[LAN_KINDS[k]] === opt)
+				return { mode: LAN_MODES[i], kind: LAN_KINDS[k] };
+	}
+	return null;
+}
+
+/* Validate + canonicalize one expert-list value by kind; null on junk. */
+function hp_lan_value(kind, v) {
+	if (kind === 'mac')
+		return hc_norm_mac(v);
+	const ce = classify_entry(v ?? '');
+	if (!ce)
+		return null;
+	if (kind === 'ip4' && (ce.kind === 'ipv4' || ce.kind === 'cidr4'))
+		return (ce.kind === 'ipv4') ? ce.host : ce.value;
+	if (kind === 'ip6' && (ce.kind === 'ipv6' || ce.kind === 'cidr6'))
+		return (ce.kind === 'ipv6') ? ce.host : ce.value;
+	return null;
+}
+
 /* The full status view (UI + Telegram share it). */
 function ctrl_status_view() {
 	const now = time();
@@ -4861,7 +4983,7 @@ const methods = {
 			for (let sid in removed)
 				gone[sid] = true;
 			const set_nil = (opt) => {
-				const v = c.get('homeproxy', 'config', opt);
+				const v = c.get('homeproxy', 'control', opt);
 				if (v != null && ('' + v) in gone) {
 					c.delete('homeproxy', 'config', opt);
 					c.set('homeproxy', 'config', opt, 'nil');
@@ -9974,6 +10096,135 @@ const methods = {
 			hc_add_event('wifi', iface, 'временное выключение снято');
 			ctrl_apply_async();
 			return { result: true };
+		}
+	},
+
+	/* ── Ф9.14 (D34d): прокси-политика устройств — только серверные RPC ──
+	 * (урок 323: клиентский uci.set на странице перетирается формой;
+	 * здесь формы нет вовсе — всё через эти методы + op-дверь). */
+
+	/* Глобальный режим фильтра — смысл режима «Auto» на карточках.
+	 * «Отключён» (disabled) упразднён D34d: он означал «все через прокси,
+	 * списки игнорируются» — мигратор migrate_lan_mode.uc переносит его в
+	 * except_listed при старте службы. */
+	control_proxy_global: {
+		args: { mode: 'mode' },
+		call: function(req) {
+			const mode = req.args?.mode;
+			if (mode !== 'except_listed' && mode !== 'listed_only')
+				return { result: false, error: 'illegal mode' };
+			const c = cursor();
+			const cur = hp_lan_global_mode(c);
+			if (cur === mode)
+				return { result: true, changed: false, mode: mode,
+					global_mode: cur, lists: hp_lan_view(c) };
+			c.set('homeproxy', 'control', 'lan_proxy_mode', mode);
+			c.commit('homeproxy');
+			hc_add_event('system', '', 'режим устройств: ' + (LAN_GLOBAL_LABEL[mode] || mode));
+			const ap = op_spawn('fw_refresh', 'device filter mode (' + mode + ')');
+			return { result: true, changed: true, mode: mode,
+				global_mode: mode, lists: hp_lan_view(c), apply: hp_lan_apply(ap) };
+		}
+	},
+
+	/* Режим одного устройства реестра: переписывает его членство во всех
+	 * списках (MAC — из MAC-списков, статический IP — из IPv4-списков),
+	 * затем добавляет в целевой (auto = только убрать). Оп — только при
+	 * реальном изменении. */
+	control_proxy_mode: {
+		args: { id: 'id', mode: 'mode' },
+		call: function(req) {
+			const id = req.args?.id;
+			const mode = req.args?.mode;
+			if (mode !== 'auto' && index(LAN_MODES, mode) === -1)
+				return { result: false, error: 'illegal mode' };
+			const cl = id ? ctrl_client_by_id(id) : null;
+			if (!cl)
+				return { result: false, error: 'unknown client id' };
+			const mac = hc_norm_mac(cl.mac);
+			const ip = trim('' + (cl.ip || ''));
+			if (!mac && !hc_valid_ip4(ip))
+				return { result: false, error: 'у устройства нет ни MAC, ни корректного IPv4' };
+			const c = cursor();
+			let changed = false;
+			for (let i = 0; i < length(LAN_MODES); i++) {
+				const mo = LAN_LIST_OPTS[LAN_MODES[i]];
+				if (mac && hp_lan_drop(c, mo.mac, mac))
+					changed = true;
+				if (length(ip) && hp_lan_drop(c, mo.ip4, ip))
+					changed = true;
+			}
+			if (mode !== 'auto') {
+				const tgt = LAN_LIST_OPTS[mode];
+				if (mac)
+					changed = hp_lan_add(c, tgt.mac, mac) || changed;
+				else
+					changed = hp_lan_add(c, tgt.ip4, ip) || changed;
+			}
+			if (!changed)
+				return { result: true, changed: false, mode: mode,
+					global_mode: hp_lan_global_mode(c), lists: hp_lan_view(c) };
+			c.commit('homeproxy');
+			hc_add_event('system', cl.name || ip || mac,
+				'режим прокси: ' + (LAN_MODE_LABEL[mode] || mode));
+			const ap = op_spawn('fw_refresh', 'device proxy mode (' + (LAN_MODE_LABEL[mode] || mode) + ')');
+			return { result: true, changed: true, mode: mode,
+				global_mode: hp_lan_global_mode(c), lists: hp_lan_view(c), apply: hp_lan_apply(ap) };
+		}
+	},
+
+	/* Экспертные списки IP/MAC: батч-запись подмножества опций. Аргумент —
+	 * JSON-СТРОКА {option: [values]} (урок 132: args — string-policy).
+	 * 🔴 Урок 256: json() парсит голый NaN — значения валидируются против
+	 * известного множества (whitelist опций + classify_entry/MAC), весь
+	 * батч проверяется ДО первой записи (fail closed). */
+	control_proxy_lists: {
+		args: { lists: 'lists' },
+		call: function(req) {
+			let data = null;
+			try { data = json(req.args?.lists || ''); } catch (e) { data = null; }
+			if (data == null || type(data) !== 'object' || !length(keys(data)))
+				return { result: false, error: 'broken payload' };
+			/* Pass 1 — validate everything first. */
+			const plan = [];
+			const opts = keys(data);
+			for (let i = 0; i < length(opts); i++) {
+				const opt = '' + opts[i];
+				const own = hp_lan_owner(opt);
+				if (!own)
+					return { result: false, error: 'illegal option: ' + opt };
+				const raw = map(data[opt] || [], (v) => trim('' + (v ?? '')));
+				if (length(raw) > 256)
+					return { result: false, error: 'too many entries in ' + opt };
+				const vals = [];
+				const seen = {};
+				for (let j = 0; j < length(raw); j++) {
+					if (!length(raw[j]))
+						continue;
+					const canon = hp_lan_value(own.kind, raw[j]);
+					if (canon == null)
+						return { result: false, error: 'invalid value for ' + opt + ': ' + raw[j] };
+					if (seen[lc(canon)])
+						continue;
+					seen[lc(canon)] = true;
+					push(vals, canon);
+				}
+				push(plan, { opt: opt, vals: vals });
+			}
+			/* Pass 2 — write. */
+			const c = cursor();
+			let changed = false;
+			for (let i = 0; i < length(plan); i++)
+				if (hp_lan_store(c, plan[i].opt, plan[i].vals))
+					changed = true;
+			if (!changed)
+				return { result: true, changed: false,
+					global_mode: hp_lan_global_mode(c), lists: hp_lan_view(c) };
+			c.commit('homeproxy');
+			hc_add_event('system', '', 'экспертные списки устройств обновлены');
+			const ap = op_spawn('fw_refresh', 'device lists apply (nft re-render, flows kept)');
+			return { result: true, changed: true,
+				global_mode: hp_lan_global_mode(c), lists: hp_lan_view(c), apply: hp_lan_apply(ap) };
 		}
 	},
 

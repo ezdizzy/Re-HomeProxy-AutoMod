@@ -8134,3 +8134,90 @@ msgstr ""
 
 msgid "Not in the last run"
 msgstr ""
+
+msgid "Expert: WAN & interfaces"
+msgstr ""
+
+msgid "WAN-wide destinations and interface binding for the whole service."
+msgstr ""
+
+msgid "Force these WAN destinations through the proxy (checked before everything else)."
+msgstr ""
+
+msgid "Force these WAN destinations direct (the \"Global proxy\" devices still pass)."
+msgstr ""
+
+msgid "Rules for the people at home: which sites a child can open, when the internet turns off in the evening, and Wi-Fi cut-off at night. The devices themselves live on the Devices page — the rules below apply to them by name. What the system did is journaled once — in the Health center."
+msgstr ""
+
+msgid "Another apply is running — try again in a moment."
+msgstr ""
+
+msgid "Saved — applying (rules reload)…"
+msgstr ""
+
+msgid "Apply failed — see the operations journal."
+msgstr ""
+
+msgid "The apply is still running — see the operations journal on the Health center page."
+msgstr ""
+
+msgid "Device proxy mode — Auto follows the common policy"
+msgstr ""
+
+msgid "Proxy mode saved and applied."
+msgstr ""
+
+msgid "What the \"Auto\" mode on the cards means"
+msgstr ""
+
+msgid "Proxy all except the \"Direct\" ones"
+msgstr ""
+
+msgid "Proxy the \"Proxied\" ones only"
+msgstr ""
+
+msgid "The device policy is applied."
+msgstr ""
+
+msgid "Not a valid MAC address."
+msgstr ""
+
+msgid "Not a valid IP address or CIDR."
+msgstr ""
+
+msgid "Save the lists"
+msgstr ""
+
+msgid "Discard changes"
+msgstr ""
+
+msgid "No changes to save."
+msgstr ""
+
+msgid "The device lists are saved and applied."
+msgstr ""
+
+msgid "The edits are discarded — the lists show the applied state."
+msgstr ""
+
+msgid "Expert IP/MAC lists"
+msgstr ""
+
+msgid "Lists shared by the whole home network: an entry here applies no matter what the card modes say. The device cards above manage the MAC/IPv4 membership of single devices."
+msgstr ""
+
+msgid "Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Parental control and the Telegram bot); every card carries its own proxy mode, the common policy and the expert lists live at the bottom."
+msgstr ""
+
+msgid "«Auto» on a device card means «like everyone else» — this policy. A card mode (Direct/Proxied/Gaming/Global) overrides it for that one device. What is proxied for the whole home is decided on the Service rules and Blocking bypass pages."
+msgstr ""
+
+msgid "Common policy for \"Auto\" devices"
+msgstr ""
+
+msgid "Clear the events journal? The repair history and the service log are not touched."
+msgstr ""
+
+msgid "The single event feed of the whole system: routing, bypass engines, automation, health, recovery, Safe Mode, updates and security all write to this one journal."
+msgstr ""

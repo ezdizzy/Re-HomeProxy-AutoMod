@@ -157,26 +157,6 @@ const callWifiTempClear = rpc.declare({
 	expect: { '': {} }
 });
 
-const callEvents = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'control_events',
-	params: [ 'limit' ],
-	expect: { '': {} }
-});
-
-const callEventsClear = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'control_events_clear',
-	expect: { '': {} }
-});
-
-const callLogTail = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'control_log_tail',
-	params: [ 'lines' ],
-	expect: { '': {} }
-});
-
 /* Offline service catalog for quick site-rule targets (D5: no runtime
  * fetches — plain data shipped with the view). Plan 15: expanded catalog
  * grouped by category, with in-catalog search. */
@@ -406,13 +386,16 @@ return view.extend({
 		};
 
 		/* ── Tab frame (wizard pattern) ─────────────────────────────── */
+		/* Ф9.14 (D34d): the «Devices» stub tab is gone (the registry lives
+		 * on the Devices page — the intro links there), and the «Journal»
+		 * duplicate is gone too: the ONE operations journal is the Health
+		 * center Event center (which now owns the clear button); the fresh
+		 * events strip stays on the Overview page. */
 		const TABS = [
 			[ 'dash', _('Dashboard') ],
-			[ 'devices', _('Devices') ],
 			[ 'rules', _('Site rules') ],
 			[ 'sched', _('Schedules') ],
 			[ 'wifi', _('Wi-Fi') ],
-			[ 'journal', _('Journal') ],
 			[ 'settings', _('Settings') ]
 		];
 		const panes = {};
@@ -431,8 +414,6 @@ return view.extend({
 					panes[k].classList.toggle('active', k === key);
 				for (let j = 0; j < tabBar.children.length; j++)
 					tabBar.children[j].classList.toggle('active', j === idx);
-				if (key === 'journal')
-					refreshJournal();
 				if (key === 'wifi')
 					refreshWifi();
 			});
@@ -628,16 +609,6 @@ return view.extend({
 		panes.dash.appendChild(E('p', { 'class': 'hpui-hint' }, [
 			_('The same actions are available from the Telegram bot: /menu (all in buttons), /devices, /blocksite, /pause, /resume, /wifi. Blocks follow DHCP address changes — devices are tracked by MAC.')
 		]));
-
-		/* ── DEVICES (moved to the dedicated page in v3d) ──────── */
-
-		panes.devices.appendChild(E('p', { 'class': 'hpui-hint' }, [
-			_('The device registry moved to the dedicated Devices page: the list, the blocking actions and the Proxy policy live there now.')
-		]));
-		panes.devices.appendChild(E('a', {
-			'class': 'btn cbi-button cbi-button-action',
-			'href': L.url('admin/services/homeproxy', 'devices')
-		}, [ _('Open Devices') ]));
 
 		/* ── SITE RULES ─────────────────────────────────────────────── */
 
@@ -1175,64 +1146,6 @@ return view.extend({
 		panes.wifi.appendChild(wifiCards);
 		panes.wifi.appendChild(resultBlock(wifiResult));
 
-		/* ── JOURNAL ────────────────────────────────────────────────── */
-
-		const evList = E('div', { 'class': 'hpui-log', 'style': 'max-height:420px' });
-		const logBox = E('pre', { 'class': 'hpui-pre hpui-log' }, [ '' ]);
-
-		/* Ф2.4: единая лента Event Bus — источник записи виден явно.
-		 * Ф9.1: иконки/цвета/подписи источников ОДНИ на всё приложение
-		 * (hp.EV_* — Home strip, Journal, Health center look the same). */
-		const evIcons = hp.EV_ICONS;
-		const evColors = hp.EV_COLORS;
-		const srcLabels = hp.EV_SRC();
-
-		function refreshJournal() {
-			return Promise.all([
-				L.resolveDefault(callEvents('120'), null),
-				L.resolveDefault(callLogTail('80'), null)
-			]).then(function(d) {
-				const events = (d[0] && d[0].events) || [];
-				const lines = [];
-				for (let i = events.length - 1; i >= 0 && lines.length < 120; i--) {
-					const ev = events[i];
-					const t = new Date(ev.ts * 1000);
-					const hh = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2);
-					const icon = evIcons[ev.type] || '•';
-					const src = srcLabels[ev.src || 'control'] || (ev.src || 'control');
-					lines.push(E('div', {}, [
-						E('span', { 'class': evColors[ev.type] || 'hpui-c-grey' }, [ hh + ' ' + icon + ' ' + (ev.who || '') ]),
-						(ev.detail ? ' — ' + ev.detail : ''),
-						E('span', { 'class': 'hpui-cap', 'style': 'margin-left:8px' }, [ '[' + src + ']' ])
-					]));
-				}
-				dom.content(evList, lines.length ? lines : [ _('The journal is empty.') ]);
-				logBox.textContent = (d[1] && d[1].content) || '';
-			});
-		}
-
-		const evClearBtn = E('button', { 'class': 'btn cbi-button-remove', type: 'button' }, [ _('Clear the journal') ]);
-		evClearBtn.addEventListener('click', function() {
-			ui.showModal(_('Clear the journal'), [
-				E('p', {}, [ _('Clear the events journal? The service log is not touched.') ]),
-				E('div', { 'class': 'right', 'style': 'margin-top:14px' }, [
-					E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
-					E('button', { 'class': 'btn cbi-button-negative important', 'click': function() {
-						ui.hideModal();
-						L.resolveDefault(callEventsClear(), {}).finally(function() { refreshJournal(); });
-					} }, [ _('Clear') ])
-				])
-			]);
-		});
-		const logRefreshBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Refresh log') ]);
-		logRefreshBtn.addEventListener('click', refreshJournal);
-
-		panes.journal.appendChild(E('div', { 'class': 'ct-toolbar' }, [ evClearBtn, logRefreshBtn ]));
-		panes.journal.appendChild(E('h4', {}, [ _('Events') ]));
-		panes.journal.appendChild(evList);
-		panes.journal.appendChild(E('h4', {}, [ _('Service log') ]));
-		panes.journal.appendChild(logBox);
-
 		/* ── SETTINGS ───────────────────────────────────────────────── */
 
 		const setEnableBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' });
@@ -1267,16 +1180,15 @@ return view.extend({
 
 		poll.add(refreshStatus, 4);
 		refreshStatus();
-		refreshJournal();
 		refreshWifi();
 		schTypeFields();
 
 		return E('div', {}, [
 			hp.pageIntro(_('Parental control'),
-				_('Rules for the people at home: which sites a child can open, when the internet turns off in the evening, and Wi-Fi cut-off at night. The devices themselves live on the Devices page — the rules below apply to them by name.')),
+				_('Rules for the people at home: which sites a child can open, when the internet turns off in the evening, and Wi-Fi cut-off at night. The devices themselves live on the Devices page — the rules below apply to them by name. What the system did is journaled once — in the Health center.')),
 			tabBar,
-			panes.dash, panes.devices, panes.rules, panes.sched,
-			panes.wifi, panes.journal, panes.settings
+			panes.dash, panes.rules, panes.sched,
+			panes.wifi, panes.settings
 		]);
 	}
 });

@@ -10,7 +10,7 @@ STOP=10
 
 # engine_restart: light strategy-apply path (see the function below).
 # rpcd_heal: self-heal for a missing /etc/init.d/rpcd (see the function below).
-EXTRA_COMMANDS="engine_restart rpcd_heal"
+EXTRA_COMMANDS="engine_restart rpcd_heal fw_refresh"
 
 CONF="homeproxy"
 PROG_HIDDIFY="/usr/bin/hiddify-core"
@@ -481,6 +481,20 @@ start_service() {
 			log "config migration stderr: $(cat "$RUN_DIR/migrate_cfg.err")"
 		fi
 		rm -f "$RUN_DIR/migrate_cfg.err"
+	fi
+
+	# Ф9.14 (D34d): legacy lan_proxy_mode «disabled»/не задано → except_listed.
+	# «disabled» означал «фильтр выключен — все через прокси, списки
+	# игнорируются»; в новой карточной модели «Напрямую» обязан работать.
+	# except_listed с пустым списком ведёт себя идентично — поведение установок
+	# не меняется. Идемпортентно, со снимком (см. migrate_lan_mode.uc).
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/migrate_lan_mode.uc" ]; then
+		_mig="$(/usr/bin/ucode "$HP_DIR/scripts/migrate_lan_mode.uc" 2>"$RUN_DIR/migrate_lan.err")"
+		[ -n "$_mig" ] && log "lan_proxy_mode migration: $_mig"
+		if [ -s "$RUN_DIR/migrate_lan.err" ]; then
+			log "lan_proxy_mode migration stderr: $(cat "$RUN_DIR/migrate_lan.err")"
+		fi
+		rm -f "$RUN_DIR/migrate_lan.err"
 	fi
 
 	config_load "$CONF"
@@ -1178,6 +1192,38 @@ engine_restart() {
 	fw4 reload >"$RUN_DIR/fw4_reload.log" 2>&1 || \
 		log "Warning: fw4 reload returned an error — check $RUN_DIR/fw4_reload.log."
 	log "engine_restart: done."
+}
+
+# Ф9.14: firewall-ONLY refresh for the device-policy changes (lan_* lists).
+# Re-renders firewall_post.ut + fw4 reload — exactly the engine_restart
+# recipe WITHOUT the engine kill: the DPI engines do not read the lan_*
+# lists, and a rapid series of list edits must not burn the procd respawn
+# budget (caught live in the Ф9.14 acceptance: 5 engine kills in 3 min left
+# both engines down — lesson 23/316 class). Guard: never re-render over a
+# STOPPED service (same as engine_restart). A render failure returns 1 —
+# for a firewall-only refresh the fresh render IS the whole apply.
+fw_refresh() {
+	local core_alive=0
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" find hiddify-core,sing-box,sing-box-core >/dev/null 2>&1 && core_alive=1
+	if [ "$core_alive" != "1" ]; then
+		log "fw_refresh: core not running — skipped (the next start applies the policy)."
+		return 0
+	fi
+
+	ucode "$HP_DIR/scripts/firewall_pre.uc"
+	local _fwtmp="$RUN_DIR/fw4_post.raw"
+	utpl -S "$HP_DIR/scripts/firewall_post.ut" > "$_fwtmp" 2>"$RUN_DIR/fw4_render.err"
+	if [ $? -eq 0 ]; then
+		tr -d '\r' < "$_fwtmp" > "$RUN_DIR/fw4_post.nft"
+	else
+		log "Warning: fw_refresh: firewall template render FAILED (see $RUN_DIR/fw4_render.err)."
+		rm -f "$_fwtmp"
+		return 1
+	fi
+	rm -f "$_fwtmp"
+	fw4 reload >"$RUN_DIR/fw4_reload.log" 2>&1 || \
+		log "Warning: fw_refresh: fw4 reload returned an error — check $RUN_DIR/fw4_reload.log."
+	log "fw_refresh: done."
 }
 
 service_triggers() {

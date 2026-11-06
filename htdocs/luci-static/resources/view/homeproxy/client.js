@@ -1475,6 +1475,41 @@ return view.extend({
 		/* Routing rules end */
 		}
 
+		/* ── Ф9.14 (D34d): the expert WAN & interface section moved here
+		 * from the Devices page (which is card-only now). UCI section
+		 * 'control' — the section firewall_post.uc reads for these options
+		 * (writing them to 'config' is invisible to the template; caught
+		 * live in the Ф9.14 acceptance). The section node is moved into a
+		 * collapsed <details> after render (automation.js pattern). */
+		const sxw = m.section(form.NamedSection, 'control', 'homeproxy', _('Expert: WAN & interfaces'));
+		sxw.description = _('WAN-wide destinations and interface binding for the whole service.');
+
+		so = sxw.option(form.DynamicList, 'wan_proxy_ipv4_ips', _('Proxy IPv4 IP-s'),
+			_('Force these WAN destinations through the proxy (checked before everything else).'));
+		so.datatype = 'or(ip4addr, cidr4)';
+
+		so = sxw.option(form.DynamicList, 'wan_proxy_ipv6_ips', _('Proxy IPv6 IP-s'));
+		so.datatype = 'or(ip6addr, cidr6)';
+		so.depends('homeproxy.config.ipv6_support', '1');
+
+		so = sxw.option(form.DynamicList, 'wan_direct_ipv4_ips', _('Direct IPv4 IP-s'),
+			_('Force these WAN destinations direct (the "Global proxy" devices still pass).'));
+		so.datatype = 'or(ip4addr, cidr4)';
+
+		so = sxw.option(form.DynamicList, 'wan_direct_ipv6_ips', _('Direct IPv6 IP-s'));
+		so.datatype = 'or(ip6addr, cidr6)';
+		so.depends('homeproxy.config.ipv6_support', '1');
+
+		so = sxw.option(widgets.DeviceSelect, 'listen_interfaces', _('Listen interfaces'),
+			_('Only process traffic from specific interfaces. Leave empty for all.'));
+		so.multiple = true;
+		so.noaliases = true;
+
+		so = sxw.option(widgets.DeviceSelect, 'bind_interface', _('Bind interface'),
+			_('Bind outbound traffic to specific interface. Leave empty to auto detect.'));
+		so.multiple = false;
+		so.noaliases = true;
+
 		/* DNS Servers / DNS Rules / Rule set — the manual custom-DNS scheme —
 		 * were RETIRED with Ф3.1/D23 together with Custom routing. A legacy
 		 * `dns_server` / `dns_rule` / `ruleset` section in UCI stays as dead
@@ -1637,6 +1672,24 @@ return view.extend({
 		}
 
 		return m.render().then(function(node) {
+			/* Ф9.14: collapse the expert WAN & interface section into a
+			 * <details> (U4: the less the user sees, the fewer mistakes —
+			 * the automation.js move pattern, located by its unique title). */
+			const expDetails = E('details', { style: 'margin:10px 0' }, [
+				E('summary', { style: 'cursor:pointer; font-weight:600; opacity:.8; padding:6px 0; user-select:none' },
+					[ _('Expert: WAN & interfaces') + ' · ' + _('hidden by default — open only if needed') ])
+			]);
+			const sections = node ? node.querySelectorAll('.cbi-section') : [];
+			for (let i = 0; i < sections.length; i++) {
+				const hd = sections[i].querySelector('.cbi-section-title') ||
+					sections[i].querySelector('h3');
+				if (hd && hd.textContent.indexOf(_('Expert: WAN & interfaces')) === 0) {
+					const parent = sections[i].parentNode;
+					parent.insertBefore(expDetails, sections[i]);
+					expDetails.appendChild(sections[i]);
+					break;
+				}
+			}
 			return E('div', {}, [
 				hp.pageIntro(_('Connection'),
 					_('How the traffic leaves your home: which server is the main one, how the routing mode decides what goes through the proxy, and what keeps the connection alive when a server dies. Everyday service→exit rules live on the Service rules page; DNS pools common to all modes — on the DNS settings page.')),

@@ -1798,6 +1798,14 @@ const callEvents = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф9.14 (D34d): the ONE clear button for the ONE journal — the Parental
+ * control duplicate (tab + clear) is gone. */
+const callEventsClear = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'control_events_clear',
+	expect: { '': {} }
+});
+
 const callRepair = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'recovery_action',
@@ -2235,6 +2243,28 @@ return view.extend({
 			dom.content(evList, out.length ? out : [ _('The journal is empty.') ]);
 		}
 
+		/* Ф9.14 (D34d): the ONE clear button for the ONE journal (the
+		 * Parental control duplicate is gone). The repair history and the
+		 * service log are NOT touched — only the event feed. */
+		const evClearBtn = E('button', { 'class': 'hpui-btn hpui-btn-sm hpui-btn-danger', type: 'button' },
+			[ _('Clear the journal') ]);
+		evClearBtn.addEventListener('click', function() {
+			ui.showModal(_('Clear the journal'), [
+				E('p', {}, [ _('Clear the events journal? The repair history and the service log are not touched.') ]),
+				E('div', { 'class': 'right', 'style': 'margin-top:14px; display:flex; gap:8px; justify-content:flex-end' }, [
+					E('button', { 'class': 'hpui-btn hpui-btn-ghost', 'click': ui.hideModal }, [ _('Cancel') ]),
+					E('button', { 'class': 'hpui-btn hpui-btn-danger', 'click': function() {
+						ui.hideModal();
+						evClearBtn.disabled = true;
+						L.resolveDefault(callEventsClear(), {}).finally(function() {
+							evClearBtn.disabled = false;
+							refreshAll();
+						});
+					} }, [ _('Clear') ])
+				])
+			]);
+		});
+
 		function refreshAll() {
 			return Promise.all([
 				L.resolveDefault(callExplain(), null),
@@ -2335,7 +2365,8 @@ return view.extend({
 		panes.journal.appendChild(E('div', { 'class': 'hpui-panel' }, [
 			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Event center') ]),
 			E('p', { 'class': 'hpui-hint' },
-				[ _('The single event feed of the whole system: routing, bypass engines, automation, health, recovery, Safe Mode, updates and security all write to this one journal. The Parental control page shows the same journal with the clear button.') ]),
+				[ _('The single event feed of the whole system: routing, bypass engines, automation, health, recovery, Safe Mode, updates and security all write to this one journal.') ]),
+			E('div', { 'style': 'margin:0 0 6px' }, [ evClearBtn ]),
 			evList
 		]));
 

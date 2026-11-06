@@ -184,7 +184,7 @@ config homeproxy 'config'
 	option russia_dns_auto_doh '0'
 
 config homeproxy 'control'
-	option lan_proxy_mode 'disabled'
+	option lan_proxy_mode 'except_listed'
 
 config homeproxy 'routing'
 	option sniff_override '1'

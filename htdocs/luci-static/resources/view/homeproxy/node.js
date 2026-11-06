@@ -1407,6 +1407,14 @@ const NODE_CSS = `
 	.node-actions .hpui-btn { padding: 4px 10px; font-size: .84em; flex: none; }
 	.node-addrow { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 	.node-addrow > input { flex: 1 1 320px; }
+	.node-urls { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+	.node-url-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+		border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-lg);
+		background: var(--hp-panel-bg-2); }
+	.node-url-text { flex: 1 1 auto; min-width: 0; font-family: var(--hp-font-mono);
+		font-size: .84em; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.node-url-row .hpui-btn { flex: none; }
+	.node-url-hint { margin: 6px 0 0; }
 	.node-result { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--hp-panel-line); border-radius: 8px; background: var(--background-color-low); }
 	.node-result p { margin: 2px 0; }
 	.node-panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
@@ -1656,6 +1664,10 @@ return view.extend({
 
 		/* ── Subscription cards ── */
 		const subCards = E('div', { 'class': 'node-cards' }, []);
+		/* The raw subscription links (the former cbi DynamicList — it looked
+		 * alien next to the cards and its client-side edit fought the RPC
+		 * add/remove): one line per URL, hpui buttons, under the add row. */
+		const subUrls = E('div', { 'class': 'node-urls', 'style': 'display:none' }, []);
 
 		function statusChip(hash) {
 			const last = subStatus.last;
@@ -1692,6 +1704,19 @@ return view.extend({
 			if (!infos.length)
 				dom.content(subCards,
 					E('p', { 'class': 'hpui-hint' }, [ _('No subscriptions yet — add a provider link below.') ]));
+
+			/* The raw links, one line each: the same Update/Remove actions as
+			 * the cards, but on the address itself. */
+			subUrls.style.display = infos.length ? '' : 'none';
+			dom.content(subUrls, infos.map(function(info) {
+				return E('div', { 'class': 'node-url-row', 'title': info.url }, [
+					E('span', { 'class': 'node-url-text' }, [ info.url ]),
+					E('button', { 'class': 'hpui-btn hpui-btn-sm hpui-btn-ghost',
+						'click': function() { startUpdate(info.url); } }, [ _('Update') ]),
+					E('button', { 'class': 'hpui-btn hpui-btn-sm hpui-btn-danger',
+						'click': function() { removeSubscription(info); } }, [ _('Remove') ])
+				]);
+			}));
 		}
 
 		/* Remove a subscription SERVER-SIDE (Ф9.11): the URL leaves the list
@@ -1935,22 +1960,11 @@ return view.extend({
 			_('Update subscriptions via proxy: the fetch goes through the running proxy and the service is NOT stopped (no internet gap), but the new nodes apply on the next restart — the panel shows an «Apply now» button then.'));
 		o.rmempty = false;
 
-		o = s.option(form.DynamicList, 'subscription_url', _('Subscription URL-s'),
-			_('Formats served by panels: URI lists, base64 batches, sing-box JSON (User-Agent «sing-box»), Xray JSON, SIP008, clash/mihomo YAML. The #fragment becomes the display title.'));
-		o.validate = function(section_id, value) {
-			if (section_id && value) {
-				try {
-					let url = new URL(value);
-					if (!url.hostname)
-						return _('Expecting: %s').format(_('valid URL'));
-				}
-				catch(e) {
-					return _('Expecting: %s').format(_('valid URL'));
-				}
-			}
-
-			return true;
-		}
+		/* The subscription_url list itself is NOT a form option anymore: it
+		 * lives in the panel above (one line per URL) and is mutated ONLY by
+		 * the server-side RPCs (app_subscription_add/remove) — the old cbi
+		 * DynamicList both looked stale and let the form's save fight the
+		 * RPC changes (lesson 323 shape). */
 
 		o = s.option(form.ListValue, 'filter_nodes', _('Filter nodes'),
 			_('Drop/keep specific nodes from subscriptions.'));
@@ -2076,6 +2090,9 @@ return view.extend({
 				E('button', { 'class': 'hpui-btn hpui-btn-primary', 'click': addSubscription },
 					[ _('Add subscription') ])
 			]),
+			subUrls,
+			E('p', { 'class': 'hpui-hint node-url-hint' },
+				[ _('Formats served by panels: URI lists, base64 batches, sing-box JSON (User-Agent «sing-box»), Xray JSON, SIP008, clash/mihomo YAML. The #fragment becomes the display title.') ]),
 			subResult
 		]);
 
