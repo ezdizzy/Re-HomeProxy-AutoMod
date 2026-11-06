@@ -223,6 +223,12 @@ return view.extend({
 		/* One object = AND (multiple .depends() calls would be OR). */
 		so.depends({ 'enabled': '1', 'use_secure': '1' });
 
+		so = ss.option(form.Flag, 'emergency_direct', _('Emergency direct resolver'),
+			_('When the proxy tunnel is down, secure-pool queries fall back to direct encrypted DoH (Cloudflare/Google, by IP) so DNS keeps working for the whole network — including clients whose resolvers bootstrap through this router (a phone with strict Private DNS). No effect while the tunnel is healthy: the fallback answers only when the tunneled path returned nothing.'));
+		so.default = '1';
+		so.rmempty = false;
+		so.depends({ 'enabled': '1', 'use_secure': '1' });
+
 		so = ss.option(form.Value, 'bench_interval', _('Quality check interval (seconds)'),
 			_('How often the analyzer probes each server for latency / liveness / poisoning and updates trends. Default 600s — lower reacts faster to a bad server but verifies sites more often (40–60 s of probing per cycle on weak SoCs).'));
 		so.datatype = 'uinteger';
@@ -270,12 +276,16 @@ return view.extend({
 						mode = _('directly (no proxy configured)');
 					secLine = ' &nbsp;|&nbsp; ' + _('Secure DNS now') + ': <b>' + mode + '</b>';
 				}
+				let chainLine = '';
+				if (st.emergency_direct !== false && st.chain_down === true)
+					chainLine = '<br><b>' + _('Emergency mode') + ':</b> ' +
+						_('the secure pool’s proxy path is unreachable — queries are answered via direct encrypted DoH (checked once per quality cycle)');
 				mdStatusEl.innerHTML =
 					_('Enabled') + ': <b>' + (en ? _('yes') : _('no')) + '</b> &nbsp;|&nbsp; ' +
 					_('mosdns') + ': <b>' + (st.mosdns ? _('running') : (st.restarting ? _('restarting...') : _('stopped'))) + '</b> &nbsp;|&nbsp; ' +
 					_('Plain pool') + ': <b>' + (st.active && st.active.ru ? st.active.ru.length : 0) + '</b> &nbsp;|&nbsp; ' +
 					_('Secure pool') + ': <b>' + (st.active && st.active.secure ? st.active.secure.length : 0) + '</b>' +
-					secLine;
+					secLine + chainLine;
 				mdRenderTable(st.servers);
 			}).catch(function(e) {
 				mdStatusEl.textContent = _('MultiDNS status unavailable: ') + e;

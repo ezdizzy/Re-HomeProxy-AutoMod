@@ -7912,3 +7912,15 @@ msgstr ""
 
 msgid "Live status of every Ravnex subsystem, the full check & repair toolkit and the operations journal — one page. Overview watches the subsystems; Check & repair runs the actual probes; the journal shows what the system did; Provider measures what the provider blocks."
 msgstr ""
+
+msgid "Emergency direct resolver"
+msgstr ""
+
+msgid "When the proxy tunnel is down, secure-pool queries fall back to direct encrypted DoH (Cloudflare/Google, by IP) so DNS keeps working for the whole network — including clients whose resolvers bootstrap through this router (a phone with strict Private DNS). No effect while the tunnel is healthy: the fallback answers only when the tunneled path returned nothing."
+msgstr ""
+
+msgid "Emergency mode"
+msgstr ""
+
+msgid "the secure pool’s proxy path is unreachable — queries are answered via direct encrypted DoH (checked once per quality cycle)"
+msgstr ""

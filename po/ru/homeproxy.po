@@ -13468,3 +13468,15 @@ msgstr "Когда что-то не работает: эта вкладка за
 
 msgid "Live status of every Ravnex subsystem, the full check & repair toolkit and the operations journal — one page. Overview watches the subsystems; Check & repair runs the actual probes; the journal shows what the system did; Provider measures what the provider blocks."
 msgstr "Живой статус всех подсистем Ravnex, полный набор проверки и ремонта и журнал операций — на одной странице. Обзор следит за подсистемами; «Проверка и ремонт» запускает реальные проверки; журнал показывает, что делала система; «Провайдер» измеряет, что блокирует провайдер."
+
+msgid "Emergency direct resolver"
+msgstr "Аварийный прямой DNS"
+
+msgid "When the proxy tunnel is down, secure-pool queries fall back to direct encrypted DoH (Cloudflare/Google, by IP) so DNS keeps working for the whole network — including clients whose resolvers bootstrap through this router (a phone with strict Private DNS). No effect while the tunnel is healthy: the fallback answers only when the tunneled path returned nothing."
+msgstr "Когда прокси-туннель лежит, запросы secure-пула уходят через прямой шифрованный DoH (Cloudflare/Google, по IP), и DNS продолжает работать для всей сети — включая клиентов, чьи резолверы бутстрапятся через этот роутер (телефон со строгим Private DNS). Пока туннель здоров — нет никакого эффекта: аварийный путь отвечает только когда туннелированный не ответил вовсе."
+
+msgid "Emergency mode"
+msgstr "Аварийный режим"
+
+msgid "the secure pool’s proxy path is unreachable — queries are answered via direct encrypted DoH (checked once per quality cycle)"
+msgstr "путь secure-пула через прокси недоступен — запросы отвечаются через прямой шифрованный DoH (проверка раз в цикл качества)"

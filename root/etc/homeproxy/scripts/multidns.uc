@@ -76,8 +76,14 @@ let PROXY = '127.0.0.1:5338';   /* dedicated mdns-proxy-in (mixed) pinned to mai
  * plaintext entry of the pool is measured dead or poisoned — the wholesale
  * port-53 interception case (UDP swallowed, TCP answered with fakes, DoT
  * blocked) where plaintext DNS cannot ever work. By-IP endpoints: no hostname,
- * so no DNS bootstrap is needed to reach them. */
-const AUTO_DOH = [ 'https://1.1.1.1/dns-query', 'https://8.8.8.8/resolve' ];
+ * so no DNS bootstrap is needed to reach them.
+ * 🔴 /dns-query on BOTH (Ф8.8, live-caught): mosdns speaks RFC8484 WIRE format —
+ * 8.8.8.8/resolve (the JSON API path) answers wire POSTs with HTTP 400 + an
+ * HTML error page ("bad http status codes 400"), i.e. a permanently dead
+ * upstream. Google serves BOTH the JSON GET and the wire POST on /dns-query,
+ * and doh_query()'s second JSON attempt forces '/resolve' anyway, so the
+ * JSON probes keep working with the same entry. */
+const AUTO_DOH = [ 'https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query' ];
 
 /* Canary set for the plain pool's poisoning verification (multi-canary): a mix
  * of stable international and domestic names, rotated per cycle. An answer IP
@@ -929,6 +935,17 @@ function build_mosdns_conf() {
 	let main_node = uci.get('homeproxy', 'config', 'main_node') || 'nil';
 	let proxy_real = !(main_node in ['byedpi-out', 'zapret-out']);
 	let use_proxy = (secure_via_proxy !== '0') && proxy_real;
+	/* Ф8.8 (D33c): emergency DIRECT encrypted resolver. Every secure-pool
+	 * upstream rides the same socks5 tunnel (127.0.0.1:5338 → main-out), so a
+	 * dead proxy chain kills the WHOLE secure pool at once — proxied domains
+	 * stop resolving and clients whose resolvers bootstrap through this router
+	 * (a phone with strict Private DNS) lose DNS entirely, "even RU". When the
+	 * emergency switch is on, fwd_secure carries two extra DIRECT by-IP DoH
+	 * upstreams (AUTO_DOH — no hostname to bootstrap, encrypted, hijack-proof)
+	 * AFTER the configured tunneled ones: mosdns launches them only when the
+	 * tunneled exchanges fail, so normal operation is untouched. UCI:
+	 * multidns.emergency_direct (default on). */
+	let emergency = (uci.get('homeproxy', 'multidns', 'emergency_direct') || '1') !== '0';
 
 	/* self_mark: stamp mosdns's OWN outbound DNS traffic with the core's self_mark
 	 * so the router's mangle_output chain (redirect_tproxy) returns it instead of
@@ -982,7 +999,21 @@ function build_mosdns_conf() {
 			push(lines, '        - addr: ' + yaml_q(addr));
 		}
 	}
-	if (have_secure) {
+	/* Ф8.8: the secure forward carries the emergency DIRECT by-IP DoH
+	 * upstreams IN-BAND (after the configured tunneled ones). mosdns races
+	 * the first `concurrent` upstreams and launches the next batch ONLY when
+	 * an exchange fails — so in normal operation the tunneled trio answers
+	 * and the direct ones are never contacted (the ISP sees nothing new);
+	 * when the tunneled path dies fast (socks5 refused, exchange error) the
+	 * direct Cloudflare/Google DoH entries answer inside the same query.
+	 * A leaked direct DoH query reveals only an encrypted connection to a
+	 * generic endpoint — never the lookup itself. (A sequential `!has_resp`
+	 * tail is IMPOSSIBLE here: a failed forward exec ABORTS the whole
+	 * mosdns sequence — verified live, "all upstream servers failed" bypassed
+	 * the tail. And this mosdns v5.3.4 has no forward `timeout` key.)
+	 * In-band also keeps the 5454 listener alive when every configured
+	 * secure upstream is pruned — sing-box already points at it. */
+	if (have_secure || emergency) {
 		push(lines, '  - tag: fwd_secure');
 		push(lines, '    type: forward');
 		push(lines, '    args:');
@@ -1008,6 +1039,13 @@ function build_mosdns_conf() {
 			 * (encrypted) because mosdns socks5 does not support UDP transports. */
 			if (use_proxy && (p.scheme === 'https' || p.scheme === 'tls'))
 				push(lines, '          socks5: ' + yaml_q(PROXY));
+		}
+		if (emergency) {
+			for (let i = 0; i < length(AUTO_DOH); i++) {
+				let p = parse_entry(AUTO_DOH[i]);
+				/* By-IP https URL: no hostname, no bootstrap, direct egress. */
+				push(lines, '        - addr: ' + yaml_q('https://' + p.host + (p.port ? ':' + p.port : '') + (p.path || '/dns-query')));
+			}
 		}
 	}
 
@@ -1099,20 +1137,26 @@ function build_mosdns_conf() {
 	}
 
 	/* --- secure sequence --- */
-	if (have_secure) {
+	let seq_secure = (use_secure !== '0') && (have_secure || emergency);
+	if (seq_secure) {
 		push(lines, '  - tag: seq_secure');
 		push(lines, '    type: sequence');
 		push(lines, '    args:');
-		push(lines, '      - exec: $cache_secure');
-		push(lines, '      - matches:');
-		push(lines, '          - ' + yaml_q('!has_resp'));
-		push(lines, '        exec: $fwd_secure');
+		if (have_secure) {
+			push(lines, '      - exec: $cache_secure');
+		}
+		/* Ф8.8: the in-band emergency upstreams live INSIDE $fwd_secure (see
+		 * the forward block) — the sequence stays the plain cache → forward
+		 * pair in every pool combination. */
+		push(lines, '      - exec: $fwd_secure');
 	}
 
 	/* --- servers (listeners) --- */
-	/* Plain listener only when seq_plain actually exists (either pool non-empty):
-	 * with both pools empty the reference to $seq_plain made mosdns fail to start,
-	 * and generate_client would repoint russia-dns at a dead 5453. */
+	/* Plain listener only when seq_plain actually has steps (either pool
+	 * non-empty): with both pools empty the reference to $seq_plain made
+	 * mosdns fail to start, and generate_client would repoint russia-dns at
+	 * a dead 5453. (The Ф8.8 in-band emergency lives in $fwd_secure behind
+	 * the SECURE listener — see seq_secure above.) */
 	if (use_plain !== '0' && (have_plain || have_secure)) {
 		push(lines, '  - type: udp_server');
 		push(lines, '    args:');
@@ -1123,7 +1167,7 @@ function build_mosdns_conf() {
 		push(lines, '      entry: seq_plain');
 		push(lines, '      listen: ' + yaml_q('127.0.0.1:' + plain_port));
 	}
-	if (use_secure !== '0' && have_secure) {
+	if (use_secure !== '0' && seq_secure) {
 		push(lines, '  - type: udp_server');
 		push(lines, '    args:');
 		push(lines, '      entry: seq_secure');
@@ -1330,6 +1374,38 @@ function analyze() {
 	let mode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
 	let main_node = uci.get('homeproxy', 'config', 'main_node') || 'nil';
 	let via_proxy = (secure_via_proxy !== '0') && !(main_node in ['byedpi-out', 'zapret-out']);
+
+	/* Ф8.8 (D33c): honest per-cycle health check of the secure pool's TUNNEL
+	 * path. The per-server probes cannot see a dead chain — doh_query()'s
+	 * socks5 attempt falls back to the direct attempt and still succeeds —
+	 * so the monitor used to show healthy upstreams while every real query
+	 * (socks5-only in mosdns) timed out. Measure the REAL path: one DoH
+	 * probe strictly via socks5, one direct control probe. chain_down =
+	 * control alive + tunneled probe dead. Edge-logged; the state flag feeds
+	 * the UI badge ("emergency mode") through multidns_status. */
+	let chain_down = false;
+	if (use_secure && via_proxy) {
+		let via_ok = false, direct_ok = false;
+		/* 🔴 the DoH JSON endpoint answers with a 301 + EMPTY body without the
+		 * accept header (caught live: both probes read empty and the chain was
+		 * judged up during a real outage) — the header is mandatory, exactly
+		 * like doh_query()'s own JSON attempt. */
+		let chain_hdr = "-H 'accept: application/dns-json' ";
+		let chain_q = 'https://1.1.1.1/dns-query?name=example.com&type=A';
+		let chain_out = MD_DIR + '/chain.tmp';
+		system(`curl -s --max-time 8 ${chain_hdr}-x socks5h://${shellquote(PROXY)} ${shellquote(chain_q)} > ${shellquote(chain_out)} 2>/dev/null`);
+		try {
+			let j = json(readfile(chain_out) || '');
+			if (type(j) === 'object' && length(j.Answer || []) > 0) via_ok = true;
+		} catch (e) { via_ok = false; }
+		system(`curl -s --max-time 4 ${chain_hdr}${shellquote(chain_q)} > ${shellquote(chain_out)} 2>/dev/null`);
+		try {
+			let j = json(readfile(chain_out) || '');
+			if (type(j) === 'object' && length(j.Answer || []) > 0) direct_ok = true;
+		} catch (e) { direct_ok = false; }
+		chain_down = direct_ok && !via_ok;
+		dbg('chain: via=' + via_ok + ' direct=' + direct_ok + ' down=' + chain_down);
+	}
 
 	/* Canary sets: fixed, stable domains, rotated per cycle (multi-canary). The
 	 * secure pool verifies anti-poisoning with cloudflare.com (a stable domain
@@ -1744,6 +1820,19 @@ function analyze() {
 		if (bad) stt.bad_streak = (stt.bad_streak || 0) + 1;
 		else stt.bad_streak = 0;
 		stt.pruned = (stt.bad_streak >= 3);
+	}
+	/* Ф8.8: publish the chain-path verdict + edge logs. The flag lives in the
+	 * state file (the UI badge reads it via multidns_status); on the edge a
+	 * line lands in the MultiDNS log so the outage is explainable later. */
+	if (use_secure && via_proxy) {
+		let prev_chain = st.secure_chain_down;
+		st.secure_chain_down = chain_down ? '1' : '0';
+		if (chain_down && prev_chain !== '1')
+			log('SECURE POOL: proxy chain DOWN — secure queries are answered via direct emergency DoH (router DNS stays up)');
+		else if (!chain_down && prev_chain === '1')
+			log('SECURE POOL: proxy chain recovered — tunneled secure path back');
+	} else if (st.secure_chain_down === '1') {
+		st.secure_chain_down = '0';
 	}
 	dbg('analyze save');
 	st.cycle = cyc + 1;

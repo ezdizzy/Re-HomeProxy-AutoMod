@@ -9066,7 +9066,18 @@ const methods = {
 				restarting: md_restarting,
 				active: active,
 				servers: servers,
-				secure_dns: secure_dns
+				secure_dns: secure_dns,
+				/* Ф8.8 (D33c): the emergency direct-resolver feature. chain_down
+				 * is the analyzer's per-cycle verdict on the secure pool's
+				 * tunnel path (state file); emergency_direct mirrors the UCI
+				 * switch (missing = on, like the daemon reads it). */
+				chain_down: (state.secure_chain_down === '1'),
+				emergency_direct: (function() {
+					let ef = popen('uci -q get homeproxy.multidns.emergency_direct 2>/dev/null');
+					let v = ef ? trim(ef.read('all')) : '';
+					if (ef) ef.close();
+					return (v !== '0');
+				})()
 			};
 		}
 	},
