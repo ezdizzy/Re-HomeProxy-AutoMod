@@ -13369,3 +13369,84 @@ msgstr "Фаззинг"
 
 msgid "How the blocked sites open: what works right now (the Serving map), the strategy picking, the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it."
 msgstr "Как открываются заблокированные сайты: что работает прямо сейчас (карта обслуживания), подбор стратегии, Лаборатория стратегий и ручное применение. Работайте сверху вниз — посмотрите состояние, подберите или проверьте стратегию, примените её."
+
+msgid "Pin \"Always direct\""
+msgstr "Пин «Всегда напрямую»"
+
+msgid "A host pinned in the Automation table — outranks every list: one host forced to direct wins over everything."
+msgstr "Хост, закреплённый в таблице автоматизации, — старше любого списка: один хост, отправленный напрямую, важнее всего."
+
+msgid "Service ports"
+msgstr "Сервисные порты"
+
+msgid "Torrents stay direct, calls ride the voice ports — port-scoped rules, not tied to a domain."
+msgstr "Торренты идут напрямую, звонки — через голосовые порты; правила по портам, не привязаны к домену."
+
+msgid "Service rules — THIS page"
+msgstr "Правила сервисов — ЭТА СТРАНИЦА"
+
+msgid "Preset rows for services and mass lists (Services, Russia Inside, Re-filter). The rows below edit exactly this tier."
+msgstr "Строки-пресеты сервисов и масс-списков (Сервисы, Россия Inside, Re-filter). Редактируются именно строками ниже."
+
+msgid "OAuth stability"
+msgstr "OAuth-стабильность"
+
+msgid "Login/auth domains ride the main exit together with their service — a proxy switch never breaks a login."
+msgstr "Домены логинов/авторизации едут через главный выход вместе со своим сервисом — смена прокси не ломает вход."
+
+msgid "Your \"Direct\" lists"
+msgstr "Свои списки «Напрямую»"
+
+msgid "The \"My lists\" zone below with the \"direct\" action — the explicit \"not through the node\" intent."
+msgstr "Зона «Мои списки» ниже с действием «напрямую» — явное намерение «не через узел»."
+
+msgid "RU-guard"
+msgstr "RU-гвард"
+
+msgid "RU-geo hosts NEVER go through the proxy — a mass or learned list cannot tunnel RU infrastructure. Always on (invariant)."
+msgstr "RU-гео-хосты НИКОГДА не идут через прокси — масс-список или выученная запись не утащат RU-инфраструктуру в туннель. Всегда включён (инвариант)."
+
+msgid "Your \"Proxy\" lists"
+msgstr "Свои списки «Через прокси»"
+
+msgid "The \"My lists\" zone with the \"via proxy\" action — checked AFTER the RU-guard: a RU domain in a proxy list stays direct."
+msgstr "Зона «Мои списки» с действием «через прокси» — проверяется ПОСЛЕ RU-гварда: RU-домен в прокси-списке остаётся прямым."
+
+msgid "Mass pins + learned"
+msgstr "Массовые пины и выученные"
+
+msgid "The proxy-domain list (your \"Always via proxy\" pins + sites the system learned) routes to the main node; manual and learned IPs follow."
+msgstr "Список proxy-domain (ваши пины «Всегда через прокси» и выученные системой сайты) идёт в главный узел; следом ручные и выученные IP."
+
+msgid "Everything else — DIRECT"
+msgstr "Всё остальное — НАПРЯМУЮ"
+
+msgid "A host no rule matched egresses directly: the whole internet is direct by default, lists and rules are the exceptions. DNS mirrors this order."
+msgstr "Хост, с которым не совпало ни одно правило, выходит напрямую: весь интернет по умолчанию прямой, списки и правила — исключения. DNS зеркалит этот порядок."
+
+msgid "How a route is decided — first match wins"
+msgstr "Как решается маршрут — первое совпадение выигрывает"
+
+msgid "The whole internet goes DIRECT by default; lists and rules are the exceptions that route traffic through a node or an engine. This is the exact order the running config follows — the first rule that matches decides. Keep it in mind while editing the rows below."
+msgstr "Весь интернет по умолчанию идёт НАПРЯМУЮ; списки и правила — исключения, которые заворачивают трафик в узел или движок. Это точный порядок работающего конфига — решает первое совпавшее правило. Держите его в голове, редактируя строки ниже."
+
+msgid "Check a route"
+msgstr "Проверить маршрут"
+
+msgid "Enter a site — the checker answers with the winning rule of the LIVE config, the exit chain and the protection verdict. Remote rule-sets are matched by the core itself, so their exact membership is reported honestly as \"probable\"."
+msgstr "Введите сайт — проверка ответит победившим правилом ЖИВОГО конфига, цепочкой выходов и вердиктом защиты. Remote-списки матчит само ядро, поэтому их точный состав честно помечается как «вероятный»."
+
+msgid "Quick check:"
+msgstr "Быстрая проверка:"
+
+msgid "Enter a site or an IP to check."
+msgstr "Введите сайт или IP для проверки."
+
+msgid "RU-guard example — stays direct"
+msgstr "Пример RU-гварда — остаётся прямым"
+
+msgid "Which service exits through what: the order map shows how a route is decided, the checker shows any site's live route, and the rows below assign exits. Routing applies in \"Bypass blocking\" mode; everything unmatched goes directly."
+msgstr "Что через какой выход ходит: карта порядка показывает, как решается маршрут, проверка показывает живой маршрут любого сайта, а строки ниже назначают выходы. Маршрутизация работает в режиме «Обход блокировок»; всё, что не попало в правила, идёт напрямую."
+
+msgid "Action results and live checks of the rows appear here."
+msgstr "Здесь появляются результаты действий и живых проверок строк."

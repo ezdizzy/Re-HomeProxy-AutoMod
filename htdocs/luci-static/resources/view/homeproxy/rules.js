@@ -1,9 +1,11 @@
-/* Ravnex — Service rules (R3 v3b, 19-UX_REDESIGN p.5)
- * The SINGLE place "which service exits through what": preset rows
- * (base zone, from the former Wizard "Services → exits" pane) + the
- * advanced proxy_ru_rule editor (moved from the Client page) + the
- * manual domain lists. One result area below the presets; the expert
- * grid saves through the standard LuCI form flow. */
+/* Ravnex — Service rules (R3 v3b, 19-UX_REDESIGN p.5; Ф9.3 v3 rework)
+ * The SINGLE place "which service exits through what". D29 (the user's
+ * "most important point"): the page MAKES THE MODEL VISIBLE — the rule
+ * ORDER map mirrors generate_client.uc in "Bypass blocking" mode, and
+ * route_explain is the MAIN instrument (check the route, then assign an
+ * exit). Preset rows keep the proven fixed control grid; the whole page
+ * rides the v3 design system. One result area per zone; the expert grid
+ * is gone (rules live only in the preset rows). */
 
 'require dom';
 'require poll';
@@ -197,19 +199,31 @@ const CSS = `
 .wiz-svc-grid > .wiz-title, .wiz-svc-grid > .wiz-state { flex: none; }
 .wiz-svc-grid > .wiz-select { width: 100%; }
 .wiz-svc .wiz-pool { margin: 6px 0 0 0; }
-.wiz-svc .wiz-note { margin: 6px 0 0 0; }
+.wiz-svc .hpui-hint { margin: 6px 0 0 0; }
 @media (max-width: 900px) {
 	.wiz-svc-grid { display: flex; flex-wrap: wrap; }
 	.wiz-svc-grid > .wiz-title { flex: 1 1 220px; }
 	.wiz-svc-grid > .wiz-state { flex: 1 1 240px; }
 	.wiz-svc-grid > .wiz-select { width: auto; }
 }
-.wiz-note { font-size: .88em; opacity: .8; margin: 8px 0; }
 .wiz-hosts { color: var(--hp-grey); font-size: .82em; }
 .wiz-pool { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; margin: 4px 0 0 0; font-size: .88em; border: 1px dashed var(--hp-panel-line-strong); border-radius: var(--hp-radius); }
 .wiz-pool label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.wiz-group { flex-basis: 100%; font-weight: 600; font-size: .95em; margin: 14px 0 2px 0; padding-top: 10px; border-top: 1px solid var(--hp-panel-line); }
-.wiz-group:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+/* Ф9.3/D29: the rule-ORDER map — the model made visible. Static content
+ * (rendered once), so hpui-stagger on the container is safe. */
+.rmap { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 2px; }
+.rmap-step { flex: 1 1 100%; display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-sm); background: var(--hp-panel-bg-2); }
+.rmap-n { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--hp-accent-fill, rgba(34,197,94,.12)); color: var(--hp-accent-strong); font-weight: 700; font-size: .82em; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.rmap-t { flex: 1 1 auto; font-size: .92em; }
+.rmap-t b { display: block; }
+.rmap-t .hpui-ic { color: var(--hp-accent-strong); width: 1.05em; height: 1.05em; flex: none; margin-right: 5px; vertical-align: -0.15em; }
+.rmap-t em { display: block; opacity: .75; font-size: .95em; font-style: normal; }
+.rmap-step.hpui-here { border-color: var(--hp-accent-strong); }
+@media (min-width: 1100px) {
+	.rmap-step { flex: 1 1 46%; }
+}
+/* Ф9.3: dense buttons (hpui-btn is sized for forms). */
+.hpui-btn-sm { padding: 2px 10px; font-size: .84em; white-space: nowrap; }
 `;
 
 function nodeText(node) {
@@ -229,12 +243,12 @@ function ruleStateText(rule, count) {
 		? E('span', { 'class': 'hpui-badge hpui-b-blue' }, [ '→ ' + nodeText(rule.node) ])
 		: E('span', { 'class': 'hpui-b-grey hpui-badge' }, [ _('disabled') + ' (→ ' + nodeText(rule.node) + ')' ]));
 	if (rule.node === 'urltest' && rule.urltest_nodes && rule.urltest_nodes.length)
-		parts.push(E('span', { 'class': 'wiz-note', style: 'margin:0' },
+		parts.push(E('span', { 'class': 'hpui-hint', style: 'margin:0' },
 			[ _('pool: %d node(s)').format(rule.urltest_nodes.length) ]));
 	/* Ф4.2: extra exits are shown in-row now — the stale "see the manual
 	 * editor" pointer is gone. */
 	if (count > 1)
-		parts.push(E('span', { 'class': 'wiz-note', style: 'margin:0' },
+		parts.push(E('span', { 'class': 'hpui-hint', style: 'margin:0' },
 			[ _('+%d more rule(s) of this service — shown below').format(count - 1) ]));
 	return E('span', {}, parts);
 }
@@ -352,6 +366,150 @@ return view.extend({
 		const envBanners = E('div', {});
 		const presetRows = E('div', {});
 		const checkResult = E('div', {});
+		/* Ф9.3 v3: the ONE result area of the preset zone becomes a panel;
+		 * actions (apply/delete/check/extra) replace the previous verdict
+		 * here — ui.action_buttons_result_placement. */
+		const checkPanel = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('check'), _('Check results') ])
+		]);
+		checkPanel.appendChild(checkResult);
+		dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+			[ _('Action results and live checks of the rows appear here.') ]));
+
+		/* ── D29: the rule-ORDER map — the model made visible ────────────
+		 * First match wins. The chain mirrors generate_client.uc in
+		 * "Bypass blocking" mode (B6.9, lesson 201: the map MUST stay in
+		 * sync with the generator — the old text note it replaces lived in
+		 * renderPresets). Static content rendered once → stagger is safe.
+		 * This map IS the D29 answer: "everything direct, lists and rules
+		 * are the exceptions" is the tail step + the guard in the middle. */
+		const ORDER_MAP = [
+			[ 'tool', _('Pin "Always direct"'), _('A host pinned in the Automation table — outranks every list: one host forced to direct wins over everything.') ],
+			[ 'activity', _('Service ports'), _('Torrents stay direct, calls ride the voice ports — port-scoped rules, not tied to a domain.') ],
+			[ 'send', _('Service rules — THIS page'), _('Preset rows for services and mass lists (Services, Russia Inside, Re-filter). The rows below edit exactly this tier.') ],
+			[ 'refresh', _('OAuth stability'), _('Login/auth domains ride the main exit together with their service — a proxy switch never breaks a login.') ],
+			[ 'compass', _('Your "Direct" lists'), _('The "My lists" zone below with the "direct" action — the explicit "not through the node" intent.') ],
+			[ 'shield', _('RU-guard'), _('RU-geo hosts NEVER go through the proxy — a mass or learned list cannot tunnel RU infrastructure. Always on (invariant).') ],
+			[ 'database', _('Your "Proxy" lists'), _('The "My lists" zone with the "via proxy" action — checked AFTER the RU-guard: a RU domain in a proxy list stays direct.') ],
+			[ 'globe', _('Mass pins + learned'), _('The proxy-domain list (your "Always via proxy" pins + sites the system learned) routes to the main node; manual and learned IPs follow.') ],
+			[ 'ban', _('Everything else — DIRECT'), _('A host no rule matched egresses directly: the whole internet is direct by default, lists and rules are the exceptions. DNS mirrors this order.') ]
+		];
+		const orderMapBox = E('div', { 'class': 'hpui-cards hpui-stagger rmap' });
+		for (let om = 0; om < ORDER_MAP.length; om++) {
+			orderMapBox.appendChild(E('div', { 'class': 'rmap-step' + (ORDER_MAP[om][0] === 'send' ? ' hpui-here' : '') }, [
+				E('span', { 'class': 'rmap-n' }, [ '' + (om + 1) ]),
+				E('span', { 'class': 'rmap-t' }, [
+					hp.icon(ORDER_MAP[om][0]),
+					E('b', {}, [ ORDER_MAP[om][1] ]),
+					E('em', {}, [ ORDER_MAP[om][2] ])
+				])
+			]));
+		}
+		const orderMapPanel = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('layers'),
+				_('How a route is decided — first match wins') ]),
+			E('p', { 'class': 'hpui-hint' }, [
+				_('The whole internet goes DIRECT by default; lists and rules are the exceptions that route traffic through a node or an engine. This is the exact order the running config follows — the first rule that matches decides. Keep it in mind while editing the rows below.')
+			]),
+			orderMapBox
+		]);
+
+		/* ── D29: route_explain — the MAIN instrument of the page ────────
+		 * Check BEFORE you edit: the checker shows which rule of the RUNNING
+		 * config matches first, the outbound chain, and the RU-guard / Master
+		 * coverage verdict. Result replaces itself in ONE place (this panel).
+		 * Quick chips = the services currently on the page (filled by
+		 * renderPresets) + one RU example to see the guard at work. */
+		const routePanel = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('crosshair'), _('Check a route') ])
+		]);
+		const routeInput = E('input', { type: 'text', 'class': 'cbi-input-text',
+			placeholder: _('example.com or 1.2.3.4'), style: 'flex:1 1 260px; min-width:220px' });
+		const routeBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
+			[ _('Check') ]);
+		const routeChips = E('div', { 'class': 'wiz-toolbar', style: 'margin:2px 0 0' });
+		const routeResult = E('div', { style: 'margin-top:6px' });
+		routePanel.appendChild(E('p', { 'class': 'hpui-hint' }, [
+			_('Enter a site — the checker answers with the winning rule of the LIVE config, the exit chain and the protection verdict. Remote rule-sets are matched by the core itself, so their exact membership is reported honestly as "probable".')
+		]));
+		routePanel.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ routeInput, routeBtn ]));
+		routePanel.appendChild(routeChips);
+		routePanel.appendChild(routeResult);
+
+		function routeChip(host, title) {
+			const c = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button',
+				title: title || host }, [ host ]);
+			c.addEventListener('click', function() {
+				routeInput.value = host;
+				runRouteCheck();
+			});
+			return c;
+		}
+
+		function fillRouteChips(chips) {
+			/* Rebuild only on a real change (the poll must not steal clicks). */
+			const sig = JSON.stringify(chips);
+			if (sig === routeChips._sig)
+				return;
+			routeChips._sig = sig;
+			dom.content(routeChips, [ E('span', { 'class': 'hpui-hint', style: 'margin:0' },
+				[ _('Quick check:') ]) ].concat(chips.map(function(ch) {
+					return routeChip(ch[0], ch[1]);
+				})));
+		}
+
+		function renderRouteVerdict(ret) {
+			dom.content(routeResult, (function() {
+				if (!ret || ret.error)
+					return [ E('p', { 'class': 'hpui-hint' },
+						[ _('Check failed: ') + ((ret && ret.error) || _('RPC error')) ]) ];
+				const parts = [];
+				/* The honest remote ambiguity (lesson 203): no outbound is
+				 * claimed when remote lists are in play unconfirmed. */
+				if (ret.remote && ret.remote.confirmed == null) {
+					parts.push(E('div', { style: 'color:var(--hp-amber); margin:4px 0' },
+						[ ret.match || _('Remote lists in play — exact match unavailable locally.') ]));
+				} else {
+					const probable = !!(ret.remote && ret.remote.confirmed != null);
+					let outLabel;
+					if (ret.outbound === 'direct-out')
+						outLabel = _('Direct (no bypass engine)');
+					else
+						outLabel = ret.outbound ? resolveTag(ret.outbound) : (ret.action || '?');
+					parts.push(E('div', { style: 'margin:4px 0' }, [
+						E('strong', {}, [ outLabel ]),
+						E('span', { style: 'opacity:.75' }, ' ← ' + (ret.match || '') +
+							(ret.rule_index ? (' · ' + (probable ? _('probable winning rule') : _('winning rule')) + ' #' + ret.rule_index) : '') +
+							(ret.fallback ? ' · ' + _('default route (no rule matched)') : ''))
+					]));
+				}
+				if (ret.chain)
+					parts.push(E('div', { style: 'opacity:.75; font-size:.88em; margin:2px 0' }, [ ret.chain ]));
+				const cov = ret.coverage;
+				if (cov && cov.status === 'protected_by_master')
+					parts.push(E('div', { style: 'color:var(--hp-accent-strong); font-size:.88em' }, [ cov.note ]));
+				else if (cov && cov.status === 'coverage_unknown')
+					parts.push(E('div', { style: 'color:var(--hp-amber); font-size:.88em' }, [ cov.note ]));
+				for (let t in (ret.trace || []))
+					if (t.action === 'reject')
+						parts.push(E('div', { style: 'color:var(--hp-amber); font-size:.88em' },
+							[ _('rejects UDP/443 (QUIC escape)') + ' — ' + (t.match || '') ]));
+				return parts;
+			})());
+		}
+
+		function runRouteCheck() {
+			const h = String(routeInput.value || '').trim().toLowerCase();
+			if (!h) {
+				dom.content(routeResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Enter a site or an IP to check.') ]));
+				return;
+			}
+			dom.content(routeResult, E('p', { 'class': 'hpui-hint' }, [ _('Tracing…') ]));
+			L.resolveDefault(callRouteExplain(h), {}).then(renderRouteVerdict);
+		}
+		routeBtn.addEventListener('click', runRouteCheck);
+		routeInput.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') runRouteCheck(); });
 
 	/* ── User lists (Ф4.2 менеджер списков) ──────────────────────────────
 	 * The former two static textareas (proxy/direct) grow into a full list
@@ -364,6 +522,10 @@ return view.extend({
 	const listsZone = E('div', {});
 	const listsResult = E('div', {});
 	const listsState = { env: null, nodes: [], data: [], editId: null };
+	/* Ф9.3 v3: the lists manager rides one hpui-panel (icon header). */
+	const listsPanel = E('div', { 'class': 'hpui-panel' }, [
+		E('h4', { 'class': 'hpui-h4' }, [ hp.icon('hardrive'), _('My lists') ])
+	]);
 
 	function listArea(text) {
 		dom.content(listsResult, E('p', { 'class': 'hpui-hint' }, [ text ]));
@@ -453,7 +615,7 @@ return view.extend({
 			checks.push(cb);
 			box.appendChild(E('label', {}, [ cb, ' ' + listsState.nodes[n].label ]));
 		}
-		box.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; flex-basis:100%' },
+		box.appendChild(E('span', { 'class': 'hpui-hint', style: 'margin:0; flex-basis:100%' },
 			[ _('For a resilient secondary route pick a pool of at least 2 nodes.') ]));
 		box._checks = checks;
 		return box;
@@ -493,10 +655,10 @@ return view.extend({
 			tr.appendChild(E('td', { style: 'font-size:.85em' }, [ l.source_url || '—' ]));
 			const btns = E('td', {}, [ E('span', { 'class': 'wiz-svc-btns' }, (function() {
 				const arr = [];
-				const eb = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Edit') ]);
+				const eb = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button' }, [ _('Edit') ]);
 				eb.addEventListener('click', function() { listsState.editId = l.id; renderListsZone(); });
 				arr.push(eb);
-				const tb2 = E('button', { 'class': 'btn cbi-button', type: 'button' },
+				const tb2 = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button' },
 					[ l.enabled ? _('Disable') : _('Enable') ]);
 				tb2.addEventListener('click', function() {
 					tb2.disabled = true;
@@ -513,7 +675,7 @@ return view.extend({
 						}).finally(function() { tb2.disabled = false; });
 				});
 				arr.push(tb2);
-				const xb = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Export') ]);
+				const xb = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button' }, [ _('Export') ]);
 				xb.addEventListener('click', function() {
 					xb.disabled = true;
 					L.resolveDefault(callListExport(l.id), {}).then(function(r) {
@@ -532,7 +694,7 @@ return view.extend({
 					}).finally(function() { xb.disabled = false; });
 				});
 				arr.push(xb);
-				const db = E('button', { 'class': 'btn cbi-button cbi-button-negative', type: 'button' },
+				const db = E('button', { 'class': 'hpui-btn hpui-btn-danger hpui-btn-sm', type: 'button' },
 					[ _('Delete') ]);
 				db.addEventListener('click', function() {
 					hp.confirmModal(_('Delete list'), _('Delete the list "%s"? A snapshot is taken automatically before the deletion.').format(l.name || l.id), _('Delete'))
@@ -595,8 +757,8 @@ return view.extend({
 				/* Import row: URL (replace / append) + local file. */
 				const urlIn = E('input', { type: 'text', 'class': 'cbi-input-text',
 					placeholder: 'https://…', style: 'flex:1 1 260px; min-width:200px' });
-				const impRep = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Replace from URL') ]);
-				const impApp = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Append from URL') ]);
+				const impRep = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button' }, [ _('Replace from URL') ]);
+				const impApp = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button' }, [ _('Append from URL') ]);
 				const fileIn = E('input', { type: 'file', 'class': 'cbi-input-file' });
 				fileIn.addEventListener('change', function() {
 					const f = fileIn.files && fileIn.files[0];
@@ -631,9 +793,9 @@ return view.extend({
 				card.appendChild(E('div', { 'class': 'wiz-row', style: 'margin:6px 0' }, [
 					E('span', { 'class': 'wiz-title', style: 'flex:none; width:160px' }, [ _('Import') ]),
 					urlIn, impRep, impApp, fileIn ]));
-				card.appendChild(E('div', { 'class': 'wiz-note' },
+				card.appendChild(E('div', { 'class': 'hpui-hint' },
 					[ _('One host per line; # lines are comments. Entries are validated and normalized at input: a /33 or garbage is rejected with a counter, a bare IP is accepted and normalized (/32, /128). Import never applies an empty/HTML answer.') ]));
-				const saveBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+				const saveBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
 					[ _('Save list') ]);
 				saveBtn.addEventListener('click', function() {
 					saveBtn.disabled = true;
@@ -655,7 +817,7 @@ return view.extend({
 						});
 					}).finally(function() { saveBtn.disabled = false; });
 				});
-				const closeBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Close') ]);
+				const closeBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Close') ]);
 				closeBtn.addEventListener('click', function() { listsState.editId = null; renderListsZone(); });
 				card.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ saveBtn, closeBtn ]));
 				listsZone.appendChild(card);
@@ -689,7 +851,7 @@ return view.extend({
 			placeholder: _('Entries — one per line (optional; you can import later)'),
 			style: 'width:100%; font-family:monospace; font-size:.85em' });
 		mk.appendChild(ta2);
-		const createBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			const createBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
 			[ _('Create') ]);
 		createBtn.addEventListener('click', function() {
 			const name = (nameIn2.value || '').trim();
@@ -723,7 +885,7 @@ return view.extend({
 			}).finally(function() { createBtn.disabled = false; });
 		});
 		mk.appendChild(E('div', { 'class': 'wiz-toolbar' }, [ createBtn ]));
-		mk.appendChild(E('div', { 'class': 'wiz-note' },
+		mk.appendChild(E('div', { 'class': 'hpui-hint' },
 			[ _('A list is created WITH its action — a list without a rule would be a dead list. Proxy lists route AFTER the RU-protection guard (a RU domain in a proxy list stays direct — the invariant holds); direct lists are checked right after the per-service rules.') ]));
 		listsZone.appendChild(mk);
 
@@ -743,7 +905,7 @@ return view.extend({
 				snapSel.appendChild(E('option', { value: snaps[i].dir },
 					[ snaps[i].dir + (snaps[i].reason ? (' — ' + snaps[i].reason) : '') + ' (' + snaps[i].counts + ')' ]));
 		});
-		const snapBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Snapshot all lists') ]);
+		const snapBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Snapshot all lists') ]);
 		snapBtn.addEventListener('click', function() {
 			snapBtn.disabled = true;
 			listArea(_('Taking a snapshot…'));
@@ -755,7 +917,7 @@ return view.extend({
 				refreshLists();
 			}).finally(function() { snapBtn.disabled = false; });
 		});
-		const restBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Restore') ]);
+		const restBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Restore') ]);
 		restBtn.addEventListener('click', function() {
 			if (!snapSel.value) {
 				listArea(_('Pick a snapshot to restore first.'));
@@ -837,18 +999,17 @@ return view.extend({
 			};
 
 			presetRows.innerHTML = '';
-			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
+			presetRows.appendChild(E('div', { 'class': 'hpui-hint' },
 				[ _('The mass lists below already cover YouTube/Discord/Telegram and most blocked resources — a per-service rule overrides the mass list.') ]));
 			/* U6/D20 honesty: "direct" wording made users read the empty action
 			 * as "this list goes into the Russian internet" — say what really
 			 * happens: no rule, general routing decides. */
-			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
+			presetRows.appendChild(E('div', { 'class': 'hpui-hint' },
 				[ _('"No rule" does NOT mean "straight into the Russian internet": it only removes the rule — the domains are not added to any proxy list and follow the GENERAL routing rules (mass lists like Russia Inside / Re-filter and learned records may still send them through the node). Only traffic unmatched by every rule egresses directly.') ]));
-			/* B6.9: the ONE documented priority order (mirrored by the DNS
-			 * rules — B6.5). Kept in sync with generate_client.uc; the first
-			 * match wins in both lists. */
-			presetRows.appendChild(E('div', { 'class': 'wiz-note' },
-				[ _('Rule priority (first match wins): manual pins "Always direct" → advanced custom rules → service rules (UDP/voice/torrents) → per-service lists (Master) → OAuth → your "Direct" lists → RU-protection (RU never via proxy) → your "Proxy" lists → static + learned lists → manual IPs → learned IPs → everything else — default (direct). DNS follows the same order.') ]));
+			/* B6.9: the ONE documented priority order used to live here as a
+			 * text note — D29 moved it into the VISIBLE order map at the top
+			 * of the page (orderMapPanel, kept in sync with
+			 * generate_client.uc; first match wins in both lists). */
 
 			function buildServiceRow(preset) {
 				const rule = (list.rules || {})[preset.source];
@@ -907,7 +1068,7 @@ return view.extend({
 				}
 				/* A1: the pool is the resilient exit for a secondary route —
 				 * a single node defeats the purpose. */
-				poolBox.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; flex-basis:100%' },
+				poolBox.appendChild(E('span', { 'class': 'hpui-hint', style: 'margin:0; flex-basis:100%' },
 					[ _('For a resilient secondary route pick a pool of at least 2 nodes.') ]));
 				const syncPool = function() {
 					const show = (sel.value === 'urltest');
@@ -923,7 +1084,7 @@ return view.extend({
 				syncPool();
 
 				const applyBtn = E('button', {
-					'class': 'btn cbi-button cbi-button-action', type: 'button'
+					'class': 'hpui-btn hpui-btn-primary', type: 'button'
 				}, [ _('Apply') ]);
 				applyBtn.addEventListener('click', function() {
 					const ids = [];
@@ -984,7 +1145,7 @@ return view.extend({
 
 				if (preset.check) {
 					const checkBtn = E('button', {
-						'class': 'btn cbi-button', type: 'button'
+						'class': 'hpui-btn hpui-btn-ghost', type: 'button'
 					}, [ _('Check') ]);
 					checkBtn.addEventListener('click', function() {
 						checkBtn.disabled = true;
@@ -999,7 +1160,7 @@ return view.extend({
 				let exZone = null;
 				if (rule) {
 					exZone = E('div', {});
-					const exBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+					const exBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' },
 						[ _('Add a second exit') ]);
 					exBtn.addEventListener('click', function() {
 						if (exZone.childNodes.length)
@@ -1017,7 +1178,7 @@ return view.extend({
 				 * becomes D20 "No rule" — the service follows the general
 				 * routing rules. Extra exits keep their own delete buttons. */
 				if (rule) {
-					const delBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', type: 'button' },
+					const delBtn = E('button', { 'class': 'hpui-btn hpui-btn-danger', type: 'button' },
 						[ _('Delete rule') ]);
 					delBtn.addEventListener('click', function() {
 						delBtn.disabled = true;
@@ -1044,12 +1205,12 @@ return view.extend({
 				 * shown here with their own remove buttons. */
 				for (let e in extras) {
 					const ex = extras[e];
-					const exRow = E('div', { 'class': 'wiz-note', style: 'margin:2px 0 0 12px' });
+					const exRow = E('div', { 'class': 'hpui-hint', style: 'margin:2px 0 0 12px' });
 					exRow.appendChild(document.createTextNode(
 						_('Also routed through %s').format(nodeText(ex.node)) +
 						(ex.enabled ? '' : (' (' + _('disabled') + ')')) + '  '));
 					const exDel = E('button', {
-						'class': 'btn cbi-button cbi-button-negative', type: 'button'
+						'class': 'hpui-btn hpui-btn-danger hpui-btn-sm', type: 'button'
 					}, [ _('Delete') ]);
 					exDel.addEventListener('click', function() {
 						exDel.disabled = true;
@@ -1080,7 +1241,7 @@ return view.extend({
 						const names = [];
 						for (let c in cov)
 							names.push(cov[c].name);
-						wrap.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
+						wrap.appendChild(E('div', { 'class': 'hpui-hint', style: 'margin:0' },
 							[ _('Covered by the mass list (%s) → %s — a rule here overrides the list.').format(names.join(', '), nodeText(cov[0].node)) ]));
 					}
 				}
@@ -1088,7 +1249,7 @@ return view.extend({
 				/* T1 (G1): a SHORT, provider-independent hint — the exit country
 				 * of the bridge differs per user, so no measured locations here. */
 				if (preset.source === 'telegram')
-					wrap.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
+					wrap.appendChild(E('div', { 'class': 'hpui-hint', style: 'margin:0' },
 						[ _('tg-ws (transparent) lets Telegram work WITHOUT a VPN — it is not a direct connection: messaging rides a local WS bridge (no proxy setup on devices) and falls back to the node automatically if the bridge dies; calls (UDP) stay on the VPN. Telegram will show the bridge relay\'s country instead of your home IP — expected for such a path. The rule routes both Telegram domains and MTProto DC IPs.') ]));
 
 				if (exZone)
@@ -1124,7 +1285,7 @@ return view.extend({
 				mNode.addEventListener('change', function() {
 					poolBox.style.display = (mNode.value === 'urltest') ? 'flex' : 'none';
 				});
-				const mAdd = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+				const mAdd = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
 					[ _('Add') ]);
 				mAdd.addEventListener('click', function() {
 					const ids = [];
@@ -1161,7 +1322,7 @@ return view.extend({
 							refresh();
 						}).finally(function() { mAdd.disabled = false; });
 				});
-				const box = E('div', { 'class': 'wiz-note', style: 'margin:2px 0 0 12px' });
+				const box = E('div', { 'class': 'hpui-hint', style: 'margin:2px 0 0 12px' });
 				box.appendChild(E('div', { 'class': 'wiz-row' }, [
 					E('span', { 'class': 'wiz-title', style: 'flex:none; width:110px' }, [ _('Node') ]),
 					mNode ]));
@@ -1170,13 +1331,15 @@ return view.extend({
 				return box;
 			}
 
+			/* Ф9.3 v3: each group renders as an hpui-panel with an icon
+			 * header; entries carry the icon at [3]. */
 			const GROUPS = [
-				[ _('Mass lists'), BULK_PRESETS ],
-				[ _('Services'), PRESETS ],
+				[ _('Mass lists'), BULK_PRESETS, null, 'database' ],
+				[ _('Services'), PRESETS, null, 'send' ],
 				[ _('Games (IP-only)'), GAMING_PRESETS,
-					_('Matched by destination IP (no domains) — a rule routes the game networks (launchers, match servers, voice) to the chosen exit.') ],
-				[ _('CDN and hosting'), CDN_PRESETS ],
-				[ _('Other'), MISC_PRESETS ]
+					_('Matched by destination IP (no domains) — a rule routes the game networks (launchers, match servers, voice) to the chosen exit.'), 'activity' ],
+				[ _('CDN and hosting'), CDN_PRESETS, null, 'globe' ],
+				[ _('Other'), MISC_PRESETS, null, 'layers' ]
 			];
 
 			/* D27: the "add a rule" master becomes the CATALOG of lists —
@@ -1184,11 +1347,11 @@ return view.extend({
 			 * created and edited IN the row; a second exit of the same
 			 * service is added by the button inside its row (rpcd
 			 * wizard_preset_add is unchanged). */
-			const mBtn = E('button', { 'class': 'btn cbi-button', type: 'button', style: 'margin:2px 0' },
+			const mBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button', style: 'margin:2px 0' },
 				[ _('Add a rule') ]);
 			const mForm = E('div', { 'class': 'wiz-svc', style: 'display:none; margin:8px 0' });
 			const mSrc = E('select', { 'class': 'cbi-input-select', style: 'min-width:260px' });
-			const mShow = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			const mShow = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
 				[ _('Show') ]);
 			const fillCatalog = function() {
 				/* B6.6: a list without its own rule may still be covered by an
@@ -1236,7 +1399,7 @@ return view.extend({
 					mForm.style.display = 'none';
 			});
 			mForm.appendChild(E('div', { 'class': 'wiz-row' }, [ mSrc, mShow ]));
-			presetRows.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0 0 4px' },
+			presetRows.appendChild(E('div', { 'class': 'hpui-hint', style: 'margin:0 0 4px' },
 				[ _('Pick a list in the catalog — its row appears on the page; a row without a rule disappears after a reload.') ]));
 			presetRows.appendChild(mBtn);
 			presetRows.appendChild(mForm);
@@ -1248,12 +1411,34 @@ return view.extend({
 						items.push(GROUPS[g][1][p]);
 				if (!items.length)
 					continue;
-				presetRows.appendChild(E('div', { 'class': 'wiz-group' }, [ GROUPS[g][0] ]));
+				const gpanel = E('div', { 'class': 'hpui-panel' }, [
+					E('h4', { 'class': 'hpui-h4' }, [ hp.icon(GROUPS[g][3]), GROUPS[g][0] ])
+				]);
 				if (GROUPS[g][2])
-					presetRows.appendChild(E('div', { 'class': 'wiz-note' }, [ GROUPS[g][2] ]));
+					gpanel.appendChild(E('p', { 'class': 'hpui-hint' }, [ GROUPS[g][2] ]));
 				for (let p2 in items)
-					presetRows.appendChild(buildServiceRow(items[p2]));
+					gpanel.appendChild(buildServiceRow(items[p2]));
+				presetRows.appendChild(gpanel);
 			}
+
+			/* D29: quick-check chips of the route checker = the services
+			 * currently on the page (their verified representative host) + one
+			 * RU example to see the guard at work. Deduped — a host may
+			 * represent several sources (instagram.com: refilter AND meta). */
+			const chips = [];
+			const seenHosts = {};
+			for (let g3 in GROUPS)
+				for (let p3 in GROUPS[g3][1]) {
+					const it3 = GROUPS[g3][1][p3];
+					if (!rowVisible(it3.source) || !it3.hosts || !it3.hosts.length)
+						continue;
+					if (seenHosts[it3.hosts[0]])
+						continue;
+					seenHosts[it3.hosts[0]] = true;
+					chips.push([ it3.hosts[0], it3.title ]);
+				}
+			chips.push([ 'ya.ru', _('RU-guard example — stays direct') ]);
+			fillRouteChips(chips);
 		}
 
 		/* ── Live checks (results in ONE place below the presets) ──────── */
@@ -1264,7 +1449,7 @@ return view.extend({
 					[ _('Check failed: ') + ((r && r.error) || _('RPC error')) ]));
 				return;
 			}
-			const exitLine = E('div', { 'class': 'wiz-note' });
+			const exitLine = E('div', { 'class': 'hpui-hint' });
 			exitLine.appendChild(document.createTextNode(_('Main-path exit') + ': '));
 			exitLine.appendChild(E('b', {}, [ (r.exit && (r.exit.country || r.exit.ip)) || _('no data') ]));
 			if (r.exit && r.exit.asn)
@@ -1294,7 +1479,7 @@ return view.extend({
 			 * through a throwaway probe core; the result lands in the ONE
 			 * result area. */
 			if (r.service === 'google_ai') {
-				const aiBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+				const aiBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' },
 					[ _('Check other nodes') ]);
 				aiBtn.addEventListener('click', function() {
 					aiBtn.disabled = true;
@@ -1309,7 +1494,7 @@ return view.extend({
 
 			const routes = r.route || {};
 			for (let h in routes) {
-				const line = E('div', { 'class': 'wiz-note' });
+				const line = E('div', { 'class': 'hpui-hint' });
 				line.appendChild(document.createTextNode(h + ': '));
 				line.appendChild(shortTrace(routes[h]));
 				checkResult.appendChild(line);
@@ -1323,12 +1508,12 @@ return view.extend({
 					[ _('Node check failed: ') + ((r && r.error) || _('RPC error')) ]));
 				return;
 			}
-			checkResult.appendChild(E('div', { 'class': 'wiz-note' },
+			checkResult.appendChild(E('div', { 'class': 'hpui-hint' },
 				[ _('Google AI — candidate nodes (one API probe per node):') ]));
 			const nodes = r.nodes || [];
 			for (let i = 0; i < nodes.length; i++) {
 				const n = nodes[i];
-				const line = E('div', { 'class': 'wiz-note' });
+				const line = E('div', { 'class': 'hpui-hint' });
 				line.appendChild(document.createTextNode(resolveTag(n.node) +
 					((n.node === r.current) ? (' · ' + _('current node')) : '') + ': '));
 				if (n.verdict === 'passes')
@@ -1342,10 +1527,10 @@ return view.extend({
 				checkResult.appendChild(line);
 			}
 			if (!nodes.length)
-				checkResult.appendChild(E('div', { 'class': 'wiz-note' },
+				checkResult.appendChild(E('div', { 'class': 'hpui-hint' },
 					[ _('No nodes found in the running config.') ]));
 			if (r.truncated)
-				checkResult.appendChild(E('div', { 'class': 'wiz-note' },
+				checkResult.appendChild(E('div', { 'class': 'hpui-hint' },
 					[ _('Some nodes were not checked (limit 12).') ]));
 			checkResult.appendChild(E('p', { 'class': 'hpui-hint' },
 				[ _('To switch the exit: pick the node in the service row above and press Apply.') ]));
@@ -1353,10 +1538,10 @@ return view.extend({
 
 		function renderPathCheck(preset, results) {
 			checkResult.innerHTML = '';
-			checkResult.appendChild(E('div', { 'class': 'wiz-note' },
+			checkResult.appendChild(E('div', { 'class': 'hpui-hint' },
 				[ _('Live route for %s:').format(preset.title) ]));
 			for (let i in results) {
-				const line = E('div', { 'class': 'wiz-note' });
+				const line = E('div', { 'class': 'hpui-hint' });
 				line.appendChild(document.createTextNode(results[i].host + ': '));
 				line.appendChild(shortTrace(results[i].trace));
 				checkResult.appendChild(line);
@@ -1445,19 +1630,22 @@ return view.extend({
 			E('p', { 'class': 'hpui-hint', style: 'margin:2px 0' },
 				[ _('Your own lists: named, with the direction (proxy/direct), the content type (domains/IPs) and the ACTION picked at creation — a single domain or IP is enough. Import from a URL (an HTML answer is never applied), pasted text or a file; entries are validated at input; snapshots outside the rotation; export shows what actually routes.') ])
 		]);
+		listsPanel.appendChild(listsIntro);
+		listsPanel.appendChild(listsZone);
+		listsPanel.appendChild(listsResult);
 
+		/* Ф9.3/D29: v3 page skeleton — intro, the order map, the route
+		 * checker (the main instrument), then the editable rows and the
+		 * per-zone result/list surfaces. */
 		return E('div', {}, [
-			E('h2', {}, _('Service rules')),
-			E('p', { 'class': 'hpui-hint', style: 'margin-top:2px' },
-				[ _('Which service exits through what: pick an exit for each known service — YouTube, Discord, Telegram, AI, games and the mass lists — and check the live route right here. Routing applies in "Bypass blocking" mode; everything unmatched goes directly.') ]),
+			hp.pageIntro(_('Service rules'),
+				_('Which service exits through what: the order map shows how a route is decided, the checker shows any site\'s live route, and the rows below assign exits. Routing applies in "Bypass blocking" mode; everything unmatched goes directly.')),
 			envBanners,
+			orderMapPanel,
+			routePanel,
 			presetRows,
-			E('h4', { style: 'margin-top:14px' }, [ _('Check results') ]),
-			checkResult,
-			E('h4', { style: 'margin-top:14px' }, [ _('My lists') ]),
-			listsIntro,
-			listsZone,
-			listsResult
+			checkPanel,
+			listsPanel
 		]);
 	}
 });

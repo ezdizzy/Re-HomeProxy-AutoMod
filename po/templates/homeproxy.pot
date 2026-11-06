@@ -7813,3 +7813,84 @@ msgstr ""
 
 msgid "How the blocked sites open: what works right now (the Serving map), the strategy picking, the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it."
 msgstr ""
+
+msgid "Pin \"Always direct\""
+msgstr ""
+
+msgid "A host pinned in the Automation table — outranks every list: one host forced to direct wins over everything."
+msgstr ""
+
+msgid "Service ports"
+msgstr ""
+
+msgid "Torrents stay direct, calls ride the voice ports — port-scoped rules, not tied to a domain."
+msgstr ""
+
+msgid "Service rules — THIS page"
+msgstr ""
+
+msgid "Preset rows for services and mass lists (Services, Russia Inside, Re-filter). The rows below edit exactly this tier."
+msgstr ""
+
+msgid "OAuth stability"
+msgstr ""
+
+msgid "Login/auth domains ride the main exit together with their service — a proxy switch never breaks a login."
+msgstr ""
+
+msgid "Your \"Direct\" lists"
+msgstr ""
+
+msgid "The \"My lists\" zone below with the \"direct\" action — the explicit \"not through the node\" intent."
+msgstr ""
+
+msgid "RU-guard"
+msgstr ""
+
+msgid "RU-geo hosts NEVER go through the proxy — a mass or learned list cannot tunnel RU infrastructure. Always on (invariant)."
+msgstr ""
+
+msgid "Your \"Proxy\" lists"
+msgstr ""
+
+msgid "The \"My lists\" zone with the \"via proxy\" action — checked AFTER the RU-guard: a RU domain in a proxy list stays direct."
+msgstr ""
+
+msgid "Mass pins + learned"
+msgstr ""
+
+msgid "The proxy-domain list (your \"Always via proxy\" pins + sites the system learned) routes to the main node; manual and learned IPs follow."
+msgstr ""
+
+msgid "Everything else — DIRECT"
+msgstr ""
+
+msgid "A host no rule matched egresses directly: the whole internet is direct by default, lists and rules are the exceptions. DNS mirrors this order."
+msgstr ""
+
+msgid "How a route is decided — first match wins"
+msgstr ""
+
+msgid "The whole internet goes DIRECT by default; lists and rules are the exceptions that route traffic through a node or an engine. This is the exact order the running config follows — the first rule that matches decides. Keep it in mind while editing the rows below."
+msgstr ""
+
+msgid "Check a route"
+msgstr ""
+
+msgid "Enter a site — the checker answers with the winning rule of the LIVE config, the exit chain and the protection verdict. Remote rule-sets are matched by the core itself, so their exact membership is reported honestly as \"probable\"."
+msgstr ""
+
+msgid "Quick check:"
+msgstr ""
+
+msgid "Enter a site or an IP to check."
+msgstr ""
+
+msgid "RU-guard example — stays direct"
+msgstr ""
+
+msgid "Which service exits through what: the order map shows how a route is decided, the checker shows any site's live route, and the rows below assign exits. Routing applies in \"Bypass blocking\" mode; everything unmatched goes directly."
+msgstr ""
+
+msgid "Action results and live checks of the rows appear here."
+msgstr ""
