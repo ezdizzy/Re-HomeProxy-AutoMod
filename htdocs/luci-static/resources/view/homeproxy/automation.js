@@ -1434,7 +1434,7 @@ return view.extend({
 		}
 
 		/* ── Event Bus feed (Журналы level, Ф7.3) ──────────────────────── */
-		const FEED_SOURCES = { automation: _('Auto-bypass'), hotswap: 'Hot Swap',
+		const FEED_SOURCES = { automation: _('Auto-bypass'), hotswap: _('Exit engine'),
 			urltest: 'URLTest', autopilot: _('DPI auto-pilot') };
 		function renderFeed(r) {
 			const evs = ((r && r.events) || []).filter(function(ev) {

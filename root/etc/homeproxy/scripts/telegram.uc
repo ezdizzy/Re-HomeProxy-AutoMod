@@ -1004,7 +1004,6 @@ function cmd_logs(chat_id) {
 const DIAG_LOGS = [
 	[ '/var/run/homeproxy/telegram.log', 12 ],
 	[ '/var/run/homeproxy/hotswap.log', 10 ],
-	[ '/var/run/homeproxy/urltest_watchdog.log', 10 ],
 	[ '/var/run/homeproxy/health.log', 10 ],
 	[ '/var/run/homeproxy/sentinel.log', 10 ],
 	[ '/var/run/homeproxy/recovery.log', 10 ],
@@ -1675,7 +1674,7 @@ function bus_push(ev) {
 			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
 	if (ev.src === 'hotswap') {
-		return { text: '🔄 <b>Hot Swap — смена выхода</b>' +
+		return { text: '🔄 <b>Выход — смена узла</b>' +
 			(length(who) ? '\nТеперь: <b>' + esc_html(who) + '</b>' : '') +
 			(length(detail) ? '\nПричина: ' + esc_html(detail) : ''), kb: KB_PUSH_SERVERS };
 	}

@@ -164,6 +164,10 @@ function backup_nodes() {
 		main_udp_urltest_nodes: uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [],
 		main_urltest_preferred: uci.get(uciconfig, ucimain, 'main_urltest_preferred'),
 		main_udp_urltest_preferred: uci.get(uciconfig, ucimain, 'main_udp_urltest_preferred'),
+		exit_mode: uci.get(uciconfig, ucimain, 'exit_mode'),
+		exit_preferred: uci.get(uciconfig, ucimain, 'exit_preferred'),
+		exit_udp_preferred: uci.get(uciconfig, ucimain, 'exit_udp_preferred'),
+		exit_reserves: uci.get(uciconfig, ucimain, 'exit_reserves') || [],
 		sections: sections
 	};
 	system(`mkdir -p ${shellQuote(BK_DIR)}`);
@@ -223,13 +227,16 @@ function restore_nodes(path) {
 	const ptrs = [
 		['main_node', 'main_node'], ['main_udp_node', 'main_udp_node'],
 		['main_urltest_preferred', 'main_urltest_preferred'],
-		['main_udp_urltest_preferred', 'main_udp_urltest_preferred']
+		['main_udp_urltest_preferred', 'main_udp_urltest_preferred'],
+		['exit_mode', 'exit_mode'],
+		['exit_preferred', 'exit_preferred'],
+		['exit_udp_preferred', 'exit_udp_preferred']
 	];
 	for (let p in ptrs) {
 		if (doc[p[0]] != null)
 			uci.set(uciconfig, ucimain, p[1], '' + doc[p[0]]);
 	}
-	const lists = [['main_urltest_nodes'], ['main_udp_urltest_nodes']];
+	const lists = [['main_urltest_nodes'], ['main_udp_urltest_nodes'], ['exit_reserves']];
 	for (let l in lists) {
 		uci.delete(uciconfig, ucimain, l[0]);
 		if (type(doc[l[0]]) === 'array')
@@ -1036,40 +1043,64 @@ function main() {
 	if (!isEmpty(main_node)) {
 		const first_server = uci.get_first(uciconfig, ucinode);
 		if (first_server) {
-			let main_urltest_nodes;
-			let urltest_empty = false;
+			/* Exit Engine (Ф9.16): резервы exit_reserves чистятся от исчезнувших
+			 * узлов при любом main_node (urltest и конкретный узел); preferred
+			 * (exit_preferred/exit_udp_preferred + легаси) чистится, когда узел
+			 * исчез. Легаси-списки main_urltest_nodes/main_udp_urltest_nodes
+			 * чистятся как раньше — генератор читает их как фолбэк до миграции.
+			 * Пул kernel-группы теперь = все узлы, поэтому «пустой список» больше
+			 * НЕ переключает main_node (пул опустевает только при 0 узлов, а тогда
+			 * first_server и так null). */
+			const pruned_reserves = filter(uci.get(uciconfig, ucimain, 'exit_reserves') || [], (v) => {
+				if (!uci.get(uciconfig, v)) {
+					log(sprintf('Node %s is gone, removing from exit reserves.', v));
+					return false;
+				}
+				return true;
+			});
+			uci.delete(uciconfig, ucimain, 'exit_reserves');
+			for (let rv in pruned_reserves)
+				uci.set(uciconfig, ucimain, 'exit_reserves', '' + rv);
+			const gone_pref = uci.get(uciconfig, ucimain, 'main_urltest_preferred');
+			if (gone_pref && !uci.get(uciconfig, gone_pref)) {
+				log(sprintf('Preferred node %s is gone, clearing preference.', gone_pref));
+				uci.delete(uciconfig, ucimain, 'main_urltest_preferred');
+			}
+			const gone_epref = uci.get(uciconfig, ucimain, 'exit_preferred');
+			if (gone_epref && !uci.get(uciconfig, gone_epref)) {
+				log(sprintf('Preferred node %s is gone, clearing exit preference.', gone_epref));
+				uci.delete(uciconfig, ucimain, 'exit_preferred');
+			}
+			const gone_upref = uci.get(uciconfig, ucimain, 'main_udp_urltest_preferred');
+			if (gone_upref && !uci.get(uciconfig, gone_upref)) {
+				log(sprintf('Preferred UDP node %s is gone, clearing preference.', gone_upref));
+				uci.delete(uciconfig, ucimain, 'main_udp_urltest_preferred');
+			}
+			const gone_eupref = uci.get(uciconfig, ucimain, 'exit_udp_preferred');
+			if (gone_eupref && !uci.get(uciconfig, gone_eupref)) {
+				log(sprintf('Preferred UDP node %s is gone, clearing exit UDP preference.', gone_eupref));
+				uci.delete(uciconfig, ucimain, 'exit_udp_preferred');
+			}
 			if (main_node === 'urltest') {
 				const ut_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
 				if (ut_mode === 'manual') {
-					main_urltest_nodes = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes'), (v) => {
+					const kept = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [], (v) => {
 						if (!uci.get(uciconfig, v)) {
 							log(sprintf('Node %s is gone, removing from urltest list.', v));
 							return false;
 						}
 						return true;
 					});
-					if (!length(main_urltest_nodes)) {
-						/* An EMPTY list must be deleted, not set([]): an empty UCI
-						 * list write leaves a stale/absent value mismatch behind. */
-						uci.delete(uciconfig, ucimain, 'main_urltest_nodes');
-						urltest_empty = true;
-					}
-				} else if (ut_mode === 'prefer') {
-					/* Preferred node gone → clear it; the pool falls back to the rest. */
-					const pref = uci.get(uciconfig, ucimain, 'main_urltest_preferred');
-					if (pref && !uci.get(uciconfig, pref)) {
-						log(sprintf('Preferred node %s is gone, clearing preference.', pref));
-						uci.delete(uciconfig, ucimain, 'main_urltest_preferred');
-					}
+					uci.delete(uciconfig, ucimain, 'main_urltest_nodes');
+					for (let kv in kept)
+						uci.set(uciconfig, ucimain, 'main_urltest_nodes', '' + kv);
 				}
-				/* auto: implicit pool — nothing to maintain */
 			}
 
 			/* Synthetic tags (direct/ByeDPI/Zapret) are not node sections and must not
 			 * be treated as missing nodes. */
 			const synthetic = ['direct-out', 'byedpi-out', 'zapret-out'];
-			if ((main_node === 'urltest') ? urltest_empty :
-			    (!(main_node in synthetic) && !uci.get(uciconfig, main_node))) {
+			if (!(main_node in synthetic) && !uci.get(uciconfig, main_node)) {
 				uci.set(uciconfig, ucimain, 'main_node', first_server);
 				uci.commit(uciconfig);
 				need_restart = true;
@@ -1078,33 +1109,23 @@ function main() {
 			}
 
 			if (!isEmpty(main_udp_node) && main_udp_node !== 'same') {
-				let main_udp_urltest_nodes;
-				let udp_urltest_empty = false;
 				if (main_udp_node === 'urltest') {
 					const ut_mode = uci.get(uciconfig, ucimain, 'main_udp_urltest_mode') || 'manual';
 					if (ut_mode === 'manual') {
-						main_udp_urltest_nodes = filter(uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes'), (v) => {
+						const kept_udp = filter(uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [], (v) => {
 							if (!uci.get(uciconfig, v)) {
 								log(sprintf('Node %s is gone, removing from UDP urltest list.', v));
 								return false;
 							}
 							return true;
 						});
-						if (!length(main_udp_urltest_nodes)) {
-							uci.set(uciconfig, ucimain, 'main_udp_urltest_nodes', main_udp_urltest_nodes);
-							udp_urltest_empty = true;
-						}
-					} else if (ut_mode === 'prefer') {
-						const pref = uci.get(uciconfig, ucimain, 'main_udp_urltest_preferred');
-						if (pref && !uci.get(uciconfig, pref)) {
-							log(sprintf('Preferred UDP node %s is gone, clearing preference.', pref));
-							uci.delete(uciconfig, ucimain, 'main_udp_urltest_preferred');
-						}
+						uci.delete(uciconfig, ucimain, 'main_udp_urltest_nodes');
+						for (let kv in kept_udp)
+							uci.set(uciconfig, ucimain, 'main_udp_urltest_nodes', '' + kv);
 					}
 				}
 
-				if ((main_udp_node === 'urltest') ? udp_urltest_empty :
-				    (!(main_udp_node in synthetic) && !uci.get(uciconfig, main_udp_node))) {
+				if (!(main_udp_node in synthetic) && !uci.get(uciconfig, main_udp_node)) {
 					uci.set(uciconfig, ucimain, 'main_udp_node', first_server);
 					uci.commit(uciconfig);
 					need_restart = true;

@@ -281,5 +281,57 @@ if (uci.get(uciconfig, ucimain, 'custom_core_type') === 'tachyon')
 uci.delete(uciconfig, 'automation', 'gemini_strict');
 uci.delete(uciconfig, 'automation', 'ai_node');
 
+/* ── Ф9.16 (D35a): единый выход-движок — миграция легаси-опций ─────────────
+ * exit_mode/exit_preferred/exit_reserves/... приходят на смену
+ * main_urltest_mode/nodes/preferred и hotswap_* (см. 21-EXIT_ENGINE_DESIGN.md).
+ * Миграция ИДЕМПОТЕНТНА и копирует-Т-ОЛЬКО-КОПИРУЕТ: легаси-ключи НЕ удаляются,
+ * чтобы откат пакета сохранил точное прежнее поведение (генератор читает exit_*
+ * первыми, легаси — только как фолбэк). main_urltest_interval /
+ * main_udp_urltest_interval остаются на месте (интервал kernel-группы). */
+if (isEmpty(uci.get(uciconfig, ucimain, 'exit_mode'))) {
+	const legacy_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode');
+	if (!isEmpty(legacy_mode) && legacy_mode in ['auto', 'prefer', 'manual'])
+		uci.set(uciconfig, ucimain, 'exit_mode', legacy_mode);
+}
+if (isEmpty(uci.get(uciconfig, ucimain, 'exit_preferred'))) {
+	const legacy_pref = uci.get(uciconfig, ucimain, 'main_urltest_preferred');
+	if (!isEmpty(legacy_pref))
+		uci.set(uciconfig, ucimain, 'exit_preferred', legacy_pref);
+}
+if (isEmpty(uci.get(uciconfig, ucimain, 'exit_udp_preferred'))) {
+	const legacy_upref = uci.get(uciconfig, ucimain, 'main_udp_urltest_preferred');
+	if (!isEmpty(legacy_upref))
+		uci.set(uciconfig, ucimain, 'exit_udp_preferred', legacy_upref);
+}
+if (isEmpty(uci.get(uciconfig, ucimain, 'exit_reserves'))) {
+	/* hotswap_nodes = порядок резервов пользователя; main_urltest_nodes только
+	 * когда легаси-режим был manual (там это был пул ручного режима). */
+	let reserves_m = [];
+	for (let sid in (uci.get(uciconfig, ucimain, 'hotswap_nodes') || []))
+		if (index(reserves_m, sid) < 0)
+			push(reserves_m, sid);
+	if ((uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual') === 'manual')
+		for (let sid in (uci.get(uciconfig, ucimain, 'main_urltest_nodes') || []))
+			if (index(reserves_m, sid) < 0)
+				push(reserves_m, sid);
+	if (length(reserves_m)) {
+		uci.delete(uciconfig, ucimain, 'exit_reserves');
+		for (let sid in reserves_m)
+			uci.set(uciconfig, ucimain, 'exit_reserves', sid);
+	}
+}
+if (isEmpty(uci.get(uciconfig, ucimain, 'exit_probe_interval'))) {
+	const legacy_pi = uci.get(uciconfig, ucimain, 'hotswap_interval');
+	if (!isEmpty(legacy_pi))
+		uci.set(uciconfig, ucimain, 'exit_probe_interval', legacy_pi);
+}
+if (isEmpty(uci.get(uciconfig, ucimain, 'exit_tolerance'))) {
+	const legacy_tol = uci.get(uciconfig, ucimain, 'main_urltest_tolerance');
+	if (!isEmpty(legacy_tol))
+		uci.set(uciconfig, ucimain, 'exit_tolerance', legacy_tol);
+}
+if (isEmpty(uci.get(uciconfig, ucimain, 'exit_failback')) && !isEmpty(uci.get(uciconfig, ucimain, 'hotswap_failback')))
+	uci.set(uciconfig, ucimain, 'exit_failback', uci.get(uciconfig, ucimain, 'hotswap_failback'));
+
 if (!isEmpty(uci.changes(uciconfig)))
 	uci.commit(uciconfig);

@@ -4,7 +4,7 @@
 //
 // Единый реестр наблюдаемых подсистем: ядро, движки (zapret/byedpi), MultiDNS +
 // mosdns, автоматизация (+ probe_pool/sni_sniffer), telegram-бот,
-// urltest-watchdog/hotswap/автопилот/контроль/метрики, TUN/route (tun_state.json),
+// выход-движок (hotswap)/автопилот/контроль/метрики, TUN/route (tun_state.json),
 // fw4-перехват, генераторы (opman-журнал применений) и память роутера.
 // (ч.200, D34b: tg-ws мост удалён из продукта — запись реестра убрана.)
 //
@@ -14,7 +14,7 @@
 //              грани, применение не верифицировано) — ОТЛИЧИМ от падения;
 //   down     — не работает, хотя должен;
 //   off      — выключен настройками (инстанса нет в procd) — НОРМА, не аларм
-//              (урок 126: несмертельные демоны; urltest-watchdog штатно не
+//              (урок 126: несмертельные демоны; выход-движок штатно не
 //              запущен при Hot Swap и т.п.).
 // Уверенность: certain — прямая проверка сейчас (identity /proc, слушатель,
 // ответ API, procd-вердикт); indirect — вывод (окно респавна, несвежее
@@ -794,7 +794,6 @@ const DEEP_SCAN_SPECS = {
 	autopilot: { script: 'zapret_autopilot.uc' },
 	control: { script: 'control_engine.uc' },
 	multidns: { script: 'multidns.uc' },
-	urltest: { script: 'urltest_watchdog.uc' },
 	hotswap: { script: 'hotswap.uc' },
 	metrics: { script: 'metrics.uc' },
 	sentinel: { script: 'sentinel_cli.uc' },
@@ -827,9 +826,7 @@ function deep_entries(svc, regst, now) {
 	entries.telegram = daemon_entry('telegram', 'Telegram-бот', 'telegram',
 		'telegram', 'telegram_bot', 'telegram.uc', svc, regst, scan);
 
-	entries.urltest = daemon_entry('urltest', 'URLTest-watchdog', 'failover',
-		'urltest', 'urltest_watchdog', 'urltest_watchdog.uc', svc, regst, scan);
-	entries.hotswap = daemon_entry('hotswap', 'Hot Swap', 'failover',
+	entries.hotswap = daemon_entry('hotswap', 'Выход (движок)', 'failover',
 		'hotswap', 'hotswap', 'hotswap.uc', svc, regst, scan);
 	entries.autopilot = daemon_entry('autopilot', 'Автопилот Zapret', 'dpi',
 		'autopilot', 'zapret_autopilot', 'zapret_autopilot.uc', svc, regst, scan);
@@ -942,9 +939,7 @@ export function light_entries(svc, regst, prev, now) {
 		'telegram', 'telegram_bot', 'telegram.uc', svc, regst, null);
 
 	/* Сторожа/служебные. */
-	entries.urltest = daemon_entry('urltest', 'URLTest-watchdog', 'failover',
-		'urltest', 'urltest_watchdog', 'urltest_watchdog.uc', svc, regst, null);
-	entries.hotswap = daemon_entry('hotswap', 'Hot Swap', 'failover',
+	entries.hotswap = daemon_entry('hotswap', 'Выход (движок)', 'failover',
 		'hotswap', 'hotswap', 'hotswap.uc', svc, regst, null);
 	entries.autopilot = daemon_entry('autopilot', 'Автопилот Zapret', 'dpi',
 		'autopilot', 'zapret_autopilot', 'zapret_autopilot.uc', svc, regst, null);

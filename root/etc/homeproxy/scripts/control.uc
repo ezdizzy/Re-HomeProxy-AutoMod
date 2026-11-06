@@ -63,7 +63,7 @@ export function systime_stamp() {
 
 export function log(msg) {
 	/* Bounded tmpfs: cap at 64 KB keeping the newest tail (same recipe as
-	 * telegram.uc / urltest_watchdog.uc). */
+	 * telegram.uc / hotswap.uc). */
 	try {
 		const ls = stat(LOG_PATH);
 		if (ls && ls.size > 65536) {

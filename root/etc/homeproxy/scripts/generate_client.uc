@@ -314,25 +314,44 @@ const zapret_voice = uci.get(uciconfig, ucimain, 'zapret_voice') || '0';
  * inbounds (forced direct / forced main) and merge the learned list into proxy_domain_list. */
 const automation_enabled = uci.get(uciconfig, 'automation', 'enabled');
 
-/* Hot Swap (ч.59/ч.60): keep N "hot" connections to the node pool and transparently
- * switch the main-out selector to a proven-alive backup when the primary dies — WITHOUT
- * a core restart, so direct traffic and DNS never notice. Works for BOTH main shapes:
- *   - a specific main node: the node is emitted under its own tag and main-out becomes
- *     a selector [primary, backups…, cold spares];
- *   - a URLTest main: the whole build_urltest group (auto/prefer/manual, sticky,
- *     dead-sink) moves under the tag `main-out-auto` and main-out becomes a selector
- *     [main-out-auto, …pool nodes] — normal traffic still rides the kernel's latency
- *     choice, and a group stalled on a dead pick is rescued by the daemon (switch to a
- *     proven-alive node, failback to the group when it answers again).
- * Synthetic and direct mains (ByeDPI/Zapret/direct-out) have nothing to switch between.
- * The daemon (scripts/hotswap.uc) owns the actual switching; this generator only
- * restructures main-out and writes the state contract file. config.hotswap_nodes is
- * the user-picked priority order of reserve nodes (empty = all nodes, as before). */
-const hotswap_opt = (uci.get(uciconfig, ucimain, 'hotswap') || '0') === '1';
-const hotswap_count_opt = int(uci.get(uciconfig, ucimain, 'hotswap_count') || '3') || 3;
-const hotswap_interval_opt = int(uci.get(uciconfig, ucimain, 'hotswap_interval') || '10') || 10;
-const hotswap_failback_opt = (uci.get(uciconfig, ucimain, 'hotswap_failback') !== '0');
-const hotswap_nodes_opt = uci.get(uciconfig, ucimain, 'hotswap_nodes') || [];
+/* Exit Engine (Ф9.16, D35a): ОДИН движок владеет выходом — три режима (auto/prefer/
+ * manual) поверх main_node + сквозной резерв-список. См. LOCAL_DOCS/REFACTOR/
+ * 21-EXIT_ENGINE_DESIGN.md. Легаси-опции (hotswap_*, main_urltest_mode/nodes/preferred)
+ * читаются как фолбэк — неконфигурация без миграции ведёт себя как раньше; миграцию
+ * делает migrate_config.uc. Демон (scripts/hotswap.uc) владеет селектором; генератор
+ * строит пулы + пишет контракт exit_engine.json (и легаси-зеркало hotswap.json). */
+const exit_mode_raw = uci.get(uciconfig, ucimain, 'exit_mode');
+const legacy_ut_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
+const exit_mode_opt = (exit_mode_raw in ['auto', 'prefer', 'manual']) ? exit_mode_raw : legacy_ut_mode;
+const exit_preferred_raw = uci.get(uciconfig, ucimain, 'exit_preferred');
+const exit_preferred_opt = !isEmpty(exit_preferred_raw) ? exit_preferred_raw : uci.get(uciconfig, ucimain, 'main_urltest_preferred');
+const exit_probe_interval_opt = int(uci.get(uciconfig, ucimain, 'exit_probe_interval') || uci.get(uciconfig, ucimain, 'hotswap_interval') || '10') || 10;
+const exit_tolerance_raw = uci.get(uciconfig, ucimain, 'exit_tolerance');
+const exit_tolerance_opt = !isEmpty(exit_tolerance_raw) ? exit_tolerance_raw : uci.get(uciconfig, ucimain, 'main_urltest_tolerance');
+const exit_failback_opt = (uci.get(uciconfig, ucimain, 'exit_failback') || uci.get(uciconfig, ucimain, 'hotswap_failback') || '1') !== '0';
+const exit_upgrade_opt = (uci.get(uciconfig, ucimain, 'exit_upgrade') === '1');
+const exit_dead_after_opt = int(uci.get(uciconfig, ucimain, 'exit_dead_after') || '2') || 2;
+const exit_recovery_oks_opt = int(uci.get(uciconfig, ucimain, 'exit_recovery_oks') || '3') || 3;
+const exit_recovery_window_opt = int(uci.get(uciconfig, ucimain, 'exit_recovery_window') || '30') || 30;
+const exit_hysteresis_opt = int(uci.get(uciconfig, ucimain, 'exit_hysteresis') || '3') || 3;
+const exit_udp_preferred_raw = uci.get(uciconfig, ucimain, 'exit_udp_preferred');
+const exit_udp_preferred_opt = !isEmpty(exit_udp_preferred_raw) ? exit_udp_preferred_raw : exit_preferred_opt;
+/* Резерв-список: hotswap_nodes (приоритет пользователя) + main_urltest_nodes только
+ * в легаси-manual (там это был пул ручного режима — данные не терять, D35a). */
+let exit_reserves = [];
+for (let hs_sid in (uci.get(uciconfig, ucimain, 'hotswap_nodes') || []))
+	if (index(exit_reserves, hs_sid) < 0)
+		push(exit_reserves, hs_sid);
+if (legacy_ut_mode === 'manual')
+	for (let hs_sid in (uci.get(uciconfig, ucimain, 'main_urltest_nodes') || []))
+		if (index(exit_reserves, hs_sid) < 0)
+			push(exit_reserves, hs_sid);
+/* Kernel-композиция групп (единая для main/UDP): prefer — только с живым
+ * preferred (структура [preferred, alt] держит preferred на уровне ядра);
+ * иначе auto (все узлы — kernel-страховка, политика у движка). */
+const exit_pref_usable = !isEmpty(exit_preferred_opt) &&
+	uci.get_all(uciconfig, exit_preferred_opt) != null && hp_node_usable(exit_preferred_opt);
+const exit_kernel_mode = (exit_mode_opt === 'prefer' && exit_pref_usable) ? 'prefer' : 'auto';
 
 /* OAuth stability (ч.59): auth-provider hosts ride the SAME exit as the services that
  * use them (main-out) instead of the RU-geo "always direct" split, QUIC/SVCB escapes
@@ -1749,12 +1768,11 @@ if (sticky_raw)
 			urltest_sticky[sm[1]] = sm[2];
 	}
 
-/* Node tags the URLTest watchdog (urltest_watchdog.uc) saw stuck dead
- * ($RUN_DIR/urltest_dead, outbound tags like cfg-<sid>-out). A sticky pick
- * pointing at such a node must NOT be fronted on the next (re)start — the whole
- * point of the watchdog restart is to move OFF it — and the node itself sinks
- * to the END of every pool so a fresh core never starts on it. Marks fade when
- * the node measures alive again (watchdog removes them). */
+/* Node tags the exit engine (hotswap.uc, Ф9.16) marked dead by its own
+ * probes ($RUN_DIR/urltest_dead, outbound tags like cfg-<sid>-out). A sticky pick
+ * pointing at such a node must NOT be fronted on the next (re)start, and the
+ * node itself sinks to the END of every pool so a fresh core never starts on
+ * it. Marks fade when the node measures alive again (the engine removes them). */
 let urltest_dead = {};
 const dead_raw = readfile(RUN_DIR + '/urltest_dead');
 if (dead_raw)
@@ -1945,31 +1963,22 @@ if (!isEmpty(main_node)) {
 	let urltest_nodes = [];
 
 	if (main_node === 'urltest') {
-		/* Mode is a backward-compatible option: configs that predate the modes keep
-		 * their explicit node list (manual). New installs set 'auto' explicitly. */
-		const main_urltest_nodes = uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [];
-		const main_urltest_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
-		const main_urltest_preferred = uci.get(uciconfig, ucimain, 'main_urltest_preferred');
+		/* Exit Engine (Ф9.16, D35a): kernel-группа main-out-auto + селектор main-out
+		 * ВСЕГДА (когда пул ≥2) — движок владеет селектором без легаси-флага hotswap.
+		 * Состав kernel-группы по exit_mode: prefer → [preferred, alt(rest)]
+		 * (PREFER_HOLD_TOLERANCE держит preferred на уровне ядра — страховка при
+		 * мёртвом движке), auto/manual → все узлы (kernel = страховка, политика —
+		 * у движка). Легаси main_urltest_nodes в состав пула больше не входит
+		 * (список мигрировал в резервы движка). */
 		const main_urltest_interval = uci.get(uciconfig, ucimain, 'main_urltest_interval');
 		const main_urltest_tolerance = uci.get(uciconfig, ucimain, 'main_urltest_tolerance');
-
-		/* Hot Swap (ч.60): with Hot Swap on, the URLTest group is emitted under
-		 * its own tag `main-out-auto` (the whole build_urltest logic — auto/
-		 * prefer/manual, sticky, dead-sink — lives inside it unchanged) and
-		 * `main-out` becomes a SELECTOR: [main-out-auto, …pool nodes]. Normal
-		 * traffic rides the group (kernel latency choice, all 3 modes kept);
-		 * when the group stalls on a dead pick the hotswap daemon re-pins the
-		 * selector onto a proven-alive node directly and fails back to the
-		 * group once it answers again. Without Hot Swap the group IS main-out
-		 * exactly as before (needs ≥1 pool node besides the group to be
-		 * meaningful — otherwise the plain group shape is kept). */
-		const hs_group = (hotswap_opt) ? 'main-out-auto' : 'main-out';
-		const ut = build_urltest(hs_group, main_urltest_mode, main_urltest_preferred,
-			main_urltest_nodes, main_urltest_interval, main_urltest_tolerance);
+		const hs_group = 'main-out-auto';
+		const ut = build_urltest(hs_group, exit_kernel_mode, exit_preferred_opt,
+			[], main_urltest_interval, main_urltest_tolerance);
 		if (ut.outbound) {
 			push(config.outbounds, ut.outbound);
 			urltest_nodes = ut.extra;
-			if (hotswap_opt && length(ut.extra)) {
+			if (length(ut.extra)) {
 				/* Selector failover targets: the group + every node of its pool
 				 * (prefer mode nests the alt subgroup too — deduped below). */
 				let hs_members = [hs_group];
@@ -1984,36 +1993,24 @@ if (!isEmpty(main_node)) {
 				const hsd = dead_last(hs_members);
 				if (hsd)
 					hs_members = hsd;
-				/* Reserve priority from the UI (config.hotswap_nodes): user-picked
-				 * nodes that are in the group pool go first, then the rest of the
-				 * pool in pool order; picks outside the pool are ignored. */
-				let hs_cands = [];
-				for (let hs_sid in hotswap_nodes_opt)
-					if (index(ut.extra, hs_sid) >= 0 && index(hs_cands, hs_sid) < 0)
-						push(hs_cands, hs_sid);
-				for (let hs_sid in ut.extra)
-					if (index(hs_cands, hs_sid) < 0)
-						push(hs_cands, hs_sid);
-				const hs_n_hot = (hotswap_count_opt > 1) ? hotswap_count_opt : 2;
-				let hs_hot = [hs_group];
-				for (let hs_sid in hs_cands) {
-					if (length(hs_hot) >= hs_n_hot)
-						break;
-					push(hs_hot, 'cfg-' + hs_sid + '-out');
+				/* Резервы (exit_reserves): порядок пользователя, отфильтрованный
+				 * по пулу; пусто → движок сканирует весь пул в порядке пула. */
+				let hs_reserve_tags = [];
+				for (let hs_sid in exit_reserves) {
+					const hs_tag = 'cfg-' + hs_sid + '-out';
+					if (index(ut.extra, hs_sid) >= 0 && index(hs_reserve_tags, hs_tag) < 0)
+						push(hs_reserve_tags, hs_tag);
 				}
-				/* Sticky: resume on the daemon's last active pick after a restart
-				 * (it may be a direct node the daemon failed over to); a dead-
+				/* Sticky: resume on the engine's last active pick after a restart
+				 * (it may be a direct node the engine failed over to); a dead-
 				 * marked pick is never fronted. "prefer" is EXEMPT: the exit must
 				 * return to the GROUP on every regen+restart — the group fronts
 				 * the preferred node (top-level [preferred, alt] + urltest_sticky
-				 * + PREFER_HOLD_TOLERANCE), and resuming the daemon's last
-				 * concrete pick here re-pinned a stale node forever: the daemon
-				 * adopts the selector pick as its antiflap pin at startup, and
-				 * prefer mode never migrates the pin back (sustained-better is
-				 * exempt), so changing the preferred node had no effect until
-				 * the stale pick actually died. Otherwise the group. */
+				 * + PREFER_HOLD_TOLERANCE), and resuming the engine's last
+				 * concrete pick here re-pinned a stale node forever. Otherwise
+				 * the group. */
 				let hs_default = null;
-				if (main_urltest_mode !== 'prefer') {
+				if (exit_mode_opt !== 'prefer') {
 					try {
 						const hs_prev = ss_read_state(RUN_DIR + '/hotswap_state.json').data;
 						if (hs_prev && type(hs_prev.active) === 'string' &&
@@ -2032,7 +2029,7 @@ if (!isEmpty(main_node)) {
 					/* Selector switches are pure API ops; never tear sessions. */
 					interrupt_exist_connections: false
 				});
-				/* ч.67: human-readable names for the daemon's last_reason — the
+				/* ч.67: human-readable names for the engine's last_reason — the
 				 * daemon is UCI-blind by contract design, so the generator
 				 * ships a tag→label map (missing label falls back to the sid). */
 				let hs_labels = {};
@@ -2045,28 +2042,35 @@ if (!isEmpty(main_node)) {
 					}
 				}
 				hotswap_state = {
+					engine_version: 2,
 					enabled: true,
-					mode: 'urltest',
-					group: 'main-out',
-					primary: hs_group,
-					hot: hs_hot,
-					count: length(hs_hot),
-					interval: (hotswap_interval_opt < 5) ? 5 : ((hotswap_interval_opt > 120) ? 120 : hotswap_interval_opt),
-					failback: hotswap_failback_opt,
-					/* ч.67 anti-flap: the daemon pins the group's current pick
-					 * with PUT /proxies/main-out so kernel re-ranks (a single
-					 * timed-out probe deletes the pick's history and the group
-					 * re-picks, tolerance never consulted) stop moving the
-					 * exit. Pin moves only on real death (2 failed probes) or
-					 * a node staying faster by > tolerance for 3 daemon rounds
-					 * ("prefer" holds its node — pool_mode exempts it). */
-					antiflap: (uci.get(uciconfig, ucimain, 'hotswap_antiflap') !== '0'),
-					pool_mode: main_urltest_mode,
-					tolerance: strToInt(isEmpty(main_urltest_tolerance) ? '150' : main_urltest_tolerance) || 150,
-					labels: hs_labels
+					mode: exit_mode_opt,
+					failback: exit_failback_opt,
+					upgrade: exit_upgrade_opt,
+					probe: {
+						interval: (exit_probe_interval_opt < 5) ? 5 : ((exit_probe_interval_opt > 120) ? 120 : exit_probe_interval_opt),
+						timeout: 6000
+					},
+					thresholds: {
+						dead_after: exit_dead_after_opt,
+						recovery_oks: exit_recovery_oks_opt,
+						recovery_window: exit_recovery_window_opt,
+						hysteresis_rounds: exit_hysteresis_opt,
+						tolerance: strToInt(isEmpty(exit_tolerance_opt) ? '150' : exit_tolerance_opt) || 150
+					},
+					labels: hs_labels,
+					contours: {
+						'main-out': {
+							selector: 'main-out',
+							group: hs_group,
+							preferred: (exit_kernel_mode === 'prefer') ? ('cfg-' + exit_preferred_opt + '-out') : null,
+							manual_pick: null,
+							reserves: hs_reserve_tags
+						}
+					}
 				};
-				warn(sprintf('homeproxy: Hot Swap on - URLTest group %s under main-out selector with %d members (hot %d).\n',
-					hs_group, length(hs_members), length(hs_hot)));
+				warn(sprintf('homeproxy: Exit Engine on - URLTest group %s under main-out selector with %d members, mode %s (reserves %d).\n',
+					hs_group, length(hs_members), exit_mode_opt, length(hs_reserve_tags)));
 			}
 		}
 		else {
@@ -2122,12 +2126,13 @@ if (!isEmpty(main_node)) {
 		 * Needs the primary PLUS at least one other usable node; otherwise the
 		 * classic shape ("the node IS main-out") is kept. */
 		let hs_cands = [];
-		if (hotswap_opt && !isEmpty(main_node_cfg)) {
-			/* Reserve priority from the UI (config.hotswap_nodes): user-picked
-			 * nodes first (in the picked order), then the remaining usable
-			 * nodes in config order. Invalid/dangling picks and the primary
-			 * itself are skipped. */
-			for (let hs_sid in hotswap_nodes_opt) {
+		if (!isEmpty(main_node_cfg)) {
+			/* Exit Engine (Ф9.16): движок активен для узла-main ВСЕГДА, когда есть
+			 * хоть один другой живой кандидат (раньше это был флаг hotswap=1).
+			 * Резервы (exit_reserves) задают порядок, остальные usable-узлы идут
+			 * как холодный запас в конце селектора. Invalid/dangling picks и сам
+			 * primary пропускаются. */
+			for (let hs_sid in exit_reserves) {
 				if (hs_sid === main_node || index(hs_cands, hs_sid) >= 0)
 					continue;
 				if (uci.get_all(uciconfig, hs_sid) == null || !hp_node_usable(hs_sid))
@@ -2146,8 +2151,8 @@ if (!isEmpty(main_node)) {
 				push(hs_cands, cfg['.name']);
 			});
 		}
-		if (hotswap_opt && !isEmpty(main_node_cfg) && length(hs_cands)) {
-			let hotswap_hot = [];
+		if (!isEmpty(main_node_cfg) && length(hs_cands)) {
+			let hs_reserve_tags = [];
 			const primary_tag = 'cfg-' + main_node + '-out';
 			if (main_node_cfg.type in ['wireguard', 'amneziawg']) {
 				push(config.endpoints, generate_endpoint(main_node_cfg));
@@ -2156,7 +2161,8 @@ if (!isEmpty(main_node)) {
 				push_outbound(config.outbounds, main_node_cfg);
 				config.outbounds[length(config.outbounds)-1].tag = primary_tag;
 			}
-			push(hotswap_hot, primary_tag);
+			/* Резервы движения: список пользователя задаёт ПОРЯДОК фейловера и
+			 * горячих проб; узел-main при смерти уходит на первый живой резерв. */
 			for (let hs_sid in hs_cands) {
 				const gt = 'cfg-' + hs_sid + '-out';
 				const bnc = uci.get_all(uciconfig, hs_sid) || {};
@@ -2167,20 +2173,19 @@ if (!isEmpty(main_node)) {
 					push_outbound(config.outbounds, bnc);
 					config.outbounds[length(config.outbounds)-1].tag = gt;
 				}
-				push(hotswap_hot, gt);
+				if (index(exit_reserves, hs_sid) >= 0)
+					push(hs_reserve_tags, gt);
 			}
-			/* The hot set is [primary + first (count-1) members]; the rest stays
-			 * in the selector as cold spares — the daemon probes them only when
-			 * it needs to fill an alive-backup slot, and they keep the group
-			 * usable even if every hot backup dies. */
-			const n_hot = (hotswap_count_opt > 1) ? hotswap_count_opt : 2;
-			let hs_cold = (length(hotswap_hot) > n_hot) ? slice(hotswap_hot, n_hot) : [];
-			hotswap_hot = (length(hotswap_hot) > n_hot) ? slice(hotswap_hot, 0, n_hot) : hotswap_hot;
-			let hs_members = [...hotswap_hot, ...hs_cold];
+			/* The selector is [primary, reserves…, cold spares]: the engine probes
+			 * reserves first (hot dials); cold spares keep the group usable even
+			 * if every reserve dies. */
+			let hs_members = ['cfg-' + main_node + '-out'];
+			for (let hs_sid in hs_cands)
+				push(hs_members, 'cfg-' + hs_sid + '-out');
 			const hs_dead = dead_last(hs_members);
 			if (hs_dead)
 				hs_members = hs_dead;
-			/* Sticky: after a restart, resume on the daemon's LAST ACTIVE pick
+			/* Sticky: after a restart, resume on the engine's LAST ACTIVE pick
 			 * (hotswap_state.json survives on tmpfs) instead of the urltest
 			 * sticky snapshot — the snapshot may point at any pool member and
 			 * would defeat the primary/failback model. Fallback: the primary.
@@ -2205,7 +2210,7 @@ if (!isEmpty(main_node)) {
 				 * and clients reconnect instantly onto the new pick. */
 				interrupt_exist_connections: false
 			});
-			/* ч.67: tag→label map for the daemon's last_reason (see the
+			/* ч.67: tag→label map for the engine's last_reason (see the
 			 * urltest branch — the daemon itself stays UCI-blind). */
 			let hs_labels = {};
 			for (let hs_tag in hs_members) {
@@ -2216,18 +2221,35 @@ if (!isEmpty(main_node)) {
 				}
 			}
 			hotswap_state = {
+				engine_version: 2,
 				enabled: true,
-				mode: 'node',
-				group: 'main-out',
-				primary: primary_tag,
-				hot: hotswap_hot,
-				count: length(hotswap_hot),
-				interval: (hotswap_interval_opt < 5) ? 5 : ((hotswap_interval_opt > 120) ? 120 : hotswap_interval_opt),
-				failback: hotswap_failback_opt,
-				labels: hs_labels
+				mode: 'manual',
+				failback: exit_failback_opt,
+				upgrade: false,
+				probe: {
+					interval: (exit_probe_interval_opt < 5) ? 5 : ((exit_probe_interval_opt > 120) ? 120 : exit_probe_interval_opt),
+					timeout: 6000
+				},
+				thresholds: {
+					dead_after: exit_dead_after_opt,
+					recovery_oks: exit_recovery_oks_opt,
+					recovery_window: exit_recovery_window_opt,
+					hysteresis_rounds: exit_hysteresis_opt,
+					tolerance: strToInt(isEmpty(exit_tolerance_opt) ? '150' : exit_tolerance_opt) || 150
+				},
+				labels: hs_labels,
+				contours: {
+					'main-out': {
+						selector: 'main-out',
+						group: null,
+						preferred: null,
+						manual_pick: primary_tag,
+						reserves: hs_reserve_tags
+					}
+				}
 			};
-			warn(sprintf('homeproxy: Hot Swap on - main-out selector with %d members (hot %d, primary %s).\n',
-				length(hs_members), length(hotswap_hot), primary_tag));
+			warn(sprintf('homeproxy: Exit Engine on - main-out selector with %d members, mode manual (reserves %d, primary %s).\n',
+				length(hs_members), length(hs_reserve_tags), primary_tag));
 		} else {
 			if (main_node_cfg.type in ['wireguard', 'amneziawg']) {
 				push(config.endpoints, generate_endpoint(main_node_cfg));
@@ -2240,21 +2262,102 @@ if (!isEmpty(main_node)) {
 	}
 
 	if (main_udp_node === 'urltest') {
-		const main_udp_urltest_nodes = uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [];
-		const main_udp_urltest_mode = uci.get(uciconfig, ucimain, 'main_udp_urltest_mode') || 'manual';
-		const main_udp_urltest_preferred = uci.get(uciconfig, ucimain, 'main_udp_urltest_preferred');
 		const main_udp_urltest_interval = uci.get(uciconfig, ucimain, 'main_udp_urltest_interval');
 		const main_udp_urltest_tolerance = uci.get(uciconfig, ucimain, 'main_udp_urltest_tolerance');
-
-		const ut = build_urltest('main-udp-out', main_udp_urltest_mode, main_udp_urltest_preferred,
-			main_udp_urltest_nodes, main_udp_urltest_interval, main_udp_urltest_tolerance);
-		if (ut.outbound)
+		/* Exit Engine (Ф9.16, второй контур): kernel-группа main-udp-auto под
+		 * селектором main-udp-out (тег правил сохранён). Режим/пороги общие с main;
+		 * preferred у UDP свой (exit_udp_preferred, иначе наследует main). Резервы
+		 * общие, применяются к пулу UDP. Правила ссылаются на main-udp-out — тег
+		 * селектора, поэтому правила не меняются. */
+		const udp_pref_sid = (!isEmpty(exit_udp_preferred_opt) &&
+			uci.get_all(uciconfig, exit_udp_preferred_opt) != null &&
+			hp_node_usable(exit_udp_preferred_opt)) ? exit_udp_preferred_opt : null;
+		const udp_kernel_mode = (exit_kernel_mode === 'prefer' && udp_pref_sid != null) ? 'prefer' : 'auto';
+		const ut = build_urltest('main-udp-auto', udp_kernel_mode, udp_pref_sid,
+			[], main_udp_urltest_interval, main_udp_urltest_tolerance);
+		if (ut.outbound && length(ut.extra) >= 2) {
 			push(config.outbounds, ut.outbound);
-		else {
-			warn('homeproxy: UDP URLTest pool is empty, main-udp-out falls back to direct.\n');
-			push(config.outbounds, { type: 'direct', tag: 'main-udp-out' });
+			let udp_members = ['main-udp-auto'];
+			for (let hs_sid in ut.extra) {
+				const hs_tag = 'cfg-' + hs_sid + '-out';
+				if (index(udp_members, hs_tag) < 0)
+					push(udp_members, hs_tag);
+			}
+			for (let hs_tag in ut.outbound.outbounds)
+				if (index(udp_members, hs_tag) < 0)
+					push(udp_members, hs_tag);
+			const udd = dead_last(udp_members);
+			if (udd)
+				udp_members = udd;
+			push(config.outbounds, {
+				type: 'selector',
+				tag: 'main-udp-out',
+				outbounds: udp_members,
+				default: 'main-udp-auto',
+				interrupt_exist_connections: false
+			});
+			let udp_reserve_tags = [];
+			for (let hs_sid in exit_reserves) {
+				const hs_tag = 'cfg-' + hs_sid + '-out';
+				if (index(ut.extra, hs_sid) >= 0 && index(udp_reserve_tags, hs_tag) < 0)
+					push(udp_reserve_tags, hs_tag);
+			}
+			let udp_labels = {};
+			udp_labels['main-udp-auto'] = 'URLTest (UDP)';
+			for (let hs_tag in udp_members) {
+				const hm = match(hs_tag, /^cfg-([A-Za-z0-9]+)-out$/);
+				if (hm) {
+					const hlbl = uci.get(uciconfig, hm[1], 'label');
+					udp_labels[hs_tag] = (hlbl && length(hlbl)) ? '' + hlbl : hm[1];
+				}
+			}
+			/* Контур UDP в контракт (hotswap_state может быть null, когда main —
+			 * синтетика: тогда контракт создаётся здесь, только с UDP-контором). */
+			if (hotswap_state == null)
+				hotswap_state = {
+					engine_version: 2,
+					enabled: true,
+					mode: exit_mode_opt,
+					failback: exit_failback_opt,
+					upgrade: exit_upgrade_opt,
+					probe: {
+						interval: (exit_probe_interval_opt < 5) ? 5 : ((exit_probe_interval_opt > 120) ? 120 : exit_probe_interval_opt),
+						timeout: 6000
+					},
+					thresholds: {
+						dead_after: exit_dead_after_opt,
+						recovery_oks: exit_recovery_oks_opt,
+						recovery_window: exit_recovery_window_opt,
+						hysteresis_rounds: exit_hysteresis_opt,
+						tolerance: strToInt(isEmpty(exit_tolerance_opt) ? '150' : exit_tolerance_opt) || 150
+					},
+					labels: {},
+					contours: {}
+				};
+			for (let ulk, ulv in udp_labels)
+				hotswap_state.labels[ulk] = ulv;
+			hotswap_state.contours['main-udp-out'] = {
+				selector: 'main-udp-out',
+				group: 'main-udp-auto',
+				preferred: (udp_kernel_mode === 'prefer') ? ('cfg-' + udp_pref_sid + '-out') : null,
+				manual_pick: null,
+				reserves: udp_reserve_tags
+			};
+			warn(sprintf('homeproxy: Exit Engine on - UDP group main-udp-auto under main-udp-out selector with %d members (reserves %d).\n',
+				length(udp_members), length(udp_reserve_tags)));
+			urltest_nodes = [...urltest_nodes, ...filter(ut.extra, (l) => !~index(urltest_nodes, l))];
+		} else {
+			/* Мало узлов для UDP-контура (0/1): прежняя форма — голая группа под
+			 * ТЕГОМ ПРАВИЛ main-udp-out или direct; движок UDP не владеет. */
+			if (ut.outbound) {
+				ut.outbound.tag = 'main-udp-out';
+				push(config.outbounds, ut.outbound);
+				urltest_nodes = [...urltest_nodes, ...filter(ut.extra, (l) => !~index(urltest_nodes, l))];
+			} else {
+				warn('homeproxy: UDP URLTest pool is empty, main-udp-out falls back to direct.\n');
+				push(config.outbounds, { type: 'direct', tag: 'main-udp-out' });
+			}
 		}
-		urltest_nodes = [...urltest_nodes, ...filter(ut.extra, (l) => !~index(urltest_nodes, l))];
 	} else if (dedicated_udp_node && main_udp_node === 'byedpi-out') {
 		/* ByeDPI as dedicated UDP node — same synthetic-tag handling as above */
 		if (byedpi_enabled === '1')
@@ -2819,22 +2922,13 @@ if (!isEmpty(main_node)) {
 		const main_node_type = uci.get(uciconfig, main_node, 'type') || '';
 		let main_has_wg = (main_node_type in ['wireguard', 'amneziawg']);
 		if (!main_has_wg && main_node === 'urltest') {
-			const ut_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
+			/* Exit Engine: kernel pool = все узлы в auto/manual (prefer = preferred +
+			 * rest) — WG-скан всегда по всем узлам. */
 			const scan_wg = (n) => ((uci.get(uciconfig, n, 'type') || '') in ['wireguard', 'amneziawg']);
-			if (ut_mode === 'auto' || ut_mode === 'prefer') {
-				foreach_node((c) => {
-					if (!main_has_wg && scan_wg(c['.name']))
-						main_has_wg = true;
-				});
-			} else {
-				const ut_nodes = usable_nodes(uci.get(uciconfig, ucimain, 'main_urltest_nodes'));
-				for (let n in ut_nodes) {
-					if (scan_wg(n)) {
-						main_has_wg = true;
-						break;
-					}
-				}
-			}
+			foreach_node((c) => {
+				if (!main_has_wg && scan_wg(c['.name']))
+					main_has_wg = true;
+			});
 		}
 		const ruleset_detour = (main_has_wg || main_node === 'byedpi-out') ? 'direct-out' : 'main-out';
 
@@ -3401,14 +3495,33 @@ const cfg_tmp = candidate + '.tmp';
 writefile(cfg_tmp, sprintf('%.J\n', removeBlankAttrs(config)));
 system('mv -f ' + hp_shellquote(cfg_tmp) + ' ' + hp_shellquote(candidate));
 
-/* Hot Swap state contract (ч.59): the daemon reads THIS file, not UCI, so its view
- * always matches the generated config. Written only when the feature is active;
- * an absent/stale file puts the daemon into idle probing of the group state.
- * Ф1.7 (аудит 10): раньше здесь был голый writefile (обрыв = битый контракт до
- * следующей генерации) — теперь атомарный write_state State Store с конвертом. */
+/* Exit Engine contract (Ф9.16): движок читает exit_engine.json (v2-контракт);
+ * hotswap.json = легаси-зеркало в старом формате (откат на прежний движок читает
+ * его же формат). Оба — атомарный write_state State Store с конвертом (Ф1.7).
+ * Отсутствие/протухание → движок в idle (или легаси-режим до регенерации). */
 if (hotswap_state) {
-	ss_write_state(RUN_DIR + '/hotswap.json', hotswap_state);
+	ss_write_state(RUN_DIR + '/exit_engine.json', hotswap_state);
+	const mspec = hotswap_state.contours['main-out'];
+	if (mspec) {
+		ss_write_state(RUN_DIR + '/hotswap.json', {
+			enabled: true,
+			mode: mspec.group ? 'urltest' : 'node',
+			group: 'main-out',
+			primary: mspec.group ? mspec.group : mspec.manual_pick,
+			hot: [...(mspec.group ? [mspec.group] : []), ...mspec.reserves],
+			count: (mspec.group ? 1 : 0) + length(mspec.reserves),
+			interval: hotswap_state.probe.interval,
+			failback: hotswap_state.failback,
+			antiflap: true,
+			pool_mode: hotswap_state.mode,
+			tolerance: hotswap_state.thresholds.tolerance,
+			labels: hotswap_state.labels
+		});
+	} else {
+		system('rm -f ' + hp_shellquote(RUN_DIR + '/hotswap.json') + ' 2>/dev/null');
+	}
 } else {
+	system('rm -f ' + hp_shellquote(RUN_DIR + '/exit_engine.json') + ' 2>/dev/null');
 	system('rm -f ' + hp_shellquote(RUN_DIR + '/hotswap.json') + ' 2>/dev/null');
 }
 

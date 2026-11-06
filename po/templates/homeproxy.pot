@@ -7930,3 +7930,87 @@ msgstr ""
 
 msgid "The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The \"apply in window\" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With \"Keep the rules on Zapret\" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed."
 msgstr ""
+
+msgid "Exit engine"
+msgstr ""
+
+msgid "One engine owns the exit for every mode. <b>Auto</b> keeps the best node and moves only when another stays faster by more than the tolerance for several probe rounds in a row; <b>Preferred node</b> holds your chosen node while it responds and fails over only when it really dies; <b>Manual</b> holds the node you picked. Reserve nodes are probed live (hot dials) and take over in your order; after a restart the engine resumes its last pick."
+msgstr ""
+
+msgid "Exit mode"
+msgstr ""
+
+msgid "Auto — best node (recommended)"
+msgstr ""
+
+msgid "Hold the preferred node"
+msgstr ""
+
+msgid "Manual — hold my pick"
+msgstr ""
+
+msgid "Preferred node"
+msgstr ""
+
+msgid "Always used while it responds — the engine leaves it only when it really dies (several dead probes in a row with a live reserve) and returns to it once it recovers. With \"Upgrade\" enabled the engine may also move to a node that stays faster by more than the tolerance for several probe rounds."
+msgstr ""
+
+msgid "Switch tolerance"
+msgstr ""
+
+msgid "Minimum latency gap (ms) required to move to a faster node — prevents flapping between nodes with close latency values. In \"Hold the preferred node\" mode it applies only when Upgrade is enabled."
+msgstr ""
+
+msgid "Preferred UDP node"
+msgstr ""
+
+msgid "For the separate UDP exit in \"Hold the preferred node\" mode: this node is held while it responds. Leave empty to use the main preferred node."
+msgstr ""
+
+msgid "Priority order of the failover reserves: add nodes in order, the topmost is tried first when the active pick dies. Reserves are probed live (this keeps their tunnels warm). Empty = every node may be used as a reserve. In URLTest modes only nodes of the pool are eligible; with a specific main node the main node itself is always first and cannot be removed."
+msgstr ""
+
+msgid "How often the active pick and the reserves are verified (seconds). Lower = faster failover (a dead main is usually replaced within ~10-20 s), higher = less background traffic."
+msgstr ""
+
+msgid "Return after recovery"
+msgstr ""
+
+msgid "When the held node recovers (or the preferred node is alive again), switch back after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies. The engine never overrides your manual pick while it stays alive."
+msgstr ""
+
+msgid "Upgrade on a better node"
+msgstr ""
+
+msgid "Only in \"Hold the preferred node\" mode: allow moving to a node that stays faster by more than the Switch tolerance for 3 probe rounds in a row (with a direct probe). Off by default — the preferred node is held regardless of latency."
+msgstr ""
+
+msgid "Dead threshold"
+msgstr ""
+
+msgid "Advanced: how many failed probes in a row declare a node dead (a fast double-check follows the first failure). Default 2."
+msgstr ""
+
+msgid "Recovery probes"
+msgstr ""
+
+msgid "Advanced: how many good probes a recovered node must collect before the engine returns to it. Default 3."
+msgstr ""
+
+msgid "Recovery window"
+msgstr ""
+
+msgid "Advanced: the recovery probes must span at least this many seconds (protects from a flapping node). Default 30."
+msgstr ""
+
+msgid "Auto hysteresis"
+msgstr ""
+
+msgid "Advanced: probe rounds in a row a challenger must stay faster by more than the tolerance before the engine moves in Auto mode (or with Upgrade enabled). Default 3."
+msgstr ""
+
+msgid "Engine state"
+msgstr ""
+
+msgid "Auto — best node"
+msgstr ""

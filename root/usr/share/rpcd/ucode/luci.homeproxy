@@ -2871,17 +2871,16 @@ const methods = {
 			const ctx = cursor();
 			const cfg = ctx.get_all('homeproxy', 'config') || {};
 			const opt = (k) => ((cfg[k] == null || cfg[k] === '') ? null : '' + cfg[k]);
-			const enabled = (opt('hotswap') === '1');
 			const main_node = opt('main_node') || 'nil';
-			/* ч.60: applicable in BOTH hot-swap shapes — a specific node AND the
-			 * URLTest group (main-out-auto under a main-out selector). The mode
-			 * itself comes from the daemon state (falls back to the UCI shape). */
-			const is_real_node = enabled && (main_node === 'urltest' ||
+			/* Ф9.16: applicable = main-узел вообще переключаемый (urltest-пул или
+			 * конкретный узел); enabled решает СТЕЙТ движка (engine_version 2),
+			 * фолбэк — легаси UCI-флаг hotswap (переход до первого регена). */
+			const is_real_node = (main_node === 'urltest' ||
 				(main_node !== 'direct-out' && main_node !== 'nil' &&
 				 main_node !== 'byedpi-out' && main_node !== 'zapret-out' &&
 				 ctx.get_all('homeproxy', main_node) != null));
 			const shape_mode = (main_node === 'urltest') ? 'urltest' :
-				((is_real_node && main_node !== 'urltest') ? 'node' : null);
+				(is_real_node ? 'node' : null);
 
 			const label_of = (tag) => {
 				if (!tag || type(tag) !== 'string')
@@ -2897,6 +2896,9 @@ const methods = {
 			 * Ф1.7: документ в конверте State Store (schema_version/config_revision);
 			 * read_state толерантен к легаси-документу. */
 			let st = ss_read_state('/var/run/homeproxy/hotswap_state.json').data;
+			const st_v2 = (st && st.engine_version === 2);
+			const enabled = st_v2 ? (st.enabled === true) : (opt('hotswap') === '1');
+			const applicable = (is_real_node && enabled);
 
 			/* Live selector view. */
 			const clash = clash_api('/proxies/main-out');
@@ -2904,7 +2906,8 @@ const methods = {
 
 			const reply = {
 				enabled: enabled,
-				applicable: is_real_node,
+				applicable: applicable,
+				engine_version: st_v2 ? st.engine_version : null,
 				mode: shape_mode,
 				daemon: false,
 				active: null, active_label: null,
@@ -2996,8 +2999,6 @@ const methods = {
 
 			const main_node = opt('main_node') || 'nil';
 			const main_udp_node = opt('main_udp_node') || 'nil';
-			const ut_mode = opt('main_urltest_mode') || 'manual';
-			const udp_mode = opt('main_udp_urltest_mode') || 'manual';
 
 			const core = get_active_core();
 			const is_hiddify = core ? (core.type === 'hiddify') : true;
@@ -3016,19 +3017,13 @@ const methods = {
 			const tcp_pool = (sid) => {
 				if (main_node === sid) return true;
 				if (hs_selector && index(hs_members, `cfg-${sid}-out`) >= 0) return true;
-				if (main_node !== 'urltest') return false;
-				if (ut_mode === 'auto' || ut_mode === 'prefer') return true;
-				const lst = list_opt('main_urltest_nodes');
-				for (let k in lst) if (lst[k] === sid) return true;
-				return false;
+				/* Ф9.16: kernel-пул urltest = ВСЕ узлы в любом режиме exit_mode
+				 * (prefer = preferred + rest = тоже все); политика — у движка. */
+				return (main_node === 'urltest');
 			};
 			const udp_pool = (sid) => {
 				if (main_udp_node === sid) return true;
-				if (main_udp_node !== 'urltest') return false;
-				if (udp_mode === 'auto' || udp_mode === 'prefer') return true;
-				const lst = list_opt('main_udp_urltest_nodes');
-				for (let k in lst) if (lst[k] === sid) return true;
-				return false;
+				return (main_udp_node === 'urltest');
 			};
 
 			/* Active outbound tags: URLTest group's pick, else the main-out
@@ -3136,10 +3131,10 @@ const methods = {
 					running: length(core_pidof(core.proc_name)) > 0
 				} : null,
 				main_node,
-				urltest_mode: (main_node === 'urltest') ? ut_mode : null,
-				udp_urltest_mode: (main_udp_node === 'urltest') ? udp_mode : null,
+				urltest_mode: (main_node === 'urltest') ? (opt('exit_mode') || null) : null,
+				udp_urltest_mode: (main_udp_node === 'urltest') ? (opt('exit_mode') || null) : null,
 				interval: opt('main_urltest_interval') || '30',
-				tolerance: opt('main_urltest_tolerance') || '150',
+				tolerance: opt('exit_tolerance') || opt('main_urltest_tolerance') || '150',
 				zapret: {
 					installed: !!access('/opt/zapret2/nfq2/nfqws2'),
 					enabled: opt('zapret_enabled') === '1',

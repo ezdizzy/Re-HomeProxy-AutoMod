@@ -4885,8 +4885,8 @@ msgstr "Минимальная разница задержек (мс) для п�
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
-msgid "The exit for traffic matched by Routing Rules.<br>• <b>URLTest</b> — automatic node selection by periodic latency measurement (Auto / Preferred + auto / Manual — configured below once selected).<br>• A specific node — that node is always used.<br>• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. \"YouTube → Zapret\" while everything else uses the VPN)."
-msgstr "Куда идёт трафик, пойманный Правилами маршрутизации.<br>• <b>URLTest</b> — автоматический выбор узла по периодическим замерам задержки (Авто / Предпочтительный + авто / Список вручную — настраивается ниже после включения).<br>• Конкретный узел — всегда используется только он.<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не туннелируется, всё выходит напрямую.<br>Движки ByeDPI / Zapret здесь не выбираются — включите их ниже и направляйте отдельные сервисы на них через Правила маршрутизации (например, «YouTube → Zapret», пока остальное ходит через VPN)."
+msgid "The exit for traffic matched by Routing Rules.<br>• <b>URLTest</b> — the exit engine owns the pick (Auto / Hold the preferred node / Manual — configured below once selected).<br>• A specific node — that node is always used.<br>• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. \"YouTube → Zapret\" while everything else uses the VPN)."
+msgstr "Куда идёт трафик, пойманный Правилами маршрутизации.<br>• <b>URLTest</b> — пик держит выход-движок (Автомат / Удержание предпочтительного / Ручной — настраивается ниже после выбора).<br>• Конкретный узел — всегда используется только он.<br>• <b>Напрямую (без прокси)</b> — прокси ВЫКЛЮЧЕН: ничего не туннелируется, всё выходит напрямую.<br>Движки ByeDPI / Zapret здесь не выбираются — включите их ниже и направляйте отдельные сервисы на них через Правила маршрутизации (например, «YouTube → Zapret», пока остальное ходит через VPN)."
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js
 
@@ -13486,3 +13486,87 @@ msgstr "Стратегия Zapret обслуживает Telegram, только 
 
 msgid "The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The \"apply in window\" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With \"Keep the rules on Zapret\" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed."
 msgstr "Автопилот держит стратегии рабочими без присмотра: по расписанию пересчитывает рейтинг корпуса и применяет лучшую стратегию по каждому ресурсу (победа >10% заменяет текущую); при повторных провалах проверок ресурса сразу применяется следующая альтернатива. Временные ворота «применять в окне» действуют только на плановый пересчёт — проверки здоровья и ремонты работают круглосуточно. При «Держать правила на Zapret» правила управляемых ресурсов переключаются на Zapret — стратегия обслуживает ресурс только через своё правило. Каждое применение снимает серверный снимок — «Восстановить» всегда откатывает. Стратегии ByeDPI не управляются."
+
+msgid "Exit engine"
+msgstr "Выход (движок)"
+
+msgid "One engine owns the exit for every mode. <b>Auto</b> keeps the best node and moves only when another stays faster by more than the tolerance for several probe rounds in a row; <b>Preferred node</b> holds your chosen node while it responds and fails over only when it really dies; <b>Manual</b> holds the node you picked. Reserve nodes are probed live (hot dials) and take over in your order; after a restart the engine resumes its last pick."
+msgstr "Один движок владеет выходом в любом режиме. <b>Автомат</b> держит лучший узел и уходит на другого, только когда тот устойчиво быстрее (больше порога несколько раундов проб подряд); <b>Предпочтительный узел</b> удерживается, пока отвечает, уход — только при реальной смерти; <b>Ручной</b> держит выбранный вами узел. Резервы пробуются живыми dial'ами и принимают выход в вашем порядке; после рестарта движок возобновляет свой последний выбор."
+
+msgid "Exit mode"
+msgstr "Режим выхода"
+
+msgid "Auto — best node (recommended)"
+msgstr "Автомат — лучший узел (рекомендуется)"
+
+msgid "Hold the preferred node"
+msgstr "Удержание предпочтительного"
+
+msgid "Manual — hold my pick"
+msgstr "Ручной — держать мой выбор"
+
+msgid "Preferred node"
+msgstr "Предпочтительный узел"
+
+msgid "Always used while it responds — the engine leaves it only when it really dies (several dead probes in a row with a live reserve) and returns to it once it recovers. With \"Upgrade\" enabled the engine may also move to a node that stays faster by more than the tolerance for several probe rounds."
+msgstr "Используется, пока отвечает — движок покидает его только при реальной смерти (несколько подряд неответивших проб при живом резерве) и возвращается после восстановления. При включённом «Переходе на лучший узел» движок может уйти на устойчиво более быстрый узел."
+
+msgid "Switch tolerance"
+msgstr "Порог переключения"
+
+msgid "Minimum latency gap (ms) required to move to a faster node — prevents flapping between nodes with close latency values. In \"Hold the preferred node\" mode it applies only when Upgrade is enabled."
+msgstr "Минимальный разрыв задержки (мс) для перехода на более быстрый узел — защищает от флапа между узлами с близкими задержками. В режиме «Удержание предпочтительного» действует только при включённом «Переходе на лучший узел»."
+
+msgid "Preferred UDP node"
+msgstr "Предпочтительный UDP-узел"
+
+msgid "For the separate UDP exit in \"Hold the preferred node\" mode: this node is held while it responds. Leave empty to use the main preferred node."
+msgstr "Для отдельного UDP-выхода в режиме «Удержание предпочтительного»: этот узел удерживается, пока отвечает. Пусто — используется основной предпочтительный узел."
+
+msgid "Priority order of the failover reserves: add nodes in order, the topmost is tried first when the active pick dies. Reserves are probed live (this keeps their tunnels warm). Empty = every node may be used as a reserve. In URLTest modes only nodes of the pool are eligible; with a specific main node the main node itself is always first and cannot be removed."
+msgstr "Порядок резервов фейловера: добавляйте узлы по порядку, верхний пробуется первым при смерти активного. Резервы пробуются живыми dial'ами (тоннели остаются тёплыми). Пусто — резервом может быть любой узел. В URLTest-режимах годятся только узлы пула; у конкретного main-узла сам узел всегда первый и не убирается."
+
+msgid "How often the active pick and the reserves are verified (seconds). Lower = faster failover (a dead main is usually replaced within ~10-20 s), higher = less background traffic."
+msgstr "Как часто проверяются активный узел и резервы (секунды). Ниже — быстрее фейловер (мёртвый main обычно заменяется за ~10-20 с), выше — меньше фонового трафика."
+
+msgid "Return after recovery"
+msgstr "Возврат после восстановления"
+
+msgid "When the held node recovers (or the preferred node is alive again), switch back after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies. The engine never overrides your manual pick while it stays alive."
+msgstr "Когда удерживаемый узел восстановится (или предпочтительный снова жив), вернуться к нему после стабилизации (3 хорошие пробы за 30+ секунд). Выключите, чтобы оставаться на резерве до его смерти. Движок никогда не отбирает ваш ручной выбор, пока тот жив."
+
+msgid "Upgrade on a better node"
+msgstr "Переход на лучший узел"
+
+msgid "Only in \"Hold the preferred node\" mode: allow moving to a node that stays faster by more than the Switch tolerance for 3 probe rounds in a row (with a direct probe). Off by default — the preferred node is held regardless of latency."
+msgstr "Только в режиме «Удержание предпочтительного»: разрешить уход на узел, который устойчиво быстрее (больше порога переключения) 3 раунда проб подряд (с прямой пробой). По умолчанию выключено — предпочтительный узел держится независимо от задержки."
+
+msgid "Dead threshold"
+msgstr "Порог смерти узла"
+
+msgid "Advanced: how many failed probes in a row declare a node dead (a fast double-check follows the first failure). Default 2."
+msgstr "Дополнительно: сколько подряд неответивших проб объявляют узел мёртвым (после первой неудачи идёт быстрая перепроверка). По умолчанию 2."
+
+msgid "Recovery probes"
+msgstr "Проб восстановления"
+
+msgid "Advanced: how many good probes a recovered node must collect before the engine returns to it. Default 3."
+msgstr "Дополнительно: сколько хороших проб должен собрать восстановившийся узел, чтобы движок вернулся на него. По умолчанию 3."
+
+msgid "Recovery window"
+msgstr "Окно восстановления"
+
+msgid "Advanced: the recovery probes must span at least this many seconds (protects from a flapping node). Default 30."
+msgstr "Дополнительно: пробы восстановления должны занимать не меньше этих секунд (защита от флапающего узла). По умолчанию 30."
+
+msgid "Auto hysteresis"
+msgstr "Гистерезис автомата"
+
+msgid "Advanced: probe rounds in a row a challenger must stay faster by more than the tolerance before the engine moves in Auto mode (or with Upgrade enabled). Default 3."
+msgstr "Дополнительно: сколько раундов проб подряд претендент должен быть быстрее порога, чтобы движок перешёл на него в режиме Автомата (или при включённом «Переходе»). По умолчанию 3."
+
+msgid "Engine state"
+msgstr "Состояние движка"
+
+msgid "Auto — best node"
+msgstr "Автомат — лучший узел"

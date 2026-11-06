@@ -770,7 +770,6 @@ export function scan_registry() {
 		{ name: 'telegram_bot', kind: 'script', spec: { script: 'telegram.uc' } },
 		{ name: 'control', kind: 'script', spec: { script: 'control_engine.uc' } },
 		{ name: 'multidns', kind: 'script', spec: { script: 'multidns.uc' } },
-		{ name: 'urltest_watchdog', kind: 'script', spec: { script: 'urltest_watchdog.uc' } },
 		{ name: 'zapret_autopilot', kind: 'script', spec: { script: 'zapret_autopilot.uc' } },
 		{ name: 'hotswap', kind: 'script', spec: { script: 'hotswap.uc' } },
 		{ name: 'metrics', kind: 'script', spec: { script: 'metrics.uc' } }

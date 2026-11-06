@@ -263,7 +263,7 @@ return view.extend({
 
 		o = s.taboption('routing', form.ListValue, 'main_node', _('Main node') + ' 🔗',
 			_('The exit for traffic matched by Routing Rules.<br>'
-			+ '• <b>URLTest</b> — automatic node selection by periodic latency measurement (Auto / Preferred + auto / Manual — configured below once selected).<br>'
+			+ '• <b>URLTest</b> — the exit engine owns the pick (Auto / Hold the preferred node / Manual — configured below once selected).<br>'
 			+ '• A specific node — that node is always used.<br>'
 			+ '• <b>Direct (no proxy)</b> — proxy OFF: nothing is tunneled, everything egresses directly.<br>'
 			+ 'ByeDPI / Zapret engines are not chosen here — enable them below and route specific services to them via Routing Rules (e.g. "YouTube → Zapret" while everything else uses the VPN).'));
@@ -318,16 +318,16 @@ return view.extend({
 			return el;
 		};
 
-		o = s.taboption('routing', form.DummyValue, '_urltest_info', _('URLTest'),
-			_('Automatically picks the fastest node by periodically measuring latency. <b>Auto</b> uses every imported node; <b>Preferred node + auto</b> keeps your chosen node as long as it responds and fails over to the fastest of the rest only when it stops responding; <b>Manual node list</b> uses only the nodes you select.<br>If you have connection problems and a node stays orange/grey for a long time, try removing it from the pool.'));
+		o = s.taboption('routing', form.DummyValue, '_urltest_info', _('Exit engine'),
+			_('One engine owns the exit for every mode. <b>Auto</b> keeps the best node and moves only when another stays faster by more than the tolerance for several probe rounds in a row; <b>Preferred node</b> holds your chosen node while it responds and fails over only when it really dies; <b>Manual</b> holds the node you picked. Reserve nodes are probed live (hot dials) and take over in your order; after a restart the engine resumes its last pick.')); 
 		o.depends('main_node', 'urltest');
 		o.rawhtml = true;
 		o.cfgvalue = function() { return ''; };
 
-		o = s.taboption('routing', form.ListValue, 'main_urltest_mode', _('URLTest mode'));
-		o.value('auto', _('Auto — all nodes (recommended)'));
-		o.value('prefer', _('Preferred node + auto'));
-		o.value('manual', _('Manual node list'));
+		o = s.taboption('routing', form.ListValue, 'exit_mode', _('Exit mode'));
+		o.value('auto', _('Auto — best node (recommended)'));
+		o.value('prefer', _('Hold the preferred node'));
+		o.value('manual', _('Manual — hold my pick'));
 		o.default = 'auto';
 		o.depends('main_node', 'urltest');
 		o.rmempty = false;
@@ -336,11 +336,11 @@ return view.extend({
 		 * switching back to URLTest silently reset the user's mode to Auto. */
 		o.retain = true;
 
-		o = s.taboption('routing', form.ListValue, 'main_urltest_preferred', _('URLTest node'),
-			_('Always used while it responds — it is never replaced by a faster node. If it stops responding, traffic fails over to the fastest of the remaining nodes (tolerance applies inside that fallback pool); the preferred node returns after Save & Apply or when the fallback node stops responding.'));
+		o = s.taboption('routing', form.ListValue, 'exit_preferred', _('Preferred node'),
+			_('Always used while it responds — the engine leaves it only when it really dies (several dead probes in a row with a live reserve) and returns to it once it recovers. With "Upgrade" enabled the engine may also move to a node that stays faster by more than the tolerance for several probe rounds.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		o.depends({ 'main_node': 'urltest', 'main_urltest_mode': 'prefer' });
+		o.depends({ 'main_node': 'urltest', 'exit_mode': 'prefer' });
 		o.retain = true;
 		/* No rmempty=false: the framework's own empty check ("Option must not be
 		 * empty") ignores custom validators and hard-blocks saving whenever this
@@ -349,44 +349,14 @@ return view.extend({
 		o.validate = function(section_id) {
 			if (this.map.data.get('homeproxy', 'config', 'main_node') !== 'urltest')
 				return true;
-			if (this.map.data.get('homeproxy', 'config', 'main_urltest_mode') !== 'prefer')
+			if (this.map.data.get('homeproxy', 'config', 'exit_mode') !== 'prefer')
 				return true;
-			let value = this.section.formvalue(section_id, 'main_urltest_preferred');
+			let value = this.section.formvalue(section_id, 'exit_preferred');
 			if (section_id && !value)
 				return _('Expecting: %s').format(_('non-empty value'));
 
 			return true;
 		}
-
-		o = s.taboption('routing', hp.CBIStaticList, 'main_urltest_nodes', _('URLTest nodes'),
-			_('List of nodes to test.'));
-		for (let i in proxy_nodes)
-			o.value(i, proxy_nodes[i]);
-		o.depends({ 'main_node': 'urltest', 'main_urltest_mode': 'manual' });
-		/* An empty manual pool reaches the generator as a stale list and silently
-		 * degrades routing — validate non-empty like the per-rule URLTest option.
-		 * Guard by the PERSISTED mode, not widget visibility: LuCI runs validate()
-		 * for hidden options too, and during a mode switch the stale formvalue
-		 * made "URLTest nodes must not be empty" fire for non-URLTest mains. */
-		o.validate = function(section_id) {
-			if (this.map.data.get('homeproxy', 'config', 'main_node') !== 'urltest')
-				return true;
-			if (this.map.data.get('homeproxy', 'config', 'main_urltest_mode') !== 'manual')
-				return true;
-			let value = this.section.formvalue(section_id, 'main_urltest_nodes') || [];
-			if (section_id && !value.length)
-				return _('Expecting: %s').format(_('non-empty value'));
-
-			return true;
-		}
-		o.retain = true;
-		/* No rmempty=false here: LuCI's parse() rejects empty values of
-		 * non-rmempty options with "Option must not be empty" BEFORE custom
-		 * validators are consulted (element validity is cached and stays true
-		 * for untouched widgets). rmempty=true lets the framework silently skip
-		 * the empty write; the guarded validate above still blocks the real
-		 * misconfiguration (URLTest + manual + nothing selected) with a proper
-		 * message when the widget validates. */
 
 		o = s.taboption('routing', form.Value, 'main_urltest_interval', _('Test interval'),
 			_('How often each node is tested (seconds). Lower = faster failover, higher = less overhead.'));
@@ -395,12 +365,13 @@ return view.extend({
 		o.default = '30';
 		o.depends('main_node', 'urltest');
 
-		o = s.taboption('routing', form.Value, 'main_urltest_tolerance', _('Test tolerance'),
-			_('Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values. In "Preferred node + auto" mode it applies to the fallback pool only (the preferred node is never replaced by a faster one).'));
+		o = s.taboption('routing', form.Value, 'exit_tolerance', _('Switch tolerance'),
+			_('Minimum latency gap (ms) required to move to a faster node — prevents flapping between nodes with close latency values. In "Hold the preferred node" mode it applies only when Upgrade is enabled.'));
 		o.datatype = 'uinteger';
 		o.placeholder = '150';
 		o.default = '150';
 		o.depends('main_node', 'urltest');
+		o.retain = true;
 
 		o = s.taboption('routing', form.ListValue, 'main_udp_node', _('Main UDP node'),
 			_('Separate exit for UDP traffic (games, calls). "Follows main route" keeps UDP on the same path as TCP.'));
@@ -425,54 +396,12 @@ return view.extend({
 		 * keeps unrendered options untouched (lesson 11 pattern). */
 		o.retain = true;
 
-		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_mode', _('URLTest mode'));
-		o.value('auto', _('Auto — all nodes (recommended)'));
-		o.value('prefer', _('Preferred node + auto'));
-		o.value('manual', _('Manual node list'));
-		o.default = 'auto';
-		o.depends('main_udp_node', 'urltest');
-		o.rmempty = false;
-		/* Retain: see the main TCP mode twin above. */
-		o.retain = true;
-
-		o = s.taboption('routing', form.ListValue, 'main_udp_urltest_preferred', _('URLTest node'),
-			_('Always used while it responds — it is never replaced by a faster node. If it stops responding, traffic fails over to the fastest of the remaining nodes (tolerance applies inside that fallback pool); the preferred node returns after Save & Apply or when the fallback node stops responding.'));
+		o = s.taboption('routing', form.ListValue, 'exit_udp_preferred', _('Preferred UDP node'),
+			_('For the separate UDP exit in "Hold the preferred node" mode: this node is held while it responds. Leave empty to use the main preferred node.'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		o.depends({ 'main_udp_node': 'urltest', 'main_udp_urltest_mode': 'prefer' });
+		o.depends({ 'main_udp_node': 'urltest', 'exit_mode': 'prefer' });
 		o.retain = true;
-		/* No rmempty=false: see the main TCP preferred twin above. */
-		o.validate = function(section_id) {
-			if (this.map.data.get('homeproxy', 'config', 'main_udp_node') !== 'urltest')
-				return true;
-			if (this.map.data.get('homeproxy', 'config', 'main_udp_urltest_mode') !== 'prefer')
-				return true;
-			let value = this.section.formvalue(section_id, 'main_udp_urltest_preferred');
-			if (section_id && !value)
-				return _('Expecting: %s').format(_('non-empty value'));
-
-			return true;
-		}
-
-		o = s.taboption('routing', hp.CBIStaticList, 'main_udp_urltest_nodes', _('URLTest nodes'),
-			_('List of nodes to test.'));
-		for (let i in proxy_nodes)
-			o.value(i, proxy_nodes[i]);
-		o.depends({ 'main_udp_node': 'urltest', 'main_udp_urltest_mode': 'manual' });
-		/* See the main TCP twin above: persist-mode guard, formvalue may be stale. */
-		o.validate = function(section_id) {
-			if (this.map.data.get('homeproxy', 'config', 'main_udp_node') !== 'urltest')
-				return true;
-			if (this.map.data.get('homeproxy', 'config', 'main_udp_urltest_mode') !== 'manual')
-				return true;
-			let value = this.section.formvalue(section_id, 'main_udp_urltest_nodes') || [];
-			if (section_id && !value.length)
-				return _('Expecting: %s').format(_('non-empty value'));
-
-			return true;
-		}
-		o.retain = true;
-		/* No rmempty=false: see the main TCP list twin above. */
 
 		o = s.taboption('routing', form.Value, 'main_udp_urltest_interval', _('Test interval'),
 			_('The test interval in seconds.'));
@@ -485,73 +414,75 @@ return view.extend({
 		 * (same trap as main_udp_node above). */
 		o.retain = true;
 
-		o = s.taboption('routing', form.Value, 'main_udp_urltest_tolerance', _('Test tolerance'),
-			_('Minimum latency gap (ms) required to switch to a faster node — prevents flapping between nodes with close latency values. In "Preferred node + auto" mode it applies to the fallback pool only (the preferred node is never replaced by a faster one).'));
-		o.datatype = 'uinteger';
-		o.placeholder = '150';
-		o.default = '150';
-		o.depends('main_udp_node', 'urltest');
+		/* ── Exit Engine (Ф9.16, D35a): единый выход-движок ──────────────────────
+		 * Один демон владеет селектором main-out (и main-udp-out при выделенном
+		 * UDP-выходе): режимы Автомат / Удержание предпочтительного / Ручной +
+		 * сквозной резерв-список. Пробы — реальные dial'ы через ядро (резервы
+		 * остаются тёплыми), переключение — чистая Clash API операция БЕЗ
+		 * рестарта ядра: direct-трафик и DNS не замечают. Синтетика main
+		 * (Direct/ByeDPI/Zapret) не имеет между чем переключать — секции скрыты. */
+		const engine_depends = {'routing_mode': /^((?!custom).)+$/, 'main_node': /^(?!direct-out$|nil$|byedpi-out$|zapret-out$)/};
+
+		o = s.taboption('routing', hp.CBIStaticList, 'exit_reserves', _('Reserve nodes') + ' 🔌',
+			_('Priority order of the failover reserves: add nodes in order, the topmost is tried first when the active pick dies. Reserves are probed live (this keeps their tunnels warm). Empty = every node may be used as a reserve. In URLTest modes only nodes of the pool are eligible; with a specific main node the main node itself is always first and cannot be removed.'));
+		for (let i in proxy_nodes)
+			o.value(i, proxy_nodes[i]);
+		o.depends(engine_depends);
 		o.retain = true;
 
-		/* ── Hot Swap (ч.59/ч.60): hot standby connections + transparent failover ──
-		 * Works for BOTH main shapes: a specific node (main-out becomes a
-		 * selector of [primary + backups]) and the URLTest group (the whole
-		 * group moves under main-out-auto and main-out becomes a selector over
-		 * it + the pool — normal traffic still follows the kernel's latency
-		 * choice, and when the group stays stuck on a dead node the daemon
-		 * re-pins the selector onto a proven-alive one, failing back once the
-		 * group answers again; kernel failover alone can sit on stale delay
-		 * history for hours). Direct/ByeDPI/Zapret mains have nothing to
-		 * switch between. The daemon keeps the standbys warm with real probes
-		 * — no service restart, direct traffic and DNS never notice. */
-		o = s.taboption('routing', form.Flag, 'hotswap', _('Hot Swap') + ' 🔌',
-			_('Keep several connections alive at once and switch to a working one within seconds when the active node dies — without restarting the core. Works both with a specific main node and in URLTest modes: the URLTest group keeps choosing by latency, and the daemon rescues it whenever it stays on a dead node. Standby nodes are verified by real probes (this also keeps their tunnels warm); existing direct connections and DNS are never affected. The number of hot connections and the reserve order are set below.'));
-		o.depends({'routing_mode': /^((?!custom).)+$/, 'main_node': /^(?!direct-out$|nil$|byedpi-out$|zapret-out$)/});
-		o.default = o.disabled;
-		o.rmempty = false;
-
-		o = s.taboption('routing', form.ListValue, 'hotswap_count', _('Hot connections'),
-			_('How many members of the failover group are kept hot: the main node (or the URLTest group) plus standby connections. Standbys are probed continuously; cold spare nodes stay in the group but are only probed when a hot slot dies.'));
-		for (let i = 2; i <= 8; i++)
-			o.value('' + i, '' + i);
-		o.default = '3';
-		o.depends('hotswap', '1');
-		o.rmempty = false;
-
-		o = s.taboption('routing', form.Value, 'hotswap_interval', _('Probe interval'),
-			_('How often each hot node is verified (seconds). Lower = faster failover (a dead main is usually replaced within ~10-20 s), higher = less background traffic.'));
+		o = s.taboption('routing', form.Value, 'exit_probe_interval', _('Probe interval'),
+			_('How often the active pick and the reserves are verified (seconds). Lower = faster failover (a dead main is usually replaced within ~10-20 s), higher = less background traffic.'));
 		o.datatype = 'range(5,120)';
 		o.placeholder = '10';
 		o.default = '10';
-		o.depends('hotswap', '1');
+		o.depends(engine_depends);
 
-		o = s.taboption('routing', form.Flag, 'hotswap_failback', _('Return to the main node'),
-			_('When the main node (or the URLTest group) recovers, switch back to it after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies.'));
+		o = s.taboption('routing', form.Flag, 'exit_failback', _('Return after recovery'),
+			_('When the held node recovers (or the preferred node is alive again), switch back after it stays stable for a while (3 good probes over 30+ seconds). Turn this off to stay on the failover node until it dies. The engine never overrides your manual pick while it stays alive.'));
 		o.default = o.enabled;
-		o.depends('hotswap', '1');
+		o.depends(engine_depends);
 		o.rmempty = false;
 
-		/* Anti-flap (ч.67): the kernel URLTest re-picks on a SINGLE bad probe
-		 * (a timed-out probe deletes the pick's delay history and the group
-		 * moves instantly — tolerance is never consulted on that path), so the
-		 * visible active node flaps although pings are stable. The daemon pins
-		 * the selector onto the current pick; kernel re-ranks stop moving the
-		 * exit, and the pin only moves on sustained evidence. */
-		o = s.taboption('routing', form.Flag, 'hotswap_antiflap', _('Anti-flap') + ' 🎯',
-			_('Hold the active node steady in URLTest modes: the daemon pins the current pick, and one bad probe no longer switches the exit. The pinned node is left only when it really dies (failover to the best live reserve) or when another node stays faster by more than the Test tolerance for 3 probe rounds in a row; in "Preferred node + auto" mode the preferred node is held while it answers. Hot Swap probes keep working as before.'));
-		o.default = o.enabled;
-		o.depends('hotswap', '1');
+		o = s.taboption('routing', form.Flag, 'exit_upgrade', _('Upgrade on a better node'),
+			_('Only in "Hold the preferred node" mode: allow moving to a node that stays faster by more than the Switch tolerance for 3 probe rounds in a row (with a direct probe). Off by default — the preferred node is held regardless of latency.'));
+		o.default = o.disabled;
+		o.depends({ 'main_node': 'urltest', 'exit_mode': 'prefer' });
 		o.rmempty = false;
 
-		o = s.taboption('routing', hp.CBIStaticList, 'hotswap_nodes', _('Reserve nodes') + ' 🔌',
-			_('Priority order of the failover reserves: add nodes in order, the topmost is tried first when the active pick dies. Empty = every node may be used as a reserve (previous behavior). In URLTest mode only nodes of the URLTest pool are eligible — picks outside the pool are ignored; with a specific main node the main node itself is always first and cannot be removed.'));
-		for (let i in proxy_nodes)
-			o.value(i, proxy_nodes[i]);
-		o.depends('hotswap', '1');
+		o = s.taboption('routing', form.Value, 'exit_dead_after', _('Dead threshold'),
+			_('Advanced: how many failed probes in a row declare a node dead (a fast double-check follows the first failure). Default 2.'));
+		o.datatype = 'range(1,10)';
+		o.placeholder = '2';
+		o.default = '2';
+		o.depends(engine_depends);
 		o.retain = true;
 
-		o = s.taboption('routing', form.DummyValue, '_hotswap_status', _('Hot Swap state'));
-		o.depends('hotswap', '1');
+		o = s.taboption('routing', form.Value, 'exit_recovery_oks', _('Recovery probes'),
+			_('Advanced: how many good probes a recovered node must collect before the engine returns to it. Default 3.'));
+		o.datatype = 'uinteger';
+		o.placeholder = '3';
+		o.default = '3';
+		o.depends(engine_depends);
+		o.retain = true;
+
+		o = s.taboption('routing', form.Value, 'exit_recovery_window', _('Recovery window'),
+			_('Advanced: the recovery probes must span at least this many seconds (protects from a flapping node). Default 30.'));
+		o.datatype = 'uinteger';
+		o.placeholder = '30';
+		o.default = '30';
+		o.depends(engine_depends);
+		o.retain = true;
+
+		o = s.taboption('routing', form.Value, 'exit_hysteresis', _('Auto hysteresis'),
+			_('Advanced: probe rounds in a row a challenger must stay faster by more than the tolerance before the engine moves in Auto mode (or with Upgrade enabled). Default 3.'));
+		o.datatype = 'uinteger';
+		o.placeholder = '3';
+		o.default = '3';
+		o.depends(engine_depends);
+		o.retain = true;
+
+		o = s.taboption('routing', form.DummyValue, '_hotswap_status', _('Engine state'));
+		o.depends(engine_depends);
 		o.cfgvalue = function() {
 			/* Live panel (ч.60): header (mode / switches / failback) + a member
 			 * table «Node | Role | State | Latency» merged from the selector
@@ -573,7 +504,14 @@ return view.extend({
 						return;
 					}
 					const urltestLabel = _('URLTest (kernel selection)');
-					const modeLabel = (ret.mode === 'urltest') ? urltestLabel : _('Specific node');
+					const modeLabels = {
+						auto: _('Auto — best node'),
+						prefer: _('Hold the preferred node'),
+						manual: _('Manual — hold my pick'),
+						urltest: urltestLabel,
+						node: _('Specific node')
+					};
+					const modeLabel = modeLabels[ret.mode] || (ret.mode || '—');
 					const headBits = [ E('span', { 'style': 'font-weight:bold' }, [ _('Mode') + ': ' + modeLabel ]) ];
 					headBits.push(document.createTextNode(' · ' + _('Switches') + ': ' + (ret.switches || 0)));
 					if (ret.last_switch)
@@ -604,7 +542,7 @@ return view.extend({
 								? _('Main node') : _('Active');
 							roleColor = 'green';
 						} else if (m.tag === ret.primary) {
-							roleEl = (ret.mode === 'urltest') ? urltestLabel : _('Main node');
+							roleEl = (m.tag === 'main-out-auto') ? urltestLabel : _('Main node');
 						} else if (d.in_hot) {
 							roleEl = _('Reserve');
 							roleColor = '#d99a1b';

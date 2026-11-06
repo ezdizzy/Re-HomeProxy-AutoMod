@@ -433,7 +433,7 @@ function build_logs(stage) {
 		'core', 'mosdns', 'nfqws2', 'ciadpi',
 		'sni_sniffer', 'probe_pool',
 		'automation', 'telegram_bot', 'control', 'multidns',
-		'urltest_watchdog', 'zapret_autopilot', 'hotswap', 'metrics'
+		'zapret_autopilot', 'hotswap', 'metrics'
 	];
 	for (let name in want) {
 		/* for-in по массиву даёт ЭЛЕМЕНТ (урок 20) — name и есть имя записи. */

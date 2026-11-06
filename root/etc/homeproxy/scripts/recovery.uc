@@ -130,7 +130,7 @@ export const ACT_HUNG_KILL = 'hung_kill';
 const HEALTH_SVC_NAMES = {
 	core: 'hiddify-c',
 	automation: 'automation', multidns: 'multidns', telegram: 'telegram',
-	urltest: 'urltest', hotswap: 'hotswap', autopilot: 'autopilot',
+	hotswap: 'hotswap', autopilot: 'autopilot',
 	control: 'control', sentinel: 'sentinel', health: 'health',
 	recovery: 'recovery', metrics: 'metrics', log_cleaner: 'log-cleaner',
 	byedpi: 'byedpi', zapret: 'zapret', tun_route: 'tun-route'
@@ -138,7 +138,7 @@ const HEALTH_SVC_NAMES = {
 
 /* hung_kill допускается ТОЛЬКО для procd-демонов (respawn вернёт процесс).
  * probe_pool/sni_sniffer — ленивые/хозяйские (automation поднимет сам). */
-const HUNG_KILLABLE = [ 'automation', 'multidns', 'telegram', 'urltest',
+const HUNG_KILLABLE = [ 'automation', 'multidns', 'telegram',
 	'hotswap', 'autopilot', 'control', 'metrics', 'health', 'sentinel',
 	'recovery' ];
 

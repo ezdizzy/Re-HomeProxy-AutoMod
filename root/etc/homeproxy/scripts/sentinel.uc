@@ -137,8 +137,7 @@ const INST_LABELS = {
 	'health': 'Health Monitor',
 	'sentinel': 'Sentinel',
 	'recovery': 'Recovery (координатор)',
-	'hotswap': 'Hot Swap',
-	'urltest': 'URLTest-watchdog',
+	'hotswap': 'Выход (движок)',
 	'metrics': 'Сборщик метрик',
 	'log-cleaner': 'Чистка логов',
 	'tun-route': 'TUN-watcher'
