@@ -7765,3 +7765,39 @@ msgstr ""
 
 msgid "Pick a list in the catalog — its row appears on the page; a row without a rule disappears after a reload."
 msgstr ""
+
+msgid "Event center"
+msgstr ""
+
+msgid "The single event feed of the whole system: routing, bypass engines, automation, health, recovery, Safe Mode, updates and security all write to this one journal. The Parental control page shows the same journal with the clear button."
+msgstr ""
+
+msgid "Resource profile"
+msgstr ""
+
+msgid "All events"
+msgstr ""
+
+msgid "What the system has just done or noticed — the tail of the journal the event center in the Health center keeps."
+msgstr ""
+
+msgid "auto"
+msgstr ""
+
+msgid "The hardware profile is unavailable (the read failed)."
+msgstr ""
+
+msgid "CPU cores"
+msgstr ""
+
+msgid "Flash"
+msgstr ""
+
+msgid "The profile is detected automatically from the hardware (RAM, cores, flash): Lite for 256 MiB-class routers, Balanced for mid-range, Performance above. Managing the behavior (poll rates, batch sizes, heavy features) is a planned milestone — today the profile is shown as an honest hardware fact."
+msgstr ""
+
+msgid "Control Center"
+msgstr ""
+
+msgid "Diagnostics & maintenance"
+msgstr ""

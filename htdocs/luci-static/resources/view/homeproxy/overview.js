@@ -87,6 +87,25 @@ const callServiceRestart = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф9.1 (§A.4): the Dashboard shows the tail of the SAME unified event
+ * journal the Health center renders in full (Event Bus → UI) — critical
+ * events are visible where the user looks every day. */
+const callEvents = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'control_events',
+	params: [ 'limit' ],
+	expect: { '': {} }
+});
+
+/* Ф9.1/Ф10: resource profile visibility — the hardware fact base
+ * (RAM/CPU/flash) + the auto-detected profile class. Static per boot:
+ * polled once + every 60 s, not with the 4 s refresh. */
+const callResProfile = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'res_profile',
+	expect: { '': {} }
+});
+
 /* Ф1.1 Operation/Apply Manager: applies run as tracked operations
  * (stages + server-side verified flag) — poll until completed/failed. */
 const callOpStatus = rpc.declare({
@@ -270,6 +289,9 @@ return view.extend({
 .ov-grid { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin: 0; }
 .ov-col { display: flex; flex-direction: column; min-width: 0; }
 .ov-col > .hpui-panel { margin: 0 0 12px 0; }
+/* Ф9.1: the Dashboard events strip — a compact tail of the unified journal. */
+.ov-evlist { max-height: 216px; }
+.hpui-h4 .hpui-cap-link { margin-left: auto; font-size: .84em; color: var(--hp-accent-strong); }
 @media (max-width: 1150px) { .ov-grid { grid-template-columns: 1fr; } }
 `;
 
@@ -554,6 +576,13 @@ return view.extend({
 			sysV[SYS_DEFS[p][0]] = pair.children[1];
 			sysPairs.appendChild(pair);
 		}
+		/* Ф9.1/Ф10: the resource profile rides the System panel (the value
+		 * is filled by the 60 s profile poll, not the 4 s refresh). */
+		const profV = E('span', { 'class': 'v' }, [ '—' ]);
+		sysPairs.appendChild(E('div', {}, [
+			E('span', { 'class': 'k' }, [ _('Resource profile') + ':' ]),
+			profV
+		]));
 
 		/* ── System panel: pairs + app version + update check ──────────── */
 
@@ -584,6 +613,48 @@ return view.extend({
 			E('p', { 'class': 'hpui-hint' },
 				[ _('The service restart re-routes every connection ("Maintenance" carries start/stop); a snapshot copies the app configuration and the routing lists; "Restore internet" is the emergency switch for a plain direct connection.') ])
 		]);
+
+		/* ── Events strip (Ф9.1, §A.4: critical events on the Dashboard) ──
+		 * The tail of the SAME unified journal the Health center renders in
+		 * full — the Home page does not fork a second feed, it just shows
+		 * the last entries where the user looks every day. */
+		const evStrip = E('div', { 'class': 'hpui-log ov-evlist' }, []);
+		const eventsEl = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', { 'class': 'hpui-h4' }, [
+				hp.icon('activity'), _('Events'),
+				E('a', { 'class': 'hpui-cap-link', 'href': L.url('admin/services/homeproxy/health') },
+					[ _('All events') ])
+			]),
+			E('p', { 'class': 'hpui-hint' }, [ _('What the system has just done or noticed — the tail of the journal the event center in the Health center keeps.') ]),
+			evStrip
+		]);
+
+		function renderEvents(events) {
+			const srcMap = hp.EV_SRC();
+			const out = [];
+			for (let i = (events || []).length - 1; i >= 0 && out.length < 6; i--) {
+				const ev = events[i];
+				const t = new Date(ev.ts * 1000);
+				const hh = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2);
+				const icon = hp.EV_ICONS[ev.type] || '•';
+				const src = srcMap[ev.src || 'control'] || (ev.src || 'control');
+				out.push(E('div', {}, [
+					E('span', { 'class': hp.EV_COLORS[ev.type] || 'hpui-c-grey' },
+						[ hh + ' ' + icon + ' ' + (ev.who || '') ]),
+					(ev.detail ? ' — ' + ev.detail : ''),
+					E('span', { 'class': 'hpui-cap', 'style': 'margin-left:8px' }, [ '[' + src + ']' ])
+				]));
+			}
+			dom.content(evStrip, out.length ? out : [ _('The journal is empty.') ]);
+		}
+
+		function renderProfile(p) {
+			p = p || {};
+			const names = { lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
+			profV.textContent = p.profile
+				? ((names[p.profile] || p.profile) + (p.source === 'auto' ? ' · ' + _('auto') : ''))
+				: '—';
+		}
 
 		/* ONE result area at the bottom for ALL button results. */
 		const resultEl = E('div', { 'class': 'ov-result' }, []);
@@ -943,7 +1014,8 @@ return view.extend({
 				L.resolveDefault(callActiveNode('main-out'), {}),
 				L.resolveDefault(callDpiStatus(), {}),
 				L.resolveDefault(callMultidnsStatus(), {}),
-				L.resolveDefault(callControlStatus(), {})
+				L.resolveDefault(callControlStatus(), {}),
+				L.resolveDefault(callEvents('12'), {})
 			]).then(function(data) {
 				metrics = (data[0] && typeof data[0] === 'object' && data[0].points)
 					? data[0] : { interval: 5, updated: 0, points: [] };
@@ -956,11 +1028,19 @@ return view.extend({
 			renderCards(sys, node, dpi, mdns, ctl);
 			renderCharts();
 			renderTraffic(metrics.totals);
+			renderEvents((data[6] && data[6].events) || []);
 			});
 		}
 
+		/* Ф9.1/Ф10: the profile is a per-boot fact — polled once + every
+		 * 60 s, NOT with the 4 s refresh. */
+		function profileRefresh() {
+			return L.resolveDefault(callResProfile(), {}).then(renderProfile);
+		}
 		poll.add(refresh, 4);
 		refresh();
+		poll.add(profileRefresh, 60);
+		profileRefresh();
 
 		/* Р3 v3 hub layout: hero (brand + status) → quick setup (until set
 		 * up) → concern cards → headline metric cards → two-column grid
@@ -979,10 +1059,12 @@ return view.extend({
 			trafficEl,
 			/* System band: utilities live at the BOTTOM of the hub — a
 			 * right-hand column stole attention from the concern cards
-			 * (user note ч.137). */
+			 * (user note ч.137). Ф9.1: the events strip joins the right
+			 * column above the quick actions (§A.4: critical events are
+			 * Dashboard material). */
 			E('div', { 'class': 'ov-grid' }, [
 				E('div', { 'class': 'ov-col' }, [ sysEl ]),
-				E('div', { 'class': 'ov-col' }, [ actionsEl ])
+				E('div', { 'class': 'ov-col' }, [ eventsEl, actionsEl ])
 			]),
 			resultEl
 		]);

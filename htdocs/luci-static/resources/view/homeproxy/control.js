@@ -1180,28 +1180,12 @@ return view.extend({
 		const evList = E('div', { 'class': 'hpui-log', 'style': 'max-height:420px' });
 		const logBox = E('pre', { 'class': 'hpui-pre hpui-log' }, [ '' ]);
 
-		const evIcons = { block: '🔒', allow: '🔓', temp: '⏱', wifi: '📶', schedule: '📅', system: '⚙️', update: '⬆️',
-			learn: '🧠', heal: '✅', outage: '⚠️', outage_end: '✅', clear: '🗑️', recheck: '🔁',
-			switch: '🔄', dead: '⛔', recovered: '✅', reload: '♻️', down: '⛔', degraded: '⚠️',
-			repair: '🛠️', stale: '⏳', loop: '🔁', blocked: '⛔', unblocked: '✅',
-			manual: '🖐️', proposal: '💡',
-			/* Ф8.7: Safe Mode / обновления / безопасность / автопилот. */
-			done: '✅', failed: '❌', safe_on: '🛡️', safe_off: '🔓',
-			code_gen: '🔑', pair_ok: '🔐', pair_fail: '⛔', user_del: '🗑️',
-			applied: '🧭', rollback: '↩️', manual_pick: '🖐️', manual_hold: '⏸', error: '❌' };
-		const evColors = { block: 'hpui-c-red', allow: 'hpui-c-green', temp: 'hpui-c-amber', wifi: 'hpui-c-blue',
-			down: 'hpui-c-red', degraded: 'hpui-c-amber', repair: 'hpui-c-green', loop: 'hpui-c-red',
-			blocked: 'hpui-c-red', proposal: 'hpui-c-amber',
-			failed: 'hpui-c-red', pair_fail: 'hpui-c-red', safe_on: 'hpui-c-amber', error: 'hpui-c-red',
-			rollback: 'hpui-c-amber', done: 'hpui-c-green', pair_ok: 'hpui-c-green' };
-		/* Ф2.4: единая лента Event Bus — источник записи виден явно. Ф2.1: события
-		 * Health Monitor (src=health) — переходы статусов подсистем. Ф2.2: события
-		 * Sentinel (src=sentinel) — ремонты и циклы восстановления. Ф2.3: события
-		 * Recovery (src=recovery) — координатор восстановления. Ф3.4: src=init —
-		 * события старта службы (миграция routing_mode). Ф8.7: src=safe/update/
-		 * security — Safe Mode, фоновые обновления, pairing/RBAC; src=autopilot —
-		 * решения автопилота (Ф7.3). */
-		const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'), hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health'), sentinel: 'Sentinel', recovery: 'Recovery', init: _('Service'), autopilot: _('Auto-pilot'), safe: _('Safe Mode'), update: _('Updates'), security: _('Security') };
+		/* Ф2.4: единая лента Event Bus — источник записи виден явно.
+		 * Ф9.1: иконки/цвета/подписи источников ОДНИ на всё приложение
+		 * (hp.EV_* — Home strip, Journal, Health center look the same). */
+		const evIcons = hp.EV_ICONS;
+		const evColors = hp.EV_COLORS;
+		const srcLabels = hp.EV_SRC();
 
 		function refreshJournal() {
 			return Promise.all([

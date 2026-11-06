@@ -26,6 +26,7 @@
 					"wizard_service_profile_status", "discovery_snapshot", "service_optimizer_plan",
 					"wizard_preset_list", "wizard_dpi_status", "wizard_strategy_list", "wizard_strategy_status",
 					"wizard_tgwsp_status", "overview_metrics", "overview_sys", "telegram_status", "automation_geo_diag",
+					"res_profile",
 					"mosdns_status", "mosdns_check_update", "multidns_status", "diag_dns_multidns",
 					"automation_list_read", "automation_backup", "automation_geo_status",
 					"lists_list", "list_read", "list_export", "list_backup_list", "list_backup_read",

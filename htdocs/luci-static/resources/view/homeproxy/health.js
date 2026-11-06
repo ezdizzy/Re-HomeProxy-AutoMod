@@ -63,19 +63,11 @@ const STATUS_VIEW = {
 	off:      { cls: 'hpui-b-grey', text: _('Off') }
 };
 
-/* The unified feed: same icons and source labels as the Control journal. */
-const evIcons = { block: '🔒', allow: '🔓', temp: '⏱', wifi: '📶', schedule: '📅', system: '⚙️', update: '⬆️',
-	learn: '🧠', heal: '✅', outage: '⚠️', outage_end: '✅', clear: '🗑️', recheck: '🔁',
-	switch: '🔄', dead: '⛔', recovered: '✅', reload: '♻️', down: '⛔', degraded: '⚠️',
-	repair: '🛠️', stale: '⏳', loop: '🔁', blocked: '⛔', unblocked: '✅',
-	manual: '🖐️', proposal: '💡' };
-const evColors = { down: 'hpui-c-red', degraded: 'hpui-c-amber', repair: 'hpui-c-green',
-	loop: 'hpui-c-red', blocked: 'hpui-c-red', proposal: 'hpui-c-amber',
-	unblocked: 'hpui-c-green', recovered: 'hpui-c-green' };
-const srcLabels = { control: _('Access Control'), automation: _('Auto-bypass'),
-	hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health'),
-	sentinel: 'Sentinel', recovery: 'Recovery', init: _('Service'),
-	autopilot: _('DPI auto-pilot') };
+/* The unified feed: Ф9.1 — ONE icon/color/source set for the whole app
+ * (hp.EV_* — Home strip, Control journal and this event center). */
+const evIcons = hp.EV_ICONS;
+const evColors = hp.EV_COLORS;
+const srcLabels = hp.EV_SRC();
 
 function fmtClock(ts) {
 	const t = new Date(ts * 1000);
@@ -498,9 +490,9 @@ return view.extend({
 				historyEl
 			]),
 			E('div', { 'class': 'hpui-panel' }, [
-				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Events') ]),
+				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Event center') ]),
 				E('p', { 'class': 'hpui-hint' },
-					[ _('The unified event feed of all subsystems. The full journal with the clear button lives in Access control → Journal.') ]),
+					[ _('The single event feed of the whole system: routing, bypass engines, automation, health, recovery, Safe Mode, updates and security all write to this one journal. The Parental control page shows the same journal with the clear button.') ]),
 				evList
 			]),
 			E('div', { 'class': 'hpui-panel' }, [

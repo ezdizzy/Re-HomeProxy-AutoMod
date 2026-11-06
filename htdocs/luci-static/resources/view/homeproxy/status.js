@@ -46,6 +46,64 @@ function pollOp(opId, onDone) {
 	tick();
 }
 
+/* Ф9.1/Ф10 (§A.4): the resource-profile card — the hardware fact base
+ * (RAM/CPU/flash) + the auto-detected Lite/Balanced/Performance class,
+ * VISIBLE in the UI. The profile DRIVES nothing yet: poll rates, batch
+ * sizes and heavy-feature gates are the Ф10 milestone; the hint below
+ * says so honestly. Per-boot facts: fetched once + every 60 s. */
+const callResProfile = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'res_profile',
+	expect: { '': {} }
+});
+
+function fmtKb(kb) {
+	kb = parseInt(kb, 10) || 0;
+	if (kb > 1048576) return (kb / 1048576).toFixed(1) + ' GB';
+	return Math.round(kb / 1024) + ' MB';
+}
+
+function buildResProfileCard() {
+	const profBadge = E('span', { 'class': 'hpui-badge hpui-b-green' }, [ '—' ]);
+	const factsEl = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' }, [ '' ]);
+
+	function render(p) {
+		p = p || {};
+		if (!p.profile) {
+			profBadge.textContent = '—';
+			factsEl.textContent = _('The hardware profile is unavailable (the read failed).');
+			return;
+		}
+		const names = { lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
+		profBadge.textContent = names[p.profile] || p.profile;
+		const parts = [];
+		if (p.ram_total_kb != null)
+			parts.push(_('RAM') + ': ' + fmtKb(p.ram_total_kb) +
+				((p.ram_avail_kb != null) ? ' (' + _('available') + ' ' + fmtKb(p.ram_avail_kb) + ')' : ''));
+		if (p.cores != null)
+			parts.push(_('CPU cores') + ': ' + p.cores);
+		if (p.flash_total_kb != null)
+			parts.push(_('Flash') + ': ' + fmtKb(p.flash_total_kb));
+		factsEl.textContent = parts.join(' · ');
+	}
+
+	function refresh() {
+		return L.resolveDefault(callResProfile(), {}).then(render);
+	}
+	poll.add(refresh, 60);
+	refresh();
+
+	return E('div', { 'class': 'hpui-panel' }, [
+		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:8px' }, [
+			E('strong', {}, [ hp.icon('cpu'), ' ', _('Resource profile') ]),
+			profBadge
+		]),
+		factsEl,
+		E('div', { style: 'margin-top:4px; font-size:0.85em; opacity:.75' },
+			[ _('The profile is detected automatically from the hardware (RAM, cores, flash): Lite for 256 MiB-class routers, Balanced for mid-range, Performance above. Managing the behavior (poll rates, batch sizes, heavy features) is a planned milestone — today the profile is shown as an honest hardware fact.') ])
+	]);
+}
+
 /* Thanks to luci-app-aria2 */
 const css = '				\
 #log_textarea {				\
@@ -1764,6 +1822,7 @@ return view.extend({
 			return E('div', {}, [
 				hp.pageIntro(_('Maintenance'),
 					_('Installation and updates: the app itself, the cores, the bypass engines and MultiDNS — each in its own card. Also configuration snapshots, emergency internet recovery and the running logs. You need this page rarely: after an update or when something must be reinstalled.')),
+				buildResProfileCard(),
 				node
 			]);
 		});

@@ -505,17 +505,21 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 	 * existing hpui-* components of all tabs adapt automatically. */
 	SHELL_ACTIVE: false,
 
-	/* Р3 v3 IA (19-UX_REDESIGN §4): five human sections. The wizard was
-	 * fully abolished in v3c (its zones moved to the bypass page); access
-	 * was dissolved into the unified Devices page in v3d (registry +
-	 * proxy policy) — its URL is gone, nothing is hidden from the
-	 * sidebar anymore, so NAV_HIDDEN is kept as an empty escape hatch. */
+	/* Ф9.1 IA (§A.4): THREE LEVELS OF CONTROL. The sidebar presents the app
+	 * as three levels — 01 Dashboard (the daily view: state, active node,
+	 * health, critical events), 02 Control Center (every management page:
+	 * connection, servers, DNS, bypass, rules, auto-bypass, devices,
+	 * parental control, phone control, server mode), 03 Diagnostics &
+	 * maintenance (health center with the event feed, check & repair,
+	 * monitoring, maintenance). The LuCI menu tree itself stays flat (no
+	 * URL moves, no cross-link churn); the levels live in the shell that
+	 * owns the app navigation. */
 	NAV_SECTIONS: [
 		{ pages: [ 'overview' ], cap: null },
-		{ pages: [ 'client', 'dns', 'node' ], cap: 'Connection' },
-		{ pages: [ 'bypass', 'rules', 'automation' ], cap: 'Blocking bypass' },
-		{ pages: [ 'devices', 'control', 'telegram' ], cap: 'Home' },
-		{ pages: [ 'status', 'monitor', 'health', 'diagnostics', 'server' ], cap: 'System section' }
+		{ pages: [ 'client', 'dns', 'node', 'bypass', 'rules', 'automation',
+			'devices', 'control', 'telegram', 'server' ], cap: 'Control Center' },
+		{ pages: [ 'health', 'diagnostics', 'monitor', 'status' ],
+			cap: 'Diagnostics & maintenance' }
 	],
 
 	NAV_ICONS: {
@@ -526,6 +530,42 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 	},
 
 	NAV_HIDDEN: {},
+
+	/* Ф9.1: the unified EVENT CENTER presentation data (Event Bus → UI).
+	 * ONE icon/color/source set shared by the Home events strip, the
+	 * Control journal and the Health center feed — the same event must
+	 * look the same everywhere. Sources: Ф2.1 health, Ф2.2 sentinel,
+	 * Ф2.3 recovery, Ф3.4 init, Ф7.3 autopilot, Ф8.7 safe/update/security;
+	 * src=rulesets — seed/geo updates (Ф5). EV_SRC is a function on
+	 * purpose: the labels are translated strings and must resolve at
+	 * render time, not at library load time. */
+	EV_ICONS: {
+		block: '🔒', allow: '🔓', temp: '⏱', wifi: '📶', schedule: '📅', system: '⚙️', update: '⬆️',
+		learn: '🧠', heal: '✅', outage: '⚠️', outage_end: '✅', clear: '🗑️', recheck: '🔁',
+		switch: '🔄', dead: '⛔', recovered: '✅', reload: '♻️', down: '⛔', degraded: '⚠️',
+		repair: '🛠️', stale: '⏳', loop: '🔁', blocked: '⛔', unblocked: '✅',
+		manual: '🖐️', proposal: '💡',
+		done: '✅', failed: '❌', safe_on: '🛡️', safe_off: '🔓',
+		code_gen: '🔑', pair_ok: '🔐', pair_fail: '⛔', user_del: '🗑️',
+		applied: '🧭', rollback: '↩️', manual_pick: '🖐️', manual_hold: '⏸', error: '❌'
+	},
+
+	EV_COLORS: {
+		block: 'hpui-c-red', allow: 'hpui-c-green', temp: 'hpui-c-amber', wifi: 'hpui-c-blue',
+		down: 'hpui-c-red', degraded: 'hpui-c-amber', repair: 'hpui-c-green', loop: 'hpui-c-red',
+		blocked: 'hpui-c-red', proposal: 'hpui-c-amber',
+		failed: 'hpui-c-red', pair_fail: 'hpui-c-red', safe_on: 'hpui-c-amber', error: 'hpui-c-red',
+		rollback: 'hpui-c-amber', done: 'hpui-c-green', pair_ok: 'hpui-c-green'
+	},
+
+	EV_SRC() {
+		return { control: _('Access Control'), automation: _('Auto-bypass'),
+			hotswap: 'Hot Swap', urltest: 'URLTest', health: _('Health'),
+			sentinel: 'Sentinel', recovery: 'Recovery', init: _('Service'),
+			autopilot: _('DPI auto-pilot'), safe: _('Safe Mode'),
+			update: _('Updates'), security: _('Security'), rulesets: 'Rule-sets',
+			subscribe: _('Subscriptions'), tg: 'Telegram' };
+	},
 
 	themeGet() {
 		let t = null;

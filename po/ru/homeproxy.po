@@ -13321,3 +13321,39 @@ msgstr "Правило удалено — сервис снова идёт по 
 
 msgid "Pick a list in the catalog — its row appears on the page; a row without a rule disappears after a reload."
 msgstr "Выберите список в каталоге — его строка появится на странице; строка без правила пропадёт после перезагрузки страницы."
+
+msgid "Event center"
+msgstr "Центр событий"
+
+msgid "The single event feed of the whole system: routing, bypass engines, automation, health, recovery, Safe Mode, updates and security all write to this one journal. The Parental control page shows the same journal with the clear button."
+msgstr "Единая лента событий всей системы: маршрутизация, движки обхода, автоматизация, здоровье, восстановление, Safe Mode, обновления и безопасность пишут в один журнал. Страница «Родительский контроль» показывает тот же журнал с кнопкой очистки."
+
+msgid "Resource profile"
+msgstr "Профиль ресурсов"
+
+msgid "All events"
+msgstr "Все события"
+
+msgid "What the system has just done or noticed — the tail of the journal the event center in the Health center keeps."
+msgstr "Что система только что сделала или заметила — конец журнала, который ведёт центр событий в «Центре здоровья»."
+
+msgid "auto"
+msgstr "авто"
+
+msgid "The hardware profile is unavailable (the read failed)."
+msgstr "Профиль железа недоступен (ошибка чтения)."
+
+msgid "CPU cores"
+msgstr "Ядер CPU"
+
+msgid "Flash"
+msgstr "Флеш"
+
+msgid "The profile is detected automatically from the hardware (RAM, cores, flash): Lite for 256 MiB-class routers, Balanced for mid-range, Performance above. Managing the behavior (poll rates, batch sizes, heavy features) is a planned milestone — today the profile is shown as an honest hardware fact."
+msgstr "Профиль определяется автоматически по железу (RAM, ядра, флеш-память): Lite для роутеров класса 256 МиБ, Balanced для среднего класса, Performance — выше. Управление поведением (частота опросов, размеры батчей, тяжёлые функции) — запланированный этап; сегодня профиль показан как честный факт о железе."
+
+msgid "Control Center"
+msgstr "Центр управления"
+
+msgid "Diagnostics & maintenance"
+msgstr "Диагностика и обслуживание"

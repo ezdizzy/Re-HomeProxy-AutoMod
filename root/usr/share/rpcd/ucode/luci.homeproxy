@@ -7812,6 +7812,58 @@ const methods = {
 		}
 	},
 
+	/* Ф9.1/Ф10 (§A.4): the resource-profile fact base, VISIBLE in the UI.
+	 * Read-only, per-boot facts (RAM/CPU cores/flash) + the auto-detected
+	 * profile class from the §A.4 thresholds («256 МБ RAM — реальный
+	 * потолок»): Lite ≤ 256 MiB, Balanced ≤ 768 MiB, Performance above.
+	 * Three readfiles + one df fork per call — the UI polls it once and
+	 * then every 60 s, NOT with the 4 s refresh. The profile DRIVES
+	 * nothing yet: behavior management (poll rates, batch sizes, heavy
+	 * features) is Ф10 — the UI cards say so honestly. */
+	res_profile: {
+		call: function() {
+			const reply = { ram_total_kb: null, ram_avail_kb: null,
+				cores: null, flash_total_kb: null, profile: null, source: 'auto' };
+
+			const mi = readfile('/proc/meminfo') || '';
+			const mt = match(mi, /MemTotal: +([0-9]+) kB/);
+			const ma = match(mi, /MemAvailable: +([0-9]+) kB/);
+			if (mt)
+				reply.ram_total_kb = int(mt[1]);
+			if (ma)
+				reply.ram_avail_kb = int(ma[1]);
+
+			/* ARM /proc/cpuinfo: one "processor : N" entry per core. */
+			const ci = readfile('/proc/cpuinfo') || '';
+			let cores = 0;
+			const lines = split(ci, '\n');
+			for (let i = 0; i < length(lines); i++)
+				if (match(lines[i], /^processor\s*:/) != null)
+					cores++;
+			if (cores > 0)
+				reply.cores = cores;
+
+			let fd = popen('df -k / 2>/dev/null | tail -n 1');
+			if (fd) {
+				const raw = trim(fd.read('all'));
+				fd.close();
+				const m = match(raw, / +([0-9]+) +[0-9]+ +[0-9]+ +[0-9]+%/);
+				if (m)
+					reply.flash_total_kb = int(m[1]);
+			}
+
+			if (reply.ram_total_kb != null) {
+				if (reply.ram_total_kb <= 262144)
+					reply.profile = 'lite';
+				else if (reply.ram_total_kb <= 786432)
+					reply.profile = 'balanced';
+				else
+					reply.profile = 'performance';
+			}
+			return reply;
+		}
+	},
+
 	/* Telegram bot v2 (Ф6, ч.78): settings/status/test for the always-on
 	 * telegram.uc daemon. The daemon hot-reloads UCI every loop, so set()
 	 * NEVER touches the service (the procd instance keeps running — the
