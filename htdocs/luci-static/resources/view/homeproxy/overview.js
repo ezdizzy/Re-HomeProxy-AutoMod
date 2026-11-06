@@ -80,6 +80,15 @@ const callControlStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* The "Subscriptions" hub card: the last update cycle + the live book of
+ * subscription nodes (the same RPC the Servers page uses — a cheap file
+ * read; polled once a minute, subscriptions change rarely). */
+const callSubsStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_subscription_status',
+	expect: { '': {} }
+});
+
 /* Quick actions — existing RPCs (unchanged). */
 const callServiceRestart = rpc.declare({
 	object: 'luci.homeproxy',
@@ -302,23 +311,17 @@ return view.extend({
 
 		/* ── Hero (Р3 v3 §6): brand on the left; on the right the big human
 		 * status ("Everything is running" / the problem) + a "Check now"
-		 * jump to Check & repair. Two technical chips (routing mode,
-		 * MultiDNS) stay visible under the wordmark — they were ribbon
-		 * members whose state is not covered by the concern cards. */
+		 * jump to Check & repair. The routing-mode chip stays under the
+		 * wordmark; MultiDNS moved to its own hub card (D35 block E — the
+		 * card covers the state, the chip would duplicate it). */
 		const heroStatus = E('div', { 'class': 'hpui-hero-status' }, [ '…' ]);
 		const heroBtn = E('button', { 'class': 'btn cbi-button' }, [ _('Check now') ]);
 		const modeChipState = E('span', { 'class': 'hpui-chip-state' }, [ '—' ]);
-		const dnsChipState = E('span', { 'class': 'hpui-chip-state' }, [ '—' ]);
 		const heroChips = E('div', { 'class': 'hpui-brand-chips' }, [
 			E('span', { 'class': 'hpui-chip', 'id': 'hp-hero-mode' }, [
 				hp.icon('shuffle'),
 				E('span', { 'class': 'hpui-chip-name' }, [ _('Routing mode') ]),
 				modeChipState
-			]),
-			E('span', { 'class': 'hpui-chip', 'id': 'hp-hero-dns' }, [
-				hp.icon('globe'),
-				E('span', { 'class': 'hpui-chip-name' }, [ 'MultiDNS' ]),
-				dnsChipState
 			])
 		]);
 		const brandVer = E('span', { 'class': 'hpui-brand-ver' }, [ '—' ]);
@@ -363,6 +366,12 @@ return view.extend({
 			[ 'learn',  'refresh',  _('Auto-bypass'),
 				_('The engine finds blocked sites itself and sends them around the block.'),
 				_('Open'), 'admin/services/homeproxy/automation' ],
+			[ 'dns',    'globe',    _('DNS & MultiDNS'),
+				_('Two DNS pools — plain for Russian sites, encrypted for blocked ones — and the racing engine that keeps them fast.'),
+				_('Configure'), 'admin/services/homeproxy/dns' ],
+			[ 'subs',   'server',   _('Subscriptions'),
+				_('The server lists your nodes come from — updated on a schedule or by hand.'),
+				_('Open'), 'admin/services/homeproxy/node' ],
 			[ 'home',   'monitor',  _('Devices at home'),
 				_('Who is connected to the router and what they can open.'),
 				_('Open'), 'admin/services/homeproxy/devices' ],
@@ -378,6 +387,9 @@ return view.extend({
 			[ 'health', 'heart',    _('Health center'),
 				_('Live status of every subsystem, the automatic repair log and the event feed.'),
 				_('Open'), 'admin/services/homeproxy/health' ],
+			[ 'load',   'trend',    _('Resources & load'),
+				_('RAM, CPU load and flash usage — how heavy the box is right now.'),
+				_('Open'), 'admin/services/homeproxy/monitor' ],
 			[ 'maint',  'cpu',      _('Maintenance'),
 				_('Core version, snapshots, update checks and service management.'),
 				_('Open'), 'admin/services/homeproxy/status' ]
@@ -842,18 +854,22 @@ return view.extend({
 			hub.bypass.state.textContent = 'Zapret: ' + zState + ' · ByeDPI: ' + bState;
 			hub.bypass.state.setAttribute('title', (zName ? 'Zapret: ' + zName + ' · NFQUEUE: ' + (zq.packets || 0) + ' pkts' : ''));
 
-			/* MultiDNS chip (hero). "restarting..." is the routine quality-
-			 * cycle rebuild window — neutral, NOT the alarming red. */
+			/* DNS & MultiDNS (hub card): the same poll data the hero chip
+			 * carried before — now a full card with a jump. "restarting..."
+			 * is the routine quality-cycle rebuild window — neutral, NOT the
+			 * alarming red. */
 			const mdEnabled = (mdns && mdns.enabled === '1') || (uci.get('homeproxy', 'multidns', 'enabled') === '1');
 			const mdRunning = !!(mdEnabled && mdns && mdns.mosdns);
 			const mdRestart = !!(mdEnabled && !mdRunning && mdns && mdns.restarting);
 			const mdRu = (mdEnabled && mdns && mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
 			const mdSec = (mdEnabled && mdns && mdns.active && mdns.active.secure) ? mdns.active.secure.length : 0;
-			dnsChipState.textContent = mdEnabled
+			hub.dns.dot.className = 'hpui-dot' +
+				(mdEnabled ? (mdRunning ? ' ok' : (mdRestart ? ' warn' : ' bad')) : '');
+			hub.dns.state.textContent = mdEnabled
 				? ((mdRunning ? _('running') : (mdRestart ? _('restarting...') : _('enabled, not running')))
 					+ ' · ' + _('RU: %d · Secure: %d').format(mdRu, mdSec))
-				: _('disabled');
-			dnsChipState.setAttribute('title', mdEnabled ? _('RU: %d · Secure: %d').format(mdRu, mdSec) : '—');
+				: _('MultiDNS off');
+			hub.dns.state.setAttribute('title', mdEnabled ? _('RU: %d · Secure: %d').format(mdRu, mdSec) : '—');
 
 			/* Auto-bypass (concern card 3) + the automation-family monitors
 			 * (Ф7.4): the health-doc pass-through gives the live status of
@@ -935,6 +951,16 @@ return view.extend({
 			}
 			hub.health.dot.className = 'hpui-dot' + (hDot ? ' ' + hDot : '');
 			hub.health.state.textContent = hText;
+
+			/* Resources & load (hub card): RAM from the metrics ring, the
+			 * 1-minute load from the same poll. >=90% RAM is a warn — the
+			 * OOM edge (Ф10) matters on small boxes. */
+			const ramNow = (last && last.ram != null) ? Math.round(last.ram) : null;
+			hub.load.dot.className = 'hpui-dot' + (ramNow != null && ramNow >= 90 ? ' warn' : '');
+			hub.load.state.textContent = (ramNow != null)
+				? _('RAM %s · load %s').format(ramNow + '%',
+					(sys.load1 != null) ? Number(sys.load1).toFixed(2) : '—')
+				: '—';
 
 			/* Quick setup strip: visible until servers + main node exist. */
 			let nodeCount = 0;
@@ -1044,10 +1070,53 @@ return view.extend({
 		function profileRefresh() {
 			return L.resolveDefault(callResProfile(), {}).then(renderProfile);
 		}
+
+		/* Subscriptions (hub card): the last cycle + node book — a cheap
+		 * file-read RPC, polled once a minute (subscriptions change rarely;
+		 * an update run carries the running flag with a fresh ts). */
+		function subsRefresh() {
+			return L.resolveDefault(callSubsStatus(), {}).then(function(st) {
+				st = st || {};
+				const groups = st.groups || {};
+				let gcount = 0;
+				for (let g in groups) gcount++;
+				const total = parseInt(st.node_total, 10) || 0;
+				const last = st.last || null;
+				const fresh = !!(last && last.running &&
+					((Date.now() / 1000) - (parseInt(last.ts, 10) || 0) < 900));
+				let text = '—', dot = '', tip = '';
+				if (!gcount && !total) {
+					text = _('No subscriptions yet');
+				} else if (fresh) {
+					text = _('Updating subscriptions…');
+					dot = 'warn';
+				} else if (last && last.action === 'failed') {
+					text = _('Last update failed');
+					dot = 'bad';
+					tip = last.reason || '';
+				} else if (last && last.action === 'rolled_back') {
+					text = _('Rolled back — new nodes rejected');
+					dot = 'bad';
+				} else {
+					text = _('nodes: %d · subscriptions: %d').format(total, gcount);
+					dot = 'ok';
+					tip = st.auto_update ? _('Auto-update is on') : '';
+				}
+				hub.subs.dot.className = 'hpui-dot' + (dot ? ' ' + dot : '');
+				hub.subs.state.textContent = text;
+				if (tip)
+					hub.subs.state.setAttribute('title', tip);
+				else
+					hub.subs.state.removeAttribute('title');
+			});
+		}
+
 		poll.add(refresh, 4);
 		refresh();
 		poll.add(profileRefresh, 60);
 		profileRefresh();
+		poll.add(subsRefresh, 60);
+		subsRefresh();
 
 		/* Р3 v3 hub layout: hero (brand + status) → quick setup (until set
 		 * up) → concern cards → headline metric cards → two-column grid

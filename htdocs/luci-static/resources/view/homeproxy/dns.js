@@ -299,7 +299,7 @@ return view.extend({
 		]);
 
 		const mdPanel = E('div', { 'class': 'hpui-panel' }, [
-			E('h4', {}, [ _('DNS quality monitor') ]),
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('DNS quality monitor') ]),
 			mdStatusEl,
 			mdTableEl,
 			mdActions,

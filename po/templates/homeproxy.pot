@@ -8221,3 +8221,66 @@ msgstr ""
 
 msgid "The single event feed of the whole system: routing, bypass engines, automation, health, recovery, Safe Mode, updates and security all write to this one journal."
 msgstr ""
+
+msgid "DNS & MultiDNS"
+msgstr ""
+
+msgid "Two DNS pools — plain for Russian sites, encrypted for blocked ones — and the racing engine that keeps them fast."
+msgstr ""
+
+msgid "The server lists your nodes come from — updated on a schedule or by hand."
+msgstr ""
+
+msgid "Resources & load"
+msgstr ""
+
+msgid "RAM, CPU load and flash usage — how heavy the box is right now."
+msgstr ""
+
+msgid "MultiDNS off"
+msgstr ""
+
+msgid "RAM %s · load %s"
+msgstr ""
+
+msgid "No subscriptions yet"
+msgstr ""
+
+msgid "Updating subscriptions…"
+msgstr ""
+
+msgid "Last update failed"
+msgstr ""
+
+msgid "Rolled back — new nodes rejected"
+msgstr ""
+
+msgid "%d nodes · %d subscriptions"
+msgstr ""
+
+msgid "Auto-update is on"
+msgstr ""
+
+msgid "Raw custom rules (expert)"
+msgstr ""
+
+msgid "Emit the raw sing-box routing rules below with the HIGHEST priority (above every preset row and user list). These are for shapes the preset rows and routing nodes do not build — write them only if you know the sing-box rule schema. The switch takes effect on Save & Apply."
+msgstr ""
+
+msgid "The expert editor failed to render: "
+msgstr ""
+
+msgid "Expert: routing nodes & raw rules"
+msgstr ""
+
+msgid "Routing nodes are custom chains and URLTest sub-groups rules can point at; they apply as soon as they exist (enabled) — no extra switch. The raw sing-box rules below are the expert level: they emit with the highest priority and need the switch above."
+msgstr ""
+
+msgid "Control the router from your Telegram chat: live status, exit switching, snapshots, parental-control actions — with per-category pushes you can mute, quiet-hour or sample first. Pairing codes and roles keep strangers out."
+msgstr ""
+
+msgid "Save & Apply"
+msgstr ""
+
+msgid "nodes: %d · subscriptions: %d"
+msgstr ""

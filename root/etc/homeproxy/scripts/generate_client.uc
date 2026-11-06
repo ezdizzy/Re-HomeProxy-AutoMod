@@ -2413,8 +2413,13 @@ if (!isEmpty(main_node)) {
 	 * hosts ride the regular main-out path and a refused exit is surfaced by the
 	 * engine's exit-health check instead of an auto-rotation machinery. */
 
-	/* Advanced routing_node outbounds for proxy_banned_ru */
-	if (routing_mode === 'proxy_banned_ru' && show_advanced_rules === '1') {
+	/* D35b: routing_node outbounds are emitted by EXISTENCE of enabled=1
+	 * sections — NO show_advanced_rules gate, NO mode gate. The old flag
+	 * silently dropped user-created chains from the generated config while
+	 * the sections kept existing (a silent behavior change; the editors now
+	 * live on the Service rules page and the flag gates ONLY the raw
+	 * routing_rule emission below). */
+	{
 		let adv_urltest_nodes = [],
 		    adv_routing_nodes = [];
 

@@ -13777,3 +13777,66 @@ msgstr "Очистить журнал событий? История ремон�
 
 msgid "The single event feed of the whole system: routing, bypass engines, automation, health, recovery, Safe Mode, updates and security all write to this one journal."
 msgstr "Единая лента событий всей системы: маршрутизация, движки обхода, автоматизация, здоровье, восстановление, Safe Mode, обновления и безопасность пишут в этот один журнал."
+
+msgid "DNS & MultiDNS"
+msgstr "DNS и MultiDNS"
+
+msgid "Two DNS pools — plain for Russian sites, encrypted for blocked ones — and the racing engine that keeps them fast."
+msgstr "Два пула DNS — прямой для российских сайтов, шифрованный для заблокированных — и гоночный движок, который держит их быстрыми."
+
+msgid "The server lists your nodes come from — updated on a schedule or by hand."
+msgstr "Списки серверов, из которых приходят ваши узлы, — обновляются по расписанию или вручную."
+
+msgid "Resources & load"
+msgstr "Ресурсы и нагрузка"
+
+msgid "RAM, CPU load and flash usage — how heavy the box is right now."
+msgstr "Память, загрузка CPU и флеш — насколько нагружен роутер прямо сейчас."
+
+msgid "MultiDNS off"
+msgstr "MultiDNS выключен"
+
+msgid "RAM %s · load %s"
+msgstr "Память %s · нагрузка %s"
+
+msgid "No subscriptions yet"
+msgstr "Подписок пока нет"
+
+msgid "Updating subscriptions…"
+msgstr "Подписки обновляются…"
+
+msgid "Last update failed"
+msgstr "Последнее обновление не удалось"
+
+msgid "Rolled back — new nodes rejected"
+msgstr "Откат — новый набор узлов не принят"
+
+msgid "%d nodes · %d subscriptions"
+msgstr "%d узлов · %d подписок"
+
+msgid "Auto-update is on"
+msgstr "Автообновление включено"
+
+msgid "Raw custom rules (expert)"
+msgstr "Сырые правила (эксперт)"
+
+msgid "Emit the raw sing-box routing rules below with the HIGHEST priority (above every preset row and user list). These are for shapes the preset rows and routing nodes do not build — write them only if you know the sing-box rule schema. The switch takes effect on Save & Apply."
+msgstr "Эмитит сырые sing-box-правила ниже с НАИВЫСШИМ приоритетом (выше всех строк-пресетов и пользовательских списков). Это для конфигураций, которые строки-пресеты и узлы маршрутизации не строят, — пишите их, только если знаете схему правил sing-box. Переключатель действует по «Save & Apply»."
+
+msgid "The expert editor failed to render: "
+msgstr "Не удалось отрисовать экспертный редактор: "
+
+msgid "Expert: routing nodes & raw rules"
+msgstr "Эксперт: узлы маршрутизации и сырые правила"
+
+msgid "Routing nodes are custom chains and URLTest sub-groups rules can point at; they apply as soon as they exist (enabled) — no extra switch. The raw sing-box rules below are the expert level: they emit with the highest priority and need the switch above."
+msgstr "Узлы маршрутизации — свои цепочки и URLTest-подгруппы, на которые могут ссылаться правила; действуют сразу по факту существования (включён) — без отдельного переключателя. Сырые sing-box-правила ниже — экспертный уровень: эмитятся с наивысшим приоритетом и требуют переключатель выше."
+
+msgid "Control the router from your Telegram chat: live status, exit switching, snapshots, parental-control actions — with per-category pushes you can mute, quiet-hour or sample first. Pairing codes and roles keep strangers out."
+msgstr "Управление роутером из Telegram-чата: живой статус, смена выхода, снапшоты, действия родительского контроля — с пушами по категориям: можно заглушить, отправить в тихие часы или сначала посмотреть примером. Коды сопряжения и роли не пускают посторонних."
+
+msgid "Save & Apply"
+msgstr "Сохранить и применить"
+
+msgid "nodes: %d · subscriptions: %d"
+msgstr "узлов: %d · подписок: %d"

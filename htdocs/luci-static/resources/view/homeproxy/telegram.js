@@ -519,7 +519,8 @@ return view.extend({
 		]);
 
 		return E('div', {}, [
-			E('h4', { style: 'margin:6px 0 0 0' }, [ _('Telegram Bot') ]),
+			hp.pageIntro(_('Phone control'),
+				_('Control the router from your Telegram chat: live status, exit switching, snapshots, parental-control actions — with per-category pushes you can mute, quiet-hour or sample first. Pairing codes and roles keep strangers out.')),
 			tgStatusCard,
 			connCard,
 			pushesCard,

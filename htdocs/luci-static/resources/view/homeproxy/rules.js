@@ -5,15 +5,38 @@
  * route_explain is the MAIN instrument (check the route, then assign an
  * exit). Preset rows keep the proven fixed control grid; the whole page
  * rides the v3 design system. One result area per zone; the expert grid
- * is gone (rules live only in the preset rows). */
+ * is gone (rules live only in the preset rows).
+ *
+ * D35b: the advanced tabs moved HERE from the Connection page as the
+ * collapsed expert group — Routing Nodes (the generator now emits them
+ * by EXISTENCE, enabled=1, no flag) and the raw sing-box Custom Rules
+ * behind an explicit expert toggle living next to the editor. */
 
 'require dom';
+'require form';
 'require poll';
 'require rpc';
 'require uci';
 'require ui';
+'require validation';
 'require view';
+'require tools.widgets as widgets';
 'require homeproxy as hp';
+
+/* Validation without a form context (the node-label builder checks raw
+ * address strings) — the same stub the Connection page uses. */
+let stubValidator = {
+	factory: validation,
+	apply(type, value, args) {
+		if (value != null)
+			this.value = value;
+
+		return validation.types[type].apply(this, args);
+	},
+	assert(condition) {
+		return !!condition;
+	}
+};
 
 const callPresetList = rpc.declare({
 	object: 'luci.homeproxy',
@@ -192,14 +215,22 @@ const CSS = `
 .wiz-select { min-width: 190px; max-width: 320px; }
 /* Service rows use a FIXED grid — name | state | select | buttons on one
  * line, hints/pool on sub-rows below the card — so the control columns
- * line up across every row regardless of hint length (Ф8-F5 D.2). */
+ * line up across every row regardless of hint length (Ф8-F5 D.2).
+ * Block E: the row buttons live in ONE row (the 3-floor wrap is gone —
+ * the actions column sizes to its content; below 1150px it may wrap). */
 .wiz-svc { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; padding: 8px 10px; }
-.wiz-svc-grid { display: grid; grid-template-columns: minmax(140px, 230px) minmax(180px, 1fr) minmax(190px, 300px) 210px; align-items: center; gap: 6px 10px; }
+.wiz-svc-grid { display: grid; grid-template-columns: minmax(140px, 210px) minmax(160px, 1fr) minmax(180px, 260px) max-content; align-items: center; gap: 6px 10px; }
 .wiz-svc-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.wiz-svc-grid > .wiz-svc-btns { flex-wrap: nowrap; }
+.wiz-svc-btns .hpui-btn, .wiz-svc-btns .btn { font-size: .92em; padding-left: 10px; padding-right: 10px; }
+.wiz-svc-btns .wiz-del { min-width: 30px; padding-left: 8px; padding-right: 8px; }
 .wiz-svc-grid > .wiz-title, .wiz-svc-grid > .wiz-state { flex: none; }
 .wiz-svc-grid > .wiz-select { width: 100%; }
 .wiz-svc .wiz-pool { margin: 6px 0 0 0; }
 .wiz-svc .hpui-hint { margin: 6px 0 0 0; }
+@media (max-width: 1150px) {
+	.wiz-svc-grid > .wiz-svc-btns { flex-wrap: wrap; }
+}
 @media (max-width: 900px) {
 	.wiz-svc-grid { display: flex; flex-wrap: wrap; }
 	.wiz-svc-grid > .wiz-title { flex: 1 1 220px; }
@@ -276,6 +307,14 @@ return view.extend({
 			uci.load('homeproxy')
 		]);
 	},
+
+	/* RPC-driven page with ONE explicit door (the expert panel's
+	 * Save & Apply button): the standard LuCI save footer has nothing
+	 * to act on for the rest of the page and would only add a second,
+	 * confusing door (telegram.js/devices.js pattern). */
+	handleSave: null,
+	handleSaveApply: null,
+	handleReset: null,
 
 	render: function() {
 		hp.uiShell();
@@ -1170,8 +1209,12 @@ return view.extend({
 				 * becomes D20 "No rule" — the service follows the general
 				 * routing rules. Extra exits keep their own delete buttons. */
 				if (rule) {
-					const delBtn = E('button', { 'class': 'hpui-btn hpui-btn-danger', type: 'button' },
-						[ _('Delete rule') ]);
+					/* Block E: the delete is a compact ✕ (the row keeps all
+					 * its actions in ONE row); the tooltip carries the name. */
+					const delBtn = E('button', {
+						'class': 'hpui-btn hpui-btn-danger wiz-del', type: 'button',
+						'title': _('Delete rule')
+					}, [ '✕' ]);
 					delBtn.addEventListener('click', function() {
 						delBtn.disabled = true;
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting…') ]));
@@ -1625,9 +1668,612 @@ return view.extend({
 		listsPanel.appendChild(listsZone);
 		listsPanel.appendChild(listsResult);
 
+		/* ── D35b: the expert group — Routing Nodes + raw Custom Rules ─────
+		 * The two advanced tabs moved here from the Connection page: a hidden
+		 * flag on the WRONG page both obscured the feature and silently
+		 * dropped routing_node sections from the generated config when off.
+		 * The generator now emits routing_node sections by EXISTENCE
+		 * (enabled=1, no flag — data = behavior); the raw sing-box rules keep
+		 * an explicit expert switch living HERE, next to the editor it gates.
+		 * The editors ride an embedded form.Map with its own Save & Apply
+		 * footer; the rest of the page stays RPC-only. The map is rendered
+		 * asynchronously into a host node (form.Map.render() is a Promise —
+		 * lesson 148). */
+		const proxyNodes = {};
+		uci.sections('homeproxy', 'node', function(res) {
+			const nodeaddr = ((res.type === 'direct') ? res.override_address : res.address) || '',
+			    nodeport = ((res.type === 'direct') ? res.override_port : res.port) || '';
+			proxyNodes[res['.name']] = String.format('[%s] %s', res.type, res.label ||
+				((stubValidator.apply('ip6addr', nodeaddr)) ?
+					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport);
+		});
+
+		const advMap = new form.Map('homeproxy');
+		const advSec = advMap.section(form.NamedSection, 'config', 'homeproxy', null);
+		advSec.addremove = false;
+
+		let av, ag, ags, ar, ars, so;
+		av = advSec.option(form.Flag, 'show_advanced_rules', _('Raw custom rules (expert)') + ' 👨‍💻',
+			_('Emit the raw sing-box routing rules below with the HIGHEST priority (above every preset row and user list). These are for shapes the preset rows and routing nodes do not build — write them only if you know the sing-box rule schema. The switch takes effect on Save & Apply.'));
+		av.default = av.disabled;
+		av.rmempty = false;
+		av.retain = true;
+
+		/* Routing nodes editor: ALWAYS visible — the generator honors these
+		 * sections by existence, so the editor is honest without any flag. */
+		ag = advSec.option(form.SectionValue, '_routing_node', form.GridSection, 'routing_node');
+		ags = ag.subsection;
+		ags.addremove = true;
+		ags.rowcolors = true;
+		ags.sortable = true;
+		ags.nodescriptions = true;
+		ags.modaltitle = L.bind(hp.loadModalTitle, this, _('Routing node'), _('Add a routing node'), 'homeproxy');
+		ags.sectiontitle = L.bind(hp.loadDefaultLabel, this, 'homeproxy');
+		ags.renderSectionAdd = L.bind(hp.renderSectionAdd, this, ags);
+
+		so = ags.option(form.Value, 'label', _('Label'));
+		so.load = L.bind(hp.loadDefaultLabel, this, 'homeproxy');
+		so.validate = L.bind(hp.validateUniqueValue, this, 'homeproxy', 'routing_node', 'label');
+		so.modalonly = true;
+
+		so = ags.option(form.Flag, 'enabled', _('Enable'));
+		so.default = so.enabled;
+		so.rmempty = false;
+		so.editable = true;
+
+		so = ags.option(form.ListValue, 'node', _('Node'),
+			_('Outbound node'));
+		/* "Same as main node" exists in every app-managed mode (Ф3.1: there are
+		 * no custom modes anymore). Built in .load() so a mode switch refreshes
+		 * the list immediately instead of keeping the render-time view. */
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+			this.value('main-out', _('Same as main node') + ' 🔗');
+			this.value('urltest', _('URLTest'));
+			for (let i in proxyNodes)
+				this.value(i, proxyNodes[i]);
+			return this.super('load', section_id);
+		};
+		so.validate = L.bind(hp.validateUniqueValue, this, 'homeproxy', 'routing_node', 'node');
+		so.editable = true;
+
+		so = ags.option(form.ListValue, 'domain_resolver', _('Domain resolver'),
+			_('For resolving domain name in the server address.'));
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('', _('Default'));
+			this.value('default-dns', _('Default DNS (issued by WAN)'));
+			this.value('system-dns', _('System DNS'));
+			const _rm = uci.get('homeproxy', 'config', 'routing_mode');
+			if (_rm === 'proxy_banned_ru') {
+				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
+				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
+			}
+
+			uci.sections('homeproxy', 'dns_server', function(res) {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
+
+			return this.super('load', section_id);
+		}
+		so.depends({'node': 'urltest', '!reverse': true});
+		so.modalonly = true;
+
+		so = ags.option(form.ListValue, 'domain_strategy', _('Domain strategy'),
+			_('The domain strategy for resolving the domain name in the address.'));
+		for (let i in hp.dns_strategy)
+			so.value(i, hp.dns_strategy[i]);
+		so.depends({'node': 'urltest', '!reverse': true});
+		so.modalonly = true;
+
+		so = ags.option(widgets.DeviceSelect, 'bind_interface', _('Bind interface'),
+			_('The network interface to bind to.'));
+		so.multiple = false;
+		so.noaliases = true;
+		so.depends({'outbound': '', 'node': /^((?!urltest$).)+$/});
+		so.modalonly = true;
+
+		so = ags.option(form.ListValue, 'outbound', _('Outbound'),
+			_('The tag of the upstream outbound.<br/>Other dial fields will be ignored when enabled.'));
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('', _('Direct'));
+			if (uci.get('homeproxy', 'config', 'routing_mode') === 'proxy_banned_ru')
+				this.value('main-out', _('Same as main node') + ' 🔗');
+			uci.sections('homeproxy', 'routing_node', function(res) {
+				if (res['.name'] !== section_id && res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
+
+			return this.super('load', section_id);
+		}
+		/* The recursion guard takes BOTH arguments — the old one-argument
+		 * signature read an undeclared `value` (a ReferenceError inside the
+		 * validator, so the chain check never really ran). */
+		so.validate = function(section_id, value) {
+			if (section_id && value) {
+				let node = this.section.formvalue(section_id, 'node');
+
+				let conflict = false;
+				uci.sections('homeproxy', 'routing_node', function(res) {
+					if (res['.name'] !== section_id) {
+						if (res.outbound === section_id && res['.name'] == value)
+							conflict = true;
+						else if (res.node === 'urltest' && res.urltest_nodes?.includes(node) && res['.name'] == value)
+							conflict = true;
+					}
+				});
+				if (conflict)
+					return _('Recursive outbound detected!');
+			}
+
+			return true;
+		}
+		so.depends({'node': 'urltest', '!reverse': true});
+		so.editable = true;
+
+		so = ags.option(hp.CBIStaticList, 'urltest_nodes', _('URLTest nodes'),
+			_('List of nodes to test.'));
+		for (let i in proxyNodes)
+			so.value(i, proxyNodes[i]);
+		so.depends('node', 'urltest');
+		so.validate = function(section_id) {
+			let value = this.section.formvalue(section_id, 'urltest_nodes') || [];
+			if (section_id && !value.length)
+				return _('Expecting: %s').format(_('non-empty value'));
+
+			return true;
+		}
+		so.modalonly = true;
+
+		so = ags.option(form.Value, 'urltest_url', _('Test URL'),
+			_('The URL to test.'));
+		so.placeholder = 'https://www.gstatic.com/generate_204';
+		so.validate = function(section_id, value) {
+			if (section_id && value) {
+				try {
+					let url = new URL(value);
+					if (!url.hostname)
+						return _('Expecting: %s').format(_('valid URL'));
+				}
+				catch(e) {
+					return _('Expecting: %s').format(_('valid URL'));
+				}
+			}
+
+			return true;
+		}
+		so.depends('node', 'urltest');
+		so.modalonly = true;
+
+		so = ags.option(form.Value, 'urltest_interval', _('Test interval'),
+			_('The test interval in seconds.'));
+		so.datatype = 'uinteger';
+		so.placeholder = '180';
+		so.validate = function(section_id, value) {
+			/* The sibling option is 'urltest_idle_timeout' — 'idle_timeout'
+			 * never existed, so the comparison always ran against the
+			 * fallback and user-set idle timeouts were ignored. */
+			let idle_timeout = this.section.formvalue(section_id, 'urltest_idle_timeout') || '1800';
+			if (section_id && value) {
+				if (parseInt(value) > parseInt(idle_timeout))
+					return _('Test interval must be less or equal than idle timeout.');
+			}
+
+			return true;
+		}
+		so.depends('node', 'urltest');
+		so.modalonly = true;
+
+		so = ags.option(form.Value, 'urltest_tolerance', _('Test tolerance'),
+			_('The test tolerance in milliseconds.'));
+		so.datatype = 'uinteger';
+		so.placeholder = '50';
+		so.depends('node', 'urltest');
+		so.modalonly = true;
+
+		so = ags.option(form.Value, 'urltest_idle_timeout', _('Idle timeout'),
+			_('The idle timeout in seconds.'));
+		so.datatype = 'uinteger';
+		so.placeholder = '1800';
+		so.depends('node', 'urltest');
+		so.modalonly = true;
+
+		so = ags.option(form.Flag, 'urltest_interrupt_exist_connections', _('Interrupt existing connections'),
+			_('Interrupt existing connections when the selected outbound has changed.'));
+		so.depends('node', 'urltest');
+		so.modalonly = true;
+
+		/* Raw sing-box rules editor: visible only with the expert switch on
+		 * (checkDepends hides it live on toggle; hidden = nothing written). */
+		ar = advSec.option(form.SectionValue, '_routing_rule', form.GridSection, 'routing_rule');
+		ar.depends('show_advanced_rules', '1');
+		ars = ar.subsection;
+		ars.addremove = true;
+		ars.rowcolors = true;
+		ars.sortable = true;
+		ars.nodescriptions = true;
+		ars.modaltitle = L.bind(hp.loadModalTitle, this, _('Routing rule'), _('Add a routing rule'), 'homeproxy');
+		ars.sectiontitle = L.bind(hp.loadDefaultLabel, this, 'homeproxy');
+		ars.renderSectionAdd = L.bind(hp.renderSectionAdd, this, ars);
+
+		ars.tab('field_other', _('Other fields'));
+		ars.tab('field_host', _('Host/IP fields'));
+		ars.tab('field_port', _('Port fields'));
+		ars.tab('fields_process', _('Process fields'));
+
+		so = ars.taboption('field_other', form.Value, 'label', _('Label'));
+		so.load = L.bind(hp.loadDefaultLabel, this, 'homeproxy');
+		so.validate = L.bind(hp.validateUniqueValue, this, 'homeproxy', 'routing_rule', 'label');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'enabled', _('Enable'));
+		so.default = so.enabled;
+		so.rmempty = false;
+		so.editable = true;
+
+		so = ars.taboption('field_other', form.ListValue, 'mode', _('Mode'),
+			_('The default rule uses the following matching logic:<br/>' +
+			'<code>(domain || domain_suffix || domain_keyword || domain_regex || ip_cidr || ip_is_private)</code> &&<br/>' +
+			'<code>(port || port_range)</code> &&<br/>' +
+			'<code>(source_ip_cidr || source_ip_is_private)</code> &&<br/>' +
+			'<code>(source_port || source_port_range)</code> &&<br/>' +
+			'<code>other fields</code>.<br/>' +
+			'Additionally, included rule sets can be considered merged rather than as a single rule sub-item.'));
+		so.value('default', _('Default'));
+		so.default = 'default';
+		so.rmempty = false;
+		so.readonly = true;
+
+		so = ars.taboption('field_other', form.ListValue, 'ip_version', _('IP version'),
+			_('4 or 6. Not limited if empty.'));
+		so.value('4', _('IPv4'));
+		so.value('6', _('IPv6'));
+		so.value('', _('Both'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.MultiValue, 'protocol', _('Protocol'),
+			_('Sniffed protocol, see <a target="_blank" href="https://sing-box.sagernet.org/configuration/route/sniff/">Sniff</a> for details.'));
+		so.value('bittorrent', _('BitTorrent'));
+		so.value('dns', _('DNS'));
+		so.value('dtls', _('DTLS'));
+		so.value('http', _('HTTP'));
+		so.value('quic', _('QUIC'));
+		so.value('rdp', _('RDP'));
+		so.value('ssh', _('SSH'));
+		so.value('stun', _('STUN'));
+		so.value('tls', _('TLS'));
+
+		so = ars.taboption('field_other', form.Value, 'client', _('Client'),
+			_('Sniffed client type (QUIC client type or SSH client name).'));
+		so.value('chromium', _('Chromium / Cronet'));
+		so.value('firefox', _('Firefox / uquic firefox'));
+		so.value('quic-go', _('quic-go / uquic chrome'));
+		so.value('safari', _('Safari / Apple Network API'));
+		so.depends('protocol', 'quic');
+		so.depends('protocol', 'ssh');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.ListValue, 'network', _('Network'));
+		so.value('tcp', _('TCP'));
+		so.value('udp', _('UDP'));
+		so.value('', _('Both'));
+
+		so = ars.taboption('field_other', hp.CBIStaticList, 'inbound', _('Inbound'),
+			_('Match inbound tag.'));
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('dns-in', _('DNS inbound'));
+			this.value('mixed-in', _('Mixed (SOCKS/HTTP) inbound'));
+			this.value('redirect-in', _('Redirect inbound'));
+			this.value('tproxy-in', _('TProxy inbound'));
+			this.value('tun-in', _('TUN inbound'));
+
+			uci.sections('homeproxy', 'server', function(res) {
+				if (res.enabled === '1')
+					this.value('cfg-' + res['.name'] + '-in', res.label || res['.name']);
+			});
+
+			return this.super('load', section_id);
+		}
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.DynamicList, 'user', _('User'),
+			_('Match user name.'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', hp.CBIStaticList, 'rule_set', _('Rule set'),
+			_('Match rule set.'));
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+
+			uci.sections('homeproxy', 'ruleset', function(res) {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
+
+			return this.super('load', section_id);
+		}
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'rule_set_ip_cidr_match_source', _('Rule set IP CIDR as source IP'),
+			_('Make IP CIDR in rule set used to match the source IP.'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'invert', _('Invert'),
+			_('Invert match result.'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.ListValue, 'action', _('Action'));
+		so.value('route', _('Route'));
+		so.value('route-options', _('Route options'));
+		so.value('reject', _('Reject'));
+		so.value('resolve', _('Resolve'));
+		so.default = 'route';
+		so.rmempty = false;
+		so.editable = true;
+
+		so = ars.taboption('field_other', form.ListValue, 'outbound', _('Outbound'),
+			_('Tag of the target outbound.'));
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('direct-out', _('Direct'));
+			/* "Same as main node" (main-out) exists in every app-managed mode (Ф3.1);
+			 * gate it on the main-node VALUE being set, not on a mode, to avoid
+			 * offering a tag that won't exist. */
+			if (uci.get('homeproxy', 'config', 'main_node'))
+				this.value('main-out', _('Same as main node') + ' 🔗');
+			/* byedpi-out IS emitted in every routing mode whenever ByeDPI is
+			 * enabled — a rule can target it directly, no routing node needed. */
+			if (uci.get('homeproxy', 'config', 'byedpi_enabled') === '1')
+				this.value('byedpi-out', _('ByeDPI'));
+			if (uci.get('homeproxy', 'config', 'zapret_enabled') === '1')
+				this.value('zapret-out', _('Zapret'));
+			uci.sections('homeproxy', 'routing_node', function(res) {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
+
+			return this.super('load', section_id);
+		}
+		so.rmempty = false;
+		so.depends('action', 'route');
+		so.editable = true;
+
+		so = ars.taboption('field_other', form.Value, 'override_address', _('Override address'),
+			_('Override the connection destination address.'));
+		so.datatype = 'ipaddr';
+		so.depends('action', 'route');
+		so.depends('action', 'route-options');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Value, 'override_port', _('Override port'),
+			_('Override the connection destination port.'));
+		so.datatype = 'port';
+		so.depends('action', 'route');
+		so.depends('action', 'route-options');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'udp_disable_domain_unmapping', _('Disable UDP domain unmapping'),
+			_('If enabled, for UDP proxy requests addressed to a domain, the original packet address will be sent in the response instead of the mapped domain.'));
+		so.depends('action', 'route');
+		so.depends('action', 'route-options');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'udp_connect', _('connect UDP connections'),
+			_('If enabled, attempts to connect UDP connection to the destination instead of listen.'));
+		so.depends('action', 'route');
+		so.depends('action', 'route-options');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Value, 'udp_timeout', _('UDP timeout'),
+			_('Timeout for UDP connections.<br/>Setting a larger value than the UDP timeout in inbounds will have no effect.'));
+		so.datatype = 'uinteger';
+		so.depends('action', 'route');
+		so.depends('action', 'route-options');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'tls_record_fragment', _('TLS record fragment'),
+			_('Fragment TLS handshake into multiple TLS records.'));
+		so.depends('action', 'route');
+		so.depends('action', 'route-options');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'tls_fragment', _('TLS fragment'),
+			_('Fragment TLS handshakes. Due to poor performance, try <code>%s</code> first.').format(
+				_('TLS record fragment')));
+		so.depends('action', 'route');
+		so.depends('action', 'route-options');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Value, 'tls_fragment_fallback_delay', _('Fragment fallback delay'),
+			_('The fallback value in milliseconds used when TLS segmentation cannot automatically determine the wait time.'));
+		so.datatype = 'uinteger';
+		so.placeholder = '500';
+		so.depends('tls_fragment', '1');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.ListValue, 'resolve_server', _('DNS server'),
+			_('Specifies DNS server tag to use instead of selecting through DNS routing.'));
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('', _('Default'));
+			this.value('default-dns', _('Default DNS (issued by WAN)'));
+			this.value('system-dns', _('System DNS'));
+			uci.sections('homeproxy', 'dns_server', function(res) {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
+
+			return this.super('load', section_id);
+		}
+		so.depends('action', 'resolve');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.ListValue, 'reject_method', _('Method'));
+		so.value('default', _('Reply with TCP RST / ICMP port unreachable'));
+		so.value('drop', _('Drop packets'));
+		so.depends('action', 'reject');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'reject_no_drop', _('Don\'t drop packets'),
+			_('<code>%s</code> will be temporarily overwritten to <code>%s</code> after 50 triggers in 30s if not enabled.').format(
+			_('Method'), _('Drop packets')));
+		so.depends('reject_method', 'default');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.ListValue, 'resolve_strategy', _('Resolve strategy'),
+			_('Domain strategy for resolving the domain names.'));
+		for (let i in hp.dns_strategy)
+			so.value(i, hp.dns_strategy[i]);
+		so.depends('action', 'resolve');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Flag, 'resolve_disable_cache', _('Disable DNS cache'),
+			_('Disable DNS cache in this query.'));
+		so.depends('action', 'resolve');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Value, 'resolve_rewrite_ttl', _('Rewrite TTL'),
+			_('Rewrite TTL in DNS responses.'));
+		so.datatype = 'uinteger';
+		so.depends('action', 'resolve');
+		so.modalonly = true;
+
+		so = ars.taboption('field_other', form.Value, 'resolve_client_subnet', _('EDNS Client subnet'),
+			_('Append a <code>edns0-subnet</code> OPT extra record with the specified IP prefix to every query by default.<br/>' +
+			'If value is an IP address instead of prefix, <code>/32</code> or <code>/128</code> will be appended automatically.'));
+		so.datatype = 'or(cidr, ipaddr)';
+		so.depends('action', 'resolve');
+		so.modalonly = true;
+
+		so = ars.taboption('field_host', form.DynamicList, 'domain', _('Domain name'),
+			_('Match full domain.'));
+		so.datatype = 'hostname';
+		so.modalonly = true;
+
+		so = ars.taboption('field_host', form.DynamicList, 'domain_suffix', _('Domain suffix'),
+			_('Match domain suffix.'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_host', form.DynamicList, 'domain_keyword', _('Domain keyword'),
+			_('Match domain using keyword.'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_host', form.DynamicList, 'domain_regex', _('Domain regex'),
+			_('Match domain using regular expression.'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_host', form.DynamicList, 'source_ip_cidr', _('Source IP CIDR'),
+			_('Match source IP CIDR.'));
+		so.datatype = 'or(cidr, ipaddr)';
+		so.modalonly = true;
+
+		so = ars.taboption('field_host', form.Flag, 'source_ip_is_private', _('Match private source IP'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_host', form.DynamicList, 'ip_cidr', _('IP CIDR'),
+			_('Match IP CIDR.'));
+		so.datatype = 'or(cidr, ipaddr)';
+		so.modalonly = true;
+
+		so = ars.taboption('field_host', form.Flag, 'ip_is_private', _('Match private IP'));
+		so.modalonly = true;
+
+		so = ars.taboption('field_port', form.DynamicList, 'source_port', _('Source port'),
+			_('Match source port.'));
+		so.datatype = 'port';
+		so.modalonly = true;
+
+		so = ars.taboption('field_port', form.DynamicList, 'source_port_range', _('Source port range'),
+			_('Match source port range. Format as START:/:END/START:END.'));
+		so.validate = hp.validatePortRange;
+		so.modalonly = true;
+
+		so = ars.taboption('field_port', form.DynamicList, 'port', _('Port'),
+			_('Match port.'));
+		so.datatype = 'port';
+		so.modalonly = true;
+
+		so = ars.taboption('field_port', form.DynamicList, 'port_range', _('Port range'),
+			_('Match port range. Format as START:/:END/START:END.'));
+		so.validate = hp.validatePortRange;
+		so.modalonly = true;
+
+		so = ars.taboption('fields_process', form.DynamicList, 'process_name', _('Process name'),
+			_('Match process name.'));
+		so.modalonly = true;
+
+		so = ars.taboption('fields_process', form.DynamicList, 'process_path', _('Process path'),
+			_('Match process path.'));
+		so.modalonly = true;
+
+		so = ars.taboption('fields_process', form.DynamicList, 'process_path_regex', _('Process path (regex)'),
+			_('Match process path using regular expression.'));
+		so.modalonly = true;
+
+		const advHost = E('div', {});
+		advMap.render().then(function(node) {
+			advHost.appendChild(node);
+		}).catch(function(e) {
+			advHost.appendChild(E('p', { 'class': 'hpui-hint hpui-c-red' },
+				[ _('The expert editor failed to render: ') + e ]));
+		});
+
+		/* ONE door for the whole expert group (the standard tracked-apply
+		 * flow): the map saves into the UCI session, then the LuCI apply
+		 * (rollback protected) commits and the changes module ITSELF
+		 * reloads the page after the confirm — a manual reload here would
+		 * kill the in-flight confirm and the rollback timer would undo the
+		 * commit (caught live twice in the acceptance). The 6 s re-enable
+		 * covers the "no changes" case where no reload happens. */
+		const advResult = E('span', { 'class': 'hpui-hint' });
+		const advSaveBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply' },
+			[ _('Save & Apply') ]);
+		advSaveBtn.addEventListener('click', function() {
+			advSaveBtn.disabled = true;
+			advResult.textContent = '';
+			Promise.resolve(advMap.save(null, true))
+				.then(function() { return ui.changes.apply(true); })
+				.then(function() {
+					window.setTimeout(function() { advSaveBtn.disabled = false; }, 6000);
+				})
+				.catch(function(e) {
+					advSaveBtn.disabled = false;
+					advResult.textContent = _('Save failed: ') + ((e && e.message) || e);
+				});
+		});
+
+		const expertPanel = E('details', { 'class': 'hpui-panel', style: 'margin:12px 0 0 0' }, [
+			E('summary', { style: 'cursor:pointer; font-weight:600; user-select:none; padding:2px 0' }, [
+				hp.icon('crosshair'), ' ',
+				_('Expert: routing nodes & raw rules') + ' · ' + _('hidden by default — open only if needed')
+			]),
+			E('p', { 'class': 'hpui-hint', style: 'margin:10px 0 4px 0' },
+				[ _('Routing nodes are custom chains and URLTest sub-groups rules can point at; they apply as soon as they exist (enabled) — no extra switch. The raw sing-box rules below are the expert level: they emit with the highest priority and need the switch above.') ]),
+			advHost,
+			E('div', { style: 'display:flex; align-items:center; gap:10px; margin-top:10px' }, [
+				advSaveBtn,
+				advResult
+			])
+		]);
+
 		/* Ф9.3/D29: v3 page skeleton — intro, the order map, the route
 		 * checker (the main instrument), then the editable rows and the
-		 * per-zone result/list surfaces. */
+		 * per-zone result/list surfaces; the collapsed expert group last. */
 		return E('div', {}, [
 			hp.pageIntro(_('Service rules'),
 				_('Which service exits through what: the order map shows how a route is decided, the checker shows any site\'s live route, and the rows below assign exits. Routing applies in "Bypass blocking" mode; everything unmatched goes directly.')),
@@ -1636,7 +2282,8 @@ return view.extend({
 			routePanel,
 			presetRows,
 			checkPanel,
-			listsPanel
+			listsPanel,
+			expertPanel
 		]);
 	}
 });
