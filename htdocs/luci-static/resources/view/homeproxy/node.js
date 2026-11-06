@@ -2,12 +2,22 @@
  * SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (C) 2022-2025 ImmortalWrt.org
+ *
+ * Ravnex — Servers (Ф9.11, D34a): the page reworked to the v3 design system
+ * WITHOUT tab archaics — a subscription panel (per-subscription cards with
+ * their own update/remove and the honest last-cycle verdict), subscription
+ * settings, own nodes and one panel per subscription group. The update runs
+ * ASYNC (start + status poll — lesson 294) and the smart import parses
+ * through the SAME server-side parser set the subscription importer uses
+ * (URI lists, base64, sing-box JSON, Xray JSON, SIP008, clash/mihomo YAML —
+ * node_parse.uc via app_import_nodes). No core-capability filtering anywhere
+ * (D34c multi-core): a node the running core cannot load is still saved,
+ * the generator skips it and the Live status shows the honest badge.
  */
 
 'use strict';
 'require dom';
 'require form';
-'require fs';
 'require poll';
 'require rpc';
 'require uci';
@@ -24,195 +34,6 @@ function allowInsecureConfirm(ev, _section_id, value) {
 		if (!ok)
 			ev.target.firstElementChild.checked = null;
 	});
-}
-
-async function parseVpnLink(uri) {
-	/* AmneziaVPN vpn:// share format: base64url(qCompress(JSON))
-	 * qCompress = 4-byte big-endian uncompressed length + zlib stream */
-	const b64 = uri.slice(6).replace(/-/g, '+').replace(/_/g, '/');
-	const binary = atob(b64);
-	const bytes = new Uint8Array(binary.length);
-	for (let i = 0; i < binary.length; i++)
-		bytes[i] = binary.charCodeAt(i);
-
-	const ds = new DecompressionStream('deflate');
-	const writer = ds.writable.getWriter();
-	const reader = ds.readable.getReader();
-	writer.write(bytes.slice(4)); // skip 4-byte qCompress length header
-	writer.close();
-
-	const chunks = [];
-	let res;
-	while (!(res = await reader.read()).done)
-		chunks.push(res.value);
-
-	const decoded = JSON.parse(new TextDecoder().decode(
-		new Uint8Array(chunks.reduce((a, c) => [...a, ...c], []))
-	));
-
-	const container = decoded.containers?.find(c => c.container === decoded.defaultContainer)
-	               || decoded.containers?.[0];
-	if (!container) return null;
-
-	const label = decoded.description || decoded.hostName || null;
-
-	switch (container.container) {
-	case 'amnezia-awg':
-	case 'amnezia-awg2': {
-		const awg = container.awg;
-		if (!awg) return null;
-		/* detailed fields live inside last_config as a JSON string */
-		let cfg = awg;
-		if (awg.last_config) {
-			try { cfg = Object.assign({}, awg, JSON.parse(awg.last_config)); } catch(e) {}
-		}
-		const clientIp = cfg.client_ip || '';
-		const localAddr = clientIp.includes('/') ? clientIp : (clientIp ? clientIp + '/32' : null);
-		return {
-			label: (label || (cfg.hostName + ':' + cfg.port) || 'AmneziaWG') + '-awg',
-			type: 'amneziawg',
-			address: cfg.hostName || decoded.hostName,
-			port: String(cfg.port || awg.port),
-			wireguard_local_address: localAddr ? [localAddr] : null,
-			wireguard_private_key: cfg.client_priv_key,
-			wireguard_peer_public_key: cfg.server_pub_key,
-			wireguard_pre_shared_key: cfg.psk_key || null,
-			wireguard_mtu: cfg.mtu || null,
-			wireguard_persistent_keepalive_interval: cfg.persistent_keep_alive || null,
-			amnezia_jc: awg.Jc,
-			amnezia_jmin: awg.Jmin,
-			amnezia_jmax: awg.Jmax,
-			amnezia_s1: awg.S1,
-			amnezia_s2: awg.S2,
-			amnezia_s3: awg.S3 || null,
-			amnezia_s4: awg.S4 || null,
-			amnezia_h1: awg.H1,
-			amnezia_h2: awg.H2,
-			amnezia_h3: awg.H3,
-			amnezia_h4: awg.H4,
-			amnezia_i1: awg.I1 || null,
-			amnezia_i2: awg.I2 || null,
-			amnezia_i3: awg.I3 || null,
-			amnezia_i4: awg.I4 || null,
-			amnezia_i5: awg.I5 || null,
-		};
-	}
-	case 'amnezia-xray': {
-		const xray = container.xray;
-		if (!xray?.last_config) return null;
-		let xrayCfg;
-		try { xrayCfg = JSON.parse(xray.last_config); } catch(e) { return null; }
-
-		const outbound = xrayCfg.outbounds?.find(
-			o => !['freedom', 'blackhole', 'dns'].includes(o.protocol)
-		);
-		if (!outbound) return null;
-
-		const stream = outbound.streamSettings || {};
-		/* Xray network → homeproxy transport */
-		const netMap = { ws: 'ws', grpc: 'grpc', h2: 'http', http: 'http',
-		                 httpupgrade: 'httpupgrade', xhttp: 'xhttp', splithttp: 'xhttp' };
-		const transport = netMap[stream.network] || null;
-		const security = stream.security || 'none';
-
-		let config = {
-			label: (label || (decoded.hostName + ':' + xray.port) || outbound.protocol) + '-XRay',
-			transport: transport,
-		};
-
-		/* TLS / Reality */
-		if (security === 'reality') {
-			const r = stream.realitySettings || {};
-			Object.assign(config, {
-				tls: '1',
-				tls_reality: '1',
-				tls_sni: r.serverName || null,
-				tls_utls: r.fingerprint || null,
-				tls_reality_public_key: r.publicKey || null,
-				tls_reality_short_id: r.shortId || null,
-			});
-		} else if (security === 'tls') {
-			const t = stream.tlsSettings || {};
-			Object.assign(config, {
-				tls: '1',
-				tls_sni: t.serverName || null,
-				tls_insecure: t.allowInsecure ? '1' : '0',
-				tls_utls: t.fingerprint || null,
-			});
-		}
-
-		/* Transport details */
-		if (transport === 'ws') {
-			const ws = stream.wsSettings || {};
-			config.ws_path = ws.path || null;
-			config.transport_host = ws.headers?.Host || null;
-		} else if (transport === 'grpc') {
-			config.grpc_servicename = (stream.grpcSettings || {}).serviceName || null;
-		} else if (transport === 'xhttp') {
-			const xhttpCfg = stream.xhttpSettings || stream.splithttpSettings || {};
-			config.http_path = xhttpCfg.path || null;
-			config.http_host = xhttpCfg.host || null;
-			config.xhttp_mode = xhttpCfg.mode || null;
-			config.xhttp_padding_bytes = xhttpCfg.xPaddingBytes || xhttpCfg.x_padding_bytes || null;
-			config.xhttp_sc_max_each_post_bytes = xhttpCfg.scMaxEachPostBytes || xhttpCfg.sc_max_each_post_bytes || null;
-			config.xhttp_sc_min_posts_interval_ms = xhttpCfg.scMinPostsIntervalMs || xhttpCfg.sc_min_posts_interval_ms || null;
-		}
-
-		/* Protocol-specific fields */
-		switch (outbound.protocol) {
-		case 'vless': {
-			const vnext = outbound.settings?.vnext?.[0];
-			if (!vnext) return null;
-			const user = vnext.users?.[0] || {};
-			return Object.assign(config, {
-				type: 'vless',
-				address: vnext.address,
-				port: String(vnext.port),
-				uuid: user.id,
-				vless_flow: (security === 'reality' || security === 'tls') ? (user.flow || null) : null,
-			});
-		}
-		case 'vmess': {
-			const vnext = outbound.settings?.vnext?.[0];
-			if (!vnext) return null;
-			const user = vnext.users?.[0] || {};
-			return Object.assign(config, {
-				type: 'vmess',
-				address: vnext.address,
-				port: String(vnext.port),
-				uuid: user.id,
-				vmess_alter_id: String(user.alterId || 0),
-			});
-		}
-		case 'trojan': {
-			const server = outbound.settings?.servers?.[0];
-			if (!server) return null;
-			return Object.assign(config, {
-				type: 'trojan',
-				address: server.address,
-				port: String(server.port),
-				password: server.password,
-			});
-		}
-		case 'shadowsocks': {
-			const server = outbound.settings?.servers?.[0];
-			if (!server) return null;
-			return Object.assign(config, {
-				type: 'shadowsocks',
-				address: server.address,
-				port: String(server.port),
-				password: server.password,
-				shadowsocks_encrypt_method: server.method,
-			});
-		}
-		default:
-			return null;
-		}
-	}
-	default:
-		/* amnezia-openvpn, amnezia-ipsec, unknown — skip silently */
-		return null;
-	}
 }
 
 function parseWireGuardConf(text) {
@@ -329,639 +150,6 @@ function validateWireGuardNode(node) {
 	return errs.length ? errs : null;
 }
 
-function parseShareLink(uri, features) {
-	let config, url, params;
-
-	uri = uri.split('://');
-	if (uri[0] && uri[1]) {
-		switch (uri[0]) {
-		case 'anytls':
-			/* https://github.com/anytls/anytls-go/blob/v0.0.8/docs/uri_scheme.md */
-			url = new URL('http://' + uri[1]);
-			params = url.searchParams;
-
-			/* Check if password exists */
-			if (!url.username)
-				return null;
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'anytls',
-				address: url.hostname,
-				port: url.port || '80',
-				password: url.username ? decodeURIComponent(url.username) : null,
-				tls: '1',
-				tls_sni: params.get('sni'),
-				tls_insecure: (params.get('insecure') === '1') ? '1' : '0'
-			};
-
-			break;
-		case 'http':
-		case 'https':
-			url = new URL('http://' + uri[1]);
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'http',
-				address: url.hostname,
-				port: url.port || '80',
-				username: url.username ? decodeURIComponent(url.username) : null,
-				password: url.password ? decodeURIComponent(url.password) : null,
-				tls: (uri[0] === 'https') ? '1' : '0'
-			};
-
-			break;
-		case 'hysteria':
-			/* https://github.com/HyNetwork/hysteria/wiki/URI-Scheme */
-			url = new URL('http://' + uri[1]);
-			params = url.searchParams;
-
-			/* WeChat-Video / FakeTCP are unsupported by sing-box currently */
-			if (!features.with_quic || (params.get('protocol') && params.get('protocol') !== 'udp'))
-				return null;
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'hysteria',
-				address: url.hostname,
-				port: url.port || '80',
-				hysteria_protocol: params.get('protocol') || 'udp',
-				hysteria_auth_type: params.get('auth') ? 'string' : null,
-				hysteria_auth_payload: params.get('auth'),
-				hysteria_obfs_password: params.get('obfsParam'),
-				hysteria_down_mbps: params.get('downmbps'),
-				hysteria_up_mbps: params.get('upmbps'),
-				tls: '1',
-				tls_sni: params.get('peer'),
-				tls_alpn: params.get('alpn'),
-				tls_insecure: (params.get('insecure') === '1') ? '1' : '0'
-			};
-
-			break;
-		case 'hysteria2':
-		case 'hy2': {
-			/* https://v2.hysteria.network/docs/developers/URI-Scheme/
-			 * The official URI carries port hopping in the PORT component
-			 * (hysteria2://pass@host:443,5000-6000/) which URL() silently drops
-			 * as a non-numeric port; third-party links use ?mport= instead. */
-			if (!features.with_quic)
-				return null;
-
-			const toPortRanges = (s) => {
-				const list = s.split(',').map(p => p.trim()).filter(p => p)
-					.map(p => /^[0-9]+$/.test(p) ? (p + ':' + p) : p.replace('-', ':'))
-					.filter(p => /^[0-9]+:[0-9]+$/.test(p));
-				return list.length ? list : null;
-			};
-
-			let hopping = null;
-			const hy2m = uri[1].match(/^((?:[^@\/?#]+)@)?(\[[^\]]*\]|[^\/?#]+?):([0-9][0-9,\-]*)([\/?#].*)?$/);
-			if (hy2m && /[-,]/.test(hy2m[3])) {
-				hopping = toPortRanges(hy2m[3]);
-				uri[1] = (hy2m[1] || '') + hy2m[2] + ':' + hy2m[3].split(/[,-]/)[0] + (hy2m[4] || '');
-			}
-
-			url = new URL('http://' + uri[1]);
-			params = url.searchParams;
-
-			if (!hopping && params.get('mport'))
-				hopping = toPortRanges(params.get('mport'));
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'hysteria2',
-				address: url.hostname,
-				port: url.port || '443',
-				password: url.username ? (
-					decodeURIComponent(url.username + (url.password ? (':' + url.password) : ''))
-				) : null,
-				hysteria_obfs_type: params.get('obfs'),
-				hysteria_obfs_password: params.get('obfs-password') || params.get('obfsPassword'),
-				hysteria_hopping_port: hopping,
-				tls: '1',
-				tls_sni: params.get('sni'),
-				tls_insecure: (params.get('insecure') === '1' || params.get('allow_insecure') === '1') ? '1' : '0'
-			};
-
-			break;
-		}
-		case 'mieru':
-			/* https://github.com/enfein/mieru */
-			url = new URL('http://' + uri[1]);
-			params = url.searchParams;
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'mieru',
-				address: url.hostname,
-				port: '0',
-				username: url.username ? decodeURIComponent(url.username) : null,
-				password: url.password ? decodeURIComponent(url.password) : null,
-				mieru_protocol: params.get('protocol') || null,
-				mieru_port_range: params.get('port') || null,
-				mieru_multiplexing: params.get('multiplexing') || null,
-				mieru_handshake_mode: params.get('handshake-mode') || null
-			};
-
-			break;
-		case 'naive':
-		case 'naive+http':
-		case 'naive+https': {
-			if (!features.with_naive_outbound)
-				return null;
-
-			url = new URL('http://' + uri[1]);
-			params = url.searchParams;
-
-			let naiveExtraHeaders = null;
-			if (params.get('header')) {
-				const hdrParts = params.get('header').split(':');
-				if (hdrParts.length >= 2) {
-					let hdrs = {};
-					hdrs[hdrParts[0].trim()] = hdrParts.slice(1).join(':').trim();
-					naiveExtraHeaders = JSON.stringify(hdrs);
-				}
-			}
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'naive',
-				address: url.hostname,
-				port: url.port || '443',
-				username: url.username ? decodeURIComponent(url.username) : null,
-				password: url.password ? decodeURIComponent(url.password) : null,
-				tls: (uri[0] === 'naive+https' || params.get('security') === 'tls') ? '1' : '0',
-				tls_sni: params.get('sni') || url.hostname,
-				naive_udp_over_tcp: (params.get('uot') === '1') ? '1' : null,
-				naive_quic: (params.get('quic') === '1') ? '1' : null,
-				naive_extra_headers: naiveExtraHeaders
-			};
-
-			break;
-		}
-		case 'socks':
-		case 'socks4':
-		case 'socks4a':
-		case 'socks5':
-		case 'socsk5':
-		case 'socks5h':
-			url = new URL('http://' + uri[1]);
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'socks',
-				address: url.hostname,
-				port: url.port || '80',
-				username: url.username ? decodeURIComponent(url.username) : null,
-				password: url.password ? decodeURIComponent(url.password) : null,
-				socks_version: (uri[0].includes('4')) ? '4' : '5'
-			};
-
-			break;
-		case 'ss':
-			try {
-				/* "Lovely" Shadowrocket format */
-				try {
-					let suri = uri[1].split('#'), slabel = '';
-					if (suri.length <= 2) {
-						if (suri.length === 2)
-							slabel = '#' + suri[1];
-						uri[1] = hp.decodeBase64Str(suri[0]) + slabel;
-					}
-				} catch(e) { }
-
-				/* SIP002 format https://shadowsocks.org/guide/sip002.html */
-				url = new URL('http://' + uri[1]);
-
-				let userinfo;
-				if (url.username && url.password) {
-					/* User info encoded with URIComponent */
-					userinfo = [url.username, decodeURIComponent(url.password)];
-				} else if (url.username) {
-					/* User info encoded with base64 */
-					userinfo = hp.decodeBase64Str(decodeURIComponent(url.username)).split(':');
-					if (userinfo.length > 1)
-						userinfo = [userinfo[0], userinfo.slice(1).join(':')]
-				}
-
-				if (!hp.shadowsocks_encrypt_methods.includes(userinfo[0]))
-					return null;
-
-				let plugin, plugin_opts;
-				if (url.search && url.searchParams.get('plugin')) {
-					let plugin_info = url.searchParams.get('plugin').split(';');
-					plugin = plugin_info[0];
-					plugin_opts = (plugin_info.length > 1) ? plugin_info.slice(1).join(';') : null;
-				}
-
-				config = {
-					label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-					type: 'shadowsocks',
-					address: url.hostname,
-					port: url.port || '80',
-					shadowsocks_encrypt_method: userinfo[0],
-					password: userinfo[1],
-					shadowsocks_plugin: plugin,
-					shadowsocks_plugin_opts: plugin_opts
-				};
-			} catch(e) {
-				/* Legacy format https://github.com/shadowsocks/shadowsocks-org/commit/78ca46cd6859a4e9475953ed34a2d301454f579e */
-				uri = uri[1].split('@');
-				if (uri.length < 2)
-					return null;
-				else if (uri.length > 2)
-					uri = [ uri.slice(0, -1).join('@'), uri.slice(-1).toString() ];
-
-				config = {
-					type: 'shadowsocks',
-					address: uri[1].split(':')[0],
-					port: uri[1].split(':')[1],
-					shadowsocks_encrypt_method: uri[0].split(':')[0],
-					password: uri[0].split(':').slice(1).join(':')
-				};
-			}
-
-			break;
-		case 'ssh': {
-			/* Manual parse to avoid URL corruption on long base64 query values */
-			let sshStr = uri[1];
-			let sshLabel = null;
-
-			const sshHashIdx = sshStr.indexOf('#');
-			if (sshHashIdx >= 0) {
-				sshLabel = decodeURIComponent(sshStr.slice(sshHashIdx + 1));
-				sshStr = sshStr.slice(0, sshHashIdx);
-			}
-
-			let sshParams = {};
-			const sshQ = sshStr.indexOf('?');
-			if (sshQ >= 0) {
-				sshParams = Object.fromEntries(new URLSearchParams(sshStr.slice(sshQ + 1)));
-				sshStr = sshStr.slice(0, sshQ);
-			}
-			sshStr = sshStr.replace(/\/+$/, '');
-
-			const sshAt = sshStr.indexOf('@');
-			let sshUser = null, sshPass = null, sshHost = null, sshPort = null;
-			if (sshAt >= 0) {
-				const sshUserinfo = sshStr.slice(0, sshAt);
-				const sshHostport = sshStr.slice(sshAt + 1);
-				const sshColon = sshUserinfo.indexOf(':');
-				if (sshColon >= 0) {
-					sshUser = decodeURIComponent(sshUserinfo.slice(0, sshColon));
-					sshPass = decodeURIComponent(sshUserinfo.slice(sshColon + 1));
-				} else {
-					sshUser = decodeURIComponent(sshUserinfo);
-				}
-				const sshHp = sshHostport.split(':');
-				sshPort = sshHp.pop();
-				sshHost = sshHp.join(':') || null;
-			}
-
-			let sshHostKey = null;
-			const rawHk = sshParams['hk'] || sshParams['host_key'] || sshParams['hostKey'];
-			if (rawHk) {
-				const hkLines = rawHk.split(',').filter(l => l.trim().length > 0);
-				sshHostKey = hkLines.length ? hkLines : null;
-			}
-
-			config = {
-				label: sshLabel,
-				type: 'ssh',
-				address: sshHost,
-				port: sshPort,
-				username: sshUser,
-				password: sshPass || null,
-				ssh_priv_key: sshParams['pk'] || sshParams['private_key'] || sshParams['privateKey'] || null,
-				ssh_priv_key_pp: sshParams['passphrase'] || null,
-				ssh_host_key: sshHostKey
-			};
-
-			break;
-		}
-		case 'trojan':
-			/* https://p4gefau1t.github.io/trojan-go/developer/url/ */
-			url = new URL('http://' + uri[1]);
-			params = url.searchParams;
-
-			/* Check if password exists */
-			if (!url.username)
-				return null;
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'trojan',
-				address: url.hostname,
-				port: url.port || '80',
-				password: decodeURIComponent(url.username),
-				transport: params.get('type') !== 'tcp' ? params.get('type') : null,
-				tls: '1',
-				tls_sni: params.get('sni')
-			};
-			switch (params.get('type')) {
-			case 'grpc':
-				config.grpc_servicename = params.get('serviceName');
-				break;
-			case 'ws':
-				config.ws_host = params.get('host') ? decodeURIComponent(params.get('host')) : null;
-				config.ws_path = params.get('path') ? decodeURIComponent(params.get('path')) : null;
-				if (config.ws_path && config.ws_path.includes('?ed=')) {
-					config.websocket_early_data_header = 'Sec-WebSocket-Protocol';
-					config.websocket_early_data = config.ws_path.split('?ed=')[1];
-					config.ws_path = config.ws_path.split('?ed=')[0];
-				}
-				break;
-			case 'xhttp':
-				config.http_path = params.get('path') ? decodeURIComponent(params.get('path')) : null;
-				config.http_host = params.get('host') ? decodeURIComponent(params.get('host')) : null;
-				config.xhttp_mode = params.get('mode') || null;
-				config.xhttp_padding_bytes = params.get('xPaddingBytes') || params.get('x_padding_bytes') || null;
-				config.xhttp_sc_max_each_post_bytes = params.get('scMaxEachPostBytes') || params.get('sc_max_each_post_bytes') || null;
-				config.xhttp_sc_min_posts_interval_ms = params.get('scMinPostsIntervalMs') || params.get('sc_min_posts_interval_ms') || null;
-				break;
-			}
-
-			if (params.get('hiddify') === '1') {
-				if (params.get('fragment')) {
-					const fparts = params.get('fragment').split(',');
-					if (fparts.length >= 2) {
-						config.tls_fragment = '1';
-						config.tls_fragment_size = fparts[0];
-						config.tls_fragment_sleep = fparts[1];
-						config.tls_fragment_type = fparts[2] || null;
-					}
-				}
-				if (params.get('allowInsecure') === 'true' || params.get('insecure') === 'true')
-					config.tls_insecure = '1';
-			}
-
-			break;
-		case 'tuic':
-			/* https://github.com/daeuniverse/dae/discussions/182 */
-			url = new URL('http://' + uri[1]);
-			params = url.searchParams;
-
-			if (!features.with_quic)
-				return null;
-
-			/* Check if uuid exists */
-			if (!url.username)
-				return null;
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'tuic',
-				address: url.hostname,
-				port: url.port || '80',
-				uuid: url.username,
-				password: url.password ? decodeURIComponent(url.password) : null,
-				tuic_congestion_control: params.get('congestion_control'),
-				tuic_udp_relay_mode: params.get('udp_relay_mode'),
-				tuic_enable_zero_rtt: params.get('zero_rtt_handshake') || null,
-				tuic_heartbeat: params.get('heartbeat') || null,
-				tls: '1',
-				tls_sni: params.get('sni'),
-				tls_alpn: params.get('alpn') ? decodeURIComponent(params.get('alpn')).split(',') : null,
-				tls_insecure: (params.get('allow_insecure') === '1' || params.get('insecure') === '1') ? '1' : '0'
-			};
-
-			break;
-		case 'vless':
-			/* https://github.com/XTLS/Xray-core/discussions/716 */
-			url = new URL('http://' + uri[1]);
-			params = url.searchParams;
-
-			/* Unsupported protocol */
-			if (params.get('type') === 'kcp')
-				return null;
-			else if (params.get('type') === 'quic' && ((params.get('quicSecurity') && params.get('quicSecurity') !== 'none') || !features.with_quic))
-				return null;
-			/* Check if uuid and type exist */
-			if (!url.username || !params.get('type'))
-				return null;
-
-			config = {
-				label: url.hash ? decodeURIComponent(url.hash.slice(1)) : null,
-				type: 'vless',
-				address: url.hostname,
-				port: url.port || '80',
-				uuid: url.username,
-				transport: params.get('type') !== 'tcp' ? params.get('type') : null,
-				tls: ['tls', 'xtls', 'reality'].includes(params.get('security')) ? '1' : '0',
-				tls_sni: params.get('sni'),
-				tls_alpn: params.get('alpn') ? decodeURIComponent(params.get('alpn')).split(',') : null,
-				tls_reality: (params.get('security') === 'reality') ? '1' : '0',
-				tls_reality_public_key: params.get('pbk') ? decodeURIComponent(params.get('pbk')) : null,
-				tls_reality_short_id: params.get('sid'),
-				tls_utls: features.with_utls ? params.get('fp') : null,
-				vless_flow: ['tls', 'reality'].includes(params.get('security')) ? params.get('flow') : null
-			};
-			switch (params.get('type')) {
-			case 'grpc':
-				config.grpc_servicename = params.get('serviceName');
-				break;
-			case 'http':
-			case 'tcp':
-				if (config.transport === 'http' || params.get('headerType') === 'http') {
-					config.http_host = params.get('host') ? decodeURIComponent(params.get('host')).split(',') : null;
-					config.http_path = params.get('path') ? decodeURIComponent(params.get('path')) : null;
-				}
-				break;
-			case 'httpupgrade':
-				config.httpupgrade_host = params.get('host') ? decodeURIComponent(params.get('host')) : null;
-				config.http_path = params.get('path') ? decodeURIComponent(params.get('path')) : null;
-				break;
-			case 'ws':
-				config.ws_host = params.get('host') ? decodeURIComponent(params.get('host')) : null;
-				config.ws_path = params.get('path') ? decodeURIComponent(params.get('path')) : null;
-				if (config.ws_path && config.ws_path.includes('?ed=')) {
-					config.websocket_early_data_header = 'Sec-WebSocket-Protocol';
-					config.websocket_early_data = config.ws_path.split('?ed=')[1];
-					config.ws_path = config.ws_path.split('?ed=')[0];
-				}
-				break;
-			case 'xhttp':
-				config.http_path = params.get('path') ? decodeURIComponent(params.get('path')) : null;
-				config.http_host = params.get('host') ? decodeURIComponent(params.get('host')) : null;
-				config.xhttp_mode = params.get('mode') || null;
-				config.xhttp_padding_bytes = params.get('xPaddingBytes') || params.get('x_padding_bytes') || null;
-				config.xhttp_sc_max_each_post_bytes = params.get('scMaxEachPostBytes') || params.get('sc_max_each_post_bytes') || null;
-				config.xhttp_sc_min_posts_interval_ms = params.get('scMinPostsIntervalMs') || params.get('sc_min_posts_interval_ms') || null;
-				break;
-			}
-
-			if (params.get('hiddify') === '1') {
-				if (params.get('fragment')) {
-					const fparts = params.get('fragment').split(',');
-					if (fparts.length >= 2) {
-						config.tls_fragment = '1';
-						config.tls_fragment_size = fparts[0];
-						config.tls_fragment_sleep = fparts[1];
-						config.tls_fragment_type = fparts[2] || null;
-					}
-				}
-				if (params.get('allowInsecure') === 'true' || params.get('insecure') === 'true')
-					config.tls_insecure = '1';
-				if (params.get('extra')) {
-					try {
-						const extra = JSON.parse(params.get('extra'));
-						if (extra.headers && Object.keys(extra.headers).length > 0)
-							config.xhttp_headers = JSON.stringify(extra.headers);
-						if (extra.downloadSettings) {
-							const dl = extra.downloadSettings;
-							config.xhttp_download_server = dl.address || null;
-							config.xhttp_download_port = dl.port ? String(dl.port) : null;
-							if (dl.xhttpSettings) {
-								config.xhttp_download_path = dl.xhttpSettings.path || null;
-								config.xhttp_download_host = dl.xhttpSettings.host || null;
-								config.xhttp_download_mode = dl.xhttpSettings.mode || null;
-							}
-							config.xhttp_download_security = dl.security || null;
-							if (dl.security === 'reality' && dl.realitySettings) {
-								config.xhttp_download_sni = dl.realitySettings.serverName || null;
-								config.xhttp_download_fp = dl.realitySettings.fingerprint || null;
-								config.xhttp_download_pbk = dl.realitySettings.publicKey || null;
-								config.xhttp_download_sid = dl.realitySettings.shortId || null;
-							} else if (dl.security === 'tls' && dl.tlsSettings) {
-								config.xhttp_download_sni = dl.tlsSettings.serverName || null;
-								config.xhttp_download_alpn = dl.tlsSettings.alpn || null;
-							}
-						}
-					} catch(e) { }
-				}
-			}
-
-			break;
-		case 'vmess':
-			/* "Lovely" shadowrocket format */
-			if (uri.includes('&'))
-				return null;
-
-			/* https://github.com/2dust/v2rayN/wiki/Description-of-VMess-share-link */
-			uri = JSON.parse(hp.decodeBase64Str(uri[1]));
-
-			if (uri.v != '2')
-				return null;
-			/* Unsupported protocols */
-			else if (uri.net === 'kcp')
-				return null;
-			else if (uri.net === 'quic' && ((uri.type && uri.type !== 'none') || !features.with_quic))
-				return null;
-			/* https://www.v2fly.org/config/protocols/vmess.html#vmess-md5-%E8%AE%A4%E8%AF%81%E4%BF%A1%E6%81%AF-%E6%B7%98%E6%B1%B0%E6%9C%BA%E5%88%B6
-			 * else if (uri.aid && parseInt(uri.aid) !== 0)
-			 * 	return null;
-			 */
-
-			config = {
-				label: uri.ps,
-				type: 'vmess',
-				address: uri.add,
-				port: uri.port,
-				uuid: uri.id,
-				vmess_alterid: uri.aid,
-				vmess_encrypt: uri.scy || 'auto',
-				transport: (uri.net !== 'tcp') ? uri.net : null,
-				tls: uri.tls === 'tls' ? '1' : '0',
-				tls_sni: uri.sni || uri.host,
-				tls_alpn: uri.alpn ? uri.alpn.split(',') : null,
-				tls_utls: features.with_utls ? uri.fp : null
-			};
-			switch (uri.net) {
-			case 'grpc':
-				config.grpc_servicename = uri.path;
-				break;
-			case 'h2':
-			case 'tcp':
-				if (uri.net === 'h2' || uri.type === 'http') {
-					config.transport = 'http';
-					config.http_host = uri.host ? uri.host.split(',') : null;
-					config.http_path = uri.path;
-				}
-				break;
-			case 'httpupgrade':
-				config.httpupgrade_host = uri.host;
-				config.http_path = uri.path;
-				break;
-			case 'ws':
-				config.ws_host = uri.host;
-				config.ws_path = uri.path;
-				if (config.ws_path && config.ws_path.includes('?ed=')) {
-					config.websocket_early_data_header = 'Sec-WebSocket-Protocol';
-					config.websocket_early_data = config.ws_path.split('?ed=')[1];
-					config.ws_path = config.ws_path.split('?ed=')[0];
-				}
-				break;
-			}
-
-			break;
-		case 'wg':
-		case 'wireguard': {
-			if (!features.with_wireguard || !features.with_gvisor)
-				return null;
-
-			/* Manual parse: private key in userinfo may contain chars that confuse URL parsing */
-			let wgStr = uri[1];
-			let wgLabel = null;
-
-			const wgHash = wgStr.indexOf('#');
-			if (wgHash >= 0) {
-				wgLabel = decodeURIComponent(wgStr.slice(wgHash + 1));
-				wgStr = wgStr.slice(0, wgHash);
-			}
-
-			let wgParams = {};
-			const wgQ = wgStr.indexOf('?');
-			if (wgQ >= 0) {
-				wgParams = Object.fromEntries(new URLSearchParams(wgStr.slice(wgQ + 1)));
-				wgStr = wgStr.slice(0, wgQ);
-			}
-			wgStr = wgStr.replace(/\/+$/, '');
-
-			const wgAt = wgStr.indexOf('@');
-			let wgPrivKey = null, wgHost = null, wgPort = null;
-			if (wgAt >= 0) {
-				wgPrivKey = decodeURIComponent(wgStr.slice(0, wgAt));
-				const wgHp = wgStr.slice(wgAt + 1).split(':');
-				wgPort = wgHp.pop();
-				wgHost = wgHp.join(':') || null;
-			} else {
-				const wgHp = wgStr.split(':');
-				wgPort = wgHp.pop();
-				wgHost = wgHp.join(':') || null;
-				wgPrivKey = wgParams['privateKey'] || wgParams['privatekey'] || null;
-			}
-
-			const wgLocalAddr = wgParams['address'] || wgParams['ip'] || null;
-			config = {
-				label: wgLabel,
-				type: 'wireguard',
-				address: wgHost,
-				port: wgPort,
-				wireguard_private_key: wgPrivKey,
-				wireguard_peer_public_key: wgParams['publicKey'] || wgParams['publickey'] || null,
-				wireguard_pre_shared_key: wgParams['presharedKey'] || wgParams['presharedkey'] || null,
-				wireguard_local_address: wgLocalAddr ? wgLocalAddr.split(',') : null,
-				wireguard_mtu: wgParams['mtu'] || null,
-				wireguard_reserved: wgParams['reserved'] ? wgParams['reserved'].split(',') : null
-			};
-
-			break;
-		}
-		}
-	}
-
-	if (config) {
-		if (!config.address || !config.port)
-			return null;
-		else if (!config.label)
-			config.label = config.address + ':' + config.port;
-
-		config.address = config.address.replace(/\[|\]/g, '');
-	}
-
-	return config;
-}
-
 /* ── Live node statuses (R3 v3e «Серверы») ──────────────────────────────
  * The grid shows what the RUNNING CORE currently thinks of every node:
  * measured delay / timeout / not in the generated config / unsupported by
@@ -1029,28 +217,25 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.validate = L.bind(hp.validateUniqueValue, this, data[0], 'node', 'label');
 	o.modalonly = true;
 
+	/* Type list: NO feature gating (D34c multi-core) — node DATA must survive
+	 * a core switch; the generator skips what the running core cannot load
+	 * (core_skipped.json) and the Live status column shows the honest badge. */
 	o = s.option(form.ListValue, 'type', _('Type'));
 	o.value('direct', _('Direct'));
 	o.value('anytls', _('AnyTLS'));
 	o.value('http', _('HTTP'));
-	if (features.with_quic) {
-		o.value('hysteria', _('Hysteria'));
-		o.value('hysteria2', _('Hysteria2'));
-		o.value('mieru', _('Mieru'));
-	}
+	o.value('hysteria', _('Hysteria'));
+	o.value('hysteria2', _('Hysteria2'));
+	o.value('mieru', _('Mieru'));
 	o.value('shadowsocks', _('Shadowsocks'));
 	o.value('shadowtls', _('ShadowTLS'));
-	if (features.with_naive_outbound)
-		o.value('naive', _('NaïveProxy'));
+	o.value('naive', _('NaïveProxy'));
 	o.value('socks', _('Socks'));
 	o.value('ssh', _('SSH'));
 	o.value('trojan', _('Trojan'));
-	if (features.with_quic)
-		o.value('tuic', _('Tuic'));
-	if (features.with_trusttunnel)
-		o.value('trusttunnel', _('TrustTunnel'));
-	if (features.with_wireguard && features.with_gvisor)
-		o.value('wireguard', _('WireGuard'));
+	o.value('tuic', _('Tuic'));
+	o.value('trusttunnel', _('TrustTunnel'));
+	o.value('wireguard', _('WireGuard'));
 	o.value('amneziawg', _('AmneziaWG'));
 	o.value('vless', _('VLESS'));
 	o.value('vmess', _('VMess'));
@@ -2164,184 +1349,657 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	return s;
 }
 
+/* ── RPCs (Ф9.11) ─────────────────────────────────────────────────────────
+ * The subscription update is ASYNC (lesson 294: a sync RPC longer than ~30 s
+ * breaks the shared ubus stream — the update cycle with fetch + verify runs
+ * 40+ s): start spawns the detached runner, the status file is polled. The
+ * smart import is a read-only server-side parse through the SAME parser set
+ * the subscription importer uses. */
+const callSubUpdateStart = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_subscription_update_start',
+	params: [ 'url' ],
+	expect: { '': {} }
+});
+
+const callSubAdd = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_subscription_add',
+	params: [ 'url' ],
+	expect: { '': {} }
+});
+
+const callSubRemove = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_subscription_remove',
+	params: [ 'url' ],
+	expect: { '': {} }
+});
+
+const callImportNodes = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_import_nodes',
+	params: [ 'text' ],
+	expect: { '': {} }
+});
+
+const callServiceRestart = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'diag_service_restart',
+	expect: { '': {} }
+});
+
+const callOpStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_op_status',
+	params: [ 'op_id' ],
+	expect: { '': {} }
+});
+
+const NODE_CSS = `
+	.node-sum { margin: 10px 0 14px; }
+	.node-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; margin-top: 10px; }
+	.node-sub-card { display: flex; flex-direction: column; gap: 7px; padding: 12px 14px; flex: none; }
+	.node-sub-top { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+	.node-sub-title { font-weight: 700; font-size: 1.02em; overflow: hidden; text-overflow: ellipsis; }
+	.node-sub-host { font-size: .82em; opacity: .7; word-break: break-all; }
+	.node-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--hp-panel-line); }
+	.node-actions .hpui-btn { padding: 4px 10px; font-size: .84em; flex: none; }
+	.node-addrow { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+	.node-addrow > input { flex: 1 1 320px; }
+	.node-result { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--hp-panel-line); border-radius: 8px; background: var(--background-color-low); }
+	.node-result p { margin: 2px 0; }
+	.node-panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+`;
+
+/* Verdict vocabulary of the update cycle (update_subscriptions.uc actions
+ * and per-group statuses) — rendered in ONE place (the panel result area). */
+const SUB_ACT = {
+	applied: _('Nodes updated'),
+	aborted: _('Update declined — nodes untouched'),
+	rolled_back: _('Update rolled back — nodes restored from the backup'),
+	failed: _('Update failed')
+};
+
+const SUB_GST = {
+	ok: _('OK'),
+	html: _('server returned an HTML page — skipped'),
+	no_valid: _('no valid node in the response — skipped'),
+	fetch_failed: _('fetch failed — skipped')
+};
+
+const SUB_CHIP = {
+	ok: [ 'hpui-b-green', _('OK') ],
+	html: [ 'hpui-b-amber', _('HTML page') ],
+	no_valid: [ 'hpui-b-amber', _('No valid nodes') ],
+	fetch_failed: [ 'hpui-b-red', _('Fetch failed') ]
+};
+
 return view.extend({
 	load() {
 		return Promise.all([
 			uci.load('homeproxy'),
-			hp.getBuiltinFeatures()
+			hp.getBuiltinFeatures(),
+			L.resolveDefault(callSubscriptionStatus(), null)
 		]);
 	},
 
 	render(data) {
-		let m, s, o, ss, so;
-		let main_node = uci.get(data[0], 'config', 'main_node');
-		let routing_mode = uci.get(data[0], 'config', 'routing_mode');
-		let features = data[1];
-
-		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
 		hp.uiShell();
 
-		/* Cache subscription information, it will be called multiple times.
-		 * Hash with the SAME FNV-1a the subscription daemon uses (grouphash on
-		 * nodes); the old MD5 here made every "Sub (…)" tab stay empty while the
-		 * nodes fell into the plain "Nodes" list. */
-		let subinfo = [];
-		for (let suburl of (uci.get(data[0], 'subscription', 'subscription_url') || [])) {
-			const url = new URL(suburl);
-			const urlhash = hp.calcStringFNV(suburl.replace(/#.*$/, ''));
-			const title = url.hash ? decodeURIComponent(url.hash.slice(1)) : url.hostname;
-			subinfo.push({ 'hash': urlhash, 'title': title });
+		const stEl = document.getElementById('hp-node-style');
+		if (!stEl)
+			document.head.appendChild(E('style', { id: 'hp-node-style' }, [ NODE_CSS ]));
+
+		const features = data[1];
+		const main_node = uci.get(data[0], 'config', 'main_node');
+		const routing_mode = uci.get(data[0], 'config', 'routing_mode');
+		let subStatus = data[2] || { last: null, groups: {}, node_total: 0 };
+
+		/* Subscription info from the UCI list — hash with the SAME FNV-1a the
+		 * subscription daemon uses (the old MD5 here made group matching break). */
+		function subInfoList() {
+			const v = uci.get(data[0], 'subscription', 'subscription_url');
+			const list = (v == null) ? [] : (Array.isArray(v) ? v : [ v ]);
+			return list.map(function(suburl) {
+				let url = null;
+				try { url = new URL(suburl); } catch (e) { url = null; }
+				const urlhash = hp.calcStringFNV(suburl.replace(/#.*$/, ''));
+				const title = (url && url.hash) ? decodeURIComponent(url.hash.slice(1)) :
+					(url ? url.hostname : suburl);
+				return { url: suburl, hash: urlhash, title: title, host: url ? url.hostname : suburl };
+			});
 		}
 
-		m = new form.Map('homeproxy');
-
-		s = m.section(form.NamedSection, 'subscription', 'homeproxy');
-
-		/* Node settings start */
-		/* User nodes start */
-		s.tab('node', _('Nodes'),
-			_('Your own servers: import share links (ss://, vmess://, vless://, hysteria2://, vpn:// …), a WireGuard .conf file, or add a node manually. Click a row to edit it.'));
-		o = s.taboption('node', form.SectionValue, '_node', form.GridSection, 'node');
-		ss = renderNodeSettings(o.subsection, data, features, main_node, routing_mode);
-		ss.addremove = true;
-		ss.filter = function(section_id) {
-			for (let info of subinfo)
-				if (info.hash === uci.get(data[0], section_id, 'grouphash'))
-					return false;
-
-			return true;
+		function groupCount(hash) {
+			return (subStatus.groups && subStatus.groups[hash]) || 0;
 		}
-		/* Import subscription links start */
-		/* Thanks to luci-app-shadowsocks-libev */
-		ss.handleLinkImport = function() {
-			let textarea = new ui.Textarea();
-			ui.showModal(_('Import share links'), [
-				E('p', _('Support Amnezia (vpn://), Hysteria, Mieru, NaïveProxy (naive://), Shadowsocks (ss://), SSH, Trojan, v2rayN (VMess), WireGuard, and VLESS (vless://) online configuration delivery standard.')),
-				textarea.render(),
-				E('div', { class: 'right' }, [
-					E('button', {
-						class: 'btn',
-						click: ui.hideModal
-					}, [ _('Cancel') ]),
-					'',
-					E('button', {
-						class: 'btn cbi-button-action',
-						click: ui.createHandlerFn(this, function() {
-							let input_links = textarea.getValue().trim().split('\n')
-								.map(l => l.trim()).filter(Boolean);
-							if (!input_links.length)
-								return ui.hideModal();
 
-							/* Remove duplicates */
-							input_links = [...new Set(input_links)];
+		function groupLine(hash) {
+			const last = subStatus.last;
+			if (!last || !last.groups)
+				return null;
+			for (let i = 0; i < last.groups.length; i++)
+				if (last.groups[i].hash === hash)
+					return last.groups[i];
+			return null;
+		}
 
-							let allow_insecure = uci.get(data[0], 'subscription', 'allow_insecure');
-							let packet_encoding = uci.get(data[0], 'subscription', 'packet_encoding');
-							const total = input_links.length;
+		/* ── Summary cards — built once, the poll updates numbers IN PLACE ── */
+		const sumDefs = [
+			{ l: _('Nodes'), c: '' },
+			{ l: _('Own nodes'), c: 'hpui-c-blue' },
+			{ l: _('From subscriptions'), c: '' },
+			{ l: _('Active'), c: 'hpui-c-green' }
+		];
+		const sumNums = sumDefs.map(function(d) {
+			return E('div', { 'class': 'hpui-num ' + d.c }, [ '—' ]);
+		});
+		const sumBox = E('div', { 'class': 'hpui-cards hpui-stagger node-sum' },
+			sumDefs.map(function(d, i) {
+				return E('div', { 'class': 'hpui-card' }, [
+					sumNums[i],
+					E('div', { 'class': 'hpui-cap' }, [ d.l ])
+				]);
+			}));
 
-							const vpnLinks = input_links.filter(l => l.startsWith('vpn://'));
-							const uriLinks = input_links.filter(l => !l.startsWith('vpn://'));
+		function updateSummary() {
+			const sections = uci.sections(data[0], 'node');
+			let mine = 0, sub = 0, active = 0;
+			sections.forEach(function(s) {
+				if (s.grouphash)
+					sub++;
+				else
+					mine++;
+			});
+			Object.keys(NODE_STATUS).forEach(function(sid) {
+				if (NODE_STATUS[sid] && NODE_STATUS[sid].selected)
+					active++;
+			});
+			const vals = [ sections.length, mine, sub, active ];
+			sumDefs.forEach(function(d, i) { sumNums[i].textContent = String(vals[i]); });
+		}
 
-							return Promise.all(vpnLinks.map(l => parseVpnLink(l).catch(() => null)))
-								.then(vpnConfigs => {
-									const configs = [
-										...vpnConfigs.filter(Boolean),
-										...uriLinks.map(l => parseShareLink(l, features)).filter(Boolean)
-									];
+		/* ── Result area: ONE place for every panel action outcome ── */
+		const subResult = E('div', { 'class': 'node-result', 'style': 'display:none' }, []);
 
-									let imported_node = 0;
-									configs.forEach((config) => {
-										if (config.tls === '1' && allow_insecure === '1')
-											config.tls_insecure = '1';
-										if (['vless', 'vmess'].includes(config.type))
-											config.packet_encoding = packet_encoding;
+		function note(ok, text) {
+			subResult.style.display = '';
+			dom.content(subResult, E('p', { 'class': 'hpui-hint' }, [
+				E('span', { 'class': ok ? 'hpui-c-green' : 'hpui-c-red' }, [ text ])
+			]));
+		}
 
-										let nameHash = hp.calcStringMD5(config.label);
-										let sid = uci.add(data[0], 'node', nameHash);
-										Object.keys(config).forEach((k) => {
-											uci.set(data[0], sid, k, config[k]);
-										});
-										imported_node++;
+		function busy(text) {
+			subResult.style.display = '';
+			dom.content(subResult, E('p', { 'class': 'hpui-hint' }, [ text ]));
+		}
+
+		function renderVerdict(last) {
+			const body = [];
+			body.push(E('p', { style: 'font-weight:bold' }, [ SUB_ACT[last.action] || last.action ]));
+			if (last.totals)
+				body.push(E('p', {}, _('Nodes: %s before, %s after (+%s/−%s; kept unchanged: %s)')
+					.format(last.totals.before, last.totals.after, last.totals.added,
+						last.totals.removed, last.totals.kept)));
+			const hostOf = (u) => String(u || '').replace(/^https?:\/\//, '').split(/[#/]/)[0];
+			(last.groups || []).forEach(function(g) {
+				body.push(E('p', { style: 'margin:2px 0; font-size:.9em' }, [
+					_('%s · %s → %s (+%s/−%s, unchanged %s)').format(
+						hostOf(g.url), SUB_GST[g.status] || g.status,
+						g.parsed, g.added, g.removed, g.kept)
+				]));
+			});
+			if (last.reason)
+				body.push(E('p', { style: 'color:#d99a1b' }, [ last.reason ]));
+			if (last.backup)
+				body.push(E('p', { style: 'font-size:.9em; opacity:.8' }, _('Backup') + ': ' + last.backup));
+			if (last.verify && last.verify.restarted === false) {
+				body.push(E('p', { style: 'font-size:.9em; opacity:.8' },
+					[_('The service was not restarted — new nodes apply on the next restart.')]));
+				body.push(E('div', { style: 'margin-top:6px' }, [
+					E('button', { 'class': 'hpui-btn hpui-btn-primary hpui-btn-sm', 'click': applyNow },
+						[ _('Apply now') ])
+				]));
+			}
+			subResult.style.display = '';
+			dom.content(subResult, body);
+		}
+
+		/* ── Async subscription update (start + status poll) ── */
+		let updating = false;
+
+		function startUpdate(url) {
+			if (updating) {
+				note(false, _('An update is already running'));
+				return;
+			}
+			updating = true;
+			busy(_('Fetching nodes, please wait...'));
+			/* The runner overwrites the status file a few seconds AFTER the
+			 * spawn (the service stop comes first) — poll for the ts CHANGE
+			 * before trusting running:false, or the PREVIOUS run's verdict
+			 * is rendered (caught live: the panel showed the old cycle). */
+			const prevTs = (subStatus.last && subStatus.last.ts) ? subStatus.last.ts : 0;
+			const tsDeadline = Date.now() + 45000;
+			L.resolveDefault(callSubUpdateStart(url || ''), null).then(function(r) {
+				if (!r || r.result === false) {
+					updating = false;
+					note(false, (r && r.error) ? r.error : _('Failed to start the update'));
+					return;
+				}
+				const deadline = Date.now() + 600000;
+				const tick = function() {
+					return L.resolveDefault(callSubscriptionStatus(), null).then(function(st) {
+						const last = st && st.last;
+						if (!last || (('' + (last.ts || 0)) === ('' + prevTs))) {
+							if (Date.now() > tsDeadline) {
+								updating = false;
+								note(false, _('The update did not report its start — see the log on the router.'));
+								return;
+							}
+							return new Promise(function(res) { setTimeout(res, 2000); }).then(tick);
+						}
+						if (last.running && Date.now() < deadline)
+							return new Promise(function(res) { setTimeout(res, 2000); }).then(tick);
+						updating = false;
+						if (st) {
+							subStatus = st;
+							rebuildSubCards();
+						}
+						if (last) {
+							renderVerdict(last);
+							return refreshNodeStatuses();
+						}
+						note(false, _('Update finished (no status report — it was produced before this feature existed).'));
+					});
+				};
+				return tick();
+			}).catch(function(e) {
+				updating = false;
+				note(false, _('Failed to start the update') + ': ' + (e && e.message ? e.message : ''));
+			});
+		}
+
+		/* Apply now: restart the service so subscription-fetched nodes go
+		 * live at once (a tracked operation, polled to the honest verdict).
+		 * `after` runs once the verdict is in (click events pass an Event —
+		 * guard by type). */
+		function applyNow(after) {
+			busy(_('Restarting the service…'));
+			L.resolveDefault(callServiceRestart(), null).then(function(r) {
+				if (!r || (r.result === false && !r.op_id)) {
+					note(false, _('Restart failed: ') + ((r && r.error) || _('rpc error')));
+					return;
+				}
+				const deadline = Date.now() + 150000;
+				const tick = function() {
+					return L.resolveDefault(callOpStatus(r.op_id), {}).then(function(st) {
+						const op = st && st.op;
+						if (op && op.status !== 'completed' && op.status !== 'failed' &&
+						    Date.now() < deadline)
+							return new Promise(function(res) { setTimeout(res, 2000); }).then(tick);
+						if (op && op.status === 'completed') {
+							note(true, _('Service restarted — the new nodes are live.'));
+							subStatus = { last: null, groups: {}, node_total: 0 };
+							rebuildSubCards();
+							if (typeof after === 'function')
+								after();
+							return refreshNodeStatuses();
+						}
+						note(false, _('The restart is still running — see the operations journal on the Health center page.'));
+					});
+				};
+				return tick();
+			});
+		}
+
+		/* ── Subscription cards ── */
+		const subCards = E('div', { 'class': 'node-cards' }, []);
+
+		function statusChip(hash) {
+			const last = subStatus.last;
+			const g = groupLine(hash);
+			if (!g)
+				/* the group simply did not take part in the LAST run (a
+				 * single-URL update touches only its own group) — that is
+				 * honest-neutral, not «never updated» */
+				return E('span', { 'class': 'hpui-badge hpui-b-grey' },
+					[ (last && last.ts) ? _('Not in the last run') : _('Not updated yet') ]);
+			const m = SUB_CHIP[g.status] || [ 'hpui-b-grey', g.status ];
+			return E('span', { 'class': 'hpui-badge ' + m[0] }, [ m[1] ]);
+		}
+
+		function rebuildSubCards() {
+			const infos = subInfoList();
+			dom.content(subCards, infos.map(function(info) {
+				return E('div', { 'class': 'hpui-card node-sub-card' }, [
+					E('div', { 'class': 'node-sub-top' }, [
+						E('span', { 'class': 'node-sub-title' }, [ info.title ]),
+						statusChip(info.hash),
+						E('span', { 'class': 'hpui-badge hpui-b-blue' },
+							[ _('%s nodes').format(groupCount(info.hash)) ])
+					]),
+					E('div', { 'class': 'node-sub-host' }, [ info.host ]),
+					E('div', { 'class': 'node-actions' }, [
+						E('button', { 'class': 'hpui-btn hpui-btn-sm hpui-btn-ghost',
+							'click': function() { startUpdate(info.url); } }, [ _('Update') ]),
+						E('button', { 'class': 'hpui-btn hpui-btn-sm hpui-btn-danger',
+							'click': function() { removeSubscription(info); } }, [ _('Remove') ])
+					])
+				]);
+			}));
+			if (!infos.length)
+				dom.content(subCards,
+					E('p', { 'class': 'hpui-hint' }, [ _('No subscriptions yet — add a provider link below.') ]));
+		}
+
+		/* Remove a subscription SERVER-SIDE (Ф9.11): the URL leaves the list
+		 * AND its nodes are cleaned up with the same pointer pruning the
+		 * update cycle does. Client-side uci.set is NOT used here — the
+		 * form's own save overwrites client-staged deltas with the form
+		 * values (caught live: a removed subscription returned to UCI).
+		 * When nodes were removed the kernel config changes too: the modal
+		 * says so up front and the verified restart runs right away. */
+		function removeSubscription(info) {
+			const cnt = groupCount(info.hash);
+			const lines = [
+				E('p', {}, _('Remove the subscription «%s» and its %s nodes? The subscription URL is deleted from the settings.').format(info.title, cnt))
+			];
+			if (cnt > 0)
+				lines.push(E('p', { 'class': 'hpui-hint' },
+					[ _('The service will be restarted to remove them from the core.') ]));
+			lines.push(E('div', { 'class': 'right', 'style': 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px' }, [
+				E('button', { 'class': 'hpui-btn hpui-btn-ghost', 'click': ui.hideModal },
+					[ _('Cancel') ]),
+				E('button', { 'class': 'hpui-btn hpui-btn-danger', 'click': function() {
+					ui.hideModal();
+					busy(_('Removing the subscription…'));
+					L.resolveDefault(callSubRemove(info.url), null).then(function(r) {
+						if (!r || r.result === false) {
+							note(false, (r && r.error) || _('Operation failed'));
+							return;
+						}
+					if (r.need_restart)
+						return applyNow(function() {
+							setTimeout(function() { location.reload(); }, 1500);
+						});
+					note(true, _('Subscription removed (no nodes — nothing to apply).'));
+					setTimeout(function() { location.reload(); }, 1500);
+					});
+				} }, [ _('Remove') ])
+			]));
+			ui.showModal(_('Remove subscription'), lines);
+		}
+
+		/* Add a subscription URL (the #fragment becomes the display title). */
+		const subUrlInput = E('input', {
+			'type': 'text', 'class': 'cbi-input-text',
+			'placeholder': 'https://provider.example/sub/token#Title'
+		});
+
+		function addSubscription() {
+			const raw = String(subUrlInput.value || '').trim();
+			if (!raw) {
+				note(false, _('Enter the subscription URL'));
+				return;
+			}
+			let parsed = null;
+			try { parsed = new URL(raw); } catch (e) { parsed = null; }
+			if (!parsed || !parsed.hostname) {
+				note(false, _('Expecting: %s').format(_('valid URL')));
+				return;
+			}
+			/* Server-side add (client-side uci.set would be overwritten by the
+			 * form's own save — caught live). The page reloads after the
+			 * verdict so every widget (cards + the settings form) is fresh. */
+			L.resolveDefault(callSubAdd(raw), null).then(function(r) {
+				if (!r || r.result === false) {
+					note(false, (r && r.error) || _('Operation failed'));
+					return;
+				}
+				subUrlInput.value = '';
+				note(true, _('Subscription added.'));
+				setTimeout(function() { location.reload(); }, 1500);
+			});
+		}
+
+		/* ── Smart import (Ф9.11): the SERVER parses — one parser set for
+		 * links, base64 batches, sing-box JSON, clash/mihomo YAML. Feature
+		 * gates are gone (D34c): a node the running core cannot load is
+		 * imported anyway and shows the honest «Unsupported by core». ── */
+		function showImport() {
+			const textarea = new ui.Textarea();
+			const fileInput = E('input', { 'type': 'file', 'style': 'display:block;margin:8px 0' });
+			const summary = E('div', {});
+
+			function parseText(text) {
+				const t = String(text || '').trim();
+				if (!t) {
+					dom.content(summary, E('p', { 'class': 'hpui-hint' }, [ _('Nothing to parse') ]));
+					return;
+				}
+				dom.content(summary, E('p', { 'class': 'hpui-hint' }, [ _('Parsing…') ]));
+				L.resolveDefault(callImportNodes(t), null).then(function(r) {
+					if (!r || r.result === false) {
+						dom.content(summary, E('p', { 'class': 'hpui-hint' }, [
+							E('span', { 'class': 'hpui-c-red' }, [ (r && r.error) || _('Parse failed') ])
+						]));
+						return;
+					}
+					const lines = [];
+					lines.push(E('p', { 'class': 'hpui-hint' }, [
+						E('span', { 'class': r.nodes.length ? 'hpui-c-green' : 'hpui-c-red' },
+							[ _('%s node(s) recognized (%s), %s skipped.').format(
+								r.nodes.length, r.format || '?', r.skipped.length) ])
+					]));
+					r.skipped.slice(0, 5).forEach(function(sk) {
+						lines.push(E('p', { 'class': 'hpui-hint', 'style': 'opacity:.75' }, [ sk ]));
+					});
+					if (r.nodes.length)
+						lines.push(E('div', { 'class': 'right', 'style': 'margin-top:8px' }, [
+							E('button', { 'class': 'hpui-btn hpui-btn-primary', 'click': function() {
+								const existing = new Set(
+									uci.sections(data[0], 'node').map(function(s) { return s.label; })
+										.filter(Boolean));
+								r.nodes.forEach(function(cfg) {
+									let label = cfg.label;
+									if (existing.has(label)) {
+										const base = label;
+										let n = 2;
+										while (existing.has(base + '-' + n)) n++;
+										label = base + '-' + n;
+									}
+									existing.add(label);
+									cfg.label = label;
+									const sid = uci.add(data[0], 'node');
+									Object.keys(cfg).forEach(function(k) {
+										if (cfg[k] != null)
+											uci.set(data[0], sid, k,
+												Array.isArray(cfg[k]) ? cfg[k] : String(cfg[k]));
 									});
-
-									if (imported_node === 0)
-										ui.addNotification(null, E('p', _('No valid share link found.')));
-									else
-										ui.addNotification(null, E('p', _('Successfully imported %s nodes of total %s.').format(
-											imported_node, total)));
-
-									return uci.save()
-										.then(L.bind(this.map.load, this.map))
-										.then(L.bind(this.map.reset, this.map))
-										.then(L.ui.hideModal)
-										.catch(() => {});
 								});
-						})
-					}, [ _('Import') ])
-				])
-			])
-		}
-		ss.handleConfImport = function() {
-			const fileInput = E('input', { type: 'file', accept: '.conf', style: 'display:block;margin:8px 0' });
-			ui.showModal(_('Import .conf file'), [
-				E('p', _('Select a WireGuard or AmneziaWG .conf file.')),
+								ui.hideModal();
+								return m.save(null, true)
+									.then(function() { return ui.changes.apply(true); })
+									.then(function() { location.reload(); });
+							} }, [ _('Import %s nodes').format(r.nodes.length) ])
+						]));
+					dom.content(summary, lines);
+				});
+			}
+
+			ui.showModal(_('Import nodes'), [
+				E('p', _('Paste share links, a base64 batch, sing-box JSON or clash/mihomo YAML — or pick a file. The server parses the SAME formats as subscriptions (no core-capability filtering: a node the current core cannot load is still saved).')),
+				textarea.render(),
 				fileInput,
-				E('div', { class: 'right' }, [
-					E('button', { class: 'btn', click: ui.hideModal }, [ _('Cancel') ]),
-					' ',
-					E('button', {
-						class: 'btn cbi-button-action',
-						click: ui.createHandlerFn(this, function() {
-							const file = fileInput.files[0];
-							if (!file) return ui.hideModal();
-
-							return new Promise((resolve) => {
-								const reader = new FileReader();
-								reader.onload = (ev) => resolve(ev.target.result);
-								reader.readAsText(file);
-							}).then((text) => {
-								const config = parseWireGuardConf(text);
-								if (!config) {
-									ui.hideModal();
-									return ui.addNotification(null, E('p', _('No valid WireGuard/AmneziaWG config found.')));
-								}
-
-								/* Ф5.3 (аудит 51): та же планка, что у серверных
-								 * импортёров — битый узел не создаётся. */
-								const verrs = validateWireGuardNode(config);
-								if (verrs) {
-									ui.hideModal();
-									return ui.addNotification(null, E('p',
-										_('Node failed validation: %s').format(verrs.join('; '))));
-								}
-
-								const existingLabels = new Set(
-									uci.sections(data[0], 'node').map(s => s.label).filter(Boolean)
-								);
-								if (existingLabels.has(config.label)) {
-									const base = config.label;
-									let n = 2;
-									while (existingLabels.has(base + '-' + n)) n++;
-									config.label = base + '-' + n;
-								}
-
-								const sid = uci.add(data[0], 'node');
-								for (const [k, v] of Object.entries(config))
-									if (v != null) uci.set(data[0], sid, k, Array.isArray(v) ? v : String(v));
-
-								return uci.save()
-									.then(L.bind(this.map.load, this.map))
-									.then(L.bind(this.map.reset, this.map))
-									.then(L.ui.hideModal)
-									.then(() => ui.addNotification(null, E('p', _('Successfully imported node: %s').format(config.label))))
-									.catch(() => {});
-							});
-						})
-					}, [ _('Import') ])
+				summary,
+				E('div', { 'class': 'right', 'style': 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px' }, [
+					E('button', { 'class': 'hpui-btn hpui-btn-ghost', 'click': ui.hideModal },
+						[ _('Cancel') ]),
+					E('button', { 'class': 'hpui-btn hpui-btn-primary', 'click': function() {
+						const file = fileInput.files[0];
+						if (file) {
+							const reader = new FileReader();
+							reader.onload = function(ev) { parseText(ev.target.result); };
+							reader.readAsText(file);
+						} else
+							parseText(textarea.getValue());
+					} }, [ _('Parse') ])
 				])
 			]);
 		}
 
+		/* WireGuard/AmneziaWG .conf import (client-side — the one format the
+		 * server parser set does not carry). */
+		function showConfImport() {
+			const fileInput = E('input', { 'type': 'file', 'accept': '.conf', 'style': 'display:block;margin:8px 0' });
+			ui.showModal(_('Import .conf file'), [
+				E('p', _('Select a WireGuard or AmneziaWG .conf file.')),
+				fileInput,
+				E('div', { 'class': 'right', 'style': 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px' }, [
+					E('button', { 'class': 'hpui-btn hpui-btn-ghost', 'click': ui.hideModal },
+						[ _('Cancel') ]),
+					E('button', { 'class': 'hpui-btn hpui-btn-primary', 'click': function() {
+						const file = fileInput.files[0];
+						if (!file)
+							return ui.hideModal();
+
+						new Promise(function(resolve) {
+							const reader = new FileReader();
+							reader.onload = function(ev) { resolve(ev.target.result); };
+							reader.readAsText(file);
+						}).then(function(text) {
+							const config = parseWireGuardConf(text);
+							if (!config) {
+								ui.hideModal();
+								return note(false, _('No valid WireGuard/AmneziaWG config found.'));
+							}
+
+							/* Ф5.3 (аудит 51): та же планка, что у серверных
+							 * импортёров — битый узел не создаётся. */
+							const verrs = validateWireGuardNode(config);
+							if (verrs) {
+								ui.hideModal();
+								return note(false,
+									_('Node failed validation: %s').format(verrs.join('; ')));
+							}
+
+							const existing = new Set(
+								uci.sections(data[0], 'node').map(function(s) { return s.label; })
+									.filter(Boolean));
+							if (existing.has(config.label)) {
+								const base = config.label;
+								let n = 2;
+								while (existing.has(base + '-' + n)) n++;
+								config.label = base + '-' + n;
+							}
+
+							const sid = uci.add(data[0], 'node');
+							for (const k in config)
+								if (config[k] != null)
+									uci.set(data[0], sid, k,
+										Array.isArray(config[k]) ? config[k] : String(config[k]));
+
+							ui.hideModal();
+							note(true, _('Successfully imported node: %s').format(config.label));
+							return m.save(null, true)
+								.then(function() { return ui.changes.apply(true); })
+								.then(function() { location.reload(); });
+						});
+					} }, [ _('Import') ])
+				])
+			]);
+		}
+
+		/* ── The form: subscription settings + node grids (NO tabs — Ф9.11) ── */
+		let m, s, o, ss;
+
+		m = new form.Map('homeproxy');
+
+		s = m.section(form.NamedSection, 'subscription', 'homeproxy');
+		s.title = _('Subscription settings');
+		s.description = _('Auto update, the fetch path (direct or via proxy), filters and defaults for imported nodes.');
+
+		o = s.option(form.Flag, 'auto_update', _('Auto update'),
+			_('Auto update subscriptions and geodata.'));
+		o.rmempty = false;
+
+		o = s.option(form.ListValue, 'auto_update_time', _('Update time'));
+		for (let i = 0; i < 24; i++)
+			o.value(i, i + ':00');
+		o.default = '2';
+		o.depends('auto_update', '1');
+
+		o = s.option(form.Flag, 'update_via_proxy', _('Update via proxy'),
+			_('Update subscriptions via proxy: the fetch goes through the running proxy and the service is NOT stopped (no internet gap), but the new nodes apply on the next restart — the panel shows an «Apply now» button then.'));
+		o.rmempty = false;
+
+		o = s.option(form.DynamicList, 'subscription_url', _('Subscription URL-s'),
+			_('Formats served by panels: URI lists, base64 batches, sing-box JSON (User-Agent «sing-box»), Xray JSON, SIP008, clash/mihomo YAML. The #fragment becomes the display title.'));
+		o.validate = function(section_id, value) {
+			if (section_id && value) {
+				try {
+					let url = new URL(value);
+					if (!url.hostname)
+						return _('Expecting: %s').format(_('valid URL'));
+				}
+				catch(e) {
+					return _('Expecting: %s').format(_('valid URL'));
+				}
+			}
+
+			return true;
+		}
+
+		o = s.option(form.ListValue, 'filter_nodes', _('Filter nodes'),
+			_('Drop/keep specific nodes from subscriptions.'));
+		o.value('disabled', _('Disable'));
+		o.value('blacklist', _('Blacklist mode'));
+		o.value('whitelist', _('Whitelist mode'));
+		o.default = 'disabled';
+		o.rmempty = false;
+
+		o = s.option(form.DynamicList, 'filter_keywords', _('Filter keywords'),
+			_('Drop/keep nodes that contain the specific keywords. <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions">Regex</a> is supported.'));
+		o.depends({'filter_nodes': 'disabled', '!reverse': true});
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'user_agent', _('User-Agent'));
+		o.placeholder = 'Wget/1.21 (HomeProxy, like v2rayN)';
+
+		o = s.option(form.Flag, 'allow_insecure', _('Allow insecure'),
+			_('Allow insecure connection by default when add nodes from subscriptions.') +
+			'<br/>' +
+			_('This is <strong>DANGEROUS</strong>, your traffic is almost like <strong>PLAIN TEXT</strong>! Use at your own risk!'));
+		o.rmempty = false;
+		o.onchange = allowInsecureConfirm;
+
+		o = s.option(form.ListValue, 'packet_encoding', _('Default packet encoding'));
+		o.value('', _('none'));
+		o.value('packetaddr', _('packet addr (v2ray-core v5+)'));
+		o.value('xudp', _('Xudp (Xray-core)'));
+
+		o = s.option(form.Button, '_save_subscriptions', _('Save subscriptions settings'),
+			_('NOTE: Save current settings before updating subscriptions.'));
+		o.inputstyle = 'apply';
+		o.inputtitle = _('Save current settings');
+		o.onclick = function() {
+			return this.map.save(null, true).then(() => {
+				ui.changes.apply(true);
+			});
+		}
+
+		/* ── Own nodes ── */
+		o = s.option(form.SectionValue, '_node', form.GridSection, 'node');
+		ss = o.subsection;
+		ss.title = _('Own nodes');
+		ss.description = _('Your own servers: import share links, a base64 batch, sing-box JSON, clash YAML or a WireGuard .conf file, or add a node manually. Click a row to edit it. The Live status column shows what the running core currently measures.');
+		renderNodeSettings(ss, data, features, main_node, routing_mode);
+		ss.addremove = true;
+		ss.filter = function(section_id) {
+			return !uci.get(data[0], section_id, 'grouphash');
+		}
 		ss.renderSectionAdd = function(/* ... */) {
 			let el = form.GridSection.prototype.renderSectionAdd.apply(this, arguments),
 				nameEl = el.querySelector('.cbi-section-create-name');
@@ -2363,231 +2021,73 @@ return view.extend({
 			}, 'blur', 'keyup');
 
 			el.appendChild(E('button', {
-				'class': 'cbi-button cbi-button-add',
-				'title': _('Import share links'),
-				'click': ui.createHandlerFn(this, 'handleLinkImport')
-			}, [ _('Import share links') ]));
+				'class': 'hpui-btn hpui-btn-sm hpui-btn-primary',
+				'title': _('Import nodes'),
+				'click': showImport
+			}, [ _('Import nodes') ]));
 
 			el.appendChild(E('button', {
-				'class': 'cbi-button cbi-button-add',
+				'class': 'hpui-btn hpui-btn-sm hpui-btn-ghost',
 				'title': _('Import .conf file'),
-				'click': ui.createHandlerFn(this, 'handleConfImport')
+				'click': showConfImport
 			}, [ _('Import .conf') ]));
 
 			return el;
 		}
-		/* Import subscription links end */
-		/* User nodes end */
 
-		/* Subscription nodes start */
-		for (const info of subinfo) {
-			s.tab('sub_' + info.hash, _('Sub (%s)').format(info.title));
-			o = s.taboption('sub_' + info.hash, form.SectionValue, '_sub_' + info.hash, form.GridSection, 'node');
-			ss = renderNodeSettings(o.subsection, data, features, main_node, routing_mode);
+		/* ── Subscription node groups ── */
+		subInfoList().forEach(function(info) {
+			o = s.option(form.SectionValue, '_sub_' + info.hash, form.GridSection, 'node');
+			ss = o.subsection;
+			ss.title = _('Subscription: %s').format(info.title);
+			ss.description = info.host;
+			renderNodeSettings(ss, data, features, main_node, routing_mode);
 			ss.filter = function(section_id) {
 				return (uci.get(data[0], section_id, 'grouphash') === info.hash);
 			}
-		}
-		/* Subscription nodes end */
-		/* Node settings end */
+		});
 
-		/* Subscriptions settings start */
-		s.tab('subscription', _('Subscriptions'),
-			_('Pull node lists from subscription URL-s automatically: every day at the set hour (optionally through the proxy) and filtered by your keywords. The results land in their own "Sub (…)" tabs.'));
+		/* ── Live statuses: one immediate refresh, then every 5 s (same RPC
+		 * as the Monitoring page — one status source for the whole app). ── */
+		poll.add(function() {
+			return refreshNodeStatuses().then(updateSummary);
+		}, 5);
+		refreshNodeStatuses().then(updateSummary);
 
-		o = s.taboption('subscription', form.Flag, 'auto_update', _('Auto update'),
-			_('Auto update subscriptions and geodata.'));
-		o.rmempty = false;
+		rebuildSubCards();
 
-		o = s.taboption('subscription', form.ListValue, 'auto_update_time', _('Update time'));
-		for (let i = 0; i < 24; i++)
-			o.value(i, i + ':00');
-		o.default = '2';
-		o.depends('auto_update', '1');
+		/* Panel header actions (one result area below the cards) */
+		const panelHead = E('div', { 'class': 'node-panel-head' }, [
+			E('button', { 'class': 'hpui-btn hpui-btn-primary', 'click': function() { startUpdate(''); } },
+				[ subInfoList().length > 1 ? _('Update all') : _('Update') ]),
+			E('button', {
+				'class': 'hpui-btn hpui-btn-ghost',
+				'style': ((subStatus.last && subStatus.last.verify &&
+				           subStatus.last.verify.restarted === false) ? '' : 'display:none'),
+				'click': applyNow
+			}, [ _('Apply now') ])
+		]);
 
-		o = s.taboption('subscription', form.Flag, 'update_via_proxy', _('Update via proxy'),
-			_('Update subscriptions via proxy.'));
-		o.rmempty = false;
-
-		o = s.taboption('subscription', form.DynamicList, 'subscription_url', _('Subscription URL-s'),
-			_('Support Hysteria, Shadowsocks, Trojan, v2rayN (VMess), and XTLS (VLESS) online configuration delivery standard.'));
-		o.validate = function(section_id, value) {
-			if (section_id && value) {
-				try {
-					let url = new URL(value);
-					if (!url.hostname)
-						return _('Expecting: %s').format(_('valid URL'));
-				}
-				catch(e) {
-					return _('Expecting: %s').format(_('valid URL'));
-				}
-			}
-
-			return true;
-		}
-
-		o = s.taboption('subscription', form.ListValue, 'filter_nodes', _('Filter nodes'),
-			_('Drop/keep specific nodes from subscriptions.'));
-		o.value('disabled', _('Disable'));
-		o.value('blacklist', _('Blacklist mode'));
-		o.value('whitelist', _('Whitelist mode'));
-		o.default = 'disabled';
-		o.rmempty = false;
-
-		o = s.taboption('subscription', form.DynamicList, 'filter_keywords', _('Filter keywords'),
-			_('Drop/keep nodes that contain the specific keywords. <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions">Regex</a> is supported.'));
-		o.depends({'filter_nodes': 'disabled', '!reverse': true});
-		o.rmempty = false;
-
-		o = s.taboption('subscription', form.Value, 'user_agent', _('User-Agent'));
-		o.placeholder = 'Wget/1.21 (HomeProxy, like v2rayN)';
-
-		o = s.taboption('subscription', form.Flag, 'allow_insecure', _('Allow insecure'),
-			_('Allow insecure connection by default when add nodes from subscriptions.') +
-			'<br/>' +
-			_('This is <strong>DANGEROUS</strong>, your traffic is almost like <strong>PLAIN TEXT</strong>! Use at your own risk!'));
-		o.rmempty = false;
-		o.onchange = allowInsecureConfirm;
-
-		o = s.taboption('subscription', form.ListValue, 'packet_encoding', _('Default packet encoding'));
-		o.value('', _('none'));
-		o.value('packetaddr', _('packet addr (v2ray-core v5+)'));
-		o.value('xudp', _('Xudp (Xray-core)'));
-
-		o = s.taboption('subscription', form.Button, '_save_subscriptions', _('Save subscriptions settings'),
-			_('NOTE: Save current settings before updating subscriptions.'));
-		o.inputstyle = 'apply';
-		o.inputtitle = _('Save current settings');
-		o.onclick = function() {
-			return this.map.save(null, true).then(() => {
-				ui.changes.apply(true);
-			});
-		}
-
-		o = s.taboption('subscription', form.Button, '_update_subscriptions', _('Update nodes from subscriptions'));
-		o.inputstyle = 'apply';
-		o.inputtitle = function(section_id) {
-			let sublist = uci.get(data[0], section_id, 'subscription_url') || [];
-			if (sublist.length > 0) {
-				return _('Update %s subscriptions').format(sublist.length);
-			} else {
-				this.readonly = true;
-				return _('No subscription available')
-			}
-		}
-		o.onclick = function() {
-			ui.showModal(_('Updating subscriptions'), [
-				E('p', { 'class': 'spinning' }, _('Fetching nodes, please wait...'))
-			]);
-
-			/* Ф5.1: результат — в ОДНОМ месте, в этой же модали: итог цикла,
-			 * diff до/после по каждой подписке, причина отказа (если была). */
-			const hostOf = (u) => String(u || '').replace(/^https?:\/\//, '').split(/[#/]/)[0];
-			const ACT = {
-				applied: _('Nodes updated'),
-				aborted: _('Update declined — nodes untouched'),
-				rolled_back: _('Update rolled back — nodes restored from the backup'),
-				failed: _('Update failed')
-			};
-			const GST = {
-				ok: _('OK'),
-				html: _('server returned an HTML page — skipped'),
-				no_valid: _('no valid node in the response — skipped'),
-				fetch_failed: _('fetch failed — skipped'),
-				pending: '…'
-			};
-			return fs.exec_direct('/etc/homeproxy/scripts/update_subscriptions.uc').then(() => {
-				return L.resolveDefault(callSubscriptionStatus(), {});
-			}).then((st) => {
-				const last = (st && st.last) || null;
-				const body = [];
-				if (!last) {
-					body.push(E('p', {}, _('Update finished (no status report — it was produced before this feature existed).')));
-				} else {
-					body.push(E('p', { style: 'font-weight:bold' }, [ ACT[last.action] || last.action ]));
-					if (last.totals)
-						body.push(E('p', {}, _('Nodes: %s before, %s after (+%s/−%s; kept unchanged: %s)')
-							.format(last.totals.before, last.totals.after, last.totals.added, last.totals.removed, last.totals.kept)));
-					for (let g of (last.groups || []))
-						body.push(E('p', { style: 'margin:2px 0; font-size:.9em' }, [
-							_('%s · %s → %s (+%s/−%s, unchanged %s)').format(
-								hostOf(g.url), GST[g.status] || g.status,
-								g.parsed, g.added, g.removed, g.kept)
-						]));
-					if (last.reason)
-						body.push(E('p', { style: 'color:#d99a1b' }, [ last.reason ]));
-					if (last.backup)
-						body.push(E('p', { style: 'font-size:.9em; opacity:.8' }, _('Backup') + ': ' + last.backup));
-					if (last.verify && last.verify.restarted === false)
-						body.push(E('p', { style: 'font-size:.9em; opacity:.8' },
-							[_('The service was not restarted — new nodes apply on the next restart.')]));
-				}
-				body.push(E('div', { class: 'right' }, [
-					E('button', {
-						class: 'btn cbi-button-action',
-						click: () => location.reload()
-					}, [ _('Reload page') ])
-				]));
-				ui.showModal(_('Updating subscriptions'), body);
-			}).catch((err) => {
-				ui.hideModal();
-				ui.addNotification(null, E('p', _('An error occurred during updating subscriptions: %s').format(err)));
-				return this.map.reset();
-			});
-		}
-
-		o = s.taboption('subscription', form.Button, '_remove_subscriptions', _('Remove all nodes from subscriptions'));
-		o.inputstyle = 'reset';
-		o.inputtitle = function() {
-			let subnodes = [];
-			uci.sections(data[0], 'node', (res) => {
-				if (res.grouphash)
-					subnodes = subnodes.concat(res['.name'])
-			});
-
-			if (subnodes.length > 0) {
-				return _('Remove %s nodes').format(subnodes.length);
-			} else {
-				this.readonly = true;
-				return _('No subscription node');
-			}
-		}
-		o.onclick = function() {
-			let subnodes = [];
-			uci.sections(data[0], 'node', (res) => {
-				if (res.grouphash)
-					subnodes = subnodes.concat(res['.name'])
-			});
-
-			for (let i in subnodes)
-				uci.remove(data[0], subnodes[i]);
-
-			if (subnodes.includes(uci.get(data[0], 'config', 'main_node')))
-				uci.set(data[0], 'config', 'main_node', 'nil');
-
-			if (subnodes.includes(uci.get(data[0], 'config', 'main_udp_node')))
-				uci.set(data[0], 'config', 'main_udp_node', 'nil');
-
-			this.inputtitle = _('%s nodes removed').format(subnodes.length);
-			this.readonly = true;
-
-			return this.map.save(null, true);
-		}
-		/* Subscriptions settings end */
-
-		/* ByeDPI/Zapret settings moved to the Routing Wizard (DPI bypass) — user wish, session 24 */
-
-		/* Live statuses: one immediate refresh, then every 5 s (same RPC as
-		 * the Monitoring page — one status source for the whole app). */
-		poll.add(refreshNodeStatuses, 5);
-		refreshNodeStatuses();
+		const subPanel = E('div', { 'class': 'hpui-card', 'style': 'padding:14px 16px; margin-top:6px' }, [
+			panelHead,
+			subCards,
+			E('div', { 'class': 'node-addrow' }, [
+				subUrlInput,
+				E('button', { 'class': 'hpui-btn hpui-btn-primary', 'click': addSubscription },
+					[ _('Add subscription') ])
+			]),
+			subResult
+		]);
 
 		return m.render().then(function(node) {
 			return E('div', {}, [
 				hp.pageIntro(_('Servers'),
-					_('The servers the connection runs through: add your own (share link, .conf file or by hand) or pull a provider subscription. The Live status column shows what the running core currently measures for every node. Which server is used as the main one — on the Connection page.')),
+					_('The servers the connection runs through: your own nodes (share link, base64 batch, sing-box JSON, clash YAML, .conf file or by hand) and provider subscriptions with automatic updates. The Live status column shows what the running core currently measures for every node. Which server is used as the main one — on the Connection page.')),
+				sumBox,
+				subPanel,
 				node
 			]);
 		});
 	}
 });
+

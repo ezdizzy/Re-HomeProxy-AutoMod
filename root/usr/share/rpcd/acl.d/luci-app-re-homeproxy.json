@@ -20,7 +20,7 @@
 					"app_status", "app_check_update", "app_op_status", "app_op_list", "app_snapshot_list",
 					"health_status", "sentinel_status", "recovery_status", "health_explain",
 					"app_rulesets_local_status", "zapret_fuzz_status", "wizard_compose_status", "wizard_compose_build",
-					"app_subscription_status",
+					"app_subscription_status", "app_import_nodes",
 					"wizard_autopilot_status", "wizard_auto_pick_status", "automation_status", "automation_stats",
 					"route_explain", "wizard_scan_status", "wizard_dpidetect_status", "wizard_service_check",
 					"wizard_service_profile_status", "discovery_snapshot", "service_optimizer_plan",
@@ -43,6 +43,7 @@
 			"ubus": {
 				"luci.homeproxy": [
 					"acllist_write", "certificate_write", "log_clean", "core_install_start", "detect_custom_core",
+					"app_subscription_update_start", "app_subscription_add", "app_subscription_remove",
 					"monitor_connections_close", "diag_config_heal", "diag_service_restart",
 					"byedpi_prepare_install", "byedpi_install_pkg", "byedpi_remove",
 					"zapret_prepare_install", "zapret_install_pkg", "zapret_remove",

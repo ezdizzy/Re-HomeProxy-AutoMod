@@ -13570,3 +13570,123 @@ msgstr "Состояние движка"
 
 msgid "Auto — best node"
 msgstr "Автомат — лучший узел"
+
+msgid "HTML page"
+msgstr "HTML-страница"
+
+msgid "No valid nodes"
+msgstr "Нет валидных узлов"
+
+msgid "Fetch failed"
+msgstr "Не удалось получить"
+
+msgid "Own nodes"
+msgstr "Свои узлы"
+
+msgid "From subscriptions"
+msgstr "Из подписок"
+
+msgid "Apply now"
+msgstr "Применить сейчас"
+
+msgid "An update is already running"
+msgstr "Обновление уже выполняется"
+
+msgid "Failed to start the update"
+msgstr "Не удалось запустить обновление"
+
+msgid "Service restarted — the new nodes are live."
+msgstr "Служба перезапущена — новые узлы в работе."
+
+msgid "The restart is still running — see the operations journal on the Health center page."
+msgstr "Перезапуск ещё выполняется — смотрите журнал операций на странице «Центр здоровья»."
+
+msgid "Not updated yet"
+msgstr "Ещё не обновлялась"
+
+msgid "%s nodes"
+msgstr "%s узлов"
+
+msgid "No subscriptions yet — add a provider link below."
+msgstr "Подписок пока нет — добавьте ссылку провайдера ниже."
+
+msgid "Remove subscription"
+msgstr "Удалить подписку"
+
+msgid "Remove the subscription «%s» and its %s nodes? The subscription URL is deleted from the settings."
+msgstr "Удалить подписку «%s» и её %s узлов? Ссылка подписки будет удалена из настроек."
+
+msgid "Subscription removed (%s nodes)."
+msgstr "Подписка удалена (%s узлов)."
+
+msgid "Enter the subscription URL"
+msgstr "Введите ссылку подписки"
+
+msgid "This subscription is already in the list"
+msgstr "Эта подписка уже есть в списке"
+
+msgid "Subscription added."
+msgstr "Подписка добавлена."
+
+msgid "Nothing to parse"
+msgstr "Нечего разбирать"
+
+msgid "Parse failed"
+msgstr "Не удалось разобрать"
+
+msgid "%s node(s) recognized (%s), %s skipped."
+msgstr "Распознано узлов: %s (%s), пропущено: %s."
+
+msgid "Import %s nodes"
+msgstr "Импортировать узлов: %s"
+
+msgid "Import nodes"
+msgstr "Импорт узлов"
+
+msgid "Paste share links, a base64 batch, sing-box JSON or clash/mihomo YAML — or pick a file. The server parses the SAME formats as subscriptions (no core-capability filtering: a node the current core cannot load is still saved)."
+msgstr "Вставьте share-ссылки, base64-пачку, sing-box JSON или clash/mihomo YAML — или выберите файл. Сервер разбирает ТЕ ЖЕ форматы, что и подписки (без фильтра по возможностям ядра: узел, который текущее ядро не умеет, всё равно сохранится)."
+
+msgid "Parse"
+msgstr "Разобрать"
+
+msgid "Subscription settings"
+msgstr "Настройки подписок"
+
+msgid "Auto update, the fetch path (direct or via proxy), filters and defaults for imported nodes."
+msgstr "Автообновление, путь получения (напрямую или через прокси), фильтры и значения по умолчанию для импортируемых узлов."
+
+msgid "Update subscriptions via proxy: the fetch goes through the running proxy and the service is NOT stopped (no internet gap), but the new nodes apply on the next restart — the panel shows an «Apply now» button then."
+msgstr "Обновление подписок через прокси: запрос идёт через работающий прокси, служба НЕ останавливается (без разрыва интернета), но новые узлы применяются при следующем рестарте — тогда в панели появляется кнопка «Применить сейчас»."
+
+msgid "Formats served by panels: URI lists, base64 batches, sing-box JSON (User-Agent «sing-box»), Xray JSON, SIP008, clash/mihomo YAML. The #fragment becomes the display title."
+msgstr "Форматы, которые отдают панели: списки URI, base64-пачки, sing-box JSON (User-Agent «sing-box»), Xray JSON, SIP008, clash/mihomo YAML. Фрагмент #… становится отображаемым названием."
+
+msgid "Your own servers: import share links, a base64 batch, sing-box JSON, clash YAML or a WireGuard .conf file, or add a node manually. Click a row to edit it. The Live status column shows what the running core currently measures."
+msgstr "Ваши собственные серверы: импорт share-ссылок, base64-пачки, sing-box JSON, clash YAML или файла WireGuard .conf, либо добавление вручную. Нажмите на строку, чтобы редактировать. Колонка «Статус» показывает, что ядро меряет для узла прямо сейчас."
+
+msgid "Subscription: %s"
+msgstr "Подписка: %s"
+
+msgid "Update all"
+msgstr "Обновить все"
+
+msgid "Add subscription"
+msgstr "Добавить подписку"
+
+msgid "The servers the connection runs through: your own nodes (share link, base64 batch, sing-box JSON, clash YAML, .conf file or by hand) and provider subscriptions with automatic updates. The Live status column shows what the running core currently measures for every node. Which server is used as the main one — on the Connection page."
+msgstr "Серверы, через которые идёт подключение: свои узлы (share-ссылка, base64-пачка, sing-box JSON, clash YAML, файл .conf или вручную) и подписки провайдера с автообновлением. Колонка «Статус» показывает, что ядро меряет для каждого узла. Какой сервер главный — на странице «Подключение»."
+
+msgid "The update did not report its start — see the log on the router."
+msgstr "Обновление не сообщило о запуске — смотрите журнал на роутере."
+
+msgid "The service will be restarted to remove them from the core."
+msgstr "Служба будет перезапущена, чтобы убрать их из ядра."
+
+msgid "Removing the subscription…"
+msgstr "Удаляем подписку…"
+
+msgid "Subscription removed (no nodes — nothing to apply)."
+msgstr "Подписка удалена (узлов не было — применять нечего)."
+
+msgid "Not in the last run"
+msgstr "Не в последнем прогоне"

@@ -11,7 +11,6 @@ import { open } from 'fs';
 import { connect } from 'ubus';
 import { cursor } from 'uci';
 
-import { urldecode, urlencode, urldecode_params } from 'luci.http';
 import { init_action } from 'luci.sys';
 
 import {
@@ -23,10 +22,12 @@ import { access, stat, popen } from 'fs';
 
 import { emit as ev_emit } from 'eventbus';
 
-/* Single shared share-link parser (also used by import_link.uc) — replacing the
- * drifted embedded copy that used to lose new features (e.g. hysteria2 port
- * hopping) whenever only one of the two copies was updated. */
-import { parse_uri } from 'node_parse';
+/* Single shared parser set (Ф9.11): parse_uri for share links (and the
+ * passthrough/validation of pre-parsed objects) + parse_content for whole
+ * subscription bodies (sing-box JSON, Xray JSON, SIP008, clash/mihomo YAML,
+ * base64 batches, plain URI lists). The UI import RPC uses the SAME
+ * implementations — no second copy to drift. */
+import { parse_uri, parse_content } from 'node_parse';
 
 /* The ucode 'digest' module is deliberately NOT used: the package must not
  * depend on it (it is absent on some OpenWrt builds). Use the same
@@ -42,13 +43,6 @@ function strhash(s) {
 		h = (h * 16777619) & 0xFFFFFFFF;
 	}
 	return sprintf('%08x', h);
-}
-
-/* Some exports put scalars where sing-box/Xray schemas expect objects (mieru
- * "transport": "UDP", hysteria2 "obfs": "salamander", ...) — property access on
- * a scalar is a fatal "left-hand side expression is not an array or object". */
-function as_obj(v) {
-	return (type(v) === 'object') ? v : {};
 }
 
 /* UCI config start */
@@ -80,6 +74,11 @@ if (routing_mode_eff !== 'custom') {
 }
 /* UCI config end */
 
+/* Ф9.11: an optional single-URL argument limits the run to ONE subscription
+ * (the per-subscription «Обновить» card button). Empty = every URL (cron). */
+const only_url = (length(ARGV) && type(ARGV[0]) === 'string' && length(trim(ARGV[0])))
+	? trim(ARGV[0]) : null;
+
 /* String helper start */
 function filter_check(name) {
 	if (isEmpty(name) || filter_mode === 'disabled' || isEmpty(filter_keywords))
@@ -97,6 +96,32 @@ function filter_check(name) {
 	return ret;
 }
 /* String helper end */
+
+/* ── Canonical node fingerprint (Ф9.11: rename + duplicate protection) ─────
+ * Sorted "k=v" pairs of a node config, label and auto-applied globals
+ * excluded. The freshly parsed config and the existing UCI section are
+ * fingerprinted the SAME way, so a user RENAME (label change only) still
+ * matches its source node and survives a subscription update instead of
+ * being re-added as a duplicate. tls_insecure/packet_encoding are excluded
+ * too: they are re-applied from the global subscription settings on every
+ * run and must never break the match. bind_interface is a user field. */
+const FP_SKIP = {
+	label: true, grouphash: true, isExisting: true,
+	bind_interface: true, tls_insecure: true, packet_encoding: true
+};
+
+function node_fingerprint(obj) {
+	const ks = sort(filter(keys(obj || {}), (k) =>
+		!(k in FP_SKIP) && substr(k, 0, 1) !== '.' &&
+		obj[k] != null && ('' + obj[k]) !== ''));
+	const parts = [];
+	for (let k in ks) {
+		const v = obj[k];
+		const s = (type(v) === 'array') ? join(',', map(v, (x) => '' + x)) : '' + v;
+		push(parts, k + '=' + s);
+	}
+	return join('|', parts);
+}
 
 /* Common var start */
 const node_cache = {},
@@ -239,8 +264,8 @@ function restore_nodes(path) {
 	const lists = [['main_urltest_nodes'], ['main_udp_urltest_nodes'], ['exit_reserves']];
 	for (let l in lists) {
 		uci.delete(uciconfig, ucimain, l[0]);
-		if (type(doc[l[0]]) === 'array')
-			map(doc[l[0]], (x) => uci.set(uciconfig, ucimain, l[0], '' + x));
+		if (type(doc[l[0]]) === 'array' && length(doc[l[0]]))
+			uci.set(uciconfig, ucimain, l[0], doc[l[0]]);
 	}
 	uci.commit(uciconfig);
 	return true;
@@ -283,437 +308,24 @@ function new_group(gid, url) {
 		added: 0, removed: 0, kept: 0, status: 'pending' };
 }
 
-function parse_singbox_outbound(ob, companion_map) {
-	const proxy_types = ['vless', 'vmess', 'trojan', 'shadowsocks', 'naive',
-	                     'tuic', 'hysteria', 'hysteria2', 'wireguard', 'ssh', 'mieru', 'anytls',
-	                     'trusttunnel', 'socks', 'http'];
-	if (type(ob) !== 'object' || !(ob.type in proxy_types)) return null;
-	/* Skip hidden companion outbounds (e.g. ShadowTLS wrappers tagged §hide§) */
-	if (ob.tag && match(ob.tag, /§hide§/)) return null;
-
-	const tls = as_obj(ob.tls);
-	const utls = as_obj(tls.utls);
-	const reality = as_obj(tls.reality);
-	/* mieru (and some panels) use a STRING transport ("UDP"/"TCP"/"ws") — it is
-	 * read as mieru_protocol below; only an object carries V2Ray transport. */
-	const tr = as_obj(ob.transport);
-
-	let config = {
-		label: ob.tag || null,
-		type: ob.type,
-		address: ob.server || null,
-		port: (ob.server_port != null) ? '' + ob.server_port : null,
-		username: ob.username || ob.user || null,
-		password: ob.password || null,
-		tls: tls.enabled ? '1' : '0',
-		tls_sni: tls.server_name || null,
-		tls_insecure: tls.insecure ? '1' : null,
-		tls_alpn: tls.alpn || null,
-		tls_reality: reality.enabled ? '1' : null,
-		tls_reality_public_key: reality.enabled ? (reality.public_key || null) : null,
-		tls_reality_short_id: reality.enabled ? (reality.short_id || null) : null,
-		tls_utls: (sing_features.with_utls && utls.enabled) ? (utls.fingerprint || null) : null,
-	};
-
-	/* V2Ray transport (vless / vmess / trojan) */
-	if (tr.type) {
-		config.transport = tr.type;
-		switch (tr.type) {
-		case 'grpc':
-			config.grpc_servicename = tr.service_name || null;
-			break;
-		case 'ws':
-			config.ws_host = (type(tr.headers) === 'object' && tr.headers.Host) ? tr.headers.Host : null;
-			config.ws_path = tr.path || null;
-			break;
-		case 'httpupgrade':
-			config.httpupgrade_host = tr.host || null;
-			config.http_path = tr.path || null;
-			break;
-		case 'http':
-			config.http_host = tr.host ? [tr.host] : null;
-			config.http_path = tr.path || null;
-			break;
-		case 'xhttp':
-			config.http_path = tr.path || null;
-			config.http_host = tr.host || null;
-			config.xhttp_mode = tr.mode || null;
-			/* Accept both dialects: hiddify camelCase (what the Hiddify app exports) and
-			 * sing-box snake_case. */
-			config.xhttp_padding_bytes = tr.xPaddingBytes || tr.x_padding_bytes || null;
-			config.xhttp_sc_max_each_post_bytes = tr.scMaxEachPostBytes || tr.sc_max_each_post_bytes || null;
-			config.xhttp_sc_min_posts_interval_ms = tr.scMinPostsIntervalMs || tr.sc_min_posts_interval_ms || null;
-			if (!isEmpty(tr.headers))
-				config.xhttp_headers = sprintf('%J', tr.headers);
-			/* Split download — hiddify `downloadSettings` or sing-box `download`. */
-			let dl = tr.downloadSettings || tr.download;
-			if (type(dl) === 'object') {
-				let dl_tls = as_obj(dl.tls);
-				config.xhttp_download_path = dl.path || null;
-				config.xhttp_download_host = dl.host || null;
-				config.xhttp_download_server = dl.server || dl.address || null;
-				config.xhttp_download_port = (dl.server_port != null && dl.server_port !== 0) ? ('' + dl.server_port) :
-				                             (dl.port != null ? ('' + dl.port) : null);
-				if (dl_tls.enabled) {
-					config.xhttp_download_security = 'tls';
-					config.xhttp_download_sni = dl_tls.server_name || null;
-					config.xhttp_download_alpn = (type(dl_tls.alpn) === 'array') ? join(',', dl_tls.alpn) : (dl_tls.alpn || null);
-					const dl_utls = dl_tls.utls || {};
-					config.xhttp_download_fp = dl_utls.fingerprint || null;
-				}
-			}
-			break;
-		}
-	}
-
-	switch (ob.type) {
-	case 'vless':
-		config.uuid = ob.uuid || null;
-		config.vless_flow = ob.flow || null;
-		config.packet_encoding = ob.packet_encoding || null;
-		break;
-	case 'vmess':
-		config.uuid = ob.uuid || null;
-		config.vmess_alterid = ob.alter_id || null;
-		break;
-	case 'shadowsocks':
-		config.shadowsocks_encrypt_method = ob.method || null;
-		if (ob.detour && companion_map[ob.detour]) {
-			const stls = as_obj(companion_map[ob.detour]);
-			config.address = stls.server || null;
-			config.port = (stls.server_port != null) ? '' + stls.server_port : null;
-			config.shadowtls_enabled = '1';
-			config.shadowtls_password = stls.password || null;
-			config.shadowtls_version = (stls.version != null) ? '' + stls.version : '3';
-			const stls_tls = as_obj(stls.tls);
-			const stls_utls = as_obj(stls_tls.utls);
-			config.tls = stls_tls.enabled ? '1' : '0';
-			config.tls_sni = stls_tls.server_name || null;
-			config.tls_insecure = stls_tls.insecure ? '1' : null;
-			config.tls_utls = (sing_features.with_utls && stls_utls.enabled) ? (stls_utls.fingerprint || null) : null;
-		}
-		break;
-	case 'naive':
-		config.naive_quic = ob.quic ? '1' : null;
-		config.naive_extra_headers = !isEmpty(ob.extra_headers) ? sprintf('%J', ob.extra_headers) : null;
-		break;
-	case 'tuic':
-		config.uuid = ob.uuid || null;
-		config.tuic_congestion_control = ob.congestion_control || null;
-		config.tuic_udp_relay_mode = ob.udp_relay_mode || null;
-		/* UCI key is tuic_enable_zero_rtt — what the config generator reads */
-		config.tuic_enable_zero_rtt = ob.zero_rtt_handshake ? '1' : null;
-		config.tuic_udp_over_stream = ob.udp_over_stream ? '1' : null;
-		config.tuic_heartbeat = ob.heartbeat || null;
-		break;
-	case 'hysteria':
-		/* Hysteria v1 (sing-box-extended / hiddify-core) */
-		config.hysteria_protocol = ob.protocol || 'udp';
-		config.hysteria_auth_type = (ob.auth || ob.auth_str) ? 'string' : null;
-		config.hysteria_auth_payload = ob.auth_str || ob.auth || null;
-		config.hysteria_obfs_password = (type(ob.obfs) === 'string') ? ob.obfs : null;
-		config.hysteria_up_mbps = (ob.up_mbps != null) ? '' + ob.up_mbps : null;
-		config.hysteria_down_mbps = (ob.down_mbps != null) ? '' + ob.down_mbps : null;
-		config.hysteria_recv_window_conn = (ob.recv_window_conn != null) ? '' + ob.recv_window_conn : null;
-		config.hysteria_revc_window = (ob.recv_window != null) ? '' + ob.recv_window : null;
-		config.hysteria_disable_mtu_discovery = ob.disable_mtu_discovery ? '1' : null;
-		break;
-	case 'hysteria2':
-		config.hysteria_up_mbps = (ob.up_mbps != null) ? '' + ob.up_mbps : null;
-		config.hysteria_down_mbps = (ob.down_mbps != null) ? '' + ob.down_mbps : null;
-		if (type(ob.obfs) === 'object') {
-			config.hysteria_obfs_type = ob.obfs.type || null;
-			config.hysteria_obfs_password = ob.obfs.password || null;
-		} else if (ob.obfs)
-			/* String shorthand ("obfs": "salamander") used by some panels */
-			config.hysteria_obfs_type = '' + ob.obfs;
-		/* Port hopping: server_ports entries are "min:max"; hop_interval is a
-		 * duration string ("30s") which strToTime() passes through untouched.
-		 * Hopping-only nodes ship NO server_port — the first range's floor
-		 * becomes the primary port (the core still requires one). */
-		if (type(ob.server_ports) === 'array' && length(ob.server_ports)) {
-			config.hysteria_hopping_port = ob.server_ports;
-			if (isEmpty(config.port)) {
-				const hy2_first = replace('' + ob.server_ports[0], /:.*$/, '');
-				if (match(hy2_first, /^\d+$/))
-					config.port = hy2_first;
-			}
-		}
-		if (ob.hop_interval != null)
-			config.hysteria_hop_interval = '' + ob.hop_interval;
-		break;
-	case 'wireguard':
-		config.wireguard_private_key = ob.private_key || null;
-		/* Ф5.3 (аудит 51): the generator reads PEER public key from
-		 * wireguard_peer_public_key — the old wireguard_public_key name was
-		 * silently ignored by the schema (peer key lost on every imported WG
-		 * subscription node; stale field is dropped by the update loop). */
-		config.wireguard_peer_public_key = ob.peer_public_key || null;
-		config.wireguard_pre_shared_key = ob.pre_shared_key || null;
-		config.wireguard_local_address = ob.local_address || null;
-		config.wireguard_mtu = (ob.mtu != null) ? '' + ob.mtu : null;
-		if (type(ob.reserved) === 'array')
-			config.wireguard_reserved = map(ob.reserved, s => '' + s);
-		break;
-	case 'ssh':
-		config.ssh_host_key = ob.host_key || null;
-		config.ssh_host_key_algo = (type(ob.host_key_algorithms) === 'array') ?
-			((length(ob.host_key_algorithms) > 1) ? ob.host_key_algorithms : ob.host_key_algorithms[0]) :
-			(ob.host_key_algorithms || null);
-		config.ssh_priv_key = ob.private_key || null;
-		config.ssh_priv_key_pp = ob.private_key_passphrase || null;
-		/* Only honored on hiddify-core (see generate_client); harmless on sing-box-extended */
-		config.ssh_udp_over_tcp = (ob.udp_over_tcp != null) ? (ob.udp_over_tcp ? '1' : '0') : null;
-		break;
-	case 'anytls':
-		config.anytls_padding_scheme = ob.padding_scheme || null;
-		break;
-	case 'trusttunnel':
-		/* TrustTunnel (AdGuard's obfuscated VPN; sing-box-extended only). The
-		 * node is ALWAYS imported (data survives a core switch); generate_client
-		 * skips it when the running build has no with_trusttunnel tag.
-		 * username/password land in the generic fields (emitted for non-ssh). */
-		config.trusttunnel_congestion_controller = ob.congestion_controller || null;
-		/* NetworkList: JSON array ["tcp","udp"] or a string ("tcp" / "tcp\nudp"). */
-		if (type(ob.network) === 'array')
-			config.trusttunnel_network = map(ob.network, (n) => '' + n);
-		else if (!isEmpty(ob.network))
-			config.trusttunnel_network = filter(split(replace('' + ob.network, /[,\n\r]+/g, ' '), ' '), (n) => length(n));
-		config.trusttunnel_quic = ob.quic ? '1' : null;
-		config.trusttunnel_health_check = ob.health_check ? '1' : null;
-		config.trusttunnel_cwnd = (ob.cwnd != null) ? '' + ob.cwnd : null;
-		if (type(as_obj(ob.multiplex).enabled) === 'boolean' && ob.multiplex.enabled) {
-			config.trusttunnel_multiplex = '1';
-			config.trusttunnel_mp_max_connections = (ob.multiplex.max_connections != null) ? '' + ob.multiplex.max_connections : null;
-			config.trusttunnel_mp_min_streams = (ob.multiplex.min_streams != null) ? '' + ob.multiplex.min_streams : null;
-			config.trusttunnel_mp_max_streams = (ob.multiplex.max_streams != null) ? '' + ob.multiplex.max_streams : null;
-		}
-		break;
-	case 'socks':
-		config.socks_version = (ob.version != null) ? '' + ob.version : null;
-		break;
-	case 'mieru':
-		/* The generator forces server_port=0 for mieru and passes the port ONLY
-		 * via mieru_port_range — every imported mieru needs that range set. */
-		config.port = '0';
-		if (type(ob.portBindings) === 'array' && type(ob.portBindings[0]) === 'object') {
-			/* Hiddify format */
-			config.mieru_protocol = ob.portBindings[0].protocol || null;
-			config.mieru_port_range = ob.portBindings[0].portRange || null;
-		} else if (type(ob.server_ports) === 'array' && ob.server_ports[0]) {
-			/* sing-box multi-port format */
-			config.mieru_port_range = ob.server_ports[0] || null;
-		}
-		/* Protocol: sing-box schema carries it as a STRING transport ("UDP"/"TCP");
-		 * absent → infer from the tag. */
-		config.mieru_protocol = (type(ob.transport) === 'string') ? ob.transport :
-			((ob.tag && match(ob.tag, /UDP/i)) ? 'UDP' : ((ob.tag && match(ob.tag, /TCP/i)) ? 'TCP' : null));
-		/* Single-port mieru (server + server_port, no ranges): synthesize the
-		 * "min:max" range so the generator emits a usable outbound. */
-		if (isEmpty(config.mieru_port_range) && ob.server_port != null && ob.server_port !== 0)
-			config.mieru_port_range = ob.server_port + ':' + ob.server_port;
-		config.mieru_multiplexing = ob.multiplexing || null;
-		config.mieru_handshake_mode = ob.handshake_mode || null;
-		break;
-	}
-
-	return config;
-}
-
-/* Parse ONE Xray/V2Ray outbound object (settings.vnext|servers + streamSettings)
- * into a HomeProxy node config. `remarks` is the config-level friendly name (Xray
- * outbounds don't carry it). Mirrors parse_singbox_outbound for the Xray schema. */
-function parse_xray_outbound(ob, remarks) {
-	const proxy_types = ['vless', 'vmess', 'trojan', 'shadowsocks', 'socks', 'http', 'hysteria'];
-	if (type(ob) !== 'object') return null;
-	const proto = ob.protocol;
-	if (!(proto in proxy_types)) return null;
-
-	const st = as_obj(ob.settings);
-	const ss = as_obj(ob.streamSettings);
-	const net = ss.network || 'tcp';
-	const security = ss.security || 'none';
-	const tls_s = as_obj(ss.tlsSettings);
-	const reality = as_obj(ss.realitySettings);
-
-	/* Hysteria (v1/v2): non-standard Xray shape — server is in settings.{address,port}
-	 * and auth in streamSettings.hysteriaSettings. Needs QUIC support in sing-box. */
-	if (proto === 'hysteria') {
-		if (!sing_features.with_quic) {
-			log(sprintf('Skipping hysteria node (sing-box has no QUIC): %s.', remarks || st.address));
-			return null;
-		}
-		const hyS = as_obj(ss.hysteriaSettings);
-		const is_v2 = (('' + (st.version || hyS.version || '2')) === '2');
-		let hcfg = {
-			label: remarks || null,
-			type: is_v2 ? 'hysteria2' : 'hysteria',
-			address: st.address || null,
-			port: (st.port != null) ? ('' + st.port) : null,
-			tls: '1',
-			tls_sni: tls_s.serverName || null,
-			tls_insecure: tls_s.allowInsecure ? '1' : null,
-			tls_alpn: (type(tls_s.alpn) === 'array') ? tls_s.alpn : (tls_s.alpn ? [tls_s.alpn] : null),
-			tls_utls: sing_features.with_utls ? (tls_s.fingerprint || null) : null
-		};
-		if (is_v2) {
-			hcfg.password = hyS.auth || null;
-			if (type(hyS.obfs) === 'object') {
-				hcfg.hysteria_obfs_type = hyS.obfs.type || null;
-				hcfg.hysteria_obfs_password = hyS.obfs.password || null;
-			} else if (hyS.obfs) {
-				/* Xray shorthand: "obfs": "salamander" + "obfsPassword": "..." */
-				hcfg.hysteria_obfs_type = '' + hyS.obfs;
-				hcfg.hysteria_obfs_password = hyS.obfsPassword || null;
-			}
-		} else {
-			hcfg.hysteria_protocol = 'udp';
-			hcfg.hysteria_auth_type = hyS.auth ? 'string' : null;
-			hcfg.hysteria_auth_payload = hyS.auth || null;
-		}
-		return hcfg;
-	}
-
-	const vnext = (st.vnext && st.vnext[0]) ? st.vnext[0] : null;
-	const server = (st.servers && st.servers[0]) ? st.servers[0] : null;
-	const user = (vnext && vnext.users && vnext.users[0]) ? vnext.users[0] : {};
-
-	let config = {
-		label: remarks || null,
-		type: proto,
-		address: vnext ? vnext.address : (server ? server.address : null),
-		port: vnext ? ('' + vnext.port) : (server ? ('' + server.port) : null),
-		tls: (security in ['tls', 'xtls', 'reality']) ? '1' : '0',
-		tls_sni: tls_s.serverName || reality.serverName || null,
-		tls_insecure: (tls_s.allowInsecure || reality.allowInsecure) ? '1' : null,
-		tls_alpn: (type(tls_s.alpn) === 'array') ? tls_s.alpn : (tls_s.alpn ? [tls_s.alpn] : null),
-		tls_reality: (security === 'reality') ? '1' : null,
-		tls_reality_public_key: (security === 'reality') ? (reality.publicKey || null) : null,
-		tls_reality_short_id: (security === 'reality') ? (reality.shortId || null) : null,
-		tls_utls: sing_features.with_utls ? (tls_s.fingerprint || reality.fingerprint || null) : null
-	};
-
-	switch (proto) {
-	case 'vless':
-		config.uuid = user.id || null;
-		config.vless_flow = user.flow || null;
-		break;
-	case 'vmess':
-		config.uuid = user.id || null;
-		config.vmess_alterid = (user.alterId != null) ? ('' + user.alterId) : null;
-		config.vmess_encrypt = user.security || 'auto';
-		config.vmess_global_padding = '1';
-		break;
-	case 'trojan':
-		config.password = server ? server.password : null;
-		break;
-	case 'shadowsocks':
-		config.shadowsocks_encrypt_method = server ? server.method : null;
-		config.password = server ? server.password : null;
-		break;
-	case 'socks':
-	case 'http':
-		const su = (server && server.users && server.users[0]) ? server.users[0] : {};
-		config.username = su.user || null;
-		config.password = su.pass || null;
-		if (proto === 'socks')
-			config.socks_version = '5';
-		break;
-	}
-
-	/* V2Ray transport */
-	if (net && net !== 'tcp') {
-		config.transport = (net === 'h2') ? 'http' : net;
-		switch (config.transport) {
-		case 'ws':
-			const wsS = as_obj(ss.wsSettings);
-			config.ws_host = (type(wsS.headers) === 'object' && wsS.headers.Host) ? wsS.headers.Host : (wsS.host || null);
-			config.ws_path = wsS.path || null;
-			break;
-		case 'grpc':
-			const grpcS = as_obj(ss.grpcSettings);
-			config.grpc_servicename = grpcS.serviceName || null;
-			break;
-		case 'httpupgrade':
-			const huS = as_obj(ss.httpupgradeSettings);
-			config.httpupgrade_host = huS.host || null;
-			config.http_path = huS.path || null;
-			break;
-		case 'http':
-			const hS = as_obj(ss.httpSettings);
-			config.http_host = hS.host ? ((type(hS.host) === 'array') ? hS.host : [hS.host]) : null;
-			config.http_path = hS.path || null;
-			break;
-		case 'xhttp':
-			const xS = as_obj(ss.xhttpSettings);
-			config.http_path = xS.path || null;
-			config.http_host = xS.host || null;
-			config.xhttp_mode = xS.mode || null;
-			break;
-		}
-	} else if (net === 'tcp' && type(ss.tcpSettings) === 'object' &&
-	           type(ss.tcpSettings.header) === 'object' &&
-	           ss.tcpSettings.header.type === 'http') {
-		config.transport = 'http';
-		const req = as_obj(ss.tcpSettings.header.request);
-		config.http_host = (type(req.headers) === 'object' && req.headers.Host) ?
-			((type(req.headers.Host) === 'array') ? req.headers.Host : [req.headers.Host]) : null;
-		config.http_path = (type(req.path) === 'array') ? req.path[0] : (req.path || null);
-	}
-
-	return config;
-}
-
-/* Parse ONE full Xray config object (an element of the subscription array): pick
- * its proxy outbound (the one tagged "proxy", else the first real proxy outbound
- * that isn't an internal helper like direct/block/dns or a routing upstream). */
-function parse_xray_config(cfg) {
-	if (type(cfg) !== 'object' || type(cfg.outbounds) !== 'array')
-		return null;
-
-	const skip = ['freedom', 'blackhole', 'dns', 'loopback'];
-	let chosen = null;
-	for (let ob in cfg.outbounds) {
-		if (type(ob) !== 'object')
-			continue;
-		if (ob.tag === 'proxy') {
-			chosen = ob;
-			break;
-		}
-	}
-	if (!chosen)
-		for (let ob in cfg.outbounds) {
-			if (type(ob) !== 'object')
-				continue;
-			if (ob.protocol in skip)
-				continue;
-			if (ob.tag && match(ob.tag, /upstream/))
-				continue;
-			chosen = ob;
-			break;
-		}
-	if (!chosen)
-		return null;
-
-	return parse_xray_outbound(chosen, cfg.remarks);
-}
-
 const ST = { running: true, ts: time(), action: 'running', reason: '',
 	groups: [], totals: null, backup: null, verify: null };
 const group_index = {};
 
 function main() {
-	/* Per-group «before» counts — read-only, BEFORE any mutation (Ф5.1 diff). */
+	/* Per-group «before» counts — read-only, BEFORE any mutation (Ф5.1). */
 	const before_by_group = {};
-	let before_total = 0;
 	uci.foreach(uciconfig, ucinode, (cfg) => {
 		if (!cfg.grouphash)
 			return null;
 		const g = '' + cfg.grouphash;
 		before_by_group[g] = (before_by_group[g] || 0) + 1;
-		before_total++;
 		return null;
 	});
+
+	/* Groups taking part in THIS run (all, or only the per-URL target). */
+	const run_groups = {};
+	let before_total = 0;
 
 	let service_was_stopped = false;
 	if (via_proxy !== '1') {
@@ -723,8 +335,19 @@ function main() {
 	}
 	wstatus(ST);
 
+	/* UA ladder (Ф9.11): panels serve the format BY User-Agent (proven live:
+	 * UA «sing-box» → full sing-box JSON, other UAs → base64 link list).
+	 * 1) Hiddify app UA (sing-box JSON on Hiddify Manager panels),
+	 * 2) sing-box UA (sing-box JSON on sub-store/marzban-style panels),
+	 * 3) the configured user_agent (base64/URI lists, clash YAML). */
+	const ladder = ['HiddifyNext/2.0.0', 'sing-box/1.11.0'];
+	const cfg_ua = user_agent || 'Wget/1.21 (HomeProxy, like v2rayN)';
+	if (cfg_ua !== 'HiddifyNext/2.0.0' && cfg_ua !== 'sing-box/1.11.0')
+		push(ladder, cfg_ua);
+
 	for (let url in subscription_urls) {
-		url = replace(url, /#.*$/, '');
+		if (only_url != null && url != only_url)
+			continue;
 
 		/* App share-wrappers pasted as subscription URLs (clash://install-config?url=…,
 		 * sing-box://import-remote?url=…) — unwrap the real subscription link. */
@@ -739,6 +362,7 @@ function main() {
 
 		const groupHash = strhash(url);
 		node_cache[groupHash] = {};
+		run_groups[groupHash] = true;
 		/* Ф5.1: честная книжка группы — до/после, статусы ответа. */
 		let grp = group_index[groupHash];
 		if (!grp) {
@@ -750,97 +374,68 @@ function main() {
 			push(ST.groups, grp);
 		}
 
-		/* Try Hiddify JSON format first: User-Agent triggers sing-box JSON on Hiddify Manager servers */
-		let res = wGET(url, 'HiddifyNext/2.0.0');
-		let nodes;
-
-		if (!isEmpty(res) && match(trim(res), /^\s*\{/)) {
-			let sub_json;
-			try { sub_json = json(res); } catch(e) {}
-			if (sub_json && type(sub_json.outbounds) === 'array') {
-				const companion_map = {};
-				for (let ob in sub_json.outbounds) {
-					if (type(ob) === 'object' && ob.tag && match(ob.tag, /§hide§/))
-						companion_map[ob.tag] = ob;
+		/* UA ladder: panels serve the format BY User-Agent (proven live:
+		 * UA «sing-box» → full sing-box JSON, other UAs → base64 link list).
+		 * A structured format (sing-box/Xray/SIP008/clash) wins at once;
+		 * line-based results (base64/URI) are provisional — the next UA may
+		 * still upgrade to a richer structured format. */
+		const STRUCTURED = ['singbox', 'xray', 'sip008', 'clash'];
+		let res = null, nodes = null, fmt = null, res_html = false;
+		for (let ua in ladder) {
+			res = wGET(url, ua);
+			if (isEmpty(res))
+				continue;
+			const pc = parse_content(res, log, sing_features);
+			if (length(pc.nodes)) {
+				if (nodes == null || (pc.format in STRUCTURED && !(fmt in STRUCTURED))) {
+					nodes = pc.nodes;
+					fmt = pc.format;
 				}
-				nodes = filter(
-					map(sub_json.outbounds, ob => parse_singbox_outbound(ob, companion_map)),
-					c => !isEmpty(c)
-				);
-				log(sprintf('Received sing-box JSON subscription from %s.', url));
+				if (fmt in STRUCTURED)
+					break;
+			} else if (pc.format === 'html') {
+				res_html = true;
 			}
 		}
 
-		/* Xray/V2Ray JSON config array (e.g. connliberty): an ARRAY of full Xray
-		 * configs, each with .outbounds and a .remarks name. The first fetch above
-		 * (HiddifyNext UA) already returns it on app-gated servers. */
-		if (isEmpty(nodes) && !isEmpty(res) && match(trim(res), /^\s*\[/)) {
-			let xray_arr;
-			try { xray_arr = json(res); } catch(e) {}
-			if (type(xray_arr) === 'array' && length(xray_arr) &&
-			    type(xray_arr[0]) === 'object' && xray_arr[0].outbounds) {
-				nodes = filter(
-					map(xray_arr, cfg => parse_xray_config(cfg)),
-					c => !isEmpty(c)
-				);
-				log(sprintf('Received Xray JSON subscription from %s.', url));
+		/* Empty or HTML response: server may require /raw suffix (e.g. HAPP-style
+		 * subscription servers that serve a web page by default). */
+		if (isEmpty(nodes)) {
+			const rawUrl = replace(url, /\/*$/, '') + '/raw';
+			const probe = wGET(url, cfg_ua);
+			if (isEmpty(probe) || match(probe, /^\s*</)) {
+				log(sprintf('%s from %s, retrying with /raw.',
+					isEmpty(probe) ? 'Empty response' : 'HTML response', url));
+				const rawRes = wGET(rawUrl, cfg_ua);
+				if (!isEmpty(rawRes) && !match(rawRes, /^\s*</)) {
+					const pc = parse_content(rawRes, log, sing_features);
+					if (length(pc.nodes)) {
+						nodes = pc.nodes;
+						fmt = pc.format;
+						res = rawRes;
+					} else if (pc.format === 'html')
+						res_html = true;
+				}
+			} else {
+				const pc = parse_content(probe, log, sing_features);
+				if (length(pc.nodes)) {
+					nodes = pc.nodes;
+					fmt = pc.format;
+					res = probe;
+				} else if (pc.format === 'html')
+					res_html = true;
 			}
 		}
 
 		if (isEmpty(nodes)) {
-			/* Fallback: fetch with configured user_agent */
-			res = wGET(url, user_agent);
-
-			/* Empty or HTML response: server may require /raw suffix (e.g. HAPP-style
-			 * subscription servers that serve a web page by default). */
-			if (isEmpty(res) || match(res, /^\s*</)) {
-				const rawUrl = replace(url, /\/*$/, '') + '/raw';
-				log(sprintf('%s from %s, retrying with /raw.',
-					isEmpty(res) ? 'Empty response' : 'HTML response', url));
-				const rawRes = wGET(rawUrl, user_agent);
-				if (!isEmpty(rawRes) && !match(rawRes, /^\s*</))
-					res = rawRes;
-			}
-
-			if (isEmpty(res)) {
-				log(sprintf('Failed to fetch resources from %s.', url));
-				grp.status = 'fetch_failed';
-				continue;
-			}
-
-			try {
-				const parsed = json(res);
-				if (type(parsed) === 'array' && length(parsed) &&
-				    type(parsed[0]) === 'object' && parsed[0].outbounds) {
-					/* Xray/V2Ray JSON config array */
-					nodes = filter(map(parsed, cfg => parse_xray_config(cfg)), c => !isEmpty(c));
-				} else if (type(parsed) === 'object' && type(parsed.servers) === 'array') {
-					/* Shadowsocks SIP008 format — index-guarded: an arbitrary JSON
-					 * object used to fall through here and crash on nodes[0] of a
-					 * non-array, masking the real "unsupported format" error. */
-					nodes = parsed.servers;
-					if (length(nodes) && type(nodes[0]) === 'object' &&
-					    nodes[0].server && nodes[0].method)
-						map(nodes, (_, i) => nodes[i].nodetype = 'sip008');
-				} else {
-					log(sprintf('Unsupported subscription JSON from %s.', url));
-					nodes = [];
-				}
-			} catch(e) {
-				/* Base64 (or plain link-list). Strip ALL whitespace first: CRLF
-				 * line endings left a trailing \r on every link (broken ports,
-				 * whole subscription rejected), and inner spaces broke the decode.
-				 * The old `replace(decoded,/ /g,'_')` corrupted decoded LABELS. */
-				const b64 = replace(res, /[ \t\r\n]+/g, '');
-				const decoded = decodeBase64Str(b64);
-				if (decoded && match(trim(decoded), /^(ss|ssr|vmess|vless|trojan|hysteria2?|tuic|socks|http|ssh|wireguard|mieru|anytls):\/\//))
-					nodes = filter(split(decoded, /[\r\n]+/), (l) => length(trim(l)));
-				else
-					nodes = filter(split(trim(res), /[\r\n]+/), (l) => length(trim(l)));
-			}
+			log(sprintf('Failed to fetch resources from %s.', url));
+			grp.status = res_html ? 'html' : 'no_valid';
+			continue;
 		}
+		if (fmt)
+			log(sprintf('Received %s subscription from %s.', fmt, url));
 
-		const res_html = !isEmpty(res) && match(res, /^\s*</);
+		const res_html_keep = res_html;
 		let count = 0;
 		for (let node in nodes) {
 			let config;
@@ -868,13 +463,13 @@ function main() {
 			if (type(label) !== 'string')
 				label = '';
 			config.label = null;
-			const confHash = strhash(sprintf('%J', config)),
+			const fpHash = node_fingerprint(config),
 			      nameHash = strhash(groupHash + '|' + label);
 			config.label = label;
 
 			if (filter_check(config.label))
 				log(sprintf('Skipping blacklist node: %s.', config.label));
-			else if (node_cache[groupHash][confHash] || node_cache[groupHash][nameHash])
+			else if (node_cache[groupHash]['fp:' + fpHash] || node_cache[groupHash][nameHash])
 				log(sprintf('Skipping duplicate node: %s.', config.label));
 			else {
 				if (config.tls === '1' && allow_insecure === '1')
@@ -885,7 +480,11 @@ function main() {
 				config.grouphash = groupHash;
 				push(node_result, []);
 				push(node_result[length(node_result)-1], config);
-				node_cache[groupHash][confHash] = config;
+				/* Keyed BOTH by the canonical fingerprint (rename-proof match)
+				 * and by the natural section id (label-based, unchanged). The
+				 * fingerprint key is namespaced 'fp:' — section ids share the
+				 * plain-key space. */
+				node_cache[groupHash]['fp:' + fpHash] = config;
 				node_cache[groupHash][nameHash] = config;
 
 				count++;
@@ -893,7 +492,8 @@ function main() {
 		}
 
 		grp.parsed = count;
-		grp.status = (count > 0) ? 'ok' : (res_html ? 'html' : 'no_valid');
+		grp.status = (count > 0) ? 'ok' : (res_html_keep ? 'html' : 'no_valid');
+		grp.format = fmt;
 		if (count == 0)
 			log(sprintf('No valid node found in %s.', url));
 		else
@@ -918,33 +518,68 @@ function main() {
 		return false;
 	}
 
-	/* Ф5.1 pass 1 (read-only): план удалений и число выживающих. */
+	/* Ф9.11 pass 1 (read-only): match every existing subscription section of
+	 * the run groups — by its section id (label-based) or, when the user
+	 * RENAMED the node, by the canonical fingerprint; duplicates collapse. */
 	let kept_total = 0, removed_total = 0;
-	const plan_remove = [];
+	const plan_remove = [], plan_update = [];
+	const run_group_list = keys(run_groups) || [];
+
+	for (let g in run_group_list) {
+		const gh = '' + g;
+		before_total += (before_by_group[gh] || 0);
+	}
+
 	uci.foreach(uciconfig, ucinode, (cfg) => {
-		/* Nodes created by the user */
 		if (!cfg.grouphash)
 			return null;
-
-		/* Empty object - failed to fetch nodes */
-		if (length(node_cache[cfg.grouphash]) === 0)
+		const gh = '' + cfg.grouphash;
+		if (!(gh in run_groups))
 			return null;
+		if (length(node_cache[gh]) === 0)
+			return null;   /* failed fetch — leave the group alone */
 
-		if (!node_cache[cfg.grouphash] || !node_cache[cfg.grouphash][cfg['.name']]) {
+		const cache = node_cache[gh];
+		let cached = cache[cfg['.name']] || null;
+		if (cached && cached.isExisting) {
+			/* Two sections matched the SAME parsed node → duplicate collapse
+			 * (Ф9.11: защита от дубля при обновлении подписки) */
+			cached = null;
+			push(plan_remove, { sid: cfg['.name'],
+				label: (cfg.label || cfg.name || cfg['.name']) + ' (дубль — совпадает с другим узлом)',
+				ghash: gh });
+			removed_total++;
+			const gr = group_index[gh];
+			if (gr) gr.removed++;
+			return null;
+		}
+		if (!cached) {
+			const fp = node_fingerprint(cfg);
+			if (length(fp) && cache['fp:' + fp]) {
+				const cand = cache['fp:' + fp];
+				if (cand && !cand.isExisting) {
+					cached = cand;
+					log(sprintf('Node matched by fingerprint after a rename: %s.', cfg['.name']));
+				}
+			}
+		}
+		if (cached) {
+			cached.isExisting = true;
+			push(plan_update, { sid: cfg['.name'], cached: cached, ghash: gh });
+			kept_total++;
+			const gr = group_index[gh];
+			if (gr) gr.kept++;
+		} else {
 			push(plan_remove, { sid: cfg['.name'],
 				label: cfg.label || cfg.name || cfg['.name'],
-				ghash: '' + cfg.grouphash });
+				ghash: gh });
 			removed_total++;
-			const gr = group_index['' + cfg.grouphash];
+			const gr = group_index[gh];
 			if (gr) gr.removed++;
-		} else {
-			node_cache[cfg.grouphash][cfg['.name']].isExisting = true;
-			kept_total++;
-			const gr = group_index['' + cfg.grouphash];
-			if (gr) gr.kept++;
 		}
 		return null;
 	});
+
 	let added_total = 0;
 	for (let nodes in node_result)
 		map(nodes, (node) => {
@@ -955,7 +590,8 @@ function main() {
 
 	/* 🔴 Ф5.1: обновление НИКОГДА не имеет права оставить ноль подписочных
 	 * узлов при ненулевом «до» — применить НЕТ (бекап даже не нужен: до
-	 * мутаций дело не доходит). */
+	 * мутаций дело не доходит). Scoped to the run's groups (Ф9.11: a
+	 * single-URL run must not abort because OTHER groups are fine). */
 	if (before_total > 0 && kept_total === 0 && added_total === 0) {
 		log(sprintf('ABORT: the update would leave 0 of %d subscription nodes.', before_total));
 		ST.action = 'aborted';
@@ -981,40 +617,37 @@ function main() {
 		log('Backup FAILED — continuing without a rollback copy');
 
 	/* Pass 2: мутации (план уже сверен гвардом). */
-	let added = 0, removed = 0;
 	for (let r in plan_remove) {
 		uci.delete(uciconfig, r.sid);
-		removed++;
 		const grp2 = group_index[r.ghash];
-		if (grp2) grp2.removed++;
+		if (grp2) grp2.removed = (grp2.removed || 0);
 		log(sprintf('Removing node: %s.', r.label));
 	}
-	uci.foreach(uciconfig, ucinode, (cfg) => {
-		/* Nodes created by the user */
-		if (!cfg.grouphash)
-			return null;
-
-		/* Empty object - failed to fetch nodes */
-		if (length(node_cache[cfg.grouphash]) === 0)
-			return null;
-
-		if (!node_cache[cfg.grouphash] || !node_cache[cfg.grouphash][cfg['.name']])
-			return null;
-
-		const cached = node_cache[cfg.grouphash][cfg['.name']];
-		const user_fields = ['bind_interface'];
+	for (let up in plan_update) {
+		const sid = up.sid, cached = up.cached;
+		/* Field sync EXCEPT label (a user rename wins, Ф9.11) and except the
+		 * user's own fields (bind_interface). New parser fields are pushed. */
+		const cfg = uci.get_all(uciconfig, sid) || {};
 		map(keys(cfg), (v) => {
-			if (v in cached)
-				uci.set(uciconfig, cfg['.name'], v, cached[v]);
-			else if (!(v in user_fields))
-				uci.delete(uciconfig, cfg['.name'], v);
+			if (substr(v, 0, 1) === '.' || v === 'label')
+				return null;
+			if (v in cached) {
+				if (cached[v] !== null)
+					uci.set(uciconfig, sid, v, cached[v]);
+				else
+					uci.delete(uciconfig, sid, v);
+			} else if (v !== 'bind_interface')
+				uci.delete(uciconfig, sid, v);
+			return null;
 		});
-		/* Also push new fields added by updated parsers to existing nodes */
 		map(keys(cached), (v) => {
+			if (v === 'label' || v === 'grouphash' || v === 'isExisting')
+				return null;
 			if (!(v in cfg) && cached[v] !== null)
-				uci.set(uciconfig, cfg['.name'], v, cached[v]);
+				uci.set(uciconfig, sid, v, cached[v]);
+			return null;
 		});
-	});
+	}
 	for (let nodes in node_result)
 		map(nodes, (node) => {
 			if (node.isExisting)
@@ -1023,19 +656,18 @@ function main() {
 			/* Section id includes the group hash: two subscriptions shipping the
 			 * same label ("Server1" from template providers) previously produced
 			 * the SAME section id — the second silently overwrote the first's
-			 * node while "added" counted both. NOTE: the loop variable groupHash
-			 * is const INSIDE the per-URL loop above and out of scope here —
-			 * each parsed node carries its own .grouphash (set when queued). */
+			 * node while "added" counted both. NOTE: each parsed node carries
+			 * its own .grouphash (set when queued). */
 			const ghash = node.grouphash || '';
 			const nlabel = (type(node.label) === 'string') ? node.label : '';
 			const nameHash = strhash(ghash + '|' + nlabel);
 			uci.set(uciconfig, nameHash, 'node');
 			map(keys(node), (v) => uci.set(uciconfig, nameHash, v, node[v]));
 
-			added++;
 			const grp3 = group_index[ghash];
 			if (grp3) grp3.added++;
 			log(sprintf('Adding node: %s.', node.label));
+			return null;
 		});
 	uci.commit(uciconfig);
 
@@ -1050,17 +682,21 @@ function main() {
 			 * чистятся как раньше — генератор читает их как фолбэк до миграции.
 			 * Пул kernel-группы теперь = все узлы, поэтому «пустой список» больше
 			 * НЕ переключает main_node (пул опустевает только при 0 узлов, а тогда
-			 * first_server и так null). */
-			const pruned_reserves = filter(uci.get(uciconfig, ucimain, 'exit_reserves') || [], (v) => {
+			 * first_server и так null). 🔴 ucode-uci: list-опция пишется ТОЛЬКО
+			 * set'ом С МАССИВОМ — скалярный set заменяет список одним элементом,
+			 * цикл скалярных set схлопывается в один (поймано живьём в Ф9.11). */
+			const pruned_reserves = map(uci.get(uciconfig, ucimain, 'exit_reserves') || [], (v) => '' + v);
+			const kept_reserves = filter(pruned_reserves, (v) => {
 				if (!uci.get(uciconfig, v)) {
 					log(sprintf('Node %s is gone, removing from exit reserves.', v));
 					return false;
 				}
 				return true;
 			});
-			uci.delete(uciconfig, ucimain, 'exit_reserves');
-			for (let rv in pruned_reserves)
-				uci.set(uciconfig, ucimain, 'exit_reserves', '' + rv);
+			if (length(kept_reserves))
+				uci.set(uciconfig, ucimain, 'exit_reserves', kept_reserves);
+			else
+				uci.delete(uciconfig, ucimain, 'exit_reserves');
 			const gone_pref = uci.get(uciconfig, ucimain, 'main_urltest_preferred');
 			if (gone_pref && !uci.get(uciconfig, gone_pref)) {
 				log(sprintf('Preferred node %s is gone, clearing preference.', gone_pref));
@@ -1084,22 +720,27 @@ function main() {
 			if (main_node === 'urltest') {
 				const ut_mode = uci.get(uciconfig, ucimain, 'main_urltest_mode') || 'manual';
 				if (ut_mode === 'manual') {
-					const kept = filter(uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [], (v) => {
+					const kept = filter(map(uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [], (v) => '' + v), (v) => {
 						if (!uci.get(uciconfig, v)) {
 							log(sprintf('Node %s is gone, removing from urltest list.', v));
 							return false;
 						}
 						return true;
 					});
-					uci.delete(uciconfig, ucimain, 'main_urltest_nodes');
-					for (let kv in kept)
-						uci.set(uciconfig, ucimain, 'main_urltest_nodes', '' + kv);
+					if (length(kept))
+						uci.set(uciconfig, ucimain, 'main_urltest_nodes', kept);
+					else
+						uci.delete(uciconfig, ucimain, 'main_urltest_nodes');
 				}
 			}
 
-			/* Synthetic tags (direct/ByeDPI/Zapret) are not node sections and must not
-			 * be treated as missing nodes. */
-			const synthetic = ['direct-out', 'byedpi-out', 'zapret-out'];
+			/* Synthetic tags are not node sections and must not be treated as
+			 * missing nodes. 🔴 Ф9.16: 'urltest' is the ENGINE-OWNED selector
+			 * (caught live: this check switched main_node=urltest to the first
+			 * node on every update, breaking the exit-engine contract) — the
+			 * engine owns the pick, the update must not touch it. 'nil' = the
+			 * explicit no-node choice; 'same' = UDP follows main. */
+			const synthetic = ['direct-out', 'byedpi-out', 'zapret-out', 'urltest', 'nil', 'same'];
 			if (!(main_node in synthetic) && !uci.get(uciconfig, main_node)) {
 				uci.set(uciconfig, ucimain, 'main_node', first_server);
 				uci.commit(uciconfig);
@@ -1112,16 +753,17 @@ function main() {
 				if (main_udp_node === 'urltest') {
 					const ut_mode = uci.get(uciconfig, ucimain, 'main_udp_urltest_mode') || 'manual';
 					if (ut_mode === 'manual') {
-						const kept_udp = filter(uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [], (v) => {
+						const kept_udp = filter(map(uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [], (v) => '' + v), (v) => {
 							if (!uci.get(uciconfig, v)) {
 								log(sprintf('Node %s is gone, removing from UDP urltest list.', v));
 								return false;
 							}
 							return true;
 						});
-						uci.delete(uciconfig, ucimain, 'main_udp_urltest_nodes');
-						for (let kv in kept_udp)
-							uci.set(uciconfig, ucimain, 'main_udp_urltest_nodes', '' + kv);
+						if (length(kept_udp))
+							uci.set(uciconfig, ucimain, 'main_udp_urltest_nodes', kept_udp);
+						else
+							uci.delete(uciconfig, ucimain, 'main_udp_urltest_nodes');
 					}
 				}
 
@@ -1177,17 +819,18 @@ function main() {
 			note: 'сервис не перезапускался — новые узлы применятся при следующем рестарте' };
 	}
 
-	log(sprintf('%s nodes added, %s removed.', added, removed));
+	const added = added_total;
+	log(sprintf('%s nodes added, %s removed.', added, removed_total));
 	log('Successfully updated subscriptions.');
 
 	ST.totals = { before: before_total, after: kept_total + added_total,
-		kept: kept_total, added: added, removed: removed };
+		kept: kept_total, added: added, removed: removed_total };
 	if (ST.action !== 'rolled_back')
 		ST.action = 'applied';
 	ST.running = false;
 	wstatus(ST);
 	const ev_sum = sprintf('узлов: было %d, стало %d (+%d/−%d)',
-		before_total, kept_total + added_total, added, removed);
+		before_total, kept_total + added_total, added, removed_total);
 	if (ST.action === 'rolled_back')
 		try { ev_emit('subscribe', 'rolled_back', '',
 			ev_sum + ' — новый набор узлов не прошёл проверку старта, узлы восстановлены из бекапа'); } catch (e) {}

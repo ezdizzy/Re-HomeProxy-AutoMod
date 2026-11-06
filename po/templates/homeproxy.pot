@@ -8014,3 +8014,123 @@ msgstr ""
 
 msgid "Auto — best node"
 msgstr ""
+
+msgid "HTML page"
+msgstr ""
+
+msgid "No valid nodes"
+msgstr ""
+
+msgid "Fetch failed"
+msgstr ""
+
+msgid "Own nodes"
+msgstr ""
+
+msgid "From subscriptions"
+msgstr ""
+
+msgid "Apply now"
+msgstr ""
+
+msgid "An update is already running"
+msgstr ""
+
+msgid "Failed to start the update"
+msgstr ""
+
+msgid "Service restarted — the new nodes are live."
+msgstr ""
+
+msgid "The restart is still running — see the operations journal on the Health center page."
+msgstr ""
+
+msgid "Not updated yet"
+msgstr ""
+
+msgid "%s nodes"
+msgstr ""
+
+msgid "No subscriptions yet — add a provider link below."
+msgstr ""
+
+msgid "Remove subscription"
+msgstr ""
+
+msgid "Remove the subscription «%s» and its %s nodes? The subscription URL is deleted from the settings."
+msgstr ""
+
+msgid "Subscription removed (%s nodes)."
+msgstr ""
+
+msgid "Enter the subscription URL"
+msgstr ""
+
+msgid "This subscription is already in the list"
+msgstr ""
+
+msgid "Subscription added."
+msgstr ""
+
+msgid "Nothing to parse"
+msgstr ""
+
+msgid "Parse failed"
+msgstr ""
+
+msgid "%s node(s) recognized (%s), %s skipped."
+msgstr ""
+
+msgid "Import %s nodes"
+msgstr ""
+
+msgid "Import nodes"
+msgstr ""
+
+msgid "Paste share links, a base64 batch, sing-box JSON or clash/mihomo YAML — or pick a file. The server parses the SAME formats as subscriptions (no core-capability filtering: a node the current core cannot load is still saved)."
+msgstr ""
+
+msgid "Parse"
+msgstr ""
+
+msgid "Subscription settings"
+msgstr ""
+
+msgid "Auto update, the fetch path (direct or via proxy), filters and defaults for imported nodes."
+msgstr ""
+
+msgid "Update subscriptions via proxy: the fetch goes through the running proxy and the service is NOT stopped (no internet gap), but the new nodes apply on the next restart — the panel shows an «Apply now» button then."
+msgstr ""
+
+msgid "Formats served by panels: URI lists, base64 batches, sing-box JSON (User-Agent «sing-box»), Xray JSON, SIP008, clash/mihomo YAML. The #fragment becomes the display title."
+msgstr ""
+
+msgid "Your own servers: import share links, a base64 batch, sing-box JSON, clash YAML or a WireGuard .conf file, or add a node manually. Click a row to edit it. The Live status column shows what the running core currently measures."
+msgstr ""
+
+msgid "Subscription: %s"
+msgstr ""
+
+msgid "Update all"
+msgstr ""
+
+msgid "Add subscription"
+msgstr ""
+
+msgid "The servers the connection runs through: your own nodes (share link, base64 batch, sing-box JSON, clash YAML, .conf file or by hand) and provider subscriptions with automatic updates. The Live status column shows what the running core currently measures for every node. Which server is used as the main one — on the Connection page."
+msgstr ""
+
+msgid "The update did not report its start — see the log on the router."
+msgstr ""
+
+msgid "The service will be restarted to remove them from the core."
+msgstr ""
+
+msgid "Removing the subscription…"
+msgstr ""
+
+msgid "Subscription removed (no nodes — nothing to apply)."
+msgstr ""
+
+msgid "Not in the last run"
+msgstr ""

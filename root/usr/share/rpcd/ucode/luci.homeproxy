@@ -19,7 +19,8 @@ import {
 	ipv6_hextets,
 	getTime,
 	wGET,
-	isBinary
+	isBinary,
+	isEmpty
 } from '/etc/homeproxy/scripts/homeproxy.uc';
 import {
 	RUN_DIR as HC_RUN_DIR, LOG_PATH as HC_LOG_PATH,
@@ -65,6 +66,14 @@ import { acquire as resmgr_acquire, release as resmgr_release,
  * Service→Route→Engine→Strategy→Transport→Exit (аудит 70/78/92/93). */
 import { chain_plan as optimizer_chain_plan, SERVICE_KEYS as OPT_SERVICE_KEYS }
 	from '/etc/homeproxy/scripts/service_optimizer.uc';
+/* Ф9.11: единый набор парсеров узлов (share-link/sing-box/Xray/SIP008/clash
+ * YAML/base64) — тот же, что у подписочного импортёра и import_link.uc.
+ * Валидатор узлов — из homeproxy.uc. */
+import { parse_uri as np_parse_uri, parse_content as np_parse_content,
+	set_features as np_set_features }
+	from '/etc/homeproxy/scripts/node_parse.uc';
+import { validate_node_config as np_validate_node_config }
+	from '/etc/homeproxy/scripts/homeproxy.uc';
 
 /* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
  * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
@@ -2238,6 +2247,116 @@ function ctrl_wifi_view() {
 }
 
 
+/* Feature map of the ACTIVE core — the shared implementation of the
+ * singbox_get_features method. A top-level function so in-process callers
+ * (Ф9.11 app_import_nodes feeding node_parse) reuse it WITHOUT an ubus
+ * self-call: a nested call to the same rpcd object deadlocks (the
+ * single-threaded handler waits for itself — caught live, the first
+ * app_import_nodes smoke timed out exactly there). */
+function singbox_features_local() {
+	let features = {};
+
+	const core = get_active_core();
+	const core_binary = core ? core.path : null;
+	if (core) {
+		features.core_type = core.type;
+		if (core.custom)
+			features.core_custom = true;
+	}
+
+	/* Active core — version cache first (packed binaries probe
+	 * for seconds; see hp_core_features_cached). */
+	if (core_binary) {
+		const cached = hp_core_features_cached(core_binary);
+		if (cached) {
+			if (cached.version)
+				features.version = cached.version;
+			for (let t in (cached.tags || {}))
+				features[t] = true;
+		} else {
+			const fd = popen(core_binary + ' version');
+			if (fd) {
+				const out = fd.read('all');
+				fd.close();
+
+				const verMatch = match(out, / version v?(\S+)/);
+				if (verMatch)
+					features.version = verMatch[1];
+
+				const tagsMatch = match(out, /\nTags: ([^\n]+)/);
+				if (tagsMatch) {
+					for (let tag in split(tagsMatch[1], ','))
+						features[trim(tag)] = true;
+				}
+			}
+		}
+	}
+	/* Per-core capability summary for ALL installed cores (UI uses it to
+	 * describe the Preferred core choice and to warn about nodes the
+	 * selected core would skip). Tags matter: e.g. sing-box-extended
+	 * ships without with_naive_outbound — its NaïveProxy outbound was
+	 * dropped upstream; hiddify-core has it. The runtime check-heal
+	 * (core `check` on the generated config) remains the source of
+	 * truth and skips what the build actually refuses. */
+	features.cores = {};
+	const core_defs = [
+		['hiddify', '/usr/bin/hiddify-core'],
+		['singbox', '/usr/bin/sing-box']
+	];
+	for (let def in core_defs) {
+		const cid = def[0], cpath = def[1];
+		let info = { installed: !!access(cpath) };
+		if (info.installed) {
+			const cached = hp_core_features_cached(cpath);
+			if (cached) {
+				info.version = cached.version;
+				info.tags = cached.tags || {};
+				info.naive = ('with_naive_outbound' in info.tags);
+				info.extended = !!cached.extended;
+			} else {
+				const fd = popen(cpath + ' version 2>/dev/null');
+				if (fd) {
+					const out = fd.read('all'); fd.close();
+					const vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
+					if (vm) info.version = vm[1];
+					const tm = match(out, /\nTags: ([^\n]+)/);
+					let tags = {};
+					if (tm)
+						for (let t in split(tm[1], ','))
+							tags[trim(t)] = true;
+					info.tags = tags;
+					info.naive = ('with_naive_outbound' in tags);
+					info.extended = !!match(out, /-extended-/);
+				}
+			}
+		}
+		features.cores[cid] = info;
+	}
+
+	features.hp_has_ip_full = !!access('/usr/libexec/ip-full');
+	features.hp_has_tcp_brutal = hasKernelModule('brutal.ko');
+	features.hp_has_tproxy = hasKernelModule('nft_tproxy.ko') || !!access('/etc/modules.d/nft-tproxy');
+	features.hp_has_tun = hasKernelModule('tun.ko') || !!access('/etc/modules.d/30-tun');
+
+	features.available_cores = [];
+	if (access('/usr/bin/hiddify-core')) push(features.available_cores, 'hiddify');
+	if (access('/usr/bin/sing-box'))     push(features.available_cores, 'singbox');
+
+	return features;
+}
+
+/* FNV-1a 32-bit — the SAME hash the subscription daemon and node_parse
+ * derive group hashes from (twin of strhash there — keep in sync). */
+function hp_sub_strhash(s) {
+	let h = 2166136261;
+	const n = length(s);
+	for (let i = 0; i < n; i++) {
+		h = (h ^ ord(s, i)) & 0xFFFFFFFF;
+		h = (h * 16777619) & 0xFFFFFFFF;
+	}
+	return sprintf('%08x', h);
+}
+
 const methods = {
 	acllist_read: {
 		args: { type: 'type' },
@@ -2454,95 +2573,7 @@ const methods = {
 
 	singbox_get_features: {
 		call: function() {
-			let features = {};
-
-				const core = get_active_core();
-				const core_binary = core ? core.path : null;
-				if (core) {
-					features.core_type = core.type;
-					if (core.custom)
-						features.core_custom = true;
-				}
-
-				/* Active core — version cache first (packed binaries probe
-				 * for seconds; see hp_core_features_cached). */
-				if (core_binary) {
-					const cached = hp_core_features_cached(core_binary);
-					if (cached) {
-						if (cached.version)
-							features.version = cached.version;
-						for (let t in (cached.tags || {}))
-							features[t] = true;
-					} else {
-						const fd = popen(core_binary + ' version');
-						if (fd) {
-							const out = fd.read('all');
-							fd.close();
-
-							const verMatch = match(out, / version v?(\S+)/);
-							if (verMatch)
-								features.version = verMatch[1];
-
-							const tagsMatch = match(out, /\nTags: ([^\n]+)/);
-							if (tagsMatch) {
-								for (let tag in split(tagsMatch[1], ','))
-									features[trim(tag)] = true;
-							}
-						}
-					}
-				}
-				/* Per-core capability summary for ALL installed cores (UI uses it to
-				 * describe the Preferred core choice and to warn about nodes the
-				 * selected core would skip). Tags matter: e.g. sing-box-extended
-				 * ships without with_naive_outbound — its NaïveProxy outbound was
-				 * dropped upstream; hiddify-core has it. The runtime check-heal
-				 * (core `check` on the generated config) remains the source of
-				 * truth and skips what the build actually refuses. */
-				features.cores = {};
-				const core_defs = [
-					['hiddify', '/usr/bin/hiddify-core'],
-					['singbox', '/usr/bin/sing-box']
-				];
-				for (let def in core_defs) {
-					const cid = def[0], cpath = def[1];
-					let info = { installed: !!access(cpath) };
-					if (info.installed) {
-						const cached = hp_core_features_cached(cpath);
-						if (cached) {
-							info.version = cached.version;
-							info.tags = cached.tags || {};
-							info.naive = ('with_naive_outbound' in info.tags);
-							info.extended = !!cached.extended;
-						} else {
-							const fd = popen(cpath + ' version 2>/dev/null');
-							if (fd) {
-								const out = fd.read('all'); fd.close();
-								const vm = match(out, / version v?([0-9][0-9a-zA-Z._-]*)/);
-								if (vm) info.version = vm[1];
-								const tm = match(out, /\nTags: ([^\n]+)/);
-								let tags = {};
-								if (tm)
-									for (let t in split(tm[1], ','))
-										tags[trim(t)] = true;
-								info.tags = tags;
-								info.naive = ('with_naive_outbound' in tags);
-								info.extended = !!match(out, /-extended-/);
-							}
-						}
-					}
-					features.cores[cid] = info;
-				}
-
-				features.hp_has_ip_full = !!access('/usr/libexec/ip-full');
-				features.hp_has_tcp_brutal = hasKernelModule('brutal.ko');
-				features.hp_has_tproxy = hasKernelModule('nft_tproxy.ko') || !!access('/etc/modules.d/nft-tproxy');
-				features.hp_has_tun = hasKernelModule('tun.ko') || !!access('/etc/modules.d/30-tun');
-
-				features.available_cores = [];
-				if (access('/usr/bin/hiddify-core')) push(features.available_cores, 'hiddify');
-				if (access('/usr/bin/sing-box'))     push(features.available_cores, 'singbox');
-
-				return features;
+			return singbox_features_local();
 		}
 	},
 
@@ -4741,6 +4772,168 @@ const methods = {
 				total += groups[k];
 			return { last: st, node_total: total, groups: groups,
 				auto_update: ('' + (c.get('homeproxy', 'subscription', 'auto_update') || '')) === '1' };
+		}
+	},
+
+	/* Ф9.11: обновление подписок — АСИНХРОННО (урок 294: синхронный вызов
+	 * дольше ~30 с рвёт общий ubus-стрим браузера; цикл обновления со
+	 * стоп/стартом + verify_core идёт 40+ с). Спавнит отсоединённый раннер
+	 * (паттерн core_install_start; 1000>&- — fd procd-лока не наследуется),
+	 * статус уже пишет сам update_subscriptions.uc в subscription_update.json
+	 * (running-флаг) — UI опрашивает app_subscription_status. Необязательный
+	 * url ограничивает прогон одной подпиской (кнопка на её карточке). */
+	app_subscription_update_start: {
+		args: { url: 'url' },
+		call: function(req) {
+			const url = ((req && req.args && req.args.url) || '');
+			const sf = RUN_DIR + '/subscription_update.json';
+			if (access(sf)) {
+				let prev = null;
+				try { prev = json(readfile(sf) || ''); } catch (e) { prev = null; }
+				if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
+					return { result: false, error: 'an update run is already in progress' };
+			}
+			const arg = length(url) ? ' ' + shellquote(url) : '';
+			system(`ucode ${shellquote(HP_DIR + '/scripts/update_subscriptions.uc')}${arg} >/dev/null 2>&1 1000>&- &`);
+			return { result: true, started: true };
+		}
+	},
+
+	/* Ф9.11: мутации списка подписок — СЕРВЕРНО и атомарно. Клиентский
+	 * uci.set + form.Map.save конфликтуют (форма перетирает клиентскую дельту
+	 * формовыми значениями — поймано живьём: удалённая подписка вернулась в
+	 * UCI). Методы пишут committed-UCI напрямую. Перезапуск службы нужен
+	 * ТОЛЬКО когда удалены узлы (need_restart — честный флаг для кнопки
+	 * «Применить сейчас»; пул kernel-группы = все узлы, любое изменение
+	 * набора узлов меняет конфиг ядра). */
+	app_subscription_add: {
+		args: { url: 'url' },
+		call: function(req) {
+			const url = trim((req && req.args && req.args.url) || '');
+			if (!length(url))
+				return { result: false, error: 'пустой URL' };
+			if (!match(url, /^https?:\/\/\S+$/))
+				return { result: false, error: 'ожидается ссылка вида http(s)://…' };
+			const c = cursor();
+			const urls = map(c.get('homeproxy', 'subscription', 'subscription_url') || [], (u) => '' + u);
+			for (let u in urls)
+				if (u === url)
+					return { result: false, error: 'эта подписка уже есть в списке' };
+			/* 🔴 ucode-uci list semantics (caught live twice): a scalar set()
+			 * REPLACES the whole list with one element and repeated scalar
+			 * sets collapse into ONE value — a list is written by set() with
+			 * an ARRAY (then the array replaces the list wholesale). */
+			push(urls, url);
+			c.set('homeproxy', 'subscription', 'subscription_url', urls);
+			c.commit('homeproxy');
+			return { result: true };
+		}
+	},
+
+	app_subscription_remove: {
+		args: { url: 'url' },
+		call: function(req) {
+			const url = trim((req && req.args && req.args.url) || '');
+			if (!length(url))
+				return { result: false, error: 'пустой URL' };
+			const c = cursor();
+			const urls = map(c.get('homeproxy', 'subscription', 'subscription_url') || [], (u) => '' + u);
+			const kept = filter(urls, (u) => u !== url);
+			if (length(kept) === length(urls))
+				return { result: false, error: 'эта подписка не найдена в списке' };
+			if (length(kept))
+				c.set('homeproxy', 'subscription', 'subscription_url', kept);
+			else
+				c.delete('homeproxy', 'subscription', 'subscription_url');
+
+			/* Remove the group's nodes + prune the pointers (the same
+			 * semantics the update cycle uses). */
+			const ghash = hp_sub_strhash(replace(url, /#.*$/, ''));
+			const removed = [];
+			c.foreach('homeproxy', 'node', (s) => {
+				if (('' + s.grouphash) === ghash)
+					push(removed, '' + s['.name']);
+				return null;
+			});
+			for (let sid in removed)
+				c.delete('homeproxy', sid);
+			const gone = {};
+			for (let sid in removed)
+				gone[sid] = true;
+			const set_nil = (opt) => {
+				const v = c.get('homeproxy', 'config', opt);
+				if (v != null && ('' + v) in gone) {
+					c.delete('homeproxy', 'config', opt);
+					c.set('homeproxy', 'config', opt, 'nil');
+				}
+			};
+			set_nil('main_node');
+			set_nil('main_udp_node');
+			set_nil('exit_preferred');
+			set_nil('exit_udp_preferred');
+			const reserves = map(c.get('homeproxy', 'config', 'exit_reserves') || [], (v) => '' + v);
+			const kept_res = filter(reserves, (v) => !(v in gone));
+			if (length(kept_res))
+				c.set('homeproxy', 'config', 'exit_reserves', kept_res);
+			else
+				c.delete('homeproxy', 'config', 'exit_reserves');
+			const leg_lists = ['main_urltest_nodes', 'main_udp_urltest_nodes'];
+			for (let lo in leg_lists) {
+				const lv = map(c.get('homeproxy', 'config', lo) || [], (v) => '' + v);
+				const kept_leg = filter(lv, (v) => !(v in gone));
+				if (length(kept_leg) !== length(lv)) {
+					if (length(kept_leg))
+						c.set('homeproxy', 'config', lo, kept_leg);
+					else
+						c.delete('homeproxy', 'config', lo);
+				}
+			}
+			c.commit('homeproxy');
+			return { result: true, removed_nodes: length(removed),
+				need_restart: length(removed) > 0 };
+		}
+	},
+
+	/* Ф9.11: умный импорт — РАЗБОР БЕЗ ЗАПИСИ (read-only): один и тот же
+	 * серверный набор парсеров, что и у подписок (parse_uri + parse_content:
+	 * sing-box JSON, Xray JSON, SIP008, clash/mihomo YAML, base64-пачки,
+	 * списки share-ссылок). UI сам пишет узлы в UCI штатным apply-потоком.
+	 * Feature-гейтов НЕТ (D34c): узел неподдерживаемого ядром типа
+	 * импортируется, генератор его скипает (core_skipped), статус честно
+	 * показывает «Unsupported by core». Лимит 50 узлов — ubus-сообщение
+	 * ограничено ~64 КиБ. */
+	app_import_nodes: {
+		args: { text: 'text' },
+		call: function(req) {
+			const text = (req && req.args && req.args.text) || '';
+			if (!length(text))
+				return { result: false, error: 'пустой ввод' };
+			/* Local feature map — an ubus self-call here would deadlock
+			 * (single-threaded rpcd handler waiting for itself). */
+			np_set_features(singbox_features_local());
+			const pc = np_parse_content(text, function() {});
+			const nodes = [], skipped = [];
+			for (let item in (pc.nodes || [])) {
+				const cfg = np_parse_uri(item, function() {});
+				if (!cfg || type(cfg) !== 'object' || isEmpty(cfg)) {
+					push(skipped, (type(item) === 'string') ?
+						substr(item, 0, 60) + ' — не распознано' : 'узел не распознан');
+					continue;
+				}
+				const verrs = np_validate_node_config(cfg);
+				if (verrs) {
+					push(skipped, ((type(cfg.label) === 'string' && length(cfg.label)) ?
+						cfg.label : (cfg.address || 'узел')) + ': ' + join('; ', verrs));
+					continue;
+				}
+				push(nodes, cfg);
+				if (length(nodes) >= 50) {
+					push(skipped, '…лимит 50 узлов за раз — импортируйте частями');
+					break;
+				}
+			}
+			return { result: true, format: pc.format || null,
+				nodes: nodes, skipped: skipped };
 		}
 	},
 
