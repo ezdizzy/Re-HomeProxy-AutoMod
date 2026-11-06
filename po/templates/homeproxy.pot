@@ -7801,3 +7801,6 @@ msgstr ""
 
 msgid "Diagnostics & maintenance"
 msgstr ""
+
+msgid "Offline"
+msgstr ""

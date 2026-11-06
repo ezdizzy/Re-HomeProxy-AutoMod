@@ -13357,3 +13357,6 @@ msgstr "Центр управления"
 
 msgid "Diagnostics & maintenance"
 msgstr "Диагностика и обслуживание"
+
+msgid "Offline"
+msgstr "Не в сети"

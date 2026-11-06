@@ -3,17 +3,31 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Ravnex — Devices (R3 v3d, 19-UX_REDESIGN §5): the ONE home page for
- * devices. Two former places are merged here:
+ * Ravnex — Devices (R3 v3d, 19-UX_REDESIGN §5; Ф9.3 v3 rework): the ONE
+ * home page for devices. Two former places are merged here:
  *  - the homecontrol registry (the "Devices" pane of Parental control):
  *    add devices from the live network (MAC identity), rename/remove,
  *    per-device internet actions (block/temp/wifi) shared with the
  *    control engine and the Telegram bot;
  *  - the proxy policy (the former "Devices & interfaces" page): per-device
  *    LAN mode, WAN IP policy and interface binding.
- * Every device row is a card with the three honest states: online /
- * internet / proxy. The registry view in Parental control keeps only a
- * link here.
+ * Every managed device is a CARD with the three honest states (online /
+ * internet / proxy); actions use the Ф9.2 hpui-btn family and pass their
+ * button to act() so a double click cannot flip a toggle twice; ALL action
+ * results render in ONE place at the bottom of the device panel
+ * (ui.action_buttons_result_placement). The registry view in Parental
+ * control keeps only a link here.
+ *
+ * AUDIT (D32, first Ф9.3 block): every backend option of the Proxy policy
+ * zone is consumed and live — lan_proxy_mode with the direct/proxy/gaming/
+ * global device lists and listen_interfaces gate the nft lanac/redirect
+ * chains (firewall_post.ut), wan_proxy/wan_direct render the WAN daddr
+ * sets (firewall_post.ut), bind_interface becomes the core
+ * default_interface (generate_client.uc). FIX found by the audit: since
+ * Ф3.1 proxyBadge referenced an UNDEFINED isGaming (the gaming badge
+ * branch survived while its computation was dropped) — any managed device
+ * outside the global lists threw a ReferenceError and the registry
+ * table/summary never rendered (proven live before the fix).
  */
 
 'use strict';
@@ -104,11 +118,22 @@ const CSS = `
 	.dev-field > input, .dev-field > select { width: 100%; max-width: 420px; box-sizing: border-box; }
 	.dev-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
 	.dev-form .dev-wide { flex: 3 1 320px; }
-	.dev-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-	.dev-actions .btn { flex: none; }
-	.dev-result-wrap { margin-top: 6px; }
+	.dev-result-wrap { margin-top: 8px; }
 	.dev-badge-wifi { margin-left: 6px; }
-	.dev-sum { margin: 10px 0 16px; }
+	.dev-sum { margin: 10px 0 14px; }
+	.dev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 10px; margin-top: 10px; }
+	.dev-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; flex: none; }
+	.dev-card-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+	.dev-name { font-weight: 700; font-size: 1.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.dev-host { font-size: .82em; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.dev-meta { font-size: .8em; opacity: .65; word-break: break-all; }
+	.dev-states { display: flex; flex-direction: column; gap: 6px; }
+	.dev-state { display: flex; align-items: center; gap: 8px; min-height: 21px; }
+	.dev-state-k { width: 64px; flex: none; font-size: .8em; opacity: .7; }
+	.dev-state-v { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+	.dev-state-t { font-size: .8em; opacity: .75; }
+	.dev-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 9px; border-top: 1px solid var(--hp-panel-line); }
+	.dev-actions .hpui-btn { padding: 4px 10px; font-size: .84em; flex: none; }
 `;
 
 /* ── formatting helpers (shared with control.js, same shapes) ────────── */
@@ -123,14 +148,6 @@ function fmtRemaining(untilSec) {
 		return h + ' ' + _('h') + (mm ? (' ' + mm + ' ' + _('min')) : '');
 	const d = Math.floor(h / 24);
 	return d + ' ' + _('d') + ' ' + (h % 24) + ' ' + _('h');
-}
-
-function fmtMinutesHuman(mins) {
-	if (mins >= 1440 && (mins % 1440) === 0)
-		return (mins / 1440) + ' ' + _('d');
-	if (mins >= 60 && (mins % 60) === 0)
-		return (mins / 60) + ' ' + _('h');
-	return mins + ' ' + _('min');
 }
 
 function clientName(c) {
@@ -173,10 +190,10 @@ function customTimeModal(title, defMinutes, onOk) {
 	ui.showModal(title, [
 		E('p', {}, [ _('Access will be restored automatically when the time is up.') ]),
 		row,
-		E('div', { 'class': 'right', 'style': 'margin-top:14px' }, [
-			E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
+		E('div', { 'class': 'right', 'style': 'margin-top:14px; display:flex; gap:8px; justify-content:flex-end' }, [
+			E('button', { 'class': 'hpui-btn hpui-btn-ghost', 'click': ui.hideModal }, [ _('Cancel') ]),
 			E('button', {
-				'class': 'btn cbi-button-positive important',
+				'class': 'hpui-btn hpui-btn-primary',
 				'click': function() {
 					const v = parseInt(inVal.value, 10);
 					const u = parseInt(selUnit.value, 10);
@@ -219,6 +236,7 @@ function proxyBadge(c) {
 	if (routing === 'direct')
 		return E('span', { 'class': 'hpui-badge hpui-b-grey' }, [ _('No proxy') ]);
 
+	const isGaming = inList('lan_gaming_mode_mac_addrs') || inList('lan_gaming_mode_ipv4_ips');
 	const isGlobal = inList('lan_global_proxy_mac_addrs') || inList('lan_global_proxy_ipv4_ips');
 
 	let cls, label;
@@ -270,7 +288,8 @@ return view.extend({
 			devices: (data[5] && data[5].devices) || []
 		};
 
-		/* Every action shows its outcome in ONE place (below the registry). */
+		/* Every action shows its outcome in ONE place, replacing the
+		 * previous (below the device grid). */
 		function resultBlock(el) {
 			return E('div', { 'class': 'dev-result-wrap', 'style': 'display:none' }, [
 				E('h4', {}, [ _('Results') ]),
@@ -319,6 +338,27 @@ return view.extend({
 			});
 		}
 
+		/* ── Summary: four cards built ONCE (static container — hpui-stagger
+		 * per Ф9.2) and the poll updates the numbers IN PLACE: a poll
+		 * re-render must never replay the entrance. ──────────────────── */
+
+		const sumDefs = [
+			{ l: _('Devices on the network'), c: 'hpui-c-blue' },
+			{ l: _('Managed'), c: '' },
+			{ l: _('Blocked now'), c: 'hpui-c-red' },
+			{ l: _('Proxied now'), c: 'hpui-c-green' }
+		];
+		const sumNums = sumDefs.map(function(d) {
+			return E('div', { 'class': 'hpui-num ' + d.c }, [ '—' ]);
+		});
+		const sumBox = E('div', { 'class': 'hpui-cards hpui-stagger dev-sum' },
+			sumDefs.map(function(d, i) {
+				return E('div', { 'class': 'hpui-card' }, [
+					sumNums[i],
+					E('div', { 'class': 'hpui-cap' }, [ d.l ])
+				]);
+			}));
+
 		/* ── Registry: add a device ─────────────────────────────────── */
 
 		const devPicker = E('select', { 'class': 'cbi-input-select', 'style': 'min-width:260px' }, [
@@ -327,7 +367,6 @@ return view.extend({
 		const devName = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'placeholder': _('Alias (e.g. Kid tablet)') });
 		const devMac = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'placeholder': 'AA:BB:CC:DD:EE:FF' });
 		const devIp = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'placeholder': '192.168.1.0 (optional)' });
-		const devTable = E('table', { 'class': 'hpui-table' });
 
 		devPicker.addEventListener('change', function() {
 			const val = devPicker.value;
@@ -360,7 +399,7 @@ return view.extend({
 			devPicker.value = (devPicker.querySelector('option[value="' + cur.replace(/"/g, '\\"') + '"]')) ? cur : '';
 		}
 
-		const devAddBtn = E('button', { 'class': 'btn cbi-button cbi-button-important', type: 'button' }, [ _('Add device') ]);
+		const devAddBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Add device') ]);
 		devAddBtn.addEventListener('click', function() {
 			const mac = String(devMac.value || '').trim();
 			const ip = String(devIp.value || '').trim();
@@ -369,11 +408,122 @@ return view.extend({
 				note(devResult, false, _('MAC or IP is required'));
 				return;
 			}
-			act(devResult, callClientAdd(name, mac, ip), _('Device added'));
+			act(devResult, callClientAdd(name, mac, ip), _('Device added'), devAddBtn);
 			devName.value = ''; devMac.value = ''; devIp.value = ''; devPicker.value = '';
 		});
 
-		/* ── Registry: the unified device list ──────────────────────── */
+		/* ── Registry: the unified device card grid ─────────────────── */
+
+		function iconBtn(cls, glyph, title, onClick) {
+			const b = E('button', { 'class': 'hpui-btn ' + cls, 'type': 'button', 'title': title }, [ glyph ]);
+			b.addEventListener('click', onClick);
+			return b;
+		}
+
+		function deviceCard(c) {
+			const actions = E('div', { 'class': 'dev-actions' });
+
+			const blk = E('button', { 'class': 'hpui-btn ' + (c.blocked ? 'hpui-btn-primary' : 'hpui-btn-danger'), type: 'button',
+				title: c.blocked ? _('Allow internet access again') : _('Full internet block for this device (firewall drop)') },
+				[ c.blocked ? _('Allow') : _('Block') ]);
+			blk.addEventListener('click', function() {
+				act(devResult, callClientBlock(c.id, c.blocked ? '0' : '1'),
+					c.blocked ? _('Allowed') : _('Blocked'), blk);
+			});
+			actions.appendChild(blk);
+
+			actions.appendChild(iconBtn('hpui-btn-ghost', '⏱', _('Temporary block'), function() {
+				customTimeModal(_('Temporary block') + ' — ' + clientName(c), 60, function(mins) {
+					act(devResult, callClientTempBlock(c.id, String(mins)), _('Temporary block set'));
+				});
+			}));
+
+			if (c.reason === 'temp') {
+				actions.appendChild(iconBtn('hpui-btn-ghost', '↩', _('Remove temporary block'), function() {
+					act(devResult, callClientTempUnblock(c.id), _('Temporary block removed'));
+				}));
+			}
+
+			actions.appendChild(iconBtn('hpui-btn-ghost', '✅', _('Temporary allow (pokes a hole in the schedule)'), function() {
+				customTimeModal(_('Temporary allow') + ' — ' + clientName(c), 60, function(mins) {
+					act(devResult, callClientTempAllow(c.id, String(mins)), _('Temporarily allowed'));
+				});
+			}));
+
+			if (c.mac) {
+				actions.appendChild(iconBtn('hpui-btn-ghost', '📶',
+					c.wifi_blocked ? _('Wi-Fi block is on — click to allow') : _('Block Wi-Fi for this device (wired stays online)'),
+					function() {
+						act(devResult, callClientWifiBlock(c.id, c.wifi_blocked ? '0' : '1'),
+							c.wifi_blocked ? _('Wi-Fi block removed') : _('Wi-Fi blocked for this device'));
+					}));
+			}
+
+			actions.appendChild(iconBtn('hpui-btn-ghost', '✎', _('Rename'), function() {
+				const inp = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': c.name || '' });
+				const go = function() {
+					const v = String(inp.value || '').trim();
+					if (!v) {
+						ui.addNotification('error', _('Enter a name'));
+						return;
+					}
+					ui.hideModal();
+					act(devResult, callClientRename(c.id, v), _('Renamed'));
+				};
+				inp.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') go(); });
+				ui.showModal(_('Rename device') + ' — ' + clientName(c), [
+					inp,
+					E('div', { 'class': 'right', 'style': 'margin-top:14px; display:flex; gap:8px; justify-content:flex-end' }, [
+						E('button', { 'class': 'hpui-btn hpui-btn-ghost', 'click': ui.hideModal }, [ _('Cancel') ]),
+						E('button', { 'class': 'hpui-btn hpui-btn-primary', 'click': go }, [ _('Apply') ])
+					])
+				]);
+			}));
+
+			actions.appendChild(iconBtn('hpui-btn-danger', '✖', _('Remove'), function() {
+				ui.showModal(_('Remove device'), [
+					E('p', {}, [ _('Remove') + ' «' + clientName(c) + '» ' + _('from control?') ]),
+					E('div', { 'class': 'right', 'style': 'margin-top:14px; display:flex; gap:8px; justify-content:flex-end' }, [
+						E('button', { 'class': 'hpui-btn hpui-btn-ghost', 'click': ui.hideModal }, [ _('Cancel') ]),
+						E('button', { 'class': 'hpui-btn hpui-btn-danger', 'click': function() { ui.hideModal(); act(devResult, callClientDelete(c.id), _('Device removed')); } }, [ _('Remove') ])
+					])
+				]);
+			}));
+
+			const hostExtra = (c.hostname && c.name && c.hostname !== c.name) ? c.hostname : '';
+
+			return E('div', { 'class': 'hpui-card dev-card' }, [
+				E('div', { 'class': 'dev-card-top' }, [
+					E('span', { 'class': 'dev-name' }, [ clientName(c) ]),
+					hostExtra ? E('span', { 'class': 'dev-host' }, [ hostExtra ]) : ''
+				]),
+				E('div', { 'class': 'dev-meta' }, [ (c.mac || '—') + (c.ip ? ' · ' + c.ip : '') ]),
+				E('div', { 'class': 'dev-states' }, [
+					E('div', { 'class': 'dev-state' }, [
+						E('span', { 'class': 'dev-state-k' }, [ _('Online') ]),
+						E('span', { 'class': 'dev-state-v' }, [
+							E('span', { 'class': 'hpui-dot' + (c.online ? ' ok' : '') }),
+							E('span', { 'class': 'dev-state-t' }, [ c.online ? _('Online') : _('Offline') ])
+						])
+					]),
+					E('div', { 'class': 'dev-state' }, [
+						E('span', { 'class': 'dev-state-k' }, [ _('Internet') ]),
+						E('span', { 'class': 'dev-state-v' }, [
+							stateBadge(c),
+							E('span', { 'class': 'dev-state-t' }, [ stateText(c) ]),
+							c.wifi_blocked ? E('span', { 'class': 'hpui-badge hpui-b-amber dev-badge-wifi' }, [ '📶 ' + _('Wi-Fi off') ]) : ''
+						])
+					]),
+					E('div', { 'class': 'dev-state' }, [
+						E('span', { 'class': 'dev-state-k' }, [ _('Proxy') ]),
+						E('span', { 'class': 'dev-state-v' }, [ proxyBadge(c) ])
+					])
+				]),
+				actions
+			]);
+		}
+
+		const devGrid = E('div', { 'class': 'dev-grid' });
 
 		function renderDevices() {
 			rebuildPicker();
@@ -386,119 +536,22 @@ return view.extend({
 				if (b && b.className.indexOf('hpui-b-green') !== -1)
 					proxied++;
 			}
-			const summary = [
-				{ n: (stats.devices_total != null) ? stats.devices_total : '—', l: _('Devices on the network'), c: 'hpui-c-blue' },
-				{ n: clients.length, l: _('Managed'), c: '' },
-				{ n: (stats.blocked != null) ? stats.blocked : '—', l: _('Blocked now'), c: 'hpui-c-red' },
-				{ n: proxied, l: _('Proxied now'), c: 'hpui-c-green' }
+			const nums = [
+				(stats.devices_total != null) ? String(stats.devices_total) : '—',
+				String(clients.length),
+				(stats.blocked != null) ? String(stats.blocked) : '—',
+				String(proxied)
 			];
-			const sumBox = document.getElementById('hp-dev-sum');
-			if (sumBox)
-				dom.content(sumBox, summary.map(function(x) {
-					return E('div', { 'class': 'hpui-card' }, [
-						E('div', { 'class': 'hpui-num ' + x.c }, [ String(x.n) ]),
-						E('div', { 'class': 'hpui-cap' }, [ x.l ])
-					]);
-				}));
+			for (let i = 0; i < sumNums.length; i++)
+				sumNums[i].textContent = nums[i];
 
-			const head = [ _('Device'), _('MAC'), _('IP'), _('Online'), _('Internet'), _('Proxy'), _('Actions') ];
-			const thead = E('thead', {}, [ E('tr', {}, head.map(function(h) { return E('th', {}, [ h ]); })) ]);
-			const tbody = E('tbody', {});
-			if (!clients.length) {
-				tbody.appendChild(E('tr', {}, [ E('td', { 'colspan': '7' }, [ _('No managed devices yet — add one from the network above.') ]) ]));
-			}
-			for (let i = 0; i < clients.length; i++) {
-				const c = clients[i];
-				const tdActions = E('td');
-				const wrap = E('div', { 'class': 'dev-actions' });
-				const blk = E('button', { 'class': 'btn cbi-button-' + (c.blocked ? 'positive' : 'negative'), type: 'button',
-					title: c.blocked ? _('Allow internet access again') : _('Full internet block for this device (firewall drop)') },
-					[ c.blocked ? _('Allow') : _('Block') ]);
-				blk.addEventListener('click', function() {
-					act(devResult, callClientBlock(c.id, c.blocked ? '0' : '1'),
-						c.blocked ? _('Allowed') : _('Blocked'));
-				});
-				wrap.appendChild(blk);
-				const tmp = E('button', { 'class': 'btn cbi-button', type: 'button', title: _('Temporary block') }, [ '⏱' ]);
-				tmp.addEventListener('click', function() {
-					customTimeModal(_('Temporary block') + ' — ' + clientName(c), 60, function(mins) {
-						act(devResult, callClientTempBlock(c.id, String(mins)), _('Temporary block set'));
-					});
-				});
-				wrap.appendChild(tmp);
-				if (c.reason === 'temp') {
-					const un = E('button', { 'class': 'btn cbi-button-positive', type: 'button', title: _('Remove temporary block') }, [ '↩' ]);
-					un.addEventListener('click', function() {
-						act(devResult, callClientTempUnblock(c.id), _('Temporary block removed'));
-					});
-					wrap.appendChild(un);
-				}
-				const tal = E('button', { 'class': 'btn cbi-button', type: 'button', title: _('Temporary allow (pokes a hole in the schedule)') }, [ '✅' ]);
-				tal.addEventListener('click', function() {
-					customTimeModal(_('Temporary allow') + ' — ' + clientName(c), 60, function(mins) {
-						act(devResult, callClientTempAllow(c.id, String(mins)), _('Temporarily allowed'));
-					});
-				});
-				wrap.appendChild(tal);
-				if (c.mac) {
-					const wfb = E('button', {
-						'class': 'btn cbi-button' + (c.wifi_blocked ? ' cbi-button-negative' : ''),
-						type: 'button',
-						title: c.wifi_blocked ? _('Wi-Fi block is on — click to allow') : _('Block Wi-Fi for this device (wired stays online)')
-					}, [ '📶' ]);
-					wfb.addEventListener('click', function() {
-						act(devResult, callClientWifiBlock(c.id, c.wifi_blocked ? '0' : '1'),
-							c.wifi_blocked ? _('Wi-Fi block removed') : _('Wi-Fi blocked for this device'));
-					});
-					wrap.appendChild(wfb);
-				}
-				const ren = E('button', { 'class': 'btn cbi-button', type: 'button', title: _('Rename') }, [ '✎' ]);
-				ren.addEventListener('click', function() {
-					const inp = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': c.name || '' });
-					const go = function() {
-						const v = String(inp.value || '').trim();
-						if (!v) {
-							ui.addNotification('error', _('Enter a name'));
-							return;
-						}
-						ui.hideModal();
-						act(devResult, callClientRename(c.id, v), _('Renamed'));
-					};
-					inp.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') go(); });
-					ui.showModal(_('Rename device') + ' — ' + clientName(c), [
-						inp,
-						E('div', { 'class': 'right', 'style': 'margin-top:14px' }, [
-							E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
-							E('button', { 'class': 'btn cbi-button-positive important', 'click': go }, [ _('Apply') ])
-						])
-					]);
-				});
-				wrap.appendChild(ren);
-				const del = E('button', { 'class': 'btn cbi-button-remove', type: 'button', title: _('Remove') }, [ '✖' ]);
-				del.addEventListener('click', function() {
-					ui.showModal(_('Remove device'), [
-						E('p', {}, [ _('Remove') + ' «' + clientName(c) + '» ' + _('from control?') ]),
-						E('div', { 'class': 'right', 'style': 'margin-top:14px' }, [
-							E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
-							E('button', { 'class': 'btn cbi-button-negative important', 'click': function() { ui.hideModal(); act(devResult, callClientDelete(c.id), _('Device removed')); } }, [ _('Remove') ])
-						])
-					]);
-				});
-				wrap.appendChild(del);
-				tdActions.appendChild(wrap);
-
-				tbody.appendChild(E('tr', {}, [
-					E('td', {}, [ String(clientName(c)) + (c.hostname && c.name && c.hostname !== c.name ? ' (' + c.hostname + ')' : '') ]),
-					E('td', {}, [ c.mac || '—' ]),
-					E('td', {}, [ c.ip || '—' ]),
-					E('td', {}, [ c.online ? '🟢' : '—' ]),
-					E('td', {}, [ stateBadge(c), ' ', stateText(c),
-						c.wifi_blocked ? E('span', { 'class': 'hpui-badge hpui-b-amber dev-badge-wifi' }, [ '📶 ' + _('Wi-Fi off') ]) : '' ]),
-					E('td', {}, [ proxyBadge(c) ]),
-					tdActions
-				]));
-			}
-			dom.content(devTable, [ thead, tbody ]);
+			const cards = [];
+			if (!clients.length)
+				cards.push(E('div', { 'class': 'hpui-hint' },
+					[ _('No managed devices yet — add one from the network above.') ]));
+			for (let i = 0; i < clients.length; i++)
+				cards.push(deviceCard(clients[i]));
+			dom.content(devGrid, cards);
 		}
 
 		/* ── Proxy policy (the former "Devices & interfaces") ───────── */
@@ -602,29 +655,34 @@ return view.extend({
 		refreshStatus();
 
 		return E('div', {}, [
-			E('h2', {}, _('Devices')),
-			E('p', { 'class': 'hpui-hint', style: 'margin-top:2px' },
-				[ _('Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Parental control and the Telegram bot); the Proxy policy at the bottom decides how the traffic of each device is served.') ]),
-			E('div', { 'class': 'hpui-cards dev-sum', id: 'hp-dev-sum' }, []),
-			E('h4', {}, [ _('Registry') ]),
-			E('p', { 'class': 'hpui-hint' }, [
-				_('Devices are identified by MAC: when the DHCP address changes the block follows the device automatically. The current IP is resolved from the DHCP lease file at every apply.')
+			hp.pageIntro(_('Devices'),
+				_('Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Parental control and the Telegram bot); the Proxy policy at the bottom decides how the traffic of each device is served.')),
+			sumBox,
+			E('div', { 'class': 'hpui-panel' }, [
+				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('database'), _('Registry') ]),
+				E('p', { 'class': 'hpui-hint' }, [
+					_('Devices are identified by MAC: when the DHCP address changes the block follows the device automatically. The current IP is resolved from the DHCP lease file at every apply.')
+				]),
+				E('div', { 'class': 'dev-form' }, [
+					E('div', { 'class': 'dev-field dev-wide' }, [ E('label', {}, [ _('From the network') ]), devPicker ]),
+					E('div', { 'class': 'dev-field' }, [ E('label', {}, [ _('Alias') ]), devName ]),
+					E('div', { 'class': 'dev-field' }, [ E('label', {}, [ _('MAC') ]), devMac ]),
+					E('div', { 'class': 'dev-field' }, [ E('label', {}, [ _('IP (static, optional)') ]), devIp ]),
+					E('div', { 'class': 'dev-field', 'style': 'flex:0 0 auto' }, [ E('label', {}, [ ' ' ]), devAddBtn ])
+				])
 			]),
-			E('div', { 'class': 'dev-form' }, [
-				E('div', { 'class': 'dev-field dev-wide' }, [ E('label', {}, [ _('From the network') ]), devPicker ]),
-				E('div', { 'class': 'dev-field' }, [ E('label', {}, [ _('Alias') ]), devName ]),
-				E('div', { 'class': 'dev-field' }, [ E('label', {}, [ _('MAC') ]), devMac ]),
-				E('div', { 'class': 'dev-field' }, [ E('label', {}, [ _('IP (static, optional)') ]), devIp ]),
-				E('div', { 'class': 'dev-field', 'style': 'flex:0 0 auto' }, [ E('label', {}, [ ' ' ]), devAddBtn ])
+			E('div', { 'class': 'hpui-panel' }, [
+				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('devices'), _('Managed devices') ]),
+				devGrid,
+				resultBlock(devResult)
 			]),
-			E('h4', {}, [ _('Managed devices') ]),
-			E('div', { 'class': 'hpui-wrap' }, [ devTable ]),
-			resultBlock(devResult),
-			E('h4', {}, [ _('Proxy policy') ]),
-			E('p', { 'class': 'hpui-hint' }, [
-				_('Per-device policy for the LAN, upstream IP policy for the WAN and interface binding. This does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages. The Apply button at the bottom of the page saves these settings.')
-			]),
-			policyBox
+			E('div', { 'class': 'hpui-panel' }, [
+				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('layers'), _('Proxy policy') ]),
+				E('p', { 'class': 'hpui-hint' }, [
+					_('Per-device policy for the LAN, upstream IP policy for the WAN and interface binding. This does not change WHAT is proxied — the service rules and lists live on the Service rules and Blocking bypass pages. The Apply button at the bottom of the page saves these settings.')
+				]),
+				policyBox
+			])
 		]);
 	}
 });
