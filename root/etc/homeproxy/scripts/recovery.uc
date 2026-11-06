@@ -147,7 +147,6 @@ const HUNG_KILLABLE = [ 'automation', 'multidns', 'telegram', 'urltest',
 export const PROPOSAL_HINTS = {
 	core: 'проверьте узлы/подписку; «Перезапуск службы» пересоберёт конфиг (Контроль → Обход блокировок)',
 	mosdns: 'MultiDNS-демон пересобирает mosdns сам; если не восстановился — «Перезапуск службы»',
-	tgws: 'проверьте настройки tg-ws (Управление с телефона)',
 	tun: 'проверьте режим перехвата; «Перезапуск службы» пересоздаст TUN',
 	fw4: '«Перезапуск службы» перестроит правила перехвата',
 	generators: 'посмотрите журнал операций (Диагностика → Операции): последнее применение не верифицировано',
@@ -192,11 +191,11 @@ export function classify_key(key) {
 		return { action: null, target: k, class: 'monitor' };
 	if (k === 'uci' || index(k, 'config:') === 0)
 		return { action: null, target: k, class: 'config' };
-	/* Health-записи без procd-инстанса: mosdns/tgws/tun/tun_route/fw4/
+	/* Health-записи без procd-инстанса: mosdns/tun/tun_route/fw4/
 	 * generators/system — proposal по имени записи. 'core' остаётся proposal
 	 * ТОЛЬКО для босого ключа (легаси/ручная заявка): реальный down ядра
 	 * collect_findings маппит в 'svc:hiddify-c' (Ф3.2 — авто-ремонт). */
-	if (k === 'core' || k === 'mosdns' || k === 'tgws' || k === 'tun' ||
+	if (k === 'core' || k === 'mosdns' || k === 'tun' ||
 	    k === 'tun_route' || k === 'fw4' || k === 'generators' || k === 'system')
 		return { action: null, target: k, class: k };
 	return null;
@@ -270,7 +269,6 @@ export function collect_findings(sent_data, health_data) {
 		} else {
 			const cls = (nm === 'mosdns') ? 'mosdns'
 				: (nm === 'core') ? 'core'
-				: (nm === 'tgws') ? 'tgws'
 				: (nm === 'tun') ? 'tun'
 				: (nm === 'fw4') ? 'fw4'
 				: (nm === 'generators') ? 'generators'

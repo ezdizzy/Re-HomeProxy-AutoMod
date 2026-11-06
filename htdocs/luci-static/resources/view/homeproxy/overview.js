@@ -498,7 +498,8 @@ return view.extend({
 			[ 'temp',    _('Temperature'),     { fmt: (v) => v + ' °C', color: hp.PALETTE.amberHot, fill: hp.PALETTE.amberFill } ],
 			[ 'learned', _('Learned records'), { fmt: (v) => String(Math.floor(v) || 0), color: hp.PALETTE.accent, fill: hp.PALETTE.accentFill } ],
 			/* Per-exit traffic speed (Ф8-F7 T2): B/s deltas from the
-			 * /connections sampler. byp = Zapret + ByeDPI + tg-ws.
+			 * /connections sampler. byp = Zapret + ByeDPI (ч.200, D34b:
+			 * tg-ws удалён).
 			 * Keys match the sampler point fields (dir_b/byp_b).
 			 * Colors are semantic (Р3): direct = grey, bypass engines =
 			 * amber; VPN speed is a headline metric (metric card). */
@@ -530,7 +531,6 @@ return view.extend({
 			[ 'direct', _('Direct') ],
 			[ 'zapret', 'Zapret (nfqws2)' ],
 			[ 'byedpi', 'ByeDPI (ciadpi)' ],
-			[ 'tgws',   _('tg-ws bridge') ],
 			[ 'block',  _('Blocked') ],
 			[ 'other',  _('Other') ]
 		];

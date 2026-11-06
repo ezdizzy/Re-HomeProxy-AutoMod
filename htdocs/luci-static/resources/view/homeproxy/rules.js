@@ -230,7 +230,6 @@ function nodeText(node) {
 	if (node === 'main-out') return _('Same as main node');
 	if (node === 'byedpi-out') return 'ByeDPI';
 	if (node === 'zapret-out') return 'Zapret';
-	if (node === 'tgws-out') return _('tg-ws (transparent)');
 	if (node === 'urltest') return _('URLTest pool');
 	return resolveTag(node);
 }
@@ -1042,11 +1041,6 @@ return view.extend({
 					sel.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
 				if (env.zapret_enabled)
 					sel.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
-				/* The transparent tg-ws exit — offered for Telegram only and
-				 * only while the bridge is running (rpcd re-checks both). */
-				if (preset.source === 'telegram' && env.tgws_ok)
-					sel.appendChild(E('option', { value: 'tgws-out' },
-						[ _('tg-ws (transparent)') ]));
 				sel.appendChild(E('option', { value: 'urltest' }, [ _('URLTest pool') ]));
 				for (let n in (list.nodes || []))
 					sel.appendChild(E('option', { value: list.nodes[n].id },
@@ -1104,10 +1098,8 @@ return view.extend({
 							const ERRS = {
 								main_is_direct: _('Main node is Direct — this rule would have no effect. Pick Zapret/ByeDPI or a real node.'),
 								byedpi_disabled: _('ByeDPI is not enabled — enable it on the Connection page first.'),
-								zapret_disabled: _('Zapret is not enabled — enable it on the Connection page first.'),
-								tgws_not_running: _('The tg-ws bridge is not running — install/start it on the Phone control page first.'),
-								tgws_telegram_only: _('The tg-ws bridge carries Telegram traffic only.'),
-								urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
+							zapret_disabled: _('Zapret is not enabled — enable it on the Connection page first.'),
+							urltest_pool_empty: _('Pick at least one node for the URLTest pool.'),
 								unknown_node: _('Unknown node — refresh the page.'),
 								unknown_source: _('Unknown service.'),
 								'config generation failed': _('Config generation failed — the previous config stays active.')
@@ -1247,10 +1239,9 @@ return view.extend({
 				}
 
 				/* T1 (G1): a SHORT, provider-independent hint — the exit country
-				 * of the bridge differs per user, so no measured locations here. */
-				if (preset.source === 'telegram')
-					wrap.appendChild(E('div', { 'class': 'hpui-hint', style: 'margin:0' },
-						[ _('tg-ws (transparent) lets Telegram work WITHOUT a VPN — it is not a direct connection: messaging rides a local WS bridge (no proxy setup on devices) and falls back to the node automatically if the bridge dies; calls (UDP) stay on the VPN. Telegram will show the bridge relay\'s country instead of your home IP — expected for such a path. The rule routes both Telegram domains and MTProto DC IPs.') ]));
+				 * of the exit differs per user, so no measured locations here.
+				 * ч.200, D34b: прежняя подсказка про выход tg-ws удалена вместе
+				 * с мостом. */
 
 				if (exZone)
 					wrap.appendChild(exZone);

@@ -3,9 +3,10 @@
 // Ravnex — Health Monitor (plan 20 §3 Ф2.1; A.1 аудита, находки 3/4/37/46/49/88).
 //
 // Единый реестр наблюдаемых подсистем: ядро, движки (zapret/byedpi), MultiDNS +
-// mosdns, автоматизация (+ probe_pool/sni_sniffer), telegram-бот и tg-ws мост,
+// mosdns, автоматизация (+ probe_pool/sni_sniffer), telegram-бот,
 // urltest-watchdog/hotswap/автопилот/контроль/метрики, TUN/route (tun_state.json),
 // fw4-перехват, генераторы (opman-журнал применений) и память роутера.
+// (ч.200, D34b: tg-ws мост удалён из продукта — запись реестра убрана.)
 //
 // Статусы (честные, раздельные — A.1 «отказ VPN ≠ отказ WAN ≠ отказ DNS»):
 //   ok       — работает, свидетельство свежее;
@@ -23,7 +24,7 @@
 // service list`, урок 171 — service get сломан) ЕСТЬ истина «что должно
 // работать»: init.d сам гейтит инстансы по UCI. Идентичность процессов —
 // Process Manager (pmgr): реестр daemons.json (владельцы регистрируются сами
-// и пингуют heartbeat) + скан /proc для не-владельческих (ядро, движки, tg-ws,
+// и пингуют heartbeat) + скан /proc для не-владельческих (ядро, движки,
 // tun-route) ОДНИМ проходом. mosdns проверяется по СЛУШАТЕЛЯМ, не по pid
 // (урок 215). SNI-сниффер — runtime-state (находка 88). TUN — tun_state.json
 // (Ф1.3). fw4 — наличие цепей homeproxy в таблице inet fw4 (рантайм-правда).
@@ -216,7 +217,7 @@ export function service_instances() {
 	return out;
 };
 
-/* ── скан процессов ОДНИМ проходом (не-владельческие: ядро, движки, tg-ws,
+	/* ── скан процессов ОДНИМ проходом (не-владельческие: ядро, движки,
  * tun-route; реестр pmgr гарантирует их только после scan_registry, который
  * в рантайме никто не зовёт) ──────────────────────────────────────────────
  * want = { '<имя записи>': { exe: 'hiddify-core' } | { script: 'tun_route_watch.sh' } }
@@ -485,6 +486,32 @@ function engine_entry(name, label, inst_name, hit, svc) {
 		'движок жив (идентичность подтверждена)', { pid: hit.pid });
 };
 
+/* Плановое окно рестарта mosdns (Ф9.15а, ч.200): пересборка конфигурации
+ * (learned-списки/quarantine/UCI) рестартит mosdns на секунды — это НЕ
+ * инцидент. multidns.uc пишет RESTART_MARK перед рестартом (ts внутри)
+ * и снимает после подъёма слушателей; протухшая копия само-истекает
+ * (60 с, семантика multidns_status «restarting»). Пока маркер свеж —
+ * запись остаётся 'ok' с честной пометкой; аларма только если mosdns
+ * не вернётся за окно маркера. Рестарты прорежены дебаунсом в multidns.uc. */
+const MOSDNS_RESTART_MARK = '/var/run/homeproxy/multidns/mosdns.restarting';
+const MOSDNS_RESTART_FRESH = 60;
+function mosdns_restarting(now) {
+	let ts = -1;
+	try {
+		const txt = trim(readfile(MOSDNS_RESTART_MARK) || '');
+		if (match(txt, /^[0-9]+$/))
+			ts = int(txt);
+	} catch (e) {}
+	if (ts < 0) {
+		try {
+			const st = stat(MOSDNS_RESTART_MARK);
+			if (st != null && st.mtime > 0)
+				ts = int(st.mtime);
+		} catch (e) {}
+	}
+	return (ts > 0 && (now - ts) < MOSDNS_RESTART_FRESH);
+};
+
 function mosdns_entry(svc, regst, now) {
 	const label = 'mosdns (пулы MultiDNS)';
 	if (svc['multidns'] == null)
@@ -500,6 +527,13 @@ function mosdns_entry(svc, regst, now) {
 			'слушатели ' + ports.plain + '/' + ports.secure + ' привязаны', {
 				listeners: listeners, listeners_checked: now,
 				pid: (e != null) ? e.pid : null
+			});
+	/* Плановое окно рестарта — не инцидент (см. комментарий над mosdns_restarting). */
+	if (mosdns_restarting(now))
+		return mk_entry('mosdns', label, 'dns', 'ok', 'indirect',
+			'короткое окно планового рестарта (пересборка конфигурации MultiDNS) — ' +
+			'аларма только если mosdns не вернётся за ' + MOSDNS_RESTART_FRESH + ' с', {
+				listeners: 0, listeners_checked: now, restarting: true
 			});
 	if (alive)
 		return mk_entry('mosdns', label, 'dns', 'degraded', 'certain',
@@ -574,33 +608,6 @@ function sni_entry(svc, regst, scan) {
 	return mk_entry('sni_sniffer', label, 'automation', 'degraded', 'certain',
 		'сниффер не запущен — автоматизация уйдёт в tcpdump-фолбэк ' +
 		'(spawn-окно/cooldown респавна до 10 мин)', {});
-};
-
-function tgws_entry(regst, scan) {
-	const label = 'tg-ws мост (Telegram без прокси)';
-	const enabled = (uci_str('homeproxy', 'config', 'tgws_enabled') === '1');
-	if (!enabled)
-		return mk_entry('tgws', label, 'telegram', 'off', 'certain',
-			'мост выключен настройками (tgws_enabled)', { enabled: false });
-	const go = (scan != null && scan['tgws_go'] != null) ? scan['tgws_go'] : null;
-	const rs = (scan != null && scan['tgws_rs'] != null) ? scan['tgws_rs'] : null;
-	/* Само-лечение реестра: мост никем не регистрируется — без heal лёгкий
-	 * проход вечно видит устаревшую (мёртвую) identity прошлой записи. */
-	heal_reg('tgws_go', go, 'tgws', null);
-	heal_reg('tgws_rs', rs, 'tgws', null);
-	if (go == null && rs == null) {
-		const reg_e = live_reg('tgws_go') || live_reg('tgws_rs');
-		if (reg_e != null)
-			return mk_entry('tgws', label, 'telegram', 'ok', 'certain',
-				'мост жив (реестр процессов)', { pid: reg_e.pid, enabled: true });
-		return mk_entry('tgws', label, 'telegram', 'down', 'certain',
-			'мост включён, но процесс tg-ws не найден', { enabled: true });
-	}
-	return mk_entry('tgws', label, 'telegram', 'ok', 'certain',
-		'мост жив (' + ((go != null) ? 'go' : 'rs') + '-вариант)', {
-			pid: (go != null) ? go.pid : rs.pid, variant: (go != null) ? 'go' : 'rs',
-			enabled: true
-		});
 };
 
 function inst_only_entry(name, label, group, inst_name, svc) {
@@ -762,7 +769,7 @@ function system_entry() {
 
 /* ── глубокий проход (fork'и: service list + скан + wget + netstat + nft) ──
  * ВСЕ идентичности — ОДНИМ сканом /proc (fork один; ~200 readfile cmdline —
- * дёшево). Сканируются и не-владельческие (ядро/движки/tg-ws), и скриптовые
+ * дёшево). Сканируются и не-владельческие (ядро/движки), и скриптовые
  * демоны: реестр может нести мёртвую identity при живом hb (гонка старта,
  * ч.164) — скан сильнее и само-лечит реестр через heal_reg(). */
 
@@ -778,8 +785,6 @@ const DEEP_SCAN_SPECS = {
 	mosdns: { exe: 'mosdns' },
 	ciadpi: { exe: 'ciadpi' },
 	nfqws2: { exe: 'nfqws2' },
-	tgws_go: { exe: 'tg-ws-proxy-go' },
-	tgws_rs: { exe: 'tg-ws-proxy-rs' },
 	sni_sniffer: { exe: 'sni_sniffer' },
 	probe_pool: { exe: 'probe_pool' },
 	tun_route: { script: 'tun_route_watch.sh' },
@@ -820,7 +825,6 @@ function deep_entries(svc, regst, now) {
 
 	entries.telegram = daemon_entry('telegram', 'Telegram-бот', 'telegram',
 		'telegram', 'telegram_bot', 'telegram.uc', svc, regst, scan);
-	entries.tgws = tgws_entry(regst, scan);
 
 	entries.urltest = daemon_entry('urltest', 'URLTest-watchdog', 'failover',
 		'urltest', 'urltest_watchdog', 'urltest_watchdog.uc', svc, regst, scan);
@@ -895,8 +899,14 @@ export function light_entries(svc, regst, prev, now) {
 		entries.mosdns = (carried_ok)
 			? mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'ok', 'certain',
 				'процесс жив (слушатели — с последней глубокой проверки)', d)
-			: mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'degraded', 'indirect',
-				'процесс жив, слушатели не подтверждались последней глубокой проверкой', d);
+			: (mosdns_restarting(now))
+				? mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'ok', 'indirect',
+					'короткое окно планового рестарта (пересборка конфигурации MultiDNS)', d)
+				: mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'degraded', 'indirect',
+					'процесс жив, слушатели не подтверждались последней глубокой проверкой', d);
+	} else if (mosdns_restarting(now)) {
+		entries.mosdns = mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'ok', 'indirect',
+			'короткое окно планового рестарта (пересборка конфигурации MultiDNS)', {});
 	} else {
 		entries.mosdns = mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'down', 'certain',
 			'процесс mosdns отсутствует', {});
@@ -929,21 +939,6 @@ export function light_entries(svc, regst, prev, now) {
 	/* Telegram. */
 	entries.telegram = daemon_entry('telegram', 'Telegram-бот', 'telegram',
 		'telegram', 'telegram_bot', 'telegram.uc', svc, regst, null);
-	/* tg-ws: гейт переносом (UCI — глубокая проверка), живость из реестра. */
-	const tg_e = live_reg('tgws_go') || live_reg('tgws_rs');
-	const prev_tg = (prev.entries.tgws != null) ? prev.entries.tgws : null;
-	const tg_enabled = (prev_tg != null && prev_tg.detail != null && prev_tg.detail.enabled != null)
-		? (prev_tg.detail.enabled === true) : (tg_e != null);
-	if (!tg_enabled) {
-		entries.tgws = mk_entry('tgws', 'tg-ws мост (Telegram без прокси)', 'telegram',
-			'off', 'certain', 'мост выключен настройками (tgws_enabled)', { enabled: false });
-	} else if (tg_e != null) {
-		entries.tgws = mk_entry('tgws', 'tg-ws мост (Telegram без прокси)', 'telegram',
-			'ok', 'certain', 'мост жив (реестр процессов)', { pid: tg_e.pid, enabled: true });
-	} else {
-		entries.tgws = mk_entry('tgws', 'tg-ws мост (Telegram без прокси)', 'telegram',
-			'down', 'certain', 'мост включён, но процесс tg-ws не найден', { enabled: true });
-	}
 
 	/* Сторожа/служебные. */
 	entries.urltest = daemon_entry('urltest', 'URLTest-watchdog', 'failover',

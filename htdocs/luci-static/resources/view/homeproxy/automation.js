@@ -750,10 +750,10 @@ return view.extend({
 				[ apEnabled, ' ' + _('Enable the auto-pilot') ]), apSave ]);
 		const apResWrap = E('div', { 'class': 'wiz-row' });
 		/* The Telegram checkbox is the frequent confusion (issue feedback):
-		 * a Zapret strategy serves a resource ONLY through its rule → Zapret,
-		 * and Telegram is served by the tg-ws bridge whenever it is enabled. */
+		 * a Zapret strategy serves a resource ONLY through its rule → Zapret.
+		 * (ч.200, D34b: прежняя оговорка про мост tg-ws удалена.) */
 		const apHints = {
-			telegram: _('A Zapret strategy serves Telegram only when its rule leads to Zapret. With the tg-ws bridge Telegram is served by the bridge and the auto-pilot leaves it alone — the checkbox can stay off. Without the bridge it works the same way as for YouTube, which only helps where the provider\'s Telegram block is DPI-shaped rather than a hard cut.')
+			telegram: _('A Zapret strategy serves Telegram only when its rule leads to Zapret. It works the same way as for YouTube, which only helps where the provider\'s Telegram block is DPI-shaped rather than a hard cut.')
 		};
 		[ ['youtube', _('YouTube')], ['discord', _('Discord')],
 		  ['telegram', _('Telegram')], ['general', _('General (best overall)')] ]
@@ -783,7 +783,7 @@ return view.extend({
 		]));
 		panes.dpi.appendChild(E('div', { style: 'margin-top:10px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
 			[ apHead, apRow1, apResWrap, apRow3, apSaveMsg, E('p', { 'class': 'wiz-note' },
-				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The "apply in window" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule, and the Telegram rule is left alone while the tg-ws bridge serves it. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
+				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The "apply in window" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
 		let apDirty = false;
 		for (let k in apRes)
 			apRes[k].addEventListener('change', function() { apDirty = true; });

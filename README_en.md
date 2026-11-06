@@ -29,9 +29,8 @@ monitoring and diagnostics — all from the LuCI web interface, all local on the
 - **two VPN-free DPI bypass engines** — [Zapret 2](https://github.com/bol-van/zapret2) (nfqws2) and
   [ByeDPI](https://github.com/hufrea/byedpi) (ciadpi) with a strategy catalog, a picking lab and an autopilot;
 - a **self-learning automation engine** that discovers blocked resources and routes them on its own;
-- **transparent Telegram without VPN** (TG WS Proxy), **hot-standby node failover** (Hot Swap),
-  **DNS server racing** (MultiDNS), **parental control**, a **Telegram control bot** and
-  **in-app self-update**.
+- **hot-standby node failover** (Hot Swap), **DNS server racing** (MultiDNS),
+  **parental control**, a **Telegram control bot** and **in-app self-update**.
 
 All logic runs on **ucode** — OpenWrt's native interpreter — so the app is frugal with RAM and needs
 no external services: the web UI loads nothing from CDNs, every chart is drawn locally, and update
@@ -81,9 +80,6 @@ checks happen only on your request.
   journal — and the same through the Telegram bot.
 - **Telegram bot v2** — status, nodes, restart-free switching, snapshots, push notifications
   (node changes, failures, learning) with dedup and rate-limiting.
-- **Telegram without a proxy (TG WS Proxy)** — Telegram messages for the whole LAN with no VPN and
-  no per-app settings: a one-button transparent bridge + read-only recognition of your own
-  tg-ws-proxy-rs install.
 
 ### Network & diagnostics
 - **MultiDNS (mosdns)** — every DNS query races the whole pool; the fastest live answer wins; a
@@ -180,14 +176,10 @@ Full guides live in the **[wiki](../../wiki/Home)**:
 
 ## Security & privacy
 
-- **LAN only** — the app opens no WAN ports; optional components (the tg-ws-proxy-go bridge) listen
-  on loopback only.
+- **LAN only** — the app opens no WAN ports; local service listeners bind to loopback only.
 - **Everything local** — the UI loads no external CDN assets/fonts; charts are built client-side.
 - **Upstream-signed binaries** — cores and DPI engines are downloaded from their official releases
   (signed apk keys); the app itself is built by GitHub CI from this repository.
-- **Third-party components stay third-party** — the tg-ws-proxy-go bridge is installed with one
-  button from its official release (SHA256-verified) and runs as its own service; nothing is
-  repackaged into the app's packages.
 
 ## Credits
 

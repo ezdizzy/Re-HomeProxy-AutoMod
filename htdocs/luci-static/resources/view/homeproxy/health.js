@@ -195,7 +195,6 @@ function nodeText(node) {
 	if (node === 'main-out') return _('Same as main node');
 	if (node === 'byedpi-out') return 'ByeDPI';
 	if (node === 'zapret-out') return 'Zapret';
-	if (node === 'tgws-out') return _('tg-ws (transparent)');
 	if (node === 'urltest') return _('URLTest pool');
 	return resolveTag(node);
 }
@@ -506,15 +505,10 @@ function buildProviderSection() {
 					: E('span', { style: 'opacity:.55' }, [ _('no rule') ]));
 			const ev = effVerdict(r, rule);
 			let rec = (r.recommend && PROV_RECOMMEND[r.recommend]) ? PROV_RECOMMEND[r.recommend] : '—';
-			/* A rule already covers a "needs proxy" resource — say so. */
-			if (r.verdict === 'needs_proxy' && rule)
-				rec = _('Rule configured (→ %s) — the resource is covered by it.').format(nodeText(rule.node));
-			/* The tg-ws bridge is MTProto-only (ch.91, lesson 95): a web
-			 * probe cannot pass the bridge, a needs_proxy verdict here does
-			 * NOT mean "create a rule". */
-			if (r.verdict === 'needs_proxy' && rule && rule.enabled && rule.node === 'tgws-out')
-				rec = _('Rule configured (→ %s) — it serves the Telegram apps (MTProto); the web version rides the node (group fallback).').format(nodeText(rule.node));
-			if (r.verdict === 'needs_strategy' && rule && (rule.node === 'zapret-out' || rule.node === 'byedpi-out'))
+		/* A rule already covers a "needs proxy" resource — say so. */
+		if (r.verdict === 'needs_proxy' && rule)
+			rec = _('Rule configured (→ %s) — the resource is covered by it.').format(nodeText(rule.node));
+		if (r.verdict === 'needs_strategy' && rule && (rule.node === 'zapret-out' || rule.node === 'byedpi-out'))
 				rec = _('The rule already leads to %s — run the Strategy Lab: the current strategy may not handle this resource.').format(nodeText(rule.node));
 			/* google_ai (C2): the page shell opens everywhere. */
 			if (r.svc === 'google_ai' && (ev === 'works_live' || (r.verdict === 'opens_direct' && !rule)))
@@ -534,11 +528,6 @@ function buildProviderSection() {
 				const note = E('div', { 'class': 'wiz-note', style: 'margin:0' }, [ svcNote ]);
 				hostCell.appendChild(note);
 			}
-			/* tg-ws rows (rule → tgws-out): the WEB probe result depends on
-			 * which urltest member serves it; messaging apps are unaffected. */
-			if (r.svc === 'telegram' && rule && rule.enabled && rule.node === 'tgws-out')
-				hostCell.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0' },
-					[ _('The probe checks the WEB version through the configured path; the tg-ws bridge carries the Telegram apps (MTProto) only — the web check may time out while the group sits on the bridge, messaging clients are unaffected. Bridge status and check: the Phone control page.') ]));
 			const tr = E('tr', {}, [
 				E('td', {}, [ hostCell ]),
 				E('td', {}, [ probeCell(r.live) ]),

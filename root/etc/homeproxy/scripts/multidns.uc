@@ -61,6 +61,19 @@ const CONF = MD_DIR + '/mosdns.yaml';
 const CAND = MD_DIR + '/mosdns.candidate.yaml';
 const PID = MD_DIR + '/mosdns.pid';
 const RESTART_MARK = MD_DIR + '/mosdns.restarting';
+/* Ф9.15а (D34f, ч.200): зеркало learned/quarantine в конфиге mosdns меняется
+ * почти на каждой волне обучения — раньше это означало рестарт каждые 5–15
+ * мин (живой журнал: 451 health-переход mosdns за два дня), а каждое окно
+ * рестарта рождало боту пару down/recovered. mosdns v5.3.4 не умеет
+ * hot-reload — рестарт при изменении обязателен, НО зеркало — только
+ * defense-in-depth (маршрутизация уже живёт в sing-box/fw4), поэтому
+ * mirror-дривнен рестарт можно проредить дебаунсом. UCI-изменения
+ * (пулы/порты/режим) рестартят сразу. Окно честно видно в health
+ * (маркер RESTART_MARK) и в multidns_status («restarting»). */
+const REBUILD_DEBOUNCE_SEC = 900;
+let last_mosdns_start = 0;      /* ts последнего ВЫПОЛНЕННОГО нами рестарта */
+let last_uci_conf_sig = '';     /* UCI-снимок на момент того рестарта */
+let debounce_note_ts = 0;       /* чтобы «отложено» не забивало журнал */
 const STATE_FILE = MD_DIR + '/multidns_state.json';
 const LOG_FILE = MD_DIR + '/multidns.log';
 const MOSDNS = '/usr/bin/mosdns';
@@ -1246,6 +1259,7 @@ function start_mosdns() {
 	 * running" on every quality-cycle rebuild. The marker is removed below;
 	 * a stale copy (daemon SIGKILLed mid-restart) self-expires after 60 s. */
 	atomic_write(RESTART_MARK, sprintf('%d', time()));
+	last_mosdns_start = time();
 	/* mosdns appends its startup banner (INFO "working directory changed" +
 	 * "main config loaded", ~600 B per start) to LOG_FILE.md on EVERY start —
 	 * its log.level=warn only filters plugin logs, the banner always lands.
@@ -1337,8 +1351,25 @@ function pools_sig() {
 		+ '|' + join(',', to_list(uci.get('homeproxy', 'config', 'iran_dns_server')))
 		+ '|' + join(',', to_list(uci.get('homeproxy', 'config', 'dns_server')))
 		+ '|' + join(',', to_list(uci.get('homeproxy', 'config', 'secure_dns_server')))
-		+ '|' + ((uci.get('homeproxy', 'config', 'russia_dns_use_wan') || '0') === '1'
-			? join(',', wan_dns_servers()) : '');
+	+ '|' + ((uci.get('homeproxy', 'config', 'russia_dns_use_wan') || '0') === '1'
+		? join(',', wan_dns_servers()) : '');
+}
+
+/* UCI-ключи, которые читает build_mosdns_conf (напрямую и через хелперы
+ * пулов) — детектор «urgent»-рестартов дебаунса Ф9.15а: изменение здесь
+ * рестартит mosdns немедленно, mirror-only-изменения (learned/quarantine,
+ * data_changed=true при неизменном UCI) могут откладываться до
+ * REBUILD_DEBOUNCE_SEC. */
+function uci_conf_sig() {
+	return pools_sig()
+		+ '|' + (uci.get('homeproxy', 'config', 'routing_mode') || '')
+		+ '|' + (uci.get('homeproxy', 'config', 'main_node') || '')
+		+ '|' + (uci.get('homeproxy', 'multidns', 'emergency_direct') || '')
+		+ '|' + (uci.get('homeproxy', 'multidns', 'use_plain') || '')
+		+ '|' + (uci.get('homeproxy', 'multidns', 'use_secure') || '')
+		+ '|' + (uci.get('homeproxy', 'multidns', 'secure_via_proxy') || '')
+		+ '|' + (uci.get('homeproxy', 'multidns', 'plain_port') || '')
+		+ '|' + (uci.get('homeproxy', 'multidns', 'secure_port') || '');
 }
 
 /* Rebuild the mosdns YAML from the current UCI + state and restart the
@@ -1357,10 +1388,31 @@ function rebuild_if_changed() {
 	 * killed+restarted on EVERY 30 s cfg-check (~130 starts/hour, the real
 	 * root of the constant "restarting..." windows ch112 only papered over
 	 * with the marker). Same-form comparison only. */
-	if (data_changed || !access(CONF) || trim(readfile(CONF)) !== trim(fresh)) {
-		atomic_write(CONF, fresh);
-		start_mosdns();
+	const live_trim = access(CONF) ? trim(readfile(CONF)) : null;
+	const fresh_trim = trim(fresh);
+	if (live_trim === fresh_trim) {
+		update_probe_set(v4_hosts(assemble_plain_pool(load_state())));
+		return;
 	}
+	/* Ф9.15а debounce: рестарт, вызванный ТОЛЬКО зеркалом learned/quarantine
+	 * (data_files изменились, UCI — нет), откладывается, если mosdns
+	 * недавно рестартился. УCI-драйвен (data_changed=false или сигнатура
+	 * UCI ушла) — рестарт немедленно. */
+	if (data_changed && last_mosdns_start > 0 &&
+	    (time() - last_mosdns_start) < REBUILD_DEBOUNCE_SEC &&
+	    uci_conf_sig() === last_uci_conf_sig) {
+		if ((time() - debounce_note_ts) > 600) {
+			debounce_note_ts = time();
+			log('зеркало learned/quarantine изменилось — рестарт mosdns отложен (дебаунс ' +
+				REBUILD_DEBOUNCE_SEC + ' с, применится окном позже)');
+		}
+		update_probe_set(v4_hosts(assemble_plain_pool(load_state())));
+		return;
+	}
+	atomic_write(CONF, fresh);
+	start_mosdns();
+	last_mosdns_start = time();
+	last_uci_conf_sig = uci_conf_sig();
 	update_probe_set(v4_hosts(assemble_plain_pool(load_state())));
 }
 
@@ -1923,6 +1975,7 @@ function main() {
 	 * pointlessly restarted a healthy mosdns (ch114). */
 	if (!(mosdns_running() && access(CONF) && trim(readfile(CONF)) === trim(conf_fresh)))
 		start_mosdns();
+	last_uci_conf_sig = uci_conf_sig();
 		/* Run an initial analysis at startup so the monitor shows real pool data
 		 * immediately instead of waiting a full bench_interval. */
 		dbg('analyze call (initial)');
@@ -1963,7 +2016,11 @@ function main() {
 
 			/* Fast self-heal: if mosdns died for any reason, bring it back up
 			 * within one loop tick (~5s) so DNS never stays down. */
-			if (!mosdns_running()) { log('mosdns not running - restarting.'); start_mosdns(); }
+			if (!mosdns_running()) {
+				log('mosdns not running - restarting.');
+				start_mosdns();
+				last_uci_conf_sig = uci_conf_sig();
+			}
 
 			if ((now - last_cfg) > 30) {
 				dbg('loop cfg-check');

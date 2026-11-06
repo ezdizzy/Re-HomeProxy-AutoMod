@@ -171,7 +171,7 @@ open_app_plane() {
 
 	# Health Monitor (Ф2.1, ч.164): ALWAYS-ON instance like the telegram bot —
 	# the single observer of ALL subsystems (core, engines, mosdns listeners,
-	# tg-bot/tg-ws, automation children, TUN/route/fw4, generators, memory).
+	# tg-bot, automation children, TUN/route/fw4, generators, memory).
 	# The set of procd instances ITSELF is its source of expectations (service
 	# list = what should run), so the watcher must exist unconditionally. Its
 	# own health is witnessed by the ts of the status document it writes every

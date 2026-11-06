@@ -1959,145 +1959,6 @@ function hp_zapret_blocks(args, corpus) {
 	return blocks;
 }
 
-/* ── TG WS Proxy (D8, Ф7) ────────────────────────────────────────────────
- * Third-party Telegram bridges (valnesfjord/tg-ws-proxy-rs as the primary
- * variant, the d0mhate Go manager as an alternative) — detected READ-ONLY.
- * The Wizard never edits a foreign package's UCI, never packs the binary
- * and never opens a WAN port; the component's own LuCI page stays the
- * single configuration point. Our own listening ports are listed so the UI
- * can warn about a port collision. */
-
-const HP_OUR_PORTS = [ 5330, 5333, 5336, 5337, 5338, 5453, 5454, 9090 ];
-
-/* Ф1.4b: bridge liveness by exact exe identity; the `--check` probe run of
- * the same binary (its cmdline carries the whole --check ELEMENT) is
- * excluded via the pmgr `neg` spec (lesson 58's ps+exclude trap, solved
- * structurally instead of by substring matching). */
-function hp_tgwsp_running_bin(bin, exclude) {
-	return pm_bin_alive(bin, null, (exclude != null && length(exclude)) ? [ exclude ] : null);
-}
-
-/* TCP LISTEN ports from netstat (the first port on each line is the local
- * one; UDP listeners are meaningless per lesson 25). */
-function hp_tgwsp_listening_ports() {
-	const ports = [];
-	const fd = popen('netstat -tln 2>/dev/null');
-	if (!fd) return ports;
-	const out = fd.read('all') || '';
-	fd.close();
-	for (let l in split(out, '\n')) {
-		const m = match(l, /:([0-9]{1,5})[[:space:]]/);
-		if (!m) continue;
-		const p = int(m[1]);
-		if (index(ports, p) < 0)
-			push(ports, p);
-	}
-	return ports;
-}
-
-/* Version of the rs binary, cached by file mtime+size — the status RPC is
- * polled every few seconds, a process spawn per poll is too heavy. */
-function hp_tgwsp_rs_version(bin) {
-	let mtime = null, size = null;
-	try {
-		const st = lstat(bin);
-		if (st) { mtime = st.mtime; size = st.size; }
-	} catch (e) {}
-	if (mtime == null) return null;
-	let cache = null;
-	if (access(RUN_DIR + '/tgwsp_ver.json')) {
-		try { cache = json(readfile(RUN_DIR + '/tgwsp_ver.json') || ''); } catch (e) { cache = null; }
-	}
-	if (cache && cache.mtime === mtime && cache.size === size && cache.ver)
-		return '' + cache.ver;
-	const fd = popen(shellquote(bin) + ' --version 2>/dev/null');
-	if (!fd) return null;
-	const ver = trim(fd.read('all') || '');
-	fd.close();
-	if (length(ver)) {
-		writefile(RUN_DIR + '/tgwsp_ver.json', sprintf('%.J', {
-			mtime: mtime, size: size, ver: ver
-		}) + '\n');
-		return ver;
-	}
-	return null;
-}
-
-function hp_tgwsp_status_file(path) {
-	if (!access(path)) return null;
-	try { return json(readfile(path) || ''); } catch (e) { return null; }
-}
-
-function hp_tgwsp_detect() {
-	const out = {
-		rs: { present: false, integration: false, running: false, enabled: false,
-			port: null, listening: false, faketls: '', version: null },
-		go: { present: false, manager: false, managed: false, running: false,
-			port: null, listening: false },
-		conflict: false,
-		our_ports: HP_OUR_PORTS,
-		lan: ''
-	};
-	const c = cursor();
-	/* LAN address for the advertised tg:// link (strip a /24 suffix). The
-	 * network.lan.ipaddr option is a LIST on OpenWrt 25.12 — take item 0. */
-	let lanv = c.get('network', 'lan', 'ipaddr');
-	if (type(lanv) === 'array' && length(lanv))
-		lanv = lanv[0];
-	let lan = trim('' + (lanv || ''));
-	const sl = match(lan, /^([0-9.]+)\//);
-	if (sl) lan = sl[1];
-	out.lan = (length(lan) && match(lan, /^[0-9.]+$/)) ? lan : '';
-
-	const ports = hp_tgwsp_listening_ports();
-
-	/* rs variant — every installed path carries the -rs suffix (an upstream
-	 * unsuffixed tg-ws-proxy package is NOT ours to claim). */
-	if (access('/usr/bin/tg-ws-proxy-rs')) {
-		out.rs.present = true;
-		out.rs.version = hp_tgwsp_rs_version('/usr/bin/tg-ws-proxy-rs');
-		out.rs.running = hp_tgwsp_running_bin('tg-ws-proxy-rs', '--check');
-		out.rs.integration = access('/etc/init.d/tg-ws-proxy-rs') ? true : false;
-		/* Foreign UCI — READ-ONLY peek for port/state/link facts. */
-		const o = c.get_all('tg-ws-proxy-rs', 'main');
-		if (o && type(o) === 'object') {
-			out.rs.enabled = (trim('' + (o.enabled || '')) === '1');
-			const port = int('' + (o.port || '1443'));
-			if (port > 0) out.rs.port = port;
-			const ft = trim('' + (o.listen_faketls_domain || o.faketls_domain || ''));
-			if (length(ft)) out.rs.faketls = ft;
-		}
-	}
-	if (out.rs.port) {
-		out.rs.listening = index(ports, out.rs.port) >= 0;
-		if (index(HP_OUR_PORTS, out.rs.port) >= 0)
-			out.conflict = true;
-	}
-
-	/* Go bridge (d0mhate binary): either OUR procd instance (/etc/init.d/tgws-go,
-	 * installed by the Wizard's «tg-ws (transparent)» button — SOCKS5 on loopback)
-	 * or a foreign tgm-managed setup. 1443 belongs to the rs package, not here. */
-	if (access('/usr/bin/tg-ws-proxy-go') || access('/usr/bin/tgm') ||
-	    hp_tgwsp_running_bin('tg-ws-proxy-go', null)) {
-		out.go.present = true;
-		out.go.manager = access('/usr/bin/tgm') ? true : false;
-		out.go.managed = access('/etc/init.d/tgws-go') ? true : false;
-		out.go.running = hp_tgwsp_running_bin('tg-ws-proxy-go', null);
-		for (let gp in [ 2080, 1080 ])
-			if (index(ports, gp) >= 0) { out.go.port = gp; break; }
-		/* Our instance: the UCI port is authoritative when it is the one listening. */
-		const tw_port = int('' + (c.get('homeproxy', 'config', 'tgws_port') || '0'));
-		if (tw_port > 0 && index(ports, tw_port) >= 0)
-			out.go.port = tw_port;
-	}
-	if (out.go.port) {
-		out.go.listening = true;
-		if (index(HP_OUR_PORTS, out.go.port) >= 0)
-			out.conflict = true;
-	}
-	return out;
-}
-
 /* ── «Контроль» (HomeControl integration, plan 14): helpers ────────────
  * Declared ABOVE `const methods` (no forward references in rpcd ucode).
  * UCI writes go through the shell `uci` tool (proven pattern of the
@@ -6390,10 +6251,6 @@ const methods = {
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
 			const lports = hp_listen_ports();
-			/* F8-F2: the «tg-ws (transparent)» exit is offered only while the
-			 * bridge is actually running and listening on a known loopback
-			 * port — otherwise the rule would lead into a black hole. */
-			const twdet = hp_tgwsp_detect();
 			return {
 				result: true,
 				env: {
@@ -6402,9 +6259,6 @@ const methods = {
 					main_is_direct: (main_node === 'direct-out' || main_node === '' || main_node === 'nil'),
 					zapret_enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1'),
 					byedpi_enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1'),
-					tgws_ok: twdet.go.present && twdet.go.running &&
-						twdet.go.listening && twdet.go.port > 0 && !twdet.conflict,
-					tgws_port: twdet.go.port || 0,
 					mixed_port: mixed,
 					direct_in: hp_inbound_listening(lports, 5336),
 					proxy_in: hp_inbound_listening(lports, 5337)
@@ -6457,7 +6311,7 @@ const methods = {
 				return { result: false, error: 'main_is_direct' };
 
 			if (node !== '' && node !== 'main-out' && node !== 'byedpi-out' &&
-			    node !== 'zapret-out' && node !== 'tgws-out' && node !== 'urltest') {
+			    node !== 'zapret-out' && node !== 'urltest') {
 				const nc = c.get_all('homeproxy', node);
 				if (!nc || nc['.type'] !== 'node')
 					return { result: false, error: 'unknown node' };
@@ -6466,20 +6320,6 @@ const methods = {
 				return { result: false, error: 'byedpi_disabled' };
 			if (node === 'zapret-out' && c.get('homeproxy', 'config', 'zapret_enabled') !== '1')
 				return { result: false, error: 'zapret_disabled' };
-			/* F8-F2 «tg-ws (transparent)»: the WS bridge carries Telegram MTProto
-			 * only, and it must actually be running — otherwise the rule leads
-			 * into a black hole (the generator adds a main-out fallback urltest,
-			 * but offering a dead exit is dishonest). The bridge's real loopback
-			 * port is pinned into the config so the outbound dials what listens. */
-			if (node === 'tgws-out') {
-				if (src !== 'telegram')
-					return { result: false, error: 'tgws_telegram_only' };
-				const twdet = hp_tgwsp_detect();
-				if (!(twdet.go.present && twdet.go.running && twdet.go.listening && twdet.go.port > 0))
-					return { result: false, error: 'tgws_not_running' };
-				c.set('homeproxy', 'config', 'tgws_enabled', '1');
-				c.set('homeproxy', 'config', 'tgws_port', '' + twdet.go.port);
-			}
 			/* URLTest pool: the generator needs ≥1 usable member node on the
 			 * rule section. Validate every id as a real node section. */
 			let pool = [];
@@ -6507,10 +6347,9 @@ const methods = {
 			 * this RPC on every repair cycle, and the previous behavior —
 			 * regenerate + full reload — was a pure connection-drop source: the
 			 * core stop RSTs every tunneled connection even when nothing
-			 * actually changed). tgws is excluded: applying it also flips
-			 * config.tgws_enabled / tgws_port, so it always re-applies. */
+			 * actually changed). */
 			let unchanged = false;
-			if (target && node !== 'tgws-out') {
+			if (target) {
 				const cur = c.get_all('homeproxy', target);
 				unchanged = !!cur && cur.enabled === '1' && ('' + (cur.node || '')) === node;
 				if (unchanged && node === 'urltest') {
@@ -7328,168 +7167,6 @@ const methods = {
 				try { preview = json(readfile(RUN_DIR + '/wizard_strategies_preview.json') || ''); } catch (e) {}
 			}
 			return { status: status, preview: preview };
-		}
-	},
-
-	/* ── D8: TG WS Proxy («Telegram без прокси») ────────────────────────────
-	 * Detection is cheap and READ-ONLY; the check and the installation spawn
-	 * the background runner wizard_tgwsp.uc (mode file, statuses in
-	 * /var/run/homeproxy/tgwsp_*.json). One operation at a time, staleness
-	 * guards like the provider scan. */
-	wizard_tgwsp_status: {
-		call: function(req) {
-			const det = hp_tgwsp_detect();
-			const c = cursor();
-			return {
-				result: true,
-				rs: det.rs,
-				go: det.go,
-				conflict: det.conflict,
-				our_ports: det.our_ports,
-				lan: det.lan,
-				tgws: {
-					enabled: (c.get('homeproxy', 'config', 'tgws_enabled') === '1'),
-					port: int('' + (c.get('homeproxy', 'config', 'tgws_port') || '0')) || null,
-					/* Issue #6: the CF-domain sync flag + the currently synced
-					 * list (the runner writes/updates it on every check). */
-					sync_rs: (c.get('homeproxy', 'config', 'tgws_sync_rs') === '1'),
-					rs_domains: trim('' + (c.get('homeproxy', 'config', 'tgws_rs_domains') || ''))
-				},
-				check: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_check.json'),
-				install: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_install.json'),
-				go_install: hp_tgwsp_status_file(RUN_DIR + '/tgwsp_go_install.json'),
-				logs: {
-					check: length(readfile(RUN_DIR + '/tgwsp_check.log') || ''),
-					install: length(readfile(RUN_DIR + '/tgwsp_install.log') || ''),
-					go_install: length(readfile(RUN_DIR + '/tgwsp_go_install.log') || '')
-				}
-			};
-		}
-	},
-
-	wizard_tgwsp_check: {
-		call: function(req) {
-			if (!access('/usr/bin/tg-ws-proxy-rs'))
-				return { result: false, error: 'tg-ws-proxy-rs is not installed' };
-			const st = RUN_DIR + '/tgwsp_check.json';
-			let prev = hp_tgwsp_status_file(st);
-			if (prev && prev.running && (time() - int(prev.ts || 0) < 600))
-				return { result: false, error: 'a check is already in progress' };
-			writefile(RUN_DIR + '/tgwsp_mode.txt', 'check\n');
-			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_tgwsp.uc')} >/dev/null 2>&1 &`);
-			return { result: true };
-		}
-	},
-
-	/* Runs the OFFICIAL installer of valnesfjord/tg-ws-proxy-rs (it verifies
-	 * the release artifacts against the SHA-256 digests of the GitHub release
-	 * API). Re-running it upgrades. Deliberate action with a UI confirm —
-	 * third-party component. */
-	wizard_tgwsp_install: {
-		call: function(req) {
-			const st = RUN_DIR + '/tgwsp_install.json';
-			let prev = hp_tgwsp_status_file(st);
-			if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
-				return { result: false, error: 'an installation is already in progress' };
-			writefile(RUN_DIR + '/tgwsp_mode.txt', 'install\n');
-			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_tgwsp.uc')} >/dev/null 2>&1 &`);
-			return { result: true };
-		}
-	},
-
-	/* The tg:// link is built ON DEMAND (D6): the MTProto secret lives in the
-	 * foreign package's UCI and must not ride the 4-second status poll. The
-	 * classic dd-link works even when the component advertises a FakeTLS
-	 * (ee) link — that link is printed by the component itself. */
-	wizard_tgwsp_link: {
-		call: function(req) {
-			if (!access('/usr/bin/tg-ws-proxy-rs'))
-				return { result: false, error: 'tg-ws-proxy-rs is not installed' };
-			const c = cursor();
-			const o = c.get_all('tg-ws-proxy-rs', 'main');
-			if (!o || type(o) !== 'object')
-				return { result: false, error: 'the component configuration was not found' };
-			const port = trim('' + (o.port || '1443'));
-			const secrets = [];
-			const sv = o.secret;
-			if (type(sv) === 'array') {
-				for (let s in sv)
-					if (length(trim('' + sv[s])))
-						push(secrets, trim('' + sv[s]));
-			} else if (sv && length(trim('' + sv))) {
-				push(secrets, trim('' + sv));
-			}
-			if (!length(secrets))
-				return { result: false, error: 'no secret in the component configuration' };
-			/* Advertised address: the component's link_ip (if set) or the LAN ip. */
-			let server = trim('' + (o.link_ip || ''));
-			const sl = match(server, /^([0-9.]+)\//);
-			if (sl) server = sl[1];
-			if (!length(server) || !match(server, /^[0-9.]+$/)) {
-				let lanv = c.get('network', 'lan', 'ipaddr');
-				if (type(lanv) === 'array' && length(lanv))
-					lanv = lanv[0];
-				server = trim('' + (lanv || ''));
-			}
-			const sl2 = match(server, /^([0-9.]+)\//);
-			if (sl2) server = sl2[1];
-			if (!length(server))
-				return { result: false, error: 'no LAN address found' };
-			const links = [];
-			for (let s in secrets)
-				push(links, 'tg://proxy?server=' + server + '&port=' + port +
-					'&secret=dd' + s);
-			return { result: true, links: links, server: server, port: port };
-		}
-	},
-
-	/* F8-F2 «tg-ws (transparent)»: install the tg-ws-proxy-go bridge (d0mhate,
-	 * MIT — the only variant with a SOCKS5 mode) as OUR procd instance and
-	 * start it. The runner (wizard_tgwsp.uc mode 'go_install') downloads the
-	 * release binary for the router arch, verifies its SHA-256 against the
-	 * digest served by the GitHub release API, writes /etc/init.d/tgws-go
-	 * (loopback-only listener — nothing is exposed even to the LAN) and turns
-	 * the config flags (tgws_enabled/tgws_port). A foreign tgm manager install
-	 * is REFUSED (the binary would collide with its own instance). Deliberate
-	 * action with a UI confirm — third-party component. */
-	wizard_tgws_install: {
-		call: function(req) {
-			if (access('/usr/bin/tgm'))
-				return { result: false, error: 'foreign tgm manager detected — manage the bridge through tgm' };
-			const st = RUN_DIR + '/tgwsp_go_install.json';
-			let prev = hp_tgwsp_status_file(st);
-			if (prev && prev.running && (time() - int(prev.ts || 0) < 900))
-				return { result: false, error: 'an installation is already in progress' };
-			writefile(RUN_DIR + '/tgwsp_mode.txt', 'go_install\n');
-			system(`ucode ${shellquote(HP_DIR + '/scripts/wizard_tgwsp.uc')} >/dev/null 2>&1 &`);
-			return { result: true };
-		}
-	},
-
-	/* Issue #6: the CF-domain sync flag (Master → Advanced → TG WS). The
-	 * check runner writes the OK Cloudflare-proxy domains of the rs check
-	 * into config.tgws_rs_domains and restarts OUR bridge when the list
-	 * changed (the foreign rs UCI is never written). Turning the sync OFF
-	 * also clears the synced list and restarts the running bridge — off
-	 * must mean the built-in pool exactly as before the sync. No service
-	 * reload: the bridge is an independent loopback instance. */
-	wizard_tgws_sync_set: {
-		args: { enabled: 'enabled' },
-		call: function(req) {
-			const v = trim('' + ((req && req.args && req.args.enabled) || ''));
-			if (v !== '0' && v !== '1')
-				return { result: false, error: 'enabled must be 0 or 1' };
-			const c = cursor();
-			c.set('homeproxy', 'config', 'tgws_sync_rs', v);
-			if (v === '0')
-				c.delete('homeproxy', 'config', 'tgws_rs_domains');
-			c.commit('homeproxy');
-			if (v === '0' && access('/etc/init.d/tgws-go')) {
-				/* Ф1.4b: identity liveness (was a bare pidof). */
-				if (pm_bin_alive('tg-ws-proxy-go'))
-					system('/etc/init.d/tgws-go restart >/dev/null 2>&1 &');
-			}
-			return { result: true, enabled: (v === '1') };
 		}
 	},
 

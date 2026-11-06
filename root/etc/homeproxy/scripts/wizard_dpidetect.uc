@@ -4,7 +4,7 @@
  *
  * Re:HomeProxy AutoMod — Routing Wizard: dpi-detect corpus updater (Ф8-F1).
  *
- * One-shot background runner (the ru_geo_build.uc / wizard_tgwsp.uc pattern):
+ * One-shot background runner (the ru_geo_build.uc pattern):
  * downloads the splify2-lists dpi-detect.lst catalog entry — domains where the
  * provider's TSPU is CONFIRMED cutting connections (>24 h: TLS teardown or the
  * ~16 KB traffic freeze; upstream rechecks every 6 h and drops healed entries

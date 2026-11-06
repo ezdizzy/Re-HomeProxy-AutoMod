@@ -8,7 +8,7 @@
  * ONE page for the whole «how do the blocked sites open» concern. The four
  * zones moved here 1:1 from the Routing Wizard DPI section (the wizard is
  * abolished — its presets went to Service rules in v3b, provider
- * diagnostics to Check & repair, the tg-ws bridge to Phone control; the
+ * diagnostics to Check & repair; the
  * wizard_* ubus method names are KEPT — lesson 149):
  *   «Working right now» — engine cards (wizard_dpi_status), the Serving map
  *   (rule → engine → strategy → last check, ч.109) and the measured quality
@@ -254,9 +254,8 @@ const callComposeRollback = rpc.declare({
 	expect: { '': {} }
 });
 
-/* ── R3 v3b: the manual domain lists moved to Service rules, the TG WS
- * Proxy bridges to Phone control — their RPC declarations moved with
- * them. ──────────────────────────────────────────────────────────────── */
+/* ── R3 v3b: the manual domain lists moved to Service rules (their RPC
+ * declarations moved with them). ─────────────────────────────────────── */
 /* Resolve a sing-box outbound tag (cfg-<section>-out) to its UCI label
  * (same logic as diagnostics.js). */
 function resolveTag(tag) {
@@ -508,7 +507,6 @@ return view.extend({
 			if (node === 'main-out') return _('Same as main node');
 			if (node === 'byedpi-out') return 'ByeDPI';
 			if (node === 'zapret-out') return 'Zapret';
-			if (node === 'tgws-out') return _('tg-ws (transparent)');
 			if (node === 'urltest') return _('URLTest pool');
 			return resolveTag(node);
 		}
@@ -2535,7 +2533,7 @@ return view.extend({
 
 		/* ── Poll ──────────────────────────────────────────────────────── */
 		/* v3b/v3c history: presets moved to Service rules, provider
-		 * diagnostics to Check & repair, tg-ws to Phone control — this
+		 * diagnostics to Check & repair (ч.200, D34b: tg-ws удалён) — this
 		 * page polls the DPI engine state + the preset LIST (rules are
 		 * the serving map's source of truth; env feeds the chain row). */
 		function refresh() {

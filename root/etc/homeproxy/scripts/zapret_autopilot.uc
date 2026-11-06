@@ -13,8 +13,9 @@
  *   resources 'youtube discord telegram general'   (subset, space-separated)
  *   set_rules '0'|'1'   — managed resources get their (first) rule repointed
  *                         to zapret-out: a strategy serves a resource ONLY
- *                         through its rule. Telegram is skipped while the
- *                         tg-ws bridge owns that rule.
+ *                         through its rule. (ч.200, D34b: прежняя оговорка
+ *                         «Telegram пропускается, пока правилом владеет мост
+ *                         tg-ws» удалена вместе с мостом.)
  *   interval_h 1..168   — scheduled re-rank interval (default 6)
  *   check_min 5..180    — health probe interval (default 15)
  *   window ''|'HH:MM-HH:MM' — scheduled re-ranks only inside the window
@@ -166,7 +167,7 @@ let S = {
 	error: '',
 	pending: null,
 	config: {},
-	mode: '', zapret_enabled: false, tgws: false,
+	mode: '', zapret_enabled: false,
 	resources: {},
 	general: { winner: null, probe: null, strikes: 0, note: '' },
 	last_apply: null,
@@ -380,10 +381,6 @@ function routing_mode() {
 	 * in every reader). */
 	const rm = '' + (cursor().get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
 	return (rm === 'custom' || rm === 'custom_json') ? 'proxy_banned_ru' : rm;
-}
-
-function tgws_enabled() {
-	return (cursor().get('homeproxy', 'config', 'tgws_enabled') === '1');
 }
 
 /* Rule state for a source: the FIRST enabled rule. */
@@ -812,10 +809,6 @@ function ensure_rules(cfg) {
 	for (let res in cfg.resources) {
 		if (res === 'general')
 			continue;
-		if (res === 'telegram' && S.tgws) {
-			log_once('tgrule', 'Telegram обслуживает мост tg-ws — его правило не трогаем');
-			continue;
-		}
 		const node = rule_node_of(res);
 		S.resources[res].rule_node = node;
 		if (node === 'zapret-out')
@@ -870,8 +863,8 @@ function compose_rollback() {
 
 /* Probes BEFORE an apply — the honest was_ok baseline for the regression
  * check (a resource that already fails cannot "regress"). Only MANAGED
- * resources are probed: the others are served by their own paths (e.g.
- * tg-ws), the auto-pilot does not touch them.
+ * resources are probed: the others are served by their own paths, the
+ * auto-pilot does not touch them.
  * Ф6.3 (аудит 64): baseline — ПОЛНАЯ ресурсная матрица (та же, что в
  * resume() после применения): потеря видео/медиа-компонента теперь тоже
  * регрессия, и откат сравнивает равные величины. */
@@ -1389,7 +1382,7 @@ function health(cfg) {
 	const battery = profile_battery();
 	for (let res in cfg.resources) {
 		if (res !== 'general' && !S.resources[res].mgmt) {
-			/* Not managed — its own path serves it (e.g. tg-ws); no red
+			/* Not managed — its own path serves it; no red
 			 * noise from paths the auto-pilot does not own. */
 			if (S.resources[res].probe != null || S.resources[res].strikes)
 				S.resources[res].probe = null;
@@ -1530,7 +1523,6 @@ function tick() {
 	S.enabled = cfg.enabled;
 	S.mode = routing_mode();
 	S.zapret_enabled = (cursor().get('homeproxy', 'config', 'zapret_enabled') === '1');
-	S.tgws = tgws_enabled();
 	tried_prune();
 
 	if (!cfg.enabled) {
@@ -1584,8 +1576,6 @@ function tick() {
 		S.resources[res].mgmt = (node === 'zapret-out');
 		if (node !== 'zapret-out' && !cfg.set_rules)
 			log_once('mgmt_' + res, res + ': правило не ведёт на Zapret — управление стратегией для него выключено (включите «Держать правила на Zapret»)');
-		if (res === 'telegram' && S.tgws)
-			log_once('tgrule', 'Telegram обслуживает мост tg-ws — его правило не трогаем');
 	}
 
 	adopt_manual();

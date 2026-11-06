@@ -204,14 +204,14 @@ let alert_state = {};
 
 /* Ф8.6 egress failover (D22): бот обязан пережить смерть ВСЕЙ прокси-цепочки.
  * Лестница: 0 = обычная цепочка (curl идёт системной маршрутизацией),
- * 1 = tg-ws мост (socks5h на loopback-порту — работает без VPN-цепочки),
- * 2 = прямой (auto-direct-in ядра, прибит к direct-out). Каждая ступень
+ * 1 = прямой (auto-direct-in ядра, прибит к direct-out). Каждая ступень
  * доказывается ЖИВОЙ пробой getMe перед переключением — машина
- * транспорт-агностична: у этого провайдера мост говорит только MTProto
- * (чистый TLS к api.telegram.org он сбрасывает), а прямые Telegram-IP
- * зарезаны (R3-FIX-2), так что обе запасные сегодня честно «не отвечают»;
- * если транспорт начнёт отвечать — бот подхватит его без правки кода. */
-const EGRESS_LABEL = [ 'обычная цепочка', 'tg-ws мост (без VPN)', 'прямой (через ядро)' ];
+ * транспорт-агностична: у этого провайдера прямые Telegram-IP зарезаны
+ * (R3-FIX-2), так что запасная сегодня честно «не отвечает»; если прямой
+ * канал начнёт отвечать — бот подхватит его без правки кода. (ч.200, D34b:
+ * ступень tg-ws удалена вместе с мостом — функционально нестабилен; запасной
+ * аварийный канал вернётся в Ф9.13 уже как WARP-выход.) */
+const EGRESS_LABEL = [ 'обычная цепочка', 'прямой (через ядро)' ];
 const EGRESS_FAILS = 2;       /* подряд пустых ответов = канал подозревается */
 const EGRESS_HOLD = 120;      /* мин. секунд на канале до следующего решения */
 const EGRESS_DIRECT_PORT = 5336;   /* auto-direct-in — синхронно с generate_client.uc */
@@ -320,7 +320,7 @@ function uci_tg_snap(key) {
 	return (length(v || '')) ? v : null;
 }
 
-/* One config.* UCI value read (the Ф8.6 ladder needs tgws_enabled/port;
+/* One config.* UCI value read (helpers/daemons use it;
  * declared ABOVE read_cfg — no hoisting, lesson 126). */
 function uci_cfg_snap(key) {
 	const fd = popen(`uci -q get homeproxy.config.${key} 2>/dev/null`);
@@ -356,9 +356,6 @@ function read_cfg() {
 	cfg.quiet_enabled  = uci_get('quiet_enabled', '0');
 	cfg.quiet_from     = uci_get('quiet_from', '23:00');
 	cfg.quiet_to       = uci_get('quiet_to', '08:00');
-	/* Ф8.6: канал tg-ws существует, только когда включён мост (hot reload). */
-	cfg.tgws_enabled  = uci_cfg_snap('tgws_enabled');
-	cfg.tgws_port     = uci_cfg_snap('tgws_port');
 	cfg.users = {
 		owner:    uci_list('owner_user'),
 		admin:    uci_list('admin_user'),
@@ -472,12 +469,7 @@ function jesc(s) {
  * системной маршрутизацией). Объявлена РАНОШЕ: tg_call и
  * tg_send_document зовут её, а hoisting в ucode нет (урок 126). */
 function egress_proxy_line(idx) {
-	if (idx === 1) {
-		const p = '' + (cfg.tgws_port || '');
-		const port = (match(p, /^[0-9]+$/) != null) ? p : '1080';
-		return 'proxy = "socks5h://127.0.0.1:' + port + '"\n';
-	}
-	if (idx === 2)
+	if (idx === 1)
 		return 'proxy = "socks5h://127.0.0.1:' + EGRESS_DIRECT_PORT + '"\n';
 	return '';
 }
@@ -1073,19 +1065,14 @@ function cmd_diag_text() {
 			' · проблем: ' + bad + ' · fresh=' + ((hx.health.fresh === true) ? 'да' : 'пересчитан') + '\n';
 	} else
 		out += 'health_explain: НЕ ОТВЕТИЛ (rpcd или демоны?)\n';
-	/* 3.5) Ф8.6: канал доставки бота + честные вердикты запасных.
-	 * БЕЗ вызова egress_available (объявлена ниже — no hoisting, урок 126):
-	 * условие моста инлайнится через cfg.tgws_enabled. */
+	/* 3.5) Ф8.6: канал доставки бота + честные вердикты запасных. */
 	out += '\n── КАНАЛ ДОСТАВКИ (egress) ─\n';
 	out += 'Текущий: ' + EGRESS_LABEL[egress_idx] + '\n';
-	for (let i = 0; i < 3; i++) {
+	for (let i = 0; i < length(EGRESS_LABEL); i++) {
 		if (i === egress_idx)
 			continue;
 		const note = trim('' + (egress_note['' + i] || ''));
-		if (i !== 1 || cfg.tgws_enabled === '1')
-			out += '· ' + EGRESS_LABEL[i] + ': запасной' + (length(note) ? (' — ' + note) : ' (проб не было)') + '\n';
-		else
-			out += '· ' + EGRESS_LABEL[i] + ': недоступен — ' + note + '\n';
+		out += '· ' + EGRESS_LABEL[i] + ': запасной' + (length(note) ? (' — ' + note) : ' (проб не было)') + '\n';
 	}
 	/* 4) Хвосты журналов подсистем. */
 	out += '\n── ЖУРНАЛЫ (хвосты) ─\n';
@@ -1521,12 +1508,6 @@ function send_push(kind, text, kb, sev) {
  * объявлен ПОСЛЕ send_push (no hoisting): переключение готовит текст пуша
  * в egress_pending — доставляет его main-цикл УЖЕ НОВЫМ каналом. */
 
-function egress_available(idx) {
-	/* tg-ws — кандидат только при включённом мосте (UCI, hot reload);
-	 * цепочка и прямой проверяются всегда — мёртвая цель отказывает быстро. */
-	return (idx !== 1) || (cfg.tgws_enabled === '1');
-}
-
 function egress_probe(idx) {
 	if (!length(api_base))
 		return false;
@@ -1575,12 +1556,9 @@ function egress_tick() {
 		/* Текущий канал подозревается — пройти лестницу живыми пробами. */
 		egress_fails = 0;
 		let moved = false;
-		for (let step = 1; step <= 2; step++) {
-			const cand = (egress_idx + step) % 3;
-			if (!egress_available(cand)) {
-				egress_note['' + cand] = 'мост выключен настройками (tgws_enabled)';
-				continue;
-			}
+		const NL = length(EGRESS_LABEL);
+		for (let step = 1; step < NL; step++) {
+			const cand = (egress_idx + step) % NL;
 			if ((int(egress_down['' + cand]) || 0) > now)
 				continue;
 			if (egress_probe(cand)) {

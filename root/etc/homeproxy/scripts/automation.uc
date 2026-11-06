@@ -1194,8 +1194,8 @@ function tcp_reachable(host, via_proxy, timeout) {
 		protect_stats = { sources: 0, hosts: 0, direct: 0, unparsed: 0 };
 		/* Hosts covered by an enabled per-service rule of the Master must never
 		 * be learned — for ANY node kind (a real node, main-out, URLTest pool,
-		 * Direct ("works directly" is the user's explicit opt-out), Zapret,
-		 * ByeDPI or the tg-ws bridge). Routing order puts user rules ABOVE the
+		 * Direct ("works directly" is the user's explicit opt-out), Zapret or
+		 * ByeDPI). Routing order puts user rules ABOVE the
 		 * learned lists, so a learned copy is dead weight — and BEFORE the
 		 * order fix it actively hijacked e.g. YouTube away from Zapret; for a
 		 * host OUTSIDE the rule's list a learned copy would even take a

@@ -73,51 +73,6 @@ const callTelegramUserRemove = rpc.declare({
 	expect: { '': {} }
 });
 
-/* ── TG WS Proxy (R3 v3b: moved from the Wizard «Advanced» pane) — third-
- * party Telegram bridges: detect / check / install, ONE result area. ──── */
-
-const callTgwspStatus = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'wizard_tgwsp_status',
-	expect: { '': {} }
-});
-
-const callTgwspCheck = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'wizard_tgwsp_check',
-	expect: { '': {} }
-});
-
-const callTgwspInstall = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'wizard_tgwsp_install',
-	expect: { '': {} }
-});
-
-const callTgwspLink = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'wizard_tgwsp_link',
-	params: [ ]
-});
-
-/* F8-F2: the transparent SOCKS5 bridge (tg-ws-proxy-go) install — procd
- * instance managed by the app, loopback-only listener. */
-const callTgwsInstall = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'wizard_tgws_install',
-	params: [ ]
-});
-
-/* Issue #6: the CF-domain sync flag — the check runner writes the OK
- * Cloudflare-proxy domains of the rs check into the bridge config and
- * restarts the bridge when the list changed (committed server-side). */
-const callTgwsSyncSet = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'wizard_tgws_sync_set',
-	params: [ 'enabled' ],
-	expect: { '': {} }
-});
-
 const CSS = `
 	.tg-card { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-lg); padding: 14px 16px; background: var(--hp-panel-bg-2); margin-top: 14px; box-shadow: var(--hp-shadow); }
 	.tg-card-title { font-weight: 700; font-size: 1.02em; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -138,10 +93,6 @@ const CSS = `
 	.tg-status-item { display: flex; flex-direction: column; gap: 2px; min-width: 150px; }
 	.tg-status-item > .tg-k { font-size: .78em; font-weight: 600; opacity: .65; text-transform: uppercase; letter-spacing: .04em; }
 	.tg-status-item > .tg-v { font-size: .95em; }
-	/* tg-ws card (moved from the wizard) */
-	.wiz-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
-	.wiz-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; }
-	.wiz-note { font-size: .88em; opacity: .8; margin: 8px 0; }
 `;
 
 return view.extend({
@@ -396,7 +347,7 @@ return view.extend({
 			tgRole.appendChild(E('option', { value: roleOpts[i][0] }, [ roleOpts[i][1] ]));
 		const pairBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
 			[ _('Generate pairing code') ]);
-		const pairLine = E('span', { 'class': 'wiz-note' });
+		const pairLine = E('span', { 'class': 'hpui-hint' });
 		const rbUsersBox = E('div', {});
 		const rbResult = E('div', {});
 
@@ -473,326 +424,13 @@ return view.extend({
 			E('div', { 'class': 'tg-card-title' }, [ _('Access (RBAC)') ]),
 			E('p', { 'class': 'hpui-hint' },
 				[ _('Roles from top to bottom: Owner (everything) → Admin (service, snapshots, rules) → Operator (nodes, pause, temporary actions) → Viewer (status only). Every command and button is checked against the sender\'s user_id; groups and channels are denied by default. Pairing: generate a one-time 60 s code here, the user sends it to the bot from a private chat.') ]),
-			E('div', { 'class': 'wiz-toolbar' }, [ tgRole, pairBtn, pairLine ]),
+			E('div', { 'class': 'tg-inline' }, [ tgRole, pairBtn, pairLine ]),
 			rbUsersBox,
 			rbResult
 		]);
 		renderRbac(st0);
 
-		/* ── Telegram without a proxy (TG WS Proxy) card — R3 v3b: moved
-		 * from the Wizard «Advanced» pane. Third-party bridges (MIT) carry
-		 * Telegram over a WebSocket path DPI does not block — a way to use
-		 * Telegram WITHOUT a VPN. Results of all buttons land in twResult
-		 * (ONE place). ───────────────────────────────────────────────── */
-		const twRow = E('div', { 'class': 'wiz-row' });
-		const twResult = E('div', {});
-		let twRsPresent = false;
-		let twGoManaged = false;
-		/* Poll-friendly result area: check/install outcomes are shown ONCE
-		 * (per signature) and never clobber a button answer the user is
-		 * reading (ui.action_buttons_result_placement). */
-		const twState = { insSig: null, ckSig: null, goSig: null, manual: false, seeded: false };
-		const twCheckBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Check now') ]);
-		const twLinkBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Show tg:// link') ]);
-		const twInstallBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
-			[ _('Install / update') ]);
-		const twGoInstallBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
-			[ _('Install tg-ws bridge') ]);
-		/* Issue #6: sync the live CF domains of the rs check into the Go
-		 * bridge (--cf-domain); shown only when OUR bridge instance exists. */
-		const twSync = E('input', { type: 'checkbox' });
-		let twSyncDirty = false;
-		const twSyncLabel = E('label', {
-			'class': 'wiz-note', style: 'margin-left:10px; cursor:pointer; display:none',
-			title: _('Every check writes the live CF-proxy domains into the bridge config (tgws_rs_domains) and restarts the bridge when the list changed; off — the bridge uses its built-in domain pool.')
-		}, [ twSync, ' ' + _('Sync CF domains from the rs check') ]);
-		twSync.addEventListener('change', function() {
-			const want = twSync.checked;
-			twSyncDirty = true;
-			L.resolveDefault(callTgwsSyncSet(want ? '1' : '0'), {}).then(function(r) {
-				if (!r || r.result !== true) {
-					twSync.checked = !want;
-					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Sync setting failed: %s').format((r && r.error) || _('rpc error')) ]));
-				}
-				twSyncDirty = false;
-			});
-		});
-
-		/* Issue #5: per-probe details of the rs check — one line per probe. */
-		function appendCheckDetails(box, details) {
-			if (!Array.isArray(details) || !details.length)
-				return;
-			const list = E('div', {
-				'style': 'max-height:220px; overflow-y:auto; margin:4px 0 0 12px; padding:2px 0'
-			});
-			for (let i = 0; i < details.length; i++) {
-				const d = details[i] || {};
-				const line = E('div', { 'class': 'wiz-note', style: 'white-space:nowrap' }, []);
-				line.appendChild(document.createTextNode((d.name || '—') + ' '));
-				line.appendChild(d.status === 'ok'
-					? badge('hpui-b-green', '✓ ' + (d.message || ''))
-					: badge('hpui-b-red', '✗ ' + (d.message || '')));
-				list.appendChild(line);
-			}
-			box.appendChild(list);
-		}
-
-		/* Issue #6: what the sync did during the check (one honest line). */
-		function appendSyncNote(box, sync) {
-			if (!sync || sync.state === 'off')
-				return;
-			let txt = '';
-			if (sync.state === 'written')
-				txt = _('Live CF domains synced to the bridge (%d) — the bridge restarted with the fresh list.').format(sync.count || 0);
-			else if (sync.state === 'written_stopped')
-				txt = _('Live CF domains synced (%d) — the bridge is stopped; it picks the list up on the next start.').format(sync.count || 0);
-			else if (sync.state === 'unchanged')
-				txt = _('Sync: the live CF domain list is unchanged (%d domains).').format(sync.count || 0);
-			else if (sync.state === 'none')
-				txt = _('Sync is on, but no CF-proxy probe passed — nothing to sync.');
-			if (txt)
-				box.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:4px 0 0 12px' }, [ txt ]));
-		}
-
-		function renderTgwsp(st) {
-			st = st || {};
-			const rs = st.rs || {}, go = st.go || {}, ck = st.check || {}, ins = st.install || {},
-				goIns = st.go_install || {};
-			twRsPresent = !!rs.present;
-			twGoManaged = !!go.managed;
-			/* The sync checkbox is only meaningful for OUR bridge instance;
-			 * the committed value wins unless the user is mid-toggle. */
-			twSyncLabel.style.display = twGoManaged ? '' : 'none';
-			if (!twSyncDirty && st.tgws)
-				twSync.checked = (st.tgws.sync_rs === true);
-			const parts = [];
-			if (rs.present) {
-				const ver = rs.version ? String(rs.version).trim().split(' ').pop() : '';
-				parts.push(badge('hpui-b-green', 'tg-ws-proxy-rs' + (ver ? ' ' + ver : '')));
-				parts.push(rs.running
-					? badge('hpui-b-blue', _('running'))
-					: badge('hpui-b-grey', _('stopped')));
-				if (rs.port)
-					parts.push(E('span', { 'style': 'opacity:.8' },
-						[ _('Port') + ' ' + String(rs.port) + (rs.listening ? ' ✓' : ' · ' + _('not listening')) ]));
-				if (rs.faketls)
-					parts.push(E('span', { 'style': 'opacity:.8' }, [ 'FakeTLS: ' + String(rs.faketls) ]));
-			} else {
-				parts.push(E('span', { 'style': 'opacity:.7' }, [ _('tg-ws-proxy-rs is not installed') ]));
-			}
-			if (go.managed) {
-				parts.push(badge('hpui-b-green', 'tg-ws bridge (SOCKS5)'));
-				parts.push(go.running
-					? badge('hpui-b-blue', _('running') +
-						(go.port ? ' · 127.0.0.1:' + go.port : ''))
-					: badge('hpui-b-red', _('stopped')));
-			} else if (go.present)
-				parts.push(badge('hpui-b-amber',
-					_('variant 2 (Go manager) detected — managed by its own tgm tool')));
-			if (st.conflict)
-				parts.push(badge('hpui-b-red',
-					_('the port collides with the app ports (%s)').format((st.our_ports || []).join(', '))));
-			if (ins.running)
-				parts.push(badge('hpui-b-amber', _('installer running (%s)…').format(ins.stage || '')));
-			else if (ck.running)
-				parts.push(badge('hpui-b-amber', _('Checking...')));
-			dom.content(twRow, E('span', {}, parts));
-			if (!twState.seeded) {
-				twState.seeded = true;
-				if (!ins.running && ins.stage && ins.stage !== 'fetch')
-					twState.insSig = 'i' + ins.stage + ':' + (ins.rc == null ? '' : ins.rc) + ':' + (ins.error || '');
-				if (!ck.running && (ck.stage === 'done' || ck.stage === 'error'))
-					twState.ckSig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
-				if (!goIns.running && goIns.stage)
-					twState.goSig = 'g' + goIns.stage + ':' + (goIns.rc == null ? '' : goIns.rc) + ':' + (goIns.error || '');
-			}
-			/* Finished operations — report ONCE per signature, and never
-			 * overwrite a button answer the user is currently reading. */
-			if (ins.running || ck.running || goIns.running)
-				twState.manual = false;
-			if (!ins.running && ins.stage && ins.stage !== 'fetch') {
-				const sig = 'i' + ins.stage + ':' + (ins.rc == null ? '' : ins.rc) + ':' + (ins.error || '');
-				if (sig !== twState.insSig) {
-					twState.insSig = sig;
-					if (!twState.manual) {
-						twState.manual = true;
-						if (ins.stage === 'done')
-							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-								[ _('Installation finished — the status line above reflects the new state.') ]));
-						else
-							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-								[ _('Installation failed (see /var/run/homeproxy/tgwsp_install.log on the router).') ]));
-					}
-				}
-			}
-			if (!ck.running && ck.stage === 'done') {
-				const sig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
-				if (sig !== twState.ckSig) {
-					twState.ckSig = sig;
-					if (!twState.manual) {
-						twState.manual = true;
-						const box = E('div', {});
-						if ((ck.ok || 0) === 0 && (ck.fail || 0) === 0)
-							box.appendChild(E('p', { 'class': 'hpui-hint' },
-								[ _('Nothing to check yet — add CF domains or an upstream on the component\'s own page, then run the check again.') ]));
-						else {
-							box.appendChild(E('p', { 'class': 'hpui-hint' },
-								[ _('Check finished: %d OK, %d FAIL (exit code %d).').format(ck.ok || 0, ck.fail || 0, ck.rc || 0) ]));
-							appendCheckDetails(box, ck.details);
-							appendSyncNote(box, ck.sync);
-						}
-						dom.content(twResult, box);
-					}
-				}
-			} else if (!ck.running && ck.stage === 'error') {
-				const sig = 'c' + ck.stage + ':' + (ck.rc == null ? '' : ck.rc) + ':' + (ck.ok || 0) + ':' + (ck.fail || 0);
-				if (sig !== twState.ckSig) {
-					twState.ckSig = sig;
-					if (!twState.manual) {
-						twState.manual = true;
-						const box = E('div', {});
-						if (Array.isArray(ck.details) && ck.details.length) {
-							box.appendChild(E('p', { 'class': 'hpui-hint' },
-								[ _('Check finished: %d OK, %d FAIL (exit code %d).').format(ck.ok || 0, ck.fail || 0, ck.rc || 0) ]));
-							appendCheckDetails(box, ck.details);
-							appendSyncNote(box, ck.sync);
-						} else
-							box.appendChild(E('p', { 'class': 'hpui-hint' },
-								[ _('Check failed (exit code %s — see /var/run/homeproxy/tgwsp_check.log on the router).').format(String(ck.rc || '?')) ]));
-						dom.content(twResult, box);
-					}
-				}
-			}
-			/* F8-F2: bridge install outcome — same ONE-place rule. */
-			if (!goIns.running && goIns.stage && goIns.stage !== 'api' && goIns.stage !== 'download') {
-				const gsig = 'g' + goIns.stage + ':' + (goIns.rc == null ? '' : goIns.rc) + ':' + (goIns.error || '');
-				if (gsig !== twState.goSig) {
-					twState.goSig = gsig;
-					if (!twState.manual) {
-						twState.manual = true;
-						if (goIns.stage === 'done')
-							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-								[ _('Bridge installed and running — the exit "tg-ws (transparent)" is now available for the Telegram preset (the select re-checks the bridge on every poll).') ]));
-						else
-							dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-								[ _('Bridge installation failed: %s (see /var/run/homeproxy/tgwsp_go_install.log on the router).').format(goIns.error || _('rpc error')) ]));
-					}
-				}
-			}
-		}
-
-		twCheckBtn.addEventListener('click', function() {
-			twCheckBtn.disabled = true;
-			twState.ckSig = null;
-			twState.manual = false;
-			L.resolveDefault(callTgwspCheck(), {}).then(function(r) {
-				if (!r || r.result === false)
-					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Check failed to start: ') + ((r && r.error) || _('rpc error')) ]));
-				else
-					dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Checking...') ]));
-				return pollTgws();
-			}).finally(function() { twCheckBtn.disabled = false; });
-		});
-
-		twLinkBtn.addEventListener('click', function() {
-			twLinkBtn.disabled = true;
-			L.resolveDefault(callTgwspLink(), {}).then(function(r) {
-				if (!r || r.result === false) {
-					dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-						[ _('No link: ') + ((r && r.error) || _('rpc error')) ]));
-					return;
-				}
-				const box = E('div', {});
-				box.appendChild(E('div', { 'class': 'wiz-note' },
-					[ _('Add an MTProto proxy in Telegram with this link (one per user secret):') ]));
-				const links = (r.links || []);
-				for (let i = 0; i < links.length; i++) {
-					const inp = E('input', {
-						'type': 'text', readonly: 'readonly',
-						'style': 'width:100%; margin:4px 0; font-size:.85em',
-						onclick: function() { this.select(); }
-					});
-					inp.value = links[i];
-					box.appendChild(inp);
-				}
-				if ((r.links || []).length === 1 && navigator.clipboard) {
-					const cp = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' },
-						[ _('Copy link') ]);
-					cp.addEventListener('click', function() {
-						navigator.clipboard.writeText(links[0]);
-					});
-					box.appendChild(cp);
-				}
-				if (r.server)
-					box.appendChild(E('div', { 'class': 'wiz-note' },
-						[ _('Server %s, port %s — LAN clients only, nothing is exposed to the WAN.').format(String(r.server), String(r.port || '')) ]));
-				dom.content(twResult, box);
-				twState.manual = true;
-			}).finally(function() { twLinkBtn.disabled = false; });
-		});
-
-		twInstallBtn.addEventListener('click', function() {
-			const warn = twRsPresent
-				? _('Run the OFFICIAL tg-ws-proxy-rs installer again? It upgrades the third-party component (SHA-256 digests are verified from the GitHub release API).')
-				: _('Install the THIRD-PARTY component tg-ws-proxy-rs (valnesfjord, MIT)? The official installer downloads the release binary and its LuCI page and verifies digests from the GitHub release API. Nothing is packed into this app; the configuration stays on the component\'s own page. LAN-only — no WAN port is opened.');
-			hp.confirmModal(_('Install tg-ws'), warn, _('Install')).then(function(ok) {
-				if (!ok)
-					return;
-				twInstallBtn.disabled = true;
-				twState.insSig = null;
-				twState.manual = false;
-				dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Downloading and running the official installer…') ]));
-				L.resolveDefault(callTgwspInstall(), {}).then(function(r) {
-					if (!r || r.result === false)
-						dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-							[ _('Installation failed to start: ') + ((r && r.error) || _('rpc error')) ]));
-					return pollTgws();
-				}).finally(function() { twInstallBtn.disabled = false; });
-			});
-		});
-
-		twGoInstallBtn.addEventListener('click', function() {
-			const warn = twGoManaged
-				? _('Re-run the tg-ws bridge installer? It re-downloads the release binary (SHA-256 verified from the GitHub release API) and restarts the local instance.')
-				: _('Install the THIRD-PARTY tg-ws bridge (tg-ws-proxy-go, d0mhate, MIT)? It downloads the release binary (SHA-256 verified from the GitHub release API), installs a local procd instance listening on 127.0.0.1 only, and enables the "tg-ws (transparent)" exit for the Telegram preset. Voice calls (UDP) are not carried by the bridge.');
-			hp.confirmModal(_('Install tg-ws bridge'), warn, _('Install')).then(function(ok) {
-				if (!ok)
-					return;
-				twGoInstallBtn.disabled = true;
-				twState.goSig = null;
-				twState.manual = false;
-				dom.content(twResult, E('p', { 'class': 'hpui-hint' }, [ _('Downloading and installing the bridge…') ]));
-				L.resolveDefault(callTgwsInstall(), {}).then(function(r) {
-					if (!r || r.result === false)
-						dom.content(twResult, E('p', { 'class': 'hpui-hint' },
-							[ _('Bridge installation failed to start: ') + ((r && r.error) || _('rpc error')) ]));
-					return pollTgws();
-				}).finally(function() { twGoInstallBtn.disabled = false; });
-			});
-		});
-
-		function pollTgws() {
-			return L.resolveDefault(callTgwspStatus(), {}).then(function(st) {
-				renderTgwsp(st);
-			});
-		}
-		pollTgws();
-		poll.add(pollTgws, 6);
 		poll.add(rbRefresh, 12);
-
-		const twBtnRow = E('div', { 'class': 'wiz-toolbar' },
-			[ twCheckBtn, twLinkBtn, twInstallBtn, twGoInstallBtn, twSyncLabel ]);
-
-		const twCard = E('div', { 'class': 'tg-card' }, [
-			E('div', { 'class': 'tg-card-title' }, [ _('Telegram without a proxy (TG WS Proxy)') ]),
-			E('p', { 'class': 'hpui-hint' },
-				[ _('Third-party bridges (MIT) carry Telegram over a WebSocket path DPI does not block — a way to use Telegram WITHOUT a VPN, not a separate service. The rs variant is MTProto-only (clients connect by a tg:// link); the Go bridge (installed by the button) adds the transparent "tg-ws" exit: LAN apps need NO proxy settings, and if the bridge dies, messaging falls back to the node — calls (UDP) keep riding the VPN. The bridge exits through a relay abroad, so Telegram shows that relay country instead of your home IP — expected for such a path. Detection of foreign installs is read-only; nothing is exposed to LAN/WAN, and neither bridge ships with this app.') ]),
-			twRow,
-			twBtnRow,
-			twResult
-		]);
 
 		/* ── diagnostics card ───────────────────────────────────────── */
 		const tgResult = E('div', {});
@@ -868,7 +506,7 @@ return view.extend({
 
 		const diagCard = E('div', { 'class': 'tg-card' }, [
 			E('div', { 'class': 'tg-card-title' }, [ _('Diagnostics') ]),
-			E('div', { 'class': 'wiz-toolbar', style: 'margin:0' }, [ tgSaveBtn, tgTestBtn, tgCheckBtn ]),
+			E('div', { 'class': 'tg-inline', style: 'margin:0' }, [ tgSaveBtn, tgTestBtn, tgCheckBtn ]),
 			tgResult
 		]);
 
@@ -886,7 +524,6 @@ return view.extend({
 			connCard,
 			pushesCard,
 			rbCard,
-			twCard,
 			diagCard,
 			cmdPanel
 		]);

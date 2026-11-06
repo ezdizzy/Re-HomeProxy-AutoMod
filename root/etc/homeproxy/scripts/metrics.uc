@@ -21,14 +21,14 @@
  *   vpn_b / dir_b / byp_b   per-exit traffic SPEED, bytes/s since the
  *           previous sample (Clash API /connections per-connection deltas,
  *           aggregated by the chain of outbounds: vpn = main-out/node leaf,
- *           dir = direct-out, byp = zapret + byedpi + tg-ws bridges;
+ *           dir = direct-out, byp = zapret + byedpi;
  *           null when the core is down or on the baseline sample)
  *   delay   active node last TLS delay, ms (Clash API /proxies, leaf history;
  *           null when core down / direct main / no fresh history)
  *   learned records in the automation learned lists (domains + raw IPs,
  *           recounted only when either file changes size/mtime)
  *   totals  CUMULATIVE per-exit VOLUME (bytes) carried in the output doc
- *           (vpn/node/direct/zapret/byedpi/tgws/block/other + since).
+ *           (vpn/node/direct/zapret/byedpi/block/other + since).
  *           Only LAN-client connections count — the router's own 127.0.0.1
  *           probes (scanner, diagnostics, bridges) are excluded. The
  *           counters are restored from the output file at startup, so they
@@ -80,7 +80,7 @@ const PROBE_URL = 'http://www.gstatic.com/generate_204';
  * prev_conn = last cumulative upload/download per connection id (the delta
  * source). null prev_conn → the next sample is a BASELINE (long-lived
  * connections must not dump their whole history into a fresh counter). */
-let totals = { vpn: 0, node: 0, direct: 0, zapret: 0, byedpi: 0, tgws: 0, block: 0, other: 0 };
+let totals = { vpn: 0, node: 0, direct: 0, zapret: 0, byedpi: 0, block: 0, other: 0 };
 let totals_since = time();
 let prev_conn = null;
 
@@ -162,15 +162,13 @@ function clash_get(path) {
  * The Clash API /connections reply carries ACTIVE connections with their
  * CUMULATIVE upload/download. Deltas between samples give the per-exit
  * speed; the deltas also accumulate into the totals. Exit = the connection
- * chain ([leaf, …, root]): tg-ws bridge beats the groups (a per-source
- * urltest group can carry both tgws-out and main-out — what "now" points
- * at decides), then main-out, then the engines, then direct/block; a bare
- * cfg-*-out leaf is a specific node (custom routing / node rules). */
+ * chain ([leaf, …, root]): main-out beats the engines, then the engines,
+ * then direct/block; a bare cfg-*-out leaf is a specific node (custom
+ * routing / node rules). (ч.200, D34b: tg-ws удалён — класс 'tgws' убран.) */
 function classify_chains(chains) {
 	if (chains == null || type(chains) !== 'array')
 		return 'other';
 	const has = (t) => (index(chains, t) >= 0);
-	if (has('tgws-out')) return 'tgws';
 	if (has('main-out')) return 'vpn';
 	if (has('zapret-out')) return 'zapret';
 	if (has('byedpi-out')) return 'byedpi';
@@ -217,7 +215,7 @@ function sample_traffic(list) {
 		totals[b] = int(totals[b] || 0) + du + dd;
 		if (b === 'vpn' || b === 'node') d.vpn += du + dd;
 		else if (b === 'direct') d.dir += du + dd;
-		else if (b === 'zapret' || b === 'byedpi' || b === 'tgws') d.byp += du + dd;
+		else if (b === 'zapret' || b === 'byedpi') d.byp += du + dd;
 	}
 	prev_conn = cur;
 	return d;

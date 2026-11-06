@@ -764,8 +764,6 @@ export function scan_registry() {
 		{ name: 'mosdns', kind: 'dns', spec: { exe: '/usr/bin/mosdns' } },
 		{ name: 'nfqws2', kind: 'dpi', spec: { exe: 'nfqws2' } },
 		{ name: 'ciadpi', kind: 'dpi', spec: { exe: 'ciadpi' } },
-		{ name: 'tgws_go', kind: 'tgws', spec: { exe: 'tg-ws-proxy-go' } },
-		{ name: 'tgws_rs', kind: 'tgws', spec: { exe: 'tg-ws-proxy-rs' } },
 		{ name: 'sni_sniffer', kind: 'automation', spec: { exe: 'sni_sniffer' } },
 		{ name: 'probe_pool', kind: 'automation', spec: { exe: 'probe_pool' } },
 		{ name: 'automation', kind: 'script', spec: { script: 'automation.uc' } },

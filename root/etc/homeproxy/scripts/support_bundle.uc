@@ -300,9 +300,7 @@ function build_metadata(stage) {
 		engines: {
 			mosdns_version: first_line(capture('mosdns version 2>/dev/null')),
 			nfqws2_bin: !!access('/opt/zapret2/nfq2/nfqws2'),
-			ciadpi_bin: !!access('/usr/bin/ciadpi'),
-			tgws_rs_bin: !!access('/usr/bin/tg-ws-proxy-rs'),
-			tgws_go_bin: !!access('/usr/bin/tg-ws-proxy-go')
+			ciadpi_bin: !!access('/usr/bin/ciadpi')
 		}
 	};
 	writefile(stage + '/metadata.json', sprintf('%.J', meta) + '\n');
@@ -321,15 +319,9 @@ function build_service_status(stage) {
 	const uc = cursor();
 	try { cfgsec = uc.get_all('homeproxy', 'config'); } catch (e) { cfgsec = {}; }
 
-	/* Ф1.4b: the tg-ws bridge liveness comes from the process registry
-	 * (identity = pid + starttime; the bare pidof could not verify either). */
-	const tge = pm_reg_get('tgws_go');
-	const tg_running = (tge != null && pm_entry_alive(tge));
 	const doc = {
 		generated: now_str(),
 		instances: redact_object(instances),
-		tgws_go_running: tg_running,
-		tgws_go_pid: tg_running ? tge.pid : null,
 		config: redact_object(cfgsec)
 	};
 	writefile(stage + '/service_status.json', sprintf('%.J', doc) + '\n');
@@ -438,7 +430,7 @@ function build_logs(stage) {
 	let daemons = [];
 	const reg = pm_scan();
 	const want = [
-		'core', 'mosdns', 'nfqws2', 'ciadpi', 'tgws_go', 'tgws_rs',
+		'core', 'mosdns', 'nfqws2', 'ciadpi',
 		'sni_sniffer', 'probe_pool',
 		'automation', 'telegram_bot', 'control', 'multidns',
 		'urltest_watchdog', 'zapret_autopilot', 'hotswap', 'metrics'
@@ -572,7 +564,6 @@ function do_text_report() {
 			return length(pm_find(exe_spec)) > 0;
 		return false;
 	};
-	add(up('tgws_go', { exe: 'tg-ws-proxy-go' }) ? 'tg-ws мост: работает' : 'tg-ws мост: не запущен');
 	add('');
 
 	add('[Ядро и движки]');

@@ -310,13 +310,6 @@ const zapret_mark = uci.get(uciconfig, ucimain, 'zapret_mark') || '110';
 /* Opt-in: route call/voice UDP ports (50000-65530) to zapret-out instead of the proxy.
  * Only honored when zapret_enabled === '1' (zapret-out exists). */
 const zapret_voice = uci.get(uciconfig, ucimain, 'zapret_voice') || '0';
-/* tg-ws (transparent) bridge — F8-F2: the local tg-ws-proxy-go bridge (SOCKS5 on
- * 127.0.0.1) carries Telegram MTProto over the WebSocket path DPI does not block.
- * TCP only: voice calls (UDP) are not carried by the bridge — they keep riding the
- * previous path (the tgws rule is emitted TCP-scoped). TheWizard installs the
- * bridge and sets both options (tgws_enabled/tgws_port). */
-const tgws_enabled = uci.get(uciconfig, ucimain, 'tgws_enabled');
-const tgws_port = uci.get(uciconfig, ucimain, 'tgws_port') || '1080';
 /* Automation (auto blocked-site detection): when enabled we expose two loopback test
  * inbounds (forced direct / forced main) and merge the learned list into proxy_domain_list. */
 const automation_enabled = uci.get(uciconfig, 'automation', 'enabled');
@@ -1044,12 +1037,14 @@ function push_outbound(list, node) {
 
 /* ч.118: `config` + `has_outbound` hoisted ABOVE get_outbound — in this
  * ucode dialect a name declared LATER is invisible to a function defined
- * earlier (no hoisting at all; lesson 126), and get_outbound's tgws-off /
- * reroute branches call has_outbound() — for every user WITHOUT the tg-ws
+ * earlier (no hoisting at all; lesson 126), and get_outbound's reroute
+ * branches call has_outbound() — for every user WITHOUT the tg-ws
  * bridge those branches threw "left-hand side is not a function" and the
  * whole generation died (dormant since the helpers sat at the file tail;
  * this router has the bridge, so the branch never ran here). The block
- * references nothing but itself — the hoist is behavior-neutral. */
+ * references nothing but itself — the hoist is behavior-neutral.
+ * ч.200 (D34b): tg-ws removed entirely — a legacy 'tgws-out' rule node
+ * rides the main path (same fallback the off-branch used). */
 const config = {};
 
 const has_outbound = (tag) => {
@@ -1085,11 +1080,8 @@ function get_outbound(cfg) {
 			/* Fall back to plain direct if zapret is disabled so the config stays valid */
 			return (zapret_enabled === '1') ? 'zapret-out' : 'direct-out';
 		case 'tgws-out':
-			/* The bridge is a LOCAL component that can be stopped: when it is
-			 * disabled, ride the main path (Telegram keeps working over the VPN)
-			 * instead of a dead loopback socket. */
-			return (tgws_enabled === '1') ? 'tgws-out'
-				: (has_outbound('main-out') ? 'main-out' : 'direct-out');
+			/* D34b: the tg-ws bridge is gone; a legacy rule node rides the main path. */
+			return has_outbound('main-out') ? 'main-out' : 'direct-out';
 		default:
 			const node = uci.get(uciconfig, cfg, 'node');
 			if (isEmpty(node)) {
@@ -1272,8 +1264,8 @@ if (!isEmpty(main_node)) {
 
 		/* Per-service sources in the canonical order (ru_rules, collected
 		 * above — the SAME list the route rules iterate). A source whose
-		 * effective outbound is proxy-family (main-out, a URLTest pool, a
-		 * real node or the tg-ws bridge) resolves through the encrypted pool
+		 * effective outbound is proxy-family (main-out, a URLTest pool or
+		 * a real node) resolves through the encrypted pool
 		 * (secure-dns); a source that falls back to direct egress (ByeDPI/
 		 * Zapret disabled) gets NO rule — the final resolver is already the
 		 * plain direct pool, matching the direct route. Engines that DIAL
@@ -2871,12 +2863,12 @@ if (!isEmpty(main_node)) {
 			else if (cfg.node === 'zapret-out')
 				effective_outbound = (zapret_enabled === '1') ? 'zapret-out' : 'direct-out';
 			else if (cfg.node === 'tgws-out')
-				effective_outbound = (tgws_enabled === '1') ? 'hp-ru-' + cfg.source + '-out'
-					: (has_outbound('main-out') ? 'main-out' : 'direct-out');
+				/* D34b: tg-ws removed — a legacy rule node rides the main path. */
+				effective_outbound = has_outbound('main-out') ? 'main-out' : 'direct-out';
 			else
 				effective_outbound = 'hp-ru-' + cfg.source + '-out';
 
-			if (cfg.node === 'main-out' || isEmpty(cfg.node) || cfg.node === 'byedpi-out' || cfg.node === 'zapret-out') {
+			if (cfg.node === 'main-out' || isEmpty(cfg.node) || cfg.node === 'byedpi-out' || cfg.node === 'zapret-out' || cfg.node === 'tgws-out') {
 				/* no new outbound needed — main-out / byedpi-out / zapret-out already exist */
 			} else if (!has_outbound(effective_outbound)) {
 				if (cfg.node === 'urltest') {
@@ -2902,27 +2894,6 @@ if (!isEmpty(main_node)) {
 							config.outbounds[length(config.outbounds)-1].tag = 'cfg-' + n + '-out';
 						}
 					}
-				} else if (cfg.node === 'tgws-out' && tgws_enabled === '1') {
-					/* F8-F2 «tg-ws (transparent)»: the per-source group wraps the
-					 * bridge with the main path — the bridge dying (procd crash,
-					 * install removed) falls back to the node, Telegram never
-					 * dies entirely. Resilience contract of the tgws preset.
-					 * sing-box has no mihomo-style fallback group (verified:
-					 * hiddify-core rejects the type), so the urltest doubles as
-					 * one: the FIRST member is provisionally selected, and a
-					 * huge tolerance keeps it selected while it PASSES probes —
-					 * a merely-faster node does NOT steal the traffic; a DEAD
-					 * bridge (no valid probe history) is excluded and the node
-					 * takes over within the check interval. */
-					const tg_members = has_outbound('main-out') ? ['tgws-out', 'main-out'] : ['tgws-out'];
-					push(config.outbounds, {
-						type: 'urltest',
-						tag: effective_outbound,
-						outbounds: tg_members,
-						interval: strToTime('30'),
-						tolerance: 60000,
-						idle_timeout: '1800s'
-					});
 				} else if (!isEmpty(cfg.node)) {
 					if (!hp_node_usable(cfg.node)) {
 						/* Unsupported by the selected core: no outbound is emitted,
@@ -2967,10 +2938,7 @@ if (!isEmpty(main_node)) {
 				rule_set: rule_sets,
 				action: 'route',
 				outbound: effective_outbound,
-				/* tg-ws bridge carries TCP only (SOCKS5/MTProto over WebSocket):
-				 * UDP (voice calls) keeps riding the next matching rule — the
-				 * mass list → main-out VPN path it uses today. */
-				network: (cfg.node === 'tgws-out') ? ['tcp'] : null
+				network: null
 			});
 
 			/* Rule sets (remote — core handles download and 1d refresh).
@@ -3334,20 +3302,6 @@ if (zapret_enabled === '1') {
 	});
 }
 /* zapret outbound end */
-
-/* tg-ws (transparent) outbound — F8-F2: a plain loopback socks dialer into the
- * tg-ws-proxy-go bridge (same shape as byedpi-out). The bridge wraps Telegram
- * MTProto into the WebSocket path; emitted whenever the bridge is enabled
- * (install sets it), even before a rule references it. */
-if (tgws_enabled === '1' && strToInt(tgws_port) > 0) {
-	push(config.outbounds, {
-		type: 'socks',
-		tag: 'tgws-out',
-		server: '127.0.0.1',
-		server_port: strToInt(tgws_port)
-	});
-}
-/* tg-ws outbound end */
 
 /* Experimental start */
 config.experimental = {
