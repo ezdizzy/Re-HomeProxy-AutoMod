@@ -84,22 +84,6 @@ const QUARANTINE_FILE = MD_DIR + '/quarantine_domains.txt';
 const DNS_LOG = '/var/log/dnsmasq-q.log';   /* dnsmasq query log (enabled by the automation daemon) */
 let PROXY = '127.0.0.1:5338';   /* dedicated mdns-proxy-in (mixed) pinned to main-out;
                                  * port follows homeproxy.multidns.proxy_port (set in bootstrap/main) */
-/* WARP-резерв secure-пула (Ф9.13/D34c, opt-in): dedicated warp-in (mixed)
- * pinned to cfg-warp-out; port hardcoded — синхронно с generate_client.uc. */
-const WARP_PROXY = '127.0.0.1:5339';
-const WARP_PROFILE = HP_DIR + '/warp_profile.json';
-
-/* Фича включена и профиль реально существует (узел-секция 'warp' enabled —
- * сам выключатель фичи; генератор эмитит cfg-warp-out только при живом
- * профиле). Без профиля upstream не добавляется — слой честный. */
-function warp_reserve_on() {
-	if ((uci.get('homeproxy', 'multidns', 'warp_reserve') || '0') !== '1')
-		return false;
-	if ((uci.get('homeproxy', 'warp', 'enabled') || '0') !== '1')
-		return false;
-	const st = stat(WARP_PROFILE);
-	return (st != null && st.size > 2);
-};
 
 /* Direct (unproxied) DoH upstreams spliced into the plain group when EVERY
  * plaintext entry of the pool is measured dead or poisoned — the wholesale
@@ -1069,17 +1053,6 @@ function build_mosdns_conf() {
 		if (use_proxy && (p.scheme === 'https' || p.scheme === 'tls'))
 			push(lines, '          socks5: ' + yaml_q(PROXY));
 	}
-	/* WARP-резерв (Ф9.13/D34c, opt-in): один by-IP DoH после туннелированной
-	 * тройки и ПЕРЕД аварийной прямой партией. mosdns запускает следующую
-	 * партию только при ОТКАЗЕ предыдущей (урок 297), так что нормальная
-	 * работа не меняется; при смерти цепочки живой WARP туннель отвечает
-	 * раньше прямого фолбэка, а при мёртвом WARP — партия отваливается
-	 * быстро (socks5 refused) и вступает аварийная прямая партия Ф8.8.
-	 * 1.1.1.1 по IP — без bootstrap, как в AUTO_DOH. */
-	if (warp_reserve_on()) {
-		push(lines, '        - addr: https://1.1.1.1/dns-query');
-		push(lines, '          socks5: ' + yaml_q(WARP_PROXY));
-	}
 	if (emergency) {
 			for (let i = 0; i < length(AUTO_DOH); i++) {
 				let p = parse_entry(AUTO_DOH[i]);
@@ -1396,11 +1369,7 @@ function uci_conf_sig() {
 		+ '|' + (uci.get('homeproxy', 'multidns', 'use_secure') || '')
 		+ '|' + (uci.get('homeproxy', 'multidns', 'secure_via_proxy') || '')
 		+ '|' + (uci.get('homeproxy', 'multidns', 'plain_port') || '')
-		+ '|' + (uci.get('homeproxy', 'multidns', 'secure_port') || '')
-		/* WARP-резерв читает UCI + файл профиля — оба состояния в сигнатуре,
-		 * иначе создание/удаление профиля не триггерит ребилд. */
-		+ '|' + (uci.get('homeproxy', 'multidns', 'warp_reserve') || '')
-		+ '|' + warp_reserve_on();
+		+ '|' + (uci.get('homeproxy', 'multidns', 'secure_port') || '');
 }
 
 /* Rebuild the mosdns YAML from the current UCI + state and restart the

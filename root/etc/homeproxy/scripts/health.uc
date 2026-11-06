@@ -744,102 +744,6 @@ function generators_entry(now) {
 	return generators_entry_from(op_list(), now);
 };
 
-/* ── WARP (Ф9.13/D34c) ──────────────────────────────────────────────────
- * Проба туннеля: curl через warp-in (socks5h 127.0.0.1:5339) к
- * cloudflare.com/cdn-cgi/trace — ответ содержит warp=on|plus ТОЛЬКО когда
- * трафик реально вышел через WARP-туннель (это честная проверка самого
- * туннеля, не его конфига). Проба живёт В ГЛУБОКОМ проходе (~2 мин);
- * лёгкий переносит запись целиком (список deep-only ниже). Счётчик
- * подряд-провалов хранится в состоянии — Sentinel берёт его для
- * автопересоздания профиля (warp:profile). */
-const WARP_PROFILE_PATH = '/etc/homeproxy/warp_profile.json';
-const WARP_STATE_PATH = RUN_DIR + '/warp_state.json';
-const WARP_PORT = 5339;             /* warp-in — синхронно с generate_client.uc */
-const WARP_PROBE_STALE_SEC = 400;   /* глубокий проход ~2 мин; допуск ×3 */
-const WARP_DOWN_FAILS = 5;          /* ~10 мин подряд провалов = down-вердикт */
-
-function warp_state_read() {
-	const raw = ss_rjson(WARP_STATE_PATH);
-	return (raw != null && type(raw) === 'object') ? raw : null;
-};
-
-function warp_state_write(st) {
-	try {
-		ss_atomic_write(WARP_STATE_PATH, sprintf('%J', st) + '\n');
-	} catch (e) { /* best-effort */ }
-};
-
-/* Живая проба (вызывается ТОЛЬКО из глубокого прохода и только когда фича
- * включена — никогда не форкает curl впустую). Пишет состояние с
- * consec-счётчиком и честной причиной. */
-function warp_probe_tick(now) {
-	const t0 = time();
-	const out = capture(`curl -s --max-time 8 -x socks5h://127.0.0.1:${WARP_PORT} https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null`);
-	const ms = (time() - t0) * 1000;
-	const m = match(out, /warp=([a-z]+)/);
-	const on = (m != null && (m[1] === 'on' || m[1] === 'plus'));
-	const prev = warp_state_read();
-	const fails = on ? 0 : (int((prev != null && prev.fails) || 0) + 1);
-	const locm = match(out, /loc=([A-Za-z]{2})/);
-	const colom = match(out, /colo=([A-Za-z]+)/);
-	const ipm = match(out, /ip=([0-9a-fA-F.:]+)/);
-	warp_state_write({
-		ts: now,
-		ok: on,
-		fails: fails,
-		latency_ms: ms,
-		verdict: (m != null) ? m[1] : 'нет ответа',
-		loc: (locm != null) ? locm[1] : '',
-		colo: (colom != null) ? colom[1] : '',
-		exit_ip: (ipm != null) ? ipm[1] : ''
-	});
-	return { ok: on, fails: fails, latency_ms: ms };
-};
-
-function warp_entry(now) {
-	const label = 'WARP (Cloudflare)';
-	const feature_on = (uci_str('homeproxy', 'warp', 'enabled') === '1');
-	const node_type = uci_str('homeproxy', 'warp', 'type');
-	if (!feature_on)
-		return mk_entry('warp', label, 'failover', 'off', 'certain',
-			'WARP выключен (выключатель — в карточке WARP на Обзорной)', {});
-	if (node_type !== 'wireguard' || !access(WARP_PROFILE_PATH))
-		return mk_entry('warp', label, 'failover', 'degraded', 'certain',
-			'включён, но профиль не зарегистрирован — WARP-узла в конфиге ядра нет', {});
-	const st = warp_state_read();
-	if (st == null || (now - int(st.ts)) > WARP_PROBE_STALE_SEC) {
-		warp_probe_tick(now);
-		return warp_entry_read(now, 0);
-	}
-	return warp_entry_read(now, int(st.fails || 0));
-};
-
-function warp_entry_read(now, fails) {
-	const label = 'WARP (Cloudflare)';
-	const st = warp_state_read();
-	const d = {
-		fails: fails,
-		verdict: (st != null) ? ('' + (st.verdict || '')) : '',
-		latency_ms: (st != null) ? int(st.latency_ms || 0) : 0,
-		loc: (st != null) ? ('' + (st.loc || '')) : '',
-		colo: (st != null) ? ('' + (st.colo || '')) : '',
-		exit_ip: (st != null) ? ('' + (st.exit_ip || '')) : ''
-	};
-	if (st == null)
-		return mk_entry('warp', label, 'failover', 'degraded', 'indirect',
-			'проба не успела — состояние ещё не писалось', d);
-	if (st.ok === true)
-		return mk_entry('warp', label, 'failover', 'ok', 'certain',
-			'туннель жив: warp=' + d.verdict + ' (loc=' + (d.loc || '?') +
-			', colo=' + (d.colo || '?') + ', ' + d.latency_ms + ' мс) — страна выхода определяется anycast Cloudflare и не выбирается', d);
-	if (fails >= WARP_DOWN_FAILS)
-		return mk_entry('warp', label, 'failover', 'down', 'certain',
-			'туннель не отвечает ' + fails + ' подряд (~' + int(fails * 2) +
-			' мин) — Sentinel рассмотрит пересоздание профиля', d);
-	return mk_entry('warp', label, 'failover', 'degraded', 'certain',
-		'проба не прошла (' + fails + ' подряд, verdict=' + (d.verdict || 'нет') + ')', d);
-};
-
 export function system_entry_from(mem_kb, load1) {
 	const label = 'Память/нагрузка роутера';
 	const detail = { mem_available_kb: mem_kb, load1: load1 };
@@ -946,14 +850,6 @@ function deep_entries(svc, regst, now) {
 
 	entries.generators = generators_entry(now);
 	entries.system = system_entry();
-
-	/* WARP (Ф9.13/D34c): проба туннеля только в глубоком проходе и только
-	 * при включённой фиче (entry сам решает — off не форкает curl). */
-	if (uci_str('homeproxy', 'warp', 'enabled') === '1' &&
-	    uci_str('homeproxy', 'warp', 'type') === 'wireguard' &&
-	    access(WARP_PROFILE_PATH))
-		warp_probe_tick(now);
-	entries.warp = warp_entry(now);
 
 	return entries;
 };
@@ -1066,15 +962,12 @@ export function light_entries(svc, regst, prev, now) {
 	entries.tun = tun_entry(svc, now);
 
 	/* Deep-only записи — перенос целиком. */
-	for (let dn in [ 'fw4', 'generators', 'warp' ]) {
+	for (let dn in [ 'fw4', 'generators' ]) {
 		entries[dn] = (prev.entries[dn] != null) ? prev.entries[dn] : null;
 		if (entries[dn] == null)
-			entries[dn] = (dn === 'warp')
-				? mk_entry('warp', 'WARP (Cloudflare)', 'failover', 'off', 'indirect',
-					'ещё не проверялось (ожидается глубокий проход)', {})
-				: mk_entry(dn, (dn === 'fw4') ? 'fw4-перехват (цепи homeproxy)'
-					: 'Генераторы конфигурации', (dn === 'fw4') ? 'net' : 'config', 'ok',
-					'indirect', 'ещё не проверялось (ожидается глубокий проход)', {});
+			entries[dn] = mk_entry(dn, (dn === 'fw4') ? 'fw4-перехват (цепи homeproxy)'
+				: 'Генераторы конфигурации', (dn === 'fw4') ? 'net' : 'config', 'ok',
+				'indirect', 'ещё не проверялось (ожидается глубокий проход)', {});
 	}
 
 	entries.system = system_entry();

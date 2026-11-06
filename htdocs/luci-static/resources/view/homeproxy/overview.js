@@ -135,22 +135,6 @@ const callAppCheckUpdate = rpc.declare({
 	expect: { '': {} }
 });
 
-/* Ф9.13/D34c: WARP (Cloudflare) monitor card — the live tunnel probe state
- * from the health deep pass, enable/disable/renew and the opt-in MultiDNS
- * WARP reserve toggle. */
-const callWarpStatus = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'warp_status',
-	expect: { '': {} }
-});
-
-const callWarpSet = rpc.declare({
-	object: 'luci.homeproxy',
-	method: 'warp_set',
-	params: [ 'action' ],
-	expect: { '': {} }
-});
-
 /* Resolve a sing-box outbound tag (cfg-<section>-out) to its UCI label —
  * human-readable names, never raw cfg-ids (hotswap lesson). */
 function resolveTag(tag) {
@@ -637,173 +621,6 @@ return view.extend({
 				[ _('The service restart re-routes every connection ("Maintenance" carries start/stop); a snapshot copies the app configuration and the routing lists; "Restore internet" is the emergency switch for a plain direct connection.') ])
 		]);
 
-		/* ── WARP monitor card (Ф9.13/D34c) ──────────────────────────────
-		 * Cloudflare WARP as a WireGuard endpoint inside the living core:
-		 * an extra node for rules/lists, the bot's emergency egress step,
-		 * the opt-in MultiDNS reserve. Honest by design: the exit country
-		 * is picked by Cloudflare anycast — there is nothing to choose. */
-		const warpDot = E('span', { 'class': 'hpui-dot' });
-		const warpState = E('span', {}, [ '…' ]);
-		const warpEnableBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' },
-			[ _('Enable WARP') ]);
-		const warpDnsBtn = E('button', { 'class': 'btn cbi-button' }, [ _('DNS reserve: off') ]);
-		const warpRenewBtn = E('button', { 'class': 'btn cbi-button' }, [ _('Re-register') ]);
-		let warpLast = {};
-		const warpResult = E('div', { 'class': 'ov-result' }, []);
-
-		function warpNote(text, ok) {
-			dom.content(warpResult, [ E('p', { 'class': 'hpui-hint' }, [ text ]) ]);
-			warpResult.style.color = (ok === true) ? 'var(--hp-accent-strong)'
-				: (ok === false ? 'var(--hp-red)' : '');
-		}
-
-		function warpPollOp(opId, btn) {
-			const deadline = Date.now() + 300000;
-			const tick = function() {
-				L.resolveDefault(callOpStatus(opId), {}).then(function(st) {
-					const op = st && st.op;
-					if (!op) {
-						if (btn) btn.disabled = false;
-						warpNote(_('Operation status unavailable'), false);
-						return;
-					}
-					if (op.status === 'running' || op.status === 'queued' || op.status === 'verifying') {
-						if (Date.now() > deadline) {
-							if (btn) btn.disabled = false;
-							warpNote(_('The operation is still running — check the operation journal'), false);
-							return;
-						}
-						warpNote(_('WARP: %s (stage: %s)').format(op.status,
-							op.stage || '—'), null);
-						window.setTimeout(tick, 3000);
-						return;
-					}
-					if (btn) btn.disabled = false;
-					const ok = (op.status === 'completed') && op.verified;
-					warpNote(ok ? _('WARP is ready — the node "WARP" is in the node list and the emergency egress step is armed.')
-						: (op.detail || _('WARP registration failed')), ok);
-				});
-			};
-			tick();
-		}
-
-		warpEnableBtn.addEventListener('click', function() {
-			const st = warpLast || {};
-			const enabling = !(st.feature_on || st.registered);
-			warpEnableBtn.disabled = true;
-			if (enabling)
-				warpNote(_('Registering the WARP device with Cloudflare (this also installs openssl-util on first run and applies the core config)…'), null);
-			else
-				warpNote(_('Disabling WARP…'), null);
-			L.resolveDefault(callWarpSet(enabling ? 'enable' : 'disable'), {}).then(function(r) {
-				if (!r || r.result === false) {
-					warpEnableBtn.disabled = false;
-					warpNote((r && r.error) || _('WARP action failed'), false);
-					return;
-				}
-				if (enabling && r.mode === 'existing_profile' && r.op_id) {
-					warpNote(_('Applying the existing WARP profile…'), null);
-					warpPollOp(r.op_id, warpEnableBtn);
-					return;
-				}
-				if (enabling && r.op_id) {
-					warpPollOp(r.op_id, warpEnableBtn);
-					return;
-				}
-				if (!enabling && r.op_id) {
-					warpPollOp(r.op_id, warpEnableBtn);
-					return;
-				}
-				warpEnableBtn.disabled = false;
-				warpNote((r && r.error) || _('WARP action failed'), false);
-			});
-		});
-
-		warpDnsBtn.addEventListener('click', function() {
-			const st = warpLast || {};
-			warpDnsBtn.disabled = true;
-			const act = st.dns_reserve ? 'dns_off' : 'dns_on';
-			L.resolveDefault(callWarpSet(act), {}).then(function(r) {
-				warpDnsBtn.disabled = false;
-				warpNote((r && r.result) ? _('MultiDNS WARP reserve %s — the mosdns rebuild follows on its own.')
-					.format(act === 'dns_on' ? _('enabled') : _('disabled'))
-					: ((r && r.error) || _('WARP action failed')), !!r.result);
-			});
-		});
-
-		warpRenewBtn.addEventListener('click', function() {
-			warpRenewBtn.disabled = true;
-			warpNote(_('Re-registering the WARP profile (a new Cloudflare device is created, the old one is deleted)…'), null);
-			L.resolveDefault(callWarpSet('renew'), {}).then(function(r) {
-				if (!r || r.result === false) {
-					warpRenewBtn.disabled = false;
-					warpNote((r && r.error) || _('WARP action failed'), false);
-					return;
-				}
-				warpPollOp(r.op_id, warpRenewBtn);
-			});
-		});
-
-		const warpEl = E('div', { 'class': 'hpui-panel' }, [
-			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('shield'), 'WARP (Cloudflare)' ]),
-			E('div', { 'class': 'hpui-hub-state' }, [ warpDot, warpState ]),
-			E('div', { 'class': 'ov-actions', 'style': 'margin-top:6px' }, [
-				warpEnableBtn, warpRenewBtn, warpDnsBtn
-			]),
-			warpResult,
-			E('p', { 'class': 'hpui-hint' },
-				[ _('WARP adds a "WARP" node to the node list (usable by rules and lists), arms the emergency egress step of the bot, and can serve as the MultiDNS secure-pool reserve. The exit country is chosen by Cloudflare anycast and cannot be selected.') ])
-		]);
-
-		function renderWarp(st) {
-			st = st || {};
-			warpLast = st;
-			const op = st.last_op;
-			const opLive = op && (op.status === 'queued' || op.status === 'running' || op.status === 'verifying');
-			let text, dot = '';
-			if (!st.feature_on && !st.registered) {
-				text = _('disabled');
-			} else if (opLive) {
-				dot = 'warn';
-				text = _('registering… (stage: %s)').format(op.stage || '—');
-			} else if (!st.feature_on) {
-				text = _('disabled') + ((st.registered) ? ' · ' + _('profile kept') : '');
-			} else if (!st.node_ready) {
-				dot = 'warn';
-				text = (st.last_op && st.last_op.status === 'failed')
-					? _('registration failed — see the details in the card actions')
-					: _('enabled, not registered');
-			} else {
-				const p = st.probe;
-				if (p && p.ok) {
-					dot = 'ok';
-					text = _('tunnel up') + ' · warp=' + (p.verdict || 'on') +
-						((p.loc) ? (' · ' + _('exit: %s/%s').format(p.loc, p.colo || '?')) : '') +
-						((p.latency_ms) ? (' · ' + p.latency_ms + ' ms') : '');
-				} else if (p && p.fails >= 5) {
-					dot = 'bad';
-					text = _('tunnel down (%d attempts in a row) — Sentinel will re-create the profile').format(p.fails);
-				} else if (p) {
-					dot = 'warn';
-					text = _('probe failing (%d in a row)').format(p.fails);
-				} else {
-					dot = 'warn';
-					text = _('no probe data yet');
-				}
-			}
-			warpState.textContent = text;
-			warpDot.className = 'hpui-dot' + (dot ? ' ' + dot : '');
-			warpEnableBtn.textContent = (st.feature_on || opLive)
-				? _('Disable WARP') : _('Enable WARP');
-			warpEnableBtn.style.display = '';
-			warpRenewBtn.style.display = (st.registered) ? '' : 'none';
-			warpDnsBtn.style.display = (st.feature_on) ? '' : 'none';
-			if (st.feature_on)
-				warpDnsBtn.textContent = st.dns_reserve
-					? _('DNS reserve: on') : _('DNS reserve: off');
-		}
-
-
 		/* ── Events strip (Ф9.1, §A.4: critical events on the Dashboard) ──
 		 * The tail of the SAME unified journal the Health center renders in
 		 * full — the Home page does not fork a second feed, it just shows
@@ -1227,18 +1044,10 @@ return view.extend({
 		function profileRefresh() {
 			return L.resolveDefault(callResProfile(), {}).then(renderProfile);
 		}
-		/* Ф9.13/D34c: the WARP card polls on its own slower cadence — the
-		 * probe state it shows refreshes every ~2 min in the health deep
-		 * pass, so 10 s is honest headroom, not a fork storm. */
-		function warpRefresh() {
-			return L.resolveDefault(callWarpStatus(), {}).then(renderWarp);
-		}
 		poll.add(refresh, 4);
 		refresh();
 		poll.add(profileRefresh, 60);
 		profileRefresh();
-		poll.add(warpRefresh, 10);
-		warpRefresh();
 
 		/* Р3 v3 hub layout: hero (brand + status) → quick setup (until set
 		 * up) → concern cards → headline metric cards → two-column grid
@@ -1255,7 +1064,6 @@ return view.extend({
 				chartsCap
 			]),
 			trafficEl,
-			warpEl,
 			/* System band: utilities live at the BOTTOM of the hub — a
 			 * right-hand column stole attention from the concern cards
 			 * (user note ч.137). Ф9.1: the events strip joins the right

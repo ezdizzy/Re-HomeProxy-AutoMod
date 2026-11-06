@@ -118,8 +118,6 @@ export const HISTORY_MAX = 20;
 export const ACT_SVC_START = 'svc_start';
 export const ACT_OP_FINISH = 'op_finish';
 export const ACT_HUNG_KILL = 'hung_kill';
-/* WARP (Ф9.13/D34c): перерегистрация профиля (повод warp:profile). */
-export const ACT_WARP_RENEW = 'warp_renew';
 
 /* Health-записи, маппящиеся на procd-инстанс (лечение svc_start / hung_kill —
  * respawn гарантирован procd'ом). Остальные имена — proposal-классы или
@@ -193,9 +191,6 @@ export function classify_key(key) {
 			? { action: ACT_HUNG_KILL, target: nm, class: 'hung' }
 			: { action: null, target: nm, class: 'hung_other' };
 	}
-	/* WARP (Ф9.13/D34c): warp:profile — автопересоздание профиля. */
-	if (index(k, 'warp:') === 0)
-		return { action: ACT_WARP_RENEW, target: substr(k, index(k, ':') + 1), class: 'warp' };
 	if (k === 'health_monitor')
 		return { action: null, target: k, class: 'monitor' };
 	if (k === 'uci' || index(k, 'config:') === 0)
@@ -502,74 +497,6 @@ function do_hung_kill(name) {
 		int(e.pid) + ') — procd вернёт его автоматически' };
 };
 
-/* WARP (Ф9.13/D34c): перерегистрация профиля — opman kind 'warp' + detached
- * warp_runner (register/renew). Координатор НЕ ждёт регистрацию (минуты,
- * сеть): сам op 'warp' ведёт стадии в журнале операций, а вердикт
- * подтверждает следующий проход по findings (finding исчез → успех).
- * 🔴 Шторм-гейт (ч.201, живой лов): мёртвая ПРОБА ≠ мёртвый ПРОФИЛЬ. На
- * сети, где провайдер не пропускает WG-хендшейки, туннель молчит вечно,
- * и наивный «fails>=5 → renew» рестартил ядро каждые ~10 минут (поймано
- * пользователем вживую). Перед перерегистрацией спрашиваем САМ CLOUDFLARE
- * об устройстве (GET по токену из профиля): устройство отвечает → профиль
- * жив → перерегистрация ОТКАЗАНА честно (рестарта нет, повод остаётся
- * degraded-предложением пользователю); 401/403/404 → устройство мертво →
- * перерегистрация оправдана. Сеть-проверка недоступна → тоже отказ
- * (регистрация всё равно требует сеть). */
-const WARP_API_BASE = 'https://api.cloudflareclient.com';
-const WARP_API_VERSION = 'v0a5641';
-
-function warp_device_alive() {
-	const pf = '/etc/homeproxy/warp_profile.json';
-	let prof = null;
-	try {
-		const d = json(readfile(pf) || '');
-		if (d != null && type(d) === 'object' && length('' + (d.device_id || '')) &&
-		    length('' + (d.token || '')))
-			prof = d;
-	} catch (e) { prof = null; }
-	if (prof == null)
-		return { known: false, alive: false, detail: 'профиля нет — проверять нечего' };
-	const UA = '1.1.1.1/6.38.9-5641 (Android 16.0.0)';
-	for (let px in [ '', 'socks5h://127.0.0.1:5337' ]) {
-		const proxy = length(px) ? (' -x ' + shellquote(px)) : '';
-		const out = '/tmp/warp_devcheck.json';
-		const cmd = `curl -s -o ${shellquote(out)} -w '%{http_code}' --max-time 12` +
-			proxy +
-			` -A ${shellquote(UA)}` +
-			` -H 'CF-Client-Version: a-6.38.9-5641'` +
-			` -H ${shellquote('Authorization: Bearer ' + prof.token)}` +
-			` ${shellquote(WARP_API_BASE + '/' + WARP_API_VERSION + '/reg/' + prof.device_id)}`;
-		const code = trim(capture(cmd));
-		system(`rm -f ${shellquote(out)}`);
-		if (code === '200')
-			return { known: true, alive: true,
-				detail: 'Cloudflare отвечает об устройстве — профиль жив, туннель молчит по сети' };
-		if (code === '401' || code === '403' || code === '404')
-			return { known: true, alive: false,
-				detail: 'Cloudflare: устройство ' + code + ' (отозвано/истекло) — перерегистрация оправдана' };
-		/* сеть/прокси не ответили — пробуем запасной путь, иначе отказ */
-	}
-	return { known: true, alive: false, skip: true,
-		detail: 'Cloudflare недоступен для проверки устройства — перерегистрация отложена (слепой renew запрещён)' };
-};
-
-function do_warp_renew() {
-	const chk = warp_device_alive();
-	if (chk.known && chk.alive)
-		return { ok: false, detail: 'шторм-гейт: ' + chk.detail +
-			' — перерегистрация НЕ выполняется' };
-	if (chk.known && chk.skip)
-		return { ok: false, detail: 'шторм-гейт: ' + chk.detail };
-	const b = op_begin('warp', 'renew', 'recovery', 'recovery: перерегистрация WARP-профиля', 0);
-	if (b == null || b.ok !== true)
-		return { ok: false, detail: 'warp-операция уже выполняется (или лок занят) — попытка останется в кампании' };
-	const op_id = b.op.op_id;
-	system('/usr/bin/ucode /etc/homeproxy/scripts/warp_runner.uc ' +
-		shellquote(op_id) + ' renew >/dev/null 2>&1 &');
-	return { ok: true, detail: 'перерегистрация WARP запущена фоном (оп ' + op_id +
-		') — успех подтвердит исчезновение повода в следующем проходе' };
-};
-
 export function execute_action(action, target, op_id) {
 	if (action === ACT_SVC_START)
 		return run_svc_start(op_id);
@@ -577,8 +504,6 @@ export function execute_action(action, target, op_id) {
 		return do_op_finish(target);
 	if (action === ACT_HUNG_KILL)
 		return do_hung_kill(target);
-	if (action === ACT_WARP_RENEW)
-		return do_warp_renew();
 	return { ok: false, detail: 'неизвестное действие «' + action + '»' };
 };
 
@@ -944,9 +869,6 @@ export function selftest() {
 		classify_key('health_monitor').class === 'monitor', null);
 	check('cls_config', classify_key('config:core_cfg').action == null &&
 		classify_key('uci').class === 'config', null);
-	check('cls_warp', classify_key('warp:profile').action === ACT_WARP_RENEW &&
-		classify_key('warp:profile').target === 'profile' &&
-		classify_key('warp:profile').class === 'warp', null);
 	check('cls_health_names', classify_key('core').class === 'core' &&
 		classify_key('mosdns').class === 'mosdns' &&
 		classify_key('fw4').class === 'fw4', null);

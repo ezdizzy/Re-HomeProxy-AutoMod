@@ -121,11 +121,6 @@ const CORE_CFG = '/var/run/homeproxy/hiddify-c.json';
 const CORE_LKG = '/var/run/homeproxy/hiddify-c.json.lastgood';
 const MDNS_CONF = '/var/run/homeproxy/multidns/mosdns.yaml';
 const SYS_CONF = '/etc/config/homeproxy';
-/* WARP (Ф9.13/D34c): состояние пробы health (fails-счётчик) — порог
- * автопересоздания профиля и окно свежести свидетельства. */
-const WARP_STATE_PATH = '/var/run/homeproxy/warp_state.json';
-const WARP_RENEW_FAILS = 5;        /* ~10 мин подряд мёртвого туннеля */
-const WARP_STATE_FRESH_SEC = 1800; /* свидетельство старше 30 мин не считается */
 const SVC_EPOCH_PATH = '/var/run/homeproxy/.service_epoch';
 
 /* Человекочитаемые имена инстансов (сообщения — именами, не сырыми id —
@@ -639,28 +634,6 @@ export function compute_and_store(opts) {
 	const cfgf = config_findings(build_config_checks(core_expected, mdns_expected));
 	for (let k in cfgf)
 		findings[k] = cfgf[k];
-
-	/* 3b. WARP (Ф9.13/D34c): автопересоздание профиля при смерти. Проба
-	 * туннеля живёт в health (warp-in → cdn-cgi/trace, глубокий проход ~2 мин);
-	 * её счётчик подряд-провалов — честное свидетельство. Туннель мёртв
-	 * N ПОДРЯД при живом ядре и включённой фиче → повод warp:profile; Recovery
-	 * (класс warp) перерегистрирует профиль через warp_runner (opman kind
-	 * 'warp'). Смерть всей сети даёт те же провалы, но регистрация тогда
-	 * честно не удастся (раннер пробует и запасной прокси-путь), а бюджет
-	 * repair-механики ограничит циклы. */
-	const wst = ss_rjson(WARP_STATE_PATH);
-	const warp_on = (trim(capture('uci -q get homeproxy.warp.enabled 2>/dev/null')) === '1');
-	if (warp_on && core_expected && wst != null && type(wst) === 'object' &&
-	    (now - int(wst.ts || 0)) < WARP_STATE_FRESH_SEC &&
-	    int(wst.fails || 0) >= WARP_RENEW_FAILS) {
-		findings['warp:profile'] = {
-			status: 'degraded', label: 'WARP (Cloudflare)',
-			reason: 'WARP-туннель не отвечает ' + int(wst.fails) +
-				' подряд (~' + int(int(wst.fails) * 2) + ' мин) при живом ядре — ' +
-				'профиль мог истечь/отозваться, требуется перерегистрация',
-			confidence: 'certain'
-		};
-	}
 
 	/* 3b. Light-проход ПЕРЕНОСИТ full-проходные находки op:/hung:/svc:/
 	 * svc_drift: (Recovery читает поводы из этого документа между полными
