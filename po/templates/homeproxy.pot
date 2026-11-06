@@ -7924,3 +7924,81 @@ msgstr ""
 
 msgid "the secure pool’s proxy path is unreachable — queries are answered via direct encrypted DoH (checked once per quality cycle)"
 msgstr ""
+
+msgid "A Zapret strategy serves Telegram only when its rule leads to Zapret. It works the same way as for YouTube, which only helps where the provider's Telegram block is DPI-shaped rather than a hard cut."
+msgstr ""
+
+msgid "The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The \"apply in window\" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With \"Keep the rules on Zapret\" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed."
+msgstr ""
+
+msgid "Enable WARP"
+msgstr ""
+
+msgid "DNS reserve: off"
+msgstr ""
+
+msgid "Re-register"
+msgstr ""
+
+msgid "WARP: %s (stage: %s)"
+msgstr ""
+
+msgid "WARP is ready — the node \"WARP\" is in the node list and the emergency egress step is armed."
+msgstr ""
+
+msgid "WARP registration failed"
+msgstr ""
+
+msgid "Registering the WARP device with Cloudflare (this also installs openssl-util on first run and applies the core config)…"
+msgstr ""
+
+msgid "Disabling WARP…"
+msgstr ""
+
+msgid "WARP action failed"
+msgstr ""
+
+msgid "Applying the existing WARP profile…"
+msgstr ""
+
+msgid "MultiDNS WARP reserve %s — the mosdns rebuild follows on its own."
+msgstr ""
+
+msgid "Re-registering the WARP profile (a new Cloudflare device is created, the old one is deleted)…"
+msgstr ""
+
+msgid "WARP adds a \"WARP\" node to the node list (usable by rules and lists), arms the emergency egress step of the bot, and can serve as the MultiDNS secure-pool reserve. The exit country is chosen by Cloudflare anycast and cannot be selected."
+msgstr ""
+
+msgid "registering… (stage: %s)"
+msgstr ""
+
+msgid "profile kept"
+msgstr ""
+
+msgid "registration failed — see the details in the card actions"
+msgstr ""
+
+msgid "enabled, not registered"
+msgstr ""
+
+msgid "tunnel up"
+msgstr ""
+
+msgid "exit: %s/%s"
+msgstr ""
+
+msgid "tunnel down (%d attempts in a row) — Sentinel will re-create the profile"
+msgstr ""
+
+msgid "probe failing (%d in a row)"
+msgstr ""
+
+msgid "no probe data yet"
+msgstr ""
+
+msgid "Disable WARP"
+msgstr ""
+
+msgid "DNS reserve: on"
+msgstr ""

@@ -376,9 +376,16 @@ start_service() {
 		uci -q set "$CONF.multidns.secure_via_proxy=1"
 		uci -q set "$CONF.multidns.emergency_direct=1"
 		uci -q set "$CONF.multidns.bench_interval=600"
+		uci -q set "$CONF.multidns.warp_reserve=0"
 		uci -q commit "$CONF"
 		log "created missing $CONF.multidns section (defaults)."
 	fi
+
+	# WARP (Ф9.13/D34c): no fixed section — the node section `homeproxy.warp`
+	# IS the feature carrier (enabled = feature switch) and is created on
+	# demand by the warp RPC/runner with the explicit node type. Nothing to
+	# bootstrap here: the generator gates on the wireguard protocol option,
+	# which appears only after a successful registration.
 
 	# Same for the Telegram bot section (ч.69, status.js renders NamedSection
 	# `homeproxy.telegram`). Idempotent.

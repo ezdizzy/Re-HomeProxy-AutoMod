@@ -289,9 +289,16 @@ function hp_node_usable(sid) {
 	return false;
 }
 
-/* foreach over proxy node sections the SELECTED CORE can actually load. */
+/* foreach over proxy node sections the SELECTED CORE can actually load.
+ * 🔴 Ф9.13/D34c: the WARP-managed node (warp_managed='1') is a RESERVE exit —
+ * it must NEVER auto-join the urltest/hotswap pools (an anycast WG endpoint
+ * could win the latency re-rank and silently become the user's main exit,
+ * and its presence would flip the rule-set download detour to direct).
+ * Explicit references (rules, user lists, a manual pool pick) stay legal. */
 function foreach_node(cb) {
 	uci.foreach(uciconfig, ucinode, (cfg) => {
+		if (cfg.warp_managed === '1')
+			return;
 		if (hp_node_usable(cfg['.name']))
 			cb(cfg);
 	});
@@ -2428,6 +2435,49 @@ if (mdns_proxy_in) {
 		inbound: 'mdns-proxy-in',
 		action: 'route',
 		outbound: 'main-out'
+	});
+}
+
+/* WARP (Ф9.13, D34c): Cloudflare WARP as a WireGuard endpoint INSIDE the living core.
+ * The node section 'warp' IS the feature carrier (its enabled option = the feature
+ * switch; created by the warp RPC/runner on demand) — there is NO separate warp
+ * UCI section, the two names would collide. THIS block adds the service loopback
+ * inbound warp-in (127.0.0.1:5339) used by three consumers: the bot's emergency
+ * egress step, the opt-in MultiDNS WARP reserve upstream, and the health
+ * cdn-cgi/trace probe. The outbound/inbound/rule trio is ALWAYS emitted together
+ * and only when the outbound really materializes: the node option type==='wireguard'
+ * appears ONLY after a successful registration (an enabled-but-empty section during
+ * registration emits nothing, so the interim config is unchanged), plus the core
+ * must carry with_wireguard. A split pair was the historical "5338 never bound"
+ * trap, and a dangling outbound reference would FATAL the core (ч.65-class).
+ * Port 5339 is free (5330-5338/5453/5454 taken). */
+const warp_node_cfg = uci.get_all(uciconfig, 'warp');
+const warp_wep = (warp_node_cfg != null && warp_node_cfg.enabled === '1' &&
+    warp_node_cfg.type === 'wireguard' && hp_core_supports_type('wireguard'))
+	? generate_endpoint(warp_node_cfg) : null;
+if (warp_wep != null) {
+	const warp_tag = 'cfg-warp-out';
+	/* This block sits AFTER the "no endpoints at all → null" cleanup above:
+	 * with every pool WG-free the array was just nulled. Re-create it — a
+	 * push() into a null silently does nothing and the tag assignment then
+	 * dereferences null (live-caught ч.201: generation crashed, core stayed
+	 * on the LKG config with a stale endpoint). */
+	if (config.endpoints == null)
+		config.endpoints = [];
+	if (!has_outbound(warp_tag)) {
+		push(config.endpoints, warp_wep);
+		config.endpoints[length(config.endpoints) - 1].tag = warp_tag;
+	}
+	push(config.inbounds, {
+		type: 'mixed',
+		tag: 'warp-in',
+		listen: '127.0.0.1',
+		listen_port: 5339
+	});
+	push(config.route.rules, {
+		inbound: 'warp-in',
+		action: 'route',
+		outbound: warp_tag
 	});
 }
 

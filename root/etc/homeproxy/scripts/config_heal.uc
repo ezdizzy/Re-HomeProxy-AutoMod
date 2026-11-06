@@ -210,6 +210,7 @@ config homeproxy 'multidns'
 	option plain_port '5453'
 	option secure_port '5454'
 	option proxy_port '5338'
+	option warp_reserve '0'
 
 config homeproxy 'subscription'
 	option auto_update '0'
