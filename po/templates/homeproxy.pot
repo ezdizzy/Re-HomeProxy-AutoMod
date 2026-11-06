@@ -7804,3 +7804,12 @@ msgstr ""
 
 msgid "Offline"
 msgstr ""
+
+msgid "Engines"
+msgstr ""
+
+msgid "Fuzzing"
+msgstr ""
+
+msgid "How the blocked sites open: what works right now (the Serving map), the strategy picking, the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it."
+msgstr ""

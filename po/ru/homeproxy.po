@@ -13360,3 +13360,12 @@ msgstr "Диагностика и обслуживание"
 
 msgid "Offline"
 msgstr "Не в сети"
+
+msgid "Engines"
+msgstr "Движки"
+
+msgid "Fuzzing"
+msgstr "Фаззинг"
+
+msgid "How the blocked sites open: what works right now (the Serving map), the strategy picking, the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it."
+msgstr "Как открываются заблокированные сайты: что работает прямо сейчас (карта обслуживания), подбор стратегии, Лаборатория стратегий и ручное применение. Работайте сверху вниз — посмотрите состояние, подберите или проверьте стратегию, примените её."

@@ -28,6 +28,12 @@
  * stay in one place, replacing the previous (ui.action_buttons_result_
  * placement). Checks are on-demand (D6 pattern): nothing monitors
  * permanently here except the poll-driven state panels.
+ *
+ * Ф9.3 v3 rework: hp.pageIntro on top; every zone is an hpui-panel with an
+ * icon header (the four manual subsections each get their own panel);
+ * stagger on the STATIC engine cards only; table buttons use the hpui-btn
+ * family (sm size for dense tables). Logic, RPCs and the tab structure are
+ * untouched.
  */
 
 'use strict';
@@ -322,6 +328,8 @@ return view.extend({
 .wiz-select { min-width: 190px; max-width: 320px; }
 .wiz-note { font-size: .88em; opacity: .8; margin: 8px 0; }
 .wiz-strat { flex: 1 1 380px; min-width: 260px; font-family: monospace; font-size: .82em; }
+/* Ф9.3: dense table buttons (hpui-btn is sized for forms). */
+.hpui-btn-sm { padding: 2px 10px; font-size: .84em; white-space: nowrap; }
 `;
 
 		const st = document.getElementById('hp-byp-style');
@@ -335,16 +343,24 @@ return view.extend({
 		 * shared node that moves under the active zone — results stay in
 		 * one place, replacing the previous. */
 		const dpiBanner = E('div', {});
-		const dpiCards = E('div', { 'class': 'hpui-cards' });
+		/* Static container (built once, poll updates texts IN PLACE) — the
+		 * hpui-stagger entrance is safe here (Ф9.2/Ф9.3). */
+		const dpiCards = E('div', { 'class': 'hpui-cards hpui-stagger' });
 		/* ч.109: the Serving map — what actually serves each resource right
 		 * now (rule → engine → strategy → last check), the user complaint
 		 * «не видно какие реально сейчас используются стратегии». */
 		const dpiMap = E('div', {});
 		const dpiQuality = E('div', {});
-		const dpiStrategy = E('div', {});
 		const dpiLab = E('div', {});
 		const dpiCorpus = E('div', {});
 		const dpiResult = E('div', {});
+		/* Ф9.3: the manual zone splits into four panels; each subsection
+		 * appends into its own holder (assembly wraps the holders). */
+		const dpiPick = E('div', {});
+		const zapBox = E('div', {});
+		const byeBox = E('div', {});
+		const compBox = E('div', {});
+		const chainBox = E('div', {});
 		const DPI_TABS = [
 			[ 'dpiOv',  _('Working right now') ],
 			/* D32: the tab is the one-click strategy PICKER — "Auto-pilot"
@@ -358,8 +374,8 @@ return view.extend({
 		for (let t in DPI_TABS)
 			dpiPanes[DPI_TABS[t][0]] = E('div', { 'class': 'hpui-pane' });
 		const dpiTabBar = E('div', { 'class': 'hpui-tabs', style: 'margin:8px 0 10px 0' });
-		const dpiResultRow = E('div', {}, [
-			E('h4', { style: 'margin-top:14px' }, [ _('Results') ]),
+		const dpiResultRow = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('check'), _('Results') ]),
 			dpiResult
 		]);
 
@@ -430,36 +446,48 @@ return view.extend({
 		}
 		dpiPanes.dpiOv.classList.add('active');
 
+		/* Ф9.3: zones are hpui-panels with an icon header (the devices.js
+		 * pattern); the holders keep their node references — the poll
+		 * renders fill them IN PLACE after the assembly. */
+		const panelOf = function(icon, title, children) {
+			const p = E('div', { 'class': 'hpui-panel' }, [
+				E('h4', { 'class': 'hpui-h4' }, [ hp.icon(icon), title ])
+			]);
+			(children || []).forEach(function(ch) { p.appendChild(ch); });
+			return p;
+		};
+
 		/* «Working right now» zone — the honest state, no actions here. */
 		dpiPanes.dpiOv.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('The live state of the bypass: which engines are running, which strategy serves each resource right now, and the measured quality of the desync path. Actions live on the other tabs; the results area follows you to every tab.') ]));
-		dpiPanes.dpiOv.appendChild(dpiBanner);
-		dpiPanes.dpiOv.appendChild(dpiCards);
-		dpiPanes.dpiOv.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('What serves what right now') ]));
-		dpiPanes.dpiOv.appendChild(dpiMap);
-		dpiPanes.dpiOv.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Quality now') ]));
-		dpiPanes.dpiOv.appendChild(dpiQuality);
+		dpiPanes.dpiOv.appendChild(panelOf('zap', _('Engines'), [ dpiBanner, dpiCards ]));
+		dpiPanes.dpiOv.appendChild(panelOf('shuffle', _('What serves what right now'), [ dpiMap ]));
+		dpiPanes.dpiOv.appendChild(panelOf('trend', _('Quality now'), [ dpiQuality ]));
 
 		/* «Auto-pilot» zone — one-click picks; the scheduled keeper lives on
 		 * the Automation page (Ф7.1). */
 		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('One click keeps a resource working: the auto-pick ranks the strategies and applies the best one for a single resource with a server snapshot and a live check. The SCHEDULED auto-pilot (always-on re-ranks and repairs) is configured on the Auto-bypass page — an always-on keeper belongs to automation.') ]));
+		dpiPanes.dpiAp.appendChild(panelOf('crosshair', _('Strategy picking'), [ dpiPick ]));
 
 		/* «Strategy Lab» zone — measure, then decide. */
 		dpiPanes.dpiLab.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('Measure, not guesswork: the Lab tests the strategy catalog against your provider and ranks honestly — the fresh-connection start first, then the video flow. Apply a winner for one resource right from the table, generate mutations, or import and share catalogs.') ]));
-		dpiPanes.dpiLab.appendChild(dpiLab);
-		dpiPanes.dpiLab.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy catalog') ]));
-		dpiPanes.dpiLab.appendChild(dpiCorpus);
+		dpiPanes.dpiLab.appendChild(panelOf('activity', _('Fuzzing'), [ dpiLab ]));
+		dpiPanes.dpiLab.appendChild(panelOf('database', _('Strategy catalog'), [ dpiCorpus ]));
 
 		/* «Manual & compositions» zone — everything applied by hand. */
 		dpiPanes.dpiMan.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the "send a service through the engine" chain. Automatic selection lives on the Auto-pilot tab.') ]));
-		dpiPanes.dpiMan.appendChild(E('h4', { style: 'margin-top:14px' }, [ _('Strategy') ]));
-		dpiPanes.dpiMan.appendChild(dpiStrategy);
+		dpiPanes.dpiMan.appendChild(panelOf('shuffle', _('Zapret strategy'), [ zapBox ]));
+		dpiPanes.dpiMan.appendChild(panelOf('zap', _('ByeDPI strategy'), [ byeBox ]));
+		dpiPanes.dpiMan.appendChild(panelOf('layers', _('Composition'), [ compBox ]));
+		dpiPanes.dpiMan.appendChild(panelOf('send', _('Send a service through the engine'), [ chainBox ]));
 
 		dpiPanes.dpiOv.appendChild(dpiResultRow);
 		const bypRoot = E('div', {});
+		bypRoot.appendChild(hp.pageIntro(_('Blocking bypass'),
+			_('How the blocked sites open: what works right now (the Serving map), the strategy picking, the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it.')));
 		bypRoot.appendChild(dpiTabBar);
 		for (let t in DPI_TABS)
 			bypRoot.appendChild(dpiPanes[DPI_TABS[t][0]]);
@@ -722,8 +750,8 @@ return view.extend({
 						lastTd.textContent = '—';
 				}
 				tr.appendChild(lastTd);
-				const chk = E('button', { 'class': 'btn cbi-button', type: 'button',
-					'style': 'font-size:.82em; padding:0 8px' }, [ _('Check') ]);
+				const chk = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button' },
+					[ _('Check') ]);
 				chk.addEventListener('click', function() {
 					chk.disabled = true;
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
@@ -846,13 +874,13 @@ return view.extend({
 		stratRow.appendChild(E('span', { 'class': 'wiz-title' }, [ _('Zapret strategy') ]));
 		stratRow.appendChild(stratSel);
 		stratRow.appendChild(stratInput);
-		const applyStratBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+		const applyStratBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
 			[ _('Apply strategy') ]);
-		const testStratBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Test strategy') ]);
+		const testStratBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Test strategy') ]);
 		stratRow.appendChild(applyStratBtn);
 		stratRow.appendChild(testStratBtn);
-		dpiStrategy.appendChild(stratRow);
-		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
+		zapBox.appendChild(stratRow);
+		zapBox.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('The global "Apply strategy" serves EVERY flow routed to Zapret (one engine strategy, no hostlists — the routing rules select the traffic). A per-resource apply (Strategy Lab rows, auto-pick) builds a SCOPED profile instead — other managed resources keep their strategies; the Composition below edits the same blocks manually. Applying also enables Zapret and restarts the service; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest).') ]));
 
 		function renderStrategySel(cands) {
@@ -1058,9 +1086,9 @@ return view.extend({
 			const p = BYEDPI_PRESETS[parseInt(bPresetSel.value, 10)];
 			if (p) bStratInput.value = p.args;
 		});
-		const bSave = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Save ByeDPI') ]);
-		const bTest = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Test') ]);
-		const bTestAll = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Test all presets') ]);
+		const bSave = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Save ByeDPI') ]);
+		const bTest = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Test') ]);
+		const bTestAll = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Test all presets') ]);
 		const bRow = E('div', { 'class': 'wiz-row' });
 		bRow.appendChild(E('span', { 'class': 'wiz-title' }, [ _('ByeDPI strategy') ]));
 		bRow.appendChild(bPresetSel);
@@ -1068,7 +1096,7 @@ return view.extend({
 		bRow.appendChild(bSave);
 		bRow.appendChild(bTest);
 		bRow.appendChild(bTestAll);
-		dpiStrategy.appendChild(E('div', { style: 'margin-top:10px' }, [ bRow ]));
+		byeBox.appendChild(E('div', { style: 'margin-top:10px' }, [ bRow ]));
 
 		const bUot = E('input', { type: 'checkbox' });
 		bUot.checked = (uci.get('homeproxy', 'config', 'byedpi_udp_over_tcp') !== '0');
@@ -1078,16 +1106,16 @@ return view.extend({
 		bVoice.checked = (uci.get('homeproxy', 'config', 'zapret_voice') === '1');
 		const bFlag = (input, text) => E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
 			[ input, ' ' + text ]);
-		dpiStrategy.appendChild(E('div', { 'class': 'wiz-row' },
+		byeBox.appendChild(E('div', { 'class': 'wiz-row' },
 			[ bFlag(bUot, _('UDP over TCP')),
 			  bFlag(bQuic, _('Block QUIC (UDP port 443)') + ' ⚠️'),
 			  bFlag(bVoice, _('Discord calls via Zapret')) ]));
-		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
+		byeBox.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled).') ]));
 		const bDesc = E('p', { 'class': 'wiz-note' });
 		/* innerHTML: the description contains HTML links E() would escape */
 		bDesc.innerHTML = _('Grouped by technique. Based on <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> and community testing. See also <a href="https://github.com/fatyzzz/Byedpi-Setup" target="_blank">fatyzzz/Byedpi-Setup</a>.');
-		dpiStrategy.appendChild(bDesc);
+		byeBox.appendChild(bDesc);
 
 		bSave.addEventListener('click', function() {
 			bSave.disabled = true;
@@ -1160,7 +1188,7 @@ return view.extend({
 						return;
 					bTestAll.disabled = true;
 			const stop = { on: false };
-			const stopBtn = E('button', { 'class': 'btn cbi-button', type: 'button', style: 'margin-left:6px' }, [ _('Stop') ]);
+			const stopBtn = E('button', { 'class': 'hpui-btn hpui-btn-danger', type: 'button', style: 'margin-left:6px' }, [ _('Stop') ]);
 			stopBtn.addEventListener('click', function() { stop.on = true; stopBtn.disabled = true; });
 			const box = E('div', {});
 			const prog = E('p', { 'class': 'hpui-hint' }, [ _('Preparing…') ]);
@@ -1181,7 +1209,7 @@ return view.extend({
 			for (let i = 0; i < BYEDPI_PRESETS.length; i++) {
 				const idx = i;
 				const dots = E('td', { style: 'white-space:nowrap; opacity:.75' }, [ '–' ]);
-				const pick = E('button', { 'class': 'btn cbi-button cbi-button-apply', style: 'font-size:.82em; padding:0 8px; visibility:hidden' },
+				const pick = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', style: 'visibility:hidden' },
 					[ _('Fill input') ]);
 				pick.addEventListener('click', function() {
 					bStratInput.value = BYEDPI_PRESETS[idx].args;
@@ -1246,18 +1274,16 @@ return view.extend({
 			[ 'dc', 'Discord' ], [ 'st', 'Speedtest' ] ];
 
 		const compRowsBox = E('div', { id: 'wiz-comp-rows', style: 'margin:2px 0 6px 0' });
-		const compAddBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Add profile') ]);
-		const compTestBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Test composition') ]);
-		const compApplyBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', type: 'button' }, [ _('Apply composition') ]);
-		const compClearBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Clear') ]);
+		const compAddBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Add profile') ]);
+		const compTestBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Test composition') ]);
+		const compApplyBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Apply composition') ]);
+		const compClearBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Clear') ]);
 		const restoreRow = E('div', { 'class': 'wiz-note', style: 'margin:4px 0' }, [ '' ]);
-		dpiStrategy.appendChild(E('div', { 'class': 'wiz-row' },
-			[ E('span', { 'class': 'wiz-title' }, [ _('Composition') ]) ]));
-		dpiStrategy.appendChild(compRowsBox);
-		dpiStrategy.appendChild(E('div', { 'class': 'wiz-toolbar' },
+		compBox.appendChild(compRowsBox);
+		compBox.appendChild(E('div', { 'class': 'wiz-toolbar' },
 			[ compAddBtn, compTestBtn, compApplyBtn, compClearBtn ]));
-		dpiStrategy.appendChild(restoreRow);
-		dpiStrategy.appendChild(E('p', { 'class': 'wiz-note' },
+		compBox.appendChild(restoreRow);
+		compBox.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('Profiles are matched in order (first match wins): scoped profiles run first, the general profile last. The server builds the final args, tests them on the isolated queue (Zapret) and through the local tester (ByeDPI); applying snapshots the previous strategies on the server, so Restore survives page reloads. ByeDPI scoped profiles are exact-domain and TCP-only (SNI in TLS-CHello/HTTP); QUIC/UDP is not domain-scoped and falls to the fallback group.') ]));
 
 		function compCandidateByArgs(args) {
@@ -1369,8 +1395,8 @@ return view.extend({
 					[ fuzzHintText(cand) ]));
 			}
 
-			const rm = E('button', { 'class': 'btn cbi-button', type: 'button',
-				'style': 'padding:0 6px', title: _('Remove') }, [ '×' ]);
+			const rm = E('button', { 'class': 'hpui-btn hpui-btn-danger hpui-btn-sm', type: 'button',
+				title: _('Remove') }, [ '×' ]);
 			rm.addEventListener('click', function() {
 				state.compProfiles.splice(idx, 1);
 				saveComposeDraft();
@@ -1506,7 +1532,7 @@ return view.extend({
 					const box = E('div', {});
 					box.appendChild(E('p', { 'class': 'hpui-hint' },
 						[ _('Composition applied and verified — the engine(s) are enabled.') ]));
-					const rbBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
+					const rbBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' },
 						[ _('Restore previous') ]);
 					rbBtn.addEventListener('click', function() {
 						rbBtn.disabled = true;
@@ -1642,7 +1668,7 @@ return view.extend({
 				[ shortStrategy(zopts || bopts || _('(disabled)'), 80) ]);
 			restoreRow.appendChild(document.createTextNode(_('Server snapshot (%s): ').format(when)));
 			restoreRow.appendChild(sum);
-			const rb = E('button', { 'class': 'btn cbi-button', type: 'button', 'style': 'margin-left:8px' },
+			const rb = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button', 'style': 'margin-left:8px' },
 				[ _('Restore') ]);
 			rb.addEventListener('click', function() {
 				rb.disabled = true;
@@ -1675,8 +1701,8 @@ return view.extend({
 		const labBest = E('div', { style: 'margin-top:6px' });
 		const labHist = E('div', {});
 		const labRow = E('div', { 'class': 'wiz-row' });
-		const labQuick = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' }, [ _('Fuzz (quick)') ]);
-		const labFull = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Full fuzz') ]);
+		const labQuick = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Fuzz (quick)') ]);
+		const labFull = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Full fuzz') ]);
 		labRow.appendChild(labQuick);
 		labRow.appendChild(labFull);
 		labRow.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ _('Rounds') ]));
@@ -1881,7 +1907,7 @@ return view.extend({
 				[ ['youtube', _('YouTube')], ['discord', _('Discord')],
 				  ['telegram', _('Telegram')], ['general', _('General')] ]
 					.forEach(function(o) { resSel.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
-				const ab = E('button', { 'class': 'btn cbi-button cbi-button-apply', 'style': 'font-size:.82em; padding:0 8px' },
+				const ab = E('button', { 'class': 'hpui-btn hpui-btn-primary hpui-btn-sm', type: 'button' },
 					[ _('Apply') ]);
 				ab.addEventListener('click', function() {
 					const target = resSel.value;
@@ -2085,12 +2111,12 @@ return view.extend({
 		const autFullWrap = E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
 			[ autFull, ' ', autFullTxt ]);
 		const autStatus = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
-		const autBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+		const autBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
 			[ _('Auto-pick strategy') ]);
 		const autRow = E('div', { 'class': 'wiz-row' },
 			[ autBtn, autSel, autFullWrap, autSetRuleWrap, autStatus ]);
-		dpiPanes.dpiAp.appendChild(autRow);
-		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'wiz-note' },
+		dpiPick.appendChild(autRow);
+		dpiPick.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured on the Manual & compositions tab.') ]));
 		autSel.addEventListener('change', function() {
 			autSetRuleWrap.style.display = (autSel.value === 'general') ? 'none' : '';
@@ -2131,7 +2157,7 @@ return view.extend({
 		 * automation, not a strategy setting. The live status still feeds
 		 * the Serving map and Quality panels here (wizard_autopilot_status).
 		 * The one-click auto-pick stays: it belongs to the Lab/measure flow. */
-		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'wiz-note' },
+		dpiPick.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('The scheduled auto-pilot (enable, resources, re-rank interval, night auto-pick) lives on the Auto-bypass page, "DPI auto-pilot" level — an always-on keeper belongs to automation. The daemon hot-reads its settings every tick.') ]));
 		/* D32: the pointer button "Open the DPI auto-pilot settings" is GONE —
 		 * out of place here; the settings live on the Auto-bypass page (Ф7.1)
@@ -2221,7 +2247,7 @@ return view.extend({
 						: _('No %s rule — the resource may ride the mass lists/VPN; the Zapret strategy is applied but not serving it yet.').format(st.resource)) ]));
 			for (let n in (st.notes || []))
 				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' }, [ String(st.notes[n]) ]));
-			const rb = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Restore previous') ]);
+			const rb = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Restore previous') ]);
 			rb.addEventListener('click', function() {
 				rb.disabled = true;
 				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
@@ -2246,13 +2272,13 @@ return view.extend({
 		const chainRow = E('div', { 'class': 'wiz-row' });
 		const chainSel = E('select', { 'class': 'cbi-input-select wiz-select' });
 		const chainEngine = E('select', { 'class': 'cbi-input-select', 'style': 'min-width:120px' });
-		const chainBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+		const chainBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
 			[ _('Create rule and verify') ]);
 		chainRow.appendChild(E('span', { 'class': 'wiz-title' }, [ _('Send a service through the engine') ]));
 		chainRow.appendChild(chainSel);
 		chainRow.appendChild(chainEngine);
 		chainRow.appendChild(chainBtn);
-		dpiStrategy.appendChild(E('div', { style: 'margin-top:10px' }, [ chainRow ]));
+		chainBox.appendChild(E('div', { style: 'margin-top:10px' }, [ chainRow ]));
 
 		function renderChain() {
 			const env = lastEnv || {};
@@ -2334,8 +2360,8 @@ return view.extend({
 		/* Strategy catalog: refresh from the external source + the generator. */
 		const corpusLine = E('div', { 'class': 'wiz-note' });
 		const corpusBtns = E('div', { 'class': 'wiz-row' });
-		const updBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Update from catalog') ]);
-		const genBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Generate mutations') ]);
+		const updBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Update from catalog') ]);
+		const genBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Generate mutations') ]);
 		corpusBtns.appendChild(updBtn);
 		corpusBtns.appendChild(genBtn);
 		/* ч.123: share strategies between routers (the same user runs TWO
@@ -2343,8 +2369,8 @@ return view.extend({
 		 * the same merge rules as the catalog (no duplicate args, cap 240).
 		 * The RANKING itself is ISP-specific and is never exported — the note
 		 * says so explicitly. */
-		const expBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Export strategies') ]);
-		const impBtn = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Import strategies') ]);
+		const expBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Export strategies') ]);
+		const impBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Import strategies') ]);
 		const impFile = E('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
 		expBtn.addEventListener('click', function() {
 			const cands = (state.cands || []).map(function(c) {
@@ -2462,7 +2488,7 @@ return view.extend({
 				dl.appendChild(wrap);
 				prevBox.appendChild(dl);
 			}
-			const applyImport = E('button', { 'class': 'btn cbi-button cbi-button-action', type: 'button' },
+			const applyImport = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
 				[ _('Apply import') ]);
 			applyImport.addEventListener('click', function() {
 				applyImport.disabled = true;
