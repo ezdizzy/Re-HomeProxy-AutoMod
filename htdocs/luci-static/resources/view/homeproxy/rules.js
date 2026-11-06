@@ -337,23 +337,16 @@ return view.extend({
 			{ source: 'xbox', title: _('Xbox') }
 		];
 
-		/* D27: preset rows are NOT always visible. A row shows when it has a
-		 * rule (main or extra), when it is Re-filter and any VPN node exists,
-		 * or when it was revealed via the catalog; the user may hide any row
-		 * (per-browser localStorage) — hiding never touches the rule itself. */
-		const HIDE_KEY = 'hp_rules_hidden_presets';
+		/* D29 (refines D27): preset rows are NOT always visible. A row shows
+		 * when it has a rule (main or extra), when it is Re-filter and any VPN
+		 * node exists, or when it was revealed via the catalog. The old
+		 * per-browser Hiding is GONE: hiding kept the rule working while the
+		 * page pretended the service was unmanaged — the honest exit is a real
+		 * "Delete rule" (wizard_preset_delete); the stale hiding key is
+		 * dropped so previously hidden rows come back. */
+		try { window.localStorage.removeItem('hp_rules_hidden_presets'); } catch (e) {}
 		const state = { presetsSig: null, pendingCheck: null, lastList: null, visRev: 0, revealed: {} };
 		let lastEnv = null;
-		function hiddenPresets() {
-			try {
-				const v = JSON.parse(window.localStorage.getItem(HIDE_KEY) || '[]');
-				return Array.isArray(v) ? v.filter(function(x) { return typeof x === 'string'; }) : [];
-			} catch (e) { return []; }
-		}
-		function setHiddenPresets(arr) {
-			try { window.localStorage.setItem(HIDE_KEY, JSON.stringify(arr)); } catch (e) {}
-			state.visRev++;
-		}
 
 		/* ── Base zone: presets ───────────────────────────────────────── */
 		const envBanners = E('div', {});
@@ -825,11 +818,10 @@ return view.extend({
 				envBanners.appendChild(E('div', { 'class': 'hpui-banner' },
 					[ _('The pinned diagnostic inbounds are not listening (the core is off or in "Direct" mode) — path checks are limited.') ]));
 
-			/* D27: which rows show on the page — see the comment at `state`.
+			/* D29: which rows show on the page — see the comment at `state`.
 			 * The YouTube/Discord "installed and configured strategy" gates
 			 * are a separate plan item; for now a no-rule row shows only via
 			 * the catalog reveal (Re-filter — via the VPN-node check). */
-			const hidden = hiddenPresets();
 			const hasVpnNode = (list.nodes || []).some(function(n) { return n.type !== 'direct'; });
 			const hasRuleOf = function(src) {
 				const r = (list.rules || {})[src];
@@ -837,8 +829,6 @@ return view.extend({
 				return !!(r || ex.length);
 			};
 			const rowVisible = function(src) {
-				if (hidden.indexOf(src) >= 0)
-					return false;
 				if (hasRuleOf(src))
 					return true;
 				if (src === 'refilter')
@@ -1020,22 +1010,30 @@ return view.extend({
 					btns.appendChild(exBtn);
 				}
 
-				/* D27: hide the ROW from the page (per-browser preference).
-				 * The rule itself is NOT touched — the catalog brings the row
-				 * back, and hiding is the way to keep the page clean when a
-				 * list is not used. */
-				const hideBtn = E('button', { 'class': 'btn cbi-button', type: 'button' },
-					[ _('Hide') ]);
-				hideBtn.addEventListener('click', function() {
-					const arr = hiddenPresets();
-					if (arr.indexOf(preset.source) < 0)
-						arr.push(preset.source);
-					setHiddenPresets(arr);
-					dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-						[ _('The row is hidden — the rule keeps working; the catalog brings the row back.') ]));
-					renderPresets(state.lastList);
-				});
-				btns.appendChild(hideBtn);
+				/* D29: the honest exit for the SOURCE rule — a real delete via
+				 * wizard_preset_delete (config regenerates through the opman
+				 * door). The row itself is a catalog preset: with no rule it
+				 * drops off the page (comes back via the catalog), the state
+				 * becomes D20 "No rule" — the service follows the general
+				 * routing rules. Extra exits keep their own delete buttons. */
+				if (rule) {
+					const delBtn = E('button', { 'class': 'btn cbi-button cbi-button-negative', type: 'button' },
+						[ _('Delete rule') ]);
+					delBtn.addEventListener('click', function() {
+						delBtn.disabled = true;
+						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting…') ]));
+						L.resolveDefault(callPresetDelete(rule.section_id), {}).then(function(r) {
+							if (!r || r.result === false)
+								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+									[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
+							else
+								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+									[ _('Rule deleted — the service follows the general routing rules again ("No rule").') ]));
+							refresh();
+						}).finally(function() { delBtn.disabled = false; });
+					});
+					btns.appendChild(delBtn);
+				}
 				row.appendChild(btns);
 				wrap.appendChild(row);
 
@@ -1208,11 +1206,9 @@ return view.extend({
 							continue;
 						any = true;
 						opts.push(E('option', { value: it.source },
-							[ it.title + (hasRuleOf(it.source)
-								? (' — ' + _('the rule exists, the row is hidden'))
-								: (massCovered
-									? (' — ' + _('no rule (possibly covered by a mass list)'))
-									: (' — ' + _('no rule')))) ]));
+							[ it.title + (massCovered
+								? (' — ' + _('no rule (possibly covered by a mass list)'))
+								: (' — ' + _('no rule'))) ]));
 					}
 					if (opts.length)
 						mSrc.appendChild(E('optgroup', { label: GROUPS[g2][0] }, opts));
@@ -1225,15 +1221,8 @@ return view.extend({
 				const src = String(mSrc.value || '');
 				if (!src)
 					return;
-				const arr = hiddenPresets();
-				const i = arr.indexOf(src);
-				if (i >= 0) {
-					arr.splice(i, 1);
-					setHiddenPresets(arr);
-				} else {
-					state.revealed[src] = true;
-					state.visRev++;
-				}
+				state.revealed[src] = true;
+				state.visRev++;
 				mForm.style.display = 'none';
 				dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
 					[ _('The row is on the page.') ]));
@@ -1248,7 +1237,7 @@ return view.extend({
 			});
 			mForm.appendChild(E('div', { 'class': 'wiz-row' }, [ mSrc, mShow ]));
 			presetRows.appendChild(E('div', { 'class': 'wiz-note', style: 'margin:0 0 4px' },
-				[ _('Pick a list in the catalog — its row appears on the page. Hiding a row does not delete its rule; a row without a rule disappears after a reload.') ]));
+				[ _('Pick a list in the catalog — its row appears on the page; a row without a rule disappears after a reload.') ]));
 			presetRows.appendChild(mBtn);
 			presetRows.appendChild(mForm);
 

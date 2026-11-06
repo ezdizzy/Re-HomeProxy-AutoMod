@@ -13309,3 +13309,15 @@ msgstr "В окне обычные пуши ВСЕХ категорий удер
 
 msgid "Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a \"Sample\" button. \"Mute\" silences pushes only — commands keep working."
 msgstr "Пуши: смены узлов Hot Swap, недоступные узлы URLTest (и восстановления), обучение и самолечение автоматизации, сбои ядра — и всё родительского контроля (блокировки, временные блоки/разрешения, окна расписаний, Wi-Fi, новые устройства в сети). Категории также покрывают ремонты здоровья и сторожа, решения автопилота, вкл/выкл Safe Mode, результаты фоновых обновлений и события безопасности привязки/RBAC — у каждой категории свой тумблер и кнопка «Пример». «Без звука» глушит только пуши — команды работают."
+
+msgid "Strategy picking"
+msgstr "Подбор стратегии"
+
+msgid "Delete rule"
+msgstr "Удалить правило"
+
+msgid "Rule deleted — the service follows the general routing rules again (\"No rule\")."
+msgstr "Правило удалено — сервис снова идёт по общим правилам маршрутизации («Нет правила»)."
+
+msgid "Pick a list in the catalog — its row appears on the page; a row without a rule disappears after a reload."
+msgstr "Выберите список в каталоге — его строка появится на странице; строка без правила пропадёт после перезагрузки страницы."

@@ -347,7 +347,10 @@ return view.extend({
 		const dpiResult = E('div', {});
 		const DPI_TABS = [
 			[ 'dpiOv',  _('Working right now') ],
-			[ 'dpiAp',  _('Auto-pilot') ],
+			/* D32: the tab is the one-click strategy PICKER — "Auto-pilot"
+			 * promised the scheduled keeper that lives on the Auto-bypass
+			 * page (Ф7.1). */
+			[ 'dpiAp',  _('Strategy picking') ],
 			[ 'dpiLab', _('Strategy Lab') ],
 			[ 'dpiMan', _('Manual & compositions') ]
 		];
@@ -2130,10 +2133,9 @@ return view.extend({
 		 * The one-click auto-pick stays: it belongs to the Lab/measure flow. */
 		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('The scheduled auto-pilot (enable, resources, re-rank interval, night auto-pick) lives on the Auto-bypass page, "DPI auto-pilot" level — an always-on keeper belongs to automation. The daemon hot-reads its settings every tick.') ]));
-		dpiPanes.dpiAp.appendChild(E('div', { 'class': 'wiz-row' }, [
-			E('a', { 'class': 'btn cbi-button', 'href': L.url('admin/services/homeproxy/automation') },
-				[ _('Open the DPI auto-pilot settings') ])
-		]));
+		/* D32: the pointer button "Open the DPI auto-pilot settings" is GONE —
+		 * out of place here; the settings live on the Auto-bypass page (Ф7.1)
+		 * and the note above says so in words. */
 
 		function renderAutoPick(st) {
 			st = (st && st.status) || null;

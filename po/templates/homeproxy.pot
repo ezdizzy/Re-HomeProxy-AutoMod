@@ -7753,3 +7753,15 @@ msgstr ""
 
 msgid "Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a \"Sample\" button. \"Mute\" silences pushes only — commands keep working."
 msgstr ""
+
+msgid "Strategy picking"
+msgstr ""
+
+msgid "Delete rule"
+msgstr ""
+
+msgid "Rule deleted — the service follows the general routing rules again (\"No rule\")."
+msgstr ""
+
+msgid "Pick a list in the catalog — its row appears on the page; a row without a rule disappears after a reload."
+msgstr ""
