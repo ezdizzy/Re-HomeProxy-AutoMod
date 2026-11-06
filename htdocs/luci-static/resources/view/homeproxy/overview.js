@@ -336,8 +336,17 @@ return view.extend({
 		]);
 
 		heroBtn.addEventListener('click', function() {
-			window.location = L.url('admin/services/homeproxy/diagnostics');
+			/* D32: Check & repair lives on the Health center (repair tab). */
+			window.location = L.url('admin/services/homeproxy/health') + '#repair';
 		});
+
+		/* D32 deep links: L.url() TRUNCATES at '#' (path() joins parts and the
+		 * fragment never survives), so split it here: L.url() for the path,
+		 * the raw '#tab' appended. */
+		function hpHref(p) {
+			const h = p.indexOf('#');
+			return (h < 0) ? L.url(p) : L.url(p.slice(0, h)) + p.slice(h);
+		}
 
 		/* ── Concern cards (Р3 v3 §6): the six human questions. Every card
 		 * = title (the question) + live state (from the shared poll data)
@@ -365,7 +374,7 @@ return view.extend({
 				_('Connect'), 'admin/services/homeproxy/telegram' ],
 			[ 'diag',   'sensors',  _('Check & repair'),
 				_('One click runs the health checks and repairs the routing.'),
-				_('Check now'), 'admin/services/homeproxy/diagnostics' ],
+				_('Check now'), 'admin/services/homeproxy/health#repair' ],
 			[ 'health', 'heart',    _('Health center'),
 				_('Live status of every subsystem, the automatic repair log and the event feed.'),
 				_('Open'), 'admin/services/homeproxy/health' ],
@@ -379,7 +388,7 @@ return view.extend({
 			const dot = E('span', { 'class': 'hpui-dot' });
 			const state = E('span', {}, [ '…' ]);
 			const btn = E('a', { 'class': 'btn cbi-button hpui-hub-btn',
-				'href': L.url(HUB_DEFS[h][5]) }, [ HUB_DEFS[h][4] ]);
+				'href': hpHref(HUB_DEFS[h][5]) }, [ HUB_DEFS[h][4] ]);
 			const el = E('div', { 'class': 'hpui-hub-card' }, [
 				E('div', { 'class': 'hpui-hub-title' }, [ hp.icon(HUB_DEFS[h][1]), HUB_DEFS[h][2] ]),
 				E('div', { 'class': 'hpui-hub-state' }, [ dot, state ]),
@@ -394,13 +403,13 @@ return view.extend({
 		 * visible until the main path is configured (servers + main node).
 		 * Buttons navigate to the owning page; no logic is duplicated. */
 		function qsBtn(url, label) {
-			return E('a', { 'class': 'btn cbi-button', 'href': L.url(url) }, [ label ]);
+			return E('a', { 'class': 'btn cbi-button', 'href': hpHref(url) }, [ label ]);
 		}
 		const qsSteps = [
 			[ 'nodes', '1', _('Add servers'), 'admin/services/homeproxy/node', _('Import a subscription or paste a share link.') ],
 			[ 'main',  '2', _('Choose the main node'), 'admin/services/homeproxy/client', null ],
 			[ 'byp',   '3', _('Turn on the bypass'), 'admin/services/homeproxy/bypass', null ],
-			[ 'net',   '4', _('Check the internet'), 'admin/services/homeproxy/diagnostics', null ]
+			[ 'net',   '4', _('Check the internet'), 'admin/services/homeproxy/health#repair', null ]
 		];
 		const qsEls = {};
 		const qsEl = E('div', { 'class': 'hpui-qs' }, [

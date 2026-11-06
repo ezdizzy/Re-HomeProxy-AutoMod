@@ -618,7 +618,9 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		{ pages: [ 'overview' ], cap: null },
 		{ pages: [ 'client', 'dns', 'node', 'bypass', 'rules', 'automation',
 			'devices', 'control', 'telegram', 'server' ], cap: 'Control Center' },
-		{ pages: [ 'health', 'diagnostics', 'monitor', 'status' ],
+		/* D32: Check & repair merged into the health center (its tabs) —
+		 * the standalone diagnostics page is gone. */
+		{ pages: [ 'health', 'monitor', 'status' ],
 			cap: 'Diagnostics & maintenance' }
 	],
 
@@ -626,7 +628,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		overview: 'activity', client: 'layers', dns: 'globe',
 		node: 'server', bypass: 'shield', rules: 'crosshair', automation: 'refresh',
 		devices: 'devices', control: 'tool', telegram: 'send', status: 'cpu', monitor: 'trend',
-		health: 'heart', diagnostics: 'sensors', server: 'hardrive'
+		health: 'heart', server: 'hardrive'
 	},
 
 	NAV_HIDDEN: {},
@@ -704,7 +706,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		 * the tab closes. One-time flush per IA version: every tab refreshes
 		 * its tree once, then the cache works as before. */
 		try {
-			const MV = 'r3v3f2';
+			const MV = 'r3v3g1';
 			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
 				ui.menu.flushCache();
 				window.localStorage.setItem('hp-menu-ver', MV);

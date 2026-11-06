@@ -410,7 +410,7 @@ return view.extend({
 					if (op && op.status !== 'completed' && op.status !== 'failed') {
 						if (Date.now() > deadline) {
 							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-								[ _('The operation is still running — check the operation journal on the Diagnostics page.') ]));
+								[ _('The operation is still running — check the operations journal on the Health center page.') ]));
 							if (after) after(false);
 							return;
 						}

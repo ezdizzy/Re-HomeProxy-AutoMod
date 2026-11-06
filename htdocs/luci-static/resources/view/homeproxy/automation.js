@@ -184,7 +184,7 @@ function applyLearnedOp(desc, after, okText) {
 			if (op && op.status !== 'completed' && op.status !== 'failed') {
 				if (Date.now() > deadline) {
 					ui.addNotification(null, E('p', {},
-						_('The apply operation is still running — check the operation journal on the Diagnostics page.')), 'info');
+						_('The apply operation is still running — check the operations journal on the Health center page.')), 'info');
 					if (after) after();
 					return;
 				}

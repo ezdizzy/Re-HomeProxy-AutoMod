@@ -33,7 +33,7 @@ function pollOp(opId, onDone) {
 			const op = st && st.op;
 			if (op && op.status !== 'completed' && op.status !== 'failed') {
 				if (Date.now() > deadline) {
-					onDone(false, _('The operation is still running — check the operation journal on the Diagnostics page.'));
+					onDone(false, _('The operation is still running — check the operations journal on the Health center page.'));
 					return;
 				}
 				window.setTimeout(tick, 2000);

@@ -13450,3 +13450,21 @@ msgstr "Что через какой выход ходит: карта поря�
 
 msgid "Action results and live checks of the rows appear here."
 msgstr "Здесь появляются результаты действий и живых проверок строк."
+
+msgid "The apply operation is still running — check the operations journal on the Health center page."
+msgstr "Операция применения ещё выполняется — смотрите журнал операций на странице «Центр здоровья»."
+
+msgid "The operation is still running — check the operations journal on the Health center page."
+msgstr "Операция ещё выполняется — смотрите журнал операций на странице «Центр здоровья»."
+
+msgid "The operation is still running — check the Operations journal tab."
+msgstr "Операция ещё выполняется — смотрите вкладку «Журнал операций»."
+
+msgid "Operations journal"
+msgstr "Журнал операций"
+
+msgid "When something does not work: this tab runs the actual probes — the core, the config, DNS and the network — and reports the findings. Start with Run All Tests, then read the panel the problem points to."
+msgstr "Когда что-то не работает: эта вкладка запускает реальные проверки — ядро, конфиг, DNS, сеть — и сообщает результаты. Начните с «Запустить все тесты», затем откройте панель, на которую указывает проблема."
+
+msgid "Live status of every Ravnex subsystem, the full check & repair toolkit and the operations journal — one page. Overview watches the subsystems; Check & repair runs the actual probes; the journal shows what the system did; Provider measures what the provider blocks."
+msgstr "Живой статус всех подсистем Ravnex, полный набор проверки и ремонта и журнал операций — на одной странице. Обзор следит за подсистемами; «Проверка и ремонт» запускает реальные проверки; журнал показывает, что делала система; «Провайдер» измеряет, что блокирует провайдер."

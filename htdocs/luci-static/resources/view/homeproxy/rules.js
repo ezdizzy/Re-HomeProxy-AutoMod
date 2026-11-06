@@ -544,7 +544,7 @@ return view.extend({
 				const op = st && st.op;
 				if (op && op.status !== 'completed' && op.status !== 'failed') {
 					if (Date.now() > deadline) {
-						listArea(_('The apply operation is still running — check the operation journal on the Diagnostics page.'));
+						listArea(_('The apply operation is still running — check the operations journal on the Health center page.'));
 						return;
 					}
 					window.setTimeout(tick, 2000);

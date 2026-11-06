@@ -7894,3 +7894,21 @@ msgstr ""
 
 msgid "Action results and live checks of the rows appear here."
 msgstr ""
+
+msgid "The apply operation is still running — check the operations journal on the Health center page."
+msgstr ""
+
+msgid "The operation is still running — check the operations journal on the Health center page."
+msgstr ""
+
+msgid "The operation is still running — check the Operations journal tab."
+msgstr ""
+
+msgid "Operations journal"
+msgstr ""
+
+msgid "When something does not work: this tab runs the actual probes — the core, the config, DNS and the network — and reports the findings. Start with Run All Tests, then read the panel the problem points to."
+msgstr ""
+
+msgid "Live status of every Ravnex subsystem, the full check & repair toolkit and the operations journal — one page. Overview watches the subsystems; Check & repair runs the actual probes; the journal shows what the system did; Provider measures what the provider blocks."
+msgstr ""
