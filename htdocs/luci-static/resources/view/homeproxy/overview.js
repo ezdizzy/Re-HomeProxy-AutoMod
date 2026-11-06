@@ -250,10 +250,8 @@ return view.extend({
 .hpui-chip .hpui-ic { width: 1.05em; height: 1.05em; opacity: .8; }
 .hpui-chip-name { font-weight: 600; white-space: nowrap; }
 .hpui-chip-state { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
-.hpui-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--hp-grey); }
-.hpui-dot.ok { background: var(--hp-accent); box-shadow: 0 0 4px var(--hp-accent-glow); }
-.hpui-dot.bad { background: var(--hp-red); box-shadow: 0 0 4px var(--hp-red-line); }
-.hpui-dot.warn { background: var(--hp-amber); box-shadow: 0 0 4px rgba(217,154,27,.5); }
+/* .hpui-dot base + ok/bad/warn variants moved into the design system
+ * (homeproxy.js uiStyle, Ф9.2) — the shell sidebar uses them on EVERY page. */
 /* Concern cards (Р3 v3 §6): question + live state + description + jump. */
 .hpui-hub { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 10px; margin: 0 0 12px; }
 .hpui-hub-card { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-lg); background: var(--hp-panel-bg); box-shadow: var(--hp-shadow); padding: 12px 14px; min-width: 0; }

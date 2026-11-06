@@ -283,6 +283,19 @@ return baseclass.extend({
 		]);
 	},
 
+	/* Ф9.2 v3 "one row-link pattern": lists that NAVIGATE («списки с
+	 * переходами в нужный раздел», §1.2). Returns an <a class="hpui-rowlink">
+	 * with the trailing chevron affordance; hover/focus/press states and the
+	 * arrow shift are owned by the design-system CSS (hpui-rowlink rules).
+	 * For plain table rows pass <tr class="hpui-rowlink" ...> built by the
+	 * page itself — the CSS keeps the table layout for that variant. */
+	rowLink(href, children) {
+		return E('a', { 'class': 'hpui-rowlink', 'href': href }, [
+			children,
+			E('span', { 'class': 'hpui-goto' }, [ this.icon('chev-right') ])
+		]);
+	},
+
 	/* R3 v3e "one modal pattern": all confirmations across the app use the
 	 * themed LuCI modal (ui.showModal) instead of the native window.confirm
 	 * dialog, which ignores the shell look. Resolves true/false; a dismiss
@@ -382,6 +395,14 @@ return baseclass.extend({
 	--hp-hover-2: rgba(27,36,49,.09);
 	--hp-input-bg: #ffffff;
 	--hp-input-line: rgba(27,36,49,.25);
+	/* Ф9.2 v3: motion / focus / effect tokens. Durations and easing are
+	 * theme-independent; the lift shadow is re-tuned per theme below. */
+	--hp-dur-1: 120ms; --hp-dur-2: 180ms; --hp-dur-3: 280ms;
+	--hp-ease: cubic-bezier(.2,.8,.25,1);
+	--hp-ease-io: cubic-bezier(.5,0,.25,1);
+	--hp-focus-ring: 0 0 0 3px rgba(34,197,94,.30);
+	--hp-glow: 0 0 10px var(--hp-accent-glow);
+	--hp-lift: 0 6px 18px rgba(16,24,40,.14);
 	--hp-sb-w: 236px;
 	--hp-sb-w-collapsed: 64px;
 	--hp-topbar-h: 52px;
@@ -485,6 +506,85 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
  * for .cbi-section-node-tabbed, so this cannot clash; modals inherit it too. */
 .cbi-section-node-tabbed { background: var(--hp-panel-bg); border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); padding: 12px 14px; }
 .cbi-tab-descr { opacity: .85; }
+/* ═══ Ф9.2 Дизайн-система v3: motion, states, effects (U10) ═══ */
+/* Entrance animations are OPT-IN: pages that re-render their grids on every
+ * poll tick must not re-trigger them (a re-created node would replay the
+ * fade). Ф9.3 adds hpui-in / hpui-stagger only to static containers. */
+@keyframes hpui-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+.hpui-in { animation: hpui-in var(--hp-dur-3) var(--hp-ease) both; }
+.hpui-cards.hpui-stagger > * { animation: hpui-in var(--hp-dur-3) var(--hp-ease) both; }
+.hpui-cards.hpui-stagger > *:nth-child(2) { animation-delay: 45ms; }
+.hpui-cards.hpui-stagger > *:nth-child(3) { animation-delay: 90ms; }
+.hpui-cards.hpui-stagger > *:nth-child(4) { animation-delay: 135ms; }
+.hpui-cards.hpui-stagger > *:nth-child(5) { animation-delay: 180ms; }
+.hpui-cards.hpui-stagger > *:nth-child(6) { animation-delay: 225ms; }
+.hpui-cards.hpui-stagger > *:nth-child(7) { animation-delay: 270ms; }
+.hpui-cards.hpui-stagger > *:nth-child(8) { animation-delay: 315ms; }
+@keyframes hpui-spin { to { transform: rotate(360deg); } }
+.hpui-spin { display: inline-block; width: 1em; height: 1em; border: 2px solid var(--hp-panel-line-strong); border-top-color: var(--hp-accent-strong); border-radius: 50%; vertical-align: -.15em; animation: hpui-spin .7s linear infinite; }
+/* Status dot: base styles live HERE (the design system), not in a page —
+ * the shell sidebar uses .hpui-dot on EVERY page; it used to be styled
+ * only by the Overview page CSS, so on all other pages the sidebar dot
+ * rendered unstyled. */
+.hpui-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--hp-grey); }
+.hpui-dot.ok { background: var(--hp-accent); box-shadow: 0 0 4px var(--hp-accent-glow); }
+.hpui-dot.bad { background: var(--hp-red); box-shadow: 0 0 4px var(--hp-red-line); }
+.hpui-dot.warn { background: var(--hp-amber); box-shadow: 0 0 4px rgba(217,154,27,.5); }
+@keyframes hpui-pulse { 0%,100% { box-shadow: 0 0 4px var(--hp-accent-glow); } 50% { box-shadow: 0 0 9px var(--hp-accent-glow); } }
+/* Component motion: interactive surfaces answer within --hp-dur-1/2. */
+.hpui-card { transition: border-color var(--hp-dur-2) var(--hp-ease), box-shadow var(--hp-dur-2) var(--hp-ease), transform var(--hp-dur-2) var(--hp-ease), background-color var(--hp-dur-2) var(--hp-ease); }
+.hpui-card.link { display: block; color: inherit; text-decoration: none; cursor: pointer; }
+.hpui-card.link:hover { transform: translateY(-2px); border-color: var(--hp-accent-line); box-shadow: var(--hp-lift); }
+.hpui-card.link:active { transform: translateY(0); box-shadow: var(--hp-shadow); }
+.hpui-card.link:focus-visible { outline: none; box-shadow: var(--hp-focus-ring); }
+.hpui-goto { display: inline-flex; align-items: center; margin-left: auto; opacity: .45; transition: opacity var(--hp-dur-2) var(--hp-ease), transform var(--hp-dur-2) var(--hp-ease), color var(--hp-dur-2) var(--hp-ease); flex: none; }
+.hpui-card.link:hover .hpui-goto, .hpui-rowlink:hover .hpui-goto { opacity: 1; color: var(--hp-accent-strong); transform: translateX(2px); }
+.hpui-tab { transition: background-color var(--hp-dur-2) var(--hp-ease), border-color var(--hp-dur-2) var(--hp-ease), color var(--hp-dur-2) var(--hp-ease), box-shadow var(--hp-dur-2) var(--hp-ease); }
+.hpui-tab:focus-visible { outline: none; box-shadow: var(--hp-focus-ring); }
+.hpui-tab.active:hover { box-shadow: var(--hp-glow); }
+table.hpui-table tbody tr { transition: background-color var(--hp-dur-1) var(--hp-ease); }
+/* Scroll panels: slim, theme-colored scrollbars. */
+.hpui-wrap, .hpui-log, .hpui-pre { scrollbar-width: thin; scrollbar-color: var(--hp-panel-line-strong) transparent; }
+/* Action button family with the full state machinery (Ф9.3 consumes these):
+ * hover, keyboard focus ring, press, disabled and a busy state that reveals
+ * an embedded .hpui-spin spinner the page put inside the button upfront. */
+.hpui-btn { appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 7px 14px; border-radius: var(--hp-radius-sm); border: 1px solid var(--hp-input-line); background: var(--hp-panel-bg-2); color: inherit; font: inherit; font-size: .92em; font-weight: 600; line-height: 1.35; cursor: pointer; text-decoration: none; transition: background-color var(--hp-dur-1) var(--hp-ease), border-color var(--hp-dur-1) var(--hp-ease), color var(--hp-dur-1) var(--hp-ease), box-shadow var(--hp-dur-1) var(--hp-ease), transform 80ms var(--hp-ease); }
+.hpui-btn:hover { border-color: var(--hp-accent-line); background: var(--hp-hover); }
+.hpui-btn:focus-visible { outline: none; box-shadow: var(--hp-focus-ring); }
+.hpui-btn:active { transform: translateY(1px); }
+.hpui-btn-primary { background: var(--hp-accent-strong); border-color: var(--hp-accent-strong); color: #fff; }
+.hpui-btn-primary:hover { background: var(--hp-accent-strong-hover); border-color: var(--hp-accent-strong-hover); color: #fff; box-shadow: var(--hp-glow); }
+.hpui-btn-danger { background: var(--hp-red-soft); border-color: var(--hp-red-line); color: var(--hp-ink-red); }
+.hpui-btn-danger:hover { border-color: var(--hp-red); color: var(--hp-ink-red); }
+.hpui-btn-ghost { background: transparent; border-color: transparent; }
+.hpui-btn-ghost:hover { background: var(--hp-hover); border-color: transparent; }
+.hpui-btn[disabled] { opacity: .45; cursor: default; pointer-events: none; }
+.hpui-btn.is-busy { pointer-events: none; opacity: .8; }
+.hpui-btn .hpui-spin { display: none; }
+.hpui-btn.is-busy .hpui-spin { display: inline-block; }
+/* Click-through list row («списки с переходами в нужный раздел»): a div/row
+ * that navigates — hover accent border, keyboard focusable, trailing arrow
+ * (hpui-goto) that shifts on hover. The tr variant keeps the table layout. */
+.hpui-rowlink { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-sm); background: var(--hp-panel-bg-2); color: inherit; text-decoration: none; cursor: pointer; transition: background-color var(--hp-dur-1) var(--hp-ease), border-color var(--hp-dur-1) var(--hp-ease), transform 80ms var(--hp-ease); }
+.hpui-rowlink:hover { background: var(--hp-hover); border-color: var(--hp-accent-line); }
+.hpui-rowlink:focus-visible { outline: none; box-shadow: var(--hp-focus-ring); }
+.hpui-rowlink:active { transform: translateY(1px); }
+tr.hpui-rowlink { display: table-row; padding: 0; border: 0; background: none; border-radius: 0; }
+tr.hpui-rowlink:hover td { background: var(--hp-hover); }
+tr.hpui-rowlink:active { transform: none; }
+/* Keyboard focus for LuCI inputs: the same brand ring, no outline juggling. */
+body.hp-shell input[type=text]:focus, body.hp-shell input[type=password]:focus,
+body.hp-shell input[type=number]:focus, body.hp-shell select:focus, body.hp-shell textarea:focus {
+	outline: none; border-color: var(--hp-accent-line); box-shadow: var(--hp-focus-ring);
+}
+/* The Flint theme paints its own blue focus glow on EVERY focused control
+ * (checkboxes included, .btn:focus…) — replace it app-wide with the brand
+ * focus ring. Placed last: wins the cascade against the theme's :focus. */
+body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !important; }
+/* Accessibility: honor the OS reduce-motion preference everywhere. */
+@media (prefers-reduced-motion: reduce) {
+	*, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
 `;
 
 		document.head.appendChild(E('style', { id: 'hp-ui-style' }, [ css ]));
@@ -815,6 +915,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 	--hp-hover: rgba(255,255,255,.06);
 	--hp-hover-2: rgba(255,255,255,.10);
 	--hp-shadow: 0 1px 2px rgba(0,0,0,.45), 0 4px 14px rgba(0,0,0,.35);
+	--hp-lift: 0 6px 18px rgba(0,0,0,.55);
 }
 :root[data-hp-theme="light"] {
 	--hp-shell-bg: #f2f4f8;
@@ -837,6 +938,7 @@ button.hp-rule-delete { margin-left: 12px; vertical-align: middle; }
 	--hp-hover: rgba(27,36,49,.05);
 	--hp-hover-2: rgba(27,36,49,.09);
 	--hp-shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 14px rgba(16,24,40,.07);
+	--hp-lift: 0 6px 18px rgba(16,24,40,.13);
 }
 /* ═══ Page takeover (app pages only — body.hp-shell) ═══ */
 body.hp-shell {
@@ -921,8 +1023,17 @@ body.hp-shell .cbi-button, body.hp-shell .btn {
 	border: 1px solid var(--hp-input-line) !important;
 	color: var(--hp-fg) !important;
 	text-shadow: none !important;
+	/* The Flint theme paints its own blue hover glow + inset shadow on
+	 * buttons — the shell owns the button look, so the box-shadow is
+	 * claimed here (brand glow on hover, focus ring on focus-visible). */
+	box-shadow: none !important;
+	transition: background-color var(--hp-dur-1) var(--hp-ease), border-color var(--hp-dur-1) var(--hp-ease), box-shadow var(--hp-dur-1) var(--hp-ease), transform 80ms var(--hp-ease);
 }
-body.hp-shell .cbi-button:hover, body.hp-shell .btn:hover { border-color: var(--hp-accent-line) !important; }
+body.hp-shell .cbi-button:hover, body.hp-shell .btn:hover { border-color: var(--hp-accent-line) !important; box-shadow: var(--hp-glow) !important; }
+body.hp-shell .cbi-button:active, body.hp-shell .btn:active { transform: translateY(1px); }
+body.hp-shell .cbi-button:focus, body.hp-shell .btn:focus { box-shadow: var(--hp-focus-ring) !important; }
+body.hp-shell .cbi-button:focus-visible, body.hp-shell .btn:focus-visible { outline: none; box-shadow: var(--hp-focus-ring) !important; }
+body.hp-shell .cbi-button[disabled], body.hp-shell .btn[disabled] { opacity: .45; cursor: default; }
 body.hp-shell .cbi-button-action, body.hp-shell .btn.cbi-button-action,
 body.hp-shell .cbi-button-positive, body.hp-shell .cbi-button-apply, body.hp-shell .cbi-button-reload {
 	background: var(--hp-accent-strong) !important;
@@ -997,6 +1108,23 @@ body.hp-shell .cbi-tooltip {
 	.hp-top-burger { display: inline-flex; }
 	.hp-sb-collapse { display: none; }
 }
+/* ═══ Ф9.2 v3: shell motion + keyboard focus ═══ */
+/* One-time entrance on every page load (full loads — never replays while
+ * the page is open). Nav sections animate when the async menu tree lands,
+ * so their delays are relative to their own insertion. */
+.hp-sb-brand, .hp-sb-esc, .hp-sb-status { animation: hpui-in var(--hp-dur-3) var(--hp-ease) both; }
+#hp-sb-nav .hp-sb-section { animation: hpui-in var(--hp-dur-3) var(--hp-ease) both; }
+#hp-sb-nav .hp-sb-section:nth-of-type(2) { animation-delay: 45ms; }
+#hp-sb-nav .hp-sb-section:nth-of-type(3) { animation-delay: 90ms; }
+.hp-sb-item { transition: background-color var(--hp-dur-1) var(--hp-ease), color var(--hp-dur-1) var(--hp-ease), border-color var(--hp-dur-1) var(--hp-ease); }
+.hp-sb-item:focus-visible { outline: none; box-shadow: var(--hp-focus-ring); }
+.hp-sb-item:active { transform: translateY(1px); }
+.hp-sb-collapse, .hp-top-btn { transition: background-color var(--hp-dur-1) var(--hp-ease), border-color var(--hp-dur-1) var(--hp-ease), color var(--hp-dur-1) var(--hp-ease), box-shadow var(--hp-dur-1) var(--hp-ease); }
+.hp-sb-collapse:focus-visible, .hp-top-btn:focus-visible { outline: none; box-shadow: var(--hp-focus-ring); }
+.hp-sb-collapse:active, .hp-top-btn:active { transform: translateY(1px); }
+/* The live status dot breathes only when the system is healthy — a quiet
+ * "alive" signal, not a distraction (scoped to the shell, not hub dots). */
+#hp-sb-dot.ok { animation: hpui-pulse 2.6s var(--hp-ease-io) infinite; }
 `,
 
 	/* Inline SVG line chart shared by the Overview and Automation tabs
