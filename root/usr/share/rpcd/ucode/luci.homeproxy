@@ -2862,11 +2862,19 @@ const methods = {
 				return { result: false, error: 'illegal params' };
 
 			/* Lesson 347: the generator binary is NOT guaranteed to be
-			 * sing-box — this install ships hiddify-core (no "generate"
-			 * subcommand) + tachyon-core (sing-box base, has it). Pick the
-			 * first installed binary that supports "generate"; an honest
-			 * failure beats a silent empty result. */
-			const gen_bins = [ '/usr/bin/sing-box', '/usr/bin/tachyon-core' ];
+			 * sing-box — installs ship hiddify-core (no "generate"
+			 * subcommand) and leftover tachyon-core builds. ECH keypairs
+			 * exist only in sing-box >= 1.12 (`generate ech-keypair`);
+			 * tachyon-core 0.1.2 rejects the type ("unknown command") and
+			 * popen() surfaces only stdout — an empty, lying result (user
+			 * report 2026-11-07). So ech-keypair accepts ONLY sing-box,
+			 * with an honest refusal otherwise; tachyon-core stays the
+			 * fallback for the remaining types (keeps the quick-wizard
+			 * REALITY generation alive on hiddify-only installs). */
+			const ech_gen_err = 'ECH keypair generation requires sing-box >= 1.12 — install the sing-box core, or leave the ECH fields empty (fine for a home server)';
+			const gen_bins = (type === 'ech-keypair')
+				? [ '/usr/bin/sing-box' ]
+				: [ '/usr/bin/sing-box', '/usr/bin/tachyon-core' ];
 			let gen_bin = null;
 			for (let i = 0; i < length(gen_bins); i++)
 				if (access(gen_bins[i])) {
@@ -2874,7 +2882,7 @@ const methods = {
 					break;
 				}
 			if (gen_bin == null)
-				return { result: false, error: 'no generator binary found (sing-box / tachyon-core)' };
+				return { result: false, error: (type === 'ech-keypair') ? ech_gen_err : 'no generator binary found (sing-box / tachyon-core)' };
 
 			let result = {};
 
@@ -2915,7 +2923,7 @@ const methods = {
 			}
 
 			if (isEmpty(result))
-				return { result: false, error: 'generator produced no output' };
+				return { result: false, error: (type === 'ech-keypair') ? ech_gen_err : 'generator produced no output' };
 
 			return { result };
 		}
