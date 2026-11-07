@@ -170,9 +170,22 @@ function downloadList(content) {
  * once; operations are polled to the honest verdict (busy attaches to the
  * holder — its restart carries our already-committed change). `after` runs
  * once the apply is settled (refresh etc.); okText overrides the success
- * line (the same helper also polls the Restart-service operation). */
-function applyLearnedOp(desc, after, okText) {
+ * line (the same helper also polls the Restart-service operation). The
+ * verdict lands in the ONE result area of the level via `sink(ok, text)`
+ * (ui.action_buttons_result_placement) — the global toast is the fallback. */
+function applyLearnedOp(desc, after, okText, sink) {
+	const report = (ok, text) => {
+		if (sink)
+			sink(ok, text);
+		else
+			ui.addNotification(null, E('p', {}, text), ok ? 'info' : 'error');
+	};
 	if (!desc || desc.hot || !desc.op_id) {
+		/* Hot applies commit instantly (watched-file sync): a caller that
+		 * named its success (okText) gets the verdict at once — silence only
+		 * when nothing was actually applied (no descriptor). */
+		if (okText && sink && desc && desc.hot)
+			sink(true, okText);
 		if (after) after();
 		return;
 	}
@@ -183,8 +196,7 @@ function applyLearnedOp(desc, after, okText) {
 			const op = st && st.op;
 			if (op && op.status !== 'completed' && op.status !== 'failed') {
 				if (Date.now() > deadline) {
-					ui.addNotification(null, E('p', {},
-						_('The apply operation is still running — check the operations journal on the Health center page.')), 'info');
+					report(false, _('The apply operation is still running — check the operations journal on the Health center page.'));
 					if (after) after();
 					return;
 				}
@@ -192,19 +204,19 @@ function applyLearnedOp(desc, after, okText) {
 				return;
 			}
 			const ok = !!op && op.status === 'completed' && op.verified;
-			ui.addNotification(null, E('p', {}, ok
-				? doneText
-				: _('Apply failed: ') + ((op && (op.detail || op.error)) || _('rpc error'))),
-				ok ? 'info' : 'error');
+			report(ok, ok ? doneText : _('Apply failed: ') + ((op && (op.detail || op.error)) || _('rpc error')));
 			if (after) after();
 		});
 	};
 	tick();
 }
 
-function btn(label, handler) {
+/* v3 action button (Ф9.2 hpui family). variant: 'primary' | 'ghost' |
+ * 'danger' | '' (plain). A double click must not fire the call twice. */
+function btn(label, handler, variant) {
 	return E('button', {
-		'class': 'btn',
+		'class': 'hpui-btn' + (variant ? ' hpui-btn-' + variant : ''),
+		type: 'button',
 		click: function() {
 			const el = this;
 			el.disabled = true;
@@ -257,13 +269,17 @@ tr.hpsrc-manual.hpsrc-manual-direct td:first-child { box-shadow: inset 3px 0 0 #
 .hpb-mproxy { background: var(--hp-blue-soft); color: var(--hp-blue); border-color: var(--hp-blue-line); }
 .hpb-mdirect { background: var(--hp-grey-soft); color: var(--hp-ink-grey); border-color: var(--hp-grey-line); }
 .hpb-type { background: rgba(128,128,128,.13); border-color: rgba(128,128,128,.28); color: inherit; opacity: .85; }
-.hpauto-why { color: #777; font-size: .88em; }
+.hpauto-why { font-size: .88em; opacity: .65; }
 .hpchip { appearance: none; border: 1px solid var(--hp-panel-line-strong); background: transparent; color: inherit; border-radius: 8px; padding: 2px 8px; margin-right: 4px; font-size: .8em; cursor: pointer; opacity: .7; }
 .hpchip:hover { opacity: 1; background: rgba(128,128,128,.15); }
 .hpchip.on { background: var(--hp-blue-soft); border-color: var(--hp-blue); color: var(--hp-blue); font-weight: 700; opacity: 1; }
 .hpchip.on.hpc-direct { background: rgba(154,154,154,.25); border-color: #8a8a8a; color: inherit; }
 .hpdel { appearance: none; border: none; background: transparent; color: var(--hp-red); font-weight: 700; cursor: pointer; font-size: 1.05em; padding: 2px 8px; border-radius: var(--hp-radius-sm); opacity: .55; }
 .hpdel:hover { opacity: 1; background: var(--hp-red-soft); }
+/* Action rows: buttons in ONE row (Ф9.3/D34e), compact card-tool sizing. */
+.automation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.automation-actions .hpui-btn { padding: 5px 12px; font-size: .88em; }
+.hpauto-result { margin: 8px 0 0; min-height: 1em; }
 .hpauto-panel { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); padding: 12px 14px; background: var(--hp-panel-bg); margin: 10px 0; box-shadow: var(--hp-shadow); }
 .hpauto-panel h4 { margin: 0 0 8px 0; }
 .hpauto-eng-charts { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
@@ -408,6 +424,19 @@ return view.extend({
 
 		injectStyle();
 
+		/* v3 result placement: every action answers in ONE place per level
+		 * (a line under the level's action row, replacing the previous
+		 * verdict) — no scattered global toasts (D34e). */
+		function resultNote(el, ok, text) {
+			el.replaceChildren(E('p', { 'class': 'hpauto-result' }, [
+				E('span', { 'class': ok ? 'hpui-c-green' : 'hpui-c-red' }, [ text ])
+			]));
+		}
+		function resultBusy(el, text) {
+			el.replaceChildren(E('p', { 'class': 'hpauto-result hpui-hint', 'style': 'margin:8px 0 0' },
+				[ text || _('Please wait…') ]));
+		}
+
 		/* Ф7.1: THREE logical levels instead of the settings zoo (U4). */
 		const TABS = [
 			[ 'engine', _('Auto-bypass') ],
@@ -480,8 +509,8 @@ return view.extend({
 		/* ── Engine level: status + sites (Ф7.1 merge of Overview+Sites) ── */
 		const ovCards = E('div', { 'class': 'hpauto-cards' });
 		const pauseEl = E('div', { 'class': 'hpauto-banner', style: 'display:none' });
-		const geoLine = E('div', { 'class': 'hpauto-hint' });
-		const helperLine = E('div', { 'class': 'hpauto-hint' });
+		const geoLine = E('div', { 'class': 'hpui-hint' });
+		const helperLine = E('div', { 'class': 'hpui-hint' });
 		panes.engine.appendChild(ovCards);
 		panes.engine.appendChild(pauseEl);
 		panes.engine.appendChild(geoLine);
@@ -496,7 +525,7 @@ return view.extend({
 		 * distribution, discovery-source activity and a recent-events
 		 * feed. Data: the small automation_stats file the daemon writes
 		 * every cycle (read via the light automation_stats RPC). ──────── */
-		const engHint = E('div', { 'class': 'hpauto-hint', style: 'margin:0 0 6px 0' });
+		const engHint = E('div', { 'class': 'hpui-hint', style: 'margin:0 0 6px 0' });
 		/* Ф8-F3: Master-rule protection transparency — the user must see that
 		 * resources covered by their configured rules never enter learning. */
 		const engProtect = E('div', { 'class': 'hpauto-eng-note', style: 'margin:0 0 6px 0' });
@@ -558,34 +587,49 @@ return view.extend({
 		]);
 		panes.engine.appendChild(engPanel);
 
+		const engResult = E('div', { 'class': 'hpauto-result' });
 		const engActions = E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
-			btn(_('Test now'), function() { return callTestNow().then(refresh); }),
+			btn(_('Test now'), function() {
+				resultBusy(engResult, _('Probing…'));
+				return callTestNow().then(function() {
+					resultNote(engResult, true, _('Probe pass started — fresh results land in the table and the engine cards.'));
+					return refresh();
+				});
+			}),
 			btn(_('Install helpers'), function() {
+				resultBusy(engResult);
 				return callHelpersInstall().then(function(r) {
-					if (!r || r.error)
-						return ui.addNotification(null, E('p', {}, _('Helpers install failed: ') + ((r && r.error) || '')), 'error');
+					if (!r || r.error) {
+						resultNote(engResult, false, _('Helpers install failed: ') + ((r && r.error) || ''));
+						return;
+					}
 					const line = (t) => {
 						const d = r[t] || {};
 						return t + ' — ' + (d.installed ? _('installed') : _('failed') + ': ' + (d.error || ''));
 					};
-					ui.addNotification(null, E('p', {}, _('Native helpers') + ': ' + line('probe_pool') + ' · ' + line('sni_sniffer')),
-						(r.probe_pool && r.probe_pool.installed) || (r.sni_sniffer && r.sni_sniffer.installed) ? 'info' : 'error');
+					const ok = (r.probe_pool && r.probe_pool.installed) || (r.sni_sniffer && r.sni_sniffer.installed);
+					resultNote(engResult, !!ok,
+						_('Native helpers') + ': ' + line('probe_pool') + ' · ' + line('sni_sniffer'));
 					return refresh();
 				});
 			}),
 			btn(_('Restart service'), function() {
 				/* Ф1.1b: the restart is a tracked operation — poll to the
 				 * honest verified verdict instead of a wishful no-op. */
+				resultBusy(engResult);
 				return callRestart().then(function(r) {
-					if (!r || (r.result === false && !r.op_id))
-						return ui.addNotification(null, E('p', {},
-							_('Restart failed: ') + ((r && r.error) || _('rpc error'))), 'error');
-				return applyLearnedOp({ op_id: r.op_id }, function() {},
-					_('Service restarted and verified.'));
-			});
-		})
+					if (!r || (r.result === false && !r.op_id)) {
+						resultNote(engResult, false, _('Restart failed: ') + ((r && r.error) || _('rpc error')));
+						return;
+					}
+					return applyLearnedOp({ op_id: r.op_id }, function() {},
+						_('Service restarted and verified.'),
+						function(ok, text) { resultNote(engResult, ok, text); });
+				});
+			})
 		]);
 		panes.engine.appendChild(engActions);
+		panes.engine.appendChild(engResult);
 
 		/* ── Sites (the RESULT of learning — inside the engine level) ──── */
 		const searchEl = E('input', { type: 'text', placeholder: _('Search by name or IP…'), 'class': 'cbi-input-text' });
@@ -613,21 +657,26 @@ return view.extend({
 		const addAction = E('select', { 'class': 'cbi-input-select' });
 		addAction.appendChild(E('option', { value: 'proxy' }, [ _('Always via proxy') ]));
 		addAction.appendChild(E('option', { value: 'direct' }, [ _('Always direct') ]));
+		/* ONE result area of the Sites level: every action here (add, pins,
+		 * delete, backup/restore/clear/re-check) answers in this line. */
+		const sitesResult = E('div', { 'class': 'hpauto-result' });
 		const addBtn = btn(_('+ Add'), function() {
 			const v = validEntry(addInput.value);
 			if (!v) {
-				ui.addNotification('error', _('Invalid entry: use a domain name or an IP address.'));
+				resultNote(sitesResult, false, _('Invalid entry: use a domain name or an IP address.'));
 				return Promise.resolve();
 			}
 			return callEntryAdd(v, addAction.value).then(function(r) {
 				if (r && r.result === false)
-					ui.addNotification('error', _('Add failed: ') + (r.error || ''));
+					resultNote(sitesResult, false, _('Add failed: ') + (r.error || ''));
 				else
-					ui.addNotification('info', _('Entry added: %s.').format(v));
+					resultNote(sitesResult, true, _('Entry added: %s.').format(v));
 				addInput.value = '';
 				return refresh();
 			});
-		});
+		}, 'primary');
+
+		const sitesSink = function(ok, text) { resultNote(sitesResult, ok, text); };
 
 		const fileInput = E('input', { type: 'file', accept: '.txt,text/plain', style: 'display:none' });
 		fileInput.addEventListener('change', function() {
@@ -637,12 +686,12 @@ return view.extend({
 			reader.onload = function() {
 				callRestore(String(reader.result)).then(function(r) {
 					if (!r || r.result === false)
-						ui.addNotification('error', _('Restore failed: ') + ((r && r.error) || ''));
+						resultNote(sitesResult, false, _('Restore failed: ') + ((r && r.error) || ''));
 					else
-						ui.addNotification('info', _('Restore complete — added %d site(s).').format(r.added || 0));
-					return applyLearnedOp(r && r.apply, refresh);
+						resultNote(sitesResult, true, _('Restore complete — added %d site(s).').format(r.added || 0));
+					return applyLearnedOp(r && r.apply, refresh, null, sitesSink);
 				}).catch(function(e) {
-					ui.addNotification('error', _('Restore failed: ') + e);
+					resultNote(sitesResult, false, _('Restore failed: ') + e);
 				});
 			};
 			reader.readAsText(file);
@@ -650,7 +699,7 @@ return view.extend({
 		});
 
 		const tableEl = E('div', {});
-		const tableMeta = E('div', { 'class': 'hpauto-hint' });
+		const tableMeta = E('div', { 'class': 'hpui-hint' });
 		sitesBox.appendChild(E('div', { 'class': 'hpauto-toolbar' }, [
 			searchEl, filterEl,
 			E('span', { style: 'flex:1' }),
@@ -662,10 +711,11 @@ return view.extend({
 			btn(_('Backup list'), function() {
 				return callBackup().then(function(r) {
 					if (!r || r.result === false) {
-						ui.addNotification('error', _('Backup failed: ') + ((r && r.error) || _('no learned list yet')));
+						resultNote(sitesResult, false, _('Backup failed: ') + ((r && r.error) || _('no learned list yet')));
 						return;
 					}
 					downloadList(r.content || '');
+					resultNote(sitesResult, true, _('Backup downloaded.'));
 				});
 			}),
 			btn(_('Restore list'), function() { fileInput.click(); }),
@@ -677,43 +727,51 @@ return view.extend({
 							return null;
 						return callClear().then(function(r) {
 							if (r && r.result === false)
-								ui.addNotification('error', _('Clear failed: ') + ((r && r.error) || ''));
-							return applyLearnedOp(r && r.apply, refresh);
+								resultNote(sitesResult, false, _('Clear failed: ') + ((r && r.error) || ''));
+							return applyLearnedOp(r && r.apply, refresh, null, sitesSink);
 						});
 					});
-			}),
+			}, 'danger'),
 			btn(_('Re-check learned'), function() {
 				return callRecheck().then(function(r) {
 					if (r && r.result === false)
-						ui.addNotification('error', _('Re-check failed to start: ') + ((r && r.error) || ''));
+						resultNote(sitesResult, false, _('Re-check failed to start: ') + ((r && r.error) || ''));
 					else
-						ui.addNotification('info', _('Re-check started: %d entries queued — entries that answer directly will be removed from the learned list within a few minutes.').format((r && r.queued) || 0));
+						resultNote(sitesResult, true, _('Re-check started: %d entries queued — entries that answer directly will be removed from the learned list within a few minutes.').format((r && r.queued) || 0));
 					return refresh();
 				});
 			})
 		]));
+		sitesBox.appendChild(sitesResult);
 		sitesBox.appendChild(fileInput);
-		sitesBox.appendChild(E('p', { 'class': 'hpauto-hint' },
+		sitesBox.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('Manual status: “Always via proxy” keeps the site on the proxy and protects it from automatic un-learning; “Always direct” removes it from the learned lists and forces the direct path; “Auto” returns the entry to the engine. A deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that.') ]));
 		/* U6 (Ф4.3): the honest scope of a pin — exactly this host, not the
 		 * whole service; a pin is also NOT a block-circumvention guarantee. */
-		sitesBox.appendChild(E('p', { 'class': 'hpauto-hint' },
+		sitesBox.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Diagnostics page, "Route explanation"). A pin is also not a guarantee: "Always via proxy" rides the main node, "Always direct" rides the direct path — both follow the general rule priority.') ]));
 
 		/* ── Logs level (Ф7.1): the engine log + the automation-family
 		 * Event Bus feed (Ф7.3 — the same journal the Health center renders,
 		 * filtered to the automation family: learn/heal/outage, Hot Swap
 		 * switches, URLTest watchdog, DPI auto-pilot decisions). ───────── */
-		const logEl = E('pre', { 'class': 'hpauto-log' });
+		const logEl = E('pre', { 'class': 'hpui-log' });
+		const logsResult = E('div', { 'class': 'hpauto-result' });
 		panes.logs.appendChild(E('h4', {}, [ _('Engine log') ]));
 		panes.logs.appendChild(logEl);
 		panes.logs.appendChild(E('div', { 'class': 'automation-actions', 'style': 'margin-top:10px' }, [
-			btn(_('Clear log'), function() { return callClearLog().then(refresh); })
+			btn(_('Clear log'), function() {
+				return callClearLog().then(function() {
+					resultNote(logsResult, true, _('Log cleared.'));
+					return refresh();
+				});
+			}, 'danger')
 		]));
+		panes.logs.appendChild(logsResult);
 		panes.logs.appendChild(E('h4', { style: 'margin-top:16px' }, [ _('Automation events') ]));
 		const feedEl = E('div', { 'class': 'hpauto-feed' });
 		panes.logs.appendChild(feedEl);
-		panes.logs.appendChild(E('p', { 'class': 'hpauto-hint' },
+		panes.logs.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('The shared event journal of the automation family — learning, self-heals, Hot Swap switches, the URLTest watchdog and the DPI auto-pilot. The full feed of every subsystem lives on the Health center page.') ]));
 
 		/* ── DPI auto-pilot level (Ф7.1): the scheduled strategy auto-pilot
@@ -737,7 +795,7 @@ return view.extend({
 			placeholder: _('empty — any time') });
 		/* Ф6.7: ночной автоподбор (01:00–06:00, только если лучше) — опция. */
 		const apNight = E('input', { type: 'checkbox' });
-		const apSave = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' }, [ _('Save auto-pilot') ]);
+		const apSave = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Save auto-pilot') ]);
 		const apAlive = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
 		const apNames = { youtube: _('YouTube'), discord: _('Discord'),
 			telegram: _('Telegram'), general: _('General (best overall)') };
@@ -775,10 +833,10 @@ return view.extend({
 			  E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer',
 				title: _('Night auto-pick (01:00–06:00): a scheduled re-rank is allowed at night even outside the maintenance window — it applies only a strategy that is measurably better.') },
 				[ apNight, ' ' + _('Night auto-pick') ]) ]);
-		panes.dpi.appendChild(E('p', { 'class': 'hpauto-hint' },
+		panes.dpi.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('The DPI auto-pilot keeps the bypass strategies working without attention: on schedule it re-ranks the tested strategies and applies the best one per resource; when a resource stops answering, the next alternative applies immediately. Every apply takes a server snapshot (Restore stays available) and verifies the resource live. One-click picks and fresh measurements live on the Blocking bypass page — the Strategy Lab.') ]));
 		panes.dpi.appendChild(E('div', { 'class': 'automation-actions' }, [
-			E('a', { 'class': 'btn cbi-button', 'href': L.url('admin/services/homeproxy/bypass') },
+			E('a', { 'class': 'hpui-btn hpui-btn-ghost', 'href': L.url('admin/services/homeproxy/bypass') },
 				[ _('Strategy Lab and one-click auto-pick') ])
 		]));
 		panes.dpi.appendChild(E('div', { style: 'margin-top:10px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
@@ -800,7 +858,7 @@ return view.extend({
 				if (apRes[k].checked)
 					res.push(k);
 			if (apEnabled.checked && !res.length) {
-				ui.addNotification(null, E('p', {}, _('Select at least one resource for the auto-pilot.')), 'error');
+				resultNote(apSaveMsg, false, _('Select at least one resource for the auto-pilot.'));
 				return;
 			}
 			const turningOn = apEnabled.checked;
@@ -815,14 +873,14 @@ return view.extend({
 					'2', apNight.checked ? '1' : '0'), {}).then(function(r) {
 					apSave.disabled = false;
 					if (!r || r.result !== true) {
-						apSaveMsg.textContent = _('Auto-pilot save failed: %s').format((r && r.error) || _('rpc error'));
+						resultNote(apSaveMsg, false, _('Auto-pilot save failed: %s').format((r && r.error) || _('rpc error')));
 						return;
 					}
 					apDirty = false;
 					state.apSig = null;   /* refill from the saved config */
-					apSaveMsg.textContent = (turningOn)
+					resultNote(apSaveMsg, true, (turningOn)
 						? _('Auto-pilot enabled — the daemon picks it up within a minute (first re-rank right away).')
-						: _('Auto-pilot settings saved — the daemon reads them on its next tick.');
+						: _('Auto-pilot settings saved — the daemon reads them on its next tick.'));
 					refresh();
 				});
 			};
@@ -1024,7 +1082,7 @@ return view.extend({
 					if (this.classList.contains('on')) return;
 					this.disabled = true;
 					callEntryAction(entry.host, mode).then(function(r) {
-						return applyLearnedOp(r && r.apply, refresh);
+						return applyLearnedOp(r && r.apply, refresh, null, sitesSink);
 					}).finally(function() { b.disabled = false; });
 				});
 				return b;
@@ -1109,7 +1167,7 @@ return view.extend({
 						.then(function(ok) {
 							if (!ok) { delBtn.disabled = false; return; }
 							callEntryDelete(e.host).then(function(r) {
-								return applyLearnedOp(r && r.apply, refresh);
+								return applyLearnedOp(r && r.apply, refresh, _('Entry deleted.'), sitesSink);
 							}).finally(function() { delBtn.disabled = false; });
 						});
 				});

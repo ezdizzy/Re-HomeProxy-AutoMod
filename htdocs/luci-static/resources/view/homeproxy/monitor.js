@@ -222,29 +222,48 @@ return view.extend({
 			renderConnTable(connCache || {});
 		});
 
+		/* Every action answers in ONE place: the line below the filters
+		 * (replaces the previous verdict; the poll never touches it). */
+		function noteConn(ok, text) {
+			dom.content(connResult, E('p', { 'class': 'hpui-hint', 'style': 'margin:4px 0 0' },
+				[ E('span', { 'class': ok ? 'hpui-c-green' : 'hpui-c-red' }, [ text ]) ]));
+		}
+
 		const closeBtn = E('button', {
-			'class': 'btn cbi-button cbi-button-negative',
+			'class': 'hpui-btn hpui-btn-danger',
 			'click': ui.createHandlerFn(this, function() {
-				return L.resolveDefault(callMonitorConnectionsClose(), {}).then(function(r) {
-					if (r && r.result === false)
-						ui.addNotification('error', _('Failed to close connections'));
-					return refreshConnections();
-				});
+				return hp.confirmModal(_('Close all connections'),
+					_('Terminate every active connection right now? Apps reconnect on their own, but running downloads will be interrupted.'), _('Close all'))
+					.then(function(ok) {
+						if (!ok)
+							return;
+						noteConn(true, _('Closing…'));
+						return L.resolveDefault(callMonitorConnectionsClose(), {}).then(function(r) {
+							if (r && r.result === false)
+								noteConn(false, _('Failed to close connections'));
+							else
+								noteConn(true, _('All connections closed.'));
+							return refreshConnections();
+						});
+					});
 			})
 		}, [ _('Close all connections') ]);
 
-		const panelNodes = E('div', { 'class': 'monitor-panel cbi-section' }, [
-			E('h3', {}, [ _('Nodes') ]),
+		const connResult = E('div', {});
+
+		const panelNodes = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('monitor'), _('Nodes') ]),
 			cards,
 			nodeTableWrap
 		]);
 
-		const panelConn = E('div', { 'class': 'monitor-panel cbi-section' }, [
-			E('h3', {}, [ _('Connections') ]),
+		const panelConn = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Connections') ]),
 			E('div', { 'style': 'display:flex; align-items:center; gap:12px; flex-wrap:wrap' }, [ connHead, closeBtn ]),
 			E('div', { 'style': 'display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:2px 0 8px' },
 				[ connSearch, connNetSel, connPathSel ]),
-			connTableWrap
+			connTableWrap,
+			connResult
 		]);
 
 		function modeText(mode) {

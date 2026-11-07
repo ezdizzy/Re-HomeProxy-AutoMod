@@ -13840,3 +13840,30 @@ msgstr "Сохранить и применить"
 
 msgid "nodes: %d · subscriptions: %d"
 msgstr "узлов: %d · подписок: %d"
+
+msgid "Probing…"
+msgstr "Проба…"
+
+msgid "Probe pass started — fresh results land in the table and the engine cards."
+msgstr "Прогон проб запущен — свежие результаты появятся в таблице и карточках движка."
+
+msgid "Backup downloaded."
+msgstr "Бэкап скачан."
+
+msgid "Log cleared."
+msgstr "Журнал очищен."
+
+msgid "Entry deleted."
+msgstr "Запись удалена."
+
+msgid "Terminate every active connection right now? Apps reconnect on their own, but running downloads will be interrupted."
+msgstr "Прервать все активные соединения прямо сейчас? Приложения переподключатся сами, но запущенные загрузки будут оборваны."
+
+msgid "Close all"
+msgstr "Закрыть все"
+
+msgid "Closing…"
+msgstr "Закрываю…"
+
+msgid "All connections closed."
+msgstr "Все соединения закрыты."

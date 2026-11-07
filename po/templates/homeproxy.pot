@@ -8284,3 +8284,30 @@ msgstr ""
 
 msgid "nodes: %d · subscriptions: %d"
 msgstr ""
+
+msgid "Probing…"
+msgstr ""
+
+msgid "Probe pass started — fresh results land in the table and the engine cards."
+msgstr ""
+
+msgid "Backup downloaded."
+msgstr ""
+
+msgid "Log cleared."
+msgstr ""
+
+msgid "Entry deleted."
+msgstr ""
+
+msgid "Terminate every active connection right now? Apps reconnect on their own, but running downloads will be interrupted."
+msgstr ""
+
+msgid "Close all"
+msgstr ""
+
+msgid "Closing…"
+msgstr ""
+
+msgid "All connections closed."
+msgstr ""

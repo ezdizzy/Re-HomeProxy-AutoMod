@@ -56,14 +56,12 @@ function renderStatus(isRunning, features) {
 	               features.core_type === 'hiddify' ? 'hiddify-core' : null;
 	let verStr = features.version ? 'v' + features.version : _('unknown');
 	let coreStr = coreName ? ('%s %s').format(coreName, verStr) : _('no core installed');
-	let spanTemp = '<em><span style="color:%s"><strong>%s (%s) %s</strong></span></em>';
-	let renderHTML;
-	if (isRunning)
-		renderHTML = spanTemp.format('#3fbf5f', _('Ravnex Server'), coreStr, _('RUNNING'));
-	else
-		renderHTML = spanTemp.format('#e05252', _('Ravnex Server'), coreStr, _('NOT RUNNING'));
-
-	return renderHTML;
+	return E('div', { 'style': 'display:flex; align-items:center; gap:8px; flex-wrap:wrap' }, [
+		E('span', { 'class': 'hpui-dot ' + (isRunning ? 'ok' : 'bad') }),
+		E('strong', {}, [ _('Ravnex Server') + ' — ' + coreStr ]),
+		E('span', { 'class': 'hpui-badge ' + (isRunning ? 'hpui-b-green' : 'hpui-b-red') },
+			[ isRunning ? _('RUNNING') : _('NOT RUNNING') ])
+	]);
 }
 
 function handleGenKey(option) {
@@ -140,7 +138,8 @@ return view.extend({
 			poll.add(() => {
 				return L.resolveDefault(getServiceStatus()).then((res) => {
 					let view = document.getElementById('service_status');
-					view.innerHTML = renderStatus(res, features);
+					if (view)
+						view.replaceChildren(renderStatus(res, features));
 				});
 			});
 
