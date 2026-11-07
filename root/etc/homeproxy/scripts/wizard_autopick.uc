@@ -181,44 +181,75 @@ function probe_live(url, host) {
 	return { code: code, tsec: tsec, rc: rc, ok: ok, host: host };
 }
 
-/* ч.228: the apply path light-restarts the DPI engine (queue re-bind) and the
- * DNS resolver; probes fired into that settling window return honest-looking
- * 000s — curl rc 28 EXACTLY at the --connect-timeout boundary (live-proven
- * 2026-11-07: baseline 4/4 BEFORE the apply, verify 000 ×3 right after, the
- * flow probe 200 at ~+30 s, and the SAME three probes 200/204/404 minutes
- * later with the SAME applied args still live). Gate the live verification on
- * readiness: the device resolver (127.0.0.1, the path LAN clients use) must
- * answer for the probe host AND the prod queue must be bound with a live
- * nfqws2 process. Bounded (~25 s); on timeout the probes run anyway and the
- * miss is reported honestly — the verdict never waits forever. */
-function wait_probe_ready(host) {
-	const deadline = time() + 25;
-	const dnsf = RUN_DIR + '/wiz_probe.dns';
-	const qnum = trim(shell_out(`uci -q get homeproxy.config.zapret_qnum 2>/dev/null`)) || '200';
-	let dns_ok = false, q_ok = false;
-	while ((time() < deadline) && !(dns_ok && q_ok)) {
-		if (!dns_ok) {
-			system(`nslookup ${sq(host)} 127.0.0.1 > ${sq(dnsf)} 2>/dev/null`);
-			dns_ok = (match(readfile(dnsf) || '', /([0-9]{1,3}\.){3}[0-9]{1,3}/) != null);
-		}
-		if (!q_ok) {
-			const ql = readfile('/proc/net/netfilter/nfnetlink_queue');
-			q_ok = (ql != null && index(ql, ' ' + qnum + ' ') >= 0 &&
-				length(pm_find({ exe: 'nfqws2' })) > 0);
-		}
-		if (!(dns_ok && q_ok))
-			sleep(1000);
-	}
-	system(`rm -f ${sq(dnsf)} 2>/dev/null`);
-	return { dns_ok: dns_ok, q_ok: q_ok };
-}
-
+/* shell_out — ВЫШЕ всех вызывающих (урок 2/93/126 в предельной форме,
+ * ч.231: t1/t3-микротесты — вызов функции, объявленной НИЖЕ в исходнике,
+ * падает «left-hand side is not a function» даже при вызове после
+ * объявления; порядок деклараций в ucode строгий, hoisting-а нет). */
 function shell_out(cmd) {
 	const f = RUN_DIR + '/wiz_probe.out';
 	system(`${cmd} > ${sq(f)} 2>/dev/null`);
 	const v = readfile(f) || '';
 	system(`rm -f ${sq(f)} 2>/dev/null`);
 	return v;
+}
+
+/* ч.231: the prod NFQUEUE row: queue file line for qnum carries the bound
+ * socket's pid in column 2 — reading it avoids matching a lab engine on
+ * 209–212 (the old gate matched ANY nfqws2 and read the not-yet-killed prod
+ * engine as "ready"). Token-parsed (урок 26/27: match() with a STRING
+ * pattern silently returns null — no dynamic regex here). */
+function prod_queue_pid(qnum) {
+	const ql = readfile('/proc/net/netfilter/nfnetlink_queue');
+	if (ql == null) return 0;
+	const lines = split(ql, '\n');
+	for (let i = 0; i < length(lines); i++) {
+		const cols = split(lines[i], ' ');
+		let q = null, pid = null;
+		for (let c in cols) {
+			if (type(c) !== 'string' || length(c) === 0)
+				continue;
+			if (q == null) { q = c; continue; }
+			pid = c;
+			break;
+		}
+		if (q == qnum && pid != null && match(pid, /^[0-9]+$/) != null)
+			return int(pid);
+	}
+	return 0;
+}
+
+/* ч.231: readiness after the apply restart. The old gate RACED the kill:
+ * engine_restart runs in the BACKGROUND (init.d sourcing delays the actual
+ * TERM by ~10 s), so the queue was still bound by the dying engine when the
+ * gate polled — probes fired into the unbind gap, where the nft rule
+ * (`queue flags bypass to 200`) lets packets BYPASS the dead queue, go out
+ * un-desynced, and TSPU drops the SYN: curl rc 28 at EXACTLY
+ * --connect-timeout 4 (live-proven 2026-11-07: nfqws2.log TERM ~18:49:5x →
+ * respawn 18:49:57; verify 000 ×3, the flow probe 200 at ~+30 s, and 0.25 s
+ * answers minutes later with the SAME args). Now the gate waits for the
+ * queue to be bound by a pid DIFFERENT from the pre-restart one (the kill
+ * landed AND the respawn completed — nfqws2 binds as its LAST init step),
+ * with the pinned --qnum identity as the belt; the resolver check rides the
+ * same loop. Bounded (75 s); on timeout the probes still run and the miss
+ * is reported honestly — the verdict never waits forever. */
+function wait_engine_settled(host, old_pid) {
+	const qnum = trim(shell_out(`uci -q get homeproxy.config.zapret_qnum 2>/dev/null`)) || '200';
+	const deadline = time() + 75;
+	const dnsf = RUN_DIR + '/wiz_probe.dns';
+	let dns_ok = false, pid = 0;
+	while (time() < deadline) {
+		if (!dns_ok) {
+			system(`nslookup ${sq(host)} 127.0.0.1 > ${sq(dnsf)} 2>/dev/null`);
+			dns_ok = (match(readfile(dnsf) || '', /([0-9]{1,3}\.){3}[0-9]{1,3}/) != null);
+		}
+		pid = prod_queue_pid(qnum);
+		if (pid > 0 && pid != old_pid &&
+			length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + qnum ] })) > 0)
+			break;
+		sleep(1000);
+	}
+	system(`rm -f ${sq(dnsf)} 2>/dev/null`);
+	return { up: (pid > 0 && pid != old_pid), dns_ok: dns_ok, qnum: qnum, pid: pid };
 }
 
 /* Ф6.5 (аудит 78/64): baseline ресурса ПЕРЕД применением — та же батарея,
@@ -826,7 +857,10 @@ function main() {
 	 * core never disappears, so `seen` fills in immediately. */
 	const zq = '' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200');
 	/* Ф1.4b: the live queue is pinned by the exact --qnum element — the
-	 * tester's temp qnum can never read as the production engine. */
+	 * tester's temp qnum can never read as the production engine. ч.231:
+	 * the bound pid goes with it — the readiness gate must see a DIFFERENT
+	 * pid before the probes fire (the dying engine binds the same queue). */
+	const old_zpid = prod_queue_pid(zq);
 	const z_alive = length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + zq ] })) > 0;
 	if (z_alive) {
 		system('/etc/init.d/homeproxy engine_restart >/dev/null 2>&1 &');
@@ -870,19 +904,36 @@ function main() {
 		 * and the firewall re-render a moment, then verify. */
 		sleep(5000);
 	}
-	/* ч.228: readiness gate before ANY probe (both paths) — the apply light-
-	 * restarts the engine (queue re-bind) and the resolver, and probes fired
-	 * into that settling window measure the WINDOW, not the strategy (000 ×3
-	 * at the connect-timeout boundary while the flow probe passed at +30 s,
-	 * live-proven 2026-11-07). */
-	const gate = wait_probe_ready((resource === 'general') ? 'www.gstatic.com' : meta.host);
+	/* ч.228→ч.231: readiness gate before ANY probe (both paths) — the apply
+	 * restarts the engine; probes fired into the swap window measure the
+	 * WINDOW, not the strategy. The gate now waits for the queue to come
+	 * back bound by a NEW pid (see wait_engine_settled). */
+	const gate = wait_engine_settled((resource === 'general') ? 'www.gstatic.com' : meta.host, old_zpid);
 	if (!gate.dns_ok)
-		note(res, 'Резолвер не ответил за 25 с после применения — пробы идут как есть (вердикт может быть честно ложным).');
-	if (!gate.q_ok)
-		note(res, 'Очередь движка Zapret не поднялась за 25 с — пробы идут как есть (вердикт может быть честно ложным).');
+		note(res, 'Резолвер не ответил за 75 с после применения — пробы идут как есть (вердикт может быть честно ложным).');
+	if (!gate.up)
+		note(res, 'Готовность движка не подтвердилась за 75 с (очередь ' + gate.qnum +
+			' без нового слушателя' + ((gate.pid > 0) ? ', слушает прежний pid ' + gate.pid : '') +
+			') — пробы идут как есть (вердикт может быть честно ложным).');
+	/* ч.231: the main probe is the FINAL arbiter and retries in a bounded
+	 * window — whatever else settles after the swap (fw4 reload, resolver
+	 * warm-up, first-flow state) shows up as a few failed connects, never
+	 * as a property of the strategy. A pass on retry is reported honestly. */
+	let attempts = 0;
 	res.verify = (resource === 'general')
 		? probe_live('http://www.gstatic.com/generate_204', 'gstatic generate_204')
 		: probe_live('https://' + meta.host, meta.host);
+	attempts = 1;
+	while (!res.verify.ok && attempts < 6) {
+		sleep(3000);
+		res.verify = (resource === 'general')
+			? probe_live('http://www.gstatic.com/generate_204', 'gstatic generate_204')
+			: probe_live('https://' + meta.host, meta.host);
+		attempts++;
+	}
+	res.verify.attempts = attempts;
+	if (res.verify.ok && attempts > 1)
+		note(res, 'Живая проверка прошла с ' + attempts + '-й попытки — перестройка движка после применения (~10–20 с) не является свойством стратегии.');
 	/* ч.109: the deep battery — a resource works when ALL its hosts answer
 	 * through the configured path (YouTube: page + thumbnail CDN + video edge). */
 	res.verify_multi = [];

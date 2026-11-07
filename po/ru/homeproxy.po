@@ -7625,3 +7625,21 @@ msgstr "Не удалось создать сертификат: %s."
 
 msgid "unknown error"
 msgstr "неизвестная ошибка"
+
+msgid "current (applied)"
+msgstr "current (applied)"
+
+msgid "The currently applied strategy also passed the deep battery (%s) — replacing it within the run noise is optional, not required."
+msgstr "Текущая применённая стратегия тоже прошла deep-батарею (%s) — замена в пределах шума прогона необязательна."
+
+msgid "no handshake rounds for this entry — it is measured by the deep battery only"
+msgstr "для этой строки handshake-раунды не гоняются — она измеряется только deep-батареей"
+
+msgid "deep only"
+msgstr "только deep"
+
+msgid "excluded"
+msgstr "исключено"
+
+msgid "Hosts that failed for EVERY strategy and both baseline passes are excluded from the Passed column — they measure the network, not the strategies: %s."
+msgstr "Хосты, не прошедшие НИ У ОДНОЙ стратегии и обоих baseline-проходов, исключены из колонки «Прошло» — они меряют сеть, а не стратегии: %s."

@@ -7618,3 +7618,21 @@ msgstr ""
 
 msgid "unknown error"
 msgstr ""
+
+msgid "current (applied)"
+msgstr ""
+
+msgid "The currently applied strategy also passed the deep battery (%s) — replacing it within the run noise is optional, not required."
+msgstr ""
+
+msgid "no handshake rounds for this entry — it is measured by the deep battery only"
+msgstr ""
+
+msgid "deep only"
+msgstr ""
+
+msgid "excluded"
+msgstr ""
+
+msgid "Hosts that failed for EVERY strategy and both baseline passes are excluded from the Passed column — they measure the network, not the strategies: %s."
+msgstr ""

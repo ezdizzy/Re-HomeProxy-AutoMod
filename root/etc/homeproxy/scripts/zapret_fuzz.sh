@@ -689,6 +689,48 @@ for (let s in strategies)
 		h.dist = !(b1 && b2);
 	}
 
+/* ч.231 (honest Passed column): a handshake host that failed for EVERY
+ * strategy AND both baseline series is dead on this network/sweep — it
+ * measures the NETWORK, not the strategy, and painted every row red
+ * (live fact 2026-11-07: the telegram.org pinned-IP timed out for all 16
+ * strategies → every row showed a misleading "3/4"). Exclude such hosts
+ * from the per-strategy ok/total display counts; the per-host detail stays
+ * in hosts[] (tooltip) and the sweep-level list goes to the result as
+ * dead_hosts. Distinguishing (dist) counts, score and verdicts are
+ * untouched — a dead host never passed, so it never contributed. */
+const tag_seen = {};
+for (let s in strategies)
+	for (let h in s.hosts)
+		if (type(h) === "object" && h.tag != null && tag_seen[h.tag] == null)
+			tag_seen[h.tag] = h;
+const dead_map = {};
+const dead_hosts = [];
+for (let tag in keys(tag_seen)) {
+	const h0 = tag_seen[tag];
+	const b1 = (b1map[tag] != null) ? b1map[tag] : false;
+	const b2 = (c2map[tag] != null) ? c2map[tag] : false;
+	let any_ok = false;
+	for (let s in strategies)
+		for (let h in s.hosts)
+			if (type(h) === "object" && h.tag === tag && h.ok == true) { any_ok = true; break; }
+	if (!any_ok && !b1 && !b2) {
+		dead_map[tag] = true;
+		push(dead_hosts, { tag: tag, label: (type(h0) === "object") ? (h0.label || tag) : tag,
+			host: (type(h0) === "object") ? (h0.host || "") : "" });
+	}
+}
+if (length(dead_hosts))
+	for (let s in strategies) {
+		let ok2 = 0, tot2 = 0;
+		for (let h in s.hosts) {
+			if (type(h) !== "object" || dead_map[h.tag]) continue;
+			tot2++;
+			if (h.ok == true) ok2++;
+		}
+		s.ok = ok2;
+		s.total = tot2;
+	}
+
 /* (аудит 85) второй IP финалистов: ручной проход по альтернативным адресам
  * подливается в host-записи (ip2/alt-статистика) — рейтинг больше не
  * измерение одного-единственного CDN-края. */
@@ -853,6 +895,7 @@ writefile(RESULT, sprintf("%.J\n", {
 	deep_failed: deep_failed, deep_skipped: skipped_ids, quic: quic,
 	probe_mode: "'$PMODE'",
 	lab: "v3",
+	dead_hosts: dead_hosts,
 	baseline_series: { first: bnote, control: cnote, drift: drift },
 	dns_sets: dns_sets,
 	verdicts: verdicts,

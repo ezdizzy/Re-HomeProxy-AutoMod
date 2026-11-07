@@ -1812,9 +1812,14 @@ return view.extend({
 						[ badge('hpui-b-amber', _('DNS sets diverge')), ' ' + dnsParts ]));
 			}
 			/* Ф6.4 (аудит 67/92): вердикты ресурсов — NO VIABLE STRATEGY
-			 * называет, ЧТО не работает; best_available — только вручную. */
+			 * называет, ЧТО не работает; best_available — только вручную.
+			 * ч.231: рядом с best_verified честно отмечается, что ТЕКУЩАЯ
+			 * применённая стратегия тоже прошла deep-батарею — замена
+			 * подтверждённой в пределах шума прогона не обязательна. */
 			if (res.verdicts) {
 				const RESL = { youtube: _('YouTube'), discord: _('Discord'), telegram: _('Telegram'), general: _('General') };
+				const curA0 = dpiSt && dpiSt.zapret ? ('' + (dpiSt.zapret.strategy || '')) : '';
+				const DTAG = { youtube: 'yt', discord: 'dc', telegram: 'tg' };
 				Object.keys(res.verdicts).forEach(function(rn) {
 					const v = res.verdicts[rn];
 					if (!v || !v.verdict)
@@ -1838,6 +1843,19 @@ return view.extend({
 							badge('hpui-b-green', _('BEST VERIFIED')),
 							' ' + (RESL[rn] || rn) + ': ' + v.chosen.name
 						]));
+						/* ч.231: current (applied) — deep-only строка лаборатории. */
+						if (curA0 && DTAG[rn]) {
+							const cRow = res.strategies.filter(function(x) { return x.args === curA0; })[0] || null;
+							const cHosts = (cRow && cRow.deep && cRow.deep.hosts) || [];
+							let cItem = null;
+							cHosts.forEach(function(hd) { if (hd.tag === DTAG[rn]) cItem = hd; });
+							if (cItem && cItem.deep_total > 0)
+								box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' }, [
+									badge('hpui-b-grey', _('current (applied)')),
+									' ' + _('The currently applied strategy also passed the deep battery (%s) — replacing it within the run noise is optional, not required.').format(
+										(cItem.deep_pass || 0) + '/' + cItem.deep_total)
+								]));
+						}
 					}
 					(v.notes || []).forEach(function(nn) {
 						box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' }, [ '· ' + nn ]));
@@ -2050,7 +2068,11 @@ return view.extend({
 							? badge('hpui-b-green', 'QUIC')
 							: E('span', { 'class': 'hpui-badge', style: 'opacity:.7' }, [ 'TCP' ]) ]
 							.concat(vBadge ? [ ' ', vBadge ] : [])),
-					E('td', { style: 'white-space:nowrap' }, [ '%d / %d'.format(s.ok || 0, s.total || 0) ]),
+					E('td', { style: 'white-space:nowrap',
+						title: (s.total === 0) ? _('no handshake rounds for this entry — it is measured by the deep battery only') : '' },
+					[ (s.total === 0)
+						? E('span', { style: 'opacity:.55' }, [ _('deep only') ])
+						: '%d / %d'.format(s.ok || 0, s.total || 0) ]),
 					E('td', {}, [ String(s.avg_tls_ms || 0) ]),
 					flowTd,
 					startTd,
@@ -2062,6 +2084,14 @@ return view.extend({
 			const wrap = E('div', { 'class': 'hpui-wrap' });
 			wrap.appendChild(E('table', { 'class': 'hpui-table' }, [ thead, tbody ]));
 			box.appendChild(wrap);
+			/* ч.231: хосты, недоступные ВСЕМ стратегиям и обоим baseline,
+			 * исключены из счёта Passed — они меряют сеть, не стратегии. */
+			if (res.dead_hosts && res.dead_hosts.length)
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' }, [
+					badge('hpui-b-grey', _('excluded')),
+					' ' + _('Hosts that failed for EVERY strategy and both baseline passes are excluded from the Passed column — they measure the network, not the strategies: %s.').format(
+						res.dead_hosts.map(function(d) { return (d.label || d.tag) + ' (' + (d.host || '?') + ')'; }).join(', '))
+				]));
 			labBest.appendChild(box);
 			/* History — persistent info under the Lab row. */
 			labHist.innerHTML = '';

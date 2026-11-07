@@ -43,7 +43,6 @@
 'use strict';
 
 import { ENGINE_MATRIX } from '/etc/homeproxy/scripts/strategy_lab.uc';
-
 /* ── Потребности популярных сервисов (§2.4) ──
  * fuzz     — есть ли фаззинг-корпус лаборатории для сервиса (иначе честный
  *            no_lab: стратегий не измерялось, «не проверено» ≠ «нет»);
@@ -120,6 +119,59 @@ export function rollback_decision(before_ok, after_ok, auto) {
 		note: 'проверка после применения не прошла (до применения ресурс тоже не работал полностью) — откат по протоколу автоподбора (аудит 78), Restore доступен' };
 };
 
+/* ── ч.231: состояние ТЕКУЩЕЙ применённой стратегии в лаборатории ──
+ * Лаборатория измеряет живую zapret_cmd_opts строкой «current (applied)»
+ * БЕЗ handshake-раундов (hosts: [] — deep-only по дизайну, ч.229), поэтому
+ * resource_verdict на ней недостижим; её подтверждение считается по той же
+ * deep-батарее ресурса: все измеренные компоненты ответили. Чистые
+ * вычисления, проб нет. { measured, verified, name, deep_str, args } */
+export function current_lab_state(lab, service, current_args) {
+	const res = { measured: false, verified: false, name: '', deep_str: '', args: '' };
+	const args = '' + (current_args || '');
+	if (lab == null || type(lab) !== 'object' || type(lab.strategies) !== 'array' ||
+		length(args) < 4)
+		return res;
+	const tagmap = { youtube: 'yt', discord: 'dc', telegram: 'tg' };
+	const tag = tagmap['' + service];
+	if (tag == null)
+		return res;
+	for (let s in lab.strategies) {
+		if (type(s) !== 'object' || s.args !== args)
+			continue;
+		res.measured = true;
+		res.args = args;
+		res.name = '' + (s.name || 'current');
+		let deep_items = null;
+		let dp = 0, dt = 0, rok = 0, rtot = 0;
+		if (s.deep != null && type(s.deep.hosts) === 'array')
+			for (let dh in s.deep.hosts)
+				if (type(dh) === 'object' && dh.tag === tag) {
+					deep_items = dh.items || [];
+					dp = int(dh.deep_pass || 0);
+					dt = int(dh.deep_total || 0);
+					for (let it in deep_items) {
+						rtot++;
+						if (type(it) === 'object' && it.ok == 1)
+							rok++;
+					}
+				}
+		if (deep_items != null && length(deep_items) > 0) {
+			res.verified = true;
+			for (let it in deep_items)
+				if (type(it) === 'object' && it.ok != 1) {
+					res.verified = false;
+					break;
+				}
+		}
+		/* показываем дифференциальный счёт (как в таблице Лаборатории);
+		 * у ресурса без дифференциала — счёт полных проб (иначе «0/0»
+		 * читается как «ничего не прошло», живой факт ч.231: discord). */
+		res.deep_str = (dt > 0) ? (dp + '/' + dt) : (rok + '/' + rtot);
+		break;
+	}
+	return res;
+};
+
 /* ── ПЛАН цепочки для ОДНОГО сервиса (аудит 70) ──
  * Вход (только ИЗМЕРЕННЫЕ факты, без проб):
  *   service      — ключ SERVICE_NEEDS;
@@ -129,6 +181,9 @@ export function rollback_decision(before_ok, after_ok, auto) {
  *   profile      — сводка батареи Ф6.3 {working,degraded,refused,broken,
  *                  unprobed}|null (батарея не гонялась);
  *   rule         — {source,node,enabled}|null (текущее правило сервиса);
+ *   current_state — {measured,verified,name,deep_str,args}|null — ч.231:
+ *                  подтверждённость ТЕКУЩЕЙ применённой стратегии лабораторией
+ *                  (current_lab_state по последнему прогону);
  *   main_node    — UCI homeproxy.config.main_node (строка);
  *   routing_mode — UCI routing_mode;
  *   zapret_enabled — boolean (движок включён).
@@ -198,9 +253,31 @@ export function chain_plan(input) {
 		return out;
 	}
 
-	/* 3. Гейт лаборатории (92). */
+	/* 3. Гейт лаборатории (92). ч.231: СНАЧАЛА честная сверка с ТЕКУЩЕЙ
+	 * применённой стратегией — замена подтверждённой работающей стратегии
+	 * на кандидата в пределах суточного шума TSPU (живой факт ч.229:
+	 * разброс между прогонами 23%) — это churn, а не оптимизация. */
 	if (lab_v === 'best_verified' && lab_chosen != null) {
+		const cs = (type(inp.current_state) === 'object') ? inp.current_state : null;
+		if (cs != null && cs.measured === true && cs.verified === true) {
+			out.verdict = 'ok';
+			push(out.reasons, 'текущая применённая стратегия подтверждена лабораторией: deep-батарея ресурса пройдена (' +
+				cs.deep_str + ' на последнем прогоне) — замена не требуется');
+			if (cs.args !== lab_chosen.args)
+				push(out.notes, 'кандидат лаборатории: ' + (lab_chosen.name || 'кастомные аргументы') +
+					' — различие с текущей в пределах шума прогона; смена — по вашему решению в Лаборатории стратегий');
+			const zn2 = engine_note(service, 'zapret');
+			if (zn2 != null)
+				push(out.notes, zn2);
+			if (rule != null && rule.enabled === '1' && rule.node === 'main-out' && main_is_direct)
+				push(out.notes, '🔴 Main node = Direct: правило сервиса сейчас на main-out — заблокированные ресурсы не должны уходить напрямую (ограничение проекта)');
+			else if (!(rule != null && rule.enabled === '1' && rule.node === 'zapret-out'))
+				push(out.notes, 'правило сервиса не ведёт ресурс на Zapret — стратегия подтверждена, но путь нужно направить (автоподбор установит правило и применит кандидата лаборатории)');
+			return out;
+		}
 		out.verdict = 'apply';
+		if (cs != null && cs.measured !== true)
+			push(out.notes, 'текущая применённая композиция последним прогоном лаборатории не измерялась (она применена позже прогона) — вердикт обновится после следующего фаззинга');
 		const route_node = 'zapret-out';
 		out.chain = {
 			service: service,
@@ -314,6 +391,43 @@ export function selftest() {
 		lab_chosen: null, profile: null, rule: { source: 'telegram', node: 'main-out', enabled: '1' },
 		main_node: 'direct-out', routing_mode: 'proxy_banned_ru' });
 	t('direct main warns on calls', index(join(';', p.notes), 'Direct') >= 0);
+
+	/* ч.231: текущая подтверждена → 'ok' (замена подтверждённой = churn) */
+	p = chain_plan({ service: 'youtube', lab_verdict: 'best_verified',
+		lab_chosen: { name: 'Default', args: '--b' },
+		profile: null, rule: { source: 'youtube', node: 'zapret-out', enabled: '1' },
+		main_node: 'urltest', routing_mode: 'proxy_banned_ru',
+		current_state: { measured: true, verified: true, name: 'current (applied)',
+			deep_str: '6/6', args: '--a' } });
+	t('current verified → ok (не ломать)', p.verdict === 'ok' &&
+		index(join(';', p.reasons), 'замена не требуется') >= 0);
+	t('current verified names candidate in notes',
+		index(join(';', p.notes), 'в пределах шума') >= 0);
+
+	/* ч.231: текущая НЕ подтверждена → 'apply' как раньше */
+	p = chain_plan({ service: 'youtube', lab_verdict: 'best_verified',
+		lab_chosen: { name: 'Default', args: '--b' }, profile: null, rule: null,
+		main_node: 'urltest', routing_mode: 'proxy_banned_ru',
+		current_state: { measured: true, verified: false, deep_str: '3/6', args: '--a' } });
+	t('current unverified → apply', p.verdict === 'apply');
+
+	/* ч.231: current_lab_state по фейковому lab (deep-only строка current) */
+	const fake_lab = { strategies: [
+		{ name: 'X', args: '--other', hosts: [], deep: null },
+		{ name: 'current (applied)', args: '--composite --new', hosts: [],
+			deep: { ok: 2, total: 2, hosts: [ { tag: 'yt', deep_pass: 2, deep_total: 2,
+				items: [ { id: 'ytp', ok: 1 }, { id: 'yti', ok: 1 } ] } ] } }
+	] };
+	let cls = current_lab_state(fake_lab, 'youtube', '--composite --new');
+	t('current_lab_state measured+verified', cls.measured === true &&
+		cls.verified === true && cls.deep_str === '2/2');
+	cls = current_lab_state(fake_lab, 'youtube', '--absent');
+	t('current_lab_state absent → unmeasured', cls.measured === false);
+	cls = current_lab_state({ strategies: [ { name: 'c', args: '--xyz', hosts: [],
+		deep: { ok: 0, total: 1, hosts: [ { tag: 'yt', deep_pass: 0, deep_total: 1,
+			items: [ { id: 'ytp', ok: 0 } ] } ] } } ] }, 'youtube', '--xyz');
+	t('current_lab_state failed item → unverified', cls.measured === true &&
+		cls.verified === false);
 
 	/* unknown service */
 	p = chain_plan({ service: 'nope' });

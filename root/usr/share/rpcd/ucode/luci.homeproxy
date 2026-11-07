@@ -66,7 +66,9 @@ import { acquire as resmgr_acquire, release as resmgr_release,
 	from '/etc/homeproxy/scripts/test_resmgr.uc';
 /* Ф6.5 Service Path Optimizer: чистые вычисления плана цепочки
  * Service→Route→Engine→Strategy→Transport→Exit (аудит 70/78/92/93). */
-import { chain_plan as optimizer_chain_plan, SERVICE_KEYS as OPT_SERVICE_KEYS }
+import { chain_plan as optimizer_chain_plan,
+	SERVICE_KEYS as OPT_SERVICE_KEYS,
+	current_lab_state as optimizer_current_state }
 	from '/etc/homeproxy/scripts/service_optimizer.uc';
 /* Ф9.11: единый набор парсеров узлов (share-link/sing-box/Xray/SIP008/clash
  * YAML/base64) — тот же, что у подписочного импортёра и import_link.uc.
@@ -5675,24 +5677,39 @@ const methods = {
 			 * the URL string, never an index. */
 			for (let url in targets[resource]) {
 				const cf = RUN_DIR + '/wiz_probe_res';
-				system(`rm -f ${shellquote(cf)} 2>/dev/null`);
-				const cmd = `curl -sL --max-redirs 3 -o /dev/null -w '%{http_code} %{time_total} %{size_download}' -k ` +
-					`--connect-timeout 4 --max-time 9 ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`;
-				const rc = system(cmd, 12000);
-				const parts = split(trim(readfile(cf) || ''), /[[:space:]]+/);
-				const code = (length(parts) && match(parts[0], /^[0-9]{3}$/)) ? parts[0] : '000';
-				const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
-				const bytes = (length(parts) > 2) ? int(parts[2]) : 0;
+				const probe_once = function() {
+					system(`rm -f ${shellquote(cf)} 2>/dev/null`);
+					const cmd = `curl -sL --max-redirs 3 -o /dev/null -w '%{http_code} %{time_total} %{size_download}' -k ` +
+						`--connect-timeout 4 --max-time 9 ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null`;
+					const rc = system(cmd, 12000);
+					const parts = split(trim(readfile(cf) || ''), /[[:space:]]+/);
+					const code = (length(parts) && match(parts[0], /^[0-9]{3}$/)) ? parts[0] : '000';
+					const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
+					const bytes = (length(parts) > 2) ? int(parts[2]) : 0;
+					return { rc: rc, code: code, tsec: tsec, bytes: bytes };
+				};
+				let pr = probe_once();
+				/* ч.231: one honest retry — a single failed connect is
+				 * bursty TSPU/engine-restart noise, not a path property
+				 * (the runner does the same in the verify battery). */
+				let edge = (index(url, 'redirector.googlevideo.com') >= 0);
+				let cok = edge
+					? (pr.code != '000')
+					: (pr.rc === 0 && int(pr.code) >= 200 && int(pr.code) < 400 &&
+						(int(pr.code) === 204 || pr.bytes > 0));
+				if (!cok) {
+					sleep(2000);
+					pr = probe_once();
+					cok = edge
+						? (pr.code != '000')
+						: (pr.rc === 0 && int(pr.code) >= 200 && int(pr.code) < 400 &&
+							(int(pr.code) === 204 || pr.bytes > 0));
+				}
 				/* pass = HTTP answered within the window AND (for content
 				 * probes) some body came through; 204 carries no body. The
 				 * video-stream edge legitimately answers 404 on its root —
 				 * ANY HTTP answer there means the DPI let the host through. */
-				const edge = (index(url, 'redirector.googlevideo.com') >= 0);
-				const cok = edge
-					? (code != '000')
-					: (rc === 0 && int(code) >= 200 && int(code) < 400 &&
-						(int(code) === 204 || bytes > 0));
-				push(probes, { url: url, code: code, tsec: tsec, bytes: bytes, ok: cok });
+				push(probes, { url: url, code: pr.code, tsec: pr.tsec, bytes: pr.bytes, ok: cok });
 			}
 			let ok = 1;
 			for (let p in probes)
@@ -6527,6 +6544,9 @@ const methods = {
 			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || 'nil');
 			const rmode = '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
 			const z_on = (c.get('homeproxy', 'config', 'zapret_enabled') === '1');
+			/* ч.231: подтверждённость ТЕКУЩЕЙ применённой стратегии — вход
+			 * честной сверки optimizer'а (замена подтверждённой = churn). */
+			const opt_cur_args = trim('' + (c.get('homeproxy', 'config', 'zapret_cmd_opts') || ''));
 			const services = {};
 			for (let k in OPT_SERVICE_KEYS) {
 				const lv = (lab != null && type(lab.verdicts) === 'object' &&
@@ -6537,6 +6557,7 @@ const methods = {
 					lab_chosen: (lv != null && type(lv.chosen) === 'object') ? lv.chosen : null,
 					profile: summaries[k],
 					rule: (rules[k] != null) ? rules[k] : null,
+					current_state: optimizer_current_state(lab, k, opt_cur_args),
 					main_node: main_node,
 					routing_mode: rmode,
 					zapret_enabled: z_on
