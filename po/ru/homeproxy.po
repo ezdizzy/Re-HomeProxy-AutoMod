@@ -7602,9 +7602,6 @@ msgstr "Обслуживает компоненты, которые сейчас
 msgid "Setting up the feed…"
 msgstr "Настраиваю feed…"
 
-msgid "Fallback probe mode: the isolated probe user is unavailable — the sweep may briefly disturb the router's own connections to the test hosts, and the ranking is noisier than usual."
-msgstr "Резервный режим проб: изолированный пользователь проб недоступен — фаззинг может кратко задевать собственные соединения роутера к проверяемым хостам, и рейтинг шумнее обычного."
-
 msgid "Fallback probe mode"
 msgstr "Резервный режим проб"
 

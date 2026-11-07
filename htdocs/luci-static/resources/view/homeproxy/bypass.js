@@ -1745,13 +1745,11 @@ return view.extend({
 				return;
 			} else
 				labStatus.textContent = '';
-			/* Honest probe mode (skuid|fallback): in the fallback the tester's
-			 * isolated uid is unavailable — the probes run as root and can only
-			 * touch router-origin dials, but the ranking is also noisier. */
-			if (st.probe_mode === 'fallback') {
-				labStatus.textContent = _('Fallback probe mode: the isolated probe user is unavailable — the sweep may briefly disturb the router\'s own connections to the test hosts, and the ranking is noisier than usual.');
-				return;
-			}
+			/* Honest probe mode (skuid|fallback): the fallback warning lives in
+			 * the RESULT box (amber badge, res.probe_mode) — an early return on
+			 * st.probe_mode here hid the whole ranking forever, because the
+			 * final status file ALSO carries probe_mode (the live "strategies
+			 * never appeared" report 2026-11-07). */
 			/* Result table — ч.109: lives in its OWN persistent container
 			 * (labBest) instead of the shared result area. Picking a strategy
 			 * used to WIPE the ranking (the user complaint) — now the action

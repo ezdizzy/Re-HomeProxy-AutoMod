@@ -31,6 +31,15 @@ zapret)
 	# http+tls only (must match init.d's zapret_default_opts).
 	OPTS="$(uci -q get $CONF.config.zapret_cmd_opts)"
 	[ -n "$OPTS" ] || OPTS="--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000 --lua-desync=multidisorder:pos=1,midsld"
+	# The engine's own words on tmpfs: procd discards instance output, so a
+	# lua/queue failure died SILENTLY (the exit-code-0 crash-loop class — the
+	# "nfqws2 fell again during the fuzz" report 2026-11-07). A dated spawn
+	# header timestamps every (re)start; the 64 KB cap keeps tmpfs clean.
+	NFQ_LOG=/var/run/homeproxy/nfqws2.log
+	NFQ_SZ=$(wc -c < "$NFQ_LOG" 2>/dev/null)
+	case "$NFQ_SZ" in ''|*[!0-9]*) NFQ_SZ=0 ;; esac
+	[ "$NFQ_SZ" -gt 65536 ] && mv -f "$NFQ_LOG" "$NFQ_LOG.1" 2>/dev/null
+	echo "$(date '+%F %T') dpi_engine: spawn nfqws2 qnum=$QNUM" >> "$NFQ_LOG" 2>/dev/null
 	eval "set -- $OPTS"
 	exec /opt/zapret2/nfq2/nfqws2 \
 		--qnum="$QNUM" \
@@ -38,7 +47,7 @@ zapret)
 		--fwmark=0x40000000 \
 		--lua-init=@/opt/zapret2/lua/zapret-lib.lua \
 		--lua-init=@/opt/zapret2/lua/zapret-antidpi.lua \
-		--lua-init=@/opt/zapret2/lua/zapret-auto.lua "$@"
+		--lua-init=@/opt/zapret2/lua/zapret-auto.lua "$@" >> "$NFQ_LOG" 2>&1
 	;;
 byedpi)
 	[ "$(uci -q get $CONF.config.byedpi_enabled)" = "1" ] || exit 0

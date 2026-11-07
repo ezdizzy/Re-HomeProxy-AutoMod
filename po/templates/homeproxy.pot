@@ -7595,9 +7595,6 @@ msgstr ""
 msgid "Setting up the feed…"
 msgstr ""
 
-msgid "Fallback probe mode: the isolated probe user is unavailable — the sweep may briefly disturb the router's own connections to the test hosts, and the ranking is noisier than usual."
-msgstr ""
-
 msgid "Fallback probe mode"
 msgstr ""
 
