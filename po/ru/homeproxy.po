@@ -2867,9 +2867,6 @@ msgstr "Выученные (движком)"
 msgid "Manual pins"
 msgstr "Ручные закрепления"
 
-msgid "Manual status: “Always via proxy” keeps the site on the proxy and protects it from automatic un-learning; “Always direct” removes it from the learned lists and forces the direct path; “Auto” returns the entry to the engine. A deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that."
-msgstr "Ручной статус: «Всегда через прокси» держит сайт на прокси и защищает его от автоматического удаления; «Всегда напрямую» убирает его из изученных списков и принудительно пускает напрямую; «Авто» возвращает запись под управление движка. Удалённая запись может быть выучена заново, если она действительно заблокирована — чтобы этого избежать, закрепите её как «Всегда напрямую»."
-
 msgid "networks %s, domains %s, %s"
 msgstr "сетей: %s, доменов: %s, %s"
 
@@ -7360,9 +7357,6 @@ msgstr "Все соединения закрыты."
 msgid "Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br><b>Mode notes:</b> active only in \"Bypass blocking\". Automatically paused in \"Everything through node\" (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in \"Direct\" mode (all mechanisms are off)."
 msgstr "Автоматически изучает заблокированные сайты: трафик, который не проходит напрямую, но работает через прокси, добавляется в списки Правил маршрутизации. Полностью совместимо с ByeDPI и Zapret — изученные сайты просто используют ваш основной путь.<br><b>Режимы:</b> работает только в «Обход блокировок». Автоматически на паузе в «Всё через узел» (туннелируется всё — учить нечему), при Основном узле «Напрямую» (нет прокси-стороны для проверки) и в режиме «Напрямую» (все механизмы выключены)."
 
-msgid "A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Service rules page, \"Check a route\"). A pin is also not a guarantee: \"Always via proxy\" rides the main node, \"Always direct\" rides the direct path — both follow the general rule priority."
-msgstr "Пин покрывает ровно этот хост и его поддомены — не весь сервис: CDN, API и другие домены сервиса не покрыты и идут по своим правилам (проверьте реальный маршрут на странице «Правила для сервисов», панель «Проверить маршрут»). Пин — не гарантия: «Всегда через прокси» идёт через главный узел, «Всегда напрямую» — напрямую; оба следуют общему порядку приоритета правил."
-
 msgid "Inside your home"
 msgstr "Внутри дома"
 
@@ -7516,3 +7510,36 @@ msgstr "Текст-отчёт готов за %s с"
 
 msgid "The report expired (router rebooted) — collect it again"
 msgstr "Отчёт истёк (роутер перезагружался) — соберите заново"
+
+msgid "Pins are the manual exceptions of the automation: “Always direct” is the only per-host override that outranks ALL rules (service rules included) — applied instantly, no core restart; “Always proxy” keeps the site on the proxy, protects it from automatic un-learning and re-checks, and works even with the automation toggle off. “Auto” returns the entry to the engine; a deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that. The engine itself always follows the service rules: hosts covered by a service rule are never learned — see the Master-rule protection line on the Engine level."
+msgstr "Закрепления — ручные исключения автоматики: «Всегда напрямую» — единственный точечный обход, который главнее ВСЕХ правил (включая правила сервисов), применяется мгновенно, без перезапуска ядра; «Всегда через прокси» удерживает сайт на прокси, защищает от самоличения и перепроверок и работает даже при выключенной автоматизации. «Авто» возвращает запись движку; удалённая запись может выучиться снова, если сайт реально заблокирован, — закрепите «Всегда напрямую», чтобы исключить это. Сам движок всегда следует правилам сервисов: хосты, покрытые правилом сервиса, никогда не выучиваются — см. строку Master-защиты на уровне «Движок»."
+
+msgid "A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules. “Always via proxy” rides the main node BELOW the service rules (an enabled service rule wins — such a pin is refused), while “Always direct” rides the direct path ABOVE everything. Verify the real route on the Service rules page, \"Check a route\"."
+msgstr "Закрепление охватывает ровно этот хост и его поддомены — не весь сервис: CDN, API и прочие домены сервиса не покрыты и живут по своим правилам. «Всегда через прокси» идёт через главный узел НИЖЕ правил сервисов (включённое правило сервиса сильнее — такое закрепление отклоняется), а «Всегда напрямую» идёт напрямую НАД всеми правилами. Реальный маршрут проверяйте на странице «Правила для сервисов» — «Проверить маршрут»."
+
+msgid "Probes run through the FULL routing path (mixed port) — the same path your devices use."
+msgstr "Пробы идут через ПОЛНЫЙ путь маршрутизации (mixed-порт) — тот же путь, что и у ваших устройств."
+
+msgid "The mixed port is not listening — probes run through the service-check loopback and test only the main exit."
+msgstr "Mixed-порт не слушается — пробы идут через loopback проверки сервисов и тестируют только главный выход."
+
+msgid "From the internet — AnyTLS"
+msgstr "Из интернета — AnyTLS"
+
+msgid "From the internet — Shadowsocks"
+msgstr "Из интернета — Shadowsocks"
+
+msgid "Your phone away from home, or a friend. AnyTLS + REALITY: also looks like normal HTTPS, with connection multiplexing — no certificates and no domain needed."
+msgstr "Ваш телефон вне дома или друг. AnyTLS + REALITY: тоже выглядит как обычный HTTPS, с мультиплексированием соединений — без сертификатов и домена."
+
+msgid "Your phone away from home, or a friend. Shadowsocks 2022: simple and lightweight — no certificates and no domain needed."
+msgstr "Ваш телефон вне дома или друг. Shadowsocks 2022: просто и легко — без сертификатов и домена."
+
+msgid "AnyTLS + REALITY: also looks like normal HTTPS, with connection multiplexing — no certificates and no domain needed."
+msgstr "AnyTLS + REALITY: тоже выглядит как обычный HTTPS-трафик, с мультиплексированием соединений — без сертификатов и домена."
+
+msgid "Shadowsocks 2022: simple and lightweight — no certificates and no domain needed."
+msgstr "Shadowsocks 2022: просто и легко — без сертификатов и домена."
+
+msgid "Protocols with mandatory TLS (Hysteria2, TUIC, Trojan with TLS) need certificates — set them up via «Add» in the list below. The wizard covers the certificate-free protocols; the generator creates REALITY keys automatically."
+msgstr "Протоколы с обязательным TLS (Hysteria2, TUIC, Trojan с TLS) требуют сертификатов — настройте их через «Добавить» в списке ниже. Мастер покрывает протоколы без сертификатов; REALITY-ключи генератор создаёт автоматически."

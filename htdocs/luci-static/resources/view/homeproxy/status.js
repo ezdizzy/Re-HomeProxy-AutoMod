@@ -308,13 +308,19 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 
 	return E([
 		E('div', {'class': 'cbi-map'}, [
-			E('h3', {'name': 'content', 'style': 'align-items: center; display: flex;'}, [
+			/* User note 2026-11-07: the clear button lived INSIDE the h3 and
+			 * inherited its 18px/36px bold typography (~52px tall), crowding
+			 * the log box below. The button now sits on its own compact row
+			 * above the log; the h3 row keeps title + level select (wrapped). */
+			E('h3', {'name': 'content', 'style': 'align-items: center; display: flex; flex-wrap: wrap; gap: 8px;'}, [
 				_('%s log').format(name),
-				log_level_el || '',
+				log_level_el || ''
+			]),
+			E('div', {'style': 'display:flex; justify-content:flex-end; margin:0 0 6px'}, [
 				E('button', {
 					'class': 'hpui-btn hpui-btn-danger',
 					'type': 'button',
-					'style': 'margin-left: 4px;',
+					'style': 'padding: 2px 10px; font-size: .84em;',
 					'click': ui.createHandlerFn(this, () => {
 						return L.resolveDefault(callLogClean(filename), {});
 					})

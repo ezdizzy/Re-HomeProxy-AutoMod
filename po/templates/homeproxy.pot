@@ -2620,9 +2620,6 @@ msgstr ""
 msgid "Manual pins"
 msgstr ""
 
-msgid "Manual status: “Always via proxy” keeps the site on the proxy and protects it from automatic un-learning; “Always direct” removes it from the learned lists and forces the direct path; “Auto” returns the entry to the engine. A deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that."
-msgstr ""
-
 msgid "networks %s, domains %s, %s"
 msgstr ""
 
@@ -5196,9 +5193,6 @@ msgstr ""
 msgid "Delete ALL learned sites? The engine will re-learn them from scratch."
 msgstr ""
 
-msgid "A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Service rules page, \"Check a route\"). A pin is also not a guarantee: \"Always via proxy\" rides the main node, \"Always direct\" rides the direct path — both follow the general rule priority."
-msgstr ""
-
 msgid "Quick fuzz"
 msgstr ""
 
@@ -7508,4 +7502,37 @@ msgid "Text report ready in %s s"
 msgstr ""
 
 msgid "The report expired (router rebooted) — collect it again"
+msgstr ""
+
+msgid "Pins are the manual exceptions of the automation: “Always direct” is the only per-host override that outranks ALL rules (service rules included) — applied instantly, no core restart; “Always proxy” keeps the site on the proxy, protects it from automatic un-learning and re-checks, and works even with the automation toggle off. “Auto” returns the entry to the engine; a deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that. The engine itself always follows the service rules: hosts covered by a service rule are never learned — see the Master-rule protection line on the Engine level."
+msgstr ""
+
+msgid "A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules. “Always via proxy” rides the main node BELOW the service rules (an enabled service rule wins — such a pin is refused), while “Always direct” rides the direct path ABOVE everything. Verify the real route on the Service rules page, \"Check a route\"."
+msgstr ""
+
+msgid "Probes run through the FULL routing path (mixed port) — the same path your devices use."
+msgstr ""
+
+msgid "The mixed port is not listening — probes run through the service-check loopback and test only the main exit."
+msgstr ""
+
+msgid "From the internet — AnyTLS"
+msgstr ""
+
+msgid "From the internet — Shadowsocks"
+msgstr ""
+
+msgid "Your phone away from home, or a friend. AnyTLS + REALITY: also looks like normal HTTPS, with connection multiplexing — no certificates and no domain needed."
+msgstr ""
+
+msgid "Your phone away from home, or a friend. Shadowsocks 2022: simple and lightweight — no certificates and no domain needed."
+msgstr ""
+
+msgid "AnyTLS + REALITY: also looks like normal HTTPS, with connection multiplexing — no certificates and no domain needed."
+msgstr ""
+
+msgid "Shadowsocks 2022: simple and lightweight — no certificates and no domain needed."
+msgstr ""
+
+msgid "Protocols with mandatory TLS (Hysteria2, TUIC, Trojan with TLS) need certificates — set them up via «Add» in the list below. The wizard covers the certificate-free protocols; the generator creates REALITY keys automatically."
 msgstr ""

@@ -745,11 +745,10 @@ return view.extend({
 		sitesBox.appendChild(sitesResult);
 		sitesBox.appendChild(fileInput);
 		sitesBox.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Manual status: “Always via proxy” keeps the site on the proxy and protects it from automatic un-learning; “Always direct” removes it from the learned lists and forces the direct path; “Auto” returns the entry to the engine. A deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that.') ]));
-		/* U6 (Ф4.3): the honest scope of a pin — exactly this host, not the
-		 * whole service; a pin is also NOT a block-circumvention guarantee. */
+			[ _('Pins are the manual exceptions of the automation: “Always direct” is the only per-host override that outranks ALL rules (service rules included) — applied instantly, no core restart; “Always proxy” keeps the site on the proxy, protects it from automatic un-learning and re-checks, and works even with the automation toggle off. “Auto” returns the entry to the engine; a deleted entry may be re-learned later if it is genuinely blocked — pin it “Always direct” to prevent that. The engine itself always follows the service rules: hosts covered by a service rule are never learned — see the Master-rule protection line on the Engine level.') ]));
+		/* U6 (Ф4.3) + variant A: the honest scope and precedence of a pin. */
 		sitesBox.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Service rules page, "Check a route"). A pin is also not a guarantee: "Always via proxy" rides the main node, "Always direct" rides the direct path — both follow the general rule priority.') ]));
+			[ _('A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules. “Always via proxy” rides the main node BELOW the service rules (an enabled service rule wins — such a pin is refused), while “Always direct” rides the direct path ABOVE everything. Verify the real route on the Service rules page, "Check a route".') ]));
 
 		/* ── Logs level (Ф7.1): the engine log + the automation-family
 		 * Event Bus feed (Ф7.3 — the same journal the Health center renders,

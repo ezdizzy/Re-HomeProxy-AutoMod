@@ -32,6 +32,34 @@ import { write_state as ss_write_state, read_state as ss_read_state } from '/etc
 
 const ubus = connect();
 
+/* Lesson 355: a REMOTE service rule-set can silently die when the upstream
+ * release asset goes stale (google_ai.srs shipped with ZERO gemini domains —
+ * verified live 2026-11-07: 375 bytes, no gemini/aistudio strings; the rule
+ * matched nothing, Gemini rode the direct path with the real IP, and the
+ * service check stayed green because it probed the main exit only). Sources
+ * with a SHIPPED local list (resources/rule_<src>.txt) become an INLINE
+ * domain_suffix rule — no rule-set binary needed, identical on every core
+ * dialect, and the route trace can prove the match locally. Missing/empty
+ * list -> null: the remote .srs path stays the honest fallback.
+ * 🔴 Top-level (lesson 93/126: no hoisting — the DNS and route scopes are
+ * different blocks, a nested declaration is invisible to the route loop). */
+function hp_service_inline_domains(src) {
+	const f = HP_DIR + '/resources/rule_' + src + '.txt';
+	let raw = null;
+	if (access(f)) {
+		try { raw = readfile(f); } catch (e) { raw = null; }
+	}
+	if (raw == null || type(raw) !== 'string')
+		return null;
+	const out = [];
+	for (let l in split('' + raw, /[\r\n]/)) {
+		l = trim(l);
+		if (length(l) && substr(l, 0, 1) !== '#')
+			push(out, lc(l));
+	}
+	return length(out) ? out : null;
+}
+
 /* const features = ubus.call('luci.homeproxy', 'singbox_get_features') || {}; */
 
 /* UCI config start */
@@ -1290,6 +1318,8 @@ if (!isEmpty(main_node)) {
 		 * plain direct pool, matching the direct route. Engines that DIAL
 		 * the resolved IP themselves (ByeDPI/Zapret enabled) need
 		 * poison-proof answers and keep secure-dns. */
+		/* Lesson 355 — the helper lives at module top level (see the header):
+		 * the DNS and route scopes are different blocks (lesson 93/126). */
 		const ru_dns_target_of = (cfg) => {
 			const n = cfg.node || 'main-out';
 			if (n === 'byedpi-out')
@@ -1302,11 +1332,19 @@ if (!isEmpty(main_node)) {
 			const dnst = ru_dns_target_of(cfg);
 			if (!dnst)
 				continue;
-			push(config.dns.rules, {
-				rule_set: (cfg.source === 'refilter') ? 'hp-ru-refilter-domain' : ('hp-ru-' + cfg.source),
-				action: 'route',
-				server: dnst
-			});
+			const inline_dns = hp_service_inline_domains(cfg.source);
+			if (inline_dns)
+				push(config.dns.rules, {
+					domain_suffix: inline_dns,
+					action: 'route',
+					server: dnst
+				});
+			else
+				push(config.dns.rules, {
+					rule_set: (cfg.source === 'refilter') ? 'hp-ru-refilter-domain' : ('hp-ru-' + cfg.source),
+					action: 'route',
+					server: dnst
+				});
 		}
 
 		/* OAuth stability (ч.59): auth providers resolve through the encrypted
@@ -3038,20 +3076,32 @@ if (!isEmpty(main_node)) {
 				'twitch': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/twitch.srs'
 			};
 
-			/* Routing rules */
-			let rule_sets;
-			if (cfg.source === 'refilter')
-				rule_sets = ['hp-ru-refilter-domain', 'hp-ru-refilter-ip'];
-			else if (SOURCE_IP_MAP[cfg.source])
-				rule_sets = ['hp-ru-' + cfg.source, 'hp-ru-' + cfg.source + '-ip'];
-			else
-				rule_sets = ['hp-ru-' + cfg.source];
-			push(config.route.rules, {
-				rule_set: rule_sets,
-				action: 'route',
-				outbound: effective_outbound,
-				network: null
-			});
+			/* Routing rules. Sources with a shipped local list ride an INLINE
+			 * domain_suffix rule (lesson 355 — the remote asset can silently
+			 * go stale and the rule dies without a trace). */
+			const inline_dom = hp_service_inline_domains(cfg.source);
+			if (inline_dom) {
+				push(config.route.rules, {
+					domain_suffix: inline_dom,
+					action: 'route',
+					outbound: effective_outbound,
+					network: null
+				});
+			} else {
+				let rule_sets;
+				if (cfg.source === 'refilter')
+					rule_sets = ['hp-ru-refilter-domain', 'hp-ru-refilter-ip'];
+				else if (SOURCE_IP_MAP[cfg.source])
+					rule_sets = ['hp-ru-' + cfg.source, 'hp-ru-' + cfg.source + '-ip'];
+				else
+					rule_sets = ['hp-ru-' + cfg.source];
+				push(config.route.rules, {
+					rule_set: rule_sets,
+					action: 'route',
+					outbound: effective_outbound,
+					network: null
+				});
+			}
 
 			/* Rule sets (remote — core handles download and 1d refresh).
 			 * ⚠ ч.63: NO filter() with an inner arrow here — this ucode build does
@@ -3108,7 +3158,11 @@ if (!isEmpty(main_node)) {
 					'wargaming': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/wargaming.srs',
 					'xbox': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/xbox.srs'
 				};
-				if (!has_ruleset('hp-ru-' + cfg.source)) {
+				if (hp_service_inline_domains(cfg.source)) {
+					/* Shipped inline list (lesson 355) — no rule-set to
+					 * declare: the route/DNS rules above carry the
+					 * domain_suffix array directly. */
+				} else if (!has_ruleset('hp-ru-' + cfg.source)) {
 					remember_ruleset('hp-ru-' + cfg.source);
 					push(config.route.rule_set, {
 						type: 'remote',

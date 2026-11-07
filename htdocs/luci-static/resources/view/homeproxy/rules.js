@@ -1496,6 +1496,16 @@ return view.extend({
 				checkResult.appendChild(E('div', { 'class': 'hpui-banner' },
 					[ _('The exit country is on the service blocklist (RU/BY/CN/HK/MO/IR/KP) — switch the node.') ]));
 
+			/* Lesson 355 honesty: the probes now ride the FULL routing path
+			 * (mixed inbound) — the same path the devices use — so a dead
+			 * rule-set shows up as a refusal instead of a false green. */
+			if (r.probe_path === 'mixed')
+				checkResult.appendChild(E('div', { 'class': 'hpui-hint' },
+					[ _('Probes run through the FULL routing path (mixed port) — the same path your devices use.') ]));
+			else
+				checkResult.appendChild(E('div', { 'class': 'hpui-banner' },
+					[ _('The mixed port is not listening — probes run through the service-check loopback and test only the main exit.') ]));
+
 			const row = E('div', { 'class': 'wiz-row' });
 			if (r.service === 'google_ai') {
 				row.appendChild(E('span', { 'class': 'wiz-title' }, [ _('Google AI API') ]));

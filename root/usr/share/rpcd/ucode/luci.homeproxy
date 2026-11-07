@@ -735,7 +735,7 @@ function hp_listen_ports() {
 	if (!fd)
 		return ports;
 	for (let line = fd.read('line'); length(line); line = fd.read('line')) {
-		if (!match(line, /hiddify|sing.box|ciadpi|mosdns/))
+		if (!match(line, /hiddify|sing.box|tachyon|ciadpi|mosdns/))
 			continue;
 		if (match(line, /^tcp/)) {
 			if (match(line, / LISTEN /))
@@ -1032,9 +1032,16 @@ function rulesets_fresh_status(list) {
  * remote list matches the host; the companion is the list's base-domain
  * subset, not a formal proof). */
 function hp_companion_hit(host, src) {
-	const f = HP_DIR + '/resources/engine_' + src + '.txt';
-	if (!access(f))
-		return null;
+	let f = HP_DIR + '/resources/engine_' + src + '.txt';
+	if (!access(f)) {
+		/* Lesson 355: sources with a SHIPPED inline list (rule_<src>.txt)
+		 * ARE locally parseable — the old remote-only assumption kept them
+		 * 'coverage_unknown' forever even though the exact domain set sits
+		 * on the box. */
+		f = HP_DIR + '/resources/rule_' + src + '.txt';
+		if (!access(f))
+			return null;
+	}
 	let raw = null;
 	try { raw = readfile(f); } catch (e) { raw = null; }
 	if (raw === null || type(raw) !== 'string')
@@ -6344,7 +6351,18 @@ const methods = {
 			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
+			/* Lesson 355: the loopback 5337 inbound is pinned to main-out
+			 * ABOVE every routing rule, so a probe through it proves only
+			 * the main exit and stays green even when a service rule
+			 * matches nothing at runtime (the gemini srs outage). The
+			 * api/web probes MUST ride the mixed inbound — the FULL
+			 * routing path the devices actually use — while the exit
+			 * lookup keeps 5337 (it measures exactly "which country the
+			 * main exit sits in"). probe_path tells the UI which path the
+			 * service probes took. */
+			const mixed_up = hp_inbound_listening(lports, int(mixed));
 			const main_port = hp_inbound_listening(lports, 5337) ? 5337 : int(mixed);
+			const probe_port = mixed_up ? int(mixed) : main_port;
 			const direct_port = hp_inbound_listening(lports, 5336) ? 5336 : null;
 
 			const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
@@ -6355,6 +6373,8 @@ const methods = {
 				result: true,
 				service: service,
 				main_port: main_port,
+				probe_port: probe_port,
+				probe_path: mixed_up ? 'mixed' : 'main-pinned',
 				direct_port: direct_port,
 				exit: exit,
 				exit_direct: exit_direct,
@@ -6368,8 +6388,9 @@ const methods = {
 				 * endpoint answers 403 from BOTH regions — a supported region
 				 * complains about the KEY ("API key not valid"), an unsupported
 				 * one about the LOCATION ("User location is not supported").
-				 * 200/400/401 shapes also mean the region gate did not fire. */
-				const api = hp_probe_fetch('https://generativelanguage.googleapis.com/v1beta/models', main_port, null, 8);
+				 * 200/400/401 shapes also mean the region gate did not fire.
+				 * Probes ride probe_port = the FULL routing path (lesson 355). */
+				const api = hp_probe_fetch('https://generativelanguage.googleapis.com/v1beta/models', probe_port, null, 8);
 				const b = lc(api.body);
 				if (index(b, 'location is not supported') >= 0 || index(b, 'unsupported_country') >= 0)
 					out.api = { code: api.code, verdict: 'refused', note: 'region refused (API)' };
@@ -6381,7 +6402,7 @@ const methods = {
 
 				/* Web verdict (ч.70): the SPA shell serves 200 from anywhere —
 				 * the refusal text inside the body is the honest signal. */
-				const web = hp_probe_fetch('https://gemini.google.com/', main_port, 'Accept-Language: en-US,en;q=0.9', 10);
+				const web = hp_probe_fetch('https://gemini.google.com/', probe_port, 'Accept-Language: en-US,en;q=0.9', 10);
 				if (web.code === '200' || web.code === '302' || web.code === '301')
 					out.web = { code: web.code, verdict: wiz_body_refuses(web.body) ? 'refused' : 'served' };
 				else
@@ -6405,7 +6426,7 @@ const methods = {
 				 * old body marker is gone, the CODE is the verdict. An
 				 * unsupported region returns the region marker in the body
 				 * (any code). */
-				const api = hp_probe_fetch('https://api.openai.com/v1/models', main_port, null, 8);
+				const api = hp_probe_fetch('https://api.openai.com/v1/models', probe_port, null, 8);
 				const b = lc(api.body);
 				if (index(b, 'unsupported_country_region_territory') >= 0)
 					out.api = { code: api.code, verdict: 'refused', note: 'region refused (API)' };
@@ -6511,9 +6532,23 @@ const methods = {
 			};
 			writefile(CFG_FILE, sprintf('%.J', probe_conf) + '\n');
 
-			/* Spawn: the pid file must carry the CORE pid, so exec replaces sh. */
+			/* Spawn: the pid file must carry the CORE pid, so exec replaces sh.
+			 * Engine-agnostic (multi-core audit): the probe rides the ACTIVE
+			 * core binary — a sing-box/tachyon box has no hiddify-core and the
+			 * hardcoded spawn could never come up (the 6 s wait burned and the
+			 * node battery died). hiddify dialect launches with `srun`, plain
+			 * sing-box with `run`. */
+			const probe_core = get_active_core();
+			const pbin = (probe_core && access(probe_core.path)) ? probe_core.path
+				: (access('/usr/bin/hiddify-core') ? '/usr/bin/hiddify-core'
+					: (access('/usr/bin/sing-box') ? '/usr/bin/sing-box' : null));
+			if (!pbin) {
+				kill_probe_core();
+				return { result: false, error: 'no core binary installed for the probe' };
+			}
+			const prun = (match(pbin, /hiddify/)) ? 'srun' : 'run';
 			const inner = 'echo $$ > ' + PID_FILE + '; exec env ' +
-				'ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /usr/bin/hiddify-core srun --config ' +
+				'ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true ' + shellquote(pbin) + ' ' + prun + ' --config ' +
 				CFG_FILE + ' >' + LOG_FILE + ' 2>&1';
 			system(`sh -c ${shellquote(inner)} &`);
 
@@ -9449,7 +9484,7 @@ const methods = {
 
 	/* ── Automation table: per-entry management (Automation tab, "List") ── */
 
-	automation_entry_add: {
+		automation_entry_add: {
 		args: { entry: 'entry', action: 'action' },
 		call: function(req) {
 			const entry = valid_automation_entry(req.args?.entry);
@@ -9459,10 +9494,17 @@ const methods = {
 			if (action !== 'proxy' && action !== 'direct')
 				return { result: false, error: 'invalid action' };
 
-			/* Manual "always proxy" pins never touch the auto lists; the learned
-			 * lists only accept RU-safe hosts (the daemon purges violations, but
-			 * never create them in the first place here). */
+			/* Variant A (user, 2026-11-07): the automation engine already
+			 * FOLLOWS the service rules — a host covered by an enabled rule
+			 * is never learned. A proxy pin on such a host would be a LIE:
+			 * the service rule outranks the proxy lists (tier order), so
+			 * the pin would silently do nothing. Refuse honestly and point
+			 * at the rules page. A DIRECT pin stays allowed — it is the
+			 * ONLY per-host override that outranks the service rules. */
 			if (action === 'proxy') {
+				const cov = hp_master_coverage(entry);
+				if (cov && cov.status === 'protected_by_master')
+					return { result: false, error: 'хост уже покрыт правилом сервиса («' + join(', ', cov.sources) + '») — правило сервисов главнее прокси-закрепления; правьте маршрут на странице правил' };
 				const proxy_set = auto_read_set(HP_DIR + '/resources/manual_proxy.txt');
 				proxy_set[entry] = true;
 				auto_write_set(HP_DIR + '/resources/manual_proxy.txt', proxy_set);
@@ -9538,6 +9580,12 @@ const methods = {
 			if (md[entry]) { delete md[entry]; auto_write_set(HP_DIR + '/resources/manual_direct.txt', md); touched = true; }
 
 			if (action === 'proxy') {
+				/* Variant A (user, 2026-11-07): a proxy pin under an enabled
+				 * service rule would be silently outranged — refuse honestly
+				 * (a DIRECT pin stays allowed: it outranks service rules). */
+				const cov = hp_master_coverage(entry);
+				if (cov && cov.status === 'protected_by_master')
+					return { result: false, error: 'хост уже покрыт правилом сервиса («' + join(', ', cov.sources) + '») — правило сервисов главнее прокси-закрепления; правьте маршрут на странице правил' };
 				/* Moving to manual proxy: leave the learned entry in place (it keeps
 				 * the probe metadata) and add the pin; if not learned, the pin alone
 				 * routes it via the proxy lists. */

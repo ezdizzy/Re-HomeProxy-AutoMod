@@ -2447,7 +2447,17 @@ function update_text() {
 		} else
 			out += esc_html(name) + ': проверка не удалась (GitHub?)\n';
 	}
-	push(rows, [ '⬆ Ядро (hiddify-core)', 'upd:core:hiddify' ]);
+	/* Engine-aware core update row (multi-core): the box may run sing-box —
+	 * the hardcoded hiddify-core label/action was a lie for those installs. */
+	let core_label = 'hiddify-core', core_key = 'hiddify';
+	try {
+		const ccj = json(ci || '');
+		if (ccj && ccj.core_type === 'singbox') {
+			core_label = 'sing-box';
+			core_key = 'singbox';
+		}
+	} catch (e) {}
+	push(rows, [ '⬆ Ядро (' + core_label + ')', 'upd:core:' + core_key ]);
 	push(rows, [ '⬅ Меню', 'act:menu' ]);
 	return { text: out, kb: kb_rows(rows) };
 }

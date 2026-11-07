@@ -160,7 +160,9 @@ function openWizard(preset, grid) {
 
 	const titles = {
 		home: _('Inside your home'),
-		net: _('From the internet')
+		net: _('From the internet'),
+		anytls: _('From the internet — AnyTLS'),
+		ss: _('From the internet — Shadowsocks')
 	};
 
 	const wName = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'placeholder': _('My server') });
@@ -173,12 +175,16 @@ function openWizard(preset, grid) {
 	const note = E('p', { 'class': 'srv-note' }, []);
 	const say = (msg) => { note.textContent = msg; };
 
-	const genPass = () => { wPass.value = hp.generateRand('hex', 16); };
+	/* Shadowsocks AEAD-2022 needs a base64 key of the method's byte length;
+	 * the other presets use a plain hex password / UUID. */
+	const genPass = (preset === 'ss')
+		? () => { wPass.value = hp.generateRand('base64', 16); }
+		: () => { wPass.value = hp.generateRand('hex', 16); };
 	const genUuid = () => { wUuid.value = hp.generateRand('uuid'); };
 	genPass();
 	genUuid();
 	wPort.value = suggestPort();
-	wFw.checked = (preset === 'net');
+	wFw.checked = (preset !== 'home');
 
 	const regenBtn = (fn) => E('button', {
 		'class': 'hpui-btn hpui-btn-ghost', 'type': 'button',
@@ -192,6 +198,8 @@ function openWizard(preset, grid) {
 
 	if (preset === 'home') {
 		rows.push([ _('Username'), wUser ]);
+		rows.push([ _('Password'), E('div', { 'class': 'srv-cred' }, [ wPass, regenBtn(genPass) ]) ]);
+	} else if (preset === 'anytls' || preset === 'ss') {
 		rows.push([ _('Password'), E('div', { 'class': 'srv-cred' }, [ wPass, regenBtn(genPass) ]) ]);
 	} else {
 		rows.push([ 'UUID', E('div', { 'class': 'srv-cred' }, [ wUuid, regenBtn(genUuid) ]) ]);
@@ -233,13 +241,13 @@ function openWizard(preset, grid) {
 		btnCreate.disabled = true;
 		say('…');
 
-		const prep = (preset === 'net')
+		const prep = (preset === 'net' || preset === 'anytls')
 			? L.resolveDefault(callGen('reality-keypair', ''), {}).then((res) =>
 				(res && res.result) ? res.result : null)
 			: Promise.resolve(null);
 
 		prep.then((keys) => {
-			if (preset === 'net' && (!keys || !keys.private_key || !keys.public_key)) {
+			if ((preset === 'net' || preset === 'anytls') && (!keys || !keys.private_key || !keys.public_key)) {
 				say(_('Key generation failed — try again.'));
 				btnCreate.disabled = null;
 				return;
@@ -259,6 +267,20 @@ function openWizard(preset, grid) {
 			if (preset === 'home') {
 				uci.set('homeproxy', sid, 'type', 'mixed');
 				uci.set('homeproxy', sid, 'username', (wUser.value || '').trim() || 'user');
+				uci.set('homeproxy', sid, 'password', wPass.value);
+			} else if (preset === 'anytls') {
+				uci.set('homeproxy', sid, 'type', 'anytls');
+				uci.set('homeproxy', sid, 'password', wPass.value);
+				uci.set('homeproxy', sid, 'tls', '1');
+				uci.set('homeproxy', sid, 'tls_reality', '1');
+				uci.set('homeproxy', sid, 'tls_reality_private_key', keys.private_key);
+				uci.set('homeproxy', sid, 'tls_reality_public_key', keys.public_key);
+				uci.set('homeproxy', sid, 'tls_reality_short_id', [ hp.generateRand('hex', 4) ]);
+				uci.set('homeproxy', sid, 'tls_reality_server_addr', 'www.microsoft.com');
+				uci.set('homeproxy', sid, 'tls_reality_server_port', '443');
+			} else if (preset === 'ss') {
+				uci.set('homeproxy', sid, 'type', 'shadowsocks');
+				uci.set('homeproxy', sid, 'shadowsocks_encrypt_method', '2022-blake3-aes-128-gcm');
 				uci.set('homeproxy', sid, 'password', wPass.value);
 			} else {
 				uci.set('homeproxy', sid, 'type', 'vless');
@@ -285,10 +307,15 @@ function openWizard(preset, grid) {
 		});
 	});
 
+	const wHints = {
+		home: _('A second router or a trusted device in your LAN. Works out of the box — no certificates, no domain.'),
+		net: _('Your phone away from home, or a friend. VLESS + REALITY: looks like normal HTTPS traffic, no certificates and no domain needed.'),
+		anytls: _('Your phone away from home, or a friend. AnyTLS + REALITY: also looks like normal HTTPS, with connection multiplexing — no certificates and no domain needed.'),
+		ss: _('Your phone away from home, or a friend. Shadowsocks 2022: simple and lightweight — no certificates and no domain needed.')
+	};
+
 	ui.showModal(_('Create server: %s').format(titles[preset]), [
-		E('p', { 'class': 'hpui-hint' }, (preset === 'home')
-			? _('A second router or a trusted device in your LAN. Works out of the box — no certificates, no domain.')
-			: _('Your phone away from home, or a friend. VLESS + REALITY: looks like normal HTTPS traffic, no certificates and no domain needed.')),
+		E('p', { 'class': 'hpui-hint' }, [ wHints[preset] || '' ]),
 		E('div', { 'class': 'srv-wform' }, rows.flatMap((r) => [ E('label', {}, [ r[0] ]), r[1] ])),
 		E('div', { 'class': 'hpui-hint', 'style': 'margin-top:10px' },
 			[ _('After you save, set up the client with the SAME parameters (port, keys, passwords) — everything is visible in the server settings.') ]),
@@ -371,8 +398,20 @@ return view.extend({
 						E('div', { 'class': 'srv-card-t' }, [ hp.icon('globe'), _('From the internet') ]),
 						E('div', { 'class': 'hpui-hint' },
 							[ _('Your phone away from home, or a friend. VLESS + REALITY: looks like normal HTTPS traffic, no certificates and no domain needed.') ])
+					]),
+					E('div', { 'class': 'hpui-card srv-card', 'click': () => openWizard('anytls', srvGrid) }, [
+						E('div', { 'class': 'srv-card-t' }, [ hp.icon('shield'), _('From the internet — AnyTLS') ]),
+						E('div', { 'class': 'hpui-hint' },
+							[ _('AnyTLS + REALITY: also looks like normal HTTPS, with connection multiplexing — no certificates and no domain needed.') ])
+					]),
+					E('div', { 'class': 'hpui-card srv-card', 'click': () => openWizard('ss', srvGrid) }, [
+						E('div', { 'class': 'srv-card-t' }, [ hp.icon('zap'), _('From the internet — Shadowsocks') ]),
+						E('div', { 'class': 'hpui-hint' },
+							[ _('Shadowsocks 2022: simple and lightweight — no certificates and no domain needed.') ])
 					])
-				])
+				]),
+				E('p', { 'class': 'hpui-hint' },
+					[ _('Protocols with mandatory TLS (Hysteria2, TUIC, Trojan with TLS) need certificates — set them up via «Add» in the list below. The wizard covers the certificate-free protocols; the generator creates REALITY keys automatically.') ])
 			]);
 		};
 

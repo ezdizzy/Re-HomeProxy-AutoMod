@@ -244,14 +244,18 @@ return view.extend({
 .ov-pairs .v { font-weight: 600; }
 .hpui-cap .hpui-ic { margin-right: 5px; opacity: .9; }
 /* Brand block (Р3): raven icon + wordmark/slogan. */
-.hpui-brand { display: flex; align-items: center; gap: 14px; padding: 12px 16px; margin: 2px 0 12px; border: 1px solid var(--hp-panel-line); border-left: 4px solid var(--hp-accent); border-radius: var(--hp-radius-lg); background: linear-gradient(90deg, var(--hp-accent-soft), transparent 55%), var(--hp-panel-bg); box-shadow: var(--hp-shadow); }
+.hpui-brand { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; padding: 12px 16px; margin: 2px 0 12px; border: 1px solid var(--hp-panel-line); border-left: 4px solid var(--hp-accent); border-radius: var(--hp-radius-lg); background: linear-gradient(90deg, var(--hp-accent-soft), transparent 55%), var(--hp-panel-bg); box-shadow: var(--hp-shadow); }
 .hpui-brand-ic { width: 52px; height: 52px; border-radius: 12px; flex: none; box-shadow: 0 2px 8px rgba(0,0,0,.28); }
 .hpui-brand-name { font-size: 1.45em; font-weight: 800; line-height: 1.25; display: flex; align-items: baseline; gap: 8px; }
 .hpui-brand-slogan { color: var(--hp-accent-strong); font-weight: 700; font-size: .58em; letter-spacing: .06em; white-space: nowrap; }
-.hpui-brand-ver { margin-left: auto; align-self: flex-start; font-size: .84em; opacity: .85; border: 1px solid var(--hp-panel-line); border-radius: 999px; padding: 2px 10px; background: var(--hp-panel-bg-2); white-space: nowrap; }
+/* One auto-margin ONLY (hero-right): the version pill sits at the FAR right
+ * with a fixed gap, so status-text width changes cannot shift it or the
+ * check button — the old double margin-left:auto split the free space and
+ * everything "jumped around" on every poll (user note 2026-11-07). */
+.hpui-brand-ver { margin-left: 12px; align-self: flex-start; font-size: .84em; opacity: .85; border: 1px solid var(--hp-panel-line); border-radius: 999px; padding: 2px 10px; background: var(--hp-panel-bg-2); white-space: nowrap; }
 /* Р3 v3 hub: hero status on the right side of the brand block. */
 .hpui-hero-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; padding-left: 14px; }
-.hpui-hero-status { font-size: 1.08em; font-weight: 800; white-space: nowrap; }
+.hpui-hero-status { font-size: 1.08em; font-weight: 800; white-space: nowrap; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; }
 .hpui-hero-status.ok { color: var(--hp-accent-strong); }
 .hpui-hero-status.bad { color: var(--hp-red); }
 .hpui-brand-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
@@ -292,12 +296,18 @@ return view.extend({
 .hpui-mnote:empty { display: none; }
 .hpui-mspark-slot { flex: none; align-self: flex-end; }
 .hpui-mspark { width: 82px; height: 34px; display: block; }
-		/* Two-column system band at the bottom (utilities, not headline). */
-.ov-grid { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin: 0; }
-.ov-col { display: flex; flex-direction: column; min-width: 0; }
-.ov-col > .hpui-panel { margin: 0 0 12px 0; }
-/* Ф9.1: the Dashboard events strip — a compact tail of the unified journal. */
-.ov-evlist { max-height: 216px; }
+		/* Utility band at the bottom: THREE EQUAL cards in one row (user
+		 * note 2026-11-07 — the old 2.1fr/1fr split with stacked right
+		 * column produced uneven card heights). auto-fit gives every card
+		 * the same width and the grid stretch equalizes heights; panels are
+		 * flex columns with the hint pinned to the bottom so the three
+		 * cards read as one level. */
+		.ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: stretch; margin: 0; }
+		.ov-grid > .hpui-panel { margin: 0; display: flex; flex-direction: column; min-width: 0; }
+		.ov-grid > .hpui-panel > .hpui-hint { margin-top: auto; padding-top: 6px; }
+		.ov-grid .ov-pairs { flex: 1 1 auto; align-content: start; }
+		/* Ф9.1: the Dashboard events strip — a compact tail of the unified journal. */
+		.ov-grid .ov-evlist { flex: 1 1 auto; max-height: 300px; min-height: 130px; }
 .hpui-h4 .hpui-cap-link { margin-left: auto; font-size: .84em; color: var(--hp-accent-strong); }
 @media (max-width: 1150px) { .ov-grid { grid-template-columns: 1fr; } }
 `;
@@ -407,7 +417,7 @@ return view.extend({
 				E('div', { 'class': 'hpui-hub-desc' }, [ HUB_DEFS[h][3] ]),
 				btn
 			]);
-			hub[HUB_DEFS[h][0]] = { dot: dot, state: state };
+			hub[HUB_DEFS[h][0]] = { dot: dot, state: state, btn: btn };
 			hubEl.appendChild(el);
 		}
 
@@ -915,12 +925,16 @@ return view.extend({
 			hub.family.state.textContent = ctlEnabled
 				? (ctlPaused ? _('Paused') : _('Active')) : _('Off');
 
-			/* Phone control (concern card 6). */
+			/* Phone control (concern card 6). Honesty: when the Telegram
+			 * daemon is up and enabled the bot IS connected — the action is
+			 * then «Open», not «Connect» (user note, 2026-11-07). */
 			const tgEnabled = !!(sys.telegram && sys.telegram.enabled === true);
 			const tgRunning = !!(sys.telegram && sys.telegram.running);
 			hub.phone.dot.className = 'hpui-dot' + (tgEnabled ? (tgRunning ? ' ok' : ' bad') : '');
 			hub.phone.state.textContent = tgEnabled
 				? (tgRunning ? _('running') : _('enabled, not running')) : _('disabled');
+			if (hub.phone.btn)
+				hub.phone.btn.textContent = (tgEnabled && tgRunning) ? _('Open') : _('Connect');
 
 			/* Check & repair + Maintenance (concern cards 7-8): the health
 			 * verdict repeats the fact the hero states; the version rides
@@ -1146,15 +1160,10 @@ return view.extend({
 				chartsCap
 			]),
 			trafficEl,
-			/* System band: utilities live at the BOTTOM of the hub — a
-			 * right-hand column stole attention from the concern cards
-			 * (user note ч.137). Ф9.1: the events strip joins the right
-			 * column above the quick actions (§A.4: critical events are
-			 * Dashboard material). */
-			E('div', { 'class': 'ov-grid' }, [
-				E('div', { 'class': 'ov-col' }, [ sysEl ]),
-				E('div', { 'class': 'ov-col' }, [ eventsEl, actionsEl ])
-			]),
+			/* Utility band: THREE EQUAL cards in one row (user note 2026-11-07).
+			 * Utilities live at the BOTTOM of the hub — away from the concern
+			 * cards; the events strip is Dashboard material (§A.4). */
+			E('div', { 'class': 'ov-grid' }, [ sysEl, eventsEl, actionsEl ]),
 			resultEl
 		]);
 	}

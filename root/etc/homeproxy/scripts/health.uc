@@ -243,11 +243,22 @@ export function scan_procs(want) {
 			const spec = want[name];
 			let hit = null;
 			if (spec.exe != null) {
+				/* exe is a bare name OR an array of names (multi-core: the
+				 * active engine may be hiddify-core or a sing-box family
+				 * binary; lesson 233 still applies — basenames only). */
+				const exes = (type(spec.exe) === 'array') ? spec.exe : [ '' + spec.exe ];
 				for (let e in parts) {
-					if (length(e) && basename_of(e) === '' + spec.exe) {
-						hit = { pid: int(p), exe: '' + e };
-						break;
+					if (!length(e))
+						continue;
+					const bn = basename_of(e);
+					for (let x in exes) {
+						if (bn === '' + x) {
+							hit = { pid: int(p), exe: '' + e };
+							break;
+						}
 					}
+					if (hit != null)
+						break;
 				}
 			} else if (spec.script != null) {
 				const full = SCRIPTS_DIR + '/' + spec.script;
@@ -775,7 +786,12 @@ function system_entry() {
  * ч.164) — скан сильнее и само-лечит реестр через heal_reg(). */
 
 const DEEP_SCAN_SPECS = {
-	core: { exe: 'hiddify-core' },
+	/* Multi-core: the scan must find the ACTIVE engine — hiddify-core OR a
+	 * sing-box-family binary (sing-box / sing-box-core lite wrapper). The
+	 * old hiddify-only spec left sing-box boxes with scan.core=null on every
+	 * deep pass → 'процесс ядра не подтверждён' flapping against the ok
+	 * light pass (registry was fine; only the deep /proc identity was blind). */
+	core: { exe: [ 'hiddify-core', 'sing-box', 'sing-box-core' ] },
 	/* 🔴 Урок 233 (ч.167, живой лов — шторм down/ok каждые 5 с): scan_procs
 	 * сравнивает basename_of(cmdline-элемента) со spec.exe — ПОЛНЫЙ ПУТЬ
 	 * ('/usr/bin/mosdns') никогда не матчился (basename 'mosdns' ≠ путь),

@@ -1,0 +1,37 @@
+# Google AI service rule — shipped local domain list (domain_suffix semantics).
+# Replaces the itdoginfo remote google_ai.srs: the upstream RELEASE asset went
+# stale (375 bytes, no gemini domains — verified live 2026-11-07), so the rule
+# silently matched nothing and Gemini traffic rode the direct path with the
+# real IP. This list is compiled into the config as an inline domain_suffix
+# rule — no rule-set binary, works on every core (hiddify/sing-box/tachyon).
+# Source of truth: itdoginfo/allow-domains Services/google_ai.lst (+ a few
+# stable extras). Refreshed with app updates.
+deepmind.com
+deepmind.google
+geller-pa.googleapis.com
+generativelanguage.googleapis.com
+proactivebackend-pa.googleapis.com
+ai.google.dev
+generativeai.google
+makersuite.google.com
+aistudio.google.com
+bard.google.com
+gemini.google
+gemini.google.com
+notebooklm.google.com
+clients6.google.com
+notebooklm.google
+jules.google
+jules.google.com
+labs.google
+aisandbox-pa.googleapis.com
+stitch.withgoogle.com
+robinfrontend-pa.googleapis.com
+aida.googleapis.com
+antigravity-pa.googleapis.com
+antigravity.googleapis.com
+antigravity.google
+antigravity-unleash.goog
+firebaseinstallations.googleapis.com
+speechs3proto2-pa.googleapis.com
+alkalimakersuite-pa.clients6.google.com
