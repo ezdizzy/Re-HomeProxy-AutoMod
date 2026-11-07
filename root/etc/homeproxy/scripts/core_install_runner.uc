@@ -112,7 +112,7 @@ function run_action(action, args, timeout_ms, op_id) {
 	 * + mirror fallback 300 s) — a 420 s runner cap killed the mirror attempt
 	 * mid-flight on a slow link and left a partial tmp file (audit 2026-10-25);
 	 * 650 s covers the full budget. */
-	const caps = { download_pkg: 650000, install_pkg: 900000 };
+	const caps = { download_pkg: 650000, install_pkg: 900000, install_feed_pkg: 650000 };
 	const cap = caps[action] || timeout_ms || 420000;
 	/* Detached chain: the stage runs in background inside the subshell, $!
 	 * (the ucode pid) lands in the pidfile as its identity anchor, wait
@@ -238,11 +238,49 @@ function main() {
 	}
 
 	const dl_url = prep.dl_url || prep.installer_url;
-	if (!dl_url || !prep.tmp_path) {
+	if (prep.source !== 'feed' && (!dl_url || !prep.tmp_path)) {
 		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: 'prepare returned no download URL', started: started, finished: time(), op_id: op_id });
 		uev(false, core, variant, 'стадия prepare: нет ссылки на загрузку');
 		if (op_id) {
 			try { op_finish(op_id, false, false, 'prepare returned no download URL'); } catch (e) { /* journal hiccup */ }
+		}
+		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
+		rmdir(LOCK_DIR);
+		return;
+	}
+
+	if (prep.source === 'feed') {
+		/* §1.7: the own apk feed provides the package — NO download stage at
+		 * all; install straight from the feed. prepare_install only picks
+		 * this path when the feed is configured and its candidate is not
+		 * older than the installed binary, so the classic upstream/fork
+		 * paths below remain the fallback. */
+		wstatus({ running: true, core: core, variant: variant, stage: 'install', note: prep.note || '', started: started, ts: time(), op_id: op_id });
+		if (op_id) {
+			try { op_stage(op_id, 'install'); } catch (e) { /* journal hiccup */ }
+		}
+		const inst = run_action('install_feed_pkg', [prep.feed_pkg], null, op_id);
+		if (!inst.result) {
+			wstatus({ running: false, ok: false, core: core, stage: 'install', error: inst.error || 'feed installation failed', started: started, finished: time(), op_id: op_id });
+			uev(false, core, variant, 'стадия install (feed): ' + (inst.error || 'feed installation failed'));
+			if (op_id) {
+				try { op_finish(op_id, false, false, 'feed install: ' + (inst.error || 'failed')); } catch (e) { /* journal hiccup */ }
+			}
+			try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
+			rmdir(LOCK_DIR);
+			return;
+		}
+		const kmods = run_action('install_kmods', [prep.pkg_manager], null, op_id);
+		wstatus({
+			running: false, ok: true, core: core, stage: 'done',
+			started: started, finished: time(),
+			note: inst.note || null, warning: inst.warning || null,
+			kmods_ok: (kmods && kmods.result === true) ? true : false,
+			op_id: op_id
+		});
+		uev(true, core, variant, inst.note || 'установлено из своего apk-репозитория');
+		if (op_id) {
+			try { op_finish(op_id, true, false, inst.note || 'feed install'); } catch (e) { /* journal hiccup */ }
 		}
 		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 		rmdir(LOCK_DIR);

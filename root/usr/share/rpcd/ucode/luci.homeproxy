@@ -2499,6 +2499,109 @@ function hp_sub_strhash(s) {
 	return sprintf('%08x', h);
 }
 
+/* ── §1.7 Own apk feed (client side) ──────────────────────────────────
+ * The feed (built by .github/build-feed.sh, published on the feed
+ * branch) serves the components that otherwise install by
+ * archive/manually — hiddify-core (full + UPX compact), mosdns and the
+ * automation helpers — as SIGNED apk v3 packages with a per-arch
+ * packages.adb index. Client wiring is three files: the public key in
+ * /etc/apk/keys/, one URL line in repositories.d/ and the keep.d entry
+ * so both survive a sysupgrade. raw.githubusercontent serves 200
+ * directly — apk does NOT follow HTTP redirects (openwrt#17180), so
+ * github.com/.../raw URLs are useless here. Repo-name resolution
+ * mirrors app_github_release: ravnex first, the pre-rename repository
+ * as fallback. Fallback semantics are apk-native: an unreachable index
+ * only warns at `apk update` and the official feeds keep resolving.
+ * Declared ABOVE the methods object (rpcd ucode rejects function
+ * declarations inside the object literal — monitor_nodes lesson). */
+const FEED_LIST_FILE = '/etc/apk/repositories.d/ravnex-feed.list';
+const FEED_KEY_FILE = '/etc/apk/keys/ravnex-feed.pub';
+const FEED_KEEP_FILE = '/lib/upgrade/keep.d/ravnex-feed';
+const FEED_PKGS = ['hiddify-core', 'hiddify-core-compact', 'mosdns', 'probe_pool', 'sni_sniffer'];
+
+function feed_detect_arch() {
+	const fd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
+	if (!fd) return '';
+	const a = trim(fd.read('all'));
+	fd.close();
+	return a || '';
+}
+
+function feed_series() {
+	/* DISTRIB_RELEASE "25.12.5" → the feed series segment "25.12" (the
+	 * feed is built per release series, not per point release). */
+	const fd = popen("awk -F\\' '/DISTRIB_RELEASE/ {print $2}' /etc/openwrt_release 2>/dev/null");
+	if (!fd) return '25.12';
+	const r = trim(fd.read('all'));
+	fd.close();
+	const m = match(r, /^([0-9]+\.[0-9]+)/);
+	return m ? m[1] : '25.12';
+}
+
+function feed_index_url(repo) {
+	return 'https://raw.githubusercontent.com/' + repo + '/refs/heads/feed/releases/' +
+		feed_series() + '/' + feed_detect_arch() + '/packages.adb';
+}
+
+function feed_key_url(index_url) {
+	/* the key sits at the feed ROOT, the index under releases/<series>/<arch>/ */
+	const parts = split(index_url, '/releases/');
+	return (length(parts) > 1) ? (parts[0] + '/ravnex-feed.pub') : (index_url.replace(/packages\.adb$/, 'ravnex-feed.pub'));
+}
+
+function feed_configured() {
+	return access(FEED_LIST_FILE) && access(FEED_KEY_FILE);
+}
+
+function feed_list_url() {
+	return trim(readfile(FEED_LIST_FILE) || '');
+}
+
+function feed_strip_rev(v) {
+	const m = match(v || '', /^[0-9]+(\.[0-9]+)*/);
+	return m ? m[0] : '';
+}
+
+function feed_vercmp_base(a, b) {
+	/* numeric dot-compare of the base versions ("5.2.3" vs "5.2.3"); the
+	 * apk "-rN" revision is stripped before the call — a rebuild of the
+	 * same upstream version still counts as a match. */
+	const pa = split(a, '.'), pb = split(b, '.');
+	const n = (length(pa) > length(pb)) ? length(pa) : length(pb);
+	for (let i = 0; i < n; i++) {
+		const xa = int((pa[i] != null) ? pa[i] : '0') || 0;
+		const xb = int((pb[i] != null) ? pb[i] : '0') || 0;
+		if (xa != xb) return (xa > xb) ? 1 : -1;
+	}
+	return 0;
+}
+
+function feed_candidate(pkg) {
+	/* apk policy <pkg> lists version entries sorted with the INSTALLED one
+	 * first when it satisfies (then the rest descending) — so the first
+	 * line is NOT always the best available candidate. Scan ALL entries
+	 * and return the one served by OUR index (if any); the caller decides
+	 * with its own version gate whether the feed beats what is installed
+	 * (an installed-only record, repo = lib/apk/db/installed, never wins). */
+	if (!feed_configured()) return null;
+	const url = feed_list_url();
+	if (!length(url)) return null;
+	const fd = popen(`apk policy ${shellquote(pkg)} 2>/dev/null`);
+	if (!fd) return null;
+	const out = fd.read('all');
+	fd.close();
+	const lines = split(out, '\n');
+	for (let i = 0; i < length(lines); i++) {
+		const m = match(lines[i], /^  ([0-9][^ :]*):/);
+		if (m) {
+			const repo = (lines[i + 1] != null) ? trim(lines[i + 1]) : '';
+			if (repo == url)
+				return { version: m[1], repo: repo };
+		}
+	}
+	return null;
+}
+
 const methods = {
 	acllist_read: {
 		args: { type: 'type' },
@@ -8955,6 +9058,95 @@ const methods = {
 		}
 	},
 
+	feed_status: {
+		call: function(req) {
+			const configured = feed_configured();
+			const primary = feed_index_url('ezdizzy/ravnex');
+			const probe_url = configured ? feed_list_url() : primary;
+			let code = '000';
+			const pfd = popen(`curl -s -o /dev/null -w '%{http_code}' --max-time 8 ${shellquote(probe_url)} 2>/dev/null`);
+			if (pfd) { code = trim(pfd.read('all')); pfd.close(); }
+			const policy = {};
+			for (let p in FEED_PKGS) {
+				const c = feed_candidate(p);
+				policy[p] = c ? c.version : null;
+			}
+			return {
+				result: true,
+				configured: configured,
+				arch: feed_detect_arch(),
+				series: feed_series(),
+				url: probe_url,
+				key_present: access(FEED_KEY_FILE),
+				index_code: code,
+				published: (code == '200'),
+				policy: policy
+			};
+		}
+	},
+
+	feed_setup: {
+		call: function(req) {
+			/* Probe primary, then the pre-rename fallback; refuse honestly
+			 * when nothing is published yet (the feed branch does not exist
+			 * until the user builds and publishes it via the CI workflow). */
+			let url = null;
+			for (let repo in ['ezdizzy/ravnex', 'ezdizzy/re-homeproxy']) {
+				const u = feed_index_url(repo);
+				let code = '000';
+				const pfd = popen(`curl -s -o /dev/null -w '%{http_code}' --max-time 8 ${shellquote(u)} 2>/dev/null`);
+				if (pfd) { code = trim(pfd.read('all')); pfd.close(); }
+				if (code == '200') { url = u; break; }
+			}
+			if (!url)
+				return { result: false, error: 'индекс feed ещё недоступен — соберите и опубликуйте его (workflow «Build Ravnex apk feed», publish=true), затем повторите' };
+			const key_url = feed_key_url(url);
+			const tmp_key = '/tmp/ravnex-feed.pub';
+			const krc = system(`curl -s --max-time 20 -o ${shellquote(tmp_key)} ${shellquote(key_url)} 2>/dev/null; RC=$?; exit $RC`, 30000);
+			if (krc !== 0 || !access(tmp_key)) {
+				system(`rm -f ${shellquote(tmp_key)}`);
+				return { result: false, error: 'не удалось получить публичный ключ feed: ' + key_url };
+			}
+			/* sanity: a PEM public key starts with the header line */
+			const key_head = substr(trim(readfile(tmp_key) || ''), 0, 27);
+			if (key_head != '-----BEGIN PUBLIC KEY-----') {
+				system(`rm -f ${shellquote(tmp_key)}`);
+				return { result: false, error: 'полученный файл не является PEM-ключом: ' + key_url };
+			}
+			mkdir('/etc/apk/keys');
+			mkdir('/etc/apk/repositories.d');
+			mkdir('/lib/upgrade/keep.d');
+			rename(tmp_key, FEED_KEY_FILE);
+			chmod(FEED_KEY_FILE, 432);
+			/* atomic writes (temp + mv): the apk client must never read a
+			 * half-written feed line (lesson 254 class) */
+			const tmp_list = FEED_LIST_FILE + '.tmp';
+			writefile(tmp_list, url + '\n');
+			rename(tmp_list, FEED_LIST_FILE);
+			const tmp_keep = FEED_KEEP_FILE + '.tmp';
+			writefile(tmp_keep, FEED_KEY_FILE + '\n' + FEED_LIST_FILE + '\n');
+			rename(tmp_keep, FEED_KEEP_FILE);
+			/* refresh the apk index cache DETACHED (runner pattern): apk update
+			 * is network-bound (15 s … 300+ s measured live on a throttled
+			 * uplink) and must never block the RPC — the candidates appear in
+			 * the status when the background refresh lands. */
+			system('( apk update >/dev/null 2>&1 ) </dev/null 1000>&- &');
+			try { hc_add_event('update', 'feed', 'свой apk-репозиторий подключён: ' + url); } catch (e) { /* best-effort */ }
+			return {
+				result: true, url: url, key: true,
+				note: 'обновление индекса идёт в фоне — кандидаты появятся в статусе через ~минуту'
+			};
+		}
+	},
+
+	feed_remove: {
+		call: function(req) {
+			system(`rm -f ${shellquote(FEED_LIST_FILE)} ${shellquote(FEED_KEY_FILE)} ${shellquote(FEED_KEEP_FILE)}`);
+			try { hc_add_event('update', 'feed', 'свой apk-репозиторий отключён — установки возвращаются к исходным источникам'); } catch (e) { /* best-effort */ }
+			return { result: !feed_configured() };
+		}
+	},
+
 	mosdns_prepare_install: {
 		call: function(req) {
 			let arch = null;
@@ -8991,6 +9183,58 @@ const methods = {
 				return { result: false, error: 'Missing arguments' };
 			if (!access(tmp_path))
 				return { result: false, error: 'Archive not found — download failed?' };
+
+			/* §1.7: the own apk feed serves mosdns as a signed package — when
+			 * configured and its candidate is not older than the running
+			 * binary, install straight from the feed (no zip download at
+			 * all). Any miss (feed down, older candidate, apk failure) falls
+			 * through to the original archive path below — the fallback IS
+			 * the old code. */
+			if (feed_configured()) {
+				let cur0 = '';
+				const vfd0 = popen('/usr/bin/mosdns version 2>/dev/null');
+				if (vfd0) {
+					const o0 = trim(vfd0.read('all'));
+					vfd0.close();
+					const m0 = match(o0, /v?([0-9]+(\.[0-9]+)*)/);
+					if (m0) cur0 = m0[1];
+				}
+				const cand0 = feed_candidate('mosdns');
+				const fits0 = cand0 && (!length(cur0) || feed_vercmp_base(feed_strip_rev(cand0.version), cur0) >= 0);
+				if (fits0) {
+					/* NO `apk update` here: it is network-bound (15 s … 300+ s on
+					 * a throttled uplink — measured live) and an RPC must stay
+					 * fast (lesson 294 class). The index cache was refreshed by
+					 * feed_setup; a stale cache simply falls through to the
+					 * archive path below — the honest fallback. */
+					/* apk semantics: `add` never upgrades an installed package
+					 * (installed is preferred) — upgrade when the package is
+					 * registered, add when it is not. */
+					const reg0 = (system('apk info -e mosdns >/dev/null 2>&1') === 0);
+					const arc0 = system(`apk ${reg0 ? 'upgrade' : 'add'} mosdns >/dev/null 2>&1; RC=$?; exit $RC`, 300000);
+					if (arc0 === 0 && access('/usr/bin/mosdns')) {
+						let pmf0 = pm_reg_get('mosdns');
+						if (pmf0 != null && pm_entry_alive(pmf0))
+							pm_kill_entry(pmf0, 5000);
+						pm_kill_matched(MD_SPECS(), 5000);
+						pm_reg_del('mosdns');
+						let pidf0 = RUN_DIR + '/multidns/mosdns.pid';
+						system('rm -f ' + shellquote(pidf0));
+						restart_daemon_instance('multidns.uc', 'multidns');
+						let version0 = null;
+						const vfd1 = popen('/usr/bin/mosdns version 2>/dev/null');
+						if (vfd1) {
+							const o1 = trim(vfd1.read('all'));
+							vfd1.close();
+							const m1 = match(o1, /v?([0-9]+\.[0-9]+\.[0-9]+)/);
+							if (m1) version0 = 'v' + m1[1];
+						}
+						try { hc_add_event('update', 'mosdns', 'установлен из своего apk-репозитория: ' + (version0 || cand0.version)); } catch (e) { /* best-effort */ }
+						return { result: true, version: version0, note: 'installed from the own apk feed' };
+					}
+					/* feed path failed — the honest fallback is the archive path */
+				}
+			}
 
 			/* unzip is required to unpack the release archive; install it
 			 * best-effort through the package manager if missing. */
@@ -9032,7 +9276,11 @@ const methods = {
 				pm_kill_entry(pmf, 5000);
 			pm_kill_matched(MD_SPECS(), 5000);
 			pm_reg_del('mosdns');
-			pidf = RUN_DIR + '/multidns/mosdns.pid';
+			/* 🔴 ch.222: `pidf = ...` without a declaration — a latent
+			 * strict-mode ReferenceError ('use strict', line 8) that crashed
+			 * EVERY UI mosdns install after the download (caught live by the
+			 * own-feed acceptance click). Declared here. */
+			let pidf = RUN_DIR + '/multidns/mosdns.pid';
 			system('rm -f ' + shellquote(pidf));
 			/* busybox `install` applet is not present on all images — cp + chmod is equivalent. */
 			rc = system(`cp ${shellquote(bin)} /usr/bin/mosdns && chmod 0755 /usr/bin/mosdns`, 30000);

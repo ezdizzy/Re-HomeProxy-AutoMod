@@ -7552,3 +7552,49 @@ msgstr "Страница Gemini — SPA-шелл%s: отказ рисуется 
 
 msgid "The node probe covers the API gate only — the Gemini WEB gate is stricter and may reject hosting-provider IPs. If a node \"passes\" here but the device still refuses, the web gate is the reason; verify on the device."
 msgstr "Проба узлов покрывает только API-гейт — ВЕБ-гейт Gemini строже и может отвергать IP хостинг-провайдеров. Если узел здесь «проходит», а на устройстве всё ещё отказ — причина в веб-гейте; проверяйте на устройстве."
+
+msgid "Feed configured"
+msgstr "Feed подключён"
+
+msgid "Feed is not configured"
+msgstr "Feed не настроен"
+
+msgid "Feed index reachable"
+msgstr "Индекс feed доступен"
+
+msgid "Feed index unreachable (code %s)"
+msgstr "Индекс feed недоступен (код %s)"
+
+msgid "The feed index is not published yet"
+msgstr "Индекс feed ещё не опубликован"
+
+msgid "Feed packages"
+msgstr "Пакеты feed"
+
+msgid "Set up the feed"
+msgstr "Подключить feed"
+
+
+msgid "Feed configured — packages update from your own repository."
+msgstr "Feed подключён — пакеты обновляются из вашего репозитория."
+
+msgid "Feed setup failed: "
+msgstr "Не удалось подключить feed: "
+
+msgid "Remove the feed"
+msgstr "Отключить feed"
+
+msgid "Feed removed — installs return to the original sources."
+msgstr "Feed отключён — установки возвращаются к исходным источникам."
+
+msgid "Feed removal failed: "
+msgstr "Не удалось отключить feed: "
+
+msgid "Own apk feed"
+msgstr "Свой apk-репозиторий"
+
+msgid "Serves the components that otherwise install from archives: hiddify-core (full and UPX compact), mosdns and the automation helpers — as signed apk packages from your own repository. When the feed is unavailable, installs automatically fall back to the original sources."
+msgstr "Обслуживает компоненты, которые сейчас ставятся архивами: hiddify-core (полная и UPX-компактная сборки), mosdns и хелперы автоматизации — как подписанные apk-пакеты из вашего собственного репозитория. Когда feed недоступен, установки автоматически возвращаются к исходным источникам."
+
+msgid "Setting up the feed…"
+msgstr "Настраиваю feed…"

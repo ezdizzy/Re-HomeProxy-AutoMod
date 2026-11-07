@@ -1,0 +1,139 @@
+name: Build Ravnex apk feed
+
+# §1.7 "own package repository": wraps the binaries that today install by
+# archive/manually (hiddify-core full + UPX compact, mosdns, probe_pool,
+# sni_sniffer) into SIGNED apk v3 packages with a signed index (packages.adb)
+# per OpenWrt arch label. Artifacts only by default; the feed branch is pushed
+# ONLY when you explicitly run this workflow with publish=true (the push is
+# YOUR action — the app reads it via raw.githubusercontent, no redirects).
+
+on:
+  workflow_dispatch:
+    inputs:
+      series:
+        description: 'OpenWrt release series the feed serves (URL segment)'
+        required: false
+        default: '25.12'
+        type: string
+      archs:
+        description: 'Comma-separated OpenWrt arch labels (empty = default set)'
+        required: false
+        default: ''
+        type: string
+      rev:
+        description: 'Package revision suffix (rebuild the same upstream with r2, r3…)'
+        required: false
+        default: 'r1'
+        type: string
+      publish:
+        description: 'Push the built tree to the feed branch (raw.githubusercontent source)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      APK_SIGN_KEY: ''
+
+    steps:
+      - name: Checkout source tree
+        uses: actions/checkout@v6
+
+      - name: Checkout apk
+        uses: actions/checkout@v6
+        with:
+          repository: 'alpinelinux/apk-tools'
+          path: 'apk-tools'
+          fetch-depth: 0
+          ref: 'b5a31c0d865342ad80be10d68f1bb3d3ad9b0866'
+
+      - name: Setup dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E rm -rf /var/lib/man-db/auto-update
+          sudo -E apt-get update -qq
+          sudo -E apt-get install -y build-essential curl libssl-dev meson ninja-build zip upx-ucl jq
+
+          pushd apk-tools
+          meson setup build \
+            -Db_lto=true \
+            -Dcompressed-help=false \
+            -Ddocs=disabled \
+            -Dhelp=enabled \
+            -Ddefault_library=static \
+            -Durl_backend=wget \
+            -Dzstd=false \
+            -Dpython=disabled \
+            -Dtests=disabled \
+            -Dcrypto_backend=openssl
+          ninja -C build
+          sudo -E meson install -C build --strip
+          popd
+          apk --version
+
+      - name: Setup APK signing key
+        run: |
+          if [ -n "${{ secrets.APK_SIGNING_KEY }}" ]; then
+            echo "${{ secrets.APK_SIGNING_KEY }}" > /tmp/apk-signing.key
+            chmod 600 /tmp/apk-signing.key
+            echo "APK_SIGN_KEY=/tmp/apk-signing.key" >> $GITHUB_ENV
+          else
+            echo "No APK_SIGNING_KEY secret set — building UNSIGNED feed (clients need --allow-untrusted)"
+          fi
+
+      - name: Build the feed tree
+        env:
+          FEED_SERIES: ${{ inputs.series || '25.12' }}
+          FEED_ARCHS: ${{ inputs.archs }}
+          FEED_REV: ${{ inputs.rev || 'r1' }}
+        run: |
+          chmod +x .github/build-feed.sh
+          bash .github/build-feed.sh "$PWD/feed"
+
+      - name: Self-check the built feed
+        run: |
+          fail=0
+          idx=$(find feed -name packages.adb | wc -l)
+          pkgs=$(find feed -name '*.apk' | wc -l)
+          echo "indexes: $idx, packages: $pkgs"
+          [ "$idx" -ge 1 ] || { echo "::error::no packages.adb built"; fail=1; }
+          [ "$pkgs" -ge 1 ] || { echo "::error::no packages built"; fail=1; }
+          if [ -n "${{ secrets.APK_SIGNING_KEY }}" ]; then
+            # every index must carry at least one signature block
+            for i in $(find feed -name packages.adb); do
+              apk adbdump "$i" | grep -q '^# sig' || { echo "::error::unsigned index $i"; fail=1; }
+            done
+          fi
+          exit $fail
+
+      - name: Upload feed tree (artifact)
+        uses: actions/upload-artifact@v7
+        with:
+          name: ravnex-apk-feed
+          path: feed/
+          include-hidden-files: true
+
+      - name: Publish to the feed branch (explicit request only)
+        if: ${{ inputs.publish == true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git clone --depth 1 --branch feed "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" feedrepo 2>/dev/null || {
+            git init feedrepo
+            cd feedrepo
+            git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+            git checkout -b feed
+          }
+          cd feedrepo
+          find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
+          cp -a "${GITHUB_WORKSPACE}/feed/." .
+          git add -A
+          git commit -m "feed: rebuild $(date -u +%Y-%m-%dT%H:%MZ) (series ${{ inputs.series || '25.12' }})" || true
+          git push --force origin feed
+          echo "Feed published to the feed branch. Client URL:"
+          echo "https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/feed/releases/${{ inputs.series || '25.12' }}/\$(cat /etc/apk/arch)/packages.adb"

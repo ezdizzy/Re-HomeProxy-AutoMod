@@ -31,7 +31,8 @@
 					"automation_list_read", "automation_backup", "automation_geo_status",
 					"lists_list", "list_read", "list_export", "list_backup_list", "list_backup_read",
 					"control_status", "control_devices", "control_wifi_status", "control_events", "control_log_tail",
-					"app_support_bundle_status", "app_support_bundle_chunk", "app_support_bundle_text_status"
+					"app_support_bundle_status", "app_support_bundle_chunk", "app_support_bundle_text_status",
+					"feed_status"
 				]
 			},
 			"uci": [ "homeproxy" ]
@@ -78,6 +79,7 @@
 					"control_wifi_set", "control_wifi_temp", "control_wifi_temp_clear", "control_events_clear",
 					"control_proxy_global", "control_proxy_mode", "control_proxy_lists",
 					"res_profile_set",
+					"feed_setup", "feed_remove",
 					"app_support_bundle_start", "app_support_bundle_text_start"
 				]
 			},

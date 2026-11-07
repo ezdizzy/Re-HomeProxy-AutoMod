@@ -7545,3 +7545,49 @@ msgstr ""
 
 msgid "The node probe covers the API gate only — the Gemini WEB gate is stricter and may reject hosting-provider IPs. If a node \"passes\" here but the device still refuses, the web gate is the reason; verify on the device."
 msgstr ""
+
+msgid "Feed configured"
+msgstr ""
+
+msgid "Feed is not configured"
+msgstr ""
+
+msgid "Feed index reachable"
+msgstr ""
+
+msgid "Feed index unreachable (code %s)"
+msgstr ""
+
+msgid "The feed index is not published yet"
+msgstr ""
+
+msgid "Feed packages"
+msgstr ""
+
+msgid "Set up the feed"
+msgstr ""
+
+
+msgid "Feed configured — packages update from your own repository."
+msgstr ""
+
+msgid "Feed setup failed: "
+msgstr ""
+
+msgid "Remove the feed"
+msgstr ""
+
+msgid "Feed removed — installs return to the original sources."
+msgstr ""
+
+msgid "Feed removal failed: "
+msgstr ""
+
+msgid "Own apk feed"
+msgstr ""
+
+msgid "Serves the components that otherwise install from archives: hiddify-core (full and UPX compact), mosdns and the automation helpers — as signed apk packages from your own repository. When the feed is unavailable, installs automatically fall back to the original sources."
+msgstr ""
+
+msgid "Setting up the feed…"
+msgstr ""

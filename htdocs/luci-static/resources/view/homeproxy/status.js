@@ -461,6 +461,25 @@ const callMosdnsCheckUpdate = rpc.declare({
 	expect: { '': {} }
 });
 
+/* §1.7 Own apk feed (client side). */
+const callFeedStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'feed_status',
+	expect: { '': {} }
+});
+
+const callFeedSetup = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'feed_setup',
+	expect: { '': {} }
+});
+
+const callFeedRemove = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'feed_remove',
+	expect: { '': {} }
+});
+
 /* "Check update" button for GitHub-packaged tools (ByeDPI / Zapret / mosdns):
  * asks the backend for the latest release tag and reports it against the
  * installed version (same interaction as the core cards). The verdict lands
@@ -1574,6 +1593,97 @@ function buildCoreCard(core, coreInfo) {
 	]);
 }
 
+/* §1.7: the own apk feed card — status + setup/remove. Honest verdicts:
+ * the package candidates come from the LAST apk index refresh (feed_setup
+ * runs apk update; the line shows "—" until then), the index reachability
+ * is probed live by the backend on every status call. After setup/remove
+ * the card re-fetches the status and repaints itself in place. */
+function buildFeedCard(feed) {
+	let st = feed || {};
+
+	const statusEl = E('strong', {});
+	const idxEl = E('span', {});
+	const pkgLine = E('div', { style: 'font-size:0.9em; opacity:.85; padding:2px 0' });
+	const resultEl = mkResult();
+	const setMsg = (txt, kind) => resultEl.setResult(txt, kind);
+
+	function pkgCell(label, val) {
+		return [
+			E('strong', {}, label + ' ' + (val || '—')),
+			E('span', { style: 'opacity:.6' }, ' · ')
+		];
+	}
+
+	function applyState() {
+		const configured = !!st.configured;
+		const published = !!st.published;
+		statusEl.textContent = configured ? _('Feed configured') : _('Feed is not configured');
+		statusEl.style.color = configured ? 'var(--hp-accent-strong)' : 'var(--hp-grey)';
+		idxEl.className = 'hpui-badge ' + (published ? 'hpui-b-green' : (configured ? 'hpui-b-amber' : 'hpui-b-grey'));
+		idxEl.textContent = published ? _('Feed index reachable')
+			: (configured ? _('Feed index unreachable (code %s)').format(st.index_code || '—')
+				: _('The feed index is not published yet'));
+		const pk = st.policy || {};
+		dom.content(pkgLine, [
+			_('Feed packages') + ': ',
+			...pkgCell('hiddify-core', pk['hiddify-core']),
+			...pkgCell('compact', pk['hiddify-core-compact']),
+			...pkgCell('mosdns', pk.mosdns),
+			...pkgCell('helpers', pk.probe_pool || pk.sni_sniffer)
+		]);
+		setupBtn.disabled = false;
+		removeBtn.disabled = !configured;
+	}
+
+	const setupBtn = mkBtn(_('Set up the feed'), 'primary', {
+		style: 'margin-left:4px',
+		click: async function() {
+			setupBtn.disabled = true;
+			removeBtn.disabled = true;
+			setMsg(_('Setting up the feed…'), 'grey');
+			const ret = await L.resolveDefault(callFeedSetup(), {});
+			if (ret.result) {
+				st = await L.resolveDefault(callFeedStatus(), {});
+				applyState();
+				setMsg(_('Feed configured — packages update from your own repository.') + (ret.note ? (' ' + ret.note) : ''), 'green');
+			} else {
+				applyState();
+				setMsg(_('Feed setup failed: ') + (ret.error || _('RPC error')), 'red');
+			}
+		}
+	});
+
+	const removeBtn = mkBtn(_('Remove the feed'), 'danger', {
+		style: 'margin-left:4px',
+		click: async function() {
+			setupBtn.disabled = true;
+			removeBtn.disabled = true;
+			const ret = await L.resolveDefault(callFeedRemove(), {});
+			if (ret.result) {
+				st = await L.resolveDefault(callFeedStatus(), {});
+				applyState();
+				setMsg(_('Feed removed — installs return to the original sources.'), 'green');
+			} else {
+				applyState();
+				setMsg(_('Feed removal failed: ') + (ret.error || _('RPC error')), 'red');
+			}
+		}
+	});
+
+	applyState();
+
+	return E('div', { 'class': 'hpui-panel' }, [
+		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
+			statusEl,
+			idxEl,
+			setupBtn,
+			removeBtn
+		]),
+		pkgLine,
+		resultEl
+	]);
+}
+
 return view.extend({
 	load() {
 		return Promise.all([
@@ -1586,11 +1696,12 @@ return view.extend({
 			L.resolveDefault(callAppStatus(), {}),
 			L.resolveDefault(callMultidnsStatus(), {}),
 			L.resolveDefault(callMosdnsStatus(), {}),
-			L.resolveDefault(callCoreSkipped(), {})
+			L.resolveDefault(callCoreSkipped(), {}),
+			L.resolveDefault(callFeedStatus(), {})
 		]);
 	},
 
-	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus, mdnsStatus, mosdnsStatus, coreSkipped]) {
+	render([features, coreInfo, _uci, byedpiStatus, curlStatus, zapretStatus, appStatus, mdnsStatus, mosdnsStatus, coreSkipped, feedStatus]) {
 		let m, s, o;
 
 		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
@@ -1793,6 +1904,18 @@ return view.extend({
 
 		o = s.option(form.DummyValue, '_multidns_card');
 		o.default = buildMosdnsCard(mdnsStatus, mosdnsStatus);
+
+		/* §1.7: the own apk feed — signed packages (hiddify-core full/compact,
+		 * mosdns, the automation helpers) from the user's own repository.
+		 * Installs that ride the feed fall back to the original sources
+		 * automatically when the feed is unavailable (apk-native behavior:
+		 * an unreachable index only warns). */
+		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Own apk feed'));
+		s.anonymous = true;
+		s.description = _('Serves the components that otherwise install from archives: hiddify-core (full and UPX compact), mosdns and the automation helpers — as signed apk packages from your own repository. When the feed is unavailable, installs automatically fall back to the original sources.');
+
+		o = s.option(form.DummyValue, '_feed_card');
+		o.default = buildFeedCard(feedStatus);
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy');
 		s.anonymous = true;

@@ -254,6 +254,61 @@ function core_features_cached(bin) {
 	return info;
 }
 
+/* ── §1.7 Own apk feed (client side, shared with rpcd's feed RPCs) ──────
+ * Declared BEFORE the action dispatch (ucode has no hoisting — a helper
+ * below the dispatch block is invisible to the branches that run at module
+ * level, lesson 93/126). Mirrors the luci.homeproxy feed block verbatim. */
+const FEED_LIST_FILE = '/etc/apk/repositories.d/ravnex-feed.list';
+const FEED_KEY_FILE = '/etc/apk/keys/ravnex-feed.pub';
+
+function feed_configured() {
+	return access(FEED_LIST_FILE) && access(FEED_KEY_FILE);
+}
+
+function feed_list_url() {
+	return trim(readfile(FEED_LIST_FILE) || '');
+}
+
+function feed_strip_rev(v) {
+	const m = match(v || '', /^[0-9]+(\.[0-9]+)*/);
+	return m ? m[0] : '';
+}
+
+function feed_vercmp_base(a, b) {
+	const pa = split(a, '.'), pb = split(b, '.');
+	const n = (length(pa) > length(pb)) ? length(pa) : length(pb);
+	for (let i = 0; i < n; i++) {
+		const xa = int((pa[i] != null) ? pa[i] : '0') || 0;
+		const xb = int((pb[i] != null) ? pb[i] : '0') || 0;
+		if (xa != xb) return (xa > xb) ? 1 : -1;
+	}
+	return 0;
+}
+
+function feed_candidate(pkg) {
+	/* apk policy <pkg> lists the INSTALLED record first when it satisfies —
+	 * scan ALL entries and return the one served by OUR index (if any);
+	 * the caller's version gate decides feed-vs-installed. */
+	if (!feed_configured()) return null;
+	const url = feed_list_url();
+	if (!length(url)) return null;
+	const fd = popen(`apk policy ${shellquote(pkg)} 2>/dev/null`);
+	if (!fd) return null;
+	const out = fd.read('all');
+	fd.close();
+	const lines = split(out, '\n');
+	for (let i = 0; i < length(lines); i++) {
+		const m = match(lines[i], /^  ([0-9][^ :]*):/);
+		if (m) {
+			const repo = (lines[i + 1] != null) ? trim(lines[i + 1]) : '';
+			if (repo == url)
+				return { version: m[1], repo: repo };
+		}
+	}
+	return null;
+}
+
+
 const action = ARGV[0];
 let result;
 
@@ -436,7 +491,32 @@ let result;
 					const up_asset = HIDDIFY_UPSTREAM_ASSET[arch] || null;
 					const up_need = overlay_compresses() ? UP_FULL_OVERLAY_COMP_KB : UP_FULL_OVERLAY_RAW_KB;
 					const up_fits = up_asset && overlay_free_kb >= up_need && tmp_free_kb >= UP_FULL_TMP_KB;
-					if (variant !== 'upx' && up_fits) {
+					/* §1.7: the own apk feed — when configured and its candidate
+					 * is not older than the installed binary, take the package
+					 * from the feed (no tarball download at all). Everything
+					 * that misses (not configured, older candidate, no space,
+					 * policy blind) falls through to the original
+					 * upstream/fork paths below — the fallback IS the old
+					 * code. The compact build rides the same feed as
+					 * hiddify-core-compact (replaces the frozen v4.1.0 fork
+					 * apk; space-checked with the same COMPACT_OVERLAY_KB). */
+					let feed_hit = null;
+					if (feed_configured()) {
+						const fpkg = (variant === 'upx') ? 'hiddify-core-compact' : 'hiddify-core';
+						const cur_info = core_features_cached('/usr/bin/hiddify-core');
+						const cur = cur_info.version || '';
+						const cand = feed_candidate(fpkg);
+						const fits = overlay_free_kb >= ((variant === 'upx') ? COMPACT_OVERLAY_KB : full_need);
+						if (cand && fits &&
+						    (!length(cur) || feed_vercmp_base(feed_strip_rev(cand.version), cur) >= 0))
+							feed_hit = { pkg_manager, arch,
+								variant: (variant === 'upx') ? 'upx' : 'standard',
+								source: 'feed', feed_pkg: fpkg,
+								note: `own apk feed: ${fpkg} ${cand.version}` };
+					}
+					if (feed_hit) {
+						result = feed_hit;
+					} else if (variant !== 'upx' && up_fits) {
 						result = {
 							pkg_manager, arch, variant: 'standard', source: 'upstream',
 							note: 'upstream build (hiddify/hiddify-core tar.gz)',
@@ -652,6 +732,37 @@ let result;
 			);
 		}
 		result = exit_code === 0 ? { result: true } : { result: false, error: 'package installation failed' };
+	}
+
+} else if (action === 'install_feed_pkg') {
+	/* §1.7: install a core from the own apk feed (prepare_install picked
+	 * the package; the feed is already configured — key + repositories.d
+	 * line). `apk update` first so the candidate is fresh; the SIBLING
+	 * variant is removed best-effort (hiddify-core and hiddify-core-compact
+	 * both own /usr/bin/hiddify-core and conflict with each other). The
+	 * service is NOT restarted here — same contract as the fork apk path
+	 * (the app restarts the service after a successful install). */
+	const feed_pkg = ARGV[1];
+	if (!match(feed_pkg, /^[a-z0-9-]+$/)) {
+		result = { result: false, error: 'invalid feed package name' };
+	} else if (!feed_configured()) {
+		result = { result: false, error: 'own feed is not configured' };
+	} else {
+		/* NO `apk update` here (network-bound: 15 s … 300+ s measured live —
+		 * an RPC/stage must stay fast; the index cache was refreshed by the
+		 * feed setup). The candidate check in prepare_install used the cached
+		 * index; apk semantics: `add` never upgrades an installed package
+		 * (installed is preferred) — upgrade when registered, add when not. */
+		const sib = (feed_pkg === 'hiddify-core-compact') ? 'hiddify-core' : 'hiddify-core-compact';
+		system(`apk del ${shellquote(sib)} >/dev/null 2>&1; true`);
+		const registered = (system(`apk info -e ${shellquote(feed_pkg)} >/dev/null 2>&1`) === 0);
+		const exit_code = system(`apk ${registered ? 'upgrade' : 'add'} ${shellquote(feed_pkg)} >/dev/null 2>&1; RC=$?; exit $RC`, 300000);
+		if (exit_code !== 0 || !access('/usr/bin/hiddify-core')) {
+			result = { result: false, error: `feed install of ${feed_pkg} failed (apk rc=${exit_code})` };
+		} else {
+			const info = core_features_cached('/usr/bin/hiddify-core');
+			result = { result: true, note: `installed from the own apk feed: ${feed_pkg} ${info.version || ''}` };
+		}
 	}
 
 } else if (action === 'install_kmods') {
