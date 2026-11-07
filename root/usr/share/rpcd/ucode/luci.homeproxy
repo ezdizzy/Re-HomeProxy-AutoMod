@@ -2651,9 +2651,25 @@ const methods = {
 			const params = trim('' + (req.args?.params || ''));
 			if (length(params) > 512 || match(params, /[`$;&|<>\n\r]/))
 				return { result: false, error: 'illegal params' };
+
+			/* Lesson 347: the generator binary is NOT guaranteed to be
+			 * sing-box — this install ships hiddify-core (no "generate"
+			 * subcommand) + tachyon-core (sing-box base, has it). Pick the
+			 * first installed binary that supports "generate"; an honest
+			 * failure beats a silent empty result. */
+			const gen_bins = [ '/usr/bin/sing-box', '/usr/bin/tachyon-core' ];
+			let gen_bin = null;
+			for (let i = 0; i < length(gen_bins); i++)
+				if (access(gen_bins[i])) {
+					gen_bin = gen_bins[i];
+					break;
+				}
+			if (gen_bin == null)
+				return { result: false, error: 'no generator binary found (sing-box / tachyon-core)' };
+
 			let result = {};
 
-			const fd = popen('/usr/bin/sing-box generate ' + type + (length(params) ? ' ' + shellquote(params) : ''));
+			const fd = popen(gen_bin + ' generate ' + type + (length(params) ? ' ' + shellquote(params) : ''));
 			if (fd) {
 				let ech_cfg_set = false;
 				let ech_key_set = false;
@@ -2688,6 +2704,9 @@ const methods = {
 
 				fd.close();
 			}
+
+			if (isEmpty(result))
+				return { result: false, error: 'generator produced no output' };
 
 			return { result };
 		}

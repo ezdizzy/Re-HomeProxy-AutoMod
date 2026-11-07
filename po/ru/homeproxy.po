@@ -488,9 +488,6 @@ msgstr "Используется для проверки обновлений By
 msgid "Global padding"
 msgstr "Глобальное дополнение"
 
-msgid "Global settings"
-msgstr "Глобальные настройки"
-
 msgid "Google"
 msgstr "Google"
 
@@ -1207,9 +1204,6 @@ msgstr "Сервер"
 
 msgid "Diagnostics"
 msgstr "Диагностика"
-
-msgid "Server settings"
-msgstr "Режим сервера"
 
 msgid "Server name to use when choosing a certificate if the ClientHello's ServerName field is empty."
 msgstr "Имя сервера для выбора сертификата, если поле ServerName в ClientHello пусто."
@@ -7399,4 +7393,67 @@ msgstr "Автоматически изучает заблокированные
 
 msgid "A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Service rules page, \"Check a route\"). A pin is also not a guarantee: \"Always via proxy\" rides the main node, \"Always direct\" rides the direct path — both follow the general rule priority."
 msgstr "Пин покрывает ровно этот хост и его поддомены — не весь сервис: CDN, API и другие домены сервиса не покрыты и идут по своим правилам (проверьте реальный маршрут на странице «Правила для сервисов», панель «Проверить маршрут»). Пин — не гарантия: «Всегда через прокси» идёт через главный узел, «Всегда напрямую» — напрямую; оба следуют общему порядку приоритета правил."
+
+msgid "Inside your home"
+msgstr "Внутри дома"
+
+msgid "From the internet"
+msgstr "Из интернета"
+
+msgid "A second router or a trusted device in your LAN. Works out of the box — no certificates, no domain."
+msgstr "Второй роутер или доверенное устройство в домашней сети. Работает сразу — без сертификатов и домена."
+
+msgid "Your phone away from home, or a friend. VLESS + REALITY: looks like normal HTTPS traffic, no certificates and no domain needed."
+msgstr "Ваш телефон вне дома или друг. VLESS + REALITY: трафик неотличим от обычного HTTPS, сертификаты и домен не нужны."
+
+msgid "Quick server"
+msgstr "Быстрый сервер"
+
+msgid "Not sure where to start? Pick what the server is for — the wizard fills in everything else and opens the full settings for review. Fine-tuning is still available via «Add» in the list below."
+msgstr "Не знаете, с чего начать? Выберите, зачем нужен сервер, — мастер заполнит всё сам и откроет полные настройки для проверки. Тонкая настройка — кнопка „Добавить“ в списке ниже."
+
+msgid "My servers"
+msgstr "Мои серверы"
+
+msgid "Each row is one server endpoint. The Firewall flag opens the port in the router firewall — only needed for access from the internet. The port must be unique."
+msgstr "Каждая строка — один сервер. Флаг брандмауэра открывает порт в фаерволе роутера — нужен только для доступа из интернета. Порт должен быть уникальным."
+
+msgid "Server endpoints run in the same core as the client proxy: a broken server section stops the WHOLE service (client traffic included) until it is fixed. Change one setting at a time, apply and check the status above."
+msgstr "Серверы работают в одном ядре с клиентским прокси: сломанная серверная секция остановит ВЕСЬ сервис (включая клиентский трафик) до исправления. Меняйте по одной настройке, применяйте и проверяйте статус выше."
+
+msgid "Applying server settings restarts the whole service — the proxy is offline for a few seconds."
+msgstr "Применение настроек сервера перезапускает весь сервис — прокси несколько секунд недоступен."
+
+msgid "Server name"
+msgstr "Название"
+
+msgid "Open the port in the firewall (reachable from the internet)"
+msgstr "Открыть порт в фаерволе (доступен из интернета)"
+
+msgid "Each open port is visible to scanners — enable only for servers you actually use."
+msgstr "Каждый открытый порт виден сканерам — включайте только для реально используемых серверов."
+
+msgid "Create server"
+msgstr "Создать сервер"
+
+msgid "Create server: %s"
+msgstr "Создать сервер: %s"
+
+msgid "My server"
+msgstr "Мой сервер"
+
+msgid "Port %s is already used by another server — pick a different one."
+msgstr "Порт %s уже занят другим сервером — выберите другой."
+
+msgid "Key generation failed — try again."
+msgstr "Не удалось сгенерировать ключи — попробуйте ещё раз."
+
+msgid "Required for Hysteria: an empty value stops the core from starting (the whole service goes down)."
+msgstr "Обязательно для Hysteria: с пустым значением ядро не запустится (встанет весь сервис)."
+
+msgid "Not yet verified live against the installed core — enable deliberately and check the service status after applying."
+msgstr "Ещё не проверено вживую на установленном ядре — включайте осознанно и проверяйте статус службы после применения."
+
+msgid "After you save, set up the client with the SAME parameters (port, keys, passwords) — everything is visible in the server settings."
+msgstr "После сохранения настройте клиент теми же параметрами (порт, ключи, пароли) — все они видны в настройках сервера."
 

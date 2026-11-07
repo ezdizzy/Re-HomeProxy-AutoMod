@@ -832,9 +832,6 @@ msgstr ""
 msgid "Global padding"
 msgstr ""
 
-msgid "Global settings"
-msgstr ""
-
 msgid "Google"
 msgstr ""
 
@@ -1991,9 +1988,6 @@ msgid "Server"
 msgstr ""
 
 msgid "Server name to use when choosing a certificate if the ClientHello's ServerName field is empty."
-msgstr ""
-
-msgid "Server settings"
 msgstr ""
 
 msgid "Service restarted"
@@ -7391,5 +7385,68 @@ msgid "unique value"
 msgstr ""
 
 msgid "valid uuid"
+msgstr ""
+
+msgid "Inside your home"
+msgstr ""
+
+msgid "From the internet"
+msgstr ""
+
+msgid "A second router or a trusted device in your LAN. Works out of the box — no certificates, no domain."
+msgstr ""
+
+msgid "Your phone away from home, or a friend. VLESS + REALITY: looks like normal HTTPS traffic, no certificates and no domain needed."
+msgstr ""
+
+msgid "Quick server"
+msgstr ""
+
+msgid "Not sure where to start? Pick what the server is for — the wizard fills in everything else and opens the full settings for review. Fine-tuning is still available via «Add» in the list below."
+msgstr ""
+
+msgid "My servers"
+msgstr ""
+
+msgid "Each row is one server endpoint. The Firewall flag opens the port in the router firewall — only needed for access from the internet. The port must be unique."
+msgstr ""
+
+msgid "Server endpoints run in the same core as the client proxy: a broken server section stops the WHOLE service (client traffic included) until it is fixed. Change one setting at a time, apply and check the status above."
+msgstr ""
+
+msgid "Applying server settings restarts the whole service — the proxy is offline for a few seconds."
+msgstr ""
+
+msgid "Server name"
+msgstr ""
+
+msgid "Open the port in the firewall (reachable from the internet)"
+msgstr ""
+
+msgid "Each open port is visible to scanners — enable only for servers you actually use."
+msgstr ""
+
+msgid "Create server"
+msgstr ""
+
+msgid "Create server: %s"
+msgstr ""
+
+msgid "My server"
+msgstr ""
+
+msgid "Port %s is already used by another server — pick a different one."
+msgstr ""
+
+msgid "Key generation failed — try again."
+msgstr ""
+
+msgid "Required for Hysteria: an empty value stops the core from starting (the whole service goes down)."
+msgstr ""
+
+msgid "Not yet verified live against the installed core — enable deliberately and check the service status after applying."
+msgstr ""
+
+msgid "After you save, set up the client with the SAME parameters (port, keys, passwords) — everything is visible in the server settings."
 msgstr ""
 
