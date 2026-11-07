@@ -181,6 +181,46 @@ function probe_live(url, host) {
 	return { code: code, tsec: tsec, rc: rc, ok: ok, host: host };
 }
 
+/* ч.228: the apply path light-restarts the DPI engine (queue re-bind) and the
+ * DNS resolver; probes fired into that settling window return honest-looking
+ * 000s — curl rc 28 EXACTLY at the --connect-timeout boundary (live-proven
+ * 2026-11-07: baseline 4/4 BEFORE the apply, verify 000 ×3 right after, the
+ * flow probe 200 at ~+30 s, and the SAME three probes 200/204/404 minutes
+ * later with the SAME applied args still live). Gate the live verification on
+ * readiness: the device resolver (127.0.0.1, the path LAN clients use) must
+ * answer for the probe host AND the prod queue must be bound with a live
+ * nfqws2 process. Bounded (~25 s); on timeout the probes run anyway and the
+ * miss is reported honestly — the verdict never waits forever. */
+function wait_probe_ready(host) {
+	const deadline = time() + 25;
+	const dnsf = RUN_DIR + '/wiz_probe.dns';
+	const qnum = trim(shell_out(`uci -q get homeproxy.config.zapret_qnum 2>/dev/null`)) || '200';
+	let dns_ok = false, q_ok = false;
+	while ((time() < deadline) && !(dns_ok && q_ok)) {
+		if (!dns_ok) {
+			system(`nslookup ${sq(host)} 127.0.0.1 > ${sq(dnsf)} 2>/dev/null`);
+			dns_ok = (match(readfile(dnsf) || '', /([0-9]{1,3}\.){3}[0-9]{1,3}/) != null);
+		}
+		if (!q_ok) {
+			const ql = readfile('/proc/net/netfilter/nfnetlink_queue');
+			q_ok = (ql != null && index(ql, ' ' + qnum + ' ') >= 0 &&
+				length(pm_find({ exe: 'nfqws2' })) > 0);
+		}
+		if (!(dns_ok && q_ok))
+			sleep(1000);
+	}
+	system(`rm -f ${sq(dnsf)} 2>/dev/null`);
+	return { dns_ok: dns_ok, q_ok: q_ok };
+}
+
+function shell_out(cmd) {
+	const f = RUN_DIR + '/wiz_probe.out';
+	system(`${cmd} > ${sq(f)} 2>/dev/null`);
+	const v = readfile(f) || '';
+	system(`rm -f ${sq(f)} 2>/dev/null`);
+	return v;
+}
+
 /* Ф6.5 (аудит 78/64): baseline ресурса ПЕРЕД применением — та же батарея,
  * что верификация после (одинаковая матрица до/после). YouTube добавляет
  * sustained-поток (один curl на 24 миниатюры); РЕАЛЬНЫЙ видеопоток
@@ -830,6 +870,16 @@ function main() {
 		 * and the firewall re-render a moment, then verify. */
 		sleep(5000);
 	}
+	/* ч.228: readiness gate before ANY probe (both paths) — the apply light-
+	 * restarts the engine (queue re-bind) and the resolver, and probes fired
+	 * into that settling window measure the WINDOW, not the strategy (000 ×3
+	 * at the connect-timeout boundary while the flow probe passed at +30 s,
+	 * live-proven 2026-11-07). */
+	const gate = wait_probe_ready((resource === 'general') ? 'www.gstatic.com' : meta.host);
+	if (!gate.dns_ok)
+		note(res, 'Резолвер не ответил за 25 с после применения — пробы идут как есть (вердикт может быть честно ложным).');
+	if (!gate.q_ok)
+		note(res, 'Очередь движка Zapret не поднялась за 25 с — пробы идут как есть (вердикт может быть честно ложным).');
 	res.verify = (resource === 'general')
 		? probe_live('http://www.gstatic.com/generate_204', 'gstatic generate_204')
 		: probe_live('https://' + meta.host, meta.host);
