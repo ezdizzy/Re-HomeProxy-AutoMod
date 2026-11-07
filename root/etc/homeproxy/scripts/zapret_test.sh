@@ -16,10 +16,22 @@
 # sweep pass. Now the probes run as a NON-ROOT user (daemon) and the temp
 # queue matches `meta skuid` in the OUTPUT hook: locally generated packets
 # only, and sing-box (root) never matches. When su is unavailable the
-# fallback keeps the postrouting hook but matches EXACT-unmarked packets,
-# which still protects the zapret-marked flows (the worst breakage).
+# fallback keeps the OUTPUT hook but matches root-owned unmarked packets
+# (meta skuid 0) — the probes are root curls there, so they still match,
+# while FORWARDED LAN traffic never traverses the OUTPUT hook at all: the
+# user's devices can no longer be mangled by a test strategy (the historical
+# fallback queued the postrouting path — every unmarked LAN flow to the test
+# IPs got the random candidate applied). Router-origin root dials to the few
+# test IPs remain the only exposed class, for the ~20 s of one pass.
 #
-# Usage:  zapret_test.sh [--baseline] [--deep] "<strategy opts>" [tag=ip tag=ip …]
+# --validate: ARGUMENT-ONLY check (audit of the "zapret dead after apply"
+# class): spawn the candidate nfqws2 on its OWN resmgr queue for ~2 s — no
+# firewall, no probes, no live traffic — and report whether the binary
+# survives the args. The apply paths run this BEFORE writing UCI: an invalid
+# strategy used to crashloop nfqws2 through the procd retry budget
+# (respawn 3600 1 5) and leave the engine dead.
+#
+# Usage:  zapret_test.sh [--baseline] [--deep] [--validate] "<strategy opts>" [tag=ip tag=ip …]
 #         zapret_test.sh --quic "<strategy opts>" "tag=ip …"   (UDP/443 contour)
 # Output: a single JSON line:  {"ok":N,"total":M,"results":[{tag,label,host,ip,code,tls,redirect,rc,ok,reason},…]}
 #         with --deep each result also carries deep_ok/deep items with the
@@ -57,6 +69,7 @@
 BASELINE=0
 DEEP=0
 QUIC=0
+VALIDATE=0
 # Ф6.4: order-insensitive flag parsing — the old two `if`s made
 # "--deep --baseline" silently treat "--baseline" as the STRATEGY args.
 while [ $# -gt 0 ]; do
@@ -64,6 +77,7 @@ while [ $# -gt 0 ]; do
 		--baseline) BASELINE=1 ;;
 		--deep) DEEP=1 ;;
 		--quic) QUIC=1 ;;
+		--validate) VALIDATE=1 ;;
 		*) break ;;
 	esac
 	shift
@@ -157,6 +171,9 @@ fi
 
 NFQ_PID=""
 WATCH_PID=""
+# --validate owns a resmgr queue of its own; the EXIT trap releases it.
+VREL_TASK=""
+VREL_QNUM=""
 
 cleanup() {
 	# nfqws2 daemonizes (so $! is stale) and busybox has no pkill. Ф1.4b: kill
@@ -172,6 +189,11 @@ cleanup() {
 		nft delete rule inet fw4 homeproxy_output_redir handle "$hnd" 2>/dev/null
 	done
 	[ -n "$WATCH_PID" ] && kill "$WATCH_PID" 2>/dev/null
+	# --validate acquired its queue INSIDE the script — release it here, so
+	# even a mid-run teardown never leaks it until the TTL.
+	if [ -n "$VREL_TASK" ]; then
+		ucode -e "import {release} from '/etc/homeproxy/scripts/test_resmgr.uc'; release($VREL_QNUM, '$VREL_TASK');" >/dev/null 2>&1
+	fi
 }
 trap cleanup EXIT INT TERM
 
@@ -180,6 +202,33 @@ fail() { echo "{\"ok\":0,\"total\":0,\"error\":\"$1\"}"; exit 0; }
 [ -x "$NFQWS" ] || fail "zapret2 not installed"
 command -v curl >/dev/null 2>&1 || fail "curl missing"
 mkdir -p "$TMP" 2>/dev/null
+
+# ── --validate: argument-only spawn check (no firewall, no probes) ───────
+# The candidate nfqws2 gets its OWN resmgr queue and must survive 2 s with
+# the given args. Anything invalid (unknown --lua-desync method/arg, garbage
+# flags) dies here — honestly reported — instead of crashlooping the live
+# engine through the procd retry budget after an apply.
+if [ "$VALIDATE" = "1" ]; then
+	[ -n "$(printf '%s' "$STRAT" | tr -d '[:space:]')" ] || fail "validate needs a strategy"
+	VQ=$(ucode -e 'import {acquire} from "/etc/homeproxy/scripts/test_resmgr.uc"; print(sprintf("%.J", acquire("validate")));' 2>/dev/null | sed -n 's/.*"qnum":[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+	case "$VQ" in ''|*[!0-9]*)
+		fail "no free test queue (209-212) - another lab task is running" ;;
+	esac
+	VREL_TASK="validate"
+	VREL_QNUM="$VQ"
+	# The EXIT-trap cleanup kills by --qnum=$QNUM — point it at the owned queue.
+	QNUM="$VQ"
+	$NFQWS --qnum="$VQ" --user=daemon --fwmark=$DMARK $LUA $STRAT >/dev/null 2>&1 &
+	NFQ_PID=$!
+	sleep 2
+	# Ф1.4b identity liveness (exact exe + the --qnum element), not a substring.
+	if ucode /etc/homeproxy/scripts/pmgr_cli.uc find "$NFQWS" "--qnum=$VQ" >/dev/null 2>&1; then
+		echo '{"ok":1,"validate":"alive"}'
+	else
+		echo '{"ok":0,"validate":"dead","error":"nfqws2 rejected the strategy (did not survive the spawn)"}'
+	fi
+	exit 0
+fi
 
 # Watchdog: guarantee teardown within 100s even if curl/nslookup wedges, so the
 # live firewall is never left modified (busybox has no `timeout` applet).
@@ -261,14 +310,21 @@ fi
 
 # Probe identity: run the curls as the non-root `daemon` user (uid resolved
 # live) and queue by meta skuid — sing-box (root) can never match. Fallback
-# when su is unusable: keep root probes, but match EXACT-unmarked packets so
-# the zapret-mark (110) flows are still protected from the test instance.
+# when su is unusable: keep root probes, but the queue rule stays in the
+# OUTPUT hook and matches ROOT-owned unmarked packets (meta skuid 0) — the
+# probes are root curls there, so they still match, while FORWARDED LAN
+# traffic never traverses OUTPUT: user devices can no longer be mangled by
+# the test strategy (the historical postrouting fallback queued every
+# unmarked LAN flow to the test IPs). The probe mode is reported honestly
+# in the "probe" field of the result JSON (the fuzzer surfaces it in the UI).
 PROBE_UID=""
+PROBE_MODE="skuid"
 if command -v su >/dev/null 2>&1; then
 	PROBE_UID=$(id -u daemon 2>/dev/null)
 	case "$PROBE_UID" in ''|*[!0-9]*) PROBE_UID="" ;; esac
 	[ -n "$PROBE_UID" ] && ! su -s /bin/sh daemon -c true >/dev/null 2>&1 && PROBE_UID=""
 fi
+[ -n "$PROBE_UID" ] || PROBE_MODE="fallback"
 
 # ── Ф6.4: UDP/QUIC contour (audit 61) ────────────────────────────────────
 # --quic: the candidate strategy's UDP profile (or none = baseline) on the
@@ -296,9 +352,8 @@ if [ "$QUIC" = "1" ]; then
 		nft add rule  inet "$TABLE" out "meta skuid $PROBE_UID meta mark and $DMARK == 0 ip daddr { $QIP } udp dport 443 ct original packets 1-3 counter queue num $QNUM bypass" 2>/dev/null
 		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 	else
-		nft add chain inet "$TABLE" pre "{ type filter hook postrouting priority mangle; policy accept; }" 2>/dev/null
-		nft add rule  inet "$TABLE" pre "meta mark 0 ip daddr { $QIP } udp dport 443 ct original packets 1-3 counter queue num $QNUM bypass" 2>/dev/null
 		nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
+		nft add rule  inet "$TABLE" out "meta skuid 0 meta mark and $DMARK == 0 ip daddr { $QIP } udp dport 443 ct original packets 1-3 counter queue num $QNUM bypass" 2>/dev/null
 		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 	fi
 	if [ "$QSTRAT" = "true" ]; then
@@ -319,7 +374,7 @@ if [ "$QUIC" = "1" ]; then
 	# verdicts pass; anything else reads as "unknown" (honest unmeasured).
 	case "$QV" in vn|icmp|silence) : ;; *) QV="unknown" ;; esac
 	[ -n "$QV" ] || QV="unknown"
-	echo "{\"ok\":1,\"quic\":\"$QV\",\"strategy\":$QSTRAT}"
+	echo "{\"ok\":1,\"quic\":\"$QV\",\"strategy\":$QSTRAT,\"probe\":\"$PROBE_MODE\"}"
 	exit 0
 fi
 
@@ -337,12 +392,11 @@ if [ -n "$PROBE_UID" ]; then
 	nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
 	nft add rule  inet "$TABLE" out "meta skuid $PROBE_UID meta mark and $DMARK == 0 ip daddr { $IPSET } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
 	nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
-else
-	nft add chain inet "$TABLE" pre "{ type filter hook postrouting priority mangle; policy accept; }" 2>/dev/null
-	nft add rule  inet "$TABLE" pre "meta mark 0 ip daddr { $IPSET } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
-	nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
-	nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
-fi
+	else
+		nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
+		nft add rule  inet "$TABLE" out "meta skuid 0 meta mark and $DMARK == 0 ip daddr { $IPSET } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
+		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
+	fi
 
 # 4. Start the candidate nfqws2 on the temp queue (skipped in --baseline mode:
 #    no queue listener = packets pass unchanged = pure baseline).
@@ -528,9 +582,9 @@ fi
 # diag_core.classify_path over the saved bodies + the honest speed gates
 # (ytv/yts) + the full result JSON. The manifest rides stdin (lesson 8: ARGV
 # unreliable on this build); the builder prints the final line.
-if [ "$DEEP" = "1" ]; then
+	if [ "$DEEP" = "1" ]; then
 	{
-		printf '{"tmp":"%s","deep":true,"hosts":[' "$TMP"
+		printf '{"tmp":"%s","probe":"%s","deep":true,"hosts":[' "$TMP" "$PROBE_MODE"
 		firsth=1
 		for h in $HOSTS; do
 			tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
@@ -570,8 +624,8 @@ else
 			fi
 		fi
 		[ -n "$JSON" ] && JSON="$JSON,"
-		JSON="$JSON{\"tag\":\"$tag\",\"label\":\"$label\",\"host\":\"$host\",\"ip\":\"$ip\",\"code\":\"$dcode\",\"tls\":\"$tls\",\"redirect\":\"$redir\",\"rc\":$rc,\"ok\":$ok,\"reason\":\"$reason\"}"
+		JSON="$JSON{\"tag\":\"$tag\",\"label\":\"$label\",\"host\":\"$host\",\"ip\":\"$ip\",\"code\":\"$dcode\",\"tls\":\"$tls\",\"redirect\":\"$redir\",\"rc\":$rc,\"ok\":$ok,\"reason\":\"$reason\",\"probe\":\"$PROBE_MODE\"}"
 	done
-	echo "{\"ok\":$OKC,\"total\":$TOT,\"results\":[$JSON]}"
+	echo "{\"ok\":$OKC,\"total\":$TOT,\"probe\":\"$PROBE_MODE\",\"results\":[$JSON]}"
 fi
 rm -rf "$TMP" 2>/dev/null

@@ -1667,6 +1667,35 @@ function hp_apply_backup_write() {
 	system(`mv -f ${shellquote(COMP_BAK + '.tmp')} ${shellquote(COMP_BAK)}`);
 }
 
+/* Argument-only spawn check (audit 2026-11-07): the apply paths run the
+ * candidate strategy through zapret_test.sh --validate BEFORE writing UCI.
+ * An invalid strategy string used to pass the regex gate, get committed and
+ * crashloop nfqws2 through the procd retry budget (respawn 3600 1 5) — the
+ * engine stayed DEAD until a manual service restart ("zapret не запускается
+ * после фаззинга"). The tester spawns the binary on its OWN resmgr queue
+ * (no firewall, no probes, ~3 s) and reports whether it survives the args.
+ * Returns null when the strategy is valid, an honest error string otherwise. */
+function hp_zapret_validate(strat) {
+	if (!length(strat)) return null;   /* empty = engine default, always valid */
+	if (!access('/opt/zapret2/nfq2/nfqws2'))
+		return 'zapret2 is not installed';
+	const fd = popen(`sh ${shellquote(HP_DIR + '/scripts/zapret_test.sh')} --validate ${shellquote(strat)} 2>/dev/null`);
+	let out = '';
+	if (fd) { out = trim(fd.read('all')); fd.close(); }
+	if (!length(out))
+		return 'проверка стратегии не дала ответа (tester produced no output)';
+	let j = null;
+	try { j = json(out); } catch (e) { j = null; }
+	if (j == null || type(j) !== 'object' || j.ok == null)
+		return 'проверка стратегии вернула нечитаемый ответ';
+	if (int(j.ok) === 1 && j.validate === 'alive')
+		return null;
+	if (j.validate === 'dead')
+		return 'nfqws2 отклонил стратегию (не пережил запуск) — применение отменено';
+	return (j.error != null && length('' + j.error)) ? ('' + j.error)
+		: 'проверка стратегии не удалась';
+}
+
 /* ч.97: the auto-pilot UCI section with the same defaults the daemon and
  * init.d assume — the single echo used by set/status. */
 function hp_autopilot_cfg() {
@@ -2715,6 +2744,63 @@ const methods = {
 				return { result: false, error: 'illegal cerificate filename' };
 				break;
 			}
+		}
+	},
+
+	/* Self-signed certificate generation (audit 2026-11-07): TLS-based server
+	 * protocols (hysteria2/tuic/trojan with TLS) need a cert+key pair, and a
+	 * publicly-trusted certificate needs a domain + ACME. For IP-only setups
+	 * the honest path is a SELF-SIGNED pair: the server presents it, clients
+	 * either enable "insecure TLS" or pin the certificate. Generated on-box:
+	 * px5g first (OpenWrt stock, EC key), openssl as the fallback — never
+	 * assume the tool (lesson-347 pattern). Atomic placement (tmp + mv),
+	 * 0600 on the key. The paths match the form defaults, so after the
+	 * generation the user only saves the configuration. */
+	server_cert_generate: {
+		call: function(req) {
+			const dir = HP_DIR + '/certs';
+			const certp = dir + '/server_publickey.pem';
+			const keyp = dir + '/server_privatekey.pem';
+			const tcert = '/tmp/homeproxy_selfsign_cert.tmp';
+			const tkey = '/tmp/homeproxy_selfsign_key.tmp';
+			system(`mkdir -p ${shellquote(dir)}`);
+			const ok_pem = (path, marker) => {
+				if (!access(path)) return false;
+				const s = readfile(path) || '';
+				return (length(s) > 0 && index(s, marker) >= 0);
+			};
+			let gen = null;
+			if (access('/usr/sbin/px5g')) {
+				system(`rm -f ${shellquote(tcert)} ${shellquote(tkey)}`);
+				if (system(`/usr/sbin/px5g selfsigned -newkey ec -days 3650 -keyout ${shellquote(tkey)} -out ${shellquote(tcert)} -subj ${shellquote('/CN=Ravnex')} 2>/dev/null`) === 0 &&
+				    ok_pem(tcert, '-----BEGIN CERTIFICATE-----') &&
+				    ok_pem(tkey, '-----BEGIN EC PRIVATE KEY-----'))
+					gen = 'px5g';
+			}
+			if (gen == null && access('/usr/bin/openssl')) {
+				system(`rm -f ${shellquote(tcert)} ${shellquote(tkey)}`);
+				if (system(`/usr/bin/openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj ${shellquote('/CN=Ravnex')} -keyout ${shellquote(tkey)} -out ${shellquote(tcert)} 2>/dev/null`) === 0 &&
+				    ok_pem(tcert, '-----BEGIN CERTIFICATE-----') &&
+				    ok_pem(tkey, 'PRIVATE KEY-----'))
+					gen = 'openssl';
+			}
+			if (gen == null) {
+				system(`rm -f ${shellquote(tcert)} ${shellquote(tkey)}`);
+				return { result: false, error: 'no certificate generator found (px5g / openssl)' };
+			}
+			system(`mv -f ${shellquote(tcert)} ${shellquote(certp)} && chmod 644 ${shellquote(certp)}`);
+			system(`mv -f ${shellquote(tkey)} ${shellquote(keyp)} && chmod 600 ${shellquote(keyp)}`);
+			let expires = null;
+			if (access('/usr/bin/openssl')) {
+				const fd = popen(`/usr/bin/openssl x509 -in ${shellquote(certp)} -noout -enddate 2>/dev/null`);
+				if (fd) {
+					const m = match(trim(fd.read('all')), /notAfter=(.*)/);
+					if (m)
+						expires = trim(m[1]);
+					fd.close();
+				}
+			}
+			return { result: true, generator: gen, cert_path: certp, key_path: keyp, expires: expires };
 		}
 	},
 
@@ -5317,6 +5403,12 @@ const methods = {
 				return { result: false, error: 'strategy contains forbidden characters' };
 			if (!access('/opt/zapret2/nfq2/nfqws2'))
 				return { result: false, error: 'zapret2 is not installed' };
+			/* Audit 2026-11-07: validate the args against the REAL binary before
+			 * committing — an invalid strategy used to crashloop the engine
+			 * through the procd retry budget and leave it dead. */
+			const vref = hp_zapret_validate(strat);
+			if (vref != null)
+				return { result: false, error: vref };
 			/* Ф8-F4: snapshot the current engines server-side BEFORE writing —
 			 * the Restore button reads this file back on every page load. */
 			hp_apply_backup_write();
@@ -5427,6 +5519,14 @@ const methods = {
 				return { result: false, error: 'zapret2 is not installed' };
 			if (length(b) && !access('/usr/bin/ciadpi'))
 				return { result: false, error: 'ciadpi is not installed' };
+			/* Audit 2026-11-07: the composed Zapret string must SURVIVE the real
+			 * binary before it reaches UCI (a dead engine after apply = the
+			 * procd retry budget burned by a crashlooping nfqws2). */
+			if (length(z)) {
+				const vref = hp_zapret_validate(z);
+				if (vref != null)
+					return { result: false, error: vref };
+			}
 			hp_apply_backup_write();
 			const c = cursor();
 			/* Light apply when every engine the composition touches already

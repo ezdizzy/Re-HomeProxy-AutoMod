@@ -52,9 +52,24 @@
       "group": "recommended"
     },
     {
+      "name": "Hostfakesplit (google.com, ts)",
+      "args": "--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=hostfakesplit:host=google.com:tcp_ts=-600000",
+      "group": "recommended"
+    },
+    {
+      "name": "Hostfakesplit midhost",
+      "args": "--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=hostfakesplit:host=www.google.com:midhost=midsld+1:tcp_ts=-1000:repeats=4",
+      "group": "recommended"
+    },
+    {
+      "name": "Fake + fakedsplit (zero pattern)",
+      "args": "--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tcp_ts=-1000:repeats=6:ip_id=zero --lua-desync=fakedsplit:pos=2:pattern=0x00:tcp_ts=-1000:ip_id=zero",
+      "group": "recommended"
+    },
+    {
       "name": "Syndata + multidisorder",
       "args": "--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=syndata --lua-desync=multidisorder:pos=1,midsld",
-      "group": "recommended"
+      "group": "auto"
     },
     {
       "name": "Split @2",
@@ -190,6 +205,16 @@
       "name": "Multi: Discord only + general",
       "args": "--blob=tls_google:@/opt/zapret2/files/fake/tls_clienthello_www_google_com.bin --blob=stun_fake:@/opt/zapret2/files/fake/stun.bin --filter-tcp=443 --filter-l7=tls --hostlist=/etc/homeproxy/resources/zapret-hosts/discord.txt --payload=tls_client_hello --lua-desync=multidisorder:pos=1,sniext+1:seqovl=336:seqovl_pattern=tls_google --new --filter-udp=443 --filter-l7=stun,discord --hostlist=/etc/homeproxy/resources/zapret-hosts/discord.txt --lua-desync=fake:blob=stun_fake:repeats=6 --new --filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tls_mod=rnd,rndsni,dupsid --lua-desync=multidisorder:pos=1,sniext+1",
       "group": "recommended"
+    },
+    {
+      "name": "Hostfakesplit (google.com, ts, midhost)",
+      "args": "--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=hostfakesplit:host=google.com:midhost=midsld+1:tcp_ts=-600000:repeats=4",
+      "group": "community"
+    },
+    {
+      "name": "Multidisorder + badack",
+      "args": "--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=multidisorder:pos=1,midsld:tcp_ack=-66000",
+      "group": "community"
     }
   ]
 }

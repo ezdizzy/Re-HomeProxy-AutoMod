@@ -98,8 +98,8 @@ function buildResProfileCard() {
 	/* Ф10.1: ONE verdict line for the whole card — every switch result
 	 * replaces the previous one here (mkResult / result-placement rule). */
 	const result = mkResult();
-	const names = { lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
-	const modeLabel = { auto: _('Auto'), lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
+	const names = { lite: _('Lite'), balanced: _('Balanced'), performance: _('Performance') };
+	const modeLabel = { auto: _('Auto'), lite: _('Lite'), balanced: _('Balanced'), performance: _('Performance') };
 	const MODES = [ 'auto', 'lite', 'balanced', 'performance' ];
 	const modeBtns = {};
 	let curMode = 'auto';

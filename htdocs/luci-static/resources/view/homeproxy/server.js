@@ -1111,6 +1111,31 @@ return view.extend({
 		o.onclick = L.bind(hp.uploadCertificate, this, _('certificate'), 'server_publickey');
 		o.modalonly = true;
 
+		o = srvGrid.option(form.Button, '_gen_selfsign_cert', _('Self-signed certificate'),
+			_('Generate a self-signed certificate and key pair on the router (EC, 10 years) — no domain needed. A self-signed cert is NOT publicly trusted: on the clients enable "Allow insecure TLS" (insecure) or pin the certificate. ACME on this page stays the way to get a publicly-trusted one.'));
+		o.inputstyle = 'action';
+		o.inputtitle = _('Generate');
+		o.depends({'tls': '1', 'tls_cert_path': '/etc/homeproxy/certs/server_publickey.pem'});
+		o.onclick = L.bind(function(ev) {
+			const callServerCertGenerate = rpc.declare({
+				object: 'luci.homeproxy',
+				method: 'server_cert_generate',
+				expect: { '': {} }
+			});
+			const btn = (ev && ev.target) ? ev.target : null;
+			if (btn)
+				btn.disabled = true;
+			return L.resolveDefault(callServerCertGenerate(), {}).then((ret) => {
+				if (btn)
+					btn.disabled = false;
+				if (ret && ret.result === true)
+					ui.addNotification(null, E('p', _('Self-signed certificate generated (%s), valid until %s. The paths above already point to it — save the configuration, then enable "Allow insecure TLS" (or pin the cert) on the clients.').format(ret.generator || '?', ret.expires || '?')));
+				else
+					ui.addNotification(null, E('p', _('Failed to generate the certificate: %s.').format((ret && ret.error) || _('unknown error'))));
+			});
+		}, this);
+		o.modalonly = true;
+
 		o = srvGrid.option(form.Value, 'tls_key_path', _('Key path'),
 			_('The server private key, in PEM format.'));
 		o.value('/etc/homeproxy/certs/server_privatekey.pem');

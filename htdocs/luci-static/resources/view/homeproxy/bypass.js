@@ -1745,6 +1745,13 @@ return view.extend({
 				return;
 			} else
 				labStatus.textContent = '';
+			/* Honest probe mode (skuid|fallback): in the fallback the tester's
+			 * isolated uid is unavailable — the probes run as root and can only
+			 * touch router-origin dials, but the ranking is also noisier. */
+			if (st.probe_mode === 'fallback') {
+				labStatus.textContent = _('Fallback probe mode: the isolated probe user is unavailable — the sweep may briefly disturb the router\'s own connections to the test hosts, and the ranking is noisier than usual.');
+				return;
+			}
 			/* Result table — ч.109: lives in its OWN persistent container
 			 * (labBest) instead of the shared result area. Picking a strategy
 			 * used to WIPE the ranking (the user complaint) — now the action
@@ -1776,6 +1783,16 @@ return view.extend({
 			else
 				box.appendChild(E('div', { 'class': 'wiz-note', style: 'font-weight:600' },
 					[ _('No strategy passes the distinguishing hosts — try the full fuzz, the strategy generator, or check your ISP blocking.') ]));
+			/* Audit 2026-11-07: the probe-honesty boundary — the user report
+			 * («probe says Default, real devices say Hostfakesplit»): the
+			 * verdict is a measurement, not a guarantee. */
+			if (res.probe_mode === 'fallback')
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'color:var(--hp-warn,#b60)' }, [
+					badge('hpui-b-amber', _('Fallback probe mode')),
+					' ' + _('The isolated probe user is unavailable — the ranking is noisier than usual, and the sweep may briefly disturb the router\'s own connections to the test hosts.')
+				]));
+			box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' },
+				[ _('The verdict is a measurement on THIS router at THIS moment: DPI regimes change over the day, phone clients ride QUIC (only strategies with a UDP profile touch it), and a browser opens many parallel connections. Margins under ~25% are noise — verify the winner on your real devices before trusting it.') ]));
 			/* Ф6.4 (аудит 84): baseline-СЕРИЯ — дрейф между первым и
 			 * контрольным проходом показывается честно. */
 			if (res.baseline_series && res.baseline_series.drift && res.baseline_series.drift.length)

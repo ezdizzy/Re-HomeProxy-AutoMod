@@ -177,5 +177,8 @@ if (man.deep === true) {
 	top.deep_ok = deep_all;
 	top.deep_total = deep_total_all;
 }
+/* Честный режим проб (skuid|fallback) — фаззер поднимает его в UI. */
+if (man.probe != null)
+	top.probe = '' + man.probe;
 top.results = results;
 print(sprintf("%.J\n", top));

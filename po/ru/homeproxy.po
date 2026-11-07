@@ -1757,6 +1757,9 @@ msgstr "нет"
 msgid "Listening ports"
 msgstr "Прослушиваемые порты"
 
+msgid "Lite"
+msgstr "Лёгкий"
+
 msgid "Service restarted"
 msgstr "Служба перезапущена"
 
@@ -7464,7 +7467,7 @@ msgid "poll factor"
 msgstr "множитель поллов"
 
 msgid "The profile scales the refresh intervals of the app pages (Lite ×3, Balanced ×2, Performance ×1) and the observation cadence of the metrics, health and sentinel daemons; reactive passes (incidents, operation progress) are never scaled. Auto = the hardware detection (RAM). Daemons follow a switch live; open pages apply it after navigation."
-msgstr "Профиль масштабирует интервалы обновления страниц приложения (Lite ×3, Balanced ×2, Performance ×1) и частоту наблюдения демонов metrics, health и sentinel; реактивные проходы (инциденты, прогресс операций) не масштабируются. Авто = определение по железу (RAM). Демоны подхватывают смену сразу; открытые страницы — после перехода."
+msgstr "Профиль масштабирует интервалы обновления страниц приложения (Лёгкий ×3, Сбалансированный ×2, Производительность ×1) и частоту наблюдения демонов metrics, health и sentinel; реактивные проходы (инциденты, прогресс операций) не масштабируются. Авто = определение по железу (RAM). Демоны подхватывают смену сразу; открытые страницы — после перехода."
 
 msgid "Critically over budget"
 msgstr "Критический перерасход"
@@ -7598,3 +7601,30 @@ msgstr "Обслуживает компоненты, которые сейчас
 
 msgid "Setting up the feed…"
 msgstr "Настраиваю feed…"
+
+msgid "Fallback probe mode: the isolated probe user is unavailable — the sweep may briefly disturb the router's own connections to the test hosts, and the ranking is noisier than usual."
+msgstr "Резервный режим проб: изолированный пользователь проб недоступен — фаззинг может кратко задевать собственные соединения роутера к проверяемым хостам, и рейтинг шумнее обычного."
+
+msgid "Fallback probe mode"
+msgstr "Резервный режим проб"
+
+msgid "The isolated probe user is unavailable — the ranking is noisier than usual, and the sweep may briefly disturb the router's own connections to the test hosts."
+msgstr "Изолированный пользователь проб недоступен — рейтинг шумнее обычного, и фаззинг может кратко задевать собственные соединения роутера к проверяемым хостам."
+
+msgid "The verdict is a measurement on THIS router at THIS moment: DPI regimes change over the day, phone clients ride QUIC (only strategies with a UDP profile touch it), and a browser opens many parallel connections. Margins under ~25% are noise — verify the winner on your real devices before trusting it."
+msgstr "Вердикт — это замер на ЭТОМ роутере и в ЭТОТ момент: режимы DPI меняются в течение суток, телефонные клиенты ездят по QUIC (его трогают только стратегии с UDP-профилем), а браузер открывает много параллельных соединений. Разница меньше ~25% — шум: победителя проверяйте на реальных устройствах, прежде чем доверять."
+
+msgid "Self-signed certificate"
+msgstr "Самоподписанный сертификат"
+
+msgid "Generate a self-signed certificate and key pair on the router (EC, 10 years) — no domain needed. A self-signed cert is NOT publicly trusted: on the clients enable \"Allow insecure TLS\" (insecure) or pin the certificate. ACME on this page stays the way to get a publicly-trusted one."
+msgstr "Создать на роутере самоподписанную пару «сертификат + ключ» (EC, 10 лет) — домен не нужен. Самоподписанный сертификат НЕ является публично доверенным: на клиентах включите «Разрешить небезопасный TLS» (insecure) или закрепите сертификат. ACME на этой странице остаётся путём получения публично доверенного."
+
+msgid "Self-signed certificate generated (%s), valid until %s. The paths above already point to it — save the configuration, then enable \"Allow insecure TLS\" (or pin the cert) on the clients."
+msgstr "Самоподписанный сертификат создан (%s), действителен до %s. Пути выше уже указывают на него — сохраните конфигурацию, затем на клиентах включите «Разрешить небезопасный TLS» (или закрепите сертификат)."
+
+msgid "Failed to generate the certificate: %s."
+msgstr "Не удалось создать сертификат: %s."
+
+msgid "unknown error"
+msgstr "неизвестная ошибка"

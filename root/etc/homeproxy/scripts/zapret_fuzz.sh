@@ -51,6 +51,12 @@ release_resmgr() {
 	return 0
 }
 trap release_resmgr EXIT INT TERM
+# Audit (2026-11-07): the acquired queue rode along as a MUTEX only — every
+# zapret_test.sh call still defaulted to qnum 209, so a manual test holding
+# 209 collided with the sweep (two nfqws2 on one queue, one cleanup killed
+# the other's probes). The acquired queue is now the ACTUAL test queue.
+TEST_QNUM="$RQNUM"
+export TEST_QNUM
 
 # One ucode pass → "name<TAB>group<TAB>args" lines (TAB cannot occur inside
 # any field). ч.129: the GROUP rides along — the deep battery selection must
@@ -119,6 +125,16 @@ printf '%s' "$CURRENT_OPTS" | tr -d "'" > "$TMP/current_opts.txt"
 # DPI-blocked and cannot credit any strategy. "" = no strategy needed there.
 sh /etc/homeproxy/scripts/zapret_test.sh --baseline "" "$IPS" 2>/dev/null > "$TMP/baseline.json"
 
+# Honest probe mode (skuid|fallback) — the tester reports it in every result
+# JSON; the fallback (no isolated uid) touches only router-origin root dials
+# since the OUTPUT-hook fix, but the ranking noise and the residual router-
+# side class must be visible in the UI.
+PMODE=$(sed -n 's/.*"probe":[[:space:]]*"\([a-z]*\)".*/\1/p' "$TMP/baseline.json" 2>/dev/null | head -n 1)
+case "$PMODE" in skuid|fallback) ;; *) PMODE="skuid" ;; esac
+if [ "$PMODE" = "fallback" ]; then
+	echo '{"running":true,"done":0,"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"fallback","current":"resolving test hosts… (fallback probe mode)"}' > "$STATUS"
+fi
+
 DONE=0
 IDX=0
 while IFS='	' read -r NAME STRAT; do
@@ -140,7 +156,7 @@ done < "$TMP/pairs.tsv"
 # video edge must load); pass 2 merges the deep verdicts and finalizes the
 # ranking (deep-verified first). The corpus keeps the RANKING DEPTH: the
 # resource auto-pick prefers deep-verified winners.
-echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"rank","current":"ranking…"}' > "$STATUS"
+echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"rank","current":"ranking…"}' > "$STATUS"
 ucode -e '
 import {readfile, writefile, access} from "fs";
 import { samples_stats } from "/etc/homeproxy/scripts/strategy_lab.uc";
@@ -285,6 +301,10 @@ const FAM = [
 	[ "fakesplit", /desync=fakesplit/ ],
 	[ "disorder", /desync=multidisorder/ ],
 	[ "seg2split", /desync=seg2split/ ],
+	/* fakedsplit BEFORE fake: /desync=fake/ is a PREFIX of "desync=fakedsplit"
+	 * (the community fake+fakedsplit candidate would silently join the fake
+	 * family and never get its own measured slot). */
+	[ "fakedsplit", /desync=fakedsplit/ ],
 	[ "fake", /desync=fake/ ],
 	[ "oob", /desync=oob/ ]
 ];
@@ -322,7 +342,7 @@ for (let i = 0; i < length(strategies) && length(covered) < 5; i++) {
 	push(covered, i + 1);
 }
 /* 3. the remaining families */
-for (let i = 0; i < length(strategies) && length(keys(fams_seen)) < 8; i++) {
+for (let i = 0; i < length(strategies) && length(keys(fams_seen)) < 9; i++) {
 	if (int(strategies[i].ok) <= 0 || index(covered, i + 1) >= 0) continue;
 	const f = fam_of(strategies[i].args || "");
 	if (f == null || fams_seen[f]) continue;
@@ -385,10 +405,14 @@ if [ ! -s "$TMP/rank.json" ]; then
 	exit 0
 fi
 
-# Deep content battery (one pass each, same isolated queue). ч.123: the
-# battery list is deep_list.json — the handshake top-5 PLUS up to 2
-# representatives of distinct technique families PLUS the currently applied
-# strategy (see the rank pass above). d<i>.json maps back through the list.
+# Deep content battery (TWO full passes — the deciding metrics are single-
+# pass medians otherwise, and a ~2x TSPU regime swing between runs flips the
+# >25% START verdict; two passes a battery-length apart average that out —
+# the audit of the "probe says Default, reality says Hostfakesplit" report).
+# ч.123: the battery list is deep_list.json — the handshake top-5 PLUS up to
+# 2 representatives of distinct technique families PLUS the currently applied
+# strategy (see the rank pass above). d<i>.json / d<i>b.json map back through
+# the list; the merge averages what both passes measured.
 TOPN=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); print(length((j && j.list) || 0));' 2>/dev/null)
 YTV_URL=$(ucode /etc/homeproxy/scripts/yt_stream_probe.uc get 2>/dev/null | ucode -e '
 import {readfile} from "fs";
@@ -397,30 +421,30 @@ try { j = json(readfile("/dev/stdin") || ""); } catch (e) { j = null; }
 if (j && j.ok && j.url) print(j.url);
 ' 2>/dev/null)
 if [ -z "$YTV_URL" ]; then
-	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","note":"deep battery: page/CDN/edge + the sustained-flow throughput probe (the real-stream URL is unavailable)"}' > "$STATUS"
+	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","note":"deep battery: page/CDN/edge + the sustained-flow throughput probe (the real-stream URL is unavailable)"}' > "$STATUS"
 else
-	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","note":"deep battery includes the real video-stream probe"}' > "$STATUS"
+	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","note":"deep battery includes the real video-stream probe"}' > "$STATUS"
 fi
-i=0
-while [ "$i" -lt "$TOPN" ]; do
-	i=$((i + 1))
-	ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
-	[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
-	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"'"}' > "$STATUS"
-	YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i.json"
-done
-
-# ч.129: a deep run can die mid-sweep (memory pressure after a long sweep,
-# the watchdog) and leave a missing/invalid/all-dead result — the strategy
-# then silently loses its measured verdict (the live fact: deep_count 4 of
-# 7 selected, the failed ones never surfaced anywhere). Retry each failed
-# run ONCE before the merge; the merge counts what still failed honestly.
-i=0
-while [ "$i" -lt "$TOPN" ]; do
-	i=$((i + 1))
-	NEED=$(ucode -e 'import {readfile, access} from "fs";
+# deep_pass <suffix> <pass#> — one full battery pass; results land in d<i><suf>.json.
+deep_pass() {
+	i=0
+	while [ "$i" -lt "$TOPN" ]; do
+		i=$((i + 1))
+		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
+		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
+		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
+		YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+	done
+}
+# deep_retry <suffix> <pass#> — one retry per failed/empty run (ч.129: a deep
+# run can die mid-sweep; the merge counts what still failed honestly).
+deep_retry() {
+	i=0
+	while [ "$i" -lt "$TOPN" ]; do
+		i=$((i + 1))
+		NEED=$(ucode -e 'import {readfile, access} from "fs";
 let ok = 0;
-const p = "'$TMP'/d'"$i"'.json";
+const p = "'$TMP'/d'"$i$1"'.json";
 if (access(p)) {
 	let j = null;
 	try { j = json(readfile(p) || ""); } catch (e) { j = null; }
@@ -439,18 +463,23 @@ if (access(p)) {
 	}
 }
 print(ok ? "0" : "1");' 2>/dev/null)
-	[ "$NEED" = "1" ] || continue
-	ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
-	[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
-	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep retry '"$i"'/'"$TOPN"'"}' > "$STATUS"
-	YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i.json"
-done
+		[ "$NEED" = "1" ] || continue
+		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
+		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
+		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep retry '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
+		YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+	done
+}
+deep_pass "" 1
+deep_retry "" 1
+deep_pass "b" 2
+deep_retry "b" 2
 
 # Ф6.4 (audit 84): CONTROL baseline — the baseline is a SERIES, not a single
 # measurement: a host passing baseline #1 but failing the control (or vice
 # versa) is DRIFT, and the free-pass credit requires BOTH passes (the merge
 # recomputes dist conservatively and reports the drift honestly).
-echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"control","current":"контрольный baseline…"}' > "$STATUS"
+echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"control","current":"контрольный baseline…"}' > "$STATUS"
 sh /etc/homeproxy/scripts/zapret_test.sh --baseline "" "$IPS" 2>/dev/null > "$TMP/control.json"
 
 # Ф6.4 (audit 85): the finalists on the SECOND edge/IP — one IP per sweep
@@ -462,7 +491,7 @@ if [ -n "$IPS2" ]; then
 		i=$((i + 1))
 		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
-		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"alt-ip","done2":'$i',"total2":'$TOPN',"current":"второй IP '"$i"'/'"$TOPN"'"}' > "$STATUS"
+		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"alt-ip","done2":'$i',"total2":'$TOPN',"current":"второй IP '"$i"'/'"$TOPN"'"}' > "$STATUS"
 		sh /etc/homeproxy/scripts/zapret_test.sh "$ARGS" "$IPS2" 2>/dev/null > "$TMP/a$i.json"
 	done
 fi
@@ -478,7 +507,7 @@ if [ -n "$YIP" ]; then
 		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
 		case "$ARGS" in *--filter-udp=443*) ;; *) continue ;; esac
-		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"stage":"quic","done2":'$i',"total2":'$TOPN',"current":"QUIC A/B '"$i"'/'"$TOPN"'"}' > "$STATUS"
+		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"quic","done2":'$i',"total2":'$TOPN',"current":"QUIC A/B '"$i"'/'"$TOPN"'"}' > "$STATUS"
 		sh /etc/homeproxy/scripts/zapret_test.sh --quic "$ARGS" "yt=$YIP" 2>/dev/null > "$TMP/q$i.json"
 	done
 fi
@@ -521,7 +550,13 @@ for (let i = 1; i <= length(dlist_items); i++) {
 		push(deep_failed, (ent_s != null) ? ("" + (ent_s.name || "custom args")) : "?");
 		continue;
 	}
-	push(drawn, { s: ent_s, results: d.results });
+	/* The SECOND battery pass (d<i>b.json) — averaged into the deciding
+	 * metrics; a missing/failed second pass degrades to the first one. */
+	let d2res = null;
+	const d2 = parse(TMP + "/d" + i + "b.json");
+	if (d2 && type(d2.results) == "array" && length(d2.results) > 0)
+		d2res = d2.results;
+	push(drawn, { s: ent_s, results: d.results, results2: d2res, passes: (d2res != null) ? 2 : 1 });
 	deepN++;
 }
 /* Ф6.4: the sweep-level QUIC baseline verdict — measured BEFORE any
@@ -562,27 +597,16 @@ for (let id in keys(probe_cnt))
 for (let r in drawn) {
 	const s = r.s;
 	let dok = 0, dtot = 0, hosts = [];
-	for (let res in r.results) {
-		if (type(res) != "object" || res.tag == null) continue;
+	/* One result entry → the metric set the merge ranks by (the per-item
+	 * collection from the pre-two-pass code, extracted verbatim). */
+	const collect = (res) => {
 		let hdok = 0, dtot_h = 0, stream = 0, start_ms = 0, stream2 = 0, vstart = 0;
 		for (let it in (res.deep || [])) {
 			if (type(it) != "object" || it.id == null) continue;
-			/* the sustained-flow speed (ytv batch / yts real stream) — the
-			 * honest quality metric WITHIN a passing deep verdict: both
-			 * strategies can pass the ≥128 KB/s bar while one crawls at
-			 * 350 KB/s and the other flies at 540 KB/s (the live ч.116
-			 * comparison the user reported). */
 			if ((it.id == "ytv" || it.id == "yts") && int(it.speed || 0) > stream)
 				stream = int(it.speed || 0);
-			/* ч.127: the ytv batch START — the averaged time_starttransfer
-			 * of the FIRST transfer of each window (a fresh connection each)
-			 * in ms: the hover-preview latency («навожу на карточку — превью
-			 * не стартует») the user pinpointed. */
 			if (it.id == "ytv" && int(it.ttfb || 0) > start_ms)
 				start_ms = int(it.ttfb || 0);
-			/* Ф6.4 (замер пользователя 2026-11-04): the VIDEO edge has its
-			 * own START (yts/yts2 ttfb) and its OWN second-edge speed
-			 * (yts2) — the preview metrics do not cover it. */
 			if ((it.id == "yts" || it.id == "yts2") && int(it.ttfb || 0) > vstart)
 				vstart = int(it.ttfb || 0);
 			if (it.id == "yts2" && int(it.speed || 0) > stream2)
@@ -591,11 +615,35 @@ for (let r in drawn) {
 			dtot_h++;
 			if (it.ok == 1) hdok++;
 		}
-		dok += hdok;
-		dtot += dtot_h;
+		return { hdok: hdok, dtot_h: dtot_h, stream: stream, start_ms: start_ms,
+			stream2: stream2, vstart: vstart };
+	};
+	for (let res in r.results) {
+		if (type(res) != "object" || res.tag == null) continue;
+		const m1 = collect(res);
+		/* The matching entry of the SECOND pass — metrics AVERAGE over both
+		 * (int mean), the deep verdict counts SUM (2 passes = 2x items). */
+		let m2 = null;
+		if (r.results2 != null)
+			for (let res2 in r.results2)
+				if (type(res2) == "object" && res2.tag == res.tag) { m2 = collect(res2); break; }
+		let stream = m1.stream, start_ms = m1.start_ms, stream2 = m1.stream2, vstart = m1.vstart;
+		let hok = m1.hdok, htot = m1.dtot_h;
+		if (m2 != null) {
+			if (int(m2.stream) > 0) stream = (stream > 0) ? int((stream + m2.stream) / 2) : m2.stream;
+			if (int(m2.start_ms) > 0) start_ms = (start_ms > 0) ? int((start_ms + m2.start_ms) / 2) : m2.start_ms;
+			if (int(m2.stream2) > 0) stream2 = (stream2 > 0) ? int((stream2 + m2.stream2) / 2) : m2.stream2;
+			if (int(m2.vstart) > 0) vstart = (vstart > 0) ? int((vstart + m2.vstart) / 2) : m2.vstart;
+			hok += m2.hdok;
+			htot += m2.dtot_h;
+			dok += m2.hdok;
+			dtot += m2.dtot_h;
+		}
+		dok += m1.hdok;
+		dtot += m1.dtot_h;
 		push(hosts, { tag: res.tag, label: res.label || res.tag,
-			deep_ok: (dtot_h > 0 && hdok == dtot_h),
-			deep_pass: hdok, deep_total: dtot_h,
+			deep_ok: (htot > 0 && hok == htot),
+			deep_pass: hok, deep_total: htot,
 			deep_total_raw: int(res.deep_total) || 0,
 			stream: stream, start_ms: start_ms,
 			stream2: stream2, stream_start_ms: vstart, items: res.deep || [] });
@@ -606,7 +654,7 @@ for (let r in drawn) {
 			if (vstart > 0) s.stream_start_ms = vstart;
 		}
 	}
-	s.deep = { ok: dok, total: dtot, hosts: hosts };
+	s.deep = { ok: dok, total: dtot, hosts: hosts, passes: r.passes };
 }
 /* ── Ф6.4 v3: измерения, второй IP, QUIC A/B, вердикты ─────────────────── */
 
@@ -787,6 +835,7 @@ writefile(RESULT, sprintf("%.J\n", {
 	rounds: ROUNDS, majority: MAJ, ts: now, baseline: bnote, strategies: final,
 	deep_count: deepN, deep_selected: length(dlist_items),
 	deep_failed: deep_failed, deep_skipped: skipped_ids, quic: quic,
+	probe_mode: "'$PMODE'",
 	lab: "v3",
 	baseline_series: { first: bnote, control: cnote, drift: drift },
 	dns_sets: dns_sets,
@@ -808,4 +857,4 @@ while (length(hist) > 5) shift(hist);
 writefile(HISTORY, sprintf("%.J\n", { runs: hist }));
 ' 2>/dev/null
 rm -rf "$TMP"
-echo '{"running":false,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS'}' > "$STATUS"
+echo '{"running":false,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'"}' > "$STATUS"

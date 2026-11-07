@@ -219,17 +219,20 @@ function probe_battery(meta) {
 /* Rough seconds-to-finish estimate from a live fuzz status: resolve+baseline
  * (~60 s) + unmeasured strategies × rounds × ~55 s (the 70 s per-pass
  * watchdog is the worst case, typical passes are faster) + the deep battery
- * tail (~8 runs × 75 s worst case). ч.123: the pick no longer caps at a
- * fixed 45 min — a full sweep honestly takes up to a few hours, so the wait
- * extends to the sweep's own estimate while it keeps making progress. */
+ * tail — TWO full passes now (the deciding metrics average over both; the
+ * single-pass medians were the "probe says Default, reality says
+ * Hostfakesplit" flip), ~8 runs × 75 s each + retries. ч.123: the pick no
+ * longer caps at a fixed 45 min — a full sweep honestly takes up to a few
+ * hours, so the wait extends to the sweep's own estimate while it keeps
+ * making progress. */
 function fuzz_remaining_est(st) {
 	if (st == null || int(st.total || 0) <= 0)
 		return 0;
 	const done = int(st.done || 0);
 	const rem = int(st.total) - done;
 	if (rem <= 0)
-		return 700;   /* the deep battery tail */
-	return 60 + rem * int(st.rounds || 2) * 55 + 600;
+		return 1300;   /* the two-pass deep battery tail */
+	return 60 + rem * int(st.rounds || 2) * 55 + 1200;
 }
 
 /* Wait until the fuzz is no longer running (status file says so); the

@@ -1186,6 +1186,9 @@ msgstr ""
 msgid "Listening ports"
 msgstr ""
 
+msgid "Lite"
+msgstr ""
+
 msgid "Live %"
 msgstr ""
 
@@ -7590,4 +7593,31 @@ msgid "Serves the components that otherwise install from archives: hiddify-core 
 msgstr ""
 
 msgid "Setting up the feed…"
+msgstr ""
+
+msgid "Fallback probe mode: the isolated probe user is unavailable — the sweep may briefly disturb the router's own connections to the test hosts, and the ranking is noisier than usual."
+msgstr ""
+
+msgid "Fallback probe mode"
+msgstr ""
+
+msgid "The isolated probe user is unavailable — the ranking is noisier than usual, and the sweep may briefly disturb the router's own connections to the test hosts."
+msgstr ""
+
+msgid "The verdict is a measurement on THIS router at THIS moment: DPI regimes change over the day, phone clients ride QUIC (only strategies with a UDP profile touch it), and a browser opens many parallel connections. Margins under ~25% are noise — verify the winner on your real devices before trusting it."
+msgstr ""
+
+msgid "Self-signed certificate"
+msgstr ""
+
+msgid "Generate a self-signed certificate and key pair on the router (EC, 10 years) — no domain needed. A self-signed cert is NOT publicly trusted: on the clients enable \"Allow insecure TLS\" (insecure) or pin the certificate. ACME on this page stays the way to get a publicly-trusted one."
+msgstr ""
+
+msgid "Self-signed certificate generated (%s), valid until %s. The paths above already point to it — save the configuration, then enable \"Allow insecure TLS\" (or pin the cert) on the clients."
+msgstr ""
+
+msgid "Failed to generate the certificate: %s."
+msgstr ""
+
+msgid "unknown error"
 msgstr ""

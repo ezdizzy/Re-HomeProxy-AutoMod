@@ -219,13 +219,18 @@ const CSS = `
  * Block E: the row buttons live in ONE row (the 3-floor wrap is gone —
  * the actions column sizes to its content; below 1150px it may wrap). */
 .wiz-svc { border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; padding: 8px 10px; }
-.wiz-svc-grid { display: grid; grid-template-columns: minmax(140px, 210px) minmax(160px, 1fr) minmax(180px, 260px) max-content; align-items: center; gap: 6px 10px; }
+/* Track 3 is FIXED (select 190-210 + gap + «Check» ~92 ≈ 308): rows with and
+ * without the Check button share the SAME column widths, so the select and
+ * the actions stay aligned across every row. */
+.wiz-svc-grid { display: grid; grid-template-columns: minmax(140px, 210px) minmax(160px, 1fr) 312px max-content; align-items: center; gap: 6px 10px; }
+.wiz-svc-sel { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.wiz-svc-sel .wiz-select { flex: 0 1 auto; min-width: 190px; max-width: 210px; }
+.wiz-svc-sel .hpui-btn { font-size: .92em; padding-left: 10px; padding-right: 10px; }
 .wiz-svc-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .wiz-svc-grid > .wiz-svc-btns { flex-wrap: nowrap; }
 .wiz-svc-btns .hpui-btn, .wiz-svc-btns .btn { font-size: .92em; padding-left: 10px; padding-right: 10px; }
 .wiz-svc-btns .wiz-del { min-width: 30px; padding-left: 8px; padding-right: 8px; }
 .wiz-svc-grid > .wiz-title, .wiz-svc-grid > .wiz-state { flex: none; }
-.wiz-svc-grid > .wiz-select { width: 100%; }
 .wiz-svc .wiz-pool { margin: 6px 0 0 0; }
 .wiz-svc .hpui-hint { margin: 6px 0 0 0; }
 @media (max-width: 1150px) {
@@ -235,7 +240,7 @@ const CSS = `
 	.wiz-svc-grid { display: flex; flex-wrap: wrap; }
 	.wiz-svc-grid > .wiz-title { flex: 1 1 220px; }
 	.wiz-svc-grid > .wiz-state { flex: 1 1 240px; }
-	.wiz-svc-grid > .wiz-select { width: auto; }
+	.wiz-svc-grid > .wiz-svc-sel { flex: 1 1 auto; }
 }
 .wiz-hosts { color: var(--hp-grey); font-size: .82em; }
 .wiz-pool { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; margin: 4px 0 0 0; font-size: .88em; border: 1px dashed var(--hp-panel-line-strong); border-radius: var(--hp-radius); }
@@ -1177,13 +1182,12 @@ return view.extend({
 					}).finally(function() { applyBtn.disabled = false; });
 				});
 
-				row.appendChild(sel);
-
-				/* Apply (+ optional Check) share ONE grid column, so the
-				 * select column stays aligned across rows with and without
-				 * the Check button. */
-				const btns = E('span', { 'class': 'wiz-svc-btns' });
-				btns.appendChild(applyBtn);
+				/* The Check button audits the CURRENT rule, while the actions
+				 * row (Apply / second exit / delete) MUTATES it — so Check
+				 * sits next to the exit (right of it), and every row keeps
+				 * ONE uniform actions composition. */
+				const selCell = E('span', { 'class': 'wiz-svc-sel' });
+				selCell.appendChild(sel);
 
 				if (preset.check) {
 					const checkBtn = E('button', {
@@ -1194,8 +1198,12 @@ return view.extend({
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Checking…') ]));
 						runServiceCheck(preset.check).finally(function() { checkBtn.disabled = false; });
 					});
-					btns.appendChild(checkBtn);
+					selCell.appendChild(checkBtn);
 				}
+				row.appendChild(selCell);
+
+				const btns = E('span', { 'class': 'wiz-svc-btns' });
+				btns.appendChild(applyBtn);
 				/* D27: a rule-bearing row can grow a SECOND exit of the same
 				 * service (rpcd wizard_preset_add is unchanged) — the form
 				 * opens in the row; the catalog no longer creates rules. */
