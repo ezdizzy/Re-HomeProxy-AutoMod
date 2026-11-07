@@ -7543,3 +7543,12 @@ msgstr "Shadowsocks 2022: просто и легко — без сертифик
 
 msgid "Protocols with mandatory TLS (Hysteria2, TUIC, Trojan with TLS) need certificates — set them up via «Add» in the list below. The wizard covers the certificate-free protocols; the generator creates REALITY keys automatically."
 msgstr "Протоколы с обязательным TLS (Hysteria2, TUIC, Trojan с TLS) требуют сертификатов — настройте их через «Добавить» в списке ниже. Мастер покрывает протоколы без сертификатов; REALITY-ключи генератор создаёт автоматически."
+
+msgid "unknown (SPA page)"
+msgstr "неизвестно (SPA-страница)"
+
+msgid "The Gemini page is a SPA shell%s — the refusal is rendered by page scripts after load, so a body probe cannot read the verdict; \"unknown\" is the honest web answer here. The region signal is the API verdict above, but the WEB gate is stricter and may reject hosting-provider IPs even when the API passes. Final proof: open gemini.google.com on the device in a fresh tab."
+msgstr "Страница Gemini — SPA-шелл%s: отказ рисуется скриптами после загрузки, и проба тела не может прочитать вердикт — честный ответ здесь «неизвестно». Сигнал региона — вердикт API выше, но ВЕБ-гейт строже и может отвергать IP хостинг-провайдеров даже при прохождении API. Финальная проверка — открыть gemini.google.com на устройстве в свежей вкладке."
+
+msgid "The node probe covers the API gate only — the Gemini WEB gate is stricter and may reject hosting-provider IPs. If a node \"passes\" here but the device still refuses, the web gate is the reason; verify on the device."
+msgstr "Проба узлов покрывает только API-гейт — ВЕБ-гейт Gemini строже и может отвергать IP хостинг-провайдеров. Если узел здесь «проходит», а на устройстве всё ещё отказ — причина в веб-гейте; проверяйте на устройстве."

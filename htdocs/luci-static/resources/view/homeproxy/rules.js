@@ -301,6 +301,17 @@ function checkBadge(obj, okText, badText) {
 	return E('span', { 'class': 'hpui-badge hpui-b-amber' }, [ '? ' + _('uncertain') + ' (' + _('code') + ' ' + code + ')' ]);
 }
 
+/* Gemini-web honesty (Блок 1 сеанса 138): the SPA refusal is rendered by
+ * page JS after the shell loads, so a body probe can never PROVE "served" —
+ * green only for a legacy backend that still sends it, red only with a real
+ * refusal marker in the body, amber otherwise. */
+function webBadge(w) {
+	const v = w && w.verdict;
+	if (v === 'refused') return E('span', { 'class': 'hpui-badge hpui-b-red' }, [ '✗ ' + _('refused') ]);
+	if (v === 'served') return E('span', { 'class': 'hpui-badge hpui-b-green' }, [ '✓ ' + _('served') ]);
+	return E('span', { 'class': 'hpui-badge hpui-b-amber' }, [ '? ' + _('unknown (SPA page)') ]);
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -1511,12 +1522,21 @@ return view.extend({
 				row.appendChild(E('span', { 'class': 'wiz-title' }, [ _('Google AI API') ]));
 				row.appendChild(checkBadge(r.api, _('region passes'), _('region refused')));
 				row.appendChild(E('span', { 'class': 'wiz-title' }, [ _('Gemini web') ]));
-				row.appendChild(checkBadge(r.web, _('served'), _('refused')));
+				row.appendChild(webBadge(r.web));
 			} else {
 				row.appendChild(E('span', { 'class': 'wiz-title' }, [ _('OpenAI API') ]));
 				row.appendChild(checkBadge(r.api, _('region passes'), _('region refused')));
 			}
 			checkResult.appendChild(row);
+
+			/* Honest web verdict (Блок 1 сеанса 138): the SPA shell cannot be
+			 * judged by a body probe — say so explicitly instead of the old
+			 * false green, and point at the API verdict + the device test. */
+			if (r.service === 'google_ai' && r.web && r.web.verdict === 'unknown') {
+				const kb = (r.web.size_kb != null) ? (' (~' + r.web.size_kb + ' KB)') : '';
+				checkResult.appendChild(E('div', { 'class': 'hpui-hint' },
+					[ _('The Gemini page is a SPA shell%s — the refusal is rendered by page scripts after load, so a body probe cannot read the verdict; "unknown" is the honest web answer here. The region signal is the API verdict above, but the WEB gate is stricter and may reject hosting-provider IPs even when the API passes. Final proof: open gemini.google.com on the device in a fresh tab.').format(kb) ]));
+			}
 
 			/* Ф8-W2 (approved): when the current exit refuses the Google AI
 			 * region gate, cycle the OTHER nodes — one API probe per node
@@ -1568,6 +1588,14 @@ return view.extend({
 					line.appendChild(E('span', { 'class': 'hpui-badge hpui-b-grey' }, [ '✗ ' + _('unreachable') ]));
 				else
 					line.appendChild(E('span', { 'class': 'hpui-badge hpui-b-amber' }, [ '? ' + _('uncertain') ]));
+				/* Egress (what IP/ASN Google sees behind the node) — the web
+				 * gate rejects hosting IPs, this is the user's picking hint
+				 * (data only, no translatable text). */
+				if (n.egress && n.egress.ip)
+					line.appendChild(document.createTextNode(' · ' + (n.egress.country || '??') +
+						((n.egress.asn) ? (' · AS' + n.egress.asn) : '') +
+						((n.egress.org) ? (' ' + n.egress.org) : '') +
+						' · ' + n.egress.ip));
 				checkResult.appendChild(line);
 			}
 			if (!nodes.length)
@@ -1578,6 +1606,8 @@ return view.extend({
 					[ _('Some nodes were not checked (limit 12).') ]));
 			checkResult.appendChild(E('p', { 'class': 'hpui-hint' },
 				[ _('To switch the exit: pick the node in the service row above and press Apply.') ]));
+			checkResult.appendChild(E('p', { 'class': 'hpui-hint' },
+				[ _('The node probe covers the API gate only — the Gemini WEB gate is stricter and may reject hosting-provider IPs. If a node "passes" here but the device still refuses, the web gate is the reason; verify on the device.') ]));
 		}
 
 		function renderPathCheck(preset, results) {

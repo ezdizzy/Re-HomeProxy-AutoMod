@@ -6400,13 +6400,30 @@ const methods = {
 				else
 					out.api = { code: api.code, verdict: 'unknown', note: 'unexpected answer' };
 
-				/* Web verdict (ч.70): the SPA shell serves 200 from anywhere —
-				 * the refusal text inside the body is the honest signal. */
+				/* Web verdict (ч.70 → honest refinement, Блок 1 сеанса 138):
+				 * the gemini SPA shell is ~850 KB and the refusal is rendered
+				 * by page JavaScript AFTER the shell loads — a body probe sees
+				 * a 200 shell with ZERO refusal markers (proven live
+				 * 2026-11-07: HTTP 200, 853405 bytes, title 'Google Gemini',
+				 * no marker, while devices show the country refusal).
+				 * wiz_body_refuses skips bodies > 32 KiB, so the old
+				 * else-branch called EVERY SPA answer 'served' — a false green
+				 * the devices never confirmed. Honest states now:
+				 * 'refused' ONLY with a refusal marker actually visible in
+				 * the body (server-rendered refusal, small body);
+				 * 'unknown' otherwise (SPA shell / small body without
+				 * markers) + size_kb for the UI hint. The region signal the
+				 * check can trust stays the API verdict above. */
 				const web = hp_probe_fetch('https://gemini.google.com/', probe_port, 'Accept-Language: en-US,en;q=0.9', 10);
-				if (web.code === '200' || web.code === '302' || web.code === '301')
-					out.web = { code: web.code, verdict: wiz_body_refuses(web.body) ? 'refused' : 'served' };
-				else
-					out.web = { code: web.code, verdict: 'unknown' };
+				const wlen = length(web.body);
+				if (web.code === '200' || web.code === '302' || web.code === '301') {
+					if (wiz_body_refuses(web.body))
+						out.web = { code: web.code, verdict: 'refused', note: 'refusal marker in page body' };
+					else
+						out.web = { code: web.code, verdict: 'unknown', note: 'spa-shell',
+							size_kb: (wlen > 32768) ? int(wlen / 1024) : wlen };
+				} else
+					out.web = { code: web.code, verdict: 'unknown', note: 'no-answer' };
 
 				out.route = {};
 				const conf_file = RUN_DIR + '/hiddify-c.json';
@@ -6568,13 +6585,20 @@ const methods = {
 			}
 
 			/* One API probe per node, all in parallel; each curl is capped so
-			 * the files are complete when the sleep ends. */
+			 * the files are complete when the sleep ends. A SECOND curl per
+			 * node (Блок 1 сеанса 138) reads the node's EGRESS (what IP/ASN
+			 * the exit presents to Google) — the web gate rejects hosting
+			 * IPs, so the user picks the node by the egress class too:
+			 * api.ip.sb sees one request per DISTINCT egress IP, its rate
+			 * limit does not fold the seven lookups into one. */
 			const url = 'https://generativelanguage.googleapis.com/v1beta/models';
 			for (let i = 0; i < length(picked); i++) {
 				const bf = '/tmp/ai_probe_' + i + '.body';
 				const cf = '/tmp/ai_probe_' + i + '.code';
-				system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
+				const gf = '/tmp/ai_probe_' + i + '.geo';
+				system(`rm -f ${shellquote(bf)} ${shellquote(cf)} ${shellquote(gf)} 2>/dev/null`);
 				system(`curl -s --connect-timeout 4 --max-time 8 -o ${shellquote(bf)} -w '%{http_code}' -x socks5h://127.0.0.1:${ports[i]} ${shellquote(url)} > ${shellquote(cf)} 2>/dev/null &`);
+				system(`curl -s --connect-timeout 4 --max-time 8 -o ${shellquote(gf)} -x socks5h://127.0.0.1:${ports[i]} https://api.ip.sb/geoip 2>/dev/null &`);
 			}
 			system('sleep 10');
 
@@ -6582,6 +6606,7 @@ const methods = {
 			for (let i = 0; i < length(picked); i++) {
 				const bf = '/tmp/ai_probe_' + i + '.body';
 				const cf = '/tmp/ai_probe_' + i + '.code';
+				const gf = '/tmp/ai_probe_' + i + '.geo';
 				const code = trim(readfile(cf) || '000');
 				const body = lc(readfile(bf) || '');
 				let verdict, note;
@@ -6599,9 +6624,22 @@ const methods = {
 					verdict = 'unknown';
 					note = 'unexpected answer';
 				}
-				system(`rm -f ${shellquote(bf)} ${shellquote(cf)} 2>/dev/null`);
+				/* Egress shape validation (lesson 256: json() parses garbage
+				 * too — check against the known field set). */
+				let eg = null;
+				const graw = readfile(gf) || '';
+				if (length(graw) > 2) {
+					try {
+						const g = json(graw);
+						if (type(g) === 'object' && g.ip)
+							eg = { ip: '' + g.ip, country: '' + (g.country_code || ''),
+								asn: (g.asn != null) ? '' + g.asn : '',
+								org: '' + (g.organization || g.isp || g.asn_organization || '') };
+					} catch (e) { eg = null; }
+				}
+				system(`rm -f ${shellquote(bf)} ${shellquote(cf)} ${shellquote(gf)} 2>/dev/null`);
 				push(nodes, { node: substr(picked[i], 4, length(picked[i]) - 8),
-					code: code, verdict: verdict, note: note });
+					code: code, verdict: verdict, note: note, egress: eg });
 			}
 
 			/* The node the google_ai rule currently points at (for the UI mark). */

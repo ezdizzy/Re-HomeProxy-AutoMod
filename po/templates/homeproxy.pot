@@ -7536,3 +7536,12 @@ msgstr ""
 
 msgid "Protocols with mandatory TLS (Hysteria2, TUIC, Trojan with TLS) need certificates — set them up via «Add» in the list below. The wizard covers the certificate-free protocols; the generator creates REALITY keys automatically."
 msgstr ""
+
+msgid "unknown (SPA page)"
+msgstr ""
+
+msgid "The Gemini page is a SPA shell%s — the refusal is rendered by page scripts after load, so a body probe cannot read the verdict; \"unknown\" is the honest web answer here. The region signal is the API verdict above, but the WEB gate is stricter and may reject hosting-provider IPs even when the API passes. Final proof: open gemini.google.com on the device in a fresh tab."
+msgstr ""
+
+msgid "The node probe covers the API gate only — the Gemini WEB gate is stricter and may reject hosting-provider IPs. If a node \"passes\" here but the device still refuses, the web gate is the reason; verify on the device."
+msgstr ""
