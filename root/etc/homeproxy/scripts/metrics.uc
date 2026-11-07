@@ -53,7 +53,8 @@
  * fetch (ч.59). */
 import { access, readfile, writefile, stat, popen } from 'fs';
 import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
-import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
+import { reg_self as pm_reg_self, reg_hb as pm_reg_hb,
+	res_profile as pm_res_profile } from '/etc/homeproxy/scripts/pmgr.uc';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -64,7 +65,8 @@ const OUT = RUN_DIR + '/overview_metrics.json';
 const API = 'http://127.0.0.1:9090';
 const RES = '/etc/homeproxy/resources';
 const SAMPLE_INTERVAL = 5;    /* s between samples; UI polls ≤5 s (D5)      */
-const MAX_POINTS = 120;       /* ring size: 120 × 5 s ≈ 10 min of history   */
+const MAX_POINTS = 120;       /* ring size: 120 × 5 s ≈ 10 min of history
+                               * (profile-scaled: up to 30 min on lite)    */
 const TEMP_SANITY = 150000;   /* thermal value sanity cap (m°C)             */
 
 let prev_cpu = null;          /* previous /proc/stat totals (CPU delta)     */
@@ -363,14 +365,28 @@ restore_totals();
 pm_reg_self('metrics', 'metrics.uc');
 
 /* Main loop. Sleep FIRST so every emitted point sits on the interval grid;
- * the very first point has no CPU delta yet (null) by design. */
+ * the very first point has no CPU delta yet (null) by design. The sample
+ * interval is profile-scaled (Ф10.1): performance ×1 (5 s — the legacy
+ * cadence), balanced ×2, lite ×3; the profile is re-read every cycle
+ * (readfile + uci, cheap) so a switch applies LIVE without a restart. */
+let cur_interval = SAMPLE_INTERVAL;
+let prev_ts = 0;
 while (true) {
 	pm_reg_hb('metrics');
-	sleep(SAMPLE_INTERVAL * 1000);
+	const rp = pm_res_profile();
+	const want = SAMPLE_INTERVAL * (int(rp.factor) || 1);
+	if (want !== cur_interval)
+		cur_interval = want;
+	sleep(cur_interval * 1000);
 
 	const t = time();
 	let pt = null;
 	try {
+		/* The traffic speed divisor is the FACTUAL gap between samples, not
+		 * the planned interval — a profile switch must not fake a spike on
+		 * the one longer sample (the guard clamps a stale gap to ×4). */
+		const dt = (prev_ts > 0 && t > prev_ts && (t - prev_ts) <= cur_interval * 4)
+			? (t - prev_ts) : cur_interval;
 		/* One /connections fetch feeds BOTH the connection count and the
 		 * per-exit traffic deltas (the aggregate is the same reply). */
 		const cj = clash_get('/connections');
@@ -389,12 +405,13 @@ while (true) {
 			ram: sample_ram(),
 			temp: sample_temp(),
 			conns: conns_n,
-			vpn_b: (rates != null) ? int(rates.vpn / SAMPLE_INTERVAL) : null,
-			dir_b: (rates != null) ? int(rates.dir / SAMPLE_INTERVAL) : null,
-			byp_b: (rates != null) ? int(rates.byp / SAMPLE_INTERVAL) : null,
+			vpn_b: (rates != null) ? int(rates.vpn / dt) : null,
+			dir_b: (rates != null) ? int(rates.dir / dt) : null,
+			byp_b: (rates != null) ? int(rates.byp / dt) : null,
 			delay: sample_delay(),
 			learned: sample_learned()
 		};
+		prev_ts = t;
 	} catch (e) {
 		pt = null;
 	}

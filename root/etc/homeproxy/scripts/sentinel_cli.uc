@@ -23,6 +23,10 @@
  * registry readfile) + blocking only during an actual repair. Full passes are
  * SKIPPED while MemAvailable < 48 MB (OOM edge, lesson 197) — light stays.
  *
+ * Ф10.1 resource profile: the light cadence scales by the profile factor
+ * (Lite ×3, Balanced ×2, Performance ×1 — re-read every tick, live); the
+ * incident fast mode and the full dividers stay UNscaled.
+ *
  * ucode constraints honored: no hoisting (helpers above callers, lesson 126),
  * non-fatal wrapper while(true){try{main()}catch{log}} (lesson 126), fs only
  * after import, sleep() = MILLISECONDS, for-in arrays = elements, no 2-arg
@@ -32,7 +36,7 @@
 'use strict';
 
 import { access, readfile, open, stat } from 'fs';
-import { reg_self, reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
+import { reg_self, reg_hb, res_profile } from '/etc/homeproxy/scripts/pmgr.uc';
 import {
 	compute_and_store, selftest, SENTINEL_PATH,
 	MEM_SKIP_KB, BOOT_GRACE_SEC, parse_meminfo_kb
@@ -92,8 +96,20 @@ function run_daemon() {
 	let tick = 0;
 	let full_countdown = 0;
 	let fast_until = 0;
+	/* Ф10.1: profile-scaled light cadence — re-read every tick (readfile +
+	 * uci, cheap); the reactive passes (FAST_MS, full dividers) are NEVER
+	 * scaled (D34h: optimize, not disable). */
+	let light_ms = LIGHT_MS;
 	while (true) {
 		try {
+			const rp = res_profile();
+			const want_ms = LIGHT_MS * (int(rp.factor) || 1);
+			if (want_ms !== light_ms) {
+				log('resource profile ' + (rp.profile || '?') + ' (factor ' +
+					sprintf('%d', rp.factor) + '): light pass every ' +
+					sprintf('%d', want_ms / 1000) + ' s');
+				light_ms = want_ms;
+			}
 			const fast = (time() < fast_until);
 			/* First tick always full (baseline + expectations). */
 			let full = (tick === 0) || (full_countdown <= 0);
@@ -124,7 +140,7 @@ function run_daemon() {
 			log('tick failed (non-fatal): ' + e);
 		}
 		const fast_now = (time() < fast_until);
-		sleep(fast_now ? FAST_MS : LIGHT_MS);
+		sleep(fast_now ? FAST_MS : light_ms);
 	}
 };
 

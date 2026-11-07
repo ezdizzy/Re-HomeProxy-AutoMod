@@ -520,9 +520,9 @@ return view.extend({
 			});
 		}
 
-		poll.add(refreshNodes, 5);
-		poll.add(refreshConnections, 5);
-		poll.add(refreshHotswap, 10);
+		poll.add(refreshNodes, hp.pollSec(5));
+		poll.add(refreshConnections, hp.pollSec(5));
+		poll.add(refreshHotswap, hp.pollSec(10));
 		refreshNodes();
 		refreshConnections();
 		refreshHotswap();

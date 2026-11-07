@@ -1521,7 +1521,7 @@ return view.extend({
 				feedEl.appendChild(E('span', { 'class': 'hpauto-cap' }, [ _('no events yet') ]));
 		}
 
-		poll.add(refresh, 5);
+		poll.add(refresh, hp.pollSec(5));
 		refresh();
 
 		/* Ф7.1/U4: the expert knobs collapse into a <details> — the level

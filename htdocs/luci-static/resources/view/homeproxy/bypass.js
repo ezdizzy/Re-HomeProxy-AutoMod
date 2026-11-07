@@ -2600,7 +2600,7 @@ return view.extend({
 			});
 		}
 
-		poll.add(refresh, 4);
+		poll.add(refresh, hp.pollSec(4));
 		refresh();
 
 		return bypRoot;

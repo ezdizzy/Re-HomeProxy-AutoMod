@@ -557,7 +557,7 @@ function buildProviderSection() {
 			renderScan(scan.status, scan.result, (data[1] && data[1].rules) || {});
 		});
 	}
-	poll.add(pollScan, 4);
+	poll.add(pollScan, hp.pollSec(4));
 	pollScan();
 
 	return {
@@ -718,7 +718,7 @@ function buildProfilesSection() {
 			renderProfiles(d.status, d.result);
 		});
 	}
-	poll.add(pollProfiles, 4);
+	poll.add(pollProfiles, hp.pollSec(4));
 	pollProfiles();
 
 	return {
@@ -1027,8 +1027,8 @@ function buildOptimizerSection() {
 		});
 	}
 
-	poll.add(pollPlan, 8);
-	poll.add(pollPick, 4);
+	poll.add(pollPlan, hp.pollSec(8));
+	poll.add(pollPick, hp.pollSec(4));
 	pollPlan();
 	pollPick();
 
@@ -1204,7 +1204,7 @@ function buildConnectivitySection(view, coreType) {
 					dom.content(resultEl, E('span', { 'class': 'diag-gray' }, _('No active node')));
 				}
 			});
-		}));
+		}, this), hp.pollSec(5));
 		return E('div', { 'class': 'diag-row' }, [ E('span', { 'class': 'diag-label' }, labelText), resultEl ]);
 	}
 
@@ -1769,7 +1769,7 @@ function buildSupportSection(view) {
 		}).finally(function() { busy(false); });
 	}));
 
-	poll.add(pollBundle, 4);
+	poll.add(pollBundle, hp.pollSec(4));
 
 	return {
 		el: sectionCard('database', _('Support report'), 'diag-support', [
@@ -2281,7 +2281,7 @@ return view.extend({
 			});
 		}
 
-		poll.add(refreshAll, 10);
+		poll.add(refreshAll, hp.pollSec(10));
 		refreshAll();
 
 

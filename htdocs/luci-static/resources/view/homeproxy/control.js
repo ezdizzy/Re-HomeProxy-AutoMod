@@ -1178,7 +1178,7 @@ return view.extend({
 			});
 		}
 
-		poll.add(refreshStatus, 4);
+		poll.add(refreshStatus, hp.pollSec(4));
 		refreshStatus();
 		refreshWifi();
 		schTypeFields();

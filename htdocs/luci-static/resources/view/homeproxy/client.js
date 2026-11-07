@@ -195,7 +195,7 @@ return view.extend({
 					let view = document.getElementById('service_status');
 					view.innerHTML = renderStatus(res, features);
 				});
-			});
+			}, hp.pollSec(5));
 
 			return E('div', { class: 'cbi-section', id: 'status_bar' }, [
 					E('p', { id: 'service_status' }, _('Collecting data...'))
@@ -312,7 +312,7 @@ return view.extend({
 						el.style.color = 'gray';
 					}
 				});
-			}));
+			}, this), hp.pollSec(5));
 			return el;
 		};
 
@@ -585,7 +585,7 @@ return view.extend({
 						box.appendChild(E('div', { 'style': 'color:#d99a1b; margin-top:2px' },
 							[ _('Traffic currently rides the failover pick') ]));
 				});
-			}, this));
+			}, this), hp.pollSec(5));
 			return box;
 		};
 
@@ -1092,7 +1092,7 @@ return view.extend({
 			function refreshRuStatus() {
 				return L.resolveDefault(callGeoStatus(), {}).then(renderRuStatus);
 			}
-			poll.add(refreshRuStatus, 10);
+			poll.add(refreshRuStatus, hp.pollSec(10));
 			refreshRuStatus();
 			ruCard = E('div', { 'class': 'hpui-panel', style: 'margin:0 0 14px 0' }, [
 				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('shield'), _('RU-protection') ]),

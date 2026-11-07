@@ -329,7 +329,7 @@ return view.extend({
 					if (view)
 						view.replaceChildren(renderStatus(res, features));
 				});
-			});
+			}, hp.pollSec(5));
 
 			return form.NamedSection.prototype.render.apply(this, arguments).then((node) =>
 				E('div', { 'class': 'hpui-panel' }, [

@@ -42,7 +42,8 @@ import {
 } from '/etc/homeproxy/scripts/opman.uc';
 import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, kill_matched as pm_kill_matched,
-	entry_alive as pm_entry_alive, reg_get as pm_reg_get, reg_del as pm_reg_del
+	entry_alive as pm_entry_alive, reg_get as pm_reg_get, reg_del as pm_reg_del,
+	res_profile as pm_res_profile
 } from '/etc/homeproxy/scripts/pmgr.uc';
 import {
 	HEALTH_PATH as HS_PATH, snapshot as hs_snapshot
@@ -7827,18 +7828,24 @@ const methods = {
 		}
 	},
 
-	/* Ф9.1/Ф10 (§A.4): the resource-profile fact base, VISIBLE in the UI.
-	 * Read-only, per-boot facts (RAM/CPU cores/flash) + the auto-detected
-	 * profile class from the §A.4 thresholds («256 МБ RAM — реальный
-	 * потолок»): Lite ≤ 256 MiB, Balanced ≤ 768 MiB, Performance above.
-	 * Three readfiles + one df fork per call — the UI polls it once and
-	 * then every 60 s, NOT with the 4 s refresh. The profile DRIVES
-	 * nothing yet: behavior management (poll rates, batch sizes, heavy
-	 * features) is Ф10 — the UI cards say so honestly. */
+	/* Ф9.1/Ф10.1 (§A.4): the resource-profile fact base, VISIBLE in the UI
+	 * and DRIVING the Ф10 behavior: the JS-page poll factor (lite ×3 /
+	 * balanced ×2 / performance ×1) and the light cadence of the metrics,
+	 * health and sentinel daemons (reactive passes are NEVER scaled — D34h:
+	 * optimize, not disable). The class comes from the §A.4 RAM thresholds
+	 * («256 МБ RAM — реальный потолок»): Lite ≤ 256 MiB, Balanced ≤ 768 MiB,
+	 * Performance above; the manual UCI mode homeproxy.config.res_profile_mode
+	 * overrides it ('auto' = the option ABSENT — returning to auto keeps the
+	 * UCI canon bit-exact). The class+mode+factor computation lives in
+	 * pmgr.uc res_profile() (readfile + uci only — safe for rpcd-importing
+	 * modules, lesson 322); this handler adds the per-boot facts (3 readfiles
+	 * + one df fork per call — the UI polls it once and then every 60 s, NOT
+	 * with the 4 s refresh). */
 	res_profile: {
 		call: function() {
 			const reply = { ram_total_kb: null, ram_avail_kb: null,
-				cores: null, flash_total_kb: null, profile: null, source: 'auto' };
+				cores: null, flash_total_kb: null, profile: null,
+				mode: 'auto', source: 'auto', factor: 1 };
 
 			const mi = readfile('/proc/meminfo') || '';
 			const mt = match(mi, /MemTotal: +([0-9]+) kB/);
@@ -7867,15 +7874,44 @@ const methods = {
 					reply.flash_total_kb = int(m[1]);
 			}
 
-			if (reply.ram_total_kb != null) {
-				if (reply.ram_total_kb <= 262144)
-					reply.profile = 'lite';
-				else if (reply.ram_total_kb <= 786432)
-					reply.profile = 'balanced';
-				else
-					reply.profile = 'performance';
-			}
+			/* class + manual override (mode/source/factor) — shared helper */
+			const rp = pm_res_profile();
+			reply.profile = rp.profile;
+			reply.mode = rp.mode;
+			reply.source = rp.source;
+			reply.factor = rp.factor;
 			return reply;
+		}
+	},
+
+	/* Ф10.1: the manual profile switch (auto/lite/balanced/performance).
+	 * UCI ONLY — no procd op: the daemons re-read the profile every cycle
+	 * (live) and the JS pages pick the new factor up on the NEXT navigation
+	 * (the honest hint in the card says so). 'auto' DELETES the option so
+	 * the UCI canon returns bit-exact. */
+	res_profile_set: {
+		args: { mode: 'mode' },
+		call: function(req) {
+			const mode = req.args?.mode;
+			if (mode !== 'auto' && mode !== 'lite' &&
+			    mode !== 'balanced' && mode !== 'performance')
+				return { result: false, error: 'illegal mode' };
+			const c = cursor();
+			const raw = c.get('homeproxy', 'config', 'res_profile_mode');
+			const cur = (raw != null && length('' + raw) &&
+				(raw === 'lite' || raw === 'balanced' || raw === 'performance'))
+				? '' + raw : 'auto';
+			if (mode === cur)
+				return { result: true, changed: false, mode: mode };
+			if (mode === 'auto') {
+				if (raw != null)
+					c.delete('homeproxy', 'config', 'res_profile_mode');
+			} else {
+				c.set('homeproxy', 'config', 'res_profile_mode', mode);
+			}
+			c.commit('homeproxy');
+			hc_add_event('system', '', 'профиль ресурсов: ' + mode);
+			return { result: true, changed: true, mode: mode };
 		}
 	},
 

@@ -21,6 +21,10 @@
  * is SKIPPED while MemAvailable < 48 MB (light stays — detection never dies,
  * only the expensive refinements wait).
  *
+ * Ф10.1 resource profile: the all-ok light cadence scales by the profile
+ * factor (Lite ×3, Balanced ×2, Performance ×1 — re-read every tick, live);
+ * the incident fast mode and the deep dividers stay UNscaled.
+ *
  * Status changes ride the Event Bus with src='health' (Ф2.1 contract: future
  * Recovery Manager repairs Ф2.3 write there too). Baseline (no previous doc —
  * reboot wiped tmpfs) is silent; a daemon restart continues diffing against
@@ -35,7 +39,7 @@
 'use strict';
 
 import { access, readfile, open, stat } from 'fs';
-import { reg_self, reg_hb } from '/etc/homeproxy/scripts/pmgr.uc';
+import { reg_self, reg_hb, res_profile } from '/etc/homeproxy/scripts/pmgr.uc';
 import {
 	compute_and_store, snapshot, selftest, HEALTH_PATH,
 	MEM_DEEP_SKIP_KB, parse_meminfo_kb
@@ -97,8 +101,20 @@ function run_daemon() {
 	let deep_countdown = 0;
 	let fast_until = 0;
 	let svc_map = null;
+	/* Ф10.1: profile-scaled light cadence — re-read every tick (readfile +
+	 * uci, cheap); the reactive passes (LIGHT_FAST_MS, deep dividers) are
+	 * NEVER scaled (D34h: optimize, not disable). */
+	let light_slow_ms = LIGHT_SLOW_MS;
 	while (true) {
 		try {
+			const rp = res_profile();
+			const want_ms = LIGHT_SLOW_MS * (int(rp.factor) || 1);
+			if (want_ms !== light_slow_ms) {
+				log('resource profile ' + (rp.profile || '?') + ' (factor ' +
+					sprintf('%d', rp.factor) + '): light pass every ' +
+					sprintf('%d', want_ms / 1000) + ' s');
+				light_slow_ms = want_ms;
+			}
 			const now = time();
 			const fast = (now < fast_until);
 			/* Deep cadence: first tick always deep (fills svc_map + carries);
@@ -130,7 +146,7 @@ function run_daemon() {
 			log('tick failed (non-fatal): ' + e);
 		}
 		const fast_now = (time() < fast_until);
-		sleep(fast_now ? LIGHT_FAST_MS : LIGHT_SLOW_MS);
+		sleep(fast_now ? LIGHT_FAST_MS : light_slow_ms);
 	}
 };
 

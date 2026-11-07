@@ -6866,9 +6866,6 @@ msgstr "Ядер CPU"
 msgid "Flash"
 msgstr "Флеш"
 
-msgid "The profile is detected automatically from the hardware (RAM, cores, flash): Lite for 256 MiB-class routers, Balanced for mid-range, Performance above. Managing the behavior (poll rates, batch sizes, heavy features) is a planned milestone — today the profile is shown as an honest hardware fact."
-msgstr "Профиль определяется автоматически по железу (RAM, ядра, флеш-память): Lite для роутеров класса 256 МиБ, Balanced для среднего класса, Performance — выше. Управление поведением (частота опросов, размеры батчей, тяжёлые функции) — запланированный этап; сегодня профиль показан как честный факт о железе."
-
 msgid "Offline"
 msgstr "Не в сети"
 
@@ -7463,3 +7460,18 @@ msgstr "Пуши: смены узлов Hot Swap, недоступные узл�
 
 msgid "Control the router from your Telegram chat: live status, exit switching, snapshots, access-control actions — with per-category pushes you can mute, quiet-hour or sample first. Pairing codes and roles keep strangers out."
 msgstr "Управление роутером из Telegram-чата: живой статус, смена выхода, снапшоты, действия контроля доступа — с пушами по категориям: можно заглушить, отправить в тихие часы или сначала посмотреть примером. Коды сопряжения и роли не пускают посторонних."
+
+msgid "manual"
+msgstr "вручную"
+
+msgid "The profile is already %s — nothing to change."
+msgstr "Профиль уже %s — менять нечего."
+
+msgid "Profile applied: %s. Daemons follow live; open pages apply the new intervals after navigation."
+msgstr "Профиль применён: %s. Демоны подхватывают сразу; открытые страницы применят новые интервалы после перехода."
+
+msgid "poll factor"
+msgstr "множитель поллов"
+
+msgid "The profile scales the refresh intervals of the app pages (Lite ×3, Balanced ×2, Performance ×1) and the observation cadence of the metrics, health and sentinel daemons; reactive passes (incidents, operation progress) are never scaled. Auto = the hardware detection (RAM). Daemons follow a switch live; open pages apply it after navigation."
+msgstr "Профиль масштабирует интервалы обновления страниц приложения (Lite ×3, Balanced ×2, Performance ×1) и частоту наблюдения демонов metrics, health и sentinel; реактивные проходы (инциденты, прогресс операций) не масштабируются. Авто = определение по железу (RAM). Демоны подхватывают смену сразу; открытые страницы — после перехода."

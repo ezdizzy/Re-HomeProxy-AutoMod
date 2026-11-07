@@ -430,7 +430,7 @@ return view.extend({
 		]);
 		renderRbac(st0);
 
-		poll.add(rbRefresh, 12);
+		poll.add(rbRefresh, hp.pollSec(12));
 
 		/* ── diagnostics card ───────────────────────────────────────── */
 		const tgResult = E('div', {});

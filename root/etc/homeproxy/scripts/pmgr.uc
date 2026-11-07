@@ -66,6 +66,7 @@
 'use strict';
 
 import { access, readfile, readlink, stat, unlink, mkdir, rmdir, popen } from 'fs';
+import { cursor } from 'uci';
 import { atomic_write as ss_atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 
 export const RUN_DIR = '/var/run/homeproxy';
@@ -98,6 +99,52 @@ export function boot_epoch() {
 		return 0;
 	const m = match(raw, /btime +([0-9]+)/);
 	return m ? int(m[1]) : 0;
+};
+
+/* ── resource profile (Ф10.1, §A.4) ─────────────────────────────────────── */
+
+/* The resource-profile class: hardware auto-detection by the §A.4 RAM
+ * thresholds (Lite ≤ 256 MiB, Balanced ≤ 768 MiB, Performance above),
+ * overridden by the manual UCI mode homeproxy.config.res_profile_mode
+ * ('auto' = the option ABSENT — the UCI canon stays bit-exact when the
+ * user returns to auto). factor = the JS-page poll multiplier; daemon
+ * cadences scale their light/observe passes by the same factor while
+ * reactive passes (incidents, operation progress) are NEVER scaled
+ * (D34h: optimize, not disable). readfile + uci only — safe for
+ * rpcd-importing modules (lesson 322: NO ubus calls here). */
+export function res_profile() {
+	const FACTORS = { lite: 3, balanced: 2, performance: 1 };
+	let profile = null;
+	const mi = readfile('/proc/meminfo');
+	if (mi != null) {
+		const m = match(mi, /MemTotal: +([0-9]+) kB/);
+		if (m != null) {
+			const mt = int(m[1]);
+			if (mt <= 262144)
+				profile = 'lite';
+			else if (mt <= 786432)
+				profile = 'balanced';
+			else
+				profile = 'performance';
+		}
+	}
+	let mode = 'auto';
+	let source = 'auto';
+	let factor = 1;
+	if (profile != null)
+		factor = FACTORS[profile];
+	const c = cursor();
+	const raw = trim('' + (c.get('homeproxy', 'config', 'res_profile_mode') || ''));
+	if (length(raw)) {
+		if (raw === 'lite' || raw === 'balanced' || raw === 'performance') {
+			mode = raw;
+			profile = raw;
+			source = 'manual';
+			factor = FACTORS[raw];
+		}
+		/* an unknown value falls back to the honest auto answer */
+	}
+	return { mode: mode, profile: profile, source: source, factor: factor };
 };
 
 /* /proc/<pid>/stat: comm may contain spaces and ')' — split after the LAST

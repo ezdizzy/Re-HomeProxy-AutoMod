@@ -66,14 +66,23 @@ function pollOp(opId, onDone) {
 	tick();
 }
 
-/* Ф9.1/Ф10 (§A.4): the resource-profile card — the hardware fact base
- * (RAM/CPU/flash) + the auto-detected Lite/Balanced/Performance class,
- * VISIBLE in the UI. The profile DRIVES nothing yet: poll rates, batch
- * sizes and heavy-feature gates are the Ф10 milestone; the hint below
- * says so honestly. Per-boot facts: fetched once + every 60 s. */
+/* Ф9.1/Ф10.1 (§A.4): the resource-profile card — the hardware fact base
+ * (RAM/CPU/flash) + the Lite/Balanced/Performance class, and (Ф10.1) the
+ * MANUAL switch: auto (the §A.4 hardware detection) or a forced class.
+ * The profile DRIVES the page-poll factor (Lite ×3, Balanced ×2,
+ * Performance ×1) and the observation cadence of the metrics, health and
+ * sentinel daemons; reactive passes (incidents, operation progress) are
+ * never scaled (D34h). Per-boot facts: fetched once + every 60 s. */
 const callResProfile = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'res_profile',
+	expect: { '': {} }
+});
+
+const callResProfileSet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'res_profile_set',
+	params: [ 'mode' ],
 	expect: { '': {} }
 });
 
@@ -86,16 +95,79 @@ function fmtKb(kb) {
 function buildResProfileCard() {
 	const profBadge = E('span', { 'class': 'hpui-badge hpui-b-green' }, [ '—' ]);
 	const factsEl = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' }, [ '' ]);
+	/* Ф10.1: ONE verdict line for the whole card — every switch result
+	 * replaces the previous one here (mkResult / result-placement rule). */
+	const result = mkResult();
+	const names = { lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
+	const modeLabel = { auto: _('Auto'), lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
+	const MODES = [ 'auto', 'lite', 'balanced', 'performance' ];
+	const modeBtns = {};
+	let curMode = 'auto';
+	let curProfile = null;
+
+	function markMode(mode) {
+		for (let i = 0; i < MODES.length; i++) {
+			const m = MODES[i];
+			modeBtns[m].className = 'hpui-btn' + (m === mode ? ' hpui-btn-primary' : '');
+			modeBtns[m].disabled = false;
+		}
+	}
+
+	function cacheFactor() {
+		/* Ф10.1: refresh the page-poll factor cache right away — the OTHER
+		 * pages apply the new intervals on their next navigation. */
+		try {
+			window.sessionStorage.setItem('hpResProfile', JSON.stringify({
+				factor: (curProfile && (parseInt(curProfile.factor, 10) || 1)) || 1,
+				profile: (curProfile && curProfile.profile) || '',
+				mode: curMode,
+				ts: Date.now()
+			}));
+		} catch (e) {}
+	}
+
+	function applyMode(mode) {
+		for (let i = 0; i < MODES.length; i++)
+			modeBtns[MODES[i]].disabled = true;
+		result.setResult(_('Applying…'), 'grey');
+		L.resolveDefault(callResProfileSet(mode), {}).then((r) => {
+			r = r || {};
+			if (!r.result) {
+				markMode(curMode);
+				result.setResult(r.error || _('Apply failed'), 'red');
+				return;
+			}
+			curMode = mode;
+			return refresh().then(() => {
+				cacheFactor();
+				markMode(mode);
+				if (!r.changed)
+					result.setResult(_('The profile is already %s — nothing to change.').format(modeLabel[mode] || mode), 'grey');
+				else
+					result.setResult(_('Profile applied: %s. Daemons follow live; open pages apply the new intervals after navigation.').format(modeLabel[mode] || mode), 'green');
+			});
+		});
+	}
+
+	for (let i = 0; i < MODES.length; i++) {
+		const m = MODES[i];
+		const b = mkBtn(modeLabel[m], '', {});
+		b.style.padding = '4px 10px';
+		b.addEventListener('click', () => { applyMode(m); });
+		modeBtns[m] = b;
+	}
 
 	function render(p) {
 		p = p || {};
+		curProfile = p;
 		if (!p.profile) {
 			profBadge.textContent = '—';
 			factsEl.textContent = _('The hardware profile is unavailable (the read failed).');
 			return;
 		}
-		const names = { lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
-		profBadge.textContent = names[p.profile] || p.profile;
+		curMode = (p.mode === 'lite' || p.mode === 'balanced' || p.mode === 'performance') ? p.mode : 'auto';
+		profBadge.textContent = (names[p.profile] || p.profile) +
+			(p.source === 'auto' ? ' · ' + _('auto') : (p.source === 'manual' ? ' · ' + _('manual') : ''));
 		const parts = [];
 		if (p.ram_total_kb != null)
 			parts.push(_('RAM') + ': ' + fmtKb(p.ram_total_kb) +
@@ -104,14 +176,20 @@ function buildResProfileCard() {
 			parts.push(_('CPU cores') + ': ' + p.cores);
 		if (p.flash_total_kb != null)
 			parts.push(_('Flash') + ': ' + fmtKb(p.flash_total_kb));
+		parts.push(_('poll factor') + ': ×' + ((parseInt(p.factor, 10) || 1)));
 		factsEl.textContent = parts.join(' · ');
+		markMode(curMode);
 	}
 
 	function refresh() {
 		return L.resolveDefault(callResProfile(), {}).then(render);
 	}
-	poll.add(refresh, 60);
+	poll.add(refresh, hp.pollSec(60));
 	refresh();
+
+	const modeRow = E('div', { style: 'margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center' }, []);
+	for (let i = 0; i < MODES.length; i++)
+		modeRow.appendChild(modeBtns[MODES[i]]);
 
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:8px' }, [
@@ -119,8 +197,10 @@ function buildResProfileCard() {
 			profBadge
 		]),
 		factsEl,
-		E('div', { style: 'margin-top:4px; font-size:0.85em; opacity:.75' },
-			[ _('The profile is detected automatically from the hardware (RAM, cores, flash): Lite for 256 MiB-class routers, Balanced for mid-range, Performance above. Managing the behavior (poll rates, batch sizes, heavy features) is a planned milestone — today the profile is shown as an honest hardware fact.') ])
+		modeRow,
+		result,
+		E('div', { style: 'margin-top:6px; font-size:0.85em; opacity:.75' },
+			[ _('The profile scales the refresh intervals of the app pages (Lite ×3, Balanced ×2, Performance ×1) and the observation cadence of the metrics, health and sentinel daemons; reactive passes (incidents, operation progress) are never scaled. Auto = the hardware detection (RAM). Daemons follow a switch live; open pages apply it after navigation.') ])
 	]);
 }
 
@@ -1544,7 +1624,7 @@ return view.extend({
 		renderCoreState(null);
 		const refreshCoreState = () => getServiceStatus().then(renderCoreState);
 		refreshCoreState();
-		poll.add(refreshCoreState, 5);
+		poll.add(refreshCoreState, hp.pollSec(5));
 
 		if (!features.core_type) {
 			const callDetectCustomCore = rpc.declare({

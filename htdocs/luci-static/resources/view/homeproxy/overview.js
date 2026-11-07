@@ -674,9 +674,9 @@ return view.extend({
 		function renderProfile(p) {
 			p = p || {};
 			const names = { lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
-			profV.textContent = p.profile
-				? ((names[p.profile] || p.profile) + (p.source === 'auto' ? ' · ' + _('auto') : ''))
-				: '—';
+			const src = (p.source === 'auto') ? ' · ' + _('auto')
+				: (p.source === 'manual' ? ' · ' + _('manual') : '');
+			profV.textContent = p.profile ? ((names[p.profile] || p.profile) + src) : '—';
 		}
 
 		/* ONE result area at the bottom for ALL button results. */
@@ -1120,11 +1120,11 @@ return view.extend({
 			});
 		}
 
-		poll.add(refresh, 4);
+		poll.add(refresh, hp.pollSec(4));
 		refresh();
-		poll.add(profileRefresh, 60);
+		poll.add(profileRefresh, hp.pollSec(60));
 		profileRefresh();
-		poll.add(subsRefresh, 60);
+		poll.add(subsRefresh, hp.pollSec(60));
 		subsRefresh();
 
 		/* Р3 v3 hub layout: hero (brand + status) → quick setup (until set

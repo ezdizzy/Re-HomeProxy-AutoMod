@@ -77,6 +77,7 @@
 					"control_rule_resume", "control_schedule_add", "control_schedule_delete", "control_schedule_toggle",
 					"control_wifi_set", "control_wifi_temp", "control_wifi_temp_clear", "control_events_clear",
 					"control_proxy_global", "control_proxy_mode", "control_proxy_lists",
+					"res_profile_set",
 					"app_support_bundle_start"
 				]
 			},

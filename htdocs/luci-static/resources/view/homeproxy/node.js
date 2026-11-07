@@ -2065,7 +2065,7 @@ return view.extend({
 		 * as the Monitoring page — one status source for the whole app). ── */
 		poll.add(function() {
 			return refreshNodeStatuses().then(updateSummary);
-		}, 5);
+		}, hp.pollSec(5));
 		refreshNodeStatuses().then(updateSummary);
 
 		rebuildSubCards();

@@ -696,6 +696,10 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 
 		this.uiStyle();
 
+		/* Ф10.1: the resource-profile factor prefetch — fire-and-forget; the
+		 * cached factor scales the poll intervals of the NEXT page render. */
+		this.profilePrefetch();
+
 		const t = this.themeGet();
 		document.documentElement.setAttribute('data-hp-theme', t);
 
@@ -869,9 +873,56 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		}, this));
 	},
 
+	/* Ф10.1: resource-profile poll scaling. factor = Lite ×3 / Balanced ×2 /
+	 * Performance ×1 (§A.4 RAM thresholds; the manual UCI mode
+	 * homeproxy.config.res_profile_mode overrides the auto class). The
+	 * factor is cached in sessionStorage (TTL 5 min) and refreshed by a
+	 * lightweight prefetch on EVERY page (uiShell) — poll intervals pick
+	 * the new factor up on the NEXT page transition; a profile switch never
+	 * rewrites live timers mid-page (the honest hint in the card). */
+	resProfileFactor() {
+		try {
+			const raw = window.sessionStorage.getItem('hpResProfile');
+			if (raw) {
+				const c = JSON.parse(raw);
+				if (c && c.factor && (Date.now() - (c.ts || 0)) < 300000)
+					return parseInt(c.factor, 10) || 1;
+			}
+		} catch (e) {}
+		return 1;
+	},
+
+	/* Scaled poll interval in seconds: poll.add(fn, hp.pollSec(4)) —
+	 * the legacy cadence IS the Performance ×1 answer, so on capable
+	 * hardware nothing changes at all. */
+	pollSec(sec) {
+		return Math.round(sec * this.resProfileFactor());
+	},
+
+	profilePrefetch() {
+		const callResProfile = rpc.declare({
+			object: 'luci.homeproxy',
+			method: 'res_profile',
+			expect: { '': {} }
+		});
+		return L.resolveDefault(callResProfile(), {}).then((p) => {
+			p = p || {};
+			if (p.profile) {
+				try {
+					window.sessionStorage.setItem('hpResProfile', JSON.stringify({
+						factor: parseInt(p.factor, 10) || 1,
+						profile: p.profile,
+						mode: p.mode,
+						ts: Date.now()
+					}));
+				} catch (e) {}
+			}
+		});
+	},
+
 	/* Sidebar status line: one cheap overview_sys poll every 10 s (the
 	 * Overview tab polls the same RPC every 4 s anyway; ubus calls are
-	 * trivial). */
+	 * trivial) — profile-scaled (Ф10.1). */
 	shellStatus(dotEl, textEl, subEl) {
 		const callShellSys = rpc.declare({
 			object: 'luci.homeproxy',
@@ -891,7 +942,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 					: (ok ? _('System is running') : _('Core is not responding'));
 				subEl.textContent = (sys && sys.app_version) ? 'Ravnex v' + sys.app_version : '';
 			});
-		}, this), 10);
+		}, this), this.pollSec(10));
 	},
 
 	SHELL_CSS: `
