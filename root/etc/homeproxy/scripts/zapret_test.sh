@@ -361,6 +361,23 @@ if [ "$QUIC" = "1" ]; then
 		NFQ_PID=$!
 		sleep 1
 		ucode /etc/homeproxy/scripts/pmgr_cli.uc find "$NFQWS" "--qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 did not start - check strategy"
+		# ч.229: same queue-bind readiness gate as the TCP contour — the QUIC
+		# A/B measured inside the settling window would compare the baseline
+		# against an engine that was not listening yet.
+		QWAIT=0
+		QBOUND=0
+		while [ "$QWAIT" -lt 50 ]; do
+			if awk -v q="$QNUM" '$1 == q { f = 1; exit } END { exit (f ? 0 : 1) }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+				QBOUND=1
+				break
+			fi
+			sleep 0.2
+			QWAIT=$((QWAIT + 1))
+		done
+		if [ "$QBOUND" != "1" ]; then
+			ucode /etc/homeproxy/scripts/pmgr_cli.uc find "$NFQWS" "--qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 died before queue bind"
+			echo "queue $QNUM bind wait timeout - quic probe may pass un-mangled" >&2
+		fi
 	fi
 	QOUT="$TMP/quic_out.json"
 	if [ -n "$PROBE_UID" ]; then
@@ -407,6 +424,28 @@ if [ "$BASELINE" != "1" ]; then
 	# Ф1.4b: identity liveness (exact exe + the --qnum element), not a
 	# substring pgrep that matched any process mentioning the number.
 	ucode /etc/homeproxy/scripts/pmgr_cli.uc find "$NFQWS" "--qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 did not start - check strategy"
+	# ч.229: the identity check passes while the queue is NOT yet bound —
+	# nfqws2 binds only after its lua init. Probes fired inside that window
+	# return 000 at exactly the connect-timeout while the SAME probes pass
+	# seconds later (the settling window proven live in ч.228 on the wizard
+	# verify; the wizard got wait_probe_ready — the fuzz contour did not,
+	# and a lost round 1 kills a candidate by majority). /proc/net/netfilter/
+	# nfnetlink_queue lists bound queues as a padded "<qnum> <pid> ..." line;
+	# poll for OUR qnum in column 1 (0.2s x 50 = 10s cap).
+	QWAIT=0
+	QBOUND=0
+	while [ "$QWAIT" -lt 50 ]; do
+		if awk -v q="$QNUM" '$1 == q { f = 1; exit } END { exit (f ? 0 : 1) }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+			QBOUND=1
+			break
+		fi
+		sleep 0.2
+		QWAIT=$((QWAIT + 1))
+	done
+	if [ "$QBOUND" != "1" ]; then
+		ucode /etc/homeproxy/scripts/pmgr_cli.uc find "$NFQWS" "--qnum=$QNUM" >/dev/null 2>&1 || fail "nfqws2 died before queue bind"
+		echo "queue $QNUM bind wait timeout - probes may pass un-mangled" >&2
+	fi
 fi
 
 # 5. Probe every host in parallel: curl forced to the resolved IP, write

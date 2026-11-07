@@ -42,6 +42,19 @@ function parse_target(argv) {
 const cmd = ARGV[0] || '';
 let rc = 0;
 
+/* ч.229 FIX (prod-killer): the old call sites passed parse_target([ ARGV[1] ])
+ * — ONLY the exe — so the pinning tokens ("--qnum=210" …) were silently
+ * dropped, spec.arg_all stayed EMPTY, and find/kill_args matched EVERY
+ * nfqws2 process. Proven live: every zapret_test.sh cleanup TERMed the PROD
+ * engine (qnum 200) alongside the test engine — the whole "nfqws2 crash
+ * loop" saga (procd 17 crashes, recovery svc_start x10 on 2026-11-07) was
+ * our own cleanup, and the identity checks passed whenever ANY nfqws2 was
+ * alive. Tokens are now forwarded verbatim: ARGV[1] = target head,
+ * ARGV[2..] = the arg_all conjunction. */
+const argv_target = [];
+for (let i = 1; i < length(ARGV); i++)
+	push(argv_target, ARGV[i]);
+
 if (cmd === 'scan') {
 	printf('%.J\n', pm.scan_registry());
 } else if (cmd === 'status') {
@@ -53,7 +66,7 @@ if (cmd === 'scan') {
 	printf('%.J\n', r);
 	rc = r.ok ? 0 : 1;
 } else if (cmd === 'find') {
-	const t = parse_target([ ARGV[1] ]);
+	const t = parse_target(argv_target);
 	let n = 0;
 	if (t == null || (!t.exes && !t.script)) {
 		printf('%.J\n', { ok: false, error: 'usage: find <exe[,exe2…]|script:NAME.uc> [arg…]' });
@@ -70,7 +83,7 @@ if (cmd === 'scan') {
 		rc = (n > 0) ? 0 : 1;
 	}
 } else if (cmd === 'kill_args') {
-	const t = parse_target([ ARGV[1] ]);
+	const t = parse_target(argv_target);
 	if (t == null || (!t.exes && !t.script)) {
 		printf('%.J\n', { ok: false, error: 'usage: kill_args <exe|script:NAME.uc> [arg…]' });
 		rc = 1;

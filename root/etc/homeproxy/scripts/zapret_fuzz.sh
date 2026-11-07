@@ -282,8 +282,12 @@ sort(strategies, (a, b) => b.score - a.score);
  *      measured verdict);
  *   4. the best-ranked IMPORTED and GENERATED strategy — the catalogs
  *      the user brought in must be measured too;
- *   5. the CURRENTLY APPLIED strategy (single-block only) if not already
- *      listed — the user must always see its measured verdict.
+ *   5. the CURRENTLY APPLIED strategy if not already listed — the user
+ *      must always see its measured verdict. ч.229: multi-block composites
+ *      (--new) measure like any corpus candidate — the corpus itself carries
+ *      --new chains and nfqws2 is profile-native (first matching profile
+ *      wins); the old single-block-only guard left the REAL composite
+ *      unmeasured while deep_note claimed otherwise.
  * Every pick requires at least one passing handshake host (ok > 0).
  * The list keeps the INDEX into rank.json strategies: the pass-2 merge
  * maps d<i>.json back through it. */
@@ -359,8 +363,8 @@ for (let gi in ["imported", "generated"]) {
 	}
 }
 const cur_args = trim(CURRENT_OPTS);
-if (length(cur_args) > 3 && index(cur_args, "--new") < 0 &&
-	match(cur_args, /^--[a-z]/)) {
+let cur_measured = false;
+if (length(cur_args) > 3 && match(cur_args, /^--[a-z]/)) {
 	let dup = false;
 	for (let i = 0; i < length(strategies); i++)
 		if (strategies[i].args === cur_args) {
@@ -377,12 +381,14 @@ if (length(cur_args) > 3 && index(cur_args, "--new") < 0 &&
 			score: 0, hosts: [] });
 		push(covered, length(strategies));
 	}
+	cur_measured = true;
 }
 /* ч.129 FIX: rank.json is written AFTER the current-strategy append —
  * the merge maps d<i>.json through deep_list.json indexes into THIS
  * array, and the old order (write first, append after) made the merge
  * silently drop the measured verdict of the current strategy forever. */
-writefile(TMP + "/rank.json", sprintf("%.J\n", { strategies: strategies, ts: now }));
+writefile(TMP + "/rank.json", sprintf("%.J\n", { strategies: strategies, ts: now,
+	cur_measured: cur_measured }));
 /* ч.129 FIX (🔴 lesson 20/31 hit the ч.123 code): for-in over an ARRAY
  * yields ELEMENTS — the old `for (let i in covered) { idx: covered[i] … }`
  * read covered[element] (an off-by-one NEIGHBOUR as the deep-verdict owner,
@@ -730,46 +736,51 @@ for (let s in strategies) {
 const tested = [], rest = [];
 for (let s in strategies)
 	(s.deep) ? push(tested, s) : push(rest, s);
+/* ч.229 FIX (ranking cycle): the old pairwise comparator (deep ratio →
+ * START >25% → vSTART >25% → flow >10% → avg_tls → score) is NOT a total
+ * order — the thresholds create cycles. Live proof, run ts 1794065143:
+ * Fake+fakedsplit beat Default pairwise on flow (522563 vs 464903 B/s,
+ * 12.4% > 10%), Multisplit beat fakedsplit on avg_tls (174 < 179), and
+ * Default tied Multisplit on every metric — M > F > D ≈ M — so the stable
+ * sort crowned the corpus-first Default with the WORST measured flow.
+ * Rank classes are now computed against the BEST measured value in the
+ * deep set (the same noise margins, applied globally): a strategy worse
+ * than the threshold drops to class 1, others stay 0. Total order:
+ * deep ratio desc → classes → avg_tls → score → corpus rank. */
+let b_start = 0, b_vstart = 0, b_flow = 0;
+for (let s in tested) {
+	const st = int(s.start_ms || 0);
+	if (st > 0 && (b_start == 0 || st < b_start)) b_start = st;
+	const vs = int(s.stream_start_ms || 0);
+	if (vs > 0 && (b_vstart == 0 || vs < b_vstart)) b_vstart = vs;
+	const fl = int(s.stream || 0);
+	if (fl > b_flow) b_flow = fl;
+}
+for (let s in tested) {
+	const st = int(s.start_ms || 0);
+	s.rk_start = (b_start > 0 && st > 0 && st > b_start + int(b_start / 4)) ? 1 : 0;
+	const vs = int(s.stream_start_ms || 0);
+	s.rk_vstart = (b_vstart > 0 && vs > 0 && vs > b_vstart + int(b_vstart / 4)) ? 1 : 0;
+	const fl = int(s.stream || 0);
+	/* a measured flow beats an unmeasured (0) one outright — the old
+	 * pairwise rule carried that; the class keeps it */
+	s.rk_flow = (b_flow > 0 && (fl <= 0 || fl < b_flow - int(b_flow / 10))) ? 1 : 0;
+}
+for (let n = 0; n < length(tested); n++)
+	tested[n].rk_i = n;
 sort(tested, (a, b) => {
 	const ra = a.deep.total ? (a.deep.ok * 1.0 / a.deep.total) : 0;
 	const rb = b.deep.total ? (b.deep.ok * 1.0 / b.deep.total) : 0;
 	if (ra != rb)
 		return rb - ra;
-	/* ч.116: equal deep verdicts → a MEASURED verdict decides (the TLS
-	 * handshake time does not predict the throttled flow).
-	 * ч.129: the fresh-connection START latency is what the user FEELS
-	 * first («навожу на карточку — превью не стартует») — a >25% better
-	 * START wins outright; a smaller gap is bursty TSPU noise (tie). The
-	 * sustained flow decides next at a >10% gap, then the handshake.
-	 * The old order (flow first, START only inside a 10% flow tie) kept a
-	 * strategy with a fast keep-alive bulk but a slow every-fresh-
-	 * connection start on top — exactly the reported complaint. */
-	const ta = int(a.start_ms || 0), tb = int(b.start_ms || 0);
-	if (ta > 0 && tb > 0 && ta != tb) {
-		const hi = (ta > tb) ? ta : tb, lo = (ta > tb) ? tb : ta;
-		if (hi - lo > int(hi / 4))
-			return ta - tb;
-	}
-	/* Ф6.4 (замер пользователя 2026-11-04): the VIDEO-edge START (yts/yts2
-	 * ttfb) decides next at the same >25% margin — the preview START does
-	 * not cover the videoplayback edges (the user: «на Hostfakesplit видео
-	 * открывается быстро, на победителе — долго»). */
-	const va = int(a.stream_start_ms || 0), vb = int(b.stream_start_ms || 0);
-	if (va > 0 && vb > 0 && va != vb) {
-		const hi = (va > vb) ? va : vb, lo = (va > vb) ? vb : va;
-		if (hi - lo > int(hi / 4))
-			return va - vb;
-	}
-	const sa = int(a.stream || 0), sb = int(b.stream || 0);
-	if (sa != sb) {
-		if (sa > 0 && sb > 0) {
-			const hi = (sa > sb) ? sa : sb, lo = (sa > sb) ? sb : sa;
-			if (hi - lo > int(hi / 10))
-				return sb - sa;
-		} else if (sa > 0 || sb > 0)
-			return sb - sa;
-	}
-	return (int(a.avg_tls_ms || 0) - int(b.avg_tls_ms || 0)) || (b.score - a.score);
+	if (a.rk_start != b.rk_start)
+		return a.rk_start - b.rk_start;
+	if (a.rk_vstart != b.rk_vstart)
+		return a.rk_vstart - b.rk_vstart;
+	if (a.rk_flow != b.rk_flow)
+		return a.rk_flow - b.rk_flow;
+	return (int(a.avg_tls_ms || 0) - int(b.avg_tls_ms || 0)) ||
+		(b.score - a.score) || (a.rk_i - b.rk_i);
 });
 const final = [];
 for (let s in tested) push(final, s);
@@ -830,6 +841,11 @@ if (ctrl && type(ctrl.results) == "array")
 const rj = parse(TMP + "/resolve.json");
 const dns_sets = (rj != null && type(rj) === "object" && type(rj.dns) === "object") ? rj.dns : null;
 
+/* ч.229: the note may claim "the current strategy" ONLY when it was
+ * actually measured (rank.cur_measured — set at the append site in the
+ * rank pass; the old hardcoded note claimed it even for runs where the
+ * --new composite was excluded and never measured). */
+const cur_measured = (rank.cur_measured == true);
 writefile(RESULT, sprintf("%.J\n", {
 	running: false, done: length(final), total: length(final),
 	rounds: ROUNDS, majority: MAJ, ts: now, baseline: bnote, strategies: final,
@@ -840,7 +856,7 @@ writefile(RESULT, sprintf("%.J\n", {
 	baseline_series: { first: bnote, control: cnote, drift: drift },
 	dns_sets: dns_sets,
 	verdicts: verdicts,
-	deep_note: "top " + deepN + " of " + length(dlist_items) + " selected deep-checked: family-diverse leaders + imported/generated bests + the current strategy; failed: " + ((length(deep_failed)) ? join(", ", deep_failed) : "none") + "; probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank"
+	deep_note: "top " + deepN + " of " + length(dlist_items) + " selected deep-checked: family-diverse leaders + imported/generated bests" + (cur_measured ? " + the current strategy" : "") + "; failed: " + ((length(deep_failed)) ? join(", ", deep_failed) : "none") + "; probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank"
 }));
 
 /* history: keep the last 5 runs (tmpfs — survives until reboot) */
