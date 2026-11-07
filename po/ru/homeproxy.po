@@ -5614,10 +5614,6 @@ msgstr "Архив истёк (роутер перезагружался) — с
 
 msgid "Failed to start: "
 msgstr "Не удалось запустить: "
-
-msgid "Empty report"
-msgstr "Пустой отчёт"
-
 msgid "Download .txt"
 msgstr "Скачать .txt"
 
@@ -7475,3 +7471,48 @@ msgstr "множитель поллов"
 
 msgid "The profile scales the refresh intervals of the app pages (Lite ×3, Balanced ×2, Performance ×1) and the observation cadence of the metrics, health and sentinel daemons; reactive passes (incidents, operation progress) are never scaled. Auto = the hardware detection (RAM). Daemons follow a switch live; open pages apply it after navigation."
 msgstr "Профиль масштабирует интервалы обновления страниц приложения (Lite ×3, Balanced ×2, Performance ×1) и частоту наблюдения демонов metrics, health и sentinel; реактивные проходы (инциденты, прогресс операций) не масштабируются. Авто = определение по железу (RAM). Демоны подхватывают смену сразу; открытые страницы — после перехода."
+
+msgid "Critically over budget"
+msgstr "Критический перерасход"
+
+msgid "Over budget"
+msgstr "Перерасход"
+
+msgid "In budget"
+msgstr "В норме"
+
+msgid "No resource snapshot yet — Sentinel takes one on its full pass"
+msgstr "Снапшот ресурсов ещё не собран — Sentinel снимет его на полном проходе"
+
+msgid "Memory available: %s"
+msgstr "Доступно памяти: %s"
+
+msgid "Measured %d s ago"
+msgstr "Замер: %d с назад"
+
+msgid "Stale snapshot"
+msgstr "Снапшот устарел"
+
+msgid "Daemon"
+msgstr "Демон"
+
+msgid "RSS"
+msgstr "RSS"
+
+msgid "RSS limit"
+msgstr "Лимит RSS"
+
+msgid "fd limit"
+msgstr "Лимит fd"
+
+msgid "Resource monitoring is unavailable"
+msgstr "Мониторинг ресурсов недоступен"
+
+msgid "Daemon resources"
+msgstr "Ресурсы демонов"
+
+msgid "Text report ready in %s s"
+msgstr "Текст-отчёт готов за %s с"
+
+msgid "The report expired (router rebooted) — collect it again"
+msgstr "Отчёт истёк (роутер перезагружался) — соберите заново"

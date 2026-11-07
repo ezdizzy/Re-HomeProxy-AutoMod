@@ -49,7 +49,7 @@ import {
 import {
 	HEALTH_PATH as HS_PATH, snapshot as hs_snapshot
 } from '/etc/homeproxy/scripts/health.uc';
-import { SENTINEL_PATH as SN_PATH } from '/etc/homeproxy/scripts/sentinel.uc';
+import { SENTINEL_PATH as SN_PATH, RES_PATH as RES_PATH } from '/etc/homeproxy/scripts/sentinel.uc';
 import {
 	RECOVERY_PATH as RC_PATH, request_manual as rc_request_manual
 } from '/etc/homeproxy/scripts/recovery.uc';
@@ -4653,6 +4653,25 @@ const methods = {
 					sentinel: null };
 			return { result: true, fresh: (age >= 0 && age <= 150), age: age,
 				sentinel: rd.data };
+		}
+	},
+
+	/* ── Ф10.3: снапшот ресурсов демонов ───────────────────────────────────
+	 * Sentinel пишет /var/run/homeproxy/resources.json на полном проходе
+	 * (~5 мин; lite — до ~15 мин) и на каждом light-проходе при активном
+	 * перерасходе. Документ отдаётся как есть (пересчёта в rpcd нет —
+	 * паттерн sentinel_status); budgets едут в каждой строке, UI не знает
+	 * таблицу лимитов. Свежесть 1800 с — с запасом к lite-каденции. */
+	resource_status: {
+		call: function(req) {
+			const rd = ss_read_state(RES_PATH);
+			const age = (rd != null && rd.meta != null && rd.meta.ts != null)
+				? (time() - int(rd.meta.ts)) : -1;
+			if (rd == null || rd.data == null)
+				return { result: true, fresh: false, age: (age >= 0) ? age : null,
+					resources: null };
+			return { result: true, fresh: (age >= 0 && age <= 1800), age: age,
+				resources: rd.data };
 		}
 	},
 
@@ -10363,8 +10382,9 @@ const methods = {
 	/* ── Support Bundle (Р4) ──────────────────────────────────────────────
 	 * Сбор приватно-безопасного отчёта: support_bundle.uc в фоне (start),
 	 * статус/самотест (status), скачивание base64-чанками 32 КиБ (chunk —
-	 * ubus-лимит ~64 КиБ на сообщение, b64enc встроенный), быстрый
-	 * текст-отчёт (text). */
+	 * ubus-лимит ~64 КиБ на сообщение, b64enc встроенный). Текст-отчёт —
+	 * ТОЖЕ фоновый (урок 294: синхронный сбор ~57 с в rpcd-петле рвал
+	 * общий ubus-стрим браузера): text_start / text_status + chunk kind='text'. */
 	app_support_bundle_start: {
 		call: function(req) {
 			const mf = '/tmp/ravnex_bundle_meta.json';
@@ -10399,18 +10419,25 @@ const methods = {
 	},
 
 	app_support_bundle_chunk: {
-		args: { offset: 'offset' },
+		args: { offset: 'offset', kind: 'kind' },
 		call: function(req) {
+			const kind = '' + ((req && req.args && req.args.kind) || 'bundle');
+			const mf = (kind === 'text')
+				? '/tmp/ravnex_text_meta.json' : '/tmp/ravnex_bundle_meta.json';
 			let meta = null;
-			try { meta = json(readfile('/tmp/ravnex_bundle_meta.json') || ''); } catch (e) { meta = null; }
+			try { meta = json(readfile(mf) || ''); } catch (e) { meta = null; }
 			if (!meta || type(meta) !== 'object' || !meta.path)
-				return { error: 'no bundle' };
+				return { error: (kind === 'text') ? 'no text report' : 'no bundle' };
 			const path = '' + meta.path;
-			/* Только канонический путь бандла — никаких путей снаружи. */
-			if (match(path, /^\/tmp\/ravnex_bundle_[0-9]{8}-[0-9]{6}\.tar(\.gz)?$/) == null)
+			/* Только канонические пути (бандл-тар / текст-отчёт) — никаких
+			 * путей снаружи. */
+			if (kind === 'text') {
+				if (match(path, /^\/tmp\/ravnex_report_[0-9]{8}-[0-9]{6}\.txt$/) == null)
+					return { error: 'bad report path' };
+			} else if (match(path, /^\/tmp\/ravnex_bundle_[0-9]{8}-[0-9]{6}\.tar(\.gz)?$/) == null)
 				return { error: 'bad bundle path' };
 			if (!access(path))
-				return { error: 'bundle gone' };
+				return { error: (kind === 'text') ? 'report gone' : 'bundle gone' };
 			const st = stat(path);
 			const size = st ? st.size : 0;
 			const CH = 32768;
@@ -10432,14 +10459,38 @@ const methods = {
 		}
 	},
 
-	app_support_bundle_text: {
+	/* Урок 294: текст-отчёт собирается ~минуту — синхронный popen внутри
+	 * rpcd-петли рвёт общий ubus-стрим браузера. Детач + поллинг статуса,
+	 * как у архивного бандла; текст UI забирает чанками (chunk kind='text'). */
+	app_support_bundle_text_start: {
 		call: function() {
-			const fd = popen(`ucode ${shellquote(HP_DIR + '/scripts/support_bundle.uc')} text 2>/dev/null`);
-			if (!fd)
-				return { error: 'spawn failed' };
-			const out = fd.read('all') || '';
-			fd.close();
-			return { text: out };
+			const mf = '/tmp/ravnex_text_meta.json';
+			if (access(mf)) {
+				let prev = null;
+				try { prev = json(readfile(mf) || ''); } catch (e) { prev = null; }
+				if (prev && prev.running && (time() - int(prev.ts || 0) < 300))
+					return { result: false, error: 'a text report build is already in progress' };
+			}
+			system('rm -f /tmp/ravnex_text_meta.json /tmp/ravnex_text_meta.json.tmp 2>/dev/null');
+			system(`ucode ${shellquote(HP_DIR + '/scripts/support_bundle.uc')} text-bg >/dev/null 2>&1 &`);
+			return { result: true, started: true };
+		}
+	},
+
+	app_support_bundle_text_status: {
+		call: function() {
+			const mf = '/tmp/ravnex_text_meta.json';
+			if (!access(mf))
+				return { exists: false, running: false };
+			let meta = null;
+			try { meta = json(readfile(mf) || ''); } catch (e) { meta = null; }
+			if (!meta || type(meta) !== 'object')
+				return { exists: false, running: false };
+			meta.exists = true;
+			/* /tmp переживает только до ребута — честно сообщаем пропажу. */
+			if (meta.path && !meta.running && !access(meta.path))
+				meta.gone = true;
+			return meta;
 		}
 	}
 

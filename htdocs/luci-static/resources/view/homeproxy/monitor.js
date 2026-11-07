@@ -39,6 +39,13 @@ const callHotswapStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Ф10.3: daemon resource snapshot (RSS/fd budgets) — written by Sentinel. */
+const callResourceStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'resource_status',
+	expect: { '': {} }
+});
+
 /* Same 4-colour scheme as the "Active URLTest node" line in Client Settings —
  * palette matches the Automation tab: red = confirmed dead (65535 timeout
  * sentinel), orange = slow (>=3000 ms), green = healthy, gray = unmeasured. */
@@ -265,6 +272,86 @@ return view.extend({
 			connTableWrap,
 			connResult
 		]);
+
+		/* ── Ф10.3: ресурсы демонов (снапшот Sentinel'а: RSS/fd vs бюджет) ── */
+		const resHead = E('div', { 'style': 'margin:2px 0 6px' }, [ '—' ]);
+		const resTableWrap = E('div', {}, [ '—' ]);
+
+		function resStatusView(level) {
+			if (level === 'crit')
+				return { color: C_RED, text: _('Critically over budget') };
+			if (level === 'warn')
+				return { color: C_AMBER, text: _('Over budget') };
+			return { color: C_GREEN, text: _('In budget') };
+		}
+
+		function renderRes(r) {
+			resHead.innerHTML = '';
+			if (!r || r.result !== true || !r.resources || !r.resources.res) {
+				resTableWrap.innerHTML = '';
+				resTableWrap.appendChild(E('em', { 'style': 'color:#9a9a9a' },
+					[ _('No resource snapshot yet — Sentinel takes one on its full pass') ]));
+				resHead.appendChild(E('span', { 'style': 'color:#9a9a9a' }, [ '—' ]));
+				return;
+			}
+			const d = r.resources;
+			const bits = [];
+			if (d.mem_available_kb > 0) {
+				const availTxt = (d.mem_available_kb / 1024).toFixed(0) + ' MB' +
+					((d.mem_total_kb > 0) ? ' / ' + (d.mem_total_kb / 1024).toFixed(0) + ' MB' : '');
+				bits.push(_('Memory available: %s').format(availTxt));
+			}
+			if (r.age != null && r.age >= 0)
+				bits.push(_('Measured %d s ago').format(r.age));
+			if (r.fresh === false)
+				bits.push(_('Stale snapshot'));
+			resHead.appendChild(E('span', { 'style': 'color:' + (r.fresh === false ? C_AMBER : 'inherit') }, [ bits.join(' · ') ]));
+
+			/* The head (age ticking) re-renders every poll; the table only on
+			 * a data change — age is deliberately NOT in the signature. */
+			const sig = JSON.stringify(d.res);
+			if (sig === renderRes._sig)
+				return;
+			renderRes._sig = sig;
+
+			const table = makeTable([ _('Daemon'), _('RSS'), _('RSS limit'), 'fd', _('fd limit'), _('Status') ]);
+			for (const e of d.res) {
+				const sv = resStatusView(e.level);
+				const rssTxt = (e.rss_kb > 0) ? (e.rss_kb / 1024).toFixed(1) + ' MB' : '—';
+				const limTxt = (e.rss_warn_kb > 0) ? (e.rss_warn_kb / 1024).toFixed(0) + ' MB' : '—';
+				const fdTxt = (e.fds >= 0) ? String(e.fds) : '—';
+				const fdLim = (e.fd_warn > 0) ? String(e.fd_warn) : '—';
+				const what = (e.level !== 'ok' && e.what === 'fd')
+					? ' (fd)' : '';
+				const tr = addRow(table, [
+					{ text: e.label || e.name, color: 'inherit' },
+					{ text: rssTxt, color: sv.color },
+					{ text: limTxt, color: C_GREY },
+					{ text: fdTxt, color: (e.level !== 'ok' && e.what === 'fd') ? sv.color : 'inherit' },
+					{ text: fdLim, color: C_GREY },
+					{ el: E('span', { 'style': 'color:' + sv.color, 'title': (e.what === 'fd' ? 'fd' : 'RSS') + what }, [ sv.text ]) }
+				]);
+				if (e.level === 'crit')
+					imp(tr, { background: 'rgba(224,82,82,.10)' });
+				else if (e.level === 'warn')
+					imp(tr, { background: 'rgba(224,123,0,.10)' });
+			}
+
+			resTableWrap.innerHTML = '';
+			const wrap = E('div', { 'class': 'hpui-wrap' });
+			imp(wrap, { 'max-height': '380px' });
+			wrap.appendChild(table);
+			resTableWrap.appendChild(wrap);
+		}
+
+		function refreshResources() {
+			return L.resolveDefault(callResourceStatus(), {}).then(function(r) {
+				renderRes(r || null);
+			}).catch(function(e) {
+				resTableWrap.innerHTML = '';
+				resTableWrap.appendChild(E('em', { 'style': 'color:#e05252' }, [ _('Resource monitoring is unavailable') ]));
+			});
+		}
 
 		function modeText(mode) {
 			if (mode === 'auto') return _('Auto — all nodes (recommended)');
@@ -520,16 +607,24 @@ return view.extend({
 			});
 		}
 
+		const panelRes = E('div', { 'class': 'hpui-panel' }, [
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('cpu'), _('Daemon resources') ]),
+			resHead,
+			resTableWrap
+		]);
+
 		poll.add(refreshNodes, hp.pollSec(5));
 		poll.add(refreshConnections, hp.pollSec(5));
 		poll.add(refreshHotswap, hp.pollSec(10));
+		poll.add(refreshResources, hp.pollSec(10));
 		refreshNodes();
 		refreshConnections();
 		refreshHotswap();
+		refreshResources();
 
 		return E('div', {}, [
 			hp.pageIntro(_('Monitoring'),
 				_('How healthy the servers are right now: the live delay of every node the core measures, the running engine and core, and the active connections with their speed. Read-only — the changes happen on the Servers and Blocking bypass pages.')),
-			panelNodes, panelConn ]);
+			panelNodes, panelConn, panelRes ]);
 	}
 });

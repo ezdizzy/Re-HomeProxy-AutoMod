@@ -3426,10 +3426,6 @@ msgstr ""
 
 msgid "Failed to start: "
 msgstr ""
-
-msgid "Empty report"
-msgstr ""
-
 msgid "Download .txt"
 msgstr ""
 
@@ -7467,4 +7463,49 @@ msgid "poll factor"
 msgstr ""
 
 msgid "The profile scales the refresh intervals of the app pages (Lite ×3, Balanced ×2, Performance ×1) and the observation cadence of the metrics, health and sentinel daemons; reactive passes (incidents, operation progress) are never scaled. Auto = the hardware detection (RAM). Daemons follow a switch live; open pages apply it after navigation."
+msgstr ""
+
+msgid "Critically over budget"
+msgstr ""
+
+msgid "Over budget"
+msgstr ""
+
+msgid "In budget"
+msgstr ""
+
+msgid "No resource snapshot yet — Sentinel takes one on its full pass"
+msgstr ""
+
+msgid "Memory available: %s"
+msgstr ""
+
+msgid "Measured %d s ago"
+msgstr ""
+
+msgid "Stale snapshot"
+msgstr ""
+
+msgid "Daemon"
+msgstr ""
+
+msgid "RSS"
+msgstr ""
+
+msgid "RSS limit"
+msgstr ""
+
+msgid "fd limit"
+msgstr ""
+
+msgid "Resource monitoring is unavailable"
+msgstr ""
+
+msgid "Daemon resources"
+msgstr ""
+
+msgid "Text report ready in %s s"
+msgstr ""
+
+msgid "The report expired (router rebooted) — collect it again"
 msgstr ""

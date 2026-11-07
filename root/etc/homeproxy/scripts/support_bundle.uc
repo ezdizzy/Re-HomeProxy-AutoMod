@@ -36,8 +36,10 @@
  *   ucode support_bundle.uc build      — полный бандл (tar.gz) + selftest
  *   ucode support_bundle.uc selftest   — сборка стейджа без tar + печать проверок
  *   ucode support_bundle.uc text       — быстрый текст-отчёт в stdout
+ *   ucode support_bundle.uc text-bg    — фоновый текст-отчёт (урок 294)
  *
- * Статус: /tmp/ravnex_bundle_meta.json (атомарно, tmp+rename), polled RPC.
+ * Статус: /tmp/ravnex_bundle_meta.json (атомарно, tmp+rename), polled RPC;
+ * текст-отчёт в фоне — /tmp/ravnex_text_meta.json + report_<ts>.txt.
  * Уроки: ucode БЕЗ hoisting (ч.118) — функции строго сверху вниз;
  * fs.stat без st_-префикса (ч.75); for-in по массиву = элементы (урок 20);
  * POSIX ERE без \b и без (?:) — только базовый синтаксис; атомарная запись
@@ -56,6 +58,7 @@ import {
 const RUN_DIR = '/var/run/homeproxy';
 const STAGE_BASE = '/tmp/ravnex_bundle';
 const META_FILE = '/tmp/ravnex_bundle_meta.json';
+const TEXT_META_FILE = '/tmp/ravnex_text_meta.json';
 const TEXT_LOG_TAIL = 500;      /* logread tail in the bundle */
 const APP_TAIL = 200;           /* own app logs tail in the bundle */
 
@@ -629,6 +632,43 @@ function write_meta(doc) {
 	return doc;
 }
 
+/* ── текст-отчёт в фоне (урок 294) ─────────────────────────────────────── */
+
+function write_meta_text(doc) {
+	watomic(TEXT_META_FILE, sprintf('%.J', doc) + '\n');
+	return doc;
+}
+
+function do_text_bg() {
+	/* Урок 294: синхронный text-сбор (~57 с) внутри rpcd-петли рвёт ОБЩИЙ
+	 * ubus-стрим браузера (ERR_INCOMPLETE_CHUNKED_ENCODING). Фоновый режим:
+	 * старт пишет running-мету, собирает, кладёт текст в
+	 * /tmp/ravnex_report_<ts>.txt; UI поллит app_support_bundle_text_status
+	 * и забирает текст чанками (тот же chunk-механизм, что у архива).
+	 * Хранится только последний отчёт (как бандл). */
+	system('rm -f /tmp/ravnex_report_*.txt 2>/dev/null');
+	write_meta_text({ running: true, ts: time() });
+	const t0 = time();
+	const text = do_text_report();
+	const ts = ts14();
+	if (!length(ts))
+		return write_meta_text({ running: false, ts: time(), took_s: time() - t0,
+			ok: false, error: 'date failed', path: null, name: null, size: 0 });
+	const path = `/tmp/ravnex_report_${ts}.txt`;
+	watomic(path, text);
+	return write_meta_text({
+		running: false,
+		ts: time(),
+		took_s: time() - t0,
+		ok: length(text) > 0,
+		error: length(text) ? null : 'пустой отчёт — сборка не вернула текст',
+		path: path,
+		name: substr(path, 5),
+		size: fsize(path),
+		chars: length(text)
+	});
+}
+
 function do_build(with_tar) {
 	const secrets = collect_secret_values();
 	/* Чистим прошлый бандл: хранится только последний. */
@@ -697,6 +737,13 @@ const mode = length(ARGV) ? ARGV[0] : 'build';
 
 if (mode === 'text') {
 	printf('%s', do_text_report());
+	exit(0);
+}
+
+/* Фоновый текст-отчёт (урок 294): мету пишет в TEXT_META_FILE, текст — в
+ * /tmp/ravnex_report_<ts>.txt; UI поллит app_support_bundle_text_status. */
+if (mode === 'text-bg') {
+	do_text_bg();
 	exit(0);
 }
 

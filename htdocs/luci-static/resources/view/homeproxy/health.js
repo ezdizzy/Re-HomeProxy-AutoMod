@@ -123,13 +123,21 @@ const callBundleStatus = rpc.declare({
 const callBundleChunk = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'app_support_bundle_chunk',
-	params: [ 'offset' ],
+	params: [ 'offset', 'kind' ],
 	expect: { '': {} }
 });
 
-const callBundleText = rpc.declare({
+/* Text report rides the SAME async pattern as the archive (lesson 294: the
+ * sync popen inside the rpcd loop tore the shared ubus stream). */
+const callBundleTextStart = rpc.declare({
 	object: 'luci.homeproxy',
-	method: 'app_support_bundle_text',
+	method: 'app_support_bundle_text_start',
+	expect: { '': {} }
+});
+
+const callBundleTextStatus = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_support_bundle_text_status',
 	expect: { '': {} }
 });
 
@@ -1677,6 +1685,60 @@ function buildSupportSection(view) {
 		});
 	}
 
+	/* Урок 294: текст-отчёт собирается фоном; готовый файл забирается теми же
+	 * base64-чанками (chunk kind='text') и декодируется в UTF-8 строку. */
+	function concatU8(parts) {
+		let n = 0;
+		for (const p of parts) n += p.length;
+		const out = new Uint8Array(n);
+		let o = 0;
+		for (const p of parts) { out.set(p, o); o += p.length; }
+		return out;
+	}
+
+	function fetchReportText(meta, progressEl) {
+		const size = Number(meta.size || 0) || 1;
+		const parts = [];
+		let off = 0;
+		function next() {
+			return L.resolveDefault(callBundleChunk(String(off), 'text'), {}).then(function(r) {
+				if (!r || r.error) throw new Error((r && r.error) || 'rpc error');
+				if (r.b64) {
+					const bin = atob(r.b64);
+					const u8 = new Uint8Array(bin.length);
+					for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+					parts.push(u8);
+					off = Number(r.next || off);
+					if (progressEl)
+						progressEl.textContent = _('Downloading… %s%').format(String(Math.min(99, Math.floor(off * 100 / size))));
+				}
+				if (r.done) {
+					if (progressEl) progressEl.textContent = '';
+					return new TextDecoder().decode(concatU8(parts));
+				}
+				return next();
+			});
+		}
+		return next();
+	}
+
+	function renderText(text, tookS) {
+		resultEl.innerHTML = '';
+		const pre = E('pre', { 'id': 'diag-bundle-text' }, [ text ]);
+		resultEl.appendChild(pre);
+		const dl = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' },
+			[ _('Download .txt') ]);
+		dl.addEventListener('click', function() {
+			saveBlob(new Blob([ text ], { type: 'text/plain' }),
+				'ravnex-report-' + fileStamp() + '.txt');
+		});
+		resultEl.appendChild(E('div', { 'class': 'diag-row' }, [
+			dl,
+			E('span', { 'class': 'diag-gray', 'style': 'font-size:.85em; margin-left:.6em' },
+				[ (tookS != null) ? _('Text report ready in %s s').format(String(tookS)) : '' ])
+		]));
+	}
+
 	function renderReady(meta) {
 		resultEl.innerHTML = '';
 		const dlBtn = E('button', {
@@ -1734,6 +1796,45 @@ function buildSupportSection(view) {
 		});
 	}
 
+	/* Poll фонового текст-отчёта (урок 294): running → Collecting…, готово →
+	 * забрать текст чанками и отрисовать. Сигнатуры 'text:*' не конфликтуют
+	 * с сигнатурами бандла в одном state.sig. */
+	function pollText() {
+		if (state.busy) return;
+		return L.resolveDefault(callBundleTextStatus(), {}).then(function(meta) {
+			if (!meta || meta.exists === false)
+				return;
+			if (meta.running) {
+				if (state.sig === 'text-run') return;
+				state.sig = 'text-run';
+				resultEl.innerHTML = '';
+				resultEl.appendChild(E('em', { 'class': 'diag-gray' }, [ _('Collecting…') ]));
+				return;
+			}
+			const sig = 'text:' + (meta.ts || 0);
+			if (sig === state.sig) return;
+			state.sig = sig;
+			if (meta.gone) {
+				resultEl.innerHTML = '';
+				resultEl.appendChild(E('span', { 'class': 'diag-gray' },
+					[ _('The report expired (router rebooted) — collect it again') ]));
+				return;
+			}
+			if (meta.ok === false) { renderFailed(meta); return; }
+			if (meta.path) {
+				const prog = E('span', { 'class': 'diag-gray', 'style': 'font-size:.85em' });
+				resultEl.appendChild(prog);
+				fetchReportText(meta, prog).then(function(text) {
+					renderText(text, meta.took_s);
+				}).catch(function(e) {
+					resultEl.innerHTML = '';
+					resultEl.appendChild(E('span', { 'class': 'diag-fail' },
+						[ _('Failed: %s').format(e.message) ]));
+				});
+			}
+		});
+	}
+
 	startBtn.addEventListener('click', ui.createHandlerFn(view, function() {
 		busy(true);
 		resultEl.innerHTML = '';
@@ -1750,26 +1851,17 @@ function buildSupportSection(view) {
 		busy(true);
 		resultEl.innerHTML = '';
 		resultEl.appendChild(E('em', { 'class': 'diag-gray' }, [ _('Collecting…') ]));
-		return L.resolveDefault(callBundleText(), {}).then(function(r) {
-			resultEl.innerHTML = '';
-			if (!r || r.error || !r.text) {
-				resultEl.appendChild(E('span', { 'class': 'diag-fail' },
-					(r && r.error) ? _('Failed: %s').format(r.error) : _('Empty report')));
-				return;
-			}
-			const pre = E('pre', { 'id': 'diag-bundle-text' }, [ r.text ]);
-			resultEl.appendChild(pre);
-			const dl = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' },
-				[ _('Download .txt') ]);
-			dl.addEventListener('click', function() {
-				saveBlob(new Blob([ r.text ], { type: 'text/plain' }),
-					'ravnex-report-' + fileStamp() + '.txt');
-			});
-			resultEl.appendChild(E('div', { 'class': 'diag-row' }, [ dl ]));
+		state.sig = 'text-run';
+		return L.resolveDefault(callBundleTextStart(), {}).then(function(r) {
+			if (!r || r.result === false)
+				ui.addNotification(null, E('p', {}, _('Failed to start: ') + ((r && r.error) || '')), 'error');
+			/* Сбор занимает ~минуту (урок 294) — поллинг статуса, стрим не трогаем. */
+			return poll.add(pollText, 2);
 		}).finally(function() { busy(false); });
 	}));
 
 	poll.add(pollBundle, hp.pollSec(4));
+	poll.add(pollText, hp.pollSec(4));
 
 	return {
 		el: sectionCard('database', _('Support report'), 'diag-support', [

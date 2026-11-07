@@ -23,6 +23,13 @@
 //      одного ключа за 30 мин; дальше авто-ремонт ключа приостанавливается
 //      до исчезновения проблемы (или TTL 2 ч) и честно рапортует событием.
 //
+// Ф10.3 (ресурсные бюджеты): по живым pid реестра daemons.json собирается
+//   fork-free снапшот ресурсов (VmRSS + счёт fd), вердикты — против щедрых
+//   бюджетов; перерасход = находка res:<имя> (всегда degraded — «процесс
+//   мёртв» резервируется down) + снапшот-документ resources.json для RPC/UI.
+//   РЕСУРСНАЯ находка БЕЗ авто-ремонта: рестарт ядра по высокому RSS
+//   недопустим, OOM-убийство = само-лечение утечки (решение ч.218).
+//
 // Политика алармов (без дублирования шума): когда health-документ СВЕЖИЙ,
 // Sentinel молчит о классах svc:*/op:* — Health Monitor сам поднимет тревогу
 // переходом статуса (его зона); Sentinel в это время выполняет РЕМОНТЫ и
@@ -60,7 +67,7 @@
 
 'use strict';
 
-import { access, readfile, popen, unlink } from 'fs';
+import { access, readfile, popen, unlink, lsdir } from 'fs';
 import {
 	read_state as ss_read_state, write_state as ss_write_state, rjson as ss_rjson,
 	read_revision as ss_read_revision
@@ -108,6 +115,27 @@ export const SVC_START_TIMEOUT = 150;
 
 /* OOM-грань (урок 197 — единый порог с Health Monitor). */
 export const MEM_SKIP_KB = 49152;
+
+/* ── Ф10.3: ресурсные бюджеты демонов ─────────────────────────────────────
+ * База — реестр daemons.json (имена+pid живых демонов); замер fork-free
+ * (readfile /proc/<pid>/status + lsdir /proc/<pid>/fd — readdir на этой
+ * сборке ucode нет, lsdir возвращает массив имён-строк). Бюджеты ЩЕДРЫЕ
+ * относительно базы ч.218 (core ~132 МБ/fd 482, automation ~40 МБ, mosdns
+ * ~26 МБ, probe_pool ~13 МБ, прочие ≤2 МБ) — находка означает рост тренда,
+ * а не «сейчас упадёт». Крит-порог RSS ядра — зона перед OOM-гранью WR3000H
+ * (727 МБ, ч.218). Имена ключей = имена реестра (core/ciadpi/nfqws2/...). */
+export const RES_PATH = '/var/run/homeproxy/resources.json';
+
+const RES_BUDGETS = {
+	core:        { rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 },
+	automation:  { rss_warn_kb:  98304, rss_crit_kb: 163840, fd_warn:  512, fd_crit: 1024 },
+	mosdns:      { rss_warn_kb:  98304, rss_crit_kb: 163840, fd_warn:  512, fd_crit: 1024 },
+	probe_pool:  { rss_warn_kb:  49152, rss_crit_kb:  98304, fd_warn:  512, fd_crit: 1024 },
+	sni_sniffer: { rss_warn_kb:  49152, rss_crit_kb:  98304, fd_warn:  512, fd_crit: 1024 }
+};
+
+/* Демоны без персонального бюджета (скрипты-демоны, движки) — общий. */
+export const RES_BUDGET_GENERIC = { rss_warn_kb: 65536, rss_crit_kb: 131072, fd_warn: 512, fd_crit: 1024 };
 
 /* Kinds apply-опов, при живых которых сервисные ремонты откладываются.
  * 🔴 Урок 229 (ч.166): РЕАЛЬНЫЕ kind'ы — 'service' (RPC op_spawn делает
@@ -164,6 +192,22 @@ function parse_json(s) {
 export function inst_label(name) {
 	const l = INST_LABELS['' + name];
 	return (l != null) ? l : ('' + name);
+};
+
+/* Человекочитаемые имена демонов РЕЕСТРА (имена реестра ≠ имена procd-инстансов:
+ * core ≠ hiddify-c, telegram_bot ≠ telegram, zapret_autopilot ≠ autopilot).
+ * Сообщения — именами, не сырыми id (память hotswap.messages_node_names_not_cfg_ids). */
+const RES_LABELS = {
+	core: 'Ядро (hiddify-core)', mosdns: 'DNS-движок mosdns',
+	ciadpi: 'ByeDPI (ciadpi)', nfqws2: 'Zapret (nfqws2)',
+	probe_pool: 'Пул проб', sni_sniffer: 'SNI-сниффер',
+	telegram_bot: 'Telegram-бот', zapret_autopilot: 'Автопилот Zapret',
+	clean_log: 'Чистка логов'
+};
+
+export function res_label(name) {
+	const l = RES_LABELS['' + name];
+	return (l != null) ? l : inst_label(name);
 };
 
 /* Общий вердикт = худший статус находок. */
@@ -549,6 +593,96 @@ function do_op_finish(stuck_op_id) {
 	return { ok: true, detail: 'операция «' + (op.action || stuck_op_id) + '» честно закрыта (лок освобождён)' };
 };
 
+/* ── Ф10.3: ресурсы демонов (снапшот + бюджеты) ──────────────────────────── */
+
+/* Вердикт одного демона против бюджета (чистая функция — selftest).
+ * level 'ok'/'warn'/'crit', what 'rss'/'fd'/''; crit сильнее warn; rss-крит
+ * сильнее fd-warn. rss_kb ≤ 0 = замер не удался — не вердикт. */
+export function res_verdict(name, rss_kb, fds) {
+	const b = (RES_BUDGETS['' + name] != null) ? RES_BUDGETS['' + name] : RES_BUDGET_GENERIC;
+	let level = 'ok', what = '';
+	if (rss_kb != null && int(rss_kb) > 0) {
+		if (int(b.rss_crit_kb) > 0 && int(rss_kb) >= int(b.rss_crit_kb)) {
+			level = 'crit'; what = 'rss';
+		} else if (int(rss_kb) >= int(b.rss_warn_kb)) {
+			level = 'warn'; what = 'rss';
+		}
+	}
+	if (fds != null && int(fds) >= 0) {
+		if (int(b.fd_crit) > 0 && int(fds) >= int(b.fd_crit)) {
+			level = 'crit'; what = 'fd';
+		} else if (level === 'ok' && int(fds) >= int(b.fd_warn)) {
+			level = 'warn'; what = 'fd';
+		}
+	}
+	return { budget: b, level: level, what: what };
+};
+
+/* Снапшот ресурсов живых демонов реестра (fork-free: readfile + lsdir).
+ * Мёртвые pid пропускаются — их живость зона svc-проверок. Строка:
+ * { name, label, pid, rss_kb, fds, level, what, rss_warn_kb, rss_crit_kb,
+ *   fd_warn, fd_crit } — бюджеты едут в строке, чтобы RPC/UI не знали таблицу. */
+export function res_snapshot(regst) {
+	const out = [];
+	if (regst == null || type(regst) !== 'object')
+		return out;
+	for (let name in regst) {
+		const e = regst[name];
+		if (e == null || type(e) !== 'object' || e.pid == null)
+			continue;
+		const pid = int(e.pid);
+		if (pid <= 0 || !access('/proc/' + pid + '/stat'))
+			continue;
+		const st = readfile('/proc/' + pid + '/status') || '';
+		const m = match(st, /VmRSS:[ \t]+([0-9]+)/);
+		const fdpath = '/proc/' + pid + '/fd';
+		let fds = -1;
+		if (access(fdpath)) {
+			const d = lsdir(fdpath);
+			fds = (d != null) ? length(d) : -1;
+		}
+		const rss = (m != null) ? int(m[1]) : 0;
+		if (rss <= 0 && fds < 0)
+			continue;   /* /proc недоступен — нет замера, нет строки */
+		const v = res_verdict(name, rss, fds);
+		push(out, {
+			name: '' + name, label: res_label(name), pid: pid,
+			rss_kb: rss, fds: fds, level: v.level, what: v.what,
+			rss_warn_kb: int(v.budget.rss_warn_kb), rss_crit_kb: int(v.budget.rss_crit_kb),
+			fd_warn: int(v.budget.fd_warn), fd_crit: int(v.budget.fd_crit)
+		});
+	}
+	return out;
+};
+
+/* Находки перерасхода из снапшота. status ВСЕГДА 'degraded': перерасход не
+ * означает «процесс мёртв» (down резервируется смертям), авто-ремонта нет. */
+export function res_findings(snap) {
+	const out = {};
+	if (snap == null || type(snap) !== 'array')
+		return out;
+	for (let r in snap) {
+		if (r == null || r.level == null || r.level === 'ok')
+			continue;
+		let reason;
+		if (r.what === 'fd')
+			reason = 'открытых fd: ' + sprintf('%d', int(r.fds)) +
+				((r.level === 'crit')
+					? ' при бюджете ' + sprintf('%d', int(r.fd_crit)) + ' — критическая зона, вероятна утечка дескрипторов'
+					: ' при бюджете ' + sprintf('%d', int(r.fd_warn)) + ' — возможна утечка дескрипторов, наблюдение участится');
+		else
+			reason = 'RSS ' + sprintf('%.1f', int(r.rss_kb) / 1024) + ' МБ' +
+				((r.level === 'crit')
+					? ' при бюджете ' + sprintf('%.0f', int(r.rss_crit_kb) / 1024) + ' МБ — зона OOM-грани (кейс WR3000H: ядро убивалось при ~727 МБ)'
+					: ' при бюджете ' + sprintf('%.0f', int(r.rss_warn_kb) / 1024) + ' МБ — потребление выше штатного, наблюдение участится');
+		out['res:' + r.name] = {
+			status: 'degraded', label: res_label(r.name), reason: reason,
+			confidence: 'certain'
+		};
+	}
+	return out;
+};
+
 /* ── главный проход ────────────────────────────────────────────────────────
  * opts = { full: bool, grace_until: int, daemon_pid: int|null }.
  * Возвращает { data, events, baseline, repairs }. */
@@ -675,8 +809,40 @@ export function compute_and_store(opts) {
 	for (let k in cfgf)
 		findings[k] = cfgf[k];
 
+	/* 3a. Ф10.3: ресурсы демонов — снапшот + бюджеты. ПОЛНЫЙ проход всегда;
+	 * light — ТОЛЬКО когда перерасход уже активен в прошлом документе
+	 * (адаптивный интервал: деградация проверяется каждым проходом ~30 с,
+	 * спокойный фон — раз в ~5 мин). Fork-free (readfile + lsdir) — light
+	 * остаётся без fork'ов. Снапшот-документ — отдельный файл (statestore,
+	 * атомарно); его читает RPC resource_status / карточка «Ресурсы демонов».
+	 * Находка res:* НЕ порождает ремонтов (OOM = само-лечение, ч.218). */
+	const prev_res_active = (function() {
+		for (let k in prev_f)
+			if (index('' + k, 'res:') === 0)
+				return true;
+		return false;
+	})();
+	if (full || prev_res_active) {
+		const snap = res_snapshot(registry_map());
+		const rf = res_findings(snap);
+		for (let k in rf)
+			findings[k] = rf[k];
+		const memraw = readfile('/proc/meminfo') || '';
+		const mtot = match(memraw, /MemTotal:\s+([0-9]+)/);
+		let res_overall = 'ok';
+		for (let r in snap)
+			if (r.level !== 'ok')
+				res_overall = 'degraded';
+		ss_write_state(RES_PATH, {
+			ts: time(), deep: full, overall_res: res_overall,
+			mem_available_kb: parse_meminfo_kb(memraw),
+			mem_total_kb: (mtot != null) ? int(mtot[1]) : -1,
+			res: snap
+		});
+	}
+
 	/* 3b. Light-проход ПЕРЕНОСИТ full-проходные находки op:/hung:/svc:/
-	 * svc_drift: (Recovery читает поводы из этого документа между полными
+	 * svc_drift:/res: (Recovery читает поводы из этого документа между полными
 	 * проходами — без переноса зависший оп/демон и убранный ubus-delete'ом
 	 * инстанс «моргали» бы пустотой каждые 30–150 с, а health видит
 	 * ubus-delete как 'off', не down). 🔴 Перенос помечается carried=true:
@@ -687,7 +853,8 @@ export function compute_and_store(opts) {
 	if (!full && prev_f != null) {
 		for (let k in prev_f) {
 			if ((index('' + k, 'op:') === 0 || index('' + k, 'hung:') === 0 ||
-			     index('' + k, 'svc:') === 0 || index('' + k, 'svc_drift:') === 0) &&
+			     index('' + k, 'svc:') === 0 || index('' + k, 'svc_drift:') === 0 ||
+			     index('' + k, 'res:') === 0) &&
 			    findings['' + k] == null) {
 				const cf = prev_f[k];
 				if (cf != null && type(cf) === 'object') {
@@ -970,6 +1137,37 @@ export function selftest() {
 	check('overall_ok', overall_of({}) === 'ok', null);
 	check('overall_degraded', overall_of({ a: { status: 'degraded' } }) === 'degraded', null);
 	check('overall_down', overall_of({ a: { status: 'degraded' }, b: { status: 'down' } }) === 'down', null);
+
+	/* Ф10.3: ресурсные вердикты (базы ч.218: core ~132 МБ/fd 482,
+	 * automation ~40 МБ, mosdns ~26 МБ — все в бюджете). */
+	check('res_ok_core', res_verdict('core', 135160, 482).level === 'ok', null);
+	check('res_ok_generic', res_verdict('multidns', 2008, 12).level === 'ok' &&
+		res_verdict('multidns', 2008, 12).budget.rss_warn_kb === 65536, null);
+	check('res_warn_rss_edge', res_verdict('automation', 98304, 13).level === 'warn' &&
+		res_verdict('automation', 98304, 13).what === 'rss', null);
+	check('res_crit_rss_core', res_verdict('core', 524288, 5).level === 'crit' &&
+		res_verdict('core', 524288, 5).what === 'rss', null);
+	check('res_warn_fd', res_verdict('multidns', 2008, 512).level === 'warn' &&
+		res_verdict('multidns', 2008, 512).what === 'fd', null);
+	check('res_crit_fd', res_verdict('multidns', 2008, 1024).level === 'crit' &&
+		res_verdict('multidns', 2008, 1024).what === 'fd', null);
+	check('res_fd_crit_wins', res_verdict('automation', 98304, 1024).level === 'crit' &&
+		res_verdict('automation', 98304, 1024).what === 'fd', null);
+	check('res_rss_crit_beats_fd_warn', res_verdict('core', 600000, 600).level === 'crit' &&
+		res_verdict('core', 600000, 600).what === 'rss', null);
+	check('res_nodata', res_verdict('core', 0, -1).level === 'ok', null);
+	const rf1 = res_findings([
+		{ name: 'core', label: res_label('core'), pid: 1, rss_kb: 98304, fds: 5,
+			level: 'warn', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 },
+		{ name: 'mosdns', label: res_label('mosdns'), pid: 2, rss_kb: 26492, fds: 26,
+			level: 'ok', what: '' }
+	]);
+	check('res_findings_one', length(rf1) === 1 && rf1['res:core'] != null &&
+		rf1['res:core'].status === 'degraded' && rf1['res:mosdns'] == null, null);
+	check('res_findings_label', length(rf1) === 1 && rf1['res:core'].label === 'Ядро (hiddify-core)', null);
+	check('res_findings_empty', length(res_findings(null)) === 0 && length(res_findings([])) === 0, null);
+	check('res_snapshot_dead_pid', length(res_snapshot({ core: { pid: 999999, start: 1 } })) === 0, null);
+	check('res_snapshot_empty', length(res_snapshot(null)) === 0, null);
 
 	/* label. */
 	check('label_known', inst_label('hiddify-c') === 'Ядро', null);
