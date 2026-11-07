@@ -1184,7 +1184,7 @@ return view.extend({
 		schTypeFields();
 
 		return E('div', {}, [
-			hp.pageIntro(_('Parental control'),
+			hp.pageIntro(_('Access Control'),
 				_('Rules for the people at home: which sites a child can open, when the internet turns off in the evening, and Wi-Fi cut-off at night. The devices themselves live on the Devices page — the rules below apply to them by name. What the system did is journaled once — in the Health center.')),
 			tabBar,
 			panes.dash, panes.rules, panes.sched,

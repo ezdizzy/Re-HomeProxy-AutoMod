@@ -513,14 +513,14 @@ return view.extend({
 		/* ── commands hint ──────────────────────────────────────────── */
 		const cmdPanel = E('div', { 'class': 'hpui-panel', style: 'margin-top:14px' }, [
 			E('p', { 'class': 'hpui-hint' },
-				[ _('Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Parental control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat.') ]),
+				[ _('Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Access control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat.') ]),
 			E('p', { 'class': 'hpui-hint' },
-				[ _('Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a "Sample" button. "Mute" silences pushes only — commands keep working.') ])
+				[ _('Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the access control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a "Sample" button. "Mute" silences pushes only — commands keep working.') ])
 		]);
 
 		return E('div', {}, [
 			hp.pageIntro(_('Phone control'),
-				_('Control the router from your Telegram chat: live status, exit switching, snapshots, parental-control actions — with per-category pushes you can mute, quiet-hour or sample first. Pairing codes and roles keep strangers out.')),
+				_('Control the router from your Telegram chat: live status, exit switching, snapshots, access-control actions — with per-category pushes you can mute, quiet-hour or sample first. Pairing codes and roles keep strangers out.')),
 			tgStatusCard,
 			connCard,
 			pushesCard,

@@ -477,7 +477,7 @@ return view.extend({
 
 		/* «Manual & compositions» zone — everything applied by hand. */
 		dpiPanes.dpiMan.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the "send a service through the engine" chain. Automatic selection lives on the Auto-pilot tab.') ]));
+			[ _('Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the "send a service through the engine" chain. Automatic selection lives on the Strategy picking tab.') ]));
 		dpiPanes.dpiMan.appendChild(panelOf('shuffle', _('Zapret strategy'), [ zapBox ]));
 		dpiPanes.dpiMan.appendChild(panelOf('zap', _('ByeDPI strategy'), [ byeBox ]));
 		dpiPanes.dpiMan.appendChild(panelOf('layers', _('Composition'), [ compBox ]));

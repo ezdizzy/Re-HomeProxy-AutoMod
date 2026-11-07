@@ -75,7 +75,7 @@
 		}
 	},
 	"admin/services/homeproxy/control": {
-		"title": "Parental control",
+		"title": "Access Control",
 		"order": 30,
 		"action": {
 			"type": "view",

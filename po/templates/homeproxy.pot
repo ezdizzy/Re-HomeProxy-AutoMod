@@ -2911,9 +2911,6 @@ msgstr ""
 msgid "Arbitrary commands (/cmd) results"
 msgstr ""
 
-msgid "Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Parental control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat."
-msgstr ""
-
 msgid "Restarting the service…"
 msgstr ""
 
@@ -3091,9 +3088,6 @@ msgstr ""
 msgid "Auto-bypass"
 msgstr ""
 
-msgid "Parental control"
-msgstr ""
-
 msgid "Phone control"
 msgstr ""
 
@@ -3151,9 +3145,6 @@ msgstr ""
 msgid "Who is connected to the router and what they can open."
 msgstr ""
 
-msgid "Site rules, schedules and Wi-Fi limits for children's devices."
-msgstr ""
-
 msgid "Status, server switching and control — right from Telegram."
 msgstr ""
 
@@ -3191,9 +3182,6 @@ msgid "Check the internet"
 msgstr ""
 
 msgid "Import a subscription or paste a share link."
-msgstr ""
-
-msgid "Update available: %s → %s (install it on the \"Maintenance\" page)."
 msgstr ""
 
 msgid "The service restart re-routes every connection (\"Maintenance\" carries start/stop); a snapshot copies the app configuration and the routing lists; \"Restore internet\" is the emergency switch for a plain direct connection."
@@ -3263,9 +3251,6 @@ msgid "The live state of the bypass: which engines are running, which strategy s
 msgstr ""
 
 msgid "Measure, not guesswork: the Lab tests the strategy catalog against your provider and ranks honestly — the fresh-connection start first, then the video flow. Apply a winner for one resource right from the table, generate mutations, or import and share catalogs."
-msgstr ""
-
-msgid "Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the \"send a service through the engine\" chain. Automatic selection lives on the Auto-pilot tab."
 msgstr ""
 
 msgid "The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled)."
@@ -4606,9 +4591,6 @@ msgstr ""
 msgid "During the window normal pushes of ALL categories are held back and counted; they are reported on the next delivered push. CRITICAL alerts (core down, subscription rollback, recovery blocked) always break through — the safety invariant. Equal from/to = window off."
 msgstr ""
 
-msgid "Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the parental control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a \"Sample\" button. \"Mute\" silences pushes only — commands keep working."
-msgstr ""
-
 msgid "Strategy picking"
 msgstr ""
 
@@ -5047,9 +5029,6 @@ msgstr ""
 msgid "Lists shared by the whole home network: an entry here applies no matter what the card modes say. The device cards above manage the MAC/IPv4 membership of single devices."
 msgstr ""
 
-msgid "Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Parental control and the Telegram bot); every card carries its own proxy mode, the common policy and the expert lists live at the bottom."
-msgstr ""
-
 msgid "«Auto» on a device card means «like everyone else» — this policy. A card mode (Direct/Proxied/Gaming/Global) overrides it for that one device. What is proxied for the whole home is decided on the Service rules and Blocking bypass pages."
 msgstr ""
 
@@ -5111,9 +5090,6 @@ msgid "Expert: routing nodes & raw rules"
 msgstr ""
 
 msgid "Routing nodes are custom chains and URLTest sub-groups rules can point at; they apply as soon as they exist (enabled) — no extra switch. The raw sing-box rules below are the expert level: they emit with the highest priority and need the switch above."
-msgstr ""
-
-msgid "Control the router from your Telegram chat: live status, exit switching, snapshots, parental-control actions — with per-category pushes you can mute, quiet-hour or sample first. Pairing codes and roles keep strangers out."
 msgstr ""
 
 msgid "Save & Apply"
@@ -7450,3 +7426,33 @@ msgstr ""
 msgid "After you save, set up the client with the SAME parameters (port, keys, passwords) — everything is visible in the server settings."
 msgstr ""
 
+
+msgid "Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the \"send a service through the engine\" chain. Automatic selection lives on the Strategy picking tab."
+msgstr ""
+
+msgid "Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Access control and the Telegram bot); every card carries its own proxy mode, the common policy and the expert lists live at the bottom."
+msgstr ""
+
+msgid "Site rules, schedules and Wi-Fi limits per device."
+msgstr ""
+
+msgid "Update available: %s → %s."
+msgstr ""
+
+msgid "Install it on the Maintenance page"
+msgstr ""
+
+msgid "Remote control from your Telegram chat. Router: /status, /nodes, /switch N (switches the exit without a restart), /service, /snapshot, /status_engine, /connections, /close. Access control: /menu (everything in buttons), /devices (block / temporary block / temporary allow / Wi-Fi block), /blocksite, /pause, /resume, /wifi. Push notifications watch the router state files; the daemon always runs and re-reads these settings on its own, so saving never restarts the service. Get the token from @BotFather; the first message to the bot binds your chat."
+msgstr ""
+
+msgid "Control Center"
+msgstr "Центр управления"
+
+msgid "Diagnostics & maintenance"
+msgstr "Диагностика и обслуживание"
+
+msgid "Pushes: Hot Swap node changes, dead URLTest nodes (and recoveries), automation learning and self-heals, core faults — and everything of the access control (blocks, temporary blocks/allow expiries, schedule windows, Wi-Fi, new devices on the network). Categories also cover health/watchdog repairs, auto-pilot decisions, Safe Mode on/off, background update results and pairing/RBAC security events — each with its own toggle and a \"Sample\" button. \"Mute\" silences pushes only — commands keep working."
+msgstr ""
+
+msgid "Control the router from your Telegram chat: live status, exit switching, snapshots, access-control actions — with per-category pushes you can mute, quiet-hour or sample first. Pairing codes and roles keep strangers out."
+msgstr ""

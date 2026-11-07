@@ -375,8 +375,8 @@ return view.extend({
 			[ 'home',   'monitor',  _('Devices at home'),
 				_('Who is connected to the router and what they can open.'),
 				_('Open'), 'admin/services/homeproxy/devices' ],
-			[ 'family', 'shield',   _('Parental control'),
-				_('Site rules, schedules and Wi-Fi limits for children\'s devices.'),
+			[ 'family', 'shield',   _('Access Control'),
+				_('Site rules, schedules and Wi-Fi limits per device.'),
 				_('Configure'), 'admin/services/homeproxy/control' ],
 			[ 'phone',  'send',     _('Phone control'),
 				_('Status, server switching and control — right from Telegram.'),
@@ -558,7 +558,11 @@ return view.extend({
 		}
 		const trSince = E('span', { 'class': 'k', 'style': 'opacity:.75' }, [ '' ]);
 		const trafficEl = E('div', { 'class': 'hpui-panel' }, [
-			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('repeat'), _('Traffic by exit') ]),
+			E('h4', { 'class': 'hpui-h4' }, [
+				hp.icon('repeat'), _('Traffic by exit'),
+				E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/homeproxy/monitor') },
+					[ _('Monitoring') ])
+			]),
 			trPairs,
 			E('div', { 'class': 'ov-actions', 'style': 'margin-top:6px' }, [ trSince ]),
 			E('p', { 'class': 'hpui-hint' },
@@ -641,7 +645,7 @@ return view.extend({
 		const eventsEl = E('div', { 'class': 'hpui-panel' }, [
 			E('h4', { 'class': 'hpui-h4' }, [
 				hp.icon('activity'), _('Events'),
-				E('a', { 'class': 'hpui-cap-link', 'href': L.url('admin/services/homeproxy/health') },
+				E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/homeproxy/health#journal') },
 					[ _('All events') ])
 			]),
 			E('p', { 'class': 'hpui-hint' }, [ _('What the system has just done or noticed — the tail of the journal the event center in the Health center keeps.') ]),
@@ -761,9 +765,14 @@ return view.extend({
 				updateBtn.disabled = false;
 				if (!r || r.error)
 					return noteResult(_('Update check failed: %s').format((r && r.error) || _('rpc error')), false);
-				noteResult(r.update_available
-					? _('Update available: %s → %s (install it on the "Maintenance" page).').format(r.installed_version, r.latest_version)
-					: _('The installed version %s is the latest.').format(r.installed_version || _('unknown')), true);
+				if (r.update_available)
+					setResult(E('p', { 'class': 'hpui-hint' }, [
+						_('Update available: %s → %s.').format(r.installed_version, r.latest_version) + ' ',
+						E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/homeproxy/status') },
+							[ _('Install it on the Maintenance page') ])
+					]), true);
+				else
+					noteResult(_('The installed version %s is the latest.').format(r.installed_version || _('unknown')), true);
 			});
 		});
 
@@ -1128,7 +1137,11 @@ return view.extend({
 			hubEl,
 			mcardsEl,
 			E('div', { 'class': 'hpui-panel' }, [
-				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Performance') ]),
+				E('h4', { 'class': 'hpui-h4' }, [
+					hp.icon('activity'), _('Performance'),
+					E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/homeproxy/monitor') },
+						[ _('Monitoring') ])
+				]),
 				chartsEl,
 				chartsCap
 			]),

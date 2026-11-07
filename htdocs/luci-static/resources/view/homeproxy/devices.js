@@ -985,7 +985,7 @@ return view.extend({
 
 		return E('div', {}, [
 			hp.pageIntro(_('Devices'),
-				_('Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Parental control and the Telegram bot); every card carries its own proxy mode, the common policy and the expert lists live at the bottom.')),
+				_('Who is connected to the router, which devices have internet right now and how the proxy serves their traffic. Add devices to the registry (they are shared with Access control and the Telegram bot); every card carries its own proxy mode, the common policy and the expert lists live at the bottom.')),
 			sumBox,
 			E('div', { 'class': 'hpui-panel' }, [
 				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('database'), _('Registry') ]),
