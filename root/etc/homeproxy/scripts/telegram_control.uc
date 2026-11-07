@@ -41,7 +41,7 @@ import { readfile, popen } from 'fs';
  * NOT export ceil (importing it breaks the whole module load — proven
  * live), so the ceiling is done with integer arithmetic instead. */
 import {
-	client_states, get_sections, get_section,
+	client_states, get_sections, get_section, get_cursor,
 	main_opt, list_devices, bump_cursor,
 	read_arp
 } from '/etc/homeproxy/scripts/control.uc';
@@ -94,6 +94,83 @@ function sid_ok(sid, stype) {
 	const s = get_section(sid);
 	return !!(s && s['.type'] === stype);
 };
+
+/* ── Ф9.15б: proxy-policy modes of devices (the Ф9.14 RPC door) ─────────
+ * The lists live in the UCI section 'control' (lesson 328: firewall_post.ut
+ * reads control, NOT config). Reads here are display-only; EVERY mutation
+ * rides control_proxy_mode / control_proxy_global (fw_refresh op — lesson
+ * 329: never engine_restart for lan_* changes). The mode order mirrors
+ * devices.js deviceMode()/proxyState() — the honest badge. */
+const LAN_MODES = [ 'direct', 'proxy', 'gaming', 'global' ];
+const LAN_LIST_OPTS = {
+	direct: { mac: 'lan_direct_mac_addrs', ip4: 'lan_direct_ipv4_ips' },
+	proxy: { mac: 'lan_proxy_mac_addrs', ip4: 'lan_proxy_ipv4_ips' },
+	gaming: { mac: 'lan_gaming_mode_mac_addrs', ip4: 'lan_gaming_mode_ipv4_ips' },
+	global: { mac: 'lan_global_proxy_mac_addrs', ip4: 'lan_global_proxy_ipv4_ips' }
+};
+const LAN_MODE_LABEL = { auto: 'Авто', direct: 'Напрямую', proxy: 'Через прокси',
+	gaming: 'Gaming (TCP)', global: 'Глобальный прокси' };
+const GLOBAL_LABEL = { except_listed: 'всё, кроме списков',
+	listed_only: 'только из списков' };
+
+function lan_state() {
+	const c = get_cursor();
+	let gm = '' + (c.get('homeproxy', 'control', 'lan_proxy_mode') || 'except_listed');
+	/* The legacy «disabled» displays as except_listed: with an empty Direct
+	 * list the nft behavior is identical (the migrator rewrote it anyway). */
+	if (gm !== 'except_listed' && gm !== 'listed_only')
+		gm = 'except_listed';
+	const out = { mode: gm, lists: {} };
+	for (let i = 0; i < length(LAN_MODES); i++) {
+		const o = LAN_LIST_OPTS[LAN_MODES[i]];
+		out.lists[LAN_MODES[i]] = {
+			mac: map(c.get('homeproxy', 'control', o.mac) || [], (v) => lc('' + v)),
+			ip4: map(c.get('homeproxy', 'control', o.ip4) || [], (v) => '' + v)
+		};
+	}
+	return out;
+}
+
+function dev_in_list(d, mo, ls) {
+	const l = ls.lists[mo];
+	const mac = lc('' + (d.mac || ''));
+	const ip = '' + (d.ip || '');
+	for (let i = 0; i < length(l.mac); i++)
+		if (mac && l.mac[i] === mac)
+			return true;
+	for (let i = 0; i < length(l.ip4); i++)
+		if (ip && l.ip4[i] === ip)
+			return true;
+	return false;
+}
+
+/* The card's chosen mode — priority as the firewall walks the lists
+ * (global, gaming, proxy, direct), none → Auto (devices.js deviceMode). */
+function device_mode_of(d, ls) {
+	if (dev_in_list(d, 'global', ls))
+		return 'global';
+	if (dev_in_list(d, 'gaming', ls))
+		return 'gaming';
+	if (dev_in_list(d, 'proxy', ls))
+		return 'proxy';
+	if (dev_in_list(d, 'direct', ls))
+		return 'direct';
+	return 'auto';
+}
+
+/* The resolved outcome RIGHT NOW (the honest badge, devices.js proxyState). */
+function dev_effective(d, ls) {
+	if (('' + (get_cursor().get('homeproxy', 'config', 'routing_mode') || '')) === 'direct')
+		return '🚫 прокси выключен (режим «Напрямую»)';
+	const m = device_mode_of(d, ls);
+	if (m === 'global')
+		return '🌐 глобальный прокси — весь трафик';
+	if (m === 'gaming')
+		return '🎮 Gaming — прокси только TCP';
+	if (ls.mode === 'listed_only')
+		return (m === 'proxy') ? '🛡 через прокси' : '➡ напрямую';
+	return (m === 'direct') ? '➡ напрямую (в списке исключений)' : '🛡 через прокси';
+}
 
 function kb(rows) {
 	return API.kb_rows(rows);
@@ -271,6 +348,52 @@ function panel_kb() {
 
 /* ── devices view / actions ───────────────────────────────────────────── */
 
+function dev_by_idx(idx) {
+	const devs = list_devices();
+	if (idx < 0 || idx >= length(devs))
+		return null;
+	return devs[idx];
+}
+
+/* Ф8.1 (audit 20): buttons carry a STABLE device reference, not an index
+ * into a live list — ARP/DHCP churn reorders list_devices(), so an index
+ * callback could act on the WRONG device. Reference forms (the stable
+ * identity available for that device):
+ *   c:<client section id>   configured device
+ *   m:<lowercase MAC>       unconfigured but seen on the wire
+ *   i:<ip>                  no MAC (rare, e.g. some VPN clients)
+ *   x:<label>               unacteable placeholder (no MAC/IP)
+ * ч.211: this block sits ABOVE devices_text/devices_kb — in this ucode
+ * dialect a module function called before its declaration line dies with
+ * «access to undeclared variable» AT RUNTIME (the dispatch catch swallows
+ * it: the devices list silently rendered nothing — caught live). */
+function dev_ref(d) {
+	if (d.client_id)
+		return 'c:' + d.client_id;
+	if (d.mac)
+		return 'm:' + lc(d.mac);
+	if (d.ip)
+		return 'i:' + d.ip;
+	return 'x:' + (d.alias || d.hostname || '?');
+}
+
+function dev_by_ref(ref) {
+	const m = match('' + ref, /^([cmi]):(.+)$/);
+	if (!m)
+		return null;
+	const devs = list_devices();
+	for (let i = 0; i < length(devs); i++) {
+		const d = devs[i];
+		if (m[1] === 'c' && d.client_id === m[2])
+			return d;
+		if (m[1] === 'm' && d.mac && lc(d.mac) === m[2])
+			return d;
+		if (m[1] === 'i' && d.ip === m[2])
+			return d;
+	}
+	return null;
+}
+
 function devices_text(page) {
 	const devs = list_devices();
 	const stmap = states_map();
@@ -282,6 +405,7 @@ function devices_text(page) {
 	const p0 = page * DEV_PAGE;
 	let out = '🛡 <b>Устройства</b> (' + (p0 + 1) + '–' +
 		((p0 + DEV_PAGE) < total ? (p0 + DEV_PAGE) : total) + ' из ' + total + '):\n';
+	out += 'Фильтр: <b>' + GLOBAL_LABEL[lan_state().mode] + '</b>\n';
 	for (let i = p0; i < (p0 + DEV_PAGE) && i < total; i++) {
 		const d = devs[i];
 		const st = (d.client_id && (d.client_id in stmap)) ? stmap[d.client_id] : null;
@@ -322,51 +446,12 @@ function devices_kb(page) {
 		push(nav, [ '➡', 'ctl:dev:' + (page + 1) ]);
 	if (length(nav))
 		push(rows, nav);
+	const ls = lan_state();
+	const gtarget = (ls.mode === 'except_listed') ? 'listed_only' : 'except_listed';
+	push(rows, [ '🎚 Фильтр → ' + GLOBAL_LABEL[gtarget], 'ctl:gm:' + gtarget ]);
 	push(rows, [ '🔄 Обновить', 'ctl:dev:' + page ]);
 	push(rows, [ '🏠 Главная', 'act:menu' ]);
 	return kb(rows);
-}
-
-function dev_by_idx(idx) {
-	const devs = list_devices();
-	if (idx < 0 || idx >= length(devs))
-		return null;
-	return devs[idx];
-}
-
-/* Ф8.1 (audit 20): buttons carry a STABLE device reference, not an index
- * into a live list — ARP/DHCP churn reorders list_devices(), so an index
- * callback could act on the WRONG device. Reference forms (the stable
- * identity available for that device):
- *   c:<client section id>   configured device
- *   m:<lowercase MAC>       unconfigured but seen on the wire
- *   i:<ip>                  no MAC (rare, e.g. some VPN clients)
- *   x:<label>               unacteable placeholder (no MAC/IP) */
-function dev_ref(d) {
-	if (d.client_id)
-		return 'c:' + d.client_id;
-	if (d.mac)
-		return 'm:' + lc(d.mac);
-	if (d.ip)
-		return 'i:' + d.ip;
-	return 'x:' + (d.alias || d.hostname || '?');
-}
-
-function dev_by_ref(ref) {
-	const m = match('' + ref, /^([cmi]):(.+)$/);
-	if (!m)
-		return null;
-	const devs = list_devices();
-	for (let i = 0; i < length(devs); i++) {
-		const d = devs[i];
-		if (m[1] === 'c' && d.client_id === m[2])
-			return d;
-		if (m[1] === 'm' && d.mac && lc(d.mac) === m[2])
-			return d;
-		if (m[1] === 'i' && d.ip === m[2])
-			return d;
-	}
-	return null;
 }
 
 function device_menu_text(ref) {
@@ -379,6 +464,9 @@ function device_menu_text(ref) {
 	body += 'MAC: <code>' + esc(d.mac || '—') + '</code> · IP: <code>' + esc(d.ip || '—') + '</code>\n';
 	body += 'Состояние: ' + (st ? reason_text(st.reason, st.until, st.allow_until)
 		: (d.blocked ? '🔒 вручную' : (d.online ? '🟢 в сети' : '⚪ офлайн'))) + '\n';
+	const ls = lan_state();
+	body += 'Режим: <b>' + LAN_MODE_LABEL[device_mode_of(d, ls)] + '</b> → сейчас: ' +
+		dev_effective(d, ls) + '\n';
 	if (d.wifi_blocked)
 		body += '📶 Wi-Fi заблокирован (кабель работает)\n';
 	else if (d.configured)
@@ -405,6 +493,14 @@ function device_menu_kb(ref) {
 			(d.wifi_blocked ? 'walm:' : 'wblk:') + ref ]);
 	if (d.configured)
 		push(rows, [ '↩ Снять временный', 'ctl:tunb:' + ref ]);
+	const ls = lan_state();
+	const curm = device_mode_of(d, ls);
+	const mbtn = (mo) => [ ((curm === mo) ? '● ' : '') + LAN_MODE_LABEL[mo],
+		'ctl:pm:' + mo + ':' + ref ];
+	if (length('ctl:pm:gaming:' + ref) <= 60) {
+		push(rows, [ mbtn('auto'), mbtn('direct') ]);
+		push(rows, [ mbtn('proxy'), mbtn('gaming'), mbtn('global') ]);
+	}
 	push(rows, [ '⬅ Устройства', 'ctl:dev:0' ]);
 	push(rows, [ '🏠 Главная', 'act:menu' ]);
 	return kb(rows);
@@ -482,6 +578,59 @@ export function dev_action(api, ref, action, cbid, chat_id) {
 	} else {
 		api.answer_cb(cbid, 'Ошибка');
 		api.send_html(chat_id, '⚠ ' + esc(label) + ': действие не выполнено — ' + esc(err), device_menu_kb(ref));
+	}
+};
+
+/* ── Ф9.15б: proxy-policy execs (confirmed in the core; the mutation itself
+ * rides the Ф9.14 RPC door — commit + event + fw_refresh op happen in rpcd). */
+export function pmode_exec(api, chat_id, mode, ref, cbid) {
+	API = api;
+	const d = dev_by_ref(ref);
+	if (!d) {
+		api.answer_cb(cbid, 'Список изменился');
+		api.send_html(chat_id, 'устройство не найдено — /devices обновит список', devices_kb(0));
+		return;
+	}
+	const cid = cfg_id_for_dev(d, true);
+	if (!cid) {
+		api.answer_cb(cbid, 'Ошибка');
+		api.send_html(chat_id, 'не удалось определить устройство (Control API: ' +
+			esc((dev_last_err != null) ? dev_last_err : 'rpcd недоступен') + ')', null);
+		return;
+	}
+	dev_last_err = null;
+	const r = ubus_call('control_proxy_mode', { id: cid, mode: mode }, 20);
+	if (r && r.result === true) {
+		bump_cursor();
+		quiet_touch(api);
+		api.answer_cb(cbid, r.changed ? 'Применено' : 'Уже было');
+		api.send_html(chat_id, ((r.changed) ? '✅ ' : 'ℹ️ ') + '<b>' +
+			esc(d.alias || d.hostname || d.ip || d.mac) + '</b>: режим «' +
+			LAN_MODE_LABEL[mode] + '»' +
+			((r.changed) ? ' применён — nft перерендерен, потоки сохранены.' : ' — уже был, ничего не изменено.'),
+			device_menu_kb(ref));
+	} else {
+		api.answer_cb(cbid, 'Ошибка');
+		api.send_html(chat_id, '⚠ Режим не применён: ' +
+			esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), device_menu_kb(ref));
+	}
+};
+
+export function gmode_exec(api, chat_id, mode, cbid) {
+	API = api;
+	dev_last_err = null;
+	const r = ubus_call('control_proxy_global', { mode: mode }, 20);
+	if (r && r.result === true) {
+		bump_cursor();
+		quiet_touch(api);
+		api.answer_cb(cbid, r.changed ? 'Применено' : 'Уже было');
+		api.send_html(chat_id, ((r.changed) ? '✅ ' : 'ℹ️ ') + 'Фильтр устройств: «' +
+			GLOBAL_LABEL[mode] + '»' + ((r.changed) ? ' — применено.' : ' — уже был.'),
+			devices_kb(0));
+	} else {
+		api.answer_cb(cbid, 'Ошибка');
+		api.send_html(chat_id, '⚠ Фильтр не изменён: ' +
+			esc((r && r.error) ? '' + r.error : 'rpcd недоступен'), null);
 	}
 };
 
@@ -1128,6 +1277,39 @@ export function handle_cb(api, chat_id, data, cbid) {
 				'Беспроводные устройства потеряют сеть (кабель работает). Включить обратно: одна кнопка.');
 		} else
 			wifi_toggle(api, chat_id, iface, false, cbid);
+		return true;
+	}
+	if (substr(data, 0, 7) === 'ctl:pm:') {
+		/* ctl:pm:<mode>:<ref> — mode is a fixed word (validated against the
+		 * label map), ref is a device reference resolved at exec (Ф8.1
+		 * audit 20 semantics: stale/foreign refs stay honest errors).
+		 * ч.211: the prefix is SEVEN chars ('ctl:pm:') — an 8-char probe
+		 * copied from 'ctl:dev:' never matches and the callback dies
+		 * silently (caught live). */
+		const m = match(substr(data, 7), /^([a-z]+):(.+)$/);
+		if (m == null || !(m[1] in LAN_MODE_LABEL)) {
+			api.answer_cb(cbid, 'Неизвестный режим');
+			return true;
+		}
+		const d = dev_by_ref(m[2]);
+		let lbl = m[2];
+		if (d)
+			lbl = d.alias || d.hostname || d.ip || d.mac;
+		api.confirm_ask(chat_id, (api.role != null) ? api.role : 'admin', 'pmode',
+			m[1] + '|' + m[2],
+			'Режим «' + LAN_MODE_LABEL[m[1]] + '» для «' + esc(lbl) + '»?',
+			'Постоянно: устройство переносится между списками политики, nft перерендеривается (потоки сохраняются).');
+		return true;
+	}
+	if (substr(data, 0, 7) === 'ctl:gm:') {
+		const t = substr(data, 7);
+		if (t !== 'except_listed' && t !== 'listed_only') {
+			api.answer_cb(cbid, 'Неизвестный режим');
+			return true;
+		}
+		api.confirm_ask(chat_id, (api.role != null) ? api.role : 'admin', 'gmode', t,
+			'Глобальный фильтр: «' + GLOBAL_LABEL[t] + '»?',
+			'Влияет на ВСЕ устройства в режиме «Авто»: какая сторона — прокси или напрямую — им достаётся.');
 		return true;
 	}
 	return false;

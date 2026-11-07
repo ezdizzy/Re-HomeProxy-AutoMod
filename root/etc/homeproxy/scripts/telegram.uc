@@ -1252,6 +1252,8 @@ const HELP = '<b>Команды</b>\n' +
 	'/blocksite домен [№] — блок сайта (/unblocksite)\n' +
 	'/pause · /resume — пауза контроля\n' +
 	'/wifi — Wi-Fi сети вкл/выкл\n' +
+	'/subs — подписки: статус, обновить, удалить\n' +
+	'/subadd ссылка — добавить подписку (админ+)\n' +
 	'/doctor — здоровье, сторож, recovery (🩺)\n' +
 	'/repair — ручные ремонты по находкам (админ+)\n' +
 	'/safe — Safe Mode: выход напрямую, DNS/firewall живы\n' +
@@ -1370,6 +1372,7 @@ function main_menu_kb() {
 		[ [ '🩺 Доктор', 'act:doctor' ], [ '🛠 Ремонт', 'act:repair' ] ],
 		[ [ '🆘 Safe Mode', 'act:safe' ], [ '🎚 Режим', 'act:mode' ] ],
 		[ [ '⚙️ Движки', 'act:engine' ], [ '⬆ Обновления', 'act:update' ] ],
+		[ [ '📋 Подписки', 'act:subs' ] ],
 		[ [ '❓ Помощь', 'act:help' ] ]
 	]);
 }
@@ -2058,6 +2061,35 @@ function confirm_exec(c, chat_id, cbid) {
 		catch (e) { log('dev exec: ' + e); }
 		return;
 	}
+	if (kind === 'pmode') {
+		const parts = split('' + c.payload, '|');
+		const mode = (length(parts) > 0) ? parts[0] : '';
+		const ref = (length(parts) > 1) ? parts[1] : '';
+		tg_answer_cb(cbid, 'Применяю');
+		try { ctrl.pmode_exec(ctrl_api, chat_id, mode, ref, cbid); }
+		catch (e) { log('pmode exec: ' + e); }
+		return;
+	}
+	if (kind === 'gmode') {
+		tg_answer_cb(cbid, 'Применяю');
+		try { ctrl.gmode_exec(ctrl_api, chat_id, '' + c.payload, cbid); }
+		catch (e) { log('gmode exec: ' + e); }
+		return;
+	}
+	if (kind === 'subdel') {
+		tg_answer_cb(cbid, 'Удаляю');
+		const r = ubus_call('app_subscription_remove', { url: '' + c.payload }, 20);
+		if (r && r.result === true) {
+			let msg = '✅ Подписка удалена, узлов удалено: ' + (int(r.removed_nodes) || 0) + '.';
+			if (r.need_restart === true)
+				msg += ' Набор узлов изменился — перезапуск службы применит изменения.';
+			tg_send_html(chat_id, msg, kb_rows([
+				[ '🔁 Применить (перезапуск)', 'act:restart' ], [ '🏠 Главная', 'act:menu' ] ]));
+		} else
+			tg_send_html(chat_id, '⚠ Удаление не удалось: ' +
+				esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+		return;
+	}
 	if (kind === 'rule_add') {
 		const parts = split('' + c.payload, '|');
 		const doms = (length(parts) > 0) ? parts[0] : '';
@@ -2323,6 +2355,176 @@ function update_text() {
 	return { text: out, kb: kb_rows(rows) };
 }
 
+/* ── Ф9.15б: subscriptions (the Ф9.11 RPC door) ─────────────────────────
+ * Everything rides the server RPCs: app_subscription_status (urls[] carry
+ * the canonical group hash — a SHORT callback token), app_subscription_
+ * update_start (async runner), app_subscription_add/remove. No bare UCI
+ * writes from the chat path. The update poll waits for the STATUS FILE TS
+ * TO CHANGE before trusting running=false (lesson 325: a naive poll
+ * renders the PREVIOUS run's verdict). */
+function fmt_dt(ts) {
+	const d = localtime(int(ts) || 0);
+	/* This ucode build's localtime: mday is the day-of-month and mon is
+	 * ALREADY 1-based (Nov 7 came out as mon=11 — verified live, ch.211);
+	 * adding 1 printed December. */
+	return sprintf('%02d.%02d %02d:%02d', d.mday, d.mon, d.hour, d.min);
+}
+
+function sub_short(url) {
+	let h = replace('' + url, /^https?:\/\//, '');
+	h = replace(h, /#.*$/, '');
+	return (length(h) > 38) ? substr(h, 0, 37) + '…' : h;
+}
+
+/* Action tokens written by update_subscriptions.uc: running / applied /
+ * aborted / rolled_back / failed. */
+function sub_run_line(last) {
+	if (!last || !int(last.ts || 0))
+		return 'прогонов ещё не было';
+	const t = (last.totals && type(last.totals) === 'object') ? last.totals : null;
+	if (last.running)
+		return fmt_dt(last.ts) + ' — <b>идёт обновление…</b>';
+	if (last.action === 'applied')
+		return fmt_dt(last.ts) + ' — ✅ применено: узлов было ' + ((t) ? t.before : '?') +
+			', стало ' + ((t) ? t.after : '?') + ' (+' + ((t && t.added) || 0) +
+			'/−' + ((t && t.removed) || 0) + ')';
+	if (last.action === 'aborted')
+		return fmt_dt(last.ts) + ' — ⚠ отменено: ' +
+			esc_html('' + (last.reason || 'ни одного валидного узла'));
+	if (last.action === 'rolled_back')
+		return fmt_dt(last.ts) + ' — ⚠ откат: ' +
+			esc_html('' + (last.reason || 'новый набор не прошёл проверку старта'));
+	if (last.action === 'failed')
+		return fmt_dt(last.ts) + ' — ⚠ ошибка: ' +
+			esc_html('' + (last.reason || 'сбой прогона'));
+	return fmt_dt(last.ts) + ' — ' + esc_html('' + (last.action || '?'));
+}
+
+function subs_text() {
+	const st = ubus_call('app_subscription_status', {}, 10);
+	if (st == null)
+		return '⚠ Подписки: rpcd недоступен.';
+	const urls = (st.urls && type(st.urls) === 'array') ? st.urls : [];
+	let out = '📋 <b>Подписки</b>\n';
+	if (!length(urls))
+		out += 'подписок нет — добавить: /subadd ссылка\n';
+	for (let i = 0; i < length(urls); i++) {
+		const u = urls[i];
+		out += '• ' + esc_html(sub_short(u.url)) + ' — ' +
+			((u.count > 0) ? (u.count + ' узл.') : 'узлов нет') + '\n';
+	}
+	out += 'Узлов всего: ' + (int(st.node_total) || 0) +
+		' · автообновление: ' + ((st.auto_update === true) ? 'вкл' : 'выкл') + '\n';
+	if (st.last && int(st.last.ts || 0) && st.last.running === true &&
+	    (time() - int(st.last.ts)) < 900)
+		out += '⏳ Прогон идёт сейчас…\n';
+	out += 'Прогон: ' + sub_run_line(st.last);
+	return out;
+}
+
+function subs_kb() {
+	const st = ubus_call('app_subscription_status', {}, 10);
+	const urls = (st && st.urls && type(st.urls) === 'array') ? st.urls : [];
+	const rows = [ [ '🔄 Обновить все', 'act:subupd:all' ] ];
+	for (let i = 0; i < length(urls) && i < 8; i++) {
+		const tok = substr('' + urls[i].ghash, 0, 8);
+		if (length(tok) < 4)
+			continue;
+		push(rows, [
+			[ '🔄 ' + substr(sub_short(urls[i].url), 0, 20), 'act:subupd:' + tok ],
+			[ '✖', 'act:subdel:' + tok ]
+		]);
+	}
+	push(rows, [ '🔄 Обновить', 'act:subs' ]);
+	push(rows, [ '🏠 Главная', 'act:menu' ]);
+	return kb_rows(rows);
+}
+
+/* The 8-hex token resolves against a FRESH status call — the url list is
+ * re-read at exec time; a stale-token tap is an honest «не найдена». */
+function sub_url_by_tok(tok) {
+	const st = ubus_call('app_subscription_status', {}, 10);
+	const urls = (st && st.urls && type(st.urls) === 'array') ? st.urls : [];
+	for (let i = 0; i < length(urls); i++)
+		if (substr('' + urls[i].ghash, 0, length(tok)) === tok)
+			return { url: '' + urls[i].url, count: urls[i].count };
+	return null;
+}
+
+/* Pure poll (harness-testable): waits for the status-file ts to change,
+ * then for running=false; an honest timeout instead of a stale verdict. */
+function sub_run_poll(prev_ts, deadline_s) {
+	const deadline = time() + deadline_s;
+	let last = null;
+	while (time() < deadline) {
+		sleep(2000);
+		const st = ubus_call('app_subscription_status', {}, 10);
+		if (st && st.last && int(st.last.ts || 0) !== prev_ts) {
+			last = st.last;
+			if (last.running === false)
+				break;
+		}
+	}
+	return { last: last, timed_out: (last == null || last.running !== false) };
+}
+
+function subupd_exec(chat_id, tok, cbid) {
+	const one = (tok !== 'all') ? sub_url_by_tok(tok) : null;
+	if (tok !== 'all' && one == null) {
+		tg_answer_cb(cbid, 'Не найдена');
+		tg_send_html(chat_id, '⚠ Подписка не найдена (список изменился?) — /subs.', null);
+		return;
+	}
+	const prev = ubus_call('app_subscription_status', {}, 10);
+	const prev_ts = (prev && prev.last) ? int(prev.last.ts || 0) : 0;
+	const args = (one != null) ? { url: one.url } : {};
+	const r = ubus_call('app_subscription_update_start', args, 15);
+	if (r == null || r.result !== true) {
+		tg_answer_cb(cbid, 'Не запущено');
+		tg_send_html(chat_id, '⚠ Прогон не запущен: ' +
+			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+		return;
+	}
+	tg_answer_cb(cbid, 'Запускаю');
+	tg_send_html(chat_id, '⏳ Обновление ' + ((one != null) ? esc_html(sub_short(one.url)) : 'всех подписок') +
+		' запущено — отчёт следующим сообщением (до ~2,5 мин).', null);
+	const res = sub_run_poll(prev_ts, 150);
+	if (res.timed_out || res.last == null) {
+		tg_send_html(chat_id, '⚠ Прогон не завершился за отведённое время — статус: /subs.', null);
+		return;
+	}
+	tg_send_html(chat_id, '📋 Прогон: ' + sub_run_line(res.last),
+		kb_rows([ [ '📋 Подписки', 'act:subs' ], [ '📡 Серверы', 'act:nodes' ] ]));
+}
+
+function subdel_cb(chat_id, tok, cbid) {
+	const one = sub_url_by_tok(tok);
+	if (one == null) {
+		tg_answer_cb(cbid, 'Не найдена');
+		tg_send_html(chat_id, '⚠ Подписка не найдена (список изменился?) — /subs.', null);
+		return;
+	}
+	tg_answer_cb(cbid, 'Подтверждение');
+	confirm_ask(chat_id, 'admin', 'subdel', one.url,
+		'Удалить подписку «' + sub_short(one.url) + '»?',
+		'Узлы подписки (' + one.count + ' шт.) будут удалены, указатели (главный узел и др.) вычищены. URL придётся добавлять заново.');
+}
+
+function sub_add_cmd(chat_id, rest) {
+	const url = trim('' + (rest || ''));
+	if (!length(url) || match(url, /^https?:\/\/\S+$/) == null) {
+		tg_send_html(chat_id, 'использование: /subadd ссылка вида http(s)://…', null);
+		return;
+	}
+	const r = ubus_call('app_subscription_add', { url: url }, 15);
+	if (r && r.result === true)
+		tg_send_html(chat_id, '✅ Подписка добавлена. Обновить её — кнопка 🔄 в /subs.',
+			kb_rows([ [ '📋 Подписки', 'act:subs' ] ]));
+	else
+		tg_send_html(chat_id, '⚠ Не добавлено: ' +
+			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+}
+
 /* ── dispatch ─────────────────────────────────────────────────────────── */
 
 /* Minimum role per command (Ф8.1, audit 1.1): the gate runs BEFORE any
@@ -2332,6 +2534,7 @@ const CMD_MIN = {
 	start: 'viewer', help: 'viewer', nodes: 'viewer', status_engine: 'viewer',
 	doctor: 'viewer',
 	control: 'viewer', devices: 'viewer', sites: 'viewer', wifi: 'viewer',
+	subs: 'viewer', subadd: 'admin',
 	safe: 'operator', safeoff: 'operator',
 	switch: 'operator', close: 'operator', mute: 'operator', unmute: 'operator',
 	pause: 'operator', resume: 'operator',
@@ -2451,6 +2654,10 @@ function handle_command(chat_id, text, role, uid) {
 		tg_send_html(chat_id, main_menu_text(), main_menu_kb());
 	} else if (cmd === 'help') {
 		tg_send_html(chat_id, HELP, main_menu_kb());
+	} else if (cmd === 'subs') {
+		tg_send_html(chat_id, subs_text(), subs_kb());
+	} else if (cmd === 'subadd') {
+		sub_add_cmd(chat_id, rest);
 	} else {
 		tg_send_html(chat_id, 'неизвестная команда — /help', null);
 	}
@@ -2479,6 +2686,8 @@ const CB_MIN_PREFIX = [
 	[ 'ctl:t30:', 'operator' ], [ 'ctl:t60:', 'operator' ],
 	[ 'ctl:t120:', 'operator' ], [ 'ctl:t1440:', 'operator' ],
 	[ 'ctl:tunb:', 'operator' ], [ 'ctl:tal60:', 'operator' ], [ 'ctl:tal1440:', 'operator' ],
+	[ 'act:subupd:', 'admin' ], [ 'act:subdel:', 'admin' ],
+	[ 'ctl:pm:', 'admin' ], [ 'ctl:gm:', 'admin' ],
 	[ 'act:doctor', 'viewer' ],
 	[ 'ctl:devi:', 'viewer' ], [ 'ctl:dev:', 'viewer' ],
 	[ 'ctl:sites', 'viewer' ], [ 'ctl:wifi', 'viewer' ],
@@ -2680,6 +2889,13 @@ function handle_update(u) {
 		} else if (data === 'act:refresh') {
 			tg_answer_cb(cbid, 'Обновляю');
 			tg_send_html(chat_id, cmd_status(), kb_rows([ [ '📡 Серверы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ], [ '🏠 Главная', 'act:menu' ] ]));
+		} else if (data === 'act:subs') {
+			tg_answer_cb(cbid, 'Подписки');
+			tg_send_html(chat_id, subs_text(), subs_kb());
+		} else if (substr(data, 0, 12) === 'act:subupd:') {
+			subupd_exec(chat_id, substr(data, 12), cbid);
+		} else if (substr(data, 0, 12) === 'act:subdel:') {
+			subdel_cb(chat_id, substr(data, 12), cbid);
 		} else {
 			/* «Контроль» callbacks — device actions first, then the panel
 			 * views; an unconsumed callback is acknowledged silently.

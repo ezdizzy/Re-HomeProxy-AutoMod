@@ -4892,7 +4892,16 @@ const methods = {
 			let total = 0;
 			for (let k in groups)
 				total += groups[k];
-			return { last: st, node_total: total, groups: groups,
+			/* Ф9.15б: per-URL view for the Telegram bot — ghash is the SAME
+			 * canonical group id (the twin line of app_subscription_remove);
+			 * its 8-hex prefix rides a 64-byte callback_data token. */
+			const urls = [];
+			const url_list = map(c.get('homeproxy', 'subscription', 'subscription_url') || [], (u) => '' + u);
+			for (let i = 0; i < length(url_list); i++) {
+				const ghash = hp_sub_strhash(replace(url_list[i], /#.*$/, ''));
+				push(urls, { url: url_list[i], ghash: ghash, count: groups[ghash] || 0 });
+			}
+			return { last: st, node_total: total, groups: groups, urls: urls,
 				auto_update: ('' + (c.get('homeproxy', 'subscription', 'auto_update') || '')) === '1' };
 		}
 	},
