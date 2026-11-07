@@ -763,6 +763,12 @@ function batch_verify_pairs(jobs) {
 			if ((jobs[i].via ? 1 : 0) === via) push(idxs, i);
 		const chunk = via ? 4 : 6;
 		for (let base = 0; base < length(idxs); base = base + chunk) {
+			/* ч.230: heartbeat INSIDE the bench — analyze() blocks the 5 s tick
+			 * for minutes on a big pool, and a frozen hb read as a wedged loop
+			 * (hung:multidns degraded/recovered spam every bench, live
+			 * 2026-11-07: hb_age 922 s). A real wedge (stuck system()) still
+			 * goes stale honestly. */
+			pm_reg_hb('multidns');
 			let end = base + chunk;
 			if (end > length(idxs)) end = length(idxs);
 			let cmd = '';
@@ -806,6 +812,7 @@ function batch_doh_json(items, chunk) {
 	if (!length(items) || !have_curl()) return out;
 	let allfiles = [];
 	for (let base = 0; base < length(items); base = base + chunk) {
+		pm_reg_hb('multidns');   /* ч.230: hb inside the bench (see batch_verify_pairs) */
 		let end = base + chunk;
 		if (end > length(items)) end = length(items);
 		let cmd = '';
@@ -855,6 +862,7 @@ function batch_tcp_dns_query(items, chunk) {
 	if (!length(items)) return out;
 	let allfiles = [];
 	for (let base = 0; base < length(items); base = base + chunk) {
+		pm_reg_hb('multidns');   /* ч.230: hb inside the bench (see batch_verify_pairs) */
 		let end = base + chunk;
 		if (end > length(items)) end = length(items);
 		let cmd = '';
@@ -1729,6 +1737,10 @@ function analyze() {
 		let c1 = cs[cyc % length(cs)];
 		let c2 = cs[(cyc + 1) % length(cs)];
 		for (let si = 0; si < length(p.servers); si = si + 1) {
+			/* ч.230: the per-server probes are SERIAL (probe_server ×2 with the
+			 * anchor retry, nc/nslookup waits) — the only honest hb spot for a
+			 * big pool; without it the whole bench read as a wedged loop. */
+			pm_reg_hb('multidns');
 			let s = p.servers[si];
 			try {
 				let pd = cs[cyc % length(cs)];

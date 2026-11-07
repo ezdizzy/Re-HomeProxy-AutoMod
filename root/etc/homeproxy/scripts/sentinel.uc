@@ -99,6 +99,13 @@ export const OP_HB_STALE_SEC = 300;
  * пингуют каждые 15–30 с; 900 с = 30+ пропущенных пингов. */
 export const HB_STALE_SEC = 900;
 
+/* Анти-флап ленты (ч.230): повторный degraded/recovered-аларм ТОГО ЖЕ ключа
+ * не чаще раза в 6 ч. Находка остаётся в документе/UI честно (свежие цифры),
+ * молчит только ЛЕНТА событий — живой случай: core fd гулял вокруг линии
+ * 2048 (2054↔2047) и multidns-бенч давал пары degraded/recovered каждый
+ * бенч-цикл. Класс 'down' (мёртвый инстанс) — ВСЕГДА звонит. */
+export const ALARM_REPEAT_SEC = 21600;
+
 /* Loop-guard: максимум починок одного ключа за окно; блокировка ключа живёт
  * до исчезновения проблемы либо до TTL (одна попытка каждые 2 часа). */
 export const REPAIR_WINDOW_SEC = 1800;
@@ -457,17 +464,31 @@ export function record_repair(repairs, key, now) {
 	r['' + key] = { times: times };
 	return r;
 };
-
 /* ── diff находок → события (политика алармов) ────────────────────────────
  * svc:/op: классы молчат при свежем health (его зона), но ПЕРЕХВАТЫВАЮТ
  * тревогу, как только health протух. Остальные классы алармятся всегда. */
+
+/* Гвард анти-флапа (ч.230): ключ алармил в окно ALARM_REPEAT_SEC.
+ * alarm_ts — карта ключ → ts ПОСЛЕДНЕГО отправленного события, живёт в
+ * статус-документе между проходами. */
+function alarm_cooled(ats, key, now) {
+	if (ats == null || type(ats) !== 'object')
+		return false;
+	const last = int(ats['' + key] || 0);
+	return (last > 0 && (now - last) < ALARM_REPEAT_SEC);
+};
+
 export function alarm_policy(key, health_fresh) {
+
 	if ((index('' + key, 'svc:') === 0 || index('' + key, 'op:') === 0) && health_fresh)
 		return false;
+
 	return true;
 };
 
-export function diff_finding_events(prev_f, findings, health_fresh) {
+export function diff_finding_events(prev_f, findings, health_fresh, now, alarm_ts) {
+	const ts_now = (now != null) ? int(now) : time();
+	const ats = (alarm_ts != null && type(alarm_ts) === 'object') ? alarm_ts : {};
 	const out = [];
 	if (findings == null)
 		return out;
@@ -479,15 +500,21 @@ export function diff_finding_events(prev_f, findings, health_fresh) {
 	for (let k in findings) {
 		const f = findings[k];
 		const want = alarm_policy(k, health_fresh);
+		const is_down = (f.status === 'down');
 		if (prev_f[k] == null) {
 			f.alarmed = want;
-			if (want)
+			if (want && (is_down || !alarm_cooled(ats, k, ts_now))) {
+				ats[k] = ts_now;
 				push(out, { type: (f.status === 'down') ? 'down' : 'degraded',
 					who: f.label, detail: f.reason });
+			}
 		} else if (want && prev_f[k].alarmed !== true) {
 			f.alarmed = true;
-			push(out, { type: (f.status === 'down') ? 'down' : 'degraded',
-				who: f.label, detail: f.reason });
+			if (is_down || !alarm_cooled(ats, k, ts_now)) {
+				ats[k] = ts_now;
+				push(out, { type: (f.status === 'down') ? 'down' : 'degraded',
+					who: f.label, detail: f.reason });
+			}
 		} else {
 			f.alarmed = (prev_f[k].alarmed === true);
 		}
@@ -495,13 +522,16 @@ export function diff_finding_events(prev_f, findings, health_fresh) {
 	for (let k in prev_f) {
 		if (findings[k] != null)
 			continue;
-		if (prev_f[k].alarmed === true)
+		if (prev_f[k].alarmed === true) {
+			if (alarm_cooled(ats, k, ts_now))
+				continue;   /* ч.230: флип ключа в окне — лента молчит, документ честен */
+			ats[k] = ts_now;
 			push(out, { type: 'recovered', who: prev_f[k].label,
 				detail: 'больше не наблюдается' });
+		}
 	}
 	return out;
 };
-
 /* ── procd-инстансы (собственная сверка; урок 171: service list) ────────── */
 
 export function service_instances() {
@@ -655,30 +685,60 @@ export function res_snapshot(regst) {
 	return out;
 };
 
+/* Причина находки перерасхода (вынесено ч.230 — один текст для свежего
+ * вердикта и для гистерезис-удержания). */
+function res_finding(r, level, what) {
+	let reason;
+	if (what === 'fd')
+		reason = 'открытых fd: ' + sprintf('%d', int(r.fds)) +
+			((level === 'crit')
+				? ' при бюджете ' + sprintf('%d', int(r.fd_crit)) + ' — критическая зона, вероятна утечка дескрипторов'
+				: ' при бюджете ' + sprintf('%d', int(r.fd_warn)) + ' — возможна утечка дескрипторов, наблюдение участится');
+	else
+		reason = 'RSS ' + sprintf('%.1f', int(r.rss_kb) / 1024) + ' МБ' +
+			((level === 'crit')
+				? ' при бюджете ' + sprintf('%.0f', int(r.rss_crit_kb) / 1024) + ' МБ — зона OOM-грани (кейс WR3000H: ядро убивалось при ~727 МБ)'
+				: ' при бюджете ' + sprintf('%.0f', int(r.rss_warn_kb) / 1024) + ' МБ — потребление выше штатного, наблюдение участится');
+	return {
+		status: 'degraded', label: res_label(r.name), reason: reason,
+		confidence: 'certain', what: what
+	};
+};
+
 /* Находки перерасхода из снапшота. status ВСЕГДА 'degraded': перерасход не
- * означает «процесс мёртв» (down резервируется смертям), авто-ремонта нет. */
-export function res_findings(snap) {
+ * означает «процесс мёртв» (down резервируется смертям), авто-ремонта нет.
+ * prev_f (ч.230) — находки прошлого прохода: активная находка того же класса
+ * (what) держится, пока метрика не уйдёт ниже 90% warn-линии (гистерезис),
+ * иначе значения, гуляющие вокруг линии бюджета, дают пары
+ * degraded/recovered каждые полпрохода (живой случай: core fd 2054↔2047).
+ * Вердикт снапшота (resources.json / карточка UI) остаётся честным live. */
+export function res_findings(snap, prev_f) {
 	const out = {};
 	if (snap == null || type(snap) !== 'array')
 		return out;
 	for (let r in snap) {
-		if (r == null || r.level == null || r.level === 'ok')
+		if (r == null || r.level == null)
 			continue;
-		let reason;
-		if (r.what === 'fd')
-			reason = 'открытых fd: ' + sprintf('%d', int(r.fds)) +
-				((r.level === 'crit')
-					? ' при бюджете ' + sprintf('%d', int(r.fd_crit)) + ' — критическая зона, вероятна утечка дескрипторов'
-					: ' при бюджете ' + sprintf('%d', int(r.fd_warn)) + ' — возможна утечка дескрипторов, наблюдение участится');
-		else
-			reason = 'RSS ' + sprintf('%.1f', int(r.rss_kb) / 1024) + ' МБ' +
-				((r.level === 'crit')
-					? ' при бюджете ' + sprintf('%.0f', int(r.rss_crit_kb) / 1024) + ' МБ — зона OOM-грани (кейс WR3000H: ядро убивалось при ~727 МБ)'
-					: ' при бюджете ' + sprintf('%.0f', int(r.rss_warn_kb) / 1024) + ' МБ — потребление выше штатного, наблюдение участится');
-		out['res:' + r.name] = {
-			status: 'degraded', label: res_label(r.name), reason: reason,
-			confidence: 'certain'
-		};
+		if (r.level === 'ok') {
+			if (prev_f != null && type(prev_f) === 'object') {
+				const pf = prev_f['res:' + r.name];
+				if (pf != null && type(pf) === 'object') {
+					/* Класс удержания — из прошлой находки (у ok-строки снапшота
+					 * what пуст); hold = метрика того же класса в полосе ≥90% warn. */
+					const pw = '' + pf.what;
+					const warn_fd = int(r.fd_warn);
+					const warn_rss = int(r.rss_warn_kb);
+					if (pw === 'fd' && warn_fd > 0 &&
+					    int(r.fds) >= warn_fd - int(warn_fd / 10))
+						out['res:' + r.name] = res_finding(r, 'warn', 'fd');
+					else if (pw === 'rss' && warn_rss > 0 &&
+					    int(r.rss_kb) >= warn_rss - int(warn_rss / 10))
+						out['res:' + r.name] = res_finding(r, 'warn', 'rss');
+				}
+			}
+			continue;
+		}
+		out['res:' + r.name] = res_finding(r, r.level, r.what);
 	}
 	return out;
 };
@@ -824,7 +884,7 @@ export function compute_and_store(opts) {
 	})();
 	if (full || prev_res_active) {
 		const snap = res_snapshot(registry_map());
-		const rf = res_findings(snap);
+		const rf = res_findings(snap, prev_f);
 		for (let k in rf)
 			findings[k] = rf[k];
 		const memraw = readfile('/proc/meminfo') || '';
@@ -925,8 +985,13 @@ export function compute_and_store(opts) {
 	}
 
 	/* 6. Diff находок → события (до исполнения ремонтов — ремонтные события
-	 * добавляются следом, порядок в ленте честный). */
-	const events = diff_finding_events(baseline ? null : prev_f, findings, health_fresh);
+	 * добавляются следом, порядок в ленте честный). Ч.230: карта alarm_ts
+	 * (ключ → ts последнего отправленного события) живёт в документе между
+	 * проходами — гвард ALARM_REPEAT_SEC глушит флип ключа взад-вперёд
+	 * (degraded/recovered спам); находки в документе честны и без ленты. */
+	const prev_ats = (prev != null && prev.alarm_ts != null && type(prev.alarm_ts) === 'object')
+		? prev.alarm_ts : {};
+	const events = diff_finding_events(baseline ? null : prev_f, findings, health_fresh, now, prev_ats);
 
 	/* 7. Исполнение ремонтов через opman-дверь.
 	 * Ф2.3: пока Recovery-координатор ЖИВ, Sentinel — только детектор: поводы
@@ -991,6 +1056,7 @@ export function compute_and_store(opts) {
 		findings: findings,
 		repairs: reps,
 		blocked: blocked,
+		alarm_ts: prev_ats,
 		last_repair: last_repair,
 		daemon: { pid: (o.daemon_pid != null) ? int(o.daemon_pid) : null, note: 'sentinel' }
 	};
@@ -1133,6 +1199,25 @@ export function selftest() {
 	const ev5 = diff_finding_events(f_quiet, f_same, true);
 	check('diff_stay_quiet', length(ev5) === 0 && f_same['svc:core'].alarmed === false, null);
 
+	/* ч.230: анти-флап — повторный аларм ключа глушится в окне ALARM_REPEAT_SEC,
+	 * recovered в том же окне молчит, 'down' звонит всегда. */
+	const ats_t = {};
+	const fdeg = { 'hung:mdns': { status: 'degraded', label: 'D', reason: 'r' } };
+	const ec1 = diff_finding_events({}, fdeg, true, 1000, ats_t);
+	check('cool_first_rings', length(ec1) === 1 && int(ats_t['hung:mdns']) === 1000, null);
+	const fdeg2 = { 'hung:mdns': { status: 'degraded', label: 'D', reason: 'r' } };
+	const ec2 = diff_finding_events({}, fdeg2, true, 1000 + 60, ats_t);
+	check('cool_reflip_silent', length(ec2) === 0 && fdeg2['hung:mdns'].alarmed === true, null);
+	const ec3 = diff_finding_events({ 'hung:mdns': { status: 'degraded', label: 'D', reason: 'r', alarmed: true } },
+		{}, true, 1000 + 120, ats_t);
+	check('cool_recovered_silent', length(ec3) === 0, null);
+	const fdeg3 = { 'hung:mdns': { status: 'degraded', label: 'D', reason: 'r' } };
+	const ec4 = diff_finding_events({}, fdeg3, true, 1000 + ALARM_REPEAT_SEC + 1, ats_t);
+	check('cool_expired_rings', length(ec4) === 1, null);
+	const fdown = { 'hung:x': { status: 'down', label: 'X', reason: 'r' } };
+	const ec5 = diff_finding_events({}, fdown, true, 2000, ats_t);
+	check('cool_down_always', length(ec5) === 1 && ec5[0].type === 'down', null);
+
 	/* overall. */
 	check('overall_ok', overall_of({}) === 'ok', null);
 	check('overall_degraded', overall_of({ a: { status: 'degraded' } }) === 'degraded', null);
@@ -1166,6 +1251,24 @@ export function selftest() {
 		rf1['res:core'].status === 'degraded' && rf1['res:mosdns'] == null, null);
 	check('res_findings_label', length(rf1) === 1 && rf1['res:core'].label === 'Ядро (hiddify-core)', null);
 	check('res_findings_empty', length(res_findings(null)) === 0 && length(res_findings([])) === 0, null);
+
+	/* ч.230: гистерезис res-находок — активная fd-находка держится в полосе
+	 * до 90% warn (1900 ≥ 1844), чистится ниже (1800 < 1844); без prev — нет. */
+	const mkrow = function(fds) {
+		return { name: 'core', label: res_label('core'), pid: 1, rss_kb: 98304, fds: fds,
+			level: 'ok', what: '', rss_warn_kb: 393216, rss_crit_kb: 524288,
+			fd_warn: 2048, fd_crit: 4096 };
+	};
+	const prev_fd = { 'res:core': { status: 'degraded', label: 'Ядро (hiddify-core)', reason: 'x', what: 'fd' } };
+	check('res_hyst_no_prev', length(res_findings([ mkrow(1900) ], null)) === 0, null);
+	const row_in = res_findings([ mkrow(1900) ], prev_fd);
+	check('res_hyst_hold', row_in['res:core'] != null && row_in['res:core'].what === 'fd' &&
+		row_in['res:core'].status === 'degraded', null);
+	const row_out = res_findings([ mkrow(1800) ], prev_fd);
+	check('res_hyst_clear', row_out['res:core'] == null, null);
+	check('res_hyst_class_match', length(res_findings([ mkrow(1900) ],
+		{ 'res:core': { status: 'degraded', label: 'x', reason: 'x', what: 'rss' } })) === 0, null);
+
 	check('res_snapshot_dead_pid', length(res_snapshot({ core: { pid: 999999, start: 1 } })) === 0, null);
 	check('res_snapshot_empty', length(res_snapshot(null)) === 0, null);
 
