@@ -51,7 +51,9 @@ import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
 	reg_set as pm_reg_set, reg_get as pm_reg_get, reg_del as pm_reg_del, reg_alive as pm_reg_alive,
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
-	proc_info as pm_proc_info
+	proc_info as pm_proc_info,
+	res_profile as pm_res_profile, MEM_GATE_KB as PM_MEM_GATE_KB,
+	mem_avail_kb as pm_mem_avail_kb
 } from '/etc/homeproxy/scripts/pmgr.uc';
 /* Ф6.2 Discovery Engine: ЕДИНЫЙ сбор обнаружения. conntrack теперь парсится
  * через discovery.uc — ТОЛЬКО оригинальный tuple (B5.1: клиентские адреса
@@ -181,6 +183,12 @@ const PAIN_BURST = 5;
 const PRUNE_AGE = 1209600;
 const ECO_STATE_CAP = 5000;
 const PERF_STATE_CAP = 12000;
+/* Ф10.2: the lite profile caps the RESIDENT working set, not just cadences —
+ * the whole state is re-parsed and re-serialized every cycle and the heap
+ * never returns to the OS (VmPeak == VmRSS live: ~30 kB of peak RAM per
+ * record with a 1.4 MB file). 600 records ≈ 18–20 MB peak heap — survivable
+ * on a 128 MB box; eco/perf caps untouched (balanced/performance). */
+const LITE_STATE_CAP = 600;
 
 const STATE_FILE = RUN_DIR + '/automation_state.json';
 const AUTO_LIST = RES + '/auto_proxy_list.txt';
@@ -232,6 +240,8 @@ let dns_failover = '0';
 let dns_failover_plain = '0';
 let dns_failover_secure = '0';
 let alt_dns = [];
+/* Ф10.2 OOM-грань: одноразовый лог отложки learn-flush (рестарта ядра). */
+let reload_mem_logged = false;
 let auto_set = {};
 let pending_reload = false;
 let pending_new = 0;
@@ -275,6 +285,9 @@ let dns_log_on = false;
  * Module-level because resolve_plain_view is a top-level helper (no closures over
  * main() locals on this ucode build). */
 let pv_cache = {};
+/* Ф10.2: pv_cache clear threshold — scaled down on the lite profile (set in
+ * main() right after the profile detection; helpers below read the module var). */
+let pv_cap = 400;
 
 /* Manual per-entry overrides (Automation table):
  *   manual_proxy_set  — "always via proxy": protected from self-healing, never re-verdicted;
@@ -781,7 +794,7 @@ function resolve_plain_view(host) {
 				continue;
 			if (!pv_ip_usable(m[2])) { null_seen = true; continue; }
 			pv_cache[host] = { ip: m[2], t: time() };
-			if (length(keys(pv_cache)) > 400) pv_cache = {};
+			if (length(keys(pv_cache)) > pv_cap) pv_cache = {};
 			return m[2];
 		}
 	}
@@ -799,7 +812,7 @@ function resolve_plain_view(host) {
 			continue;
 		if (!pv_ip_usable(m[2])) { null_seen = true; continue; }
 		pv_cache[host] = { ip: m[2], t: time() };
-		if (length(keys(pv_cache)) > 400) pv_cache = {};
+		if (length(keys(pv_cache)) > pv_cap) pv_cache = {};
 		return m[2];
 	}
 	/* ч.115: every visible answer was a blocker-style null (or nothing
@@ -1582,7 +1595,7 @@ function ensure_sni_sniffer(iface) {
 			system(`mv -f ${shellquote(SNI_EVENTS)} ${shellquote(SNI_EVENTS + '.old')} 2>/dev/null; rm -f ${shellquote(SNI_EVENTS + '.old')} 2>/dev/null`);
 	}
 	sni_events_offset = 0;
-	system(`${shellquote(SNI_SNIFFER_BIN)} -iface ${shellquote(iface)} -file ${shellquote(SNI_EVENTS)} >/dev/null 2>&1 &`);
+	system(`${shellquote('/etc/homeproxy/scripts/oom_adj.sh')} 400 0 ${shellquote(SNI_SNIFFER_BIN)} -iface ${shellquote(iface)} -file ${shellquote(SNI_EVENTS)} >/dev/null 2>&1 &`);
 	/* Register the identity as soon as the process is visible (5 × 200 ms
 	 * grace); without a registry entry the next pass would just re-detect it
 	 * via the scan — best-effort either way. */
@@ -1982,10 +1995,19 @@ function main() {
 	const dom_cap = PERF ? PERF_DOM_CAP : ECO_DOM_CAP;
 	const ip_cap = PERF ? PERF_IP_CAP : ECO_IP_CAP;
 	const par = PERF ? PERF_PARALLEL : 1;
-	const state_cap = PERF ? PERF_STATE_CAP : ECO_STATE_CAP;
+	let state_cap = PERF ? PERF_STATE_CAP : ECO_STATE_CAP;
 	const sni_pkts = PERF ? 60 : 20;
 	const sni_secs = PERF ? 8 : 5;
-	log(`performance profile: ${perf_mode} (dom_cap=${dom_cap}, ip_cap=${ip_cap}, parallel=${par})`);
+	/* Ф10.2: the resource profile scales the RESIDENT working set on lite —
+	 * the state heap lives in RAM for the daemon's whole uptime and the heap
+	 * never shrinks back (malloc keeps the peak), so lite gets a smaller cap
+	 * and a smaller pv_cache. eco/perf caps untouched (balanced/performance:
+	 * bit-exact behavior on big boxes). */
+	if (pm_res_profile().profile === 'lite') {
+		state_cap = LITE_STATE_CAP;
+		pv_cap = 150;
+	}
+	log(`performance profile: ${perf_mode} (dom_cap=${dom_cap}, ip_cap=${ip_cap}, parallel=${par}, state_cap=${state_cap})`);
 
 	/* PERFORMANCE PROFILE constraint of this ucode build: a nested function only
 	 * closes over main() locals declared LEXICALLY BEFORE its own definition —
@@ -2203,7 +2225,7 @@ echo done > "$PRE.done"
 		if (length(pm_find({ exe: 'probe_pool' }))) return pp_daemon_alive();
 		if ((time() - pp_last_respawn) < 300) return false;
 		pp_last_respawn = time();
-		system(`${shellquote(PROBE_POOL_BIN)} -daemon -dir ${shellquote(RUN_DIR)} >/dev/null 2>&1 &`);
+		system(`${shellquote('/etc/homeproxy/scripts/oom_adj.sh')} 400 0 ${shellquote(PROBE_POOL_BIN)} -daemon -dir ${shellquote(RUN_DIR)} >/dev/null 2>&1 &`);
 		for (let i = 0; i < 12 && !access(PP_HB); i++) sleep(250);
 		/* Ф1.4 (audit 17): register identity as soon as the process is
 		 * visible — PID + starttime, so later liveness checks are reuse-proof. */
@@ -2342,7 +2364,7 @@ echo done > "$PRE.done"
 				resolve[h] = rmap[h];
 			}
 		}
-		if (length(keys(pv_cache)) > 400) pv_cache = {};
+		if (length(keys(pv_cache)) > pv_cap) pv_cache = {};
 		/* issue #14 second layer — plain-answer verification. The direct probe
 		 * of THIS batch dialed exactly the plain-view IP the DoH answer
 		 * disagreed with (both sides read the same pin map). A clean, real
@@ -4203,11 +4225,16 @@ echo done > "$PRE.done"
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
 				push(rest, { h: h, t: state[h].last_probe || 0 });
 			}
-			let excess = length(rest) - state_cap;
+			/* Ф10.2: the cap is RE-READ at each hourly prune — a manual profile
+			 * switch applies to the working set WITHOUT a daemon respawn
+			 * (cadence consumers re-read per tick; the hourly prune is the
+			 * natural re-read point for the resident-set size). */
+			const cap_now = (pm_res_profile().profile === 'lite') ? LITE_STATE_CAP : state_cap;
+			let excess = length(rest) - cap_now;
 			if (excess > 0) {
 				sort(rest, (a, b) => a.t - b.t);
 				for (let i = 0; i < excess; i++) delete state[rest[i].h];
-				log('state cap: evicted ' + excess + ' oldest records');
+				log('state cap: evicted ' + excess + ' oldest records (cap=' + cap_now + ')');
 			}
 			let removed = length(stale) + (excess > 0 ? excess : 0);
 			if (removed > 0) {
@@ -4276,10 +4303,24 @@ echo done > "$PRE.done"
 
 		/* Batch-flush window: apply when the time throttle elapsed OR enough new entries
 		 * accumulated (so a burst of learns triggers a single core restart, not many). */
-		if (pending_reload && ((now - last_reload) > reload_interval || (flush_min_entries > 0 && pending_new >= flush_min_entries)))
-			do_reload();
-		else if (pending_reload && run_now)
-			do_reload();
+		/* Ф10.2 OOM-грань: do_reload() = полный рестарт ядра (cold-start пик RSS +
+		 * перекачка rule-set'ов) — при памяти ниже 64 МБ применение выученного
+		 * откладывается до следующего цикла (pending_reload сохраняется и
+		 * догонит при восстановлении); user-триггер тоже честно ждёт. */
+		if (pending_reload) {
+			const ma = pm_mem_avail_kb();
+			const mem_low = (ma > 0 && ma < 65536);
+			if (mem_low !== reload_mem_logged) {
+				log('OOM-грань: применение выученного ' + (mem_low
+					? 'ОТЛОЖЕНО (MemAvailable ' + ma + ' kB < 65536) — рестарт ядра при низкой памяти опасен'
+					: 'возобновлено (MemAvailable ' + ma + ' kB)'));
+				reload_mem_logged = mem_low;
+			}
+			if (!mem_low && ((now - last_reload) > reload_interval || (flush_min_entries > 0 && pending_new >= flush_min_entries)))
+				do_reload();
+			else if (!mem_low && run_now)
+				do_reload();
+		}
 
 		return true;
 	}

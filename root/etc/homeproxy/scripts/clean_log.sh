@@ -13,6 +13,8 @@ while true; do
 	sleep 180
 	for i in "$main_log_file" "$hiddifyc_log_file"; do
 		[ -s "$i" ] || continue
-		[ "$(( $(ls -l "$i" | awk -F ' ' '{print $5}') / 1024 >= log_max_size))" -eq "0" ] || echo "" > "$i"
+		# F10.2: keep the newest tail instead of wiping the file — diagnostics
+		# must survive exactly on a busy box, where the cap is hit most often.
+		[ "$(( $(ls -l "$i" | awk -F ' ' '{print $5}') / 1024 >= log_max_size))" -eq "0" ] || { tail -n 100 "$i" > "$i.t" 2>/dev/null && mv -f "$i.t" "$i"; }
 	done
 done

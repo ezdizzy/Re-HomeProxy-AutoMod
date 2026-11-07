@@ -43,7 +43,8 @@ import {
 import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, kill_matched as pm_kill_matched,
 	entry_alive as pm_entry_alive, reg_get as pm_reg_get, reg_del as pm_reg_del,
-	res_profile as pm_res_profile
+	res_profile as pm_res_profile,
+	MEM_GATE_KB as PM_MEM_GATE_KB, mem_avail_kb as pm_mem_avail_kb
 } from '/etc/homeproxy/scripts/pmgr.uc';
 import {
 	HEALTH_PATH as HS_PATH, snapshot as hs_snapshot
@@ -75,6 +76,17 @@ import { parse_uri as np_parse_uri, parse_content as np_parse_content,
 	from '/etc/homeproxy/scripts/node_parse.uc';
 import { validate_node_config as np_validate_node_config }
 	from '/etc/homeproxy/scripts/homeproxy.uc';
+
+/* Ф10.2 OOM-грань для тяжёлых фоновых прогонов: ниже общей грани
+ * (PM_MEM_GATE_KB) старт батарей/апдейтов честно отказывается —
+ * прогон при низкой памяти добивает коробку (класс WR3000H). */
+function mem_gate_refusal() {
+	const ma = pm_mem_avail_kb();
+	if (ma > 0 && ma < PM_MEM_GATE_KB)
+		return 'мало памяти (MemAvailable ' + int(ma / 1024) + ' МБ < ' +
+			int(PM_MEM_GATE_KB / 1024) + ' МБ) — тяжёлый прогон не запущен, повторите позже';
+	return null;
+}
 
 /* 🔴 Ф1.1b (сеанс 79, живой лов): ТОП-УРОВНЕВАЯ const в ucode НЕВИДИМА функциям,
  * объявлённым ВЫШЕ неё — они видят null НАВСЕГДА (доказано микротестом: функция до
@@ -4937,6 +4949,9 @@ const methods = {
 		args: { url: 'url' },
 		call: function(req) {
 			const url = ((req && req.args && req.args.url) || '');
+			const memref = mem_gate_refusal();
+			if (memref != null)
+				return { result: false, error: memref };
 			const sf = RUN_DIR + '/subscription_update.json';
 			if (access(sf)) {
 				let prev = null;
@@ -5114,6 +5129,9 @@ const methods = {
 			const mode = ((req && req.args && req.args.mode) === 'full') ? 'full' : 'quick';
 			let rounds = int((req && req.args && req.args.rounds) || 0) || 2;
 			if (rounds < 1 || rounds > 3) rounds = 2;
+			const memref = mem_gate_refusal();
+			if (memref != null)
+				return { result: false, error: memref };
 			const st = RUN_DIR + '/zapret_fuzz.json';
 		/* One fuzzer at a time. */
 		let prev = null;
@@ -5712,6 +5730,9 @@ const methods = {
 			}
 			if (!access('/opt/zapret2/nfq2/nfqws2'))
 				return { result: false, error: 'zapret2 is not installed' };
+			const memref = mem_gate_refusal();
+			if (memref != null)
+				return { result: false, error: memref };
 			const st = RUN_DIR + '/wizard_autopick.json';
 			/* One auto-pick at a time; a stale running status older than the
 			 * runner's own hard cap (wait 45 min + core 90 s + verify) is
@@ -6173,6 +6194,9 @@ const methods = {
 			const p = lc(trim('' + ((req && req.args && req.args.profile) || 'all')));
 			if (!valid[p])
 				return { result: false, error: 'unknown profile: ' + p };
+			const memref = mem_gate_refusal();
+			if (memref != null)
+				return { result: false, error: memref };
 			writefile(RUN_DIR + '/service_profile_task.txt', p + '\n');
 			system(`ucode ${shellquote(HP_DIR + '/scripts/service_profile_run.uc')} >/dev/null 2>&1 &`);
 			return { result: true, profile: p };

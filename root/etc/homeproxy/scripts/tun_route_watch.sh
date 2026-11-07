@@ -68,6 +68,14 @@ if [ "$IPV6" = "1" ] && ! ip -6 route show table "$TUN_TABLE" 2>/dev/null | grep
 		logline "TUN fail-closed floor (IPv6) FAILED to install."
 fi
 
+# F10.2: on a lite-class box (MemTotal <= 256 MB) the 3 s fork cadence of
+# this watcher is heavy for a 2-core SoC — 8 s keeps the same floor with
+# ~2.5x less fork churn. Big boxes keep the legacy 3 s.
+INTERVAL=3
+MT=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
+case "$MT" in ''|*[!0-9]*) MT=0;; esac
+[ "$MT" -gt 0 ] && [ "$MT" -le 262144 ] && INTERVAL=8
+
 while :; do
 	if ip link show "$TUN_NAME" >/dev/null 2>&1; then
 		MARK_HEX=$(printf '%x' "$TUN_MARK" 2>/dev/null)
@@ -97,5 +105,5 @@ while :; do
 	else
 		write_state down "device absent — unreachable floor active (fail-closed)"
 	fi
-	sleep 3
+	sleep "$INTERVAL"
 done

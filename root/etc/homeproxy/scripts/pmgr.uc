@@ -147,6 +147,29 @@ export function res_profile() {
 	return { mode: mode, profile: profile, source: source, factor: factor };
 };
 
+/* ── memory gate (Ф10.2) ────────────────────────────────────────────────── */
+
+/* The OOM-edge constant shared by the threaded consumers: below this
+ * MemAvailable the HEAVY work (Clash-API fetches, multidns analyze fork
+ * waves, wizard/battery runs, the learn-flush core restart) is skipped or
+ * postponed while light/observe passes keep running — the same semantics
+ * the health/sentinel deep-skip carried since lesson 197, now from ONE
+ * constant so the edge cannot drift between consumers. */
+export const MEM_GATE_KB = 49152;
+
+/* MemAvailable in kB, 0 when unreadable. Tab-safe parse (lesson 61:
+ * /proc fields are TAB-separated — "[[:space:]]*" matches both shapes).
+ * readfile only — rpcd-import-safe (lesson 322: NO ubus calls here).
+ * `path` overrides the meminfo source (microtests: fake meminfo). */
+export function mem_avail_kb(path) {
+	const p = (path != null && length('' + path)) ? '' + path : '/proc/meminfo';
+	const mi = readfile(p);
+	if (mi == null)
+		return 0;
+	const m = match(mi, /MemAvailable:[[:space:]]*([0-9]+)/);
+	return (m != null) ? int(m[1]) : 0;
+};
+
 /* /proc/<pid>/stat: comm may contain spaces and ')' — split after the LAST
  * ')'. Post-tail fields (0-based): state=0, ppid=1, …, starttime=19
  * (overall field 22). Returns null when the process is gone. */

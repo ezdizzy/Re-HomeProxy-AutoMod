@@ -54,7 +54,9 @@
 import { access, readfile, writefile, stat, popen } from 'fs';
 import { atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
 import { reg_self as pm_reg_self, reg_hb as pm_reg_hb,
-	res_profile as pm_res_profile } from '/etc/homeproxy/scripts/pmgr.uc';
+	res_profile as pm_res_profile,
+	MEM_GATE_KB as PM_MEM_GATE_KB, mem_avail_kb as pm_mem_avail_kb
+} from '/etc/homeproxy/scripts/pmgr.uc';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
@@ -379,42 +381,48 @@ while (true) {
 		cur_interval = want;
 	sleep(cur_interval * 1000);
 
-	const t = time();
-	let pt = null;
-	try {
-		/* The traffic speed divisor is the FACTUAL gap between samples, not
-		 * the planned interval — a profile switch must not fake a spike on
-		 * the one longer sample (the guard clamps a stale gap to ×4). */
-		const dt = (prev_ts > 0 && t > prev_ts && (t - prev_ts) <= cur_interval * 4)
-			? (t - prev_ts) : cur_interval;
-		/* One /connections fetch feeds BOTH the connection count and the
-		 * per-exit traffic deltas (the aggregate is the same reply). */
-		const cj = clash_get('/connections');
-		let conns_n = null;
-		let rates = null;
-		if (cj != null && type(cj) === 'object') {
-			const list = cj.connections;
-			conns_n = (list != null && type(list) === 'array') ? length(list) : 0;
-			rates = sample_traffic(list);
-		} else {
-			prev_conn = null;
+		const t = time();
+		let pt = null;
+		try {
+			/* Ф10.2 OOM-грань: below the shared edge (PM_MEM_GATE_KB) the
+			 * Clash-API fetches are skipped — each one is a forked wget plus
+			 * a full /connections JSON parse; the /proc-only sample stays
+			 * (cpu/ram/temp honest), conns/rates/delay are honestly absent
+			 * from the point. prev_conn is reset so the first sample after
+			 * recovery is a BASELINE (no fake traffic spike — same class as
+			 * the ch.217 factual-gap divisor). */
+			const ma = pm_mem_avail_kb();
+			const mem_gate = (ma > 0 && ma < PM_MEM_GATE_KB);
+			const dt = (prev_ts > 0 && t > prev_ts && (t - prev_ts) <= cur_interval * 4)
+				? (t - prev_ts) : cur_interval;
+			/* One /connections fetch feeds BOTH the connection count and the
+			 * per-exit traffic deltas (the aggregate is the same reply). */
+			const cj = mem_gate ? null : clash_get('/connections');
+			let conns_n = null;
+			let rates = null;
+			if (cj != null && type(cj) === 'object') {
+				const list = cj.connections;
+				conns_n = (list != null && type(list) === 'array') ? length(list) : 0;
+				rates = sample_traffic(list);
+			} else {
+				prev_conn = null;
+			}
+			pt = {
+				t: t,
+				cpu: sample_cpu(),
+				ram: sample_ram(),
+				temp: sample_temp(),
+				conns: conns_n,
+				vpn_b: (rates != null) ? int(rates.vpn / dt) : null,
+				dir_b: (rates != null) ? int(rates.dir / dt) : null,
+				byp_b: (rates != null) ? int(rates.byp / dt) : null,
+				delay: mem_gate ? null : sample_delay(),
+				learned: sample_learned()
+			};
+			prev_ts = t;
+		} catch (e) {
+			pt = null;
 		}
-		pt = {
-			t: t,
-			cpu: sample_cpu(),
-			ram: sample_ram(),
-			temp: sample_temp(),
-			conns: conns_n,
-			vpn_b: (rates != null) ? int(rates.vpn / dt) : null,
-			dir_b: (rates != null) ? int(rates.dir / dt) : null,
-			byp_b: (rates != null) ? int(rates.byp / dt) : null,
-			delay: sample_delay(),
-			learned: sample_learned()
-		};
-		prev_ts = t;
-	} catch (e) {
-		pt = null;
-	}
 	if (pt != null) {
 		try {
 			push(points, pt);

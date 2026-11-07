@@ -308,6 +308,22 @@ teardown_interception() {
 start_service() {
 	mkdir -p "$RUN_DIR"
 
+	# F10.2: on a lite-class box (MemTotal <= 256 MB) the kernel-default
+	# min_free is so small that the OOM killer fires only after the box is
+	# already thrashing (the "LuCI locked up" shape). Raise the trigger
+	# point once per start, ONLY when it sits below the target — big boxes
+	# (kernel auto-tunes min_free high there) are never touched.
+	MT=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
+	case "$MT" in ''|*[!0-9]*) MT=0;; esac
+	if [ "$MT" -gt 0 ] && [ "$MT" -le 262144 ]; then
+		CUR=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null)
+		case "$CUR" in ''|*[!0-9]*) CUR=0;; esac
+		if [ "$CUR" -lt 8192 ]; then
+			echo 8192 > /proc/sys/vm/min_free_kbytes 2>/dev/null && \
+				log "lite RAM: vm.min_free_kbytes raised to 8192 (was $CUR) — the OOM killer fires earlier, before the box gridlocks"
+		fi
+	fi
+
 	# Service epoch (Ф3.1): bumped on EVERY start — the Sentinel's drift
 	# discriminator. A service start is the ONLY legitimate way the procd
 	# instance set changes (init.d re-evaluates every gate from UCI); an
@@ -746,8 +762,14 @@ start_service() {
 	# hiddify-core (client)
 	procd_open_instance "hiddify-c"
 
-	procd_set_param command "$PROG"
-	procd_append_param command $RUN_CMD --config "$RUN_DIR/hiddify-c.json"
+	# F10.2 OOM victim ordering: the core is the biggest RSS and the FIRST
+	# legitimate OOM victim (respawnable, LKG-protected) — the wrapper also
+	# sets GOMEMLIMIT=64M on lite-class boxes (MemTotal <= 256 MB) so the Go
+	# heap cannot grow into a global OOM on small RAM (lesson 197: the core
+	# was OOM-killed at 727 MB anon). exec keeps the pid — procd still
+	# watches the real binary.
+	procd_set_param command /bin/sh "$HP_DIR/scripts/oom_adj.sh" 300 64
+	procd_append_param command "$PROG" $RUN_CMD --config "$RUN_DIR/hiddify-c.json"
 
 	# QUIC-GO GSO is broken on kernel 6.6 currently
 	uname -r | grep -Eq "^6\.6" && procd_set_param env "QUIC_GO_DISABLE_GSO"="true"
@@ -929,7 +951,11 @@ start_service() {
 	config_get_bool automation_enabled "automation" "enabled" "0"
 	if [ "$automation_enabled" = "1" ]; then
 		procd_open_instance "automation"
-		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/automation.uc"
+		# F10.2 OOM victim ordering: automation is the heaviest ucode daemon
+		# (tens of MB heap on long runs) and fully respawnable (state lives
+		# on tmpfs) — it dies BEFORE the DNS/UI plane under memory pressure.
+		procd_set_param command /bin/sh "$HP_DIR/scripts/oom_adj.sh" 200 0
+		procd_append_param command /usr/bin/ucode "$HP_DIR/scripts/automation.uc"
 		procd_set_param respawn
 		procd_close_instance
 	fi

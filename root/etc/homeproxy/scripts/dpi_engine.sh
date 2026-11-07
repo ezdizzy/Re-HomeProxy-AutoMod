@@ -17,6 +17,10 @@
 CONF=homeproxy
 MODE="$1"
 
+# F10.2 OOM victim ordering: the engines are respawnable (procd respawns
+# this wrapper) — under memory pressure they die BEFORE the DNS/UI plane.
+echo 300 > /proc/self/oom_score_adj 2>/dev/null
+
 case "$MODE" in
 zapret)
 	[ "$(uci -q get $CONF.config.zapret_enabled)" = "1" ] || exit 0

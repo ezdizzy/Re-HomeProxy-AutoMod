@@ -510,6 +510,30 @@ function run_svc_start(op_id) {
 	}
 };
 
+/* Ф10.2: ремонт rpcd через гвард init.d — rpcd_heal восстанавливает
+ * /etc/init.d/rpcd (класс whiteout, урок 130) и поднимает ТОЛЬКО мёртвый
+ * rpcd, живой не трогается. Тот же rc-файл + опрос, что и run_svc_start
+ * (урок 167); rpcd под procd — respawn продолжается сам. */
+function run_rpcd_heal(op_id) {
+	const rcfile = '/tmp/hp_sentinel_' + op_id + '.rc';
+	system('( /etc/init.d/homeproxy rpcd_heal >/dev/null 2>&1; echo $? > ' + rcfile + ' ) &');
+	const deadline = time() + SVC_START_TIMEOUT;
+	while (true) {
+		if (access(rcfile)) {
+			const rc = trim(readfile(rcfile) || '');
+			try { unlink(rcfile); } catch (e) { /* уже нет */ }
+			return { ok: true, detail: 'rpcd_heal отчитался (rc=' + (length(rc) ? rc : '?') + ')' };
+		}
+		if (time() >= deadline) {
+			try { unlink(rcfile); } catch (e) { /* уже нет */ }
+			return { ok: false, detail: 'rpcd_heal не отчитался за ' + SVC_START_TIMEOUT +
+				' с (продолжается фоном — верифицируется следующим проходом)' };
+		}
+		try { op_heartbeat(op_id); } catch (e) { /* lease продержится сам */ }
+		sleep(2000);
+	}
+};
+
 /* Честное закрытие зависшего опа: лок освобождается, действие НЕ повторяется
  * (Sentinel не может знать, началось ли оно — но журнал честен). */
 function do_op_finish(stuck_op_id) {
@@ -602,6 +626,23 @@ export function compute_and_store(opts) {
 					};
 					push(svc_want, inst_label(name));
 				}
+			}
+			/* Ф10.2: rpcd НЕ homeproxy-инстанс — его смерть = класс «LuCI
+			 * заблокирована» (уроки 130: whiteout init-скрипта, 132: crash-loop
+			 * регистрации — LuCI/RPC мёртвы целиком). Бинарный pidof надёжен
+			 * (rpcd = /sbin/rpcd; урок 320 о ucode-CLI сюда не относится).
+			 * Ремонт — rpcd_heal (тот же гвард, что на каждом старте службы). */
+			if (now >= grace_until && !length(trim(capture('pidof rpcd 2>/dev/null') || ''))) {
+				findings['svc:rpcd'] = {
+					status: 'down', label: 'rpcd (LuCI/RPC-плоскость)',
+					reason: 'rpcd не работает — LuCI/RPC недоступны для новых сессий; авто-ремонт rpcd_heal',
+					confidence: 'certain'
+				};
+				push(svc_want, 'rpcd');
+				push(actions, {
+					key: 'rpcd_heal', action: 'rpcd_heal', who: 'rpcd',
+					detail: 'гвард rpcd_heal: восстановление init-скрипта + идемпотентный старт rpcd (живой не трогается)'
+				});
 			}
 			for (let so in stale_ops(ops_now, now)) {
 				findings['op:' + so.op_id] = {
@@ -742,6 +783,8 @@ export function compute_and_store(opts) {
 			res = run_svc_start(op.op_id);
 		else if (a.action === 'op_finish')
 			res = do_op_finish(a.op_id);
+		else if (a.action === 'rpcd_heal')
+			res = run_rpcd_heal(op.op_id);
 		/* 🔴 verified=false ВСЕГДА: ремонт не есть применение конфигурации —
 		 * verified=true бампнул бы config_revision (опман) и подавил бы
 		 * следующий drift-детект (поймано приёмкой ч.165). Честность

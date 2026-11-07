@@ -221,6 +221,19 @@ function flap_load() {
 function flap_save() {
 	/* atomic (temp + rename) — тот же паттерн done_save (урок 256). */
 	try {
+		/* Ф10.2 tmpfs-гигиена: закрытые эпизоды (open:false) — надгробия;
+		 * старше 7 суток вычищаются при сохранении (ucode БЕЗ delete —
+		 * пересборка for-in, урок 341). Открытые эпизоды не трогаются. */
+		const now = time();
+		const clean = {};
+		for (let k in flap_state) {
+			const e = flap_state[k];
+			if (type(e) !== 'object')
+				continue;
+			if (e.open === true || (now - int(e.ts || 0)) <= 604800)
+				clean[k] = e;
+		}
+		flap_state = clean;
 		const tmp = FLAP_FILE + '.tmp';
 		writefile(tmp, sprintf('%J', flap_state));
 		rename(tmp, FLAP_FILE);

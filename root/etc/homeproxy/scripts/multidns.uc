@@ -47,7 +47,8 @@ import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
 	reg_set as pm_reg_set, reg_del as pm_reg_del, reg_get as pm_reg_get,
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
-	proc_info as pm_proc_info
+	proc_info as pm_proc_info,
+	MEM_GATE_KB as PM_MEM_GATE_KB, mem_avail_kb as pm_mem_avail_kb
 } from '/etc/homeproxy/scripts/pmgr.uc';
 
 const HP_DIR = '/etc/homeproxy';
@@ -1232,7 +1233,12 @@ function mosdns_running() {
  * ticks) in the daemons registry on success — the text pidfile stays only
  * for legacy sh consumers. */
 function mosdns_try(conf_path) {
-	system('setsid ' + MOSDNS + ' start -c ' + shellquote(conf_path) + ' -d ' + shellquote(MD_DIR)
+	/* Ф10.2 OOM victim ordering: mosdns is respawnable (multidns re-adopts
+	 * it within seconds — ch.204) and heavy (Go heap) — a positive
+	 * oom_score_adj keeps the killer away from dnsmasq/uhttpd; GOMEMLIMIT=32M
+	 * on lite-class boxes keeps the heap inside a 128 MB budget.
+	 * The wrapper exec's mosdns — cmdline identity (pm_find exe+arg) intact. */
+	system('setsid /etc/homeproxy/scripts/oom_adj.sh 100 32 ' + MOSDNS + ' start -c ' + shellquote(conf_path) + ' -d ' + shellquote(MD_DIR)
 		+ ' </dev/null >>' + shellquote(LOG_FILE + '.md') + ' 2>&1 &');
 	for (let i = 0; i < 10; i = i + 1) {
 		sleep(1000);
@@ -1986,6 +1992,7 @@ function main() {
 		rebuild_if_changed();
 
 		let last = time(), last_cfg = 0;
+		let mem_gate_logged = false;
 		/* Seed the pools signature with the just-analyzed configuration: the
 		 * initial analyze() above already covered exactly this UCI snapshot,
 		 * so starting from '' would fire a duplicate analyze ~30 s after
@@ -2047,15 +2054,31 @@ function main() {
 			}
 			if ((now - last) > bench_interval) {
 				last = now;
-				dbg('analyze call');
-				try {
-					analyze();
-					dbg('analyze done');
-					/* analyze() just mutated pruned / quarantine / dead-IP state:
-					 * push a changed config into the live mosdns RIGHT NOW instead
-					 * of waiting for the next cfg-check (issue #8, bench rebuild). */
-					rebuild_if_changed();
-				} catch (e) { log('analyze error: ' + sprintf('%s', e)); }
+				/* Ф10.2 OOM-грань: analyze() — волны из десятков fork'ов
+				 * (curl-батчи, nslookup ×2/сервер, nc, ping). При памяти ниже
+				 * общей грани бенчмарк откладывается до следующего интервала;
+				 * тик и rebuild_if_changed живут дальше. */
+				const ma = pm_mem_avail_kb();
+				if (ma > 0 && ma < PM_MEM_GATE_KB) {
+					if (!mem_gate_logged) {
+						log('OOM-грань: MemAvailable ' + ma + ' kB < ' + PM_MEM_GATE_KB + ' — бенчмарк пулов отложен до следующего интервала');
+						mem_gate_logged = true;
+					}
+				} else {
+					if (mem_gate_logged) {
+						log('OOM-грань пройдена: MemAvailable ' + ma + ' kB — бенчмарк пулов возобновлён');
+						mem_gate_logged = false;
+					}
+					dbg('analyze call');
+					try {
+						analyze();
+						dbg('analyze done');
+						/* analyze() just mutated pruned / quarantine / dead-IP state:
+						 * push a changed config into the live mosdns RIGHT NOW instead
+						 * of waiting for the next cfg-check (issue #8, bench rebuild). */
+						rebuild_if_changed();
+					} catch (e) { log('analyze error: ' + sprintf('%s', e)); }
+				}
 			}
 		}
 		/* inner loop exited because MultiDNS was disabled; outer loop sleeps and
