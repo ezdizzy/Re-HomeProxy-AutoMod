@@ -107,8 +107,12 @@ const RESOURCES = {
 	youtube:  { tag: 'yt', url: 'https://www.youtube.com', host: 'www.youtube.com',
 		/* ч.116: the health check covers the WHOLE resource — the page alone
 		 * passes while TSPU throttles the video stream (the user's exact
-		 * complaint: «страница открывается, а видео грузится вечность»). */
-		deep: [ 'https://i.ytimg.com/generate_204', 'https://redirector.googlevideo.com/' ] },
+		 * complaint: «страница открывается, а видео грузится вечность»).
+		 * ч.236: the redirector root edge-probe is REMOVED — edge-dominated
+		 * (a swallowed edge failed the matrix and churned repairs while
+		 * devices worked, the ч.235 class); the stream is measured by
+		 * probe_flow() — the REAL sustained stream. */
+		deep: [ 'https://i.ytimg.com/generate_204' ] },
 	discord:  { tag: 'dc', url: 'https://discord.com', host: 'discord.com' },
 	telegram: { tag: 'tg', url: 'https://web.telegram.org', host: 'web.telegram.org' },
 	general:  { tag: null, url: 'http://www.gstatic.com/generate_204', host: 'gstatic generate_204' }
@@ -1414,14 +1418,10 @@ function resource_matrix(res, meta) {
 	if (meta.deep != null && length(meta.deep)) {
 		for (let du in meta.deep) {
 			const dpr = probe_live(du);
-			/* the video-stream edge legitimately answers 404 on its root —
-			 * ANY HTTP answer there means the DPI let the host through
-			 * (caught live ч.116: the honest 404 failed the check and
-			 * churned repairs; decide by the code alone). */
-			const d_ok = (index(du, 'redirector.googlevideo.com') >= 0)
-				? !dpr.dead
-				: dpr.ok;
-			if (ok_all && !d_ok) {
+			/* ч.236: the redirector 404-tolerance special case is gone with
+			 * the edge-probe itself — every deep probe is judged by dpr.ok;
+			 * a dead edge can no longer fail the matrix while devices work. */
+			if (ok_all && !dpr.ok) {
 				ok_all = false;
 				if (dpr.dead)
 					dead_hit = true;

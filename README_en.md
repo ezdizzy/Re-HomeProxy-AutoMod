@@ -9,11 +9,6 @@
 A multi-core proxy platform for OpenWrt: VPN subscriptions, VPN-free DPI bypass, automation,
 monitoring and diagnostics — all from the LuCI web interface, all local on the router.
 
-> The project was previously known as **Re:HomeProxy AutoMod** (a fork of
-> [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy)). From the 3.0 branch on it
-> develops under the **Ravnex** name. The package and service keep the technical `homeproxy` name —
-> updates from previous releases apply in place, with no manual steps.
-
 [![Release](https://img.shields.io/github/v/release/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](../../releases/latest)
 [![Stars](https://img.shields.io/github/stars/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](../../stargazers)
 [![License](https://img.shields.io/github/license/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](LICENSE)
@@ -178,8 +173,9 @@ Full guides live in the **[wiki](../../wiki/Home)**:
 
 - **LAN only** — the app opens no WAN ports; local service listeners bind to loopback only.
 - **Everything local** — the UI loads no external CDN assets/fonts; charts are built client-side.
-- **Upstream-signed binaries** — cores and DPI engines are downloaded from their official releases
-  (signed apk keys); the app itself is built by GitHub CI from this repository.
+- **Own signed repository** — every component (cores, DPI engines, helpers) is delivered from our
+  feed, a mirror of the upstreams' official releases signed with our key; the app itself is built
+  by GitHub CI from this repository.
 
 ## Credits
 
@@ -187,7 +183,7 @@ The project builds on the work of the open-source community:
 
 - [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy) — the original LuCI app
 - [hiddify-core](https://github.com/hiddify/hiddify-core) · [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) · [sing-box](https://sing-box.sagernet.org) — proxy cores
-- [zapret2 (bol-van)](https://github.com/bol-van/zapret2) and [ByeDPI (hufrea)](https://github.com/hufrea/byedpi) — DPI bypass; OpenWrt packages by [1andrevich](https://github.com/1andrevich)
+- [zapret2 (bol-van)](https://github.com/bol-van/zapret2) and [ByeDPI (hufrea)](https://github.com/hufrea/byedpi) — DPI bypass
 - [Re:Filter](https://github.com/1andrevich/re-filter), [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) — routing lists
 - [StressOzz/Zapret-Manager](https://github.com/StressOzz/Zapret-Manager) — strategy catalog
 - [1andrevich/homeproxy-hiddify](https://github.com/1andrevich/homeproxy-hiddify) — the direct base of the Re:HomeProxy line

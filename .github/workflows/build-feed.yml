@@ -1,13 +1,25 @@
-name: Build Ravnex apk feed
+name: Build Ravnex package feed
 
-# §1.7 "own package repository": wraps the binaries that today install by
-# archive/manually (hiddify-core full + UPX compact, mosdns, probe_pool,
-# sni_sniffer) into SIGNED apk v3 packages with a signed index (packages.adb)
-# per OpenWrt arch label. Artifacts only by default; the feed branch is pushed
-# ONLY when you explicitly run this workflow with publish=true (the push is
-# YOUR action — the app reads it via raw.githubusercontent, no redirects).
+# §1.7 "own package repository" (Ф11 V2): builds our components (hiddify-core
+# full + UPX compact, mosdns, probe_pool, sni_sniffer) AND mirrors the foreign
+# components (sing-box-extended, sing-box-extended-lite, byedpi, zapret2 —
+# payloads rebuilt and signed with OUR key, name/version preserved) into
+# signed apk v3 packages + ipk packages + manifest.json per OpenWrt arch.
+#
+# Contract (session 150): the client NEVER resolves through repositories (no
+# repositories.d line — a foreign feed could out-version our components via
+# `apk upgrade`); it downloads the exact file named by manifest.json and
+# installs it explicitly. The feed branch is the raw.githubusercontent source.
+#
+# Publishing: scheduled runs (daily 03:00 UTC) publish automatically WITH a
+# change-guard — the feed branch is pushed only when versions.txt actually
+# changed (a rebuild of the same upstream versions is a no-op push). Manual
+# runs default to artifacts only; publish=true forces publication, force=true
+# republishes even when versions are unchanged.
 
 on:
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       series:
@@ -26,7 +38,12 @@ on:
         default: 'r1'
         type: string
       publish:
-        description: 'Push the built tree to the feed branch (raw.githubusercontent source)'
+        description: 'Push the built tree to the feed branch'
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: 'Republish even when versions.txt is unchanged'
         required: false
         default: false
         type: boolean
@@ -57,7 +74,7 @@ jobs:
         run: |
           sudo -E rm -rf /var/lib/man-db/auto-update
           sudo -E apt-get update -qq
-          sudo -E apt-get install -y build-essential curl libssl-dev meson ninja-build zip upx-ucl jq
+          sudo -E apt-get install -y build-essential curl libssl-dev meson ninja-build zip upx-ucl jq zstd
 
           pushd apk-tools
           meson setup build \
@@ -99,10 +116,26 @@ jobs:
         run: |
           fail=0
           idx=$(find feed -name packages.adb | wc -l)
-          pkgs=$(find feed -name '*.apk' | wc -l)
-          echo "indexes: $idx, packages: $pkgs"
+          apks=$(find feed -name '*.apk' | wc -l)
+          ipks=$(find feed -name '*.ipk' | wc -l)
+          mans=$(find feed -name manifest.json | wc -l)
+          echo "indexes: $idx, apk: $apks, ipk: $ipks, manifests: $mans"
           [ "$idx" -ge 1 ] || { echo "::error::no packages.adb built"; fail=1; }
-          [ "$pkgs" -ge 1 ] || { echo "::error::no packages built"; fail=1; }
+          [ "$apks" -ge 1 ] || { echo "::error::no apk packages built"; fail=1; }
+          [ "$ipks" -ge 1 ] || { echo "::error::no ipk packages built"; fail=1; }
+          [ "$mans" -ge 1 ] || { echo "::error::no manifest.json built"; fail=1; }
+          [ -s feed/versions.txt ] || { echo "::error::no versions.txt"; fail=1; }
+          # every manifest entry must point at files that exist with matching sha256
+          for m in $(find feed -name manifest.json); do
+            d=$(dirname "$m")
+            jq -r '.pkgs | to_entries[] | "\(.key)|\(.value.apk)|\(.value.apk_sha256)|\(.value.ipk)|\(.value.ipk_sha256)"' "$m" \
+            | while IFS='|' read -r name apkf sha_a ipkf sha_i; do
+                [ -f "$d/$apkf" ] || { echo "::error::$m: missing $apkf"; exit 1; }
+                [ -f "$d/$ipkf" ] || { echo "::error::$m: missing $ipkf"; exit 1; }
+                echo "$sha_a  $d/$apkf" | sha256sum -c - >/dev/null || { echo "::error::$m: apk sha256 mismatch $apkf"; exit 1; }
+                echo "$sha_i  $d/$ipkf" | sha256sum -c - >/dev/null || { echo "::error::$m: ipk sha256 mismatch $ipkf"; exit 1; }
+              done || fail=1
+          done
           if [ -n "${{ secrets.APK_SIGNING_KEY }}" ]; then
             # every index must carry at least one signature block
             for i in $(find feed -name packages.adb); do
@@ -114,13 +147,14 @@ jobs:
       - name: Upload feed tree (artifact)
         uses: actions/upload-artifact@v7
         with:
-          name: ravnex-apk-feed
+          name: ravnex-package-feed
           path: feed/
           include-hidden-files: true
 
-      - name: Publish to the feed branch (explicit request only)
-        if: ${{ inputs.publish == true }}
+      - name: Publish to the feed branch (change-guarded)
+        if: ${{ inputs.publish == true || github.event_name == 'schedule' }}
         run: |
+          SERIES="${{ inputs.series || '25.12' }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git clone --depth 1 --branch feed "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" feedrepo 2>/dev/null || {
@@ -128,12 +162,21 @@ jobs:
             cd feedrepo
             git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
             git checkout -b feed
+            cd ..
           }
+          # change-guard: push only when versions.txt actually changed (a
+          # rebuild of the same upstream versions must not churn the branch).
+          OLD=$(git -C feedrepo show feed:versions.txt 2>/dev/null || true)
+          NEW=$(cat feed/versions.txt)
+          if [ "$OLD" = "$NEW" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "versions.txt unchanged — feed not republished (force=true to override)"
+            exit 0
+          fi
           cd feedrepo
           find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
           cp -a "${GITHUB_WORKSPACE}/feed/." .
           git add -A
-          git commit -m "feed: rebuild $(date -u +%Y-%m-%dT%H:%MZ) (series ${{ inputs.series || '25.12' }})" || true
+          git commit -m "feed: rebuild $(date -u +%Y-%m-%dT%H:%MZ) (series $SERIES)" || true
           git push --force origin feed
-          echo "Feed published to the feed branch. Client URL:"
-          echo "https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/feed/releases/${{ inputs.series || '25.12' }}/\$(cat /etc/apk/arch)/packages.adb"
+          echo "Feed published to the feed branch. Client manifest URL:"
+          echo "https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/feed/releases/$SERIES/\$(cat /etc/openwrt_release | awk -F\\' '/DISTRIB_ARCH/{print \$2}')/manifest.json"

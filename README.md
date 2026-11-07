@@ -9,10 +9,6 @@
 Многоядерная прокси-платформа для OpenWrt: VPN-подписки, обход DPI без VPN, автоматизация,
 мониторинг и диагностика — всё из веб-интерфейса LuCI, всё локально на роутере.
 
-> Ранее проект назывался **Re:HomeProxy AutoMod** (форк [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy)).
-> Начиная с ветки 3.0 проект развивается под именем **Ravnex**. Пакет и служба сохраняют техническое имя
-> `homeproxy` — обновления с прошлых версий проходят на месте, без ручных шагов.
-
 [![Release](https://img.shields.io/github/v/release/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](../../releases/latest)
 [![Stars](https://img.shields.io/github/stars/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](../../stargazers)
 [![License](https://img.shields.io/github/license/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](LICENSE)
@@ -175,8 +171,9 @@ Ravnex после установки новой версии.
 - **Только LAN** — приложение не открывает портов в WAN; локальные служебные слушатели работают
   только на loopback.
 - **Всё локально** — интерфейс не обращается к внешним CDN/шрифтам; графики строятся на клиенте.
-- **Подписанные бинарники апстрима** — ядра и DPI-движки скачиваются из официальных релизов
-  (подписанные apk-ключи); сборка приложения — GitHub CI этого репозитория.
+- **Свой подписанный репозиторий** — все компоненты (ядра, DPI-движки, помощники) доставляются
+  из нашего фида — зеркала официальных релизов апстримов с нашей подписью; сборка приложения —
+  GitHub CI этого репозитория.
 
 ## Благодарности
 
@@ -184,7 +181,7 @@ Ravnex после установки новой версии.
 
 - [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy) — исходное LuCI-приложение
 - [hiddify-core](https://github.com/hiddify/hiddify-core) · [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) · [sing-box](https://sing-box.sagernet.org) — прокси-ядра
-- [zapret2 (bol-van)](https://github.com/bol-van/zapret2) и [ByeDPI (hufrea)](https://github.com/hufrea/byedpi) — обход DPI; пакеты OpenWrt — [1andrevich](https://github.com/1andrevich)
+- [zapret2 (bol-van)](https://github.com/bol-van/zapret2) и [ByeDPI (hufrea)](https://github.com/hufrea/byedpi) — обход DPI
 - [Re:Filter](https://github.com/1andrevich/re-filter), [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) — списки маршрутизации
 - [StressOzz/Zapret-Manager](https://github.com/StressOzz/Zapret-Manager) — каталог стратегий
 - [1andrevich/homeproxy-hiddify](https://github.com/1andrevich/homeproxy-hiddify) — прямая основа ветки Re:HomeProxy

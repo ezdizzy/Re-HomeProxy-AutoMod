@@ -117,7 +117,11 @@ TMP=/tmp/zapret_test.$$
 # передаёт tg=IP, а тестер перебирает ИМЕННО этот список: оставленный здесь tg
 # давал в каждом результате строку tg с пустым IP и причиной «dns» + вердикт
 # unmeasured/dead для telegram. Ручной тест tg жив: zapret_test.sh "<args>" "tg=1.2.3.4".
-HOSTS="yt|YouTube|redirector.googlevideo.com dc|Discord|discord.com st|Speedtest|www.speedtest.net"
+	# ч.236: yt baseline host = www.youtube.com — the SAME host the strategy
+	# probes measure (ytp); the free-pass verdict must be decided on the
+	# measured host, not on redirector (removed from the sweep entirely this
+	# revision — ytr deep probe dropped, baseline aligned).
+	HOSTS="yt|YouTube|www.youtube.com dc|Discord|discord.com st|Speedtest|www.speedtest.net"
 
 # --deep content probes (ч.109): a handshake passing ≠ the resource working.
 # Each resource gets real fetches through the SAME temp queue — YouTube is
@@ -134,15 +138,18 @@ HOSTS="yt|YouTube|redirector.googlevideo.com dc|Discord|discord.com st|Speedtest
 # video-stream download (a ranged 4 MB of a live videoplayback URL from
 # yt_stream_probe.uc) when the upstream hands one out (often bot-gated —
 # then the probe is honestly absent).
-# id|url  (the yt edge reuses the yt handshake host/IP; id ytr = edge probe;
-# id ytv = sustained-flow throughput; id yts = real video stream;
+# id|url  (id ytv = sustained-flow throughput; id yts = real video stream;
+# ч.236: ytr/redirector removed — it rode the pinned yt handshake edge
+# (edge-dominated, not a strategy signal: fails everywhere including
+# baseline on a swallowed edge), devices don't traverse it during playback
+# and the dead-host/edge machinery already reports the diagnostic;
 # ids with the "f" suffix = the SAME page probe under a browser-like
 # fingerprint profile (audit 90) — bare-curl vs browser verdicts differing
 # is client filtering / WAF, not DPI; bodies are saved for diag_core)
 DEEP_PROBES=""
 YTV_URLS=""
 if [ "$DEEP" = "1" ]; then
-	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytr|https://redirector.googlevideo.com/ ytv|BATCH tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/ ytpf|https://www.youtube.com/ tgpf|https://web.telegram.org/ dcpf|https://discord.com/ stpf|https://www.speedtest.net/"
+	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytv|BATCH tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/ ytpf|https://www.youtube.com/ tgpf|https://web.telegram.org/ dcpf|https://discord.com/ stpf|https://www.speedtest.net/"
 	if [ -f /etc/homeproxy/resources/yt_probe_ids.txt ]; then
 		# Ф6.4: cap the batch at 12 URLs (6 videos × 2 thumbs) — the ≥8-pass
 		# bar stays reachable while the WORST-CASE window (every fetch timing
@@ -293,27 +300,32 @@ if [ "$DEEP" = "1" ]; then
 		esac
 		[ -s "$TMP/ip_$BT" ] || continue
 		dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
-	if [ "$did" = "ytr" ]; then
-		cp "$TMP/ip_yt" "$TMP/dip_$did" 2>/dev/null
-	elif [ "$did" = "ytv" ]; then
+	if [ "$did" = "ytv" ]; then
 		# the sustained-flow batch rides the SAME host+IP as the yti probe
 		cp "$TMP/dip_yti" "$TMP/dip_$did" 2>/dev/null
 		echo "i.ytimg.com" > "$TMP/dhost_$did"
 	elif [ "$did" = "yts2" ]; then
-		# Ф6.4: the SECOND real-stream edge — a DIFFERENT public A of the same
-		# host (the user's live report: videos live on different edges; one
-		# edge lied). Falls back to the yts IP when the resolver has one A.
-		nslookup "redirector.googlevideo.com" 2>/dev/null \
+		# Ф6.4/ч.236: the SECOND real-stream edge — a DIFFERENT public A of the
+		# SAME videoplayback host the yts probe rides (the user's live report:
+		# videos live on different edges; one edge lied). ч.236 bugfix: the old
+		# code resolved redirector.googlevideo.com and wrote it as dhost —
+		# curl --resolve matches the URL host, so the pin never applied and
+		# yts2 silently duplicated yts over plain DNS rotation. Picks the
+		# first A that DIFFERS from the yts edge; falls back to the yts IP
+		# when the resolver has a single A (same edge, honest note upstream).
+		dh2=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
+		nslookup "$dh2" 2>/dev/null \
 			| grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
 			| grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' \
 			| sort -u > "$TMP/yt2_ips"
-		nyts=$(wc -l < "$TMP/yt2_ips" 2>/dev/null)
-		if [ "$nyts" -ge 2 ]; then
-			sed -n '2p' "$TMP/yt2_ips" > "$TMP/dip_$did"
+		ytsip=$(cat "$TMP/dip_yts" 2>/dev/null)
+		pick=$(grep -v "^${ytsip}$" "$TMP/yt2_ips" 2>/dev/null | head -1)
+		if [ -n "$pick" ]; then
+			echo "$pick" > "$TMP/dip_$did"
 		else
 			cp "$TMP/dip_yts" "$TMP/dip_$did" 2>/dev/null
 		fi
-		echo "redirector.googlevideo.com" > "$TMP/dhost_$did"
+		echo "$dh2" > "$TMP/dhost_$did"
 	elif [ "${did%f}" != "$did" ]; then
 		# Ф6.4 fingerprint variant: the SAME page under the browser-like
 		# profile — the base id's resolution is REUSED (no second DNS hit).
@@ -358,11 +370,16 @@ fi
 # UDP has no probe tool on this router (no nc -u, no socat) and stays honestly
 # unprobed (audit 60/91 — service_profiles.uc carries that component).
 if [ "$QUIC" = "1" ]; then
-	QIP=""
-	for kv in $IPS_ARG; do
-		case "$kv" in yt=*) QIP=${kv#yt=} ;; esac
-	done
-	[ -z "$QIP" ] && fail "quic contour needs the yt=ip argument"
+	# ч.236: the QUIC target is resolved HERE as redirector.googlevideo.com —
+	# SNI and IP must be the SAME host (the video-edge UDP class, the one
+	# meaningful QUIC measurement). The yt tag's IP is now www.youtube.com
+	# (baseline aligned this revision) and must NOT feed the QUIC probe —
+	# the old yt=-argument pair would send SNI=redirector to a www edge.
+	QIP=$(nslookup redirector.googlevideo.com 2>/dev/null \
+		| grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+		| grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' \
+		| head -1)
+	[ -z "$QIP" ] && fail "quic contour could not resolve the video edge (redirector.googlevideo.com)"
 	[ -x /usr/bin/probe_pool ] || { echo '{"ok":0,"error":"probe_pool not installed"}'; exit 0; }
 	QSTRAT="false"
 	[ "$BASELINE" != "1" ] && [ -n "$(printf '%s' "$STRAT" | tr -d '[:space:]')" ] && QSTRAT="true"
@@ -700,7 +717,7 @@ fi
 			firsth=0
 			printf '["%s","%s","%s"]' "$tag" "$label" "$host"
 		done
-		printf '],"owners":{"yt":["ytp","ytpf","yti","ytr","ytv","yts","yts2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf"],"st":["stp","stpf"]}}\n'
+		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf"],"st":["stp","stpf"]}}\n'
 	} > "$TMP/manifest.json"
 	ucode /etc/homeproxy/scripts/zapret_deep_build.uc < "$TMP/manifest.json"
 else

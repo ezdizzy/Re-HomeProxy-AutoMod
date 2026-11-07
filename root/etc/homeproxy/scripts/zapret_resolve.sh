@@ -46,7 +46,10 @@
 # DNS-таймауты-шум (ч.233). resource_verdict на пустом наборе честно даёт
 # no_candidate → оптимизатор показывает via_node, как и раньше. Ручной тестер
 # (zapret_test.sh без аргументов) сохраняет tg — точечная диагностика жива.
-HOSTS="yt|redirector.googlevideo.com dc|discord.com st|www.speedtest.net"
+# ч.236: yt host = www.youtube.com — ТОТ ЖЕ хост, который меряют стратегии
+# (ytp); free-pass-вердикт обязан определяться на измеряемом хосте. Ушёл
+# redirector.googlevideo.com вместе с ytr (краевой лотерейный шум ч.235/236).
+HOSTS="yt|www.youtube.com dc|discord.com st|www.speedtest.net"
 
 TMP=/tmp/zapret_resolve.$$
 mkdir -p "$TMP" 2>/dev/null

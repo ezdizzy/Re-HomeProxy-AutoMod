@@ -13,7 +13,7 @@
  * Вход (stdin, одна JSON-строка):
  *   { tmp:   "/tmp/zapret_test.NNN",
  *     hosts: [ ["tag","label","host"], … ],
- *     owners:{ yt:["ytp","ytpf","yti","ytr","ytv","yts"], tg:[…], … } }
+ *     owners:{ yt:["ytp","ytpf","yti","ytv","yts"], tg:[…], … } }
  *
  * Читает (в каталоге tmp):
  *   r_<tag>  — "http_code time_appconnect redirect_url curl_exit" (3 или 4

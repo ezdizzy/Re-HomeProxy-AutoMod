@@ -5743,7 +5743,11 @@ const methods = {
 			if (!(resource in ['youtube', 'discord', 'telegram', 'general']))
 				return { result: false, error: 'invalid resource' };
 			const targets = {
-				youtube:  [ 'https://www.youtube.com/', 'https://i.ytimg.com/generate_204', 'https://redirector.googlevideo.com/' ],
+				/* ч.236: the redirector root edge-probe is REMOVED —
+				 * edge-dominated (a swallowed edge failed the check while
+				 * devices worked, the ч.235 class). The stream is covered by
+				 * the sustained-flow and real-stream probes below. */
+				youtube:  [ 'https://www.youtube.com/', 'https://i.ytimg.com/generate_204' ],
 				discord:  [ 'https://discord.com/' ],
 				telegram: [ 'https://web.telegram.org/' ],
 				general:  [ 'http://www.gstatic.com/generate_204' ]
@@ -5767,24 +5771,20 @@ const methods = {
 				let pr = probe_once();
 				/* ч.231: one honest retry — a single failed connect is
 				 * bursty TSPU/engine-restart noise, not a path property
-				 * (the runner does the same in the verify battery). */
-				let edge = (index(url, 'redirector.googlevideo.com') >= 0);
-				let cok = edge
-					? (pr.code != '000')
-					: (pr.rc === 0 && int(pr.code) >= 200 && int(pr.code) < 400 &&
-						(int(pr.code) === 204 || pr.bytes > 0));
+				 * (the runner does the same in the verify battery).
+				 * ч.236: the redirector edge special case is gone with the
+				 * edge-probe itself — every probe is judged by the content
+				 * rule below. */
+				let cok = (pr.rc === 0 && int(pr.code) >= 200 && int(pr.code) < 400 &&
+					(int(pr.code) === 204 || pr.bytes > 0));
 				if (!cok) {
 					sleep(2000);
 					pr = probe_once();
-					cok = edge
-						? (pr.code != '000')
-						: (pr.rc === 0 && int(pr.code) >= 200 && int(pr.code) < 400 &&
-							(int(pr.code) === 204 || pr.bytes > 0));
+					cok = (pr.rc === 0 && int(pr.code) >= 200 && int(pr.code) < 400 &&
+						(int(pr.code) === 204 || pr.bytes > 0));
 				}
 				/* pass = HTTP answered within the window AND (for content
-				 * probes) some body came through; 204 carries no body. The
-				 * video-stream edge legitimately answers 404 on its root —
-				 * ANY HTTP answer there means the DPI let the host through. */
+				 * probes) some body came through; 204 carries no body. */
 				push(probes, { url: url, code: pr.code, tsec: pr.tsec, bytes: pr.bytes, ok: cok });
 			}
 			let ok = 1;

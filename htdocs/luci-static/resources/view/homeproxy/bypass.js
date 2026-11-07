@@ -888,9 +888,10 @@ return view.extend({
 				flowWhen = aps.probe.ts
 					? new Date(Number(aps.probe.ts) * 1000).toLocaleString() : '';
 			} else if (res && res.strategies && res.strategies.length &&
-				Number(res.strategies[0].stream || 0) > 0) {
-				flow = Number(res.strategies[0].stream);
-				flowStart = Number(res.strategies[0].start_ms || 0);
+				Number((res.strategies.filter(function(x) { return x.name !== 'current (applied)'; })[0] || {}).stream || 0) > 0) {
+				const bf = res.strategies.filter(function(x) { return x.name !== 'current (applied)'; })[0];
+				flow = Number(bf.stream);
+				flowStart = Number(bf.start_ms || 0);
 				flowWhen = res.ts
 					? new Date(Number(res.ts) * 1000).toLocaleString() : '';
 			}
@@ -924,14 +925,17 @@ return view.extend({
 					E('span', { title: z.strategy },
 						[ (z.strategy_name || shortStrategy(z.strategy, 70)) ])
 				]));
-			if (res && res.strategies && res.strategies.length &&
-				Number(res.strategies[0].ok || 0) > 0) {
-				const b = res.strategies[0];
-				dpiQuality.appendChild(E('div', { 'class': 'wiz-note' }, [
-					_('Last fuzz winner: %s (flow %s).').format(b.name || _('custom args'),
-						(Number(b.stream || 0) > 0)
-							? (Math.round(b.stream / 1024) + ' KB/s') : _('n/a'))
-				]));
+			if (res && res.strategies && res.strategies.length) {
+				/* ч.236: exclude the «current (applied)» row — it is prepended
+				 * at [0] with 0/0 (quick battery does not measure it), which
+				 * hid the real winner line entirely. */
+				const b = res.strategies.filter(function(x) { return x.name !== 'current (applied)'; })[0];
+				if (b && Number(b.ok || 0) > 0)
+					dpiQuality.appendChild(E('div', { 'class': 'wiz-note' }, [
+						_('Last fuzz winner: %s (flow %s).').format(b.name || _('custom args'),
+							(Number(b.stream || 0) > 0)
+								? (Math.round(b.stream / 1024) + ' KB/s') : _('n/a'))
+					]));
 			}
 			dpiQuality.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:2px 0 0 0; opacity:.8' },
 				[ _('Every number here was measured through your real path. The flow speed refreshes on every auto-pilot health check; without the auto-pilot it comes from the last fuzz ranking.') ]));
@@ -1846,7 +1850,11 @@ return view.extend({
 				_('Baseline (no desync):') + ' ' + blParts.join(' · ') +
 				(blFree.length ? ' — ' + _('%s pass without a strategy (free pass, not measured).').format(blFree.join(', ')) : '')
 			]));
-			const best = res.strategies[0];
+			/* ч.236: same exclusion as the ranking table (ч.232) — «current
+			 * (applied)» is prepended at [0] by the builder and holds 0/0
+			 * (quick battery does not measure it by design), so taking [0]
+			 * verbatim showed «No strategy passes…» over a green 3/3 table. */
+			const best = res.strategies.filter(function(x) { return x.name !== 'current (applied)'; })[0];
 			if (best && best.ok > 0)
 				box.appendChild(E('div', { 'class': 'wiz-note', style: 'font-weight:600' },
 					[ _('Recommended: %s — %d of %d distinguishing hosts pass (avg %d ms)').format(

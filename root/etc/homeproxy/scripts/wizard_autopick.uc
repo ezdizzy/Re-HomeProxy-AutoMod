@@ -29,8 +29,9 @@
  *      resource's OWN deep verdict (page/CDN/edge/REAL video-stream
  *      throughput, differential-only) ranks first — deep-verified above
  *      untested, deep-failed below — then the host's minimal TLS, then
- *      the global score. "general" takes the global ranking head
- *      (strategies[0]).
+ *      the global score. "general" takes the ranking head — the first
+ *      entry with ok > 0 (the prepended «current (applied)» row holds
+ *      0/0 and is skipped by that guard; ч.236).
  *   3. RULE — when set_rule, hand the resource rule to the EXISTING
  *      wizard_preset_apply RPC through ubus (its guards — one-rule-per-source,
  *      main_is_direct, mode check — stay the single implementation). Never
@@ -91,15 +92,16 @@ const NFQWS = '/opt/zapret2/nfq2/nfqws2';
 
 const RESOURCES = {
 	youtube:  { tag: 'yt', host: 'www.youtube.com',
-		/* ч.109 deep verify: page (content) + thumbnail CDN + the video-stream
-		 * edge — «сайт открывается» не значит «ресурс работает целиком»
-		 * (карточки, превью и видео идут с разных CDN). The edge root
-		 * legitimately answers 404 — ANY HTTP answer is a pass there.
-		 * ч.116 adds the REAL video-stream throughput probe (a ranged 4 MB
-		 * download of a live videoplayback URL, measured in bytes/second) —
-		 * TSPU lets the handshake through and throttles the sustained
-		 * stream, which no handshake or tiny fetch can see. */
-		deep: [ 'https://www.youtube.com/', 'https://i.ytimg.com/generate_204', 'https://redirector.googlevideo.com/' ] },
+		/* ч.109 deep verify: page (content) + thumbnail CDN — «сайт открывается»
+		 * не значит «ресурс работает целиком» (карточки, превью и видео идут
+		 * с разных CDN). ч.116 adds the REAL video-stream throughput probe
+		 * (a ranged 4 MB download of a live videoplayback URL, measured in
+		 * bytes/second) — TSPU lets the handshake through and throttles the
+		 * sustained stream, which no handshake or tiny fetch can see.
+		 * ч.236: the redirector root edge-probe is REMOVED — edge-dominated
+		 * (a swallowed edge failed verify and churned rollbacks while devices
+		 * worked, the ч.235 class); the stream is covered by yt_flow_probe. */
+		deep: [ 'https://www.youtube.com/', 'https://i.ytimg.com/generate_204' ] },
 	discord:  { tag: 'dc', host: 'discord.com',
 		deep: [ 'https://discord.com/' ] },
 	telegram: { tag: 'tg', host: 'web.telegram.org',
@@ -303,8 +305,8 @@ function probe_battery(meta) {
 	/* for-in over an array yields the ELEMENTS (lesson 20/31) */
 	for (let url in urls) {
 		const pr = probe_live(url, url);
-		if (index('' + url, 'redirector.googlevideo.com') >= 0)
-			pr.ok = (pr.code != '000' && pr.rc == 0);
+		/* ч.236: the redirector 404-tolerance special case is gone with the
+		 * edge-probe itself — every probe is judged by pr.ok. */
 		if (pr.ok)
 			ok_n++;
 		push(items, { url: url, code: pr.code, ok: pr.ok });
@@ -1043,9 +1045,8 @@ function main() {
 			sleep(2000);
 			pr = probe_live(url, url);
 		}
-		/* the video-stream edge: ANY HTTP answer = the DPI let it through */
-		if (index('' + url, 'redirector.googlevideo.com') >= 0)
-			pr.ok = (pr.code != '000' && pr.rc == 0);
+		/* ч.236: the redirector 404-tolerance special case is gone with the
+		 * edge-probe itself — every probe is judged by pr.ok. */
 		push(res.verify_multi, pr);
 		if (pr.ok) deep_ok++;
 	}
