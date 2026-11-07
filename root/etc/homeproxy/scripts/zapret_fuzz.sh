@@ -30,6 +30,11 @@ RESULT="$RUN/zapret_fuzz_result.json"
 HISTORY="$RUN/zapret_fuzz_history.json"
 CAND=/etc/homeproxy/zapret_candidates.json
 TMP=/tmp/zapret_fuzz.$$
+# ч.235 (решение пользователя): load average в статус и результат —
+# ретроспективно отличает «хост умер» от «роутер задыхался» (прод-nfqws2 +
+# кандидат + пробы одновременно). Каждый значимый этап пишет сэмпл 1-min LA
+# в $TMP/load.tsv; финальный merge кладёт карту в result.loads.
+loadmark() { mkdir -p "$TMP" 2>/dev/null; printf '%s %s\n' "$1" "$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)" >> "$TMP/load.tsv" 2>/dev/null; return 0; }
 
 [ -f "$CAND" ] || { echo '{"running":false,"done":0,"total":0,"error":"no candidates file"}' > "$STATUS"; exit 0; }
 command -v ucode >/dev/null 2>&1 || { echo '{"running":false,"error":"ucode missing"}' > "$STATUS"; exit 0; }
@@ -57,6 +62,31 @@ trap release_resmgr EXIT INT TERM
 # the other's probes). The acquired queue is now the ACTUAL test queue.
 TEST_QNUM="$RQNUM"
 export TEST_QNUM
+# ч.235: ОДИН свип за раз — настоящий мьютекс через resmgr, а не статус-файл.
+# Живой факт 00:19-00:42: два свипа шли параллельно и затирали result/history
+# (статус-гвард RPC читает файл, который мог протухнуть или быть сброшен
+# вручную). Пул даёт каждому запуску СВОЮ очередь (209-212), поэтому второй
+# свип легально получил бы 210 при занятой 209 — эта проверка закрывает лаз.
+# Строгая hold старше 5400 с = мёртвый свип (зависший после kill -9) —
+# освобождается на месте, живая — честный отказ.
+_conflict=$(ucode -e '
+import {status, release} from "/etc/homeproxy/scripts/test_resmgr.uc";
+let st = status();
+let found = "";
+for (let q in keys(st.queues)) {
+	if (st.queues[q] == null || st.queues[q].task !== "fuzz") continue;
+	if (q == "'$RQNUM'") continue;
+	const age = time() - int(st.queues[q].ts || 0);
+	if (age > 5400) { release(q, "fuzz"); continue; }
+	found = "queue " + q + ", hold age " + age + "s";
+}
+print(found);
+' 2>/dev/null)
+if [ -n "$_conflict" ]; then
+	ucode -e "import {release} from '/etc/homeproxy/scripts/test_resmgr.uc'; release($RQNUM, 'fuzz');" >/dev/null 2>&1
+	echo '{"running":false,"done":0,"total":0,"error":"another fuzz sweep is already running ('$_conflict') - one sweep at a time"}' > "$STATUS"
+	exit 0
+fi
 
 # One ucode pass → "name<TAB>group<TAB>args" lines (TAB cannot occur inside
 # any field). ч.129: the GROUP rides along — the deep battery selection must
@@ -108,6 +138,7 @@ YIP=$(printf '%s\n' "$IPS" | tr ' ' '\n' | sed -n 's/^yt=//p' | head -n 1)
 if [ -n "$YIP" ] && [ -x /usr/bin/probe_pool ]; then
 	sh /etc/homeproxy/scripts/zapret_test.sh --quic "" "yt=$YIP" 2>/dev/null > "$TMP/quic_base.json"
 	grep -q '^{"ok"' "$TMP/quic_base.json" 2>/dev/null || rm -f "$TMP/quic_base.json"
+	loadmark quic_base
 fi
 
 mkdir -p "$TMP"
@@ -121,9 +152,57 @@ printf '%s\n' "$PAIRS" > "$TMP/pairs.tsv"
 # (`^--[a-z]` never matches a string starting with a quote).
 printf '%s' "$CURRENT_OPTS" | tr -d "'" > "$TMP/current_opts.txt"
 
+# ч.235 (решение пользователя «Резолв+retry»): свежие края против чёрных дыр
+# TSPU. Эксперимент (w24_matrix, живой роутер) доказал: свип долбит ОДИН
+# закреплённый на старте IP (209.85.233.198) — TSPU глотает ВСЁ на нём (все
+# 16 стратегий + оба контроля таймаутятся), а устройства живут на свежих
+# краях DNS (та же составная на 142.251.20.100 проходит за 207 мс curl +
+# 211 мс utls-chrome). Отсюда: (1) резолв перед каждой фазой, (2) retry
+# прохода со свежим краем, если ЛЮБОЙ тег вернул таймаут (сигнатура
+# мёртвого края).
+reresolve() {
+	_R2=$(sh /etc/homeproxy/scripts/zapret_resolve.sh 2>/dev/null)
+	[ -n "$_R2" ] || return 0
+	printf '%s' "$_R2" > "$TMP/resolve.json" 2>/dev/null
+	_RIPS=$(printf '%s' "$_R2" | ucode -e '
+import {readfile} from "fs";
+let j = null;
+try { j = json(readfile("/dev/stdin") || ""); } catch (e) { j = null; }
+if (!j || j.ok != 1) exit(1);
+let parts = [];
+for (let k in keys(j.ips || {}))
+	if (j.ips[k]) push(parts, k + "=" + j.ips[k]);
+print(join(" ", parts));
+' 2>/dev/null)
+	[ -n "$_RIPS" ] && IPS="$_RIPS"
+	return 0
+}
+# retry_probe <resultfile> <tester args...>: если в результате есть тег с
+# таймаутом — свежий резолв + ОДИН повтор; повторный результат заменяет
+# исходный (мажорность раундов дальше всё равно работает по фактам).
+retry_probe() {
+	local OUT="$1"; shift
+	local NEED=$(ucode -e '
+import {readfile} from "fs";
+let j = null;
+try { j = json(readfile("'$1'") || ""); } catch (e) { j = null; }
+let to = false;
+if (j != null && type(j.results) == "array")
+	for (let r in j.results)
+		if (type(r) == "object" && r.ok != 1 && ("" + r.reason) == "timeout") { to = true; break; }
+print(to ? "RETRY" : "");
+' 2>/dev/null)
+	[ "$NEED" = "RETRY" ] || return 0
+	reresolve
+	sh /etc/homeproxy/scripts/zapret_test.sh "$@" 2>/dev/null > "$OUT"
+	return 0
+}
+
 # One BASELINE pass (no desync): hosts that pass without a strategy are not
 # DPI-blocked and cannot credit any strategy. "" = no strategy needed there.
 sh /etc/homeproxy/scripts/zapret_test.sh --baseline "" "$IPS" 2>/dev/null > "$TMP/baseline.json"
+retry_probe "$TMP/baseline.json" --baseline "" "$IPS"
+loadmark baseline
 
 # Honest probe mode (skuid|fallback) — the tester reports it in every result
 # JSON; the fallback (no isolated uid) touches only router-origin root dials
@@ -141,8 +220,11 @@ while IFS='	' read -r NAME STRAT; do
 	[ -z "$(printf '%s' "$STRAT" | tr -d '[:space:]')" ] && continue
 	IDX=$((IDX + 1))
 	for R in $(seq 1 "$ROUNDS"); do
-		echo "{\"running\":true,\"done\":$DONE,\"total\":$TOTAL,\"rounds\":$ROUNDS,\"current\":\"$NAME (round $R/$ROUNDS)\"}" > "$STATUS"
+		L1=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null); [ -n "$L1" ] || L1=0
+		echo "{\"running\":true,\"done\":$DONE,\"total\":$TOTAL,\"rounds\":$ROUNDS,\"load\":$L1,\"current\":\"$NAME (round $R/$ROUNDS)\"}" > "$STATUS"
 		sh /etc/homeproxy/scripts/zapret_test.sh "$STRAT" "$IPS" 2>/dev/null > "$TMP/c${IDX}_${R}.json"
+		retry_probe "$TMP/c${IDX}_${R}.json" "$STRAT" "$IPS"
+		loadmark "c${IDX}_${R}"
 	done
 	DONE=$((DONE + 1))
 done < "$TMP/pairs.tsv"
@@ -181,15 +263,25 @@ const parse = (path) => {
 	try { return json(readfile(path) || ""); } catch (e) { return null; }
 };
 
-/* baseline: tag → { ok, tls } (hosts passing WITHOUT desync = non-distinguishing) */
+/* baseline: tag → { ok, uok, tls } (hosts passing WITHOUT desync = non-
+ * distinguishing; uok = the browser-Hello class verdict, false when the
+ * probe class was not measured — conservative NOT free). */
 const bres = {};
 const bj = parse(TMP + "/baseline.json");
 if (bj && type(bj.results) == "array")
 	for (let r in bj.results)
 		if (type(r) == "object" && r.tag)
-			bres[r.tag] = { ok: (r.ok == 1), tls: r.tls };
+			bres[r.tag] = { ok: (r.ok == 1), uok: (r.uok == 1), tls: r.tls };
 
 const strategies = [];
+/* ч.232: the sweep carries the BROWSER ClientHello probe class (utls_probe)
+ * when the binary is installed — detected from the round JSONs. The ranking
+ * policy lives HERE (one place): a host "passes" only when BOTH classes pass
+ * (curl AND browser Hello), because TSPU decides by the client fingerprint
+ * and the curl Hello is not a browser Hello (live fact 2026-11-07: Default passed
+ * every router probe and failed on the phone). No binary → curl-only sweep,
+ * the honest status quo. */
+let u_meas = false;
 for (let n = 0; n < length(pairs); n++) {
 	const idx = n + 1;
 	/* collect per-host across rounds (results keep the fixed HOSTS order).
@@ -197,12 +289,14 @@ for (let n = 0; n < length(pairs); n++) {
 	 * jitter) instead of the best single measurement — the round samples are
 	 * kept per tag and reduced by strategy_lab.samples_stats (ONE stats
 	 * implementation for the whole project). */
-	let per = null;          /* tag → {label, host, ip, votes, tls_min, last_reason, times, oks} */
+	let per = null;          /* tag → {label, host, ip, votes, tls_min, last_reason, times, oks, uoks, utls_min} */
 	let order = [];
 	let total = 0;
 	for (let rd = 1; rd <= ROUNDS; rd++) {
 		const j = parse(TMP + "/c" + idx + "_" + rd + ".json");
 		if (!j || type(j.results) != "array") continue;
+		if (j.utls_probe == true)
+			u_meas = true;
 		if (!total) total = int(j.total) || 0;
 		if (int(j.total) > total) total = int(j.total);
 		if (!per) {
@@ -211,15 +305,20 @@ for (let n = 0; n < length(pairs); n++) {
 				if (type(r) == "object" && r.tag) {
 					push(order, r.tag);
 					per[r.tag] = { label: r.label || r.tag, host: r.host || "", ip: r.ip || "",
-					               votes: 0, tls_min: 0, last_reason: "", times: [], oks: [] };
+					               votes: 0, tls_min: 0, last_reason: "", times: [], oks: [],
+					               uoks: [], utls_min: 0, last_u_reason: "" };
 				}
 		}
 		for (let r in j.results) {
 			if (type(r) != "object" || !r.tag || !per[r.tag]) continue;
 			const tls = ("" + r.tls) * 1.0;
 			const oksv = (r.ok == 1) ? 1 : 0;
+			/* uok: null = the probe class was not measured (no binary) —
+			 * treated as a pass so the curl-only behavior stays intact. */
+			const uokv = (r.uok == null) ? 1 : ((r.uok == 1) ? 1 : 0);
 			push(per[r.tag].times, tls * 1000.0);
 			push(per[r.tag].oks, oksv);
+			push(per[r.tag].uoks, uokv);
 			if (oksv == 1) {
 				per[r.tag].votes++;
 				const ms = int(tls * 1000);
@@ -228,14 +327,31 @@ for (let n = 0; n < length(pairs); n++) {
 			} else {
 				per[r.tag].last_reason = r.reason || "fail";
 			}
+			if (uokv == 1) {
+				const ums = int(r.utls_ms || 0);
+				if (ums > 0 && (per[r.tag].utls_min == 0 || ums < per[r.tag].utls_min))
+					per[r.tag].utls_min = ums;
+			} else {
+				per[r.tag].last_u_reason = (r.u_err != null) ? ("" + r.u_err) : "u_fail";
+			}
 		}
 	}
 	if (!total) { total = length(order); }
 	let hosts = [], ok = 0, dist_ok = 0, dist_total = 0, tls_sum = 0, tls_n = 0;
 	for (let t in order) {
 		const p = per[t];
-		const host_ok = (p.votes >= MAJ);
-		const dist = (bres[t] == null || !bres[t].ok);
+		let uvotes = 0;
+		for (let u in p.uoks)
+			uvotes += u;
+		/* combined pass: curl majority AND (when measured) browser-Hello
+		 * majority; without the binary — curl-only, as before. */
+		const host_ok = (p.votes >= MAJ) && (!u_meas || uvotes >= MAJ);
+		/* free-pass: the RAW pass of EITHER class cannot credit a strategy.
+		 * The browser baseline verdict (uok) is known only when the probe
+		 * class was measured; unknown → conservative NOT free. */
+		const free_curl = (bres[t] != null && bres[t].ok == true);
+		const free_browser = (bres[t] != null && bres[t].uok == true);
+		const dist = !free_curl && !free_browser;
 		/* Ф6.4 (аудит 66): the series stats per host — ONE implementation
 		 * (strategy_lab.samples_stats); tls_ms keeps the historical min for
 		 * the compatibility readers, median_ms is the honest rating value.
@@ -255,6 +371,9 @@ for (let n = 0; n < length(pairs); n++) {
 		              median_ms: int(sst.median), p90_ms: int(sst.p90),
 		              jitter_ms: int(sst.jitter), ok_rate: sst.ok_rate,
 		              samples: rr,
+		              uok: u_meas ? (uvotes >= MAJ) : null,
+		              utls_ms: (u_meas && uvotes >= MAJ) ? p.utls_min : 0,
+		              u_reason: (!u_meas || uvotes >= MAJ) ? "" : p.last_u_reason,
 		              reason: host_ok ? "" : (p.last_reason || "fail"), dist: dist });
 	}
 	/* score: distinguishing successes weigh 1000, already-free hosts 100,
@@ -388,7 +507,7 @@ if (length(cur_args) > 3 && match(cur_args, /^--[a-z]/)) {
  * array, and the old order (write first, append after) made the merge
  * silently drop the measured verdict of the current strategy forever. */
 writefile(TMP + "/rank.json", sprintf("%.J\n", { strategies: strategies, ts: now,
-	cur_measured: cur_measured }));
+	cur_measured: cur_measured, utls_probe: u_meas, utls_fp: u_meas ? "chrome" : "" }));
 /* ч.129 FIX (🔴 lesson 20/31 hit the ч.123 code): for-in over an ARRAY
  * yields ELEMENTS — the old `for (let i in covered) { idx: covered[i] … }`
  * read covered[element] (an off-by-one NEIGHBOUR as the deep-verdict owner,
@@ -438,8 +557,10 @@ deep_pass() {
 		i=$((i + 1))
 		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
-		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
+		DL1=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null); [ -n "$DL1" ] || DL1=0
+		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","load":'$DL1',"done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
 		YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+		loadmark "deep${i}_p$2"
 	done
 }
 # deep_retry <suffix> <pass#> — one retry per failed/empty run (ч.129: a deep
@@ -476,6 +597,9 @@ print(ok ? "0" : "1");' 2>/dev/null)
 		YTV_URL="$YTV_URL" sh /etc/homeproxy/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
 	done
 }
+# ч.235: fresh edges before the deep battery — the battery is the EXPENSIVE
+# phase (~10 min); a dead pinned edge here poisons every deep verdict.
+reresolve
 deep_pass "" 1
 deep_retry "" 1
 deep_pass "b" 2
@@ -486,7 +610,9 @@ deep_retry "b" 2
 # versa) is DRIFT, and the free-pass credit requires BOTH passes (the merge
 # recomputes dist conservatively and reports the drift honestly).
 echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"control","current":"контрольный baseline…"}' > "$STATUS"
+reresolve
 sh /etc/homeproxy/scripts/zapret_test.sh --baseline "" "$IPS" 2>/dev/null > "$TMP/control.json"
+retry_probe "$TMP/control.json" --baseline "" "$IPS"
 
 # Ф6.4 (audit 85): the finalists on the SECOND edge/IP — one IP per sweep
 # made the whole ranking a single-CDN measurement. Plain handshake pass per
@@ -518,6 +644,13 @@ if [ -n "$YIP" ]; then
 	done
 fi
 
+# ч.235: the 1-min load at merge time — result.load_now. 🔴 ONE field only:
+# the triple from /proc/loadavg carries SPACES and "'$LNOW'" inside the
+# single-quoted ucode -e program word-splits on them — the -e argument was
+# truncated at `load_now: "1.25` (unterminated string, proven live 00:16 via
+# fuzz_stderr.log) and the whole merge died silently (2>/dev/null era).
+LNOW=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null); [ -n "$LNOW" ] || LNOW="0"
+
 ucode -e '
 import {readfile, writefile, access} from "fs";
 import { samples_stats, dims_of, resource_verdict, strategy_verdict, engine_can } from "/etc/homeproxy/scripts/strategy_lab.uc";
@@ -540,6 +673,9 @@ const parse = (path) => {
  * and ranks by the differential-only deep ratio. */
 const rank = parse(TMP + "/rank.json") || { strategies: [] };
 const strategies = rank.strategies || [];
+/* ч.232: the browser-Hello probe class verdict (rank pass detected it) —
+ * the free-credit and the result flag below honor it. */
+const u_meas2 = (rank.utls_probe == true);
 /* ч.123: d<i>.json maps through deep_list.json (idx into rank.json), NOT
  * positionally — the battery now covers the top-5 + family reps + the
  * current strategy. */
@@ -568,12 +704,12 @@ for (let i = 1; i <= length(dlist_items); i++) {
 /* Ф6.4: the sweep-level QUIC baseline verdict — measured BEFORE any
  * candidate ran on our queue (zapret_test.sh --quic with no strategy),
  * read from the FILE the shell wrote (never shell-injected). Shape kept
- * compatible for the readers: {verdict: 'vn'|'icmp'|'silence'|''}. */
+ * compatible for the readers: {verdict: vn|icmp|silence|empty}. */
 let quic = null;
 if (access(TMP + "/quic_base.json")) {
 	const qb = parse(TMP + "/quic_base.json");
 	if (qb != null && type(qb) === "object" && qb.quic != null) {
-		const qvs = '' + qb.quic;
+		const qvs = "" + qb.quic;
 		/* Ф6.4 defensive (live fact): ucode json() accepts a bare NaN token —
 		 * only the three honest verdicts pass; anything else = unmeasured. */
 		if (qvs === "vn" || qvs === "icmp" || qvs === "silence")
@@ -671,14 +807,18 @@ for (let r in drawn) {
 const base1 = parse(TMP + "/baseline.json");
 const ctrl = parse(TMP + "/control.json");
 const b1map = {}, c2map = {};
+/* ч.232: the browser-class baseline verdicts of both series (free credit
+ * requires BOTH passes of BOTH classes; unknown class → conservative NOT free). */
+const b1u = {}, c2u = {};
 if (base1 && type(base1.results) == "array")
 	for (let r in base1.results)
-		if (type(r) == "object" && r.tag) b1map[r.tag] = (r.ok == 1);
+		if (type(r) == "object" && r.tag) { b1map[r.tag] = (r.ok == 1); b1u[r.tag] = (r.uok == 1); }
 const drift = [];
 if (ctrl && type(ctrl.results) == "array")
 	for (let r in ctrl.results)
 		if (type(r) == "object" && r.tag) {
 			c2map[r.tag] = (r.ok == 1);
+			c2u[r.tag] = (r.uok == 1);
 			if (b1map[r.tag] != null && b1map[r.tag] !== c2map[r.tag])
 				push(drift, { tag: r.tag, first: (b1map[r.tag] == true), control: (c2map[r.tag] == true) });
 		}
@@ -686,7 +826,9 @@ for (let s in strategies)
 	for (let h in s.hosts) {
 		const b1 = (b1map[h.tag] != null) ? b1map[h.tag] : false;
 		const b2 = (c2map[h.tag] != null) ? c2map[h.tag] : false;
-		h.dist = !(b1 && b2);
+		const fu1 = (u_meas2) ? ((b1u[h.tag] != null) ? b1u[h.tag] : false) : false;
+		const fu2 = (u_meas2) ? ((c2u[h.tag] != null) ? c2u[h.tag] : false) : false;
+		h.dist = !(b1 && b2) && !(fu1 && fu2);
 	}
 
 /* ч.231 (honest Passed column): a handshake host that failed for EVERY
@@ -755,7 +897,7 @@ for (let i = 1; i <= length(dlist_items); i++) {
 	if (match(s.args || "", /--filter-udp=443/)) {
 		const qj = parse(TMP + "/q" + i + ".json");
 		if (qj != null && type(qj) === "object" && qj.quic != null)
-			s.quic_ab = { strategy: '' + qj.quic,
+			s.quic_ab = { strategy: "" + qj.quic,
 				baseline: (quic != null && quic.verdict != null) ? quic.verdict : "" };
 	}
 }
@@ -827,9 +969,49 @@ sort(tested, (a, b) => {
 const final = [];
 for (let s in tested) push(final, s);
 for (let s in rest) push(final, s);
+/* ── ч.232: метки С УСТРОЙСТВА — наивысший вес ранжирования ──────────────
+ * Проба-модель лаборатории не видит ClientHello браузера/телефона, QUIC-
+ * фоллбек и паттерн соединений (живой факт 2026-11-07: Default best_verified
+ * опровергнут телефоном). Метки пользователя хранит
+ * /etc/homeproxy/device_verdicts.json: works — выбор подтверждён устройством
+ * (первый приоритет resource_verdict и верх таблицы), broken — опровергнута
+ * (не выбирается при наличии альтернатив, низ таблицы). */
+const DEVP = "/etc/homeproxy/device_verdicts.json";
+let devres = {};
+if (access(DEVP)) {
+	const dj = parse(DEVP);
+	if (dj != null && type(dj.resources) === "object")
+		devres = dj.resources;
+}
+const dev_of = (resname) => (type(devres["" + resname]) === "object") ? devres["" + resname] : null;
+const dev_cls = (s) => {
+	let w = false, b = false;
+	for (let rn in devres) {
+		const dm = devres[rn];
+		if (type(dm) !== "object")
+			continue;
+		const mv = dm[s.args];
+		const v = (mv != null && type(mv) === "object") ? ("" + (mv.verdict || "")) : "";
+		if (v === "works") w = true;
+		if (v === "broken") b = true;
+	}
+	return w ? 0 : (b ? 2 : 1);
+};
+for (let n = 0; n < length(final); n++)
+	final[n].dev_i = n;
+sort(final, (a, b) => {
+	const ca = dev_cls(a), cb = dev_cls(b);
+	if (ca != cb)
+		return ca - cb;
+	return a.dev_i - b.dev_i;
+});
 /* Финалисты получают ВЕРДИКТ по каждому ресурсу (аудит 92):
- * best_verified / best_available / no_candidate. */
-const RES_TAGS = { youtube: "yt", discord: "dc", telegram: "tg", general: null };
+ * best_verified / best_available / no_candidate.
+ * ч.235 (завершение В3): telegram УБРАН из RES_TAGS — свип не пробует tg,
+ * пустой entries дал бы красный no_candidate («ни одна не прошла») вместо
+ * честного отсутствия вердикта; оптимизатор при отсутствующем ключе даёт
+ * via_node (lab_verdict=null), автопилот tg не управляет (ч.233). */
+const RES_TAGS = { youtube: "yt", discord: "dc", general: null };
 const udp_any = (function () {
 	for (let s in strategies)
 		if (match(s.args || "", /--filter-udp=443/)) return true;
@@ -855,7 +1037,7 @@ for (let ri = 0; ri < length(rn_keys); ri++) {
 			 * distinguishing handshake — expressed as a synthetic deep
 			 * item so best_verified stays reachable (аудит 92 без лжи:
 			 * «проверено» = рукопожатие различающих хостов). */
-			deep_items = [ { id: 'reach', ok: reach_ok ? 1 : 0 } ];
+			deep_items = [ { id: "reach", ok: reach_ok ? 1 : 0 } ];
 		} else {
 			for (let h in s.hosts)
 				if (h.tag == tag) reach_ok = (h.ok && h.dist);
@@ -865,7 +1047,12 @@ for (let ri = 0; ri < length(rn_keys); ri++) {
 		}
 		push(entries, { name: s.name, args: s.args, reach_ok: reach_ok, deep_items: deep_items });
 	}
-	verdicts[resname] = resource_verdict(entries, (qv != "") ? qv : null, udp_any);
+	/* ч.234: dead-тег (никто не прошёл хост + оба контрольных прохода
+	 * провалены, dead_map выше) — вход честного «измерение невозможно»;
+	 * general (tag=null) имеет только синтетический reach-пункт — false. */
+	const dead_tag = (tag == null) ? false : (dead_map[tag] == true);
+	verdicts[resname] = resource_verdict(entries, (qv != "") ? qv : null,
+		udp_any, dev_of(resname), dead_tag);
 }
 
 const bnote = [];
@@ -873,12 +1060,14 @@ const bj = parse(TMP + "/baseline.json");
 if (bj && type(bj.results) == "array")
 	for (let r in bj.results)
 		if (type(r) == "object")
-			push(bnote, { tag: r.tag, label: r.label || r.tag, host: r.host || "", ok: (r.ok == 1) });
+			push(bnote, { tag: r.tag, label: r.label || r.tag, host: r.host || "", ok: (r.ok == 1),
+				uok: (u_meas2) ? (r.uok == 1) : null });
 const cnote = [];
 if (ctrl && type(ctrl.results) == "array")
 	for (let r in ctrl.results)
 		if (type(r) == "object")
-			push(cnote, { tag: r.tag, label: r.label || r.tag, host: r.host || "", ok: (r.ok == 1) });
+			push(cnote, { tag: r.tag, label: r.label || r.tag, host: r.host || "", ok: (r.ok == 1),
+				uok: (u_meas2) ? (r.uok == 1) : null });
 /* Ф6.4 (аудит 58/83): наборы DNS четырёх взглядов — из resolver-файла. */
 const rj = parse(TMP + "/resolve.json");
 const dns_sets = (rj != null && type(rj) === "object" && type(rj.dns) === "object") ? rj.dns : null;
@@ -888,18 +1077,36 @@ const dns_sets = (rj != null && type(rj) === "object" && type(rj.dns) === "objec
  * rank pass; the old hardcoded note claimed it even for runs where the
  * --new composite was excluded and never measured). */
 const cur_measured = (rank.cur_measured == true);
+/* ч.235: load samples (1-min LA per stage) — retrospectively distinguishes
+ * «the host died» from «the router was choking» (prod nfqws2 + candidate +
+ * probes at once). Last sample per stage wins. */
+const loads = {};
+if (access(TMP + "/load.tsv")) {
+	const llines = split(trim(readfile(TMP + "/load.tsv") || ""), "\n");
+	for (let li = 0; li < length(llines); li++) {
+		const lparts = split(trim(llines[li]), " ");
+		if (length(lparts) == 2 && length(lparts[0]) > 0 && length(lparts[1]) > 0)
+			loads[lparts[0]] = "" + lparts[1];
+	}
+}
 writefile(RESULT, sprintf("%.J\n", {
 	running: false, done: length(final), total: length(final),
 	rounds: ROUNDS, majority: MAJ, ts: now, baseline: bnote, strategies: final,
 	deep_count: deepN, deep_selected: length(dlist_items),
 	deep_failed: deep_failed, deep_skipped: skipped_ids, quic: quic,
 	probe_mode: "'$PMODE'",
+	load_now: "'$LNOW'",
+	loads: loads,
+	/* ч.232: the browser-ClientHello probe class verdict — false = the
+	 * utls_probe binary is not installed, Passed honestly measures only
+	 * the curl class (status quo). */
+	utls_probe: u_meas2, utls_fp: u_meas2 ? "chrome" : "",
 	lab: "v3",
 	dead_hosts: dead_hosts,
 	baseline_series: { first: bnote, control: cnote, drift: drift },
 	dns_sets: dns_sets,
 	verdicts: verdicts,
-	deep_note: "top " + deepN + " of " + length(dlist_items) + " selected deep-checked: family-diverse leaders + imported/generated bests" + (cur_measured ? " + the current strategy" : "") + "; failed: " + ((length(deep_failed)) ? join(", ", deep_failed) : "none") + "; probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank"
+	deep_note: "top " + deepN + " of " + length(dlist_items) + " selected deep-checked: family-diverse leaders + imported/generated bests" + (cur_measured ? " + the current strategy" : "") + "; failed: " + ((length(deep_failed)) ? join(", ", deep_failed) : "none") + "; probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank" + (u_meas2 ? "; Passed = curl AND browser ClientHello (utls_probe chrome)" : "; browser ClientHello probe NOT installed — Passed measures only the curl class")
 }));
 
 /* history: keep the last 5 runs (tmpfs — survives until reboot) */
@@ -914,6 +1121,6 @@ push(hist, { ts: now, mode: "'$MODE'", rounds: ROUNDS,
                             dist_ok: best.dist_ok, dist_total: best.dist_total } : null });
 while (length(hist) > 5) shift(hist);
 writefile(HISTORY, sprintf("%.J\n", { runs: hist }));
-' 2>/dev/null
+' 2>>/var/run/homeproxy/fuzz_stderr.log
 rm -rf "$TMP"
 echo '{"running":false,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'"}' > "$STATUS"

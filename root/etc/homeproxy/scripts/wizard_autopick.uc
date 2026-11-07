@@ -151,6 +151,25 @@ function deep_ratio_of(s, tag) {
 	return null;
 }
 
+/* ч.232: метка С УСТРОЙСТВА для (ресурс, стратегия) из
+ * /etc/homeproxy/device_verdicts.json — 'works'|'broken'|''.
+ * Проба-модель лаборатории не видит ClientHello браузера/телефона, QUIC-
+ * фоллбек и паттерн соединений: лабораторный best_verified Default был
+ * опровергнут телефоном. Метка — единственный канал, который видит то же,
+ * что устройство, поэтому она сильнее лаборатории в решениях раннера. */
+const DEV_FILE = '/etc/homeproxy/device_verdicts.json';
+function dev_verdict(resource, args) {
+	const a = '' + (args || '');
+	if (resource == null || length(a) < 4)
+		return '';
+	const j = read_json(DEV_FILE);
+	if (j == null || type(j.resources) !== 'object' ||
+		type(j.resources['' + resource]) !== 'object')
+		return '';
+	const mv = j.resources['' + resource][a];
+	return (mv != null && type(mv) === 'object') ? ('' + (mv.verdict || '')) : '';
+}
+
 /* Rule state for the source (honest reporting only — never edited here).
  * cursor.foreach is the working enumeration (cursor.get with a TYPE answers
  * null in this ucode-uci build — caught live; cursor has no length()). */
@@ -179,6 +198,25 @@ function probe_live(url, host) {
 	const tsec = (length(parts) > 1) ? ('' + parts[1]) : null;
 	const ok = (rc === 0 && int(code) >= 200 && int(code) < 400);
 	return { code: code, tsec: tsec, rc: rc, ok: ok, host: host };
+}
+
+/* ч.232: браузерная ClientHello-проба через КОНФИГУРИРУЕМЫЙ путь (реальная
+ * prod-очередь + резолвер — ровно то, чем обслуживаются устройства). curl-
+ * пробы не видят отпечаток клиента, а TSPU решает по нему. null = бинарник
+ * не установлен — честное «не измерено» (класс curl не врёт, он один). */
+function probe_utls(host) {
+	if (!access('/usr/bin/utls_probe'))
+		return null;
+	const uf = RUN_DIR + '/wiz_probe.utls';
+	system(`/usr/bin/utls_probe -host ${sq(host)} -timeout 9 > ${sq(uf)} 2>/dev/null`, 12000);
+	const uj = read_json(uf);
+	system(`rm -f ${sq(uf)} 2>/dev/null`);
+	if (uj == null || type(uj) !== 'object' || uj.ok == null)
+		return null;
+	return { url: '(браузерный ClientHello)', host: host + ' — Chrome ClientHello (utls_probe)',
+		code: (uj.ok == 1) ? '200' : '000',
+		tsec: (uj.tls_ms != null) ? ('' + (int(uj.tls_ms) / 1000.0)) : null,
+		ok: (uj.ok == 1) };
 }
 
 /* shell_out — ВЫШЕ всех вызывающих (урок 2/93/126 в предельной форме,
@@ -283,6 +321,14 @@ function probe_battery(meta) {
 			push(items, { url: '(поток видео)', code: '' + (fj.code || '0'), ok: fok });
 		}
 	}
+	/* ч.232: браузерный ClientHello того же хоста через тот же путь —
+	 * curl-батарея не видит отпечаток клиента. */
+	const upb = probe_utls((meta.tag == null) ? 'www.gstatic.com' : meta.host);
+	if (upb != null) {
+		if (upb.ok)
+			ok_n++;
+		push(items, { url: upb.url, code: upb.code, ok: upb.ok });
+	}
 	return { items: items, ok_n: ok_n, total: length(items),
 		ok_all: (length(items) > 0 && ok_n === length(items)) };
 }
@@ -380,6 +426,17 @@ function main() {
 		return;
 	}
 	const resource = req.resource;
+	/* ч.233 (решение пользователя): автоподбор для Telegram ОТКЛЮЧЁН —
+	 * без VPN/туннеля Telegram в РФ не поднимается, автоперебор стратегий
+	 * только тратит время. Ручное применение из таблицы (req.strategy задан)
+	 * продолжают работать через этот же раннер (fixed-путь ниже). */
+	if (resource === 'telegram' &&
+		!(req.strategy != null && length(trim('' + req.strategy)))) {
+		wstat({ running: false, stage: 'error', resource: resource, mode: 'quick',
+			error: 'автоподбор Telegram отключён — Telegram в РФ не поднимается без VPN/туннеля; подберите стратегию вручную в Лаборатории' });
+		system(`rm -f ${sq(REQ)}`);
+		return;
+	}
 	const mode = (req.mode === 'full') ? 'full' : 'quick';
 	const res = {
 		running: true, stage: 'started', resource: resource, mode: mode,
@@ -624,6 +681,40 @@ function main() {
 			wstat(res);
 			return;
 		}
+		/* ч.232: device-гварды выбора — метка с устройства сильнее лаборатории.
+		 * (а) помеченная вами «не работает» стратегия не применяется никогда;
+		 * (б) подтверждённая на устройстве ТЕКУЩАЯ не заменяется лабораторным
+		 * лидером без его же подтверждения — иначе поиск бесконечно churn-ит
+		 * работающую композицию (живая жалоба: «поиск всегда выбирает Default»). */
+		const pick_cur_args = trim('' + (cursor().get('homeproxy', 'config', 'zapret_cmd_opts') || ''));
+		const pick_cur_dv = dev_verdict(resource, pick_cur_args);
+		const pick_ch_dv = dev_verdict(resource, chosen.args);
+		if (pick_ch_dv === 'broken') {
+			res.running = false; res.stage = 'done';
+			res.verdict = 'device_refused';
+			res.applied = false;
+			res.chosen = { name: chosen.name || '', args: chosen.args || '',
+				score: 0, avg_tls_ms: 0, stream: 0, start_ms: 0, runners: [] };
+			note(res, 'Автоприменение ОТМЕНЕНО: лабораторный лидер помечен вами как НЕ работающий на устройстве (метка сильнее лаборатории). Снимите метку или выберите другую стратегию вручную в Лаборатории.');
+			wstat(res);
+			system(`rm -f ${sq(REQ)}`);
+			return;
+		}
+		if (pick_cur_dv === 'works' && pick_ch_dv !== 'works' &&
+			pick_cur_args !== chosen.args) {
+			res.running = false; res.stage = 'done';
+			res.verdict = 'ok';
+			res.applied = false;
+			res.chosen = { name: 'current (applied)', args: pick_cur_args,
+				score: 0, avg_tls_ms: 0, stream: 0, start_ms: 0, runners: [] };
+			note(res, 'Текущая применённая стратегия подтверждена на УСТРОЙСТВЕ — замена не выполняется (метка сильнее лабораторного рейтинга).');
+			if (pick_ch_dv !== 'works')
+				note(res, 'Кандидат лаборатории: ' + (chosen.name || 'кастомные аргументы') +
+					' — смена возможна вручную в Лаборатории стратегий.');
+			wstat(res);
+			system(`rm -f ${sq(REQ)}`);
+			return;
+		}
 	res.chosen = {
 		name: chosen.name || '', args: chosen.args || '',
 		score: int(chosen.score) || 0, avg_tls_ms: int(chosen.avg_tls_ms) || 0,
@@ -773,7 +864,9 @@ function main() {
 		const ap = read_json(RUN_DIR + '/zapret_autopilot.json');
 		const others = {};
 		if (ap != null && type(ap.resources) === 'object') {
-			for (let rk in ['youtube', 'discord', 'telegram']) {
+			/* ч.233: telegram исключён — победитель автопилота по tg больше
+		 * никогда не Adopt-ится в композицию (автопилот tg не управляет). */
+		for (let rk in ['youtube', 'discord']) {
 				if (rk === resource)
 					continue;
 				const rr = ap.resources[rk];
@@ -1001,6 +1094,13 @@ function main() {
 				code: code, tsec: tsec, bytes: bytes, speed: speed, ok: sok });
 			if (sok) deep_ok++;
 		}
+	}
+	/* ч.232: браузерный ClientHello прикладного хоста через prod-путь —
+	 * участвует в вердикте «ресурс работает целиком» и в авто-rollback. */
+	const upv = probe_utls((resource === 'general') ? 'www.gstatic.com' : meta.host);
+	if (upv != null) {
+		push(res.verify_multi, upv);
+		if (upv.ok) deep_ok++;
 	}
 	res.verify.deep_ok = deep_ok;
 	res.verify.deep_total = length(res.verify_multi);

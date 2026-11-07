@@ -189,13 +189,18 @@ export function current_lab_state(lab, service, current_args) {
  *   zapret_enabled — boolean (движок включён).
  * Выход: { service, verdict, chain|null, actions[], reasons[], notes[] }
  *   verdict: 'ok' | 'apply' | 'manual_only' | 'no_candidate' | 'no_lab'
- *            | 'unknown'
+ *            | 'via_node' | 'unknown'
  *   'ok'           — ресурс уже обслуживается (батарея подтверждает):
  *                    НИЧЕГО не трогаем (не ломать ручные пики/композиции);
  *   'apply'        — автоприменение best_verified разрешено (92), откат
  *                    обязателен (78);
  *   'manual_only'  — best_available: только вручную с предупреждением;
  *   'no_candidate' — подтверждённых стратегий нет; notes = ЧТО не работает;
+ *   'via_node'     — ч.234: правило сервиса ведёт на УЗЕЛ (полный тракт) —
+ *                    лабораторный вердикт zapret-стратегий к этому пути не
+ *                    применим (91: не применимо ≠ провал); красный
+ *                    no_candidate здесь лгал живой факт ч.234: Telegram
+ *                    на узле красился отказом лаборатории;
  *   'no_lab'       — для сервиса нет фаззинг-корпуса (whatsapp) — честное
  *                    «не измерялось», направление: батарея профиля + сканер. */
 export function chain_plan(input) {
@@ -218,6 +223,15 @@ export function chain_plan(input) {
 	const rmode = '' + (inp.routing_mode || 'proxy_banned_ru');
 	const main_is_direct = (main_node === 'direct-out' || main_node === 'nil' ||
 		rmode === 'direct' || rmode === 'custom' || rmode === 'custom_json');
+	/* ч.232: метки с устройства — { '<args>': {verdict: 'works'|'broken'} }.
+	 * Лаборатория не видит ClientHello устройства (curl), QUIC-фоллбек и
+	 * паттерн соединений — метка пользователя сильнее любого лабораторного
+	 * вердикта в решениях о замене. */
+	const dev = (type(inp.device) === 'object') ? inp.device : {};
+	const dv = (a) => {
+		const mv = dev['' + (a || '')];
+		return (mv != null && type(mv) === 'object') ? ('' + (mv.verdict || '')) : '';
+	};
 
 	/* Заметки матрицы движков (93) — всегда, до любых решений. */
 	const sz = engine_suitability(service, 'zapret');
@@ -242,6 +256,62 @@ export function chain_plan(input) {
 		}
 	}
 
+	/* 1.5. ч.232: ТЕКУЩАЯ применённая стратегия подтверждена на УСТРОЙСТВЕ →
+	 * ничего не трогаем. Метка сильнее лаборатории и батареи профиля (те не
+	 * видят ClientHello устройства) — замена подтверждённой это churn с
+	 * риском потерять работающую композицию. */
+	const cs_dev = (type(inp.current_state) === 'object') ? inp.current_state : null;
+	if (cs_dev != null && cs_dev.device === 'works') {
+		out.verdict = 'ok';
+		push(out.reasons, 'текущая применённая стратегия подтверждена на УСТРОЙСТВЕ — замена не требуется (метка сильнее лаборатории: пробы не видят ClientHello устройства)');
+		if (lab_chosen != null && dv(lab_chosen.args) === 'broken')
+			push(out.notes, 'кандидат лаборатории (' + (lab_chosen.name || 'кастомные аргументы') + ') ОПРОВЕРГНУТ на устройстве — не применяется');
+		else if (lab_chosen != null && dv(cs_dev.args) !== 'works')
+			push(out.notes, 'кандидат лаборатории: ' + (lab_chosen.name || 'кастомные аргументы') + ' — без подтверждения устройством; смена — по вашему решению в Лаборатории');
+		const zn3 = engine_note(service, 'zapret');
+		if (zn3 != null)
+			push(out.notes, zn3);
+		if (rule != null && rule.enabled === '1' && rule.node === 'main-out' && main_is_direct)
+			push(out.notes, '🔴 Main node = Direct: правило сервиса сейчас на main-out — заблокированные ресурсы не должны уходить напрямую (ограничение проекта)');
+		return out;
+	}
+
+	/* 1.7. ч.234: ресурс на УЗЛЕ/ОБЩЕМ ПРОКСИ-ТРАКТЕ — лабораторный
+	 * вердикт zapret-стратегий к этому пути не применим (91). Два случая:
+	 * (a) per-service правило ведёт на узел (не direct, не zapret);
+	 * (b) пер-сервисного правила НЕТ, а основной путь — прокси-узел:
+	 * ресурс обслуживается общим трактом (живой факт ч.234: Telegram без
+	 * proxy_ru_rule-секции шёл через urltest, а оптимизатор красил его
+	 * no_candidate). Ставится ПОСЛЕ батареи/device-гвардий (они честнее)
+	 * и ДО лабораторного гейта. Direct (main-out при direct/nil-режиме
+	 * или main=direct без правила) сюда НЕ попадает: прямой путь для
+	 * заблокированных — ограничение проекта, красный отказ честен.
+	 * При best_verified ветка НЕ срабатывает — предложение перевода пути
+	 * на zapret ('apply', ч.231 приёмка) честно и красным не пахнет;
+	 * поймано selftest'ом на приёмке ч.234 (порядок гвардий важен). */
+	const rnode = (rule != null && rule.enabled === '1' && rule.node != null)
+		? ('' + rule.node) : '';
+	const rule_to_node = (rule != null && rnode !== '' && rnode !== 'nil' &&
+		rnode !== 'zapret-out' && !(rnode === 'main-out' && main_is_direct));
+	const no_rule_proxy_path = (rule == null && !main_is_direct);
+	/* только ОТКАЗ лабы (no_candidate) или её отсутствие; best_available
+	 * остаётся жёлтым manual_only — живое предложение кандидата (приёмка
+	 * ч.234: via_node перехватывал best_available и гасил предложение) */
+	const lab_refused = (lab_v === 'no_candidate' || lab_v === '');
+	if (lab_refused && (rule_to_node || no_rule_proxy_path)) {
+		out.verdict = 'via_node';
+		if (rule_to_node)
+			push(out.reasons, 'правило сервиса ведёт на узел (' + rnode +
+				') — ресурс обслуживается полным трактом узла; вердикт лаборатории zapret-стратегий к этому пути не применим');
+		else
+			push(out.reasons, 'пер-сервисного правила нет: ресурс обслуживается общим трактом основного узла (' +
+				main_node + '); вердикт лаборатории zapret-стратегий к этому пути не применим');
+		push(out.actions, 'если хотите обслуживать ресурс дезинком — переключите правило на Zapret (автоподбор или Лаборатория стратегий)');
+		if (lab_v === 'no_candidate' || lab_v === 'best_available')
+			push(out.notes, 'вердикт лаборатории (' + lab_v + ') относится к zapret-стратегиям и НЕ делает ресурс необслуживаемым на узле');
+		return out;
+	}
+
 	/* 2. Нет фаззинг-корпуса → честное no_lab (91: не измерялось ≠ нет). */
 	if (needs.fuzz !== true) {
 		out.verdict = 'no_lab';
@@ -258,6 +328,15 @@ export function chain_plan(input) {
 	 * на кандидата в пределах суточного шума TSPU (живой факт ч.229:
 	 * разброс между прогонами 23%) — это churn, а не оптимизация. */
 	if (lab_v === 'best_verified' && lab_chosen != null) {
+		/* ч.232: лабораторный победитель опровергнут устройством —
+		 * автоприменение отменено (инвариант «победитель лаборатории обязан
+		 * подтверждаться устройством»). */
+		if (dv(lab_chosen.args) === 'broken') {
+			out.verdict = 'manual_only';
+			push(out.reasons, 'лабораторный победитель ОПРОВЕРГНУТ на устройстве (метка) — автоприменение отменено');
+			push(out.actions, 'решение вручную: выберите другую стратегию в Лаборатории или снимите метку');
+			return out;
+		}
 		const cs = (type(inp.current_state) === 'object') ? inp.current_state : null;
 		if (cs != null && cs.measured === true && cs.verified === true) {
 			out.verdict = 'ok';
@@ -366,12 +445,12 @@ export function selftest() {
 		main_node: 'urltest', routing_mode: 'proxy_banned_ru' });
 	t('best_available → manual_only', p.verdict === 'manual_only');
 
+	/* no_candidate честен, когда пути через узел НЕТ (direct) — refusal */
 	p = chain_plan({ service: 'telegram', lab_verdict: 'no_candidate',
 		lab_chosen: null, profile: null, rule: null,
-		main_node: 'urltest', routing_mode: 'proxy_banned_ru' });
-	t('no_candidate honest', p.verdict === 'no_candidate' && p.chain == null);
+		main_node: 'direct-out', routing_mode: 'proxy_banned_ru' });
+	t('no_candidate honest (direct, no path)', p.verdict === 'no_candidate' && p.chain == null);
 	t('udp calls honesty note (60/91)', index(join(';', p.notes), 'не проверено') >= 0);
-	t('proxy-node fallback note', index(join(';', p.notes), 'основной прокси-узел') >= 0);
 
 	/* батарея подтверждает работу → 'ok', ничего не трогаем */
 	p = chain_plan({ service: 'youtube', lab_verdict: 'best_verified',
@@ -381,10 +460,19 @@ export function selftest() {
 		main_node: 'urltest', routing_mode: 'proxy_banned_ru' });
 	t('working profile → ok (не ломать пики)', p.verdict === 'ok' && p.chain == null);
 
-	/* whatsapp → no_lab (честное «не измерялось») */
+	/* whatsapp → no_lab (честное «не измерялось»); direct-путь, чтобы не
+	 * попадать в via_node (ч.234: без правила на прокси-режиме ресурс
+	 * обслуживается общим трактом) */
 	p = chain_plan({ service: 'whatsapp', lab_verdict: null, lab_chosen: null,
-		profile: null, rule: null, main_node: 'urltest', routing_mode: 'proxy_banned_ru' });
+		profile: null, rule: null, main_node: 'direct-out', routing_mode: 'proxy_banned_ru' });
 	t('whatsapp no_lab', p.verdict === 'no_lab');
+
+	/* ч.234: без per-service правила на прокси-режиме — общий тракт узла */
+	p = chain_plan({ service: 'telegram', lab_verdict: 'no_candidate',
+		lab_chosen: null, profile: null, rule: null,
+		main_node: 'urltest', routing_mode: 'proxy_banned_ru' });
+	t('no rule + proxy main → via_node (не красный)', p.verdict === 'via_node' &&
+		index(join(';', p.reasons), 'общим трактом основного узла') >= 0);
 
 	/* Main = Direct: заблокированные не уходят напрямую (ограничение проекта) */
 	p = chain_plan({ service: 'telegram', lab_verdict: 'no_candidate',
@@ -411,6 +499,34 @@ export function selftest() {
 		current_state: { measured: true, verified: false, deep_str: '3/6', args: '--a' } });
 	t('current unverified → apply', p.verdict === 'apply');
 
+	/* ч.232: текущая подтверждена на УСТРОЙСТВЕ → 'ok' даже без лаб-вердикта
+	 * (метка сильнее: лаборатория не видит ClientHello устройства) */
+	p = chain_plan({ service: 'youtube', lab_verdict: null, lab_chosen: null,
+		profile: null, rule: null, main_node: 'urltest', routing_mode: 'proxy_banned_ru',
+		current_state: { measured: false, verified: false, name: 'current (applied)',
+			deep_str: '', args: '--composite', device: 'works' },
+		device: { '--composite': { verdict: 'works' } } });
+	t('current device-confirmed → ok', p.verdict === 'ok' &&
+		index(join(';', p.reasons), 'УСТРОЙСТВЕ') >= 0);
+
+	/* ч.232: лабораторный победитель опровергнут устройством → manual_only */
+	p = chain_plan({ service: 'youtube', lab_verdict: 'best_verified',
+		lab_chosen: { name: 'Default', args: '--default' }, profile: null, rule: null,
+		main_node: 'urltest', routing_mode: 'proxy_banned_ru',
+		device: { '--default': { verdict: 'broken' } } });
+	t('refuted lab winner → manual_only', p.verdict === 'manual_only' &&
+		index(join(';', p.reasons), 'ОПРОВЕРГНУТ') >= 0);
+
+	/* ч.232: кандидат опровергнут, текущая подтверждена → 'ok' + пометка */
+	p = chain_plan({ service: 'youtube', lab_verdict: 'best_verified',
+		lab_chosen: { name: 'Default', args: '--default' }, profile: null, rule: null,
+		main_node: 'urltest', routing_mode: 'proxy_banned_ru',
+		current_state: { measured: true, verified: false, name: 'current (applied)',
+			deep_str: '4/6', args: '--composite', device: 'works' },
+		device: { '--default': { verdict: 'broken' }, '--composite': { verdict: 'works' } } });
+	t('refuted candidate + confirmed current → ok', p.verdict === 'ok' &&
+		index(join(';', p.notes), 'ОПРОВЕРГНУТ') >= 0);
+
 	/* ч.231: current_lab_state по фейковому lab (deep-only строка current) */
 	const fake_lab = { strategies: [
 		{ name: 'X', args: '--other', hosts: [], deep: null },
@@ -428,6 +544,29 @@ export function selftest() {
 			items: [ { id: 'ytp', ok: 0 } ] } ] } } ] }, 'youtube', '--xyz');
 	t('current_lab_state failed item → unverified', cls.measured === true &&
 		cls.verified === false);
+
+	/* ч.234: правило на УЗЕЛ — via_node, лабораторный отказ не красит */
+	p = chain_plan({ service: 'telegram', lab_verdict: 'no_candidate',
+		lab_chosen: null, profile: null,
+		rule: { source: 'telegram', node: 'cfg-proxy-node', enabled: '1' },
+		main_node: 'urltest', routing_mode: 'proxy_banned_ru' });
+	t('rule to node → via_node (не красный)', p.verdict === 'via_node' &&
+		p.chain == null && index(join(';', p.reasons), 'полным трактом узла') >= 0);
+	t('via_node explains lab verdict is irrelevant',
+		index(join(';', p.notes), 'относится к zapret-стратегиям') >= 0);
+	/* main-out при НЕ-direct — тоже узел (полный тракт) */
+	p = chain_plan({ service: 'telegram', lab_verdict: 'no_candidate',
+		lab_chosen: null, profile: null,
+		rule: { source: 'telegram', node: 'main-out', enabled: '1' },
+		main_node: 'urltest', routing_mode: 'proxy_banned_ru' });
+	t('main-out with proxy main → via_node', p.verdict === 'via_node');
+	/* main-out при Direct — НЕ via_node: прямой путь = ограничение проекта */
+	p = chain_plan({ service: 'telegram', lab_verdict: 'no_candidate',
+		lab_chosen: null, profile: null,
+		rule: { source: 'telegram', node: 'main-out', enabled: '1' },
+		main_node: 'direct-out', routing_mode: 'proxy_banned_ru' });
+	t('direct main NOT via_node', p.verdict === 'no_candidate' &&
+		index(join(';', p.notes), 'Direct') >= 0);
 
 	/* unknown service */
 	p = chain_plan({ service: 'nope' });

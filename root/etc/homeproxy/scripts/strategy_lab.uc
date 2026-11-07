@@ -20,6 +20,13 @@
 //                    ТОЛЬКО вручную, с предупреждением (аудит 92);
 //   no_candidate   — не кандидат.
 //
+// ч.232 DEVICE-МЕТКИ (инвариант «лабораторный победитель обязан
+// подтверждаться устройством»): проба-модель (curl, пиновые IP, temp-очередь)
+// не видит ClientHello браузера/телефона, QUIC-фоллбек и паттерн соединений —
+// живой факт 2026-11-07 (Default best_verified опровергнут телефоном).
+// Метка с устройства ('works'/'broken') — НАИВЫСШИЙ вес в resource_verdict:
+// works выбирается первым, broken не выбирается при наличии альтернатив.
+//
 // МАТРИЦА ВОЗМОЖНОСТЕЙ ДВИЖКОВ (аудит 93) учитывается ДО подбора: ByeDPI не
 // умеет UDP/QUIC/STUN — компонент вне возможностей движка не «провал» и не
 // «успех», он honest "не применимо" (не подмешивается в измерения).
@@ -131,30 +138,111 @@ export function strategy_verdict(reach_ok, deep_items) {
  *               стратегии РЕСУРСА;
  *   quic_vn   — вердикт sweep-уровня QUIC: 'vn'|'icmp'|'silence'|null;
  *   udp_any   — есть ли в корпусе стратегии с UDP-профилем (--filter-udp=443).
- * Выход: { verdict, chosen, what_failed[], notes[] } — verdict ресурса:
+ *   device    — ч.232: метки С УСТРОЙСТВА { '<args>': 'works'|'broken' }|null.
+ *               Проба-модель лаборатории (curl, пиновые IP, тестовая очередь)
+ *               НЕ видит решающих факторов TSPU: ClientHello браузера/телефона
+ *               (curl-овый TLS-fingerprint ≠ браузерный; utls на mipsle
+ *               недоступен), QUIC-фоллбек клиента, паттерн соединений —
+ *               живой факт 2026-11-07: лабораторный best_verified Default
+ *               опровергнут телефоном, реально работающая стратегия в лидеры
+ *               не попадала. Инвариант: лабораторный победитель обязан
+ *               подтверждаться устройством → device-метка — НАИВЫСШИЙ вес
+ *               выбора, 'broken' не выбирается, пока есть альтернатива.
+ *               ч.234: реальный формат device_verdicts.json —
+ *               { '<args>': { verdict: 'works'|'broken' } } (ОБЪЕКТ);
+ *               принимается и строковое значение для совместимости.
+ *   dead      — ч.234: тег ресурса МЁРТВ для измерения (ни одна стратегия
+ *               не прошла хост И оба контрольных baseline-прохода провалены
+ *               — окно дрейфа сети/TSPU). Это отказ ИЗМЕРЕНИЯ, а не вердикт
+ *               стратегий: красный «ни одна стратегия не прошла» здесь ложь
+ *               (живой факт ч.233: YouTube жил в браузере, свип писал
+ *               no_candidate). Метка с устройства сильнее — works всё ещё
+ *               выбирается.
+ * Выход: { verdict, chosen, what_failed[], notes[], device_confirmed } —
+ *   verdict ресурса:
  *   'best_verified' (есть подтверждённый — автоподбор МОЖЕТ применить),
  *   'best_available' (только доступные — ТОЛЬКО вручную с предупреждением),
- *   'no_candidate' (никто; what_failed называет, ЧТО не работает). */
-export function resource_verdict(entries, quic_vn, udp_any) {
+ *   'no_candidate' (никто; what_failed называет, ЧТО не работает).
+ *   device_confirmed — выбор сделан по метке с устройства (true|false). */
+export function resource_verdict(entries, quic_vn, udp_any, device, dead) {
 	const out = { verdict: 'no_candidate', chosen: null,
-		what_failed: [], notes: [] };
-	let verified = null, available = null;
+		what_failed: [], notes: [], device_confirmed: false };
+	/* ч.234: метка в device_verdicts.json — ОБЪЕКТ { verdict: 'works'|… };
+	 * прежний dv делал '' + объект (≠ 'works') — метка была МЕРТВА в
+	 * лабораторном вердикте с момента появления (ч.232): свип ч.233 писал
+	 * no_candidate при живой works-метке на составной (ключ 1862 симв.
+	 * байт-в-байт совпадал — доказано сверкой коробки). Разворачиваем. */
+	const dv = (device != null && type(device) === 'object')
+		? ((a) => {
+			const mv = device['' + a];
+			if (mv == null)
+				return '';
+			if (type(mv) === 'object')
+				return '' + (mv.verdict || '');
+			return '' + mv;
+		}) : (() => '');
+	let verified = null, available = null, dev_confirmed = null;
+	let refuted_verified = null, any_refuted = false;
 	for (let e in entries) {
 		if (type(e) !== 'object')
 			continue;
 		const v = strategy_verdict(e.reach_ok === true, e.deep_items);
-		if (v === 'best_verified' && verified == null)
-			verified = e;
-		if (v === 'best_available' && available == null)
+		const d = dv(e.args);
+		if (d === 'works') {
+			/* устройство сказало «работает» — сильнее любой лаборатории,
+			 * включая стратегии без полного лабораторного подтверждения */
+			if (dev_confirmed == null)
+				dev_confirmed = e;
+			continue;
+		}
+		if (d === 'broken')
+			any_refuted = true;
+		if (v === 'best_verified') {
+			if (d === 'broken') {
+				if (refuted_verified == null)
+					refuted_verified = e;
+			} else if (verified == null)
+				verified = e;
+		}
+		if (v === 'best_available' && d !== 'broken' && available == null)
 			available = e;
 	}
-	if (verified != null) {
+	/* ч.234: измерение НЕВОЗМОЖНО (аудит 91 — не проверено ≠ провалено).
+	 * Тег мёртв: ни одна стратегия не прошла хост И оба контрольных
+	 * прохода провалены — сломалось ИЗМЕРЕНИЕ, а не все стратегии сразу.
+	 * Серый вердикт вместо красного no_candidate; what_failed и QUIC-
+	 * заметки опускаются — они дали бы ложь в мёртвом окне. Метка с
+	 * устройства сильнее: works выше этого отказа (dev_confirmed). */
+	if (dev_confirmed == null && dead === true) {
+		out.verdict = 'unmeasured';
+		push(out.notes, 'измерение ресурса НЕВОЗМОЖНО: тестовый хост не ответил ни у одной стратегии и в обоих контрольных проходах — отказ измерения (дрейф сети/TSPU), не вердикт стратегий; повторите свип позже');
+		return out;
+	}
+	if (dev_confirmed != null) {
+		out.verdict = 'best_verified';
+		out.chosen = { name: dev_confirmed.name, args: dev_confirmed.args };
+		out.device_confirmed = true;
+		push(out.notes, 'выбор подтверждён на УСТРОЙСТВЕ (' +
+			((dev_confirmed.name != null && length('' + dev_confirmed.name))
+				? dev_confirmed.name : 'кастомные аргументы') +
+			') — сигнал с реального устройства сильнее лабораторной пробы: curl не воспроизводит ClientHello браузера/телефона и QUIC-фоллбек');
+	} else if (verified != null) {
 		out.verdict = 'best_verified';
 		out.chosen = { name: verified.name, args: verified.args };
+		if (any_refuted)
+			push(out.notes, 'лабораторный победитель выбран с учётом меток с устройства: опровергнутые на устройстве стратегии пропущены');
 	} else if (available != null) {
 		out.verdict = 'best_available';
 		out.chosen = { name: available.name, args: available.args };
 		push(out.notes, 'подтверждённого победителя нет: доступна только стратегия с пройденным рукопожатием без полного подтверждения компонентов — автоприменение ЗАПРЕЩЕНО (аудит 92), решение вручную');
+	} else if (refuted_verified != null) {
+		/* все лабораторно подтверждённые опровергнуты устройством —
+		 * автоприменение отменяется, решение вручную (метка сильнее лаборатории) */
+		out.verdict = 'best_available';
+		out.chosen = { name: refuted_verified.name, args: refuted_verified.args };
+		push(out.notes, 'единственная лабораторно подтверждённая стратегия ОПРОВЕРГНУТА на устройстве — автоприменение отменено (аудит 92 + метка с устройства), решение вручную');
+	} else if (any_refuted) {
+		push(out.notes, 'лабораторные кандидаты этого ресурса опровергнуты на устройстве — честный отказ до подтверждения альтернативы');
 	}
 
 	/* ЧТО не работает (аудит 67): равномерные отказы обязательных
@@ -192,11 +280,15 @@ export function resource_verdict(entries, quic_vn, udp_any) {
 		}
 	}
 	/* QUIC-честность (61/§2.5): вердикт контура + покрытие UDP-профилями —
-	 * это ЗАМЕТКА о совместимости, а не отказ сервиса (TCP остаётся). */
+	 * это ЗАМЕТКА о совместимости, а не отказ сервиса (TCP остаётся).
+	 * ч.234: формулировка явно называет это СОСТОЯНИЕМ ПРОВАЙДЕРА в момент
+	 * свипа — пользователь читал «QUIC отрезан» как «в v3 сломалось»
+	 * (вопрос 2026-11-07: до v3 QUIC не измерялся вовсе, «работал всегда»
+	 * — наблюдение из браузера, где резаный QUIC невидим: TCP-фоллбек). */
 	if (quic_vn === 'silence' || quic_vn === 'icmp') {
-		push(out.notes, 'QUIC (UDP/443) отрезан у провайдера (' + quic_vn + ') — TCP-стратегии от этого не страдают, браузер падает на TCP');
+		push(out.notes, 'QUIC (UDP/443) отрезан у провайдера (' + quic_vn + ') — состояние провайдера в момент свипа, НЕ вердикт стратегий: TCP-стратегии от этого не страдают, браузер падает на TCP');
 	} else if (quic_vn === 'vn' && udp_any !== true) {
-		push(out.notes, 'QUIC (UDP/443) у провайдера ОТКРЫТ, но ни одна стратегия корпуса не несёт UDP-профиля — QUIC-попытки браузера идут без дезинка');
+		push(out.notes, 'QUIC (UDP/443) у провайдера ОТКРЫТ (состояние провайдера, не вердикт стратегий), но ни одна стратегия корпуса не несёт UDP-профиля — QUIC-попытки браузера идут без дезинка, браузер добивает их TCP-фоллбеком');
 	}
 	return out;
 };
@@ -295,6 +387,66 @@ export function selftest() {
 		{ name: 'E', args: '--e', reach_ok: true, deep_items: [ { id: 'dcp', ok: 1 } ] }
 	], 'vn', false);
 	t('discord verified via dcp', rv4.verdict === 'best_verified');
+
+	/* ч.232: device-метки — наивысший вес выбора. ч.234: РЕАЛЬНЫЙ формат
+	 * device_verdicts.json — ОБЪЕКТ {verdict:'works'} (прежний тест
+	 * прогонял строковые значения и пропустил мёртвый dv: свип ч.233
+	 * писал no_candidate при живой метке — урок «микротест реплеит
+	 * реальный формат данных, а не удобный»). */
+	const dev = { '--default': { verdict: 'broken' }, '--composite': { verdict: 'works' } };
+	/* device-confirmed бьёт лабораторного verified (Default опровергнут) */
+	const rv5 = resource_verdict([
+		{ name: 'Default', args: '--default', reach_ok: true, deep_items: ok_deep },
+		{ name: 'Composite', args: '--composite', reach_ok: true, deep_items: null }
+	], 'vn', true, dev);
+	t('device works beats lab verified', rv5.verdict === 'best_verified' &&
+		rv5.chosen.args === '--composite' && rv5.device_confirmed === true);
+	t('device note present', index(join(';', rv5.notes), 'УСТРОЙСТВЕ') >= 0);
+	/* опровергнутый verified пропускается, выбирается следующий */
+	const rv6 = resource_verdict([
+		{ name: 'Default', args: '--default', reach_ok: true, deep_items: ok_deep },
+		{ name: 'Other', args: '--other', reach_ok: true, deep_items: ok_deep }
+	], 'vn', true, dev);
+	t('refuted verified skipped', rv6.chosen.args === '--other' &&
+		rv6.device_confirmed === false);
+	/* все verified опровергнуты → manual-only с честной заметкой */
+	const rv7 = resource_verdict([
+		{ name: 'Default', args: '--default', reach_ok: true, deep_items: ok_deep }
+	], 'vn', true, dev);
+	t('all verified refuted → manual only', rv7.verdict === 'best_available' &&
+		rv7.chosen.args === '--default' &&
+		index(join(';', rv7.notes), 'ОПРОВЕРГНУТА') >= 0);
+	/* без меток — прежнее поведение */
+	const rv8 = resource_verdict([
+		{ name: 'Default', args: '--default', reach_ok: true, deep_items: ok_deep }
+	], 'vn', true, null);
+	t('no device map → lab order', rv8.verdict === 'best_verified' &&
+		rv8.chosen.args === '--default' && rv8.device_confirmed === false);
+	/* ч.234: строковое значение метки — обратная совместимость */
+	const rv9 = resource_verdict([
+		{ name: 'Composite', args: '--composite', reach_ok: false, deep_items: null }
+	], 'silence', true, { '--composite': 'works' });
+	t('string verdict value still works', rv9.verdict === 'best_verified' &&
+		rv9.device_confirmed === true);
+	/* ч.234: dead-тег — серый unmeasured вместо красного no_candidate */
+	const rv10 = resource_verdict([
+		{ name: 'C', args: '--c', reach_ok: false, deep_items: null },
+		{ name: 'D', args: '--d', reach_ok: false, deep_items: null }
+	], 'silence', true, null, true);
+	t('dead tag → unmeasured (not red)', rv10.verdict === 'unmeasured' &&
+		rv10.chosen == null && length(rv10.what_failed) === 0 &&
+		index(join(';', rv10.notes), 'НЕВОЗМОЖНО') >= 0);
+	/* метка с устройства сильнее даже мёртвого измерения */
+	const rv11 = resource_verdict([
+		{ name: 'Composite', args: '--composite', reach_ok: false, deep_items: null }
+	], 'silence', true, dev, true);
+	t('device works beats dead measurement', rv11.verdict === 'best_verified' &&
+		rv11.device_confirmed === true && rv11.chosen.args === '--composite');
+	/* dead без дрейфа (по умолчанию) — прежнее поведение */
+	const rv12 = resource_verdict([
+		{ name: 'C', args: '--c', reach_ok: false, deep_items: null }
+	], 'silence', true, null, false);
+	t('no dead flag → no_candidate', rv12.verdict === 'no_candidate');
 
 	/* dims_of: независимость измерений (66/71) */
 	const d1 = dims_of([ { ok: true, tls_ms: 100 }, { ok: true, tls_ms: 300 } ],

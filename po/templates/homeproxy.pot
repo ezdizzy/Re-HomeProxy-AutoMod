@@ -7636,3 +7636,30 @@ msgstr ""
 
 msgid "Hosts that failed for EVERY strategy and both baseline passes are excluded from the Passed column — they measure the network, not the strategies: %s."
 msgstr ""
+
+msgid "Device check"
+msgstr ""
+
+msgid "works on my device"
+msgstr ""
+
+msgid "broken on my device"
+msgstr ""
+
+msgid "confirmed on device"
+msgstr ""
+
+msgid "refuted on device"
+msgstr ""
+
+msgid "The browser ClientHello probe (utls_probe) is not installed — \"Passed\" measures only the curl class. Install native helpers to measure what TSPU actually sees."
+msgstr ""
+
+msgid "The deep battery measured the current strategy at %s — not all components passed; keeping or replacing it is your call."
+msgstr ""
+
+msgid "The deep battery did not measure this resource for the current strategy — no verdict is claimed (unmeasured is not a failure)."
+msgstr ""
+
+msgid "Router load during the sweep (1-min avg): max %s, at finish %s."
+msgstr ""

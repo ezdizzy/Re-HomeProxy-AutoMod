@@ -97,6 +97,14 @@ if [ "$QNUM" = "$PROD_QNUM" ]; then
 	echo '{"ok":0,"total":0,"error":"TEST_QNUM equals the production queue - refused"}'
 	exit 0
 fi
+# ч.235: fallback-mode guard — the fallback queue rule matches ALL root dials
+# (meta skuid 0), including sing-box zapret-out flows (mark zapret_mark, 110)
+# to the test IPs. Queued here, such a flow is mangled by the candidate AND
+# then again by the live postrouting chain (mark 110 match) — the historical
+# double-mangling bug. skuid mode never matches the core (it is root), so the
+# escape rule is only needed in the fallback branches.
+ZAPRET_MARK=$(uci -q get homeproxy.config.zapret_mark 2>/dev/null)
+[ -n "$ZAPRET_MARK" ] || ZAPRET_MARK=110
 DMARK=0x40000000               # nfqws2 DESYNC_MARK (its reinjected fakes)
 NFQWS=/opt/zapret2/nfq2/nfqws2
 LUA="--lua-init=@/opt/zapret2/lua/zapret-lib.lua --lua-init=@/opt/zapret2/lua/zapret-antidpi.lua --lua-init=@/opt/zapret2/lua/zapret-auto.lua"
@@ -104,8 +112,12 @@ TABLE=zapret_test
 CMT=zapret_test                # comment tag on our output_redir bypass rules
 TMP=/tmp/zapret_test.$$
 
-# tag|label|host  — far/near spread (mirrors the ByeDPI tester)
-HOSTS="yt|YouTube|redirector.googlevideo.com tg|Telegram|telegram.org dc|Discord|discord.com st|Speedtest|www.speedtest.net"
+# tag|label|host  — far/near spread (mirrors the ByeDPI tester).
+# ч.235 (решение пользователя, завершение В3): tg УДАЛЁН — свип больше не
+# передаёт tg=IP, а тестер перебирает ИМЕННО этот список: оставленный здесь tg
+# давал в каждом результате строку tg с пустым IP и причиной «dns» + вердикт
+# unmeasured/dead для telegram. Ручной тест tg жив: zapret_test.sh "<args>" "tg=1.2.3.4".
+HOSTS="yt|YouTube|redirector.googlevideo.com dc|Discord|discord.com st|Speedtest|www.speedtest.net"
 
 # --deep content probes (ч.109): a handshake passing ≠ the resource working.
 # Each resource gets real fetches through the SAME temp queue — YouTube is
@@ -269,6 +281,17 @@ IPSET=$(echo "$IPSET" | sed 's/[[:space:]]//g; s/,$//')
 if [ "$DEEP" = "1" ]; then
 	for dp in $DEEP_PROBES; do
 		did=${dp%%|*}; durl=${dp#*|}
+		# ч.235 (завершение В3): deep-проба тега без резолвнутого IP — SKIP.
+		# Свип больше не передаёт tg: без этой гвардии tgp/tgpf сами резолвят
+		# web.telegram.org и resurrect'ят tg в deep-результатах (живой факт:
+		# tg:0/0 в deep и unmeasured-вердикт при полностью убранном tg).
+		case "$did" in
+			y*) BT=yt ;;
+			t*) BT=tg ;;
+			d*) BT=dc ;;
+			*) BT=st ;;
+		esac
+		[ -s "$TMP/ip_$BT" ] || continue
 		dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
 	if [ "$did" = "ytr" ]; then
 		cp "$TMP/ip_yt" "$TMP/dip_$did" 2>/dev/null
@@ -353,6 +376,7 @@ if [ "$QUIC" = "1" ]; then
 		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 	else
 		nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
+		nft add rule  inet "$TABLE" out "meta mark $ZAPRET_MARK counter return" 2>/dev/null
 		nft add rule  inet "$TABLE" out "meta skuid 0 meta mark and $DMARK == 0 ip daddr { $QIP } udp dport 443 ct original packets 1-3 counter queue num $QNUM bypass" 2>/dev/null
 		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 	fi
@@ -411,6 +435,7 @@ if [ -n "$PROBE_UID" ]; then
 	nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 	else
 		nft add chain inet "$TABLE" out "{ type filter hook output priority -150; policy accept; }" 2>/dev/null
+		nft add rule  inet "$TABLE" out "meta mark $ZAPRET_MARK counter return" 2>/dev/null
 		nft add rule  inet "$TABLE" out "meta skuid 0 meta mark and $DMARK == 0 ip daddr { $IPSET } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
 		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 	fi
@@ -456,6 +481,13 @@ fi
 #    by --max-time 10, so 25s is a ceiling). In skuid mode each probe runs as
 #    `daemon` (the queue rule matches that uid only); the temp dir must then
 #    accept the daemon's result files.
+#    ч.232: alongside each curl — the BROWSER ClientHello probe (utls_probe,
+#    u_<tag>): TSPU decides by the client fingerprint and curl's Hello is not
+#    a browser's (live fact 2026-11-07: Default passes every router probe,
+#    fails on the phone). The probe class rides the SAME queue rule (daemon
+#    uid, test IPs). Absent binary → honest curl-only sweep (status quo).
+UTLS=""
+[ -x /usr/bin/utls_probe ] && UTLS="1"
 [ -n "$PROBE_UID" ] && chmod 777 "$TMP" 2>/dev/null
 for h in $HOSTS; do
 	tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
@@ -468,6 +500,17 @@ for h in $HOSTS; do
 	else
 		( out=$(curl -s --resolve "${host}:443:${ip}" -o /dev/null -w '%{http_code} %{time_appconnect} %{redirect_url}' --connect-timeout 4 --max-time 10 "https://${host}" 2>/dev/null); echo "$out $?" > "$TMP/r_$tag" ) >/dev/null 2>&1 &
 	fi
+	if [ -n "$UTLS" ]; then
+		# Same identity as the curl probe of this host: the temp-queue rule
+		# matches the PROBE uid (skuid mode) or root (fallback) — a probe run
+		# under the WRONG uid would never enter the queue and would measure
+		# the raw path while pretending to measure the strategy.
+		if [ -n "$PROBE_UID" ]; then
+			su -s /bin/sh daemon -c "/usr/bin/utls_probe -host '${host}' -ip '${ip}' -timeout 10 > '${TMP}/u_${tag}'" >/dev/null 2>&1 &
+		else
+			( /usr/bin/utls_probe -host "${host}" -ip "${ip}" -timeout 10 > "$TMP/u_${tag}" 2>/dev/null ) &
+		fi
+	fi
 done
 n=0
 while [ "$n" -lt 25 ]; do
@@ -475,11 +518,35 @@ while [ "$n" -lt 25 ]; do
 	for h in $HOSTS; do
 		tag=${h%%|*}
 		[ -s "$TMP/r_$tag" ] || all=0
+		if [ -n "$UTLS" ] && [ ! -s "$TMP/u_$tag" ]; then all=0; fi
 	done
 	[ "$all" = 1 ] && break
 	sleep 1
 	n=$((n + 1))
 done
+
+# ч.232: flatten the browser-probe verdicts into "uok ms alpn|err" token
+# files (ut_<tag>) for the shell JSON builder; the deep builder reads the
+# u_<tag> JSON itself. err tokens are safe words by contract (errName).
+if [ -n "$UTLS" ]; then
+	UTAGS=""
+	for h in $HOSTS; do UTAGS="$UTAGS ${h%%|*}"; done
+	ucode -e '
+import { readfile, writefile } from "fs";
+const TMP = "'"$TMP"'";
+for (let t in split("'"$UTAGS"'", " ")) {
+	if (type(t) !== "string" || !length(t)) continue;
+	let j = null;
+	try { j = json(readfile(TMP + "/u_" + t) || ""); } catch (e) { j = null; }
+	let line;
+	if (j != null && type(j) === "object" && j.ok == 1)
+		line = "1 " + int(j.tls_ms || 0) + " ok " + ("" + (j.alpn || ""));
+	else
+		line = "0 0 " + ((j != null && type(j) === "object" && j.err != null) ? ("" + j.err) : "absent");
+	writefile(TMP + "/ut_" + t, line + "\n");
+}
+' 2>/dev/null
+fi
 
 # 5b. Deep content fetches (--deep): run through the SAME temp queue (the
 # fetch IPs joined the IPSET above, each URL host pinned with --resolve).
@@ -623,7 +690,9 @@ fi
 # unreliable on this build); the builder prints the final line.
 	if [ "$DEEP" = "1" ]; then
 	{
-		printf '{"tmp":"%s","probe":"%s","deep":true,"hosts":[' "$TMP" "$PROBE_MODE"
+		printf '{"tmp":"%s","probe":"%s","deep":true' "$TMP" "$PROBE_MODE"
+		[ -n "$UTLS" ] && printf ',"utls":true'
+		printf ',"hosts":['
 		firsth=1
 		for h in $HOSTS; do
 			tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
@@ -636,6 +705,8 @@ fi
 	ucode /etc/homeproxy/scripts/zapret_deep_build.uc < "$TMP/manifest.json"
 else
 	# plain build: the same unified record (code/tls/redirect/rc), no deep.
+	# ч.232: the browser-ClientHello verdict rides along as uok/utls_ms —
+	# ok stays the CURL class; the RANKING layer decides the combined policy.
 	JSON=""; OKC=0; TOT=0
 	for h in $HOSTS; do
 		tag=${h%%|*}; rest=${h#*|}; label=${rest%%|*}; host=${rest#*|}
@@ -650,6 +721,13 @@ else
 			rc=$4
 		fi
 		case "$rc" in ''|*[!0-9]*) rc=1 ;; esac
+		UOK=1; UMS=0; UERR=""
+		if [ -n "$UTLS" ]; then
+			uraw=$(cat "$TMP/ut_$tag" 2>/dev/null)
+			set -- $uraw
+			UOK=${1:-0}; UMS=${2:-0}; UERR=${3:-}
+			[ "$UOK" = "1" ] || { UOK=0; [ -n "$UERR" ] || UERR=absent; }
+		fi
 		TOT=$((TOT+1))
 		tlsok=0; case "$tls" in 0|0.000000|"") tlsok=0;; *) tlsok=1;; esac
 		ok=0; [ "$tlsok" = 1 ] && [ "$rc" = 0 ] && ok=1
@@ -663,8 +741,15 @@ else
 			fi
 		fi
 		[ -n "$JSON" ] && JSON="$JSON,"
-		JSON="$JSON{\"tag\":\"$tag\",\"label\":\"$label\",\"host\":\"$host\",\"ip\":\"$ip\",\"code\":\"$dcode\",\"tls\":\"$tls\",\"redirect\":\"$redir\",\"rc\":$rc,\"ok\":$ok,\"reason\":\"$reason\",\"probe\":\"$PROBE_MODE\"}"
+		JSON="$JSON{\"tag\":\"$tag\",\"label\":\"$label\",\"host\":\"$host\",\"ip\":\"$ip\",\"code\":\"$dcode\",\"tls\":\"$tls\",\"redirect\":\"$redir\",\"rc\":$rc,\"ok\":$ok,\"reason\":\"$reason\",\"probe\":\"$PROBE_MODE\""
+		if [ -n "$UTLS" ]; then
+			JSON="$JSON,\"uok\":$UOK,\"utls_ms\":$UMS"
+			[ "$UOK" = "1" ] || JSON="$JSON,\"u_err\":\"$UERR\""
+		fi
+		JSON="$JSON}"
 	done
-	echo "{\"ok\":$OKC,\"total\":$TOT,\"probe\":\"$PROBE_MODE\",\"results\":[$JSON]}"
+	UTLSJ=""
+	[ -n "$UTLS" ] && UTLSJ=',"utls_probe":true,"utls_fp":"chrome"'
+	echo "{\"ok\":$OKC,\"total\":$TOT,\"probe\":\"$PROBE_MODE\"$UTLSJ,\"results\":[$JSON]}"
 fi
 rm -rf "$TMP" 2>/dev/null

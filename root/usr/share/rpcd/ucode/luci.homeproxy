@@ -1708,7 +1708,8 @@ function hp_autopilot_cfg() {
 	};
 	return {
 		enabled: (get('enabled', '0') === '1'),
-		resources: '' + get('resources', 'youtube discord telegram'),
+		/* ч.233: telegram убран из автопилота (решение пользователя). */
+		resources: '' + get('resources', 'youtube discord general'),
 		set_rules: (get('set_rules', '1') === '1'),
 		interval_h: int(get('interval_h', '6')),
 		check_min: int(get('check_min', '15')),
@@ -5387,6 +5388,17 @@ const methods = {
 		}
 		if (wprev && wprev.running && (time() - int(wprev.ts || 0) < 900))
 			return { result: false, error: 'идёт импорт/генерация стратегий — фаззинг станет возможен после его завершения' };
+		/* ч.235: настоящий мьютекс свипов — пул тестовых очередей. Живая
+		 * fuzz-очередь (моложе 5400 с) = свип уже идёт, честный отказ.
+		 * Статус-гвард выше читает файл, который мог протухнуть (мёртвый
+		 * merge) или быть сброшен вручную (живой факт 00:19-00:42: два
+		 * свипа шли параллельно и затирали result/history). */
+		const rmst = resmgr_status();
+		for (let rq in keys(rmst.queues)) {
+			if (rmst.queues[rq] != null && rmst.queues[rq].task === 'fuzz' &&
+				time() - int(rmst.queues[rq].ts || 0) < 5400)
+				return { result: false, error: 'a fuzz sweep is already running (test queue ' + rq + ') — one sweep at a time' };
+		}
 			system(`sh ${shellquote(HP_DIR + '/scripts/zapret_fuzz.sh')} ${mode} ${rounds} >/dev/null 2>&1 &`);
 			return { result: true, mode: mode, rounds: rounds };
 		}
@@ -5408,6 +5420,70 @@ const methods = {
 				try { history = json(readfile(hs) || ''); } catch (e) { history = null; }
 			}
 			return { status: status, result: result, history: history };
+		}
+	},
+
+	/* ── ч.232: метки С УСТРОЙСТВА (device verdicts) ──────────────────────
+	 * Проба-модель лаборатории (curl, пиновые IP, temp-очередь) не видит
+	 * решающих факторов TSPU: ClientHello браузера/телефона (utls на mipsle
+	 * недоступен), QUIC-фоллбек клиента, паттерн соединений — живой факт
+	 * 2026-11-07: лабораторный best_verified Default опровергнут телефоном,
+	 * реально работающая стратегия в лидеры не попадала. Метки пользователя
+	 * («работает / не работает на устройстве») — единственный канал
+	 * подтверждения и НАИВЫСШИЙ вес выбора: хранятся в
+	 * /etc/homeproxy/device_verdicts.json (переживает ребут, в отличие от
+	 * /var/run), читаются merge'ем фаззинга (порядок + вердикты),
+	 * wizard_autopick (не применять опровергнутую / не заменять
+	 * подтверждённую текущую), авто-пилотом и оптимизатором. */
+	zapret_device_verdicts: {
+		call: function(req) {
+			const dp = '/etc/homeproxy/device_verdicts.json';
+			let dev = null;
+			if (access(dp)) {
+				try { dev = json(readfile(dp) || ''); } catch (e) { dev = null; }
+			}
+			return { result: true, device: (dev != null && type(dev.resources) === 'object') ? dev.resources : {}, ts: (dev != null) ? int(dev.ts || 0) : 0 };
+		}
+	},
+
+	zapret_device_verdict_set: {
+		args: { resource: 'resource', strategy: 'strategy', verdict: 'verdict' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const resource = trim('' + (a.resource || ''));
+			const strategy = trim('' + (a.strategy || ''));
+			const verdict = trim('' + (a.verdict || ''));
+			if (resource != 'youtube' && resource != 'discord' &&
+				resource != 'telegram' && resource != 'general')
+				return { result: false, error: 'unknown resource' };
+			if (verdict != 'works' && verdict != 'broken' && verdict != 'clear')
+				return { result: false, error: 'verdict must be works|broken|clear' };
+			/* Тот же guard формы, что у zapret_fuzz_apply: --shape, без
+			 * шелл-метасимволов (строка уходит в ранжирование и apply-пути). */
+			if (!length(strategy) || length(strategy) > 2000 ||
+				match(strategy, /[`$;&|<>\n\r]/) || !match(strategy, /^--[a-z]/))
+				return { result: false, error: 'invalid strategy' };
+			const dp = '/etc/homeproxy/device_verdicts.json';
+			let dev = { ts: time(), resources: {} };
+			if (access(dp)) {
+				try {
+					const j = json(readfile(dp) || '');
+					if (j != null && type(j.resources) === 'object')
+						dev.resources = j.resources;
+				} catch (e) {}
+			}
+			if (type(dev.resources[resource]) !== 'object')
+				dev.resources[resource] = {};
+			if (verdict === 'clear')
+				delete dev.resources[resource][strategy];
+			else
+				dev.resources[resource][strategy] = { verdict: verdict, ts: time() };
+			/* атомарная запись (tmp + mv -f) — читатели (merge, автопилот)
+			 * не должны увидеть обрезанный файл */
+			const tmp = dp + '.tmp';
+			writefile(tmp, sprintf('%.J\n', dev));
+			system(`mv -f ${shellquote(tmp)} ${shellquote(dp)}`);
+			return { result: true, device: dev.resources, ts: int(dev.ts) };
 		}
 	},
 
@@ -5814,7 +5890,10 @@ const methods = {
 			const set_rules = flag(a.set_rules);
 			if (set_rules == null)
 				return { result: false, error: 'некорректный set_rules' };
-			const RES = { youtube: 1, discord: 1, telegram: 1, general: 1 };
+			/* ч.233: telegram УБРАН из автопилота (решение пользователя) —
+			 * сеттер его молча не пропускает; стратегия для tg подбирается
+			 * вручную. */
+			const RES = { youtube: 1, discord: 1, general: 1 };
 			const resources = [];
 			const seen = {};
 			for (let x in split(trim('' + (a.resources || '')), /[[:space:],]+/)) {
@@ -5984,6 +6063,13 @@ const methods = {
 			if (length(strategy) > 2000 || (length(strategy) &&
 					(!match(strategy, /^--[a-z]/) || match(strategy, /[`$;&|<>\n]/))))
 				return { result: false, error: 'invalid strategy' };
+			/* ч.233 (решение пользователя 2026-11-07): автоподбор для Telegram
+			 * отключён — без VPN/туннеля Telegram в РФ не поднимается, автоперебор
+			 * стратегий только тратит время. РУЧНОЕ применение из таблицы
+			 * (strategy задан) остаётся: тот же resource/rule/apply/verify
+			 * механизм — пользователь пробует стратегии вручную. */
+			if (resource === 'telegram' && !length(strategy))
+				return { result: false, error: 'автоподбор Telegram отключён — Telegram в РФ не поднимается без VPN/туннеля; подберите стратегию вручную в Лаборатории' };
 			if (set_rule && resource === 'general')
 				return { result: false, error: 'set_rule makes no sense for "general"' };
 			if (set_rule) {
@@ -6544,6 +6630,17 @@ const methods = {
 			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || 'nil');
 			const rmode = '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
 			const z_on = (c.get('homeproxy', 'config', 'zapret_enabled') === '1');
+			/* ч.232: метки с устройства — вход честной сверки (работающая на
+			 * устройстве стратегия не заменяется лабораторным лидером). */
+			let devres = {};
+			const dvp = '/etc/homeproxy/device_verdicts.json';
+			if (access(dvp)) {
+				try {
+					const dj = json(readfile(dvp) || '');
+					if (dj != null && type(dj.resources) === 'object')
+						devres = dj.resources;
+				} catch (e) { devres = {}; }
+			}
 			/* ч.231: подтверждённость ТЕКУЩЕЙ применённой стратегии — вход
 			 * честной сверки optimizer'а (замена подтверждённой = churn). */
 			const opt_cur_args = trim('' + (c.get('homeproxy', 'config', 'zapret_cmd_opts') || ''));
@@ -6551,13 +6648,20 @@ const methods = {
 			for (let k in OPT_SERVICE_KEYS) {
 				const lv = (lab != null && type(lab.verdicts) === 'object' &&
 					type(lab.verdicts[k]) === 'object') ? lab.verdicts[k] : null;
+				const dvres = (type(devres[k]) === 'object') ? devres[k] : {};
+				const cur_state = optimizer_current_state(lab, k, opt_cur_args);
+				/* 🔴 приёмка ч.232: обращение к полю ПУСТОГО слота (метки нет)
+				 * = null.field = краш всего RPC (rc 247) — только через guard. */
+				const dvm = (type(dvres[opt_cur_args]) === 'object') ? dvres[opt_cur_args] : null;
+				cur_state.device = (dvm != null) ? ('' + (dvm.verdict || '')) : '';
 				services[k] = optimizer_chain_plan({
 					service: k,
 					lab_verdict: (lv != null) ? ('' + (lv.verdict || '')) : null,
 					lab_chosen: (lv != null && type(lv.chosen) === 'object') ? lv.chosen : null,
 					profile: summaries[k],
 					rule: (rules[k] != null) ? rules[k] : null,
-					current_state: optimizer_current_state(lab, k, opt_cur_args),
+					current_state: cur_state,
+					device: dvres,
 					main_node: main_node,
 					routing_mode: rmode,
 					zapret_enabled: z_on
@@ -9112,7 +9216,10 @@ const methods = {
 			};
 
 			const res = { arch: arch, go_asset: goasset };
-			const tools = [ 'probe_pool', 'sni_sniffer' ];
+			/* ч.232: utls_probe — браузерная ClientHello-проба лаборатории
+			 * стратегий (TSPU видит отпечаток клиента; curl не воспроизводит).
+			 * Опциональна: без бинарника Passed честно меряет только curl. */
+			const tools = [ 'probe_pool', 'sni_sniffer', 'utls_probe' ];
 			for (let tool in tools)
 				res[tool] = install_one(tool);
 			/* The daemon picks the helpers up on its next pass; restarting the

@@ -412,7 +412,8 @@ start_service() {
 	if ! uci -q get "$CONF.autopilot" >/dev/null 2>&1; then
 		uci -q set "$CONF.autopilot=homeproxy"
 		uci -q set "$CONF.autopilot.enabled=0"
-		uci -q set "$CONF.autopilot.resources=youtube discord telegram"
+		# ч.233: telegram убран из автопилота (решение пользователя).
+		uci -q set "$CONF.autopilot.resources=youtube discord general"
 		uci -q set "$CONF.autopilot.set_rules=1"
 		uci -q set "$CONF.autopilot.interval_h=6"
 		uci -q set "$CONF.autopilot.check_min=15"

@@ -136,17 +136,43 @@ function hand_item(tag) {
 	return { code: code, tls: tls, redirect: redirect, rc: rc, ok: ok, reason: reason };
 }
 
-let deep_all = 0, deep_total_all = 0;
-const results = [];
-for (let h in hosts) {
-	const tag = '' + h[0], label = '' + h[1], host = '' + h[2];
-	const r = hand_item(tag);
-	const hres = (r != null) ? r : { code: '000', tls: 0.0, redirect: '-', rc: 1, ok: false, reason: 'fail' };
-	const ipf = TMP + '/ip_' + tag;
-	const ip = access(ipf) ? trim(readfile(ipf) || '') : '';
-	const out = { tag: tag, label: label, host: host, ip: ip,
-		code: hres.code, tls: sprintf('%.6f', hres.tls),
-		redirect: hres.redirect, rc: hres.rc, ok: hres.ok, reason: hres.reason };
+/* ч.232: браузерная ClientHello-проба тега (utls_probe) → {uok, utls_ms,
+ * u_err}|null. ok в этой записи остаётся классом CURL; политику « Passed =
+ * оба класса» применяет ранжирующий merge. Честное отсутствие (нет файла)
+ * = бинарник не установлен — «не измерено», не провал (урок 91). */
+function utls_item(tag) {
+	const up = TMP + '/u_' + tag;
+	if (!access(up)) return null;
+	let j = null;
+	try { j = json(readfile(up) || ''); } catch (e) { j = null; }
+	if (j == null || type(j) !== 'object')
+		return null;
+	if (j.ok == 1)
+		return { uok: 1, utls_ms: int(j.tls_ms || 0), alpn: '' + (j.alpn || ''), u_err: '' };
+	return { uok: 0, utls_ms: 0, alpn: '', u_err: '' + (j.err || 'fail') };
+}
+
+	let deep_all = 0, deep_total_all = 0;
+	const results = [];
+	for (let h in hosts) {
+		const tag = '' + h[0], label = '' + h[1], host = '' + h[2];
+		const r = hand_item(tag);
+		const hres = (r != null) ? r : { code: '000', tls: 0.0, redirect: '-', rc: 1, ok: false, reason: 'fail' };
+		const ipf = TMP + '/ip_' + tag;
+		const ip = access(ipf) ? trim(readfile(ipf) || '') : '';
+		const out = { tag: tag, label: label, host: host, ip: ip,
+			code: hres.code, tls: sprintf('%.6f', hres.tls),
+			redirect: hres.redirect, rc: hres.rc, ok: hres.ok, reason: hres.reason };
+		/* ч.232: браузерная ClientHello-проба (когда бинарник установлен) */
+		const u = (man.utls === true) ? utls_item(tag) : null;
+		if (u != null) {
+			out.uok = u.uok;
+			out.utls_ms = u.utls_ms;
+			if (u.uok == 1 && length(u.alpn))
+				out.u_alpn = u.alpn;
+			else if (u.uok != 1)
+				out.u_err = u.u_err;
+		}
 	if (man.deep === true) {
 		const ids = owners[tag];
 		const items = [];
@@ -180,5 +206,10 @@ if (man.deep === true) {
 /* Честный режим проб (skuid|fallback) — фаззер поднимает его в UI. */
 if (man.probe != null)
 	top.probe = '' + man.probe;
+/* ч.232: факт наличия браузерной ClientHello-пробы в этом прогоне (merge
+ * применяет политику «Passed = curl И браузерный Hello» только когда она
+ * реально мерялась; иначе — прежнее curl-only поведение). */
+if (man.utls === true)
+	top.utls_probe = true;
 top.results = results;
 print(sprintf("%.J\n", top));

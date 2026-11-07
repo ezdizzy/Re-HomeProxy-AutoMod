@@ -40,7 +40,13 @@
 #                 "verdict":"…","note":"…"},…}}
 #   {"ok":0,"error":"…"}
 
-HOSTS="yt|redirector.googlevideo.com tg|telegram.org dc|discord.com st|www.speedtest.net"
+# ч.235 (решение пользователя): tg УБРАН из набора проб свипа — telegram нет
+# в autopilot.resources («youtube discord»), вердикт для tg после ч.234 всё
+# равно «не применим» (via_node), а пробы тратили минуты и добавляли
+# DNS-таймауты-шум (ч.233). resource_verdict на пустом наборе честно даёт
+# no_candidate → оптимизатор показывает via_node, как и раньше. Ручной тестер
+# (zapret_test.sh без аргументов) сохраняет tg — точечная диагностика жива.
+HOSTS="yt|redirector.googlevideo.com dc|discord.com st|www.speedtest.net"
 
 TMP=/tmp/zapret_resolve.$$
 mkdir -p "$TMP" 2>/dev/null

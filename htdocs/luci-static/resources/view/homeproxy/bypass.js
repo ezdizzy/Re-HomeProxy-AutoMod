@@ -216,6 +216,23 @@ const callAutoPickStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* ч.232: метки С УСТРОЙСТВА — единственный канал, который видит то же, что
+ * телефон (лабораторные пробы — curl: свой ClientHello, нет QUIC-фоллбека).
+ * 'works' поднимает стратегию во всех выборщиках, 'broken' исключает её из
+ * автоподбора и опускает в таблице. */
+const callDeviceVerdicts = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'zapret_device_verdicts',
+	expect: { '': {} }
+});
+
+const callDeviceVerdictSet = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'zapret_device_verdict_set',
+	params: [ 'resource', 'strategy', 'verdict' ],
+	expect: { '': {} }
+});
+
 /* ч.97 → Ф7.1: the scheduled strategy auto-pilot lives on the Automation
  * page now (level «DPI auto-pilot»); the STATUS still rides this page for
  * the Serving map and the Quality panels. Only the status RPC stays. */
@@ -501,7 +518,63 @@ return view.extend({
 			compProfiles: [ { engine: 'zapret', resource: 'youtube', domains: '', strategy: '' } ],
 			compBuilt: null, composeSig: null, composeSeeded: false, rbSig: null,
 			compSeeded: false, compDirty: false, compSaveError: null,
-			mapSig: null, fuzzShownSig: null };
+			mapSig: null, fuzzShownSig: null,
+			/* ч.232: метки с устройства { resource: { args: {verdict, ts} } }. */
+			dev: {} };
+
+		/* ── ч.232: device-verdict helpers ─────────────────────────────── */
+		/* Метка одной стратегии по ресурсу: 'works'|'broken'|'' (live map). */
+		function devMark(resource, args) {
+			const dm = state.dev && state.dev[resource];
+			const mv = dm && dm[args];
+			return (mv && mv.verdict) ? String(mv.verdict) : '';
+		}
+		/* Все метки стратегии (для бейджа в строке таблицы). */
+		function devMarksOf(args) {
+			const out = [];
+			const RMAP = { youtube: 'YT', discord: 'DC', telegram: 'TG', general: 'GEN' };
+			Object.keys(RMAP).forEach(function(rn) {
+				const v = devMark(rn, args);
+				if (v)
+					out.push({ res: rn, short: RMAP[rn], verdict: v });
+			});
+			return out;
+		}
+		/* Пара кнопок «работает / не работает на устройстве» + текущие метки.
+		 * Одно место результата (client-правило: результат внизу, заменяя
+		 * предыдущий) — сюда пользователь приходит ПОСЛЕ проверки на телефоне.
+		 * title — подпись «<Ресурс> · <имя стратегии>» (согласовано ч.233:
+		 * одна подписанная группа на ресурс). */
+		function devButtons(resource, args, title) {
+			if (!resource || !args)
+				return null;
+			const wrap = E('span', { 'class': 'wiz-note', style: 'display:inline-flex; gap:6px; align-items:center; margin:4px 0' });
+			const set = function(v) {
+				wrap.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+				L.resolveDefault(callDeviceVerdictSet(resource, args, v), {}).then(function(r) {
+					if (r && r.device)
+						state.dev = r.device;
+					refresh();
+				});
+			};
+			const mk = function(label, v, cls) {
+				const b = E('button', { 'class': 'hpui-btn ' + cls + ' hpui-btn-sm', type: 'button' }, [ label ]);
+				b.addEventListener('click', function() { set(v); });
+				return b;
+			};
+			const cur = devMark(resource, args);
+			wrap.appendChild(E('span', { style: 'opacity:.75' },
+				[ _('Device check') + (title ? (' — ' + title) : '') + ':' ]));
+			wrap.appendChild(mk(_('works on my device'), 'works',
+				cur === 'works' ? 'hpui-btn-primary' : 'hpui-btn'));
+			wrap.appendChild(mk(_('broken on my device'), 'broken',
+				cur === 'broken' ? 'hpui-btn-danger' : 'hpui-btn'));
+			if (cur === 'works')
+				wrap.appendChild(badge('hpui-b-green', _('confirmed on device')));
+			else if (cur === 'broken')
+				wrap.appendChild(badge('hpui-b-red', _('refuted on device')));
+			return wrap;
+		}
 
 		function nodeText(node) {
 			if (node === 'main-out') return _('Same as main node');
@@ -1824,7 +1897,18 @@ return view.extend({
 					const v = res.verdicts[rn];
 					if (!v || !v.verdict)
 						return;
-					if (v.verdict === 'no_candidate') {
+					if (v.verdict === 'unmeasured') {
+						/* ч.234: измерение невозможно (мёртвый тег: ни одна
+						 * стратегия не прошла + оба контрола провалены) —
+						 * СЕРЫЙ «не удалось измерить» вместо красного
+						 * «ни одна стратегия не прошла»; works-метка выше
+						 * этого отказа и дала бы best_verified серверно. */
+						box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' }, [
+							badge('hpui-b-grey', _('MEASUREMENT UNAVAILABLE')),
+							' ' + (RESL[rn] || rn) + ': ' +
+							_('the test host did not answer for ANY strategy and in both control passes — a measurement failure (network drift/TSPU), not a strategy verdict; re-run the sweep later.')
+						]));
+					} else if (v.verdict === 'no_candidate') {
 						box.appendChild(E('div', { 'class': 'wiz-note', style: 'color:var(--hp-danger,#c00)' }, [
 							badge('hpui-b-red', _('NO VIABLE STRATEGY')),
 							' ' + (RESL[rn] || rn) + ': ' +
@@ -1838,23 +1922,50 @@ return view.extend({
 							' ' + (RESL[rn] || rn) + ': ' + ((v.chosen && v.chosen.name) || '') + ' — ' +
 							_('the handshake passes but the mandatory component tests are unconfirmed; auto-pick will NOT apply it — pick it manually if it suits you.')
 						]));
+						/* ч.233 (согласовано с пользователем): кнопок у
+						 * НЕприменённого выбора нет — маркируется то, что реально
+						 * обслуживает трафик (группа ниже, у current). */
 					} else if (v.verdict === 'best_verified' && v.chosen && v.chosen.name) {
 						box.appendChild(E('div', { 'class': 'wiz-note' }, [
 							badge('hpui-b-green', _('BEST VERIFIED')),
 							' ' + (RESL[rn] || rn) + ': ' + v.chosen.name
 						]));
-						/* ч.231: current (applied) — deep-only строка лаборатории. */
+						/* ч.235 (вариант (i), согласован с пользователем): честная
+						 * current-ремарка вместо утверждения «прошла». Полный
+						 * проход — серый бейдж и прежний текст; частичный —
+						 * янтарный бейдж с реальным счётом; ресурс батарей не
+						 * измерялся — серое «deep не измерялась» (не измерено
+						 * ≠ провал). Сама строка из таблицы убрана ч.232 —
+						 * этот блок единственная поверхность этих данных. */
 						if (curA0 && DTAG[rn]) {
 							const cRow = res.strategies.filter(function(x) { return x.args === curA0; })[0] || null;
 							const cHosts = (cRow && cRow.deep && cRow.deep.hosts) || [];
 							let cItem = null;
 							cHosts.forEach(function(hd) { if (hd.tag === DTAG[rn]) cItem = hd; });
-							if (cItem && cItem.deep_total > 0)
+							if (cItem && cItem.deep_total > 0 && (cItem.deep_pass || 0) === cItem.deep_total)
 								box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' }, [
 									badge('hpui-b-grey', _('current (applied)')),
 									' ' + _('The currently applied strategy also passed the deep battery (%s) — replacing it within the run noise is optional, not required.').format(
 										(cItem.deep_pass || 0) + '/' + cItem.deep_total)
 								]));
+							else if (cItem && cItem.deep_total > 0)
+								box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' }, [
+									badge('hpui-b-amber', _('current (applied)')),
+									' ' + _('The deep battery measured the current strategy at %s — not all components passed; keeping or replacing it is your call.').format(
+										(cItem.deep_pass || 0) + '/' + cItem.deep_total)
+								]));
+							else if (cRow)
+								box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' }, [
+									badge('hpui-b-grey', _('current (applied)')),
+									' ' + _('The deep battery did not measure this resource for the current strategy — no verdict is claimed (unmeasured is not a failure).')
+								]));
+							/* ч.233 (согласовано): ОДНА кнопочная группа на ресурс —
+							 * у ПРИМЕНЁННОЙ стратегии (chosen == curA0 → одна группа,
+							 * задвоение убрано; подпись несёт ресурс и имя). */
+							const dbc = devButtons(rn, curA0, (RESL[rn] || rn) + ' · ' +
+								((cRow && cRow.name) || _('custom args')));
+							if (dbc)
+								box.appendChild(dbc);
 						}
 					}
 					(v.notes || []).forEach(function(nn) {
@@ -1865,15 +1976,19 @@ return view.extend({
 			/* ч.123: the sweep-level QUIC verdict — measured UDP/443
 			 * passability to the YouTube video edge, once per sweep. Ф6.4:
 			 * only the three honest verdicts render — a garbage token
-			 * (the live «NaN» fact) reads as unmeasured, no badge. */
+			 * (the live «NaN» fact) reads as unmeasured, no badge.
+			 * ч.234: формулировки явно называют это СОСТОЯНИЕМ ПРОВАЙДЕРА
+			 * в момент свипа, не вердиктом стратегий (пользователь читал
+			 * «QUIC отрезан» как «в v3 сломалось»; до v3 QUIC не измерялся
+			 * вовсе — «работал всегда» это браузерный TCP-фоллбек). */
 			if (res.quic && res.quic.verdict != null &&
 				[ 'vn', 'icmp', 'silence' ].indexOf('' + res.quic.verdict) >= 0) {
 				const qv = '' + res.quic.verdict;
 				const qtxt = (qv === 'vn')
-					? _('QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — the browser may pick QUIC for some flows; strategies without fake-QUIC leave those attempts unserved.')
+					? _('QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — provider state at the sweep moment, NOT a strategy verdict: strategies without fake-QUIC leave browser QUIC attempts unserved (the browser falls back to TCP).')
 					: (qv === 'icmp')
-						? _('QUIC (UDP 443) to the YouTube video edge is REJECTED (measured) — the browser falls back to TCP quickly; TCP-only strategies serve the whole resource.')
-						: _('QUIC (UDP 443) to the YouTube video edge gets NO answer (measured) — typically a silent provider cut; the browser falls back to TCP, TCP-only strategies serve the whole resource.');
+						? _('QUIC (UDP 443) to the YouTube video edge is REJECTED (measured) — provider state at the sweep moment, NOT a strategy verdict: the browser falls back to TCP quickly; TCP-only strategies serve the whole resource.')
+						: _('QUIC (UDP 443) to the YouTube video edge got NO answer (measured) — provider state at the sweep moment, NOT a strategy verdict: the browser falls back to TCP; TCP-only strategies serve the whole resource.');
 				box.appendChild(E('div', { 'class': 'wiz-note', title: 'probe_pool -quic-check (Version Negotiation, UDP/443)' },
 					[ (qv === 'vn')
 						? badge('hpui-b-green', 'QUIC: open')
@@ -1886,9 +2001,27 @@ return view.extend({
 					res.total || res.strategies.length, res.deep_count || 0,
 					res.deep_selected || res.deep_count || 0,
 					fuzzEtaMin(13), fuzzEtaMin(res.total || res.strategies.length)) ]));
+			/* ч.235 (решение пользователя): load average свипа — отличает
+			 * «хост умер» от «роутер задыхался» (прод-nfqws2 + кандидат +
+			 * пробы одновременно) в ретроспективе. */
+			if (res.loads != null && res.load_now != null) {
+				let lmax = 0;
+				for (const lk in res.loads) {
+					const lv = parseFloat(res.loads[lk]);
+					if (!isNaN(lv) && lv > lmax) lmax = lv;
+				}
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.75' },
+					[ _('Router load during the sweep (1-min avg): max %s, at finish %s.').format(
+						lmax.toFixed(2), ('' + res.load_now).split(' ')[0] || '0') ]));
+			}
 			if (res.deep_failed && res.deep_failed.length)
 				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.75' },
 					[ _('Deep check failed (retried once, no verdict): %s — these strategies rank as untested.').format(res.deep_failed.join(', ')) ]));
+			/* ч.232: honest probe-class note — without utls_probe the Passed
+			 * column measures only the curl class (no browser ClientHello). */
+			if (res.utls_probe === false)
+				box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.75' },
+					[ _('The browser ClientHello probe (utls_probe) is not installed — "Passed" measures only the curl class. Install native helpers to measure what TSPU actually sees.') ]));
 			const thead = E('thead', {}, E('tr', {}, [
 				E('th', {}, [ '#' ]),
 				E('th', {}, [ _('Strategy') ]),
@@ -1907,14 +2040,29 @@ return view.extend({
 			const curRow = (curArgs && res.strategies.filter(function(x) { return x.args === curArgs; })[0]) || null;
 			const curStream = (curRow && Number(curRow.stream || 0)) || 0;
 			const tbody = E('tbody', {});
-			res.strategies.slice(0, 15).forEach(function(s, i) {
+			/* ч.232 (просьба пользователя): строка «current (applied)» — это
+			 * ТЕКУЩАЯ применённая композиция, а не кандидат; в таблице
+			 * ранжирования она только путает. Её данные остаются в результате
+			 * (вердикт «текущая тоже прошла» выше, оптимизатор, метки
+			 * устройства) — из таблицы она убрана. */
+			const tableRows = res.strategies.filter(function(x) { return x.name !== 'current (applied)'; });
+			tableRows.slice(0, 15).forEach(function(s, i) {
 				const hostsTip = (s.hosts || []).map(function(h) {
 					return (h.label || h.tag) + ' ' +
 						(h.ok ? '✓ ' + h.votes + '/' + h.rounds + ' · median ' + (h.median_ms || 0) + ' ms · jitter ' + (h.jitter_ms || 0) + ' ms'
 						      : '✗ ' + (h.reason || 'fail')) +
 						(h.dist ? '' : ' (' + _('free pass') + ')') +
+						/* ч.232: браузерный ClientHello-класс (utls_probe). */
+						(h.uok === true ? ' · uTLS ✓ ' + (h.utls_ms || 0) + ' ms'
+							: (h.uok === false ? ' · uTLS ✗ ' + (h.u_reason || 'fail') : '')) +
 						(h.ip2 ? (h.alt_ok ? ' · IP2 ✓' : ' · IP2 ✗ ' + (h.alt_reason || 'fail')) : '');
 				}).join(' · ');
+				/* ч.232: метки с устройства — бейджи у имени (живые, не
+				 * снапшот свипа). */
+				const devBadges = devMarksOf(s.args).map(function(m) {
+					return badge(m.verdict === 'works' ? 'hpui-b-green' : 'hpui-b-red',
+						m.short + ' ' + (m.verdict === 'works' ? '✓' : '✗'));
+				});
 				/* Ф6.4 (аудит 92): вердикт стратегии по ресурсам — бейджем у
 				 * имени (проверен/доступен), как назвал Strategy Lab v3. */
 				let vBadge = null;
@@ -2067,7 +2215,8 @@ return view.extend({
 						  quicCapable
 							? badge('hpui-b-green', 'QUIC')
 							: E('span', { 'class': 'hpui-badge', style: 'opacity:.7' }, [ 'TCP' ]) ]
-							.concat(vBadge ? [ ' ', vBadge ] : [])),
+							.concat(vBadge ? [ ' ', vBadge ] : [])
+							.concat(devBadges.length ? [ ' ' ].concat(devBadges) : [])),
 					E('td', { style: 'white-space:nowrap',
 						title: (s.total === 0) ? _('no handshake rounds for this entry — it is measured by the deep battery only') : '' },
 					[ (s.total === 0)
@@ -2136,8 +2285,10 @@ return view.extend({
 		 * snapshot → live check of the configured path. Progress and the
 		 * result render into dpiResult (ONE place). */
 		const autSel = E('select', { 'class': 'cbi-input-select', 'style': 'width:auto' });
+		/* ч.233: Telegram убран из автоподбора (решение пользователя — без
+		 * VPN/туннеля tg в РФ не поднимается; стратегии пробуются вручную). */
 		[ ['youtube', _('YouTube')], ['discord', _('Discord')],
-		  ['telegram', _('Telegram')], ['general', _('General (best overall)')] ]
+		  ['general', _('General (best overall)')] ]
 			.forEach(function(o) { autSel.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
 		const autFull = E('input', { type: 'checkbox' });
 		/* ч.123: honest sweep duration — computed from the corpus size
@@ -2248,6 +2399,15 @@ return view.extend({
 			box.appendChild(E('div', { 'class': 'wiz-note' },
 				[ _('Best strategy: %s (%s).').format(ch.name || _('custom args'),
 					(ch.avg_tls_ms > 0) ? _('avg TLS %d ms').format(ch.avg_tls_ms) : _('custom args')) ]));
+			/* ч.232: проверьте на устройстве (телефон/ПК) и отметьте — метка
+			 * сильнее лаборатории: «работает» поднимает стратегию во всех
+			 * выборщиках, «не работает» исключает из автоподбора. ч.233:
+			 * подпись «Ресурс · имя стратегии» — тот же формат, что в
+			 * вердиктах Лаборатории. */
+			const dbr = devButtons(st.resource || resource, ch.args,
+				resName + ' · ' + (ch.name || _('custom args')));
+			if (dbr)
+				box.appendChild(dbr);
 			if (ch.args)
 				box.appendChild(E('details', {}, [
 					E('summary', { style: 'cursor:pointer' }, [ _('Strategy args') ]),
@@ -2590,12 +2750,15 @@ return view.extend({
 				L.resolveDefault(callFuzzStatus(), {}),
 				L.resolveDefault(callComposeStatus(), {}),
 				L.resolveDefault(callAutoPickStatus(), {}),
-				L.resolveDefault(callAutoPilotStatus(), {})
+				L.resolveDefault(callAutoPilotStatus(), {}),
+				L.resolveDefault(callDeviceVerdicts(), {})
 			]).then(function(data) {
 				if (data[0] && data[0].env) {
 					lastEnv = data[0].env;
 					renderChain();
 				}
+				/* ч.232: live device marks (fresher than any sweep snapshot). */
+				state.dev = (data[8] && data[8].device) || state.dev || {};
 				renderDpi(data[1] || {});
 				seedCompProfiles((data[1] || {}).comp_profiles);
 				renderStrategySel((data[2] && data[2].candidates) || []);

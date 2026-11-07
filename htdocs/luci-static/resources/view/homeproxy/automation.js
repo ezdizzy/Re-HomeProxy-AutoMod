@@ -779,9 +779,10 @@ return view.extend({
 		 * the one-click auto-pick and the Strategy Lab stay on the bypass
 		 * page (they belong to measuring). ────────────────────────────── */
 		const apBadge = (cls, text) => E('span', { 'class': 'hpui-badge ' + cls }, [ text ]);
+		/* ч.233: Telegram убран из автопилота (решение пользователя — без
+		 * VPN/туннеля tg в РФ не поднимается; автоперебор лишь тратит время). */
 		const apRes = { youtube: E('input', { type: 'checkbox' }),
 			discord: E('input', { type: 'checkbox' }),
-			telegram: E('input', { type: 'checkbox' }),
 			general: E('input', { type: 'checkbox' }) };
 		const apEnabled = E('input', { type: 'checkbox' });
 		const apRules = E('input', { type: 'checkbox', checked: '' });
@@ -797,7 +798,7 @@ return view.extend({
 		const apSave = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Save auto-pilot') ]);
 		const apAlive = E('span', { 'class': 'wiz-note', style: 'margin:0' }, [ '' ]);
 		const apNames = { youtube: _('YouTube'), discord: _('Discord'),
-			telegram: _('Telegram'), general: _('General (best overall)') };
+			general: _('General (best overall)') };
 		const apStatus = E('div', {});
 		const apSaveMsg = E('div', { 'class': 'wiz-note', style: 'margin:4px 0 0 0' }, [ '' ]);
 		const apHead = E('div', { 'class': 'wiz-row', style: 'margin-top:8px' },
@@ -806,14 +807,11 @@ return view.extend({
 			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer; font-weight:600' },
 				[ apEnabled, ' ' + _('Enable the auto-pilot') ]), apSave ]);
 		const apResWrap = E('div', { 'class': 'wiz-row' });
-		/* The Telegram checkbox is the frequent confusion (issue feedback):
-		 * a Zapret strategy serves a resource ONLY through its rule → Zapret.
-		 * (ч.200, D34b: прежняя оговорка про мост tg-ws удалена.) */
-		const apHints = {
-			telegram: _('A Zapret strategy serves Telegram only when its rule leads to Zapret. It works the same way as for YouTube, which only helps where the provider\'s Telegram block is DPI-shaped rather than a hard cut.')
-		};
+		/* ч.233: Telegram убран из автопилота — чекбокс, hint и имя не нужны
+		 * (статус-грид ниже идёт по ключам apRes, строка tg исчезает сама). */
+		const apHints = {};
 		[ ['youtube', _('YouTube')], ['discord', _('Discord')],
-		  ['telegram', _('Telegram')], ['general', _('General (best overall)')] ]
+		  ['general', _('General (best overall)')] ]
 			.forEach(function(o) {
 				apResWrap.appendChild(E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer',
 					title: apHints[o[0]] || '' },

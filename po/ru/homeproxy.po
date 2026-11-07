@@ -5165,14 +5165,14 @@ msgstr "Папка с локальными копиями .srs — один фа
 msgid "Local .srs copies of the remote rule lists. The core takes them for the FIRST load when the cache is empty (fresh firmware, wiped cache, no network) instead of dying on a blocked download, then refreshes from the network as usual. Enable the fallback and pick the folder on the Client Settings page; the toggle works for the sing-box family of cores."
 msgstr "Локальные копии .srs удалённых списков правил. Ядро берёт их для ПЕРВОЙ загрузки, когда кэш пуст (свежая прошивка, очищенный кэш, нет сети), вместо падения на заблокированном скачивании, дальше обновляется из сети как обычно. Включите страховку и выберите папку на странице «Настройки клиента»; работает для семейства ядер sing-box."
 
-msgid "QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — the browser may pick QUIC for some flows; strategies without fake-QUIC leave those attempts unserved."
-msgstr "QUIC (UDP 443) до видео-края YouTube ОТКРЫТ (замер) — браузер может выбирать QUIC для части потоков; стратегии без fake-QUIC оставляют эти попытки без дезинка."
+msgid "QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — provider state at the sweep moment, NOT a strategy verdict: strategies without fake-QUIC leave browser QUIC attempts unserved (the browser falls back to TCP)."
+msgstr "QUIC (UDP 443) до видео-края YouTube ОТКРЫТ (замер) — состояние провайдера в момент свипа, НЕ вердикт стратегий: стратегии без fake-QUIC оставляют QUIC-попытки браузера без дезинка (браузер падает на TCP)."
 
-msgid "QUIC (UDP 443) to the YouTube video edge is REJECTED (measured) — the browser falls back to TCP quickly; TCP-only strategies serve the whole resource."
-msgstr "QUIC (UDP 443) до видео-края YouTube ОТВЕРГАЕТСЯ (замер) — браузер быстро падает на TCP; TCP-only стратегии обслуживают весь ресурс."
+msgid "QUIC (UDP 443) to the YouTube video edge is REJECTED (measured) — provider state at the sweep moment, NOT a strategy verdict: the browser falls back to TCP quickly; TCP-only strategies serve the whole resource."
+msgstr "QUIC (UDP 443) до видео-края YouTube ОТВЕРГАЕТСЯ (замер) — состояние провайдера в момент свипа, НЕ вердикт стратегий: браузер быстро падает на TCP; TCP-only стратегии обслуживают весь ресурс."
 
-msgid "QUIC (UDP 443) to the YouTube video edge gets NO answer (measured) — typically a silent provider cut; the browser falls back to TCP, TCP-only strategies serve the whole resource."
-msgstr "QUIC (UDP 443) до видео-края YouTube НЕ ОТВЕЧАЕТ (замер) — как правило, тихая обрезка провайдером; браузер падает на TCP, TCP-only стратегии обслуживают весь ресурс."
+msgid "QUIC (UDP 443) to the YouTube video edge got NO answer (measured) — provider state at the sweep moment, NOT a strategy verdict: the browser falls back to TCP; TCP-only strategies serve the whole resource."
+msgstr "QUIC (UDP 443) до видео-края YouTube НЕ ОТВЕЧАЕТ (замер) — состояние провайдера в момент свипа, НЕ вердикт стратегий: браузер падает на TCP; TCP-only стратегии обслуживают весь ресурс."
 
 msgid "This sweep: %d strategies — the deep battery measured %d of %d selected (family-diverse leaders, the best imported/generated strategies and your current strategy). A quick sweep takes ~%d min, a full one ~%d min on this corpus."
 msgstr "Этот прогон: %d стратегий — deep-батарея измерила %d из %d выбранных (лидеры по одному из каждого семейства, лучшие импортированных/сгенерированных и ваша текущая стратегия). Быстрый прогон ~%d мин, полный ~%d мин на этом корпусе."
@@ -6514,6 +6514,15 @@ msgstr "НЕТ ПРИГОДНОЙ СТРАТЕГИИ"
 msgid "no strategy passes the mandatory checks"
 msgstr "ни одна стратегия не проходит обязательные проверки"
 
+msgid "MEASUREMENT UNAVAILABLE"
+msgstr "НЕ УДАЛОСЬ ИЗМЕРИТЬ"
+
+msgid "the test host did not answer for ANY strategy and in both control passes — a measurement failure (network drift/TSPU), not a strategy verdict; re-run the sweep later."
+msgstr "тестовый хост не ответил НИ У ОДНОЙ стратегии и в обоих контрольных проходах — отказ измерения (дрейф сети/TSPU), а не вердикт стратегий; повторите свип позже."
+
+msgid "Served via node rule — lab verdict not applicable"
+msgstr "Обслуживается правилом на узел — лабораторный вердикт не применим"
+
 msgid "BEST AVAILABLE (manual only)"
 msgstr "ДОСТУПНА (только вручную)"
 
@@ -7643,3 +7652,30 @@ msgstr "исключено"
 
 msgid "Hosts that failed for EVERY strategy and both baseline passes are excluded from the Passed column — they measure the network, not the strategies: %s."
 msgstr "Хосты, не прошедшие НИ У ОДНОЙ стратегии и обоих baseline-проходов, исключены из колонки «Прошло» — они меряют сеть, а не стратегии: %s."
+
+msgid "Device check"
+msgstr "Проверка на устройстве"
+
+msgid "works on my device"
+msgstr "работает на моём устройстве"
+
+msgid "broken on my device"
+msgstr "не работает на устройстве"
+
+msgid "confirmed on device"
+msgstr "подтверждено устройством"
+
+msgid "refuted on device"
+msgstr "опровергнуто устройством"
+
+msgid "The browser ClientHello probe (utls_probe) is not installed — \"Passed\" measures only the curl class. Install native helpers to measure what TSPU actually sees."
+msgstr "Браузерная ClientHello-проба (utls_probe) не установлена — «Прошло» меряет только curl-класс. Установите нативные помощники, чтобы мерять то, что реально видит TSPU."
+
+msgid "The deep battery measured the current strategy at %s — not all components passed; keeping or replacing it is your call."
+msgstr "Батарея deep измерила текущую стратегию на %s — прошли не все компоненты; держать или менять — ваше решение."
+
+msgid "The deep battery did not measure this resource for the current strategy — no verdict is claimed (unmeasured is not a failure)."
+msgstr "Батарея deep не измеряла этот ресурс для текущей стратегии — вердикта нет (не измерено ≠ провал)."
+
+msgid "Router load during the sweep (1-min avg): max %s, at finish %s."
+msgstr "Нагрузка роутера во время свипа (1-мин среднее): максимум %s, на финише %s."

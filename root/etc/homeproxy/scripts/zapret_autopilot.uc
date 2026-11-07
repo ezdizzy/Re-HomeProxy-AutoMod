@@ -192,6 +192,32 @@ function read_json(path) {
 	try { return json(readfile(path) || ''); } catch (e) { return null; }
 }
 
+/* ── ч.232: метки С УСТРОЙСТВА — наивысший вес переразметки ─────────────
+ * Проба-модель лаборатории не видит ClientHello браузера/телефона, QUIC-
+ * фоллбек и паттерн соединений — живой факт 2026-11-07: лабораторный
+ * best_verified Default опровергнут телефоном, реально работающая стратегия
+ * в лидеры не попадала. Метки хранит /etc/homeproxy/device_verdicts.json:
+ * 'broken' исключает кандидата из подбора; 'works' поднимает кандидата над
+ * лабораторным порядком и удерживает текущего победителя от плановой замены
+ * лабораторным лидером без подтверждения устройством. Кэш перечитывается на
+ * каждой плановой переразметке (метка пользователя вступает в силу сразу).
+ * Объявлено НИЖЕ read_json: ucode не имеет hoisting (урок 2/93/126/ч.231). */
+const DEV_FILE = '/etc/homeproxy/device_verdicts.json';
+let DEV_CACHE = {};
+function dev_reload() {
+	DEV_CACHE = {};
+	const dj = read_json(DEV_FILE);
+	if (dj != null && type(dj.resources) === 'object')
+		DEV_CACHE = dj.resources;
+}
+function dv_of(res, args) {
+	const dm = DEV_CACHE['' + res];
+	if (type(dm) !== 'object')
+		return '';
+	const mv = dm['' + (args || '')];
+	return (mv != null && type(mv) === 'object') ? ('' + (mv.verdict || '')) : '';
+}
+
 function log(msg) {
 	push(S.log, { ts: time(), m: '' + msg });
 	while (length(S.log) > 24)
@@ -323,11 +349,19 @@ function cfg_read() {
 		const v = c.get('homeproxy', 'autopilot', o);
 		return (v == null) ? d : '' + v;
 	};
-	const raw = split(get('resources', 'youtube discord telegram'), /[[:space:],]+/);
+	/* ч.233: telegram УБРАН из автопилота (решение пользователя: без VPN/
+	 * туннеля Telegram в РФ не поднимается — автоперебор стратегий лишь тратит
+	 * время; владение стратегией у пользователя). Фильтр ниже гарантирует, что
+	 * даже УСТАРЕВШИЙ UCI-список с telegram не вернёт tg в управление. */
+	const raw = split(get('resources', 'youtube discord general'), /[[:space:],]+/);
 	const resources = [];
 	const seen = {};
 	for (let x in raw) {
 		x = trim(x);
+		if (x === 'telegram') {
+			log_once('tg_removed', 'telegram: автоподбор отключён (решение пользователя) — из ресурсов автопилота исключён, стратегию для Telegram подбирают вручную');
+			continue;
+		}
 		if (length(x) && RESOURCES[x] != null && !seen[x]) {
 			seen[x] = true;
 			push(resources, x);
@@ -665,6 +699,10 @@ function pick_resource(fz, res, exclude_args) {
 	for (let s in fz.strategies) {
 		if (!shape_ok('' + (s.args || '')) || s.args == exclude_args || tried_has(res, s.args))
 			continue;
+		/* ч.232: кандидат, опровергнутый на устройстве, подбором не берётся
+		 * (метка сильнее лаборатории). */
+		if (dv_of(res, '' + (s.args || '')) === 'broken')
+			continue;
 		let h = null;
 		for (let x in s.hosts)
 			if (x.tag === tag) { h = x; break; }
@@ -699,11 +737,17 @@ function pick_resource(fz, res, exclude_args) {
 	 * TSPU noise (tie). The sustained flow decides next at a >10% gap,
 	 * then the handshake. The old order (flow first, START only inside a
 	 * 10% flow tie) kept a fast-bulk/slow-start strategy on top — exactly
-	 * the user's complaint; a measured stream still beats an untested one. */
+	 * the user's complaint; a measured stream still beats an untested one.
+	 * ч.232: device-confirmed ('works') outranks the whole lab order —
+	 * the only evidence class that sees what the phone sees. */
+	const dband = (e) => (dv_of(res, e.s.args) === 'works') ? 0 : 1;
 	const band = (e) => (((e.deep != null) && (e.deep > 0)) ||
 		((e.deep == null) && (int(e.stream || 0) > 0))) ? 0
 		: (((e.deep != null) && (e.deep == 0)) ? 2 : 1);
 	sort(elig, (a, b) => {
+		const da = dband(a), dbb = dband(b);
+		if (da != dbb)
+			return da - dbb;
 		const ba = band(a), bb = band(b);
 		if (ba != bb)
 			return ba - bb;
@@ -748,6 +792,9 @@ function pick_general(fz, exclude_args) {
 			continue;
 		const args = '' + (s.args || '');
 		if (!shape_ok(args) || args == exclude_args || tried_has('general', args))
+			continue;
+		/* ч.232: опровергнутая на устройстве стратегия подбором не берётся. */
+		if (dv_of('general', args) === 'broken')
 			continue;
 		return { name: '' + (s.name || 'кастомные аргументы'), args: args,
 			tls_ms: int(s.avg_tls_ms) || 0, score: int(s.score) || 0, runners: [] };
@@ -1082,11 +1129,18 @@ function cycle(cfg) {
 	 * карточкой «Оптимизатор маршрутов» (service_optimizer_plan читает те же
 	 * вердикты). best_available = manual_only: автоприменение запрещено (92). */
 	const labv = (fz != null && type(fz.verdicts) === 'object') ? fz.verdicts : null;
+	/* ч.234: счётчик ресурсов с отказом лаборатории — для досрочного свипа. */
+	let labnone_n = 0;
+	/* ч.232: свежие метки с устройства — на каждую переразметку. */
+	dev_reload();
 	for (let res in cfg.resources) {
 		if (res === 'general') {
 			const cur = S.general.winner;
 			const cand = pick_general(fz, null);
 			let use = cand;
+			/* ч.232: device-метки для general — те же правила, что у ресурсов. */
+			const gd_cur = (cur != null) ? dv_of('general', cur.args) : '';
+			const gd_cand = (cand != null) ? dv_of('general', cand.args) : '';
 			if (hold) {
 				if (cur)
 					target.general = cur;
@@ -1094,6 +1148,17 @@ function cycle(cfg) {
 			}
 			else if (cur && cand && cand.args == cur.args)
 				use = null;
+			else if (cur && cand && (S.general.strikes == 0) &&
+				gd_cur === 'works' && gd_cand !== 'works') {
+				log_once('devhold_general', 'general: текущая стратегия подтверждена на УСТРОЙСТВЕ — плановая замена не выполняется (метка сильнее лаборатории)');
+				explain('general', 'держу текущую: подтверждена устройством');
+				use = null;
+			}
+			else if (cur && cand && (S.general.strikes == 0) &&
+				gd_cand === 'works' && gd_cur !== 'works') {
+				log_once('devpick_general', 'general: кандидат подтверждён на УСТРОЙСТВЕ — смена без запаса по score (метка сильнее лаборатории)');
+				explain('general', 'смена: кандидат подтверждён устройством, текущий — нет');
+			}
 			else if (cur && cand && (S.general.strikes == 0) &&
 				(cand.score < cur.score + GENERAL_SCORE_STEP)) {
 				log_once('genhold', 'general: текущая стратегия остаётся лучшей в пределах запаса по score');
@@ -1130,17 +1195,36 @@ function cycle(cfg) {
 				target.resources[res] = cur;
 			continue;
 		}
-		if (lv != null && lv.verdict === 'no_candidate') {
-			log_once('labnone_' + res, res + ': вердикт лаборатории no_candidate — ни одна стратегия корпуса не прошла обязательные проверки');
-			explain(res, 'no_candidate: корпус не дал подтверждённой стратегии; подробности — в вердиктах лаборатории');
+		if (lv != null && (lv.verdict === 'no_candidate' || lv.verdict === 'unmeasured')) {
+			log_once('labnone_' + res, res + ': вердикт лаборатории ' + lv.verdict +
+				((lv.verdict === 'unmeasured')
+					? ' — измерение ресурса в этом прогоне не состоялось (дрейф сети/TSPU)'
+					: ' — ни одна стратегия корпуса не прошла обязательные проверки'));
+			explain(res, (lv.verdict === 'unmeasured')
+				? 'измерение не состоялось: держу текущую, лаборатория в этом окне бессильна'
+				: 'no_candidate: корпус не дал подтверждённой стратегии; подробности — в вердиктах лаборатории');
 			if (cur)
 				target.resources[res] = cur;
+			labnone_n++;
 			continue;
 		}
 		const cand = pick_resource(fz, res, null);
 		let use = cand;
+		/* ч.232: device-правила переразметки. Подтверждённая на устройстве
+		 * ТЕКУЩАЯ не заменяется лабораторным лидером без его же подтверждения;
+		 * подтверждённый КАНДИДАТ сменяет неподтверждённого текущего даже в
+		 * пределах антифлап-запаса (метка сильнее лаборатории). При strikes>0
+		 * ремонт работает как раньше — живые провалы сильнее любых меток. */
+		const cur_dv = (cur != null) ? dv_of(res, cur.args) : '';
+		const cand_dv = (cand != null) ? dv_of(res, cand.args) : '';
 		if (cur && cand && cand.args == cur.args)
 			use = null;
+		else if (cur && cand && (S.resources[res].strikes == 0) &&
+			cur_dv === 'works' && cand_dv !== 'works') {
+			log_once('devhold_' + res, res + ': текущая стратегия подтверждена на УСТРОЙСТВЕ — плановая замена не выполняется (метка сильнее лаборатории)');
+			explain(res, 'держу текущую: подтверждена устройством; лабораторный кандидат подтверждения устройства не имеет');
+			use = null;
+		}
 		else if (cur && cand && (S.resources[res].strikes == 0)) {
 			/* ч.116 anti-flap: a switch needs a clear win on the resource's
 			 * MEASURED verdicts — a tested candidate replaces an untested
@@ -1168,7 +1252,11 @@ function cycle(cfg) {
 			const start_better = (ust > 0) && (cst > 0) &&
 				(cst < int(ust * (100 - START_MARGIN_PCT) / 100));
 			let switch_ok = false;
-			if (cb > ub)
+			/* ч.232: кандидат подтверждён устройством, текущий — нет →
+			 * смена без запасов (метка сильнее лабораторных замеров). */
+			if (cand_dv === 'works' && cur_dv !== 'works')
+				switch_ok = true;
+			else if (cb > ub)
 				switch_ok = false;
 			else if (cb < ub)
 				switch_ok = true;
@@ -1210,6 +1298,19 @@ function cycle(cfg) {
 	apply_target(cfg, target);
 	S.error = '';
 	S.next_cycle_ts = time() + cfg.interval_h * 3600;
+	/* ч.234: отказ лаборатории — дрейф-окно, явление часа. Вердикт без
+	 * повторного прогона не обновится никогда, а плановый интервал может
+	 * быть много длиннее. Досрочный повторный свип через ~75 мин
+	 * (окно 60–90 мин — решение пользователя ч.234), только если
+	 * плановый цикл позже; holds/ремонты не затрагиваются. */
+	if (labnone_n > 0) {
+		const early = time() + 75 * 60;
+		if (S.next_cycle_ts > early) {
+			S.next_cycle_ts = early;
+			log('лаборатория дала no_candidate/unmeasured по ' + labnone_n +
+				' ресурсу(ам) — досрочный повторный свип через ~75 мин (дрейф-окно); текущие стратегии не тронуты');
+		}
+	}
 	wstat();
 }
 
@@ -1244,12 +1345,36 @@ function repair(cfg, res) {
 	}
 	if (cur)
 		tried_add(res, cur.args);
+	/* ч.234: честное предупреждение — кандидат берётся по критерию
+	 * majority+dist из рейтинга, собранного в ТО ЖЕ время, что и провал
+	 * живой проверки. Если лаборатория в этом прогоне дала no_candidate/
+	 * unmeasured по ресурсу или контрольные проходы тега разошлись —
+	 * кандидат «слепой» (один счастливый раунд возможен). Поведение
+	 * ремонта НЕ меняем (живой провал сильнее), только предупреждаем. */
+	const lvw = (fz != null && type(fz.verdicts) === 'object' &&
+		type(fz.verdicts[res]) === 'object') ? fz.verdicts[res] : null;
+	const lvw_bad = (lvw != null &&
+		(lvw.verdict === 'no_candidate' || lvw.verdict === 'unmeasured'));
+	const rtag = (RESOURCES[res] != null) ? RESOURCES[res].tag : null;
+	let drift_hit = false;
+	if (rtag != null && fz != null && type(fz.baseline_series) === 'object' &&
+		type(fz.baseline_series.drift) === 'array')
+		for (let d in fz.baseline_series.drift)
+			if (type(d) === 'object' && d.tag === rtag)
+				drift_hit = true;
+	const driftwarn = lvw_bad || drift_hit;
+	if (driftwarn)
+		log_once('rep_driftwarn_' + res, res + ': ⚠ КАНДИДАТ ИЗ РЕЙТИНГА, СОБРАННОГО В ДРЕЙФ-ОКНО (вердикт лаборатории: ' +
+			((lvw != null) ? ('' + lvw.verdict) : 'нет') +
+			(drift_hit ? '; контрольные проходы ресурса разошлись' : '') +
+			') — после переключения проверьте ресурс на устройстве');
 	log(res + ': стратегия перестала работать (' + ((res === 'general') ? S.general.strikes : S.resources[res].strikes) +
 		' неудачных проверок подряд) — переключаюсь на ' + alt.name +
 		(hold_active() ? ' — удержа (Hot Swap 9) снята: ресурс МЁРТВ, ремонт важнее удержи' : ''));
 	ap_emit('repair', res + ': стратегия перестала работать (' +
 		((res === 'general') ? S.general.strikes : S.resources[res].strikes) + ' неудачных проверок подряд)',
 		'переключаюсь на «' + alt.name + '»' + (hold_active() ? '; удержа снята — ремонт важнее удержи' : '') +
+		(driftwarn ? '; ⚠ рейтинг собран в дрейф-окно — проверьте на устройстве' : '') +
 		'; снимок Restore доступен');
 	/* Ф6.7: ремонт снимает удержу — мёртвый ресурс ремонтируется даже при
 	 * ручном пике (иначе пользователь остаётся на сломанной стратегии). */

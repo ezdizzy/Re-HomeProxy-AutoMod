@@ -873,6 +873,7 @@ const OPT_VERDICT = {
 	apply:        [ 'hpui-b-amber', '▶ ' ],
 	manual_only:  [ 'hpui-b-amber', '✋ ' ],
 	no_candidate: [ 'hpui-b-red',   '✗ ' ],
+	via_node:     [ 'hpui-b-grey',  '⇄ ' ],
 	no_lab:       [ 'hpui-b-grey',  '' ],
 	unknown:      [ 'hpui-b-grey',  '' ]
 };
@@ -882,6 +883,7 @@ function optVerdictLabel(v) {
 		v === 'apply' ? _('Verified strategy ready to apply') :
 		v === 'manual_only' ? _('Manual apply only (auto is forbidden)') :
 		v === 'no_candidate' ? _('NO VIABLE STRATEGY') :
+		v === 'via_node' ? _('Served via node rule — lab verdict not applicable') :
 		v === 'no_lab' ? _('Not measured by the Strategy Lab') :
 		_('—');
 }
@@ -940,10 +942,13 @@ function buildOptimizerSection() {
 					[ notes.join(' · ') ]) : null;
 			const main = E('div', {}, [ badge ]);
 			if (detail) main.appendChild(detail);
-			/* Действие: автоподбор — только для сервисов с фаззинг-корпусом;
-			 * WhatsApp лаборатория не измеряет (честно). */
+			/* Действие: автоподбор — только для сервисов с фаззинг-корпусом
+			 * и разрешённым автоподбором; WhatsApp лаборатория не измеряет
+			 * (честно), у Telegram автоподбор УБРАН решением ч.233
+			 * (RPC wizard_auto_pick_start отклоняет tg) — кнопка ч.234
+			 * скрыта: она предлагала то, что RPC отклоняет. */
 			let act = null;
-			if (key !== 'whatsapp') {
+			if (key !== 'whatsapp' && key !== 'telegram') {
 				act = E('button', {
 					'class': 'hpui-btn hpui-btn-primary hpui-btn-sm', type: 'button'
 				}, [ _('Auto-pick') ]);
