@@ -2829,7 +2829,20 @@ const methods = {
 				break;
 			}
 
-			return { result: (system(`/usr/bin/wget --spider -qT3 ${url} 2>"/dev/null"`, 3100) === 0) };
+			/* Probe rides the REAL through-path: router-origin traffic hits the OUTPUT
+			 * redirect to the core, then the actual routing rules (service rules, zapret,
+			 * main node) — the same route a LAN device takes. It is NOT a direct-WAN probe.
+			 * Client choice is load-bearing (live-proven 2026-11-07): /usr/bin/wget here is
+			 * uclient-fetch (busybox symlink) with ustream-ssl/mbedtls, and on TLS-hostile
+			 * hosts it stalls on large responses — tcpdump of the youtube root fetch showed
+			 * a fully healthy wire (TCP + split-ClientHello handshake ACKed, ~600 KB of
+			 * server data streaming, zero RST/FIN) while the client itself reported
+			 * 'Connection timed out' even with -T25. curl on the SAME path completes in
+			 * <1 s every time. So curl first (-f = honest HTTP >= 400 failure); wget stays
+			 * only as a fallback for installs without curl (curl is not a hard dependency). */
+			if (access('/usr/bin/curl'))
+				return { result: (system(`/usr/bin/curl -fsS -o /dev/null --max-time 8 ${url} 2>"/dev/null"`, 12000) === 0) };
+			return { result: (system(`/usr/bin/wget --spider -qT8 ${url} 2>"/dev/null"`, 12000) === 0) };
 		}
 	},
 
