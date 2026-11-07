@@ -1549,7 +1549,12 @@ if (mdns_proxy_in)
 		listen_port: mdns_proxy_port,
 	});
 
-/* Server inbounds */
+/* Server inbounds. Master switch (the 'server' NamedSection, type 'homeproxy') is the
+ * UI promise "whether Ravnex accepts incoming connections at all" — firewall_pre.uc
+ * honors it for the port accepts, so the generator must honor it the same way: a
+ * shell-side audit (Ф9.6/D31) caught enabled server inbounds being generated (and
+ * LISTENING) while the master switch was OFF. */
+if (uci.get(uciconfig, uciserver, 'enabled') === '1')
 uci.foreach(uciconfig, uciserver, (cfg) => {
 	if (cfg.enabled !== '1')
 		return;
@@ -1574,12 +1579,20 @@ uci.foreach(uciconfig, uciserver, (cfg) => {
 		/* Hysteria */
 		up_mbps: strToInt(cfg.hysteria_up_mbps),
 		down_mbps: strToInt(cfg.hysteria_down_mbps),
-		obfs: cfg.hysteria_obfs_type ? {
-			type: cfg.hysteria_obfs_type,
-			password: cfg.hysteria_obfs_password
-		} : cfg.hysteria_obfs_password,
+		/* Ф9.6/D31 live audit: hiddify-core v5.1.0 rejects an OBJECT here for the
+		 * Hysteria(1) inbound ("cannot unmarshal object ... HysteriaInboundOptions.obfs
+		 * of type string") — hysteria1 obfs is a plain password STRING (salamander is
+		 * the only scheme). The object form {type,password} is only valid for the
+		 * Hysteria2 inbound (the UI offers obfs_type there). The old code sent the
+		 * object whenever obfs_type was set (crash-loop + LKG rollback) and a raw
+		 * password string otherwise (which the core decodes fine). */
+		obfs: (cfg.type === 'hysteria') ? (cfg.hysteria_obfs_password || null) :
+			((cfg.type === 'hysteria2' && cfg.hysteria_obfs_type) ? {
+				type: cfg.hysteria_obfs_type,
+				password: cfg.hysteria_obfs_password
+			} : null),
 		recv_window_conn: strToInt(cfg.hysteria_recv_window_conn),
-		recv_window_client: strToInt(cfg.hysteria_revc_window_client),
+		recv_window_client: strToInt(cfg.hysteria_recv_window_client),
 		max_conn_client: strToInt(cfg.hysteria_max_conn_client),
 		disable_mtu_discovery: strToBool(cfg.hysteria_disable_mtu_discovery),
 		ignore_client_bandwidth: strToBool(cfg.hysteria_ignore_client_bandwidth),
