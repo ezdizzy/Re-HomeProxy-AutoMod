@@ -153,6 +153,7 @@ const DEDUP_SEC = 300;
 /* Ф8.1 security core */
 const QUEUE_DIR = RUN_DIR + '/tg_queue';   /* durable update queue (audit 1.2) */
 const DONE_FILE = RUN_DIR + '/tg_done.json';
+const FLAP_FILE = RUN_DIR + '/tg_flap.json';  /* Ф9.15а: flap-gate state (survives daemon respawns) */
 const CURL_F = RUN_DIR + '/.tg.curl';     /* the ONLY place the token may appear (0600) */
 const BODY_F = RUN_DIR + '/.tg.body';
 const ROLES = [ 'owner', 'admin', 'operator', 'viewer' ];
@@ -201,6 +202,30 @@ let bus_saved = 0;    /* id already persisted to the durable cursor */
 let bus_ready = false;/* baseline done (never re-baseline mid-boot) */
 /* Ф8.5 Alert Manager: per-kind alert state { text, ts, times[], suppressed } */
 let alert_state = {};
+/* Ф9.15а (D34f) flap-gate: per-subsystem state, key = '<src>:<who>' —
+ * { open: тревога ДОСТАВЛЕНА и ещё не закрыта восстановлением, ts: её момент }.
+ * Переживает рестарт демона (tmpfs-файл): серия respawn'ов не переигрывает
+ * пару ⛔/✅. Журнал/лента хранят ВСЕ переходы — гейт только на доставке. */
+let flap_state = {};
+let flap_loaded = false;
+function flap_load() {
+	if (flap_loaded)
+		return;
+	flap_loaded = true;
+	try {
+		const j = json(readfile(FLAP_FILE) || '');
+		if (type(j) === 'object')
+			flap_state = j;
+	} catch (e) { /* нет файла — чистый старт */ }
+}
+function flap_save() {
+	/* atomic (temp + rename) — тот же паттерн done_save (урок 256). */
+	try {
+		const tmp = FLAP_FILE + '.tmp';
+		writefile(tmp, sprintf('%J', flap_state));
+		rename(tmp, FLAP_FILE);
+	} catch (e) { log('flap save: ' + e); }
+}
 
 /* Ф8.6 egress failover (D22): бот обязан пережить смерть ВСЕЙ прокси-цепочки.
  * Лестница: 0 = обычная цепочка (curl идёт системной маршрутизацией),
@@ -1415,20 +1440,28 @@ function push_enabled(kind) {
 const ALERT_RATE = 6;       /* обычных пушей на категорию за окно */
 const ALERT_WINDOW = 300;   /* окно порога, с */
 const CRIT_DEDUP = 60;      /* дедуп критических (против флуда), с */
+/* Ф9.15а (D34f): кулдаун повторной тревоги той же ПОДСИСТЕМЫ (flap):
+ * тревога → быстрое восстановление → снова тревога в пределах окна =
+ * штатный рестарт/флаб — повтор подавляется (счётчик честно показывается). */
+const FLAP_COOLDOWN = 600;  /* с от ПОСЛЕДНЕЙ доставленной тревоги ключа */
 
 /* Push with optional ACTION BUTTONS (Ф8.4) + severity (Ф8.5): a
  * notification carries what happened + a one-tap reaction. The kb is a
  * ready-built reply_markup (kb_rows), same as direct replies; sev='crit'
  * marks safety-critical alerts. */
 /* Prefixes for suppressed normal alerts (pure — harness-testable):
- * sup = превышение порога частоты, qsup = тихие часы. */
-function alert_text(sup, qsup, text) {
+ * sup = превышение порога частоты, qsup = тихие часы, fsup = флап-повторы
+ * той же подсистемы (Ф9.15а). */
+function alert_text(sup, qsup, fsup, text) {
 	let head = '';
 	if (int(sup) > 0)
 		head = '⚠ Подавлено фоновых уведомлений за 5 мин: ' + int(sup);
 	if (int(qsup) > 0)
 		head += (length(head) ? '\n' : '') +
 			'🌙 Подавлено тихими часами: ' + int(qsup);
+	if (int(fsup) > 0)
+		head += (length(head) ? '\n' : '') +
+			'🔁 Подавлено повторов той же подсистемы: ' + int(fsup);
 	return (length(head) ? head + '\n' : '') + text;
 }
 
@@ -1453,13 +1486,45 @@ function quiet_active(now) {
 	return (fm < tm) ? (cur >= fm && cur < tm) : (cur >= fm || cur < tm);
 }
 
-function send_push(kind, text, kb, sev) {
+function send_push(kind, text, kb, sev, meta) {
 	const crit = (sev === 'crit');
 	const now = time();
 	let s = alert_state[kind];
 	if (s == null) {
-		s = { text: '', ts: 0, times: [], suppressed: 0, qsup: 0 };
+		s = { text: '', ts: 0, times: [], suppressed: 0, qsup: 0, fsup: 0 };
 		alert_state[kind] = s;
+	}
+	/* Ф9.15а (D34f): flap-gate на ДОСТАВКЕ — дедуп/кулдаун повторных алертов
+	 * одной подсистемы (meta.key = '<src>:<who>'; meta.rec = событие-возврат).
+	 * Повторная тревога той же подсистемы в пределах FLAP_COOLDOWN от последней
+	 * ДОСТАВЛЕННОЙ тревоги = штатный рестарт/флаб → подавляется (счётчик fsup
+	 * честно показывается в следующем доставленном пуше категории). Честное
+	 * «восстановлено» доставляется ТОЛЬКО в ответ на доставленную тревогу
+	 * (open); тревога, до пользователя не дошедшая (mute/тишина/порог —
+	 * ниже), open не открывает. Критические не гейтятся (инвариант Ф8.5). */
+	flap_load();
+	const mkey = (meta != null) ? trim('' + (meta.key || '')) : '';
+	const gated = (!crit && length(mkey));
+	if (gated) {
+		const fl = flap_state[mkey];
+		if (meta.rec) {
+			if (fl == null || fl.open !== true)
+				return;   /* открытой доставленной тревоги нет — одиночный ✅ шумит зря */
+			fl.open = false;   /* восстановление закрывает эпизод (доставка ниже) */
+		} else {
+			if (fl != null && fl.open === true) {
+				/* Тот же плохой эпизод (down↔degraded) — дубль. */
+				s.fsup = int(s.fsup) + 1;
+				flap_save();
+				return;
+			}
+			if (fl != null && (now - int(fl.ts || 0)) < FLAP_COOLDOWN) {
+				/* Флап: тревога → быстрое восстановление → снова тревога. */
+				s.fsup = int(s.fsup) + 1;
+				flap_save();
+				return;
+			}
+		}
 	}
 	/* Dedup: identical text per kind within the window is dropped
 	 * (criticals get a SHORT window — a repeat after 60 s goes through). */
@@ -1497,9 +1562,17 @@ function send_push(kind, text, kb, sev) {
 	 * пуше ЭТОЙ категории (и критическом тоже — окно одно на категорию). */
 	const sup = int(s.suppressed);
 	const qsup = int(s.qsup);
+	const fsup = int(s.fsup);
 	s.suppressed = 0;
 	s.qsup = 0;
-	tg_send_html(allowed_chat, alert_text(sup, qsup, text), kb || null);
+	s.fsup = 0;
+	/* Доставка = точка открытия эпизода: open/ts ставятся ТОЛЬКО когда пуш
+	 * реально дошёл до отправки (mute/тишина/порог выше уже отсеяли). */
+	if (gated && !meta.rec) {
+		flap_state[mkey] = { open: true, ts: now };
+		flap_save();
+	}
+	tg_send_html(allowed_chat, alert_text(sup, qsup, fsup, text), kb || null);
 }
 
 /* ── Ф8.6: машинерия egress-фейловера (D22) ─────────────────────────────
@@ -1711,29 +1784,37 @@ function bus_push(ev) {
 		return { text: '📦 <b>Rule-sets</b>' + (length(detail) ? ': ' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
 	if (ev.src === 'urltest') {
+		/* Ф9.15а: dead/recovered — пара тревога/возврат ОДНОГО узла → meta
+		 * (flap-gate); reload — действие, не гейтится. */
 		if (ev.type === 'recovered')
 			return { text: '✅ <b>URLTest — узел восстановился</b>' +
-				(length(who) ? '\nУзел: <b>' + esc_html(who) + '</b>' : ''), kb: null };
+				(length(who) ? '\nУзел: <b>' + esc_html(who) + '</b>' : ''), kb: null,
+				key: 'urltest:' + who, rec: true };
 		if (ev.type === 'reload')
 			return { text: '♻️ <b>URLTest — перезагрузка службы</b>' +
 				(length(who) ? '\nУзел: <b>' + esc_html(who) + '</b>' : '') +
 				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 		return { text: '⛔ <b>URLTest — узел недоступен</b>' +
 			(length(who) ? '\nУзел: <b>' + esc_html(who) + '</b>' : '') +
-			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_SERVERS };
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_SERVERS,
+			key: 'urltest:' + who, rec: false };
 	}
 	/* Ф8.7: Здоровье/сторож — СВОЯ категория (были в service). health.uc
 	 * пишет переходы статусов (down/degraded/recovered; off-переходы не
-	 * алармят); who = имя подсистемы, detail = причина. */
+	 * алармят); who = имя подсистемы, detail = причина. Ф9.15а: переходы
+	 * одной подсистемы несут meta {key, rec} для flap-gate доставки. */
 	if (ev.src === 'health') {
 		if (ev.type === 'down')
 			return { text: '⛔ <b>Здоровье — подсистема недоступна</b>: ' + esc_html(who) +
-				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR,
+				key: 'health:' + who, rec: false };
 		if (ev.type === 'degraded')
 			return { text: '⚠️ <b>Здоровье — деградация</b>: ' + esc_html(who) +
-				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
+				(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR,
+				key: 'health:' + who, rec: false };
 		if (ev.type === 'recovered')
-			return { text: '✅ <b>Здоровье</b>: ' + esc_html(who) + ' — снова в норме', kb: null };
+			return { text: '✅ <b>Здоровье</b>: ' + esc_html(who) + ' — снова в норме', kb: null,
+				key: 'health:' + who, rec: true };
 		return { text: '🩺 <b>Здоровье</b>: ' + esc_html(who) +
 			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_DOCTOR };
 	}
@@ -1844,7 +1925,10 @@ function push_bus() {
 		if (p.sev !== 'crit' && !push_enabled(kind))
 			continue;
 		sent++;
-		send_push(kind, p.text, p.kb, p.sev);
+		/* Ф9.15а: payload p сам несёт key/rec (ветки health/urltest) —
+		 * send_push читает meta.key/meta.rec; остальные ветки без key —
+		 * гейт их не трогает. */
+		send_push(kind, p.text, p.kb, p.sev, p);
 	}
 	if (bus_id !== bus_saved) {
 		bus_cursor_set('telegram-bus', bus_id);
