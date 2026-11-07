@@ -749,7 +749,7 @@ return view.extend({
 		/* U6 (Ф4.3): the honest scope of a pin — exactly this host, not the
 		 * whole service; a pin is also NOT a block-circumvention guarantee. */
 		sitesBox.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Diagnostics page, "Route explanation"). A pin is also not a guarantee: "Always via proxy" rides the main node, "Always direct" rides the direct path — both follow the general rule priority.') ]));
+			[ _('A pin covers exactly this host and its subdomains — not the whole service: CDN, API and other service domains are not covered and follow their own rules (verify the real route on the Service rules page, "Check a route"). A pin is also not a guarantee: "Always via proxy" rides the main node, "Always direct" rides the direct path — both follow the general rule priority.') ]));
 
 		/* ── Logs level (Ф7.1): the engine log + the automation-family
 		 * Event Bus feed (Ф7.3 — the same journal the Health center renders,

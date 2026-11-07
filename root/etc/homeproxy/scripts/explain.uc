@@ -25,7 +25,7 @@
 // мониторинга»; proposal-классы честно говорят «авто-ремонта нет».
 //
 // Маппинг Health-запись → ключ Recovery: procd-службы → 'svc:<инстанс>'
-// (+ 'svc_drift:'), proposal-классы → голое имя (core/mosdns/tgws/tun/fw4/
+// (+ 'svc_drift:'), proposal-классы → голое имя (core/mosdns/tun/fw4/
 // generators/system). Ключи реестра pmgr ≠ имена записей Health — этот
 // маппинг ДРУГОЙ (здесь имена записей Health, у Recovery — procd-инстансы;
 // урок 223 не переносится сюда напрямую, но маппинги сверены с
@@ -68,9 +68,10 @@ const SVC_INST = {
 	byedpi: 'byedpi', zapret: 'zapret', tun_route: 'tun-route'
 };
 
-/* Health-запись → proposal-ключ Recovery (голое имя записи). */
+/* Health-запись → proposal-ключ Recovery (голое имя записи).
+ * Ф9.8: 'tgws' убран — класс исчез вместе с мостом (ч.200/D34b). */
 const PLAIN_KEYS = {
-	core: 'core', mosdns: 'mosdns', tgws: 'tgws', tun: 'tun', fw4: 'fw4',
+	core: 'core', mosdns: 'mosdns', tun: 'tun', fw4: 'fw4',
 	generators: 'generators', system: 'system'
 };
 

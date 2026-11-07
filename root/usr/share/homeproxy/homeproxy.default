@@ -82,7 +82,6 @@ config homeproxy 'subscription'
 	option packet_encoding 'xudp'
 	option update_via_proxy '0'
 	option filter_nodes 'blacklist'
-	list filter_keywords '重置|到期|过期|剩余|套餐'
 	list filter_keywords 'Expiration|Remaining'
 
 config homeproxy 'server'

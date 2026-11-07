@@ -1629,6 +1629,17 @@ function main() {
 	const prev = read_json(STATE);
 	if (prev && type(prev) === 'object' && prev.alive)
 		S = prev;
+	/* Ф9.8: в state-файле остался ключ-призрак 'tgws' (мост удалён ч.200/D34b):
+	 * main() возобновляет S = prev ЦЕЛИКОМ, и неизвестный схеме ключ кочует
+	 * через каждый respawn. ucode не имеет delete — выкидываем его копированием
+	 * (for-in по объекту = ключи, урок 20). Один раз — дальше схема чиста. */
+	if ('tgws' in S) {
+		const clean = {};
+		for (let k in S)
+			if (k !== 'tgws')
+				clean[k] = S[k];
+		S = clean;
+	}
 	state_ensure();
 	S.alive = true;
 	S.error = '';

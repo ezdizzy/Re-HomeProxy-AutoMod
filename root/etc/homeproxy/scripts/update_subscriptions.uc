@@ -64,14 +64,14 @@ const allow_insecure = uci.get(uciconfig, ucisubscription, 'allow_insecure') || 
       via_proxy = uci.get(uciconfig, ucisubscription, 'update_via_proxy') || '0';
 
 const routing_mode = uci.get(uciconfig, ucimain, 'routing_mode') || 'proxy_banned_ru';
-/* Ф3.1: legacy custom/custom_json read as the working mode (D23). */
+/* Ф3.1: legacy custom/custom_json читается как рабочий режим (D23) —
+ * routing_mode_eff здесь уже никогда не 'custom', поэтому main_node
+ * читается безусловно (Ф9.8: мёртвое условие снято). */
 const routing_mode_eff = (routing_mode === 'custom' || routing_mode === 'custom_json')
 	? 'proxy_banned_ru' : routing_mode;
 let main_node, main_udp_node;
-if (routing_mode_eff !== 'custom') {
-	main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
-	main_udp_node = uci.get(uciconfig, ucimain, 'main_udp_node') || 'nil';
-}
+main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
+main_udp_node = uci.get(uciconfig, ucimain, 'main_udp_node') || 'nil';
 /* UCI config end */
 
 /* Ф9.11: an optional single-URL argument limits the run to ONE subscription

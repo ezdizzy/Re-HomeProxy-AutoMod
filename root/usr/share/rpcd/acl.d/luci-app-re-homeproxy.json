@@ -62,6 +62,8 @@
 					"telegram_flag_set", "telegram_bind_set", "telegram_pair_consume",
 					"control_service_set", "control_mode_set", "control_safe_set",
 					"mosdns_prepare_install", "mosdns_install_pkg", "mosdns_remove",
+					"multidns_disable", "multidns_reload", "multidns_reset",
+					"automation_clear", "automation_clear_log",
 					"automation_list_write", "automation_test_now", "automation_restore", "automation_recheck",
 					"automation_entry_add", "automation_entry_delete", "automation_entry_action", "automation_geo_update",
 					"automation_geo_protect_set",
