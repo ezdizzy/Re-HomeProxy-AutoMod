@@ -12,7 +12,7 @@ monitoring and diagnostics — all from the LuCI web interface, all local on the
 [![Release](https://img.shields.io/github/v/release/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](../../releases/latest)
 [![Stars](https://img.shields.io/github/stars/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](../../stargazers)
 [![License](https://img.shields.io/github/license/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](LICENSE)
-[![OpenWrt](https://img.shields.io/badge/OpenWrt-24.10%20%7C%2025.12%2B%20%7C%20SNAPSHOT?style=for-the-badge&logo=openwrt&color=00B5E2)](https://openwrt.org/)
+[![OpenWrt](docs/img/badge_openwrt.svg)](https://openwrt.org/)
 
 ## About
 
