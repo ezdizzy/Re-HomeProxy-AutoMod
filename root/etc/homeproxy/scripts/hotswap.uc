@@ -206,12 +206,18 @@ function hist_delay(proxies, tag) {
 }
 
 /* A concrete node tag that may hold the pin: never our own groups/selector or
- * the built-in service outbounds. */
+ * the built-in service outbounds. main-out-auto(-alt) / main-udp-auto(-alt) are
+ * the kernel URLTest groups the generator nests under the selectors (prefer
+ * mode builds the "-alt" fallback group) — the engine must never probe, dead-
+ * mark or pin a GROUP: ch.253 (user report) had main-out-auto-alt probed via
+ * the group /delay endpoint, dead-marked and frozen as "Недоступен" in the
+ * panel while the kernel showed it alive. */
 function pinnable(tag) {
 	if (!tag || type(tag) !== 'string' || !length(tag))
 		return false;
-	if (tag === 'main-out' || tag === 'main-out-auto' || tag === 'main-out-alt' ||
-	    tag === 'main-udp-out' || tag === 'main-udp-auto' || tag === 'main-udp-out-alt')
+	if (tag === 'main-out' || tag === 'main-out-auto' || tag === 'main-out-auto-alt' ||
+	    tag === 'main-out-alt' || tag === 'main-udp-out' ||
+	    tag === 'main-udp-auto' || tag === 'main-udp-auto-alt' || tag === 'main-udp-out-alt')
 		return false;
 	return (index([ 'direct-out', 'block-out' ], tag) < 0);
 }
@@ -289,7 +295,11 @@ function mark_probe(tag, delay) {
 	const h = health_of(tag);
 	h.ts = time();
 	if (delay) {
-		if (h.fails > 0 && deadset[tag] != null)
+		/* ч.253: clear on ANY successful probe — after a daemon restart the
+		 * health map is fresh (fails==0) while urltest_dead persisted, so the
+		 * old "fails>0" condition never fired and the node looped in bounded
+		 * re-checks forever with a stale dead-mark. */
+		if (deadset[tag] != null)
 			dead_clear(tag);
 		h.fails = 0;
 		h.oks = h.oks + 1;
@@ -592,8 +602,15 @@ function tick_contour(c, spec, proxies, now_ts) {
 	}
 
 	/* ── 2. Probe candidates until the alive quota is known ─────────────────
-	 * Reserve order first (hot dials); the failback target is always probed;
-	 * dead-marked candidates cost one probe each (and fade their mark). */
+	 * Reserve order first (hot dials); the failback target is always probed.
+	 * ч.253 (user report «резервные узлы считают мёртвыми»): the alive quota
+	 * must NOT freeze the tail of the pool — a transient probe outage (core
+	 * reload, TSPU flap) used to write fails>0 + a dead-mark that NOTHING
+	 * ever re-checked while the quota was full: the panel showed Недоступен
+	 * forever while the kernel measured the same node alive. Candidates with
+	 * a dead-mark or a failed last probe therefore get ONE bounded re-probe
+	 * per tick (extra quota = RESERVE_QUOTA) so marks fade and states age
+	 * honestly; everything healthy beyond the quota stays unprobed. */
 	const order = scan_order(spec, members);
 	let fb_probe = null;
 	if (c.mode === 'prefer' && type(spec.preferred) === 'string' && spec.preferred !== ct.held)
@@ -601,13 +618,20 @@ function tick_contour(c, spec, proxies, now_ts) {
 	else if (c.mode === 'manual' && ct.fb_target != null && ct.fb_target !== ct.held)
 		fb_probe = ct.fb_target;
 	let alive_others = [];
+	let rechecks = 0;
 	for (let tag in order) {
 		if (tag === ct.held)
 			continue;
 		const need_more = (length(alive_others) < RESERVE_QUOTA);
 		const want_fb = (fb_probe != null && tag === fb_probe);
-		if (!need_more && !want_fb)
-			continue;
+		if (!need_more && !want_fb) {
+			const hh = health[tag];
+			const stuck = (deadset[tag] != null) ||
+				(type(hh) === 'object' && hh.fails > 0);
+			if (!stuck || rechecks >= RESERVE_QUOTA)
+				continue;
+			rechecks = rechecks + 1;
+		}
 		const h = mark_probe(tag, probe_node(tag, c.probe_timeout));
 		if (h.fails === 0)
 			push(alive_others, tag);
