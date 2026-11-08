@@ -469,10 +469,29 @@ function scan_order(spec, members) {
 	return ordered;
 }
 
+/* Prefer-mode seed arming: the preferred node is the documented hold target
+ * ("returns to it once it recovers") — a restart or any settings save must not
+ * sever that promise just because the engine was in a failover at the time.
+ * (Declared ABOVE seed_contour — ucode has no hoisting, lesson 294.) */
+function seed_prefer_fb(c, spec, ct, seed) {
+	if (c != null && c.mode === 'prefer' &&
+	    type(spec.preferred) === 'string' && length(spec.preferred) &&
+	    spec.preferred !== seed)
+		ct.fb_target = spec.preferred;
+}
+
 /* Seed the pin at first tick / after a contract change: respect a concrete
  * external/sticky pick; otherwise take the nested group's pick (prefer: that IS
- * the preferred node via sticky; auto: kernel's best); otherwise first member. */
-function seed_contour(spec, proxies, active) {
+ * the preferred node via sticky; auto: kernel's best); otherwise first member.
+ * Prefer-mode: an adopted pick that differs from the preferred is NOT user
+ * agency — it is leftover kernel/selector state after a restart or a contract
+ * reset (any settings save changes the signature and wipes fb_target with it).
+ * Arm the preferred as the failback target here so the recovery gate (3c)
+ * returns to it once it is stable; while the preferred is dead the gate never
+ * passes and the adopted pick keeps serving — no dead-node window at seed.
+ * A mid-run external move (user agency) rides the adoption path in the tick,
+ * not the seed, so it is never undone by this. */
+function seed_contour(c, spec, proxies, active) {
 	const ct = contour_of(spec.selector);
 	let seed = null;
 	if (pinnable(active)) {
@@ -495,12 +514,14 @@ function seed_contour(spec, proxies, active) {
 	if (active === seed) {
 		ct.held = seed;
 		ct.last_group_pick = null;
+		seed_prefer_fb(c, spec, ct, seed);
 		log('[' + spec.selector + '] pinned ' + tag_label(seed) + ' (adopted selector pick)');
 		return true;
 	}
 	if (switch_to(spec.selector, seed)) {
 		ct.held = seed;
 		ct.last_group_pick = seed;
+		seed_prefer_fb(c, spec, ct, seed);
 		log('[' + spec.selector + '] pinned ' + tag_label(seed) + ' (seed)');
 		return true;
 	}
@@ -524,7 +545,7 @@ function tick_contour(c, spec, proxies, now_ts) {
 
 	/* ── 0. OWN the selection (adopt external moves, restore the pin) ─────── */
 	if (ct.held == null) {
-		if (!seed_contour(spec, proxies, active))
+		if (!seed_contour(c, spec, proxies, active))
 			return;
 	} else if (active === spec.group) {
 		/* Selector moved back to the nested group by an external API call:
