@@ -808,10 +808,14 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 	shellNav() {
 		ui.menu.load().then(L.bind(function(tree) {
 			try {
-				const hpNode = tree && tree.children && tree.children.admin &&
-					tree.children.admin.children && tree.children.admin.children.services &&
-					tree.children.admin.children.services.children &&
-					tree.children.admin.children.services.children.homeproxy;
+			/* 🔴 ч.252: R9 шаг-1 переименовал поддерево меню в services/ravnex;
+			 * под services/homeproxy осталась только алиас-запись БЕЗ детей —
+			 * getChildren() по ней пуст, и сайдбар молча вымирал («МЕНЮ ПРОПАЛО»).
+			 * Берём ravnex, фолбэк homeproxy — пока старый релиз жив на коробке. */
+			const svcKids = tree && tree.children && tree.children.admin &&
+				tree.children.admin.children && tree.children.admin.children.services &&
+				tree.children.admin.children.services.children;
+			const hpNode = svcKids ? (svcKids.ravnex || svcKids.homeproxy || null) : null;
 				if (!hpNode)
 					return;
 				const kids = ui.menu.getChildren(hpNode);
