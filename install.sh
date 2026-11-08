@@ -1,6 +1,6 @@
 #!/bin/sh
 # Установщик и интерактивный конфигуратор Ravnex для OpenWrt (apk / opkg)
-# https://github.com/ezdizzy/re-homeproxy
+# https://github.com/ezdizzy/ravnex
 #
 # Вручную ставится только LuCI-приложение + ключ подписи, а ядро, ByeDPI и Zapret
 # устанавливаются через собственный бэкенд приложения (core_mgmt.uc + rpcd-объект
@@ -9,11 +9,11 @@
 # проверенной логикой, что и графический интерфейс.
 #
 # Установка (одной строкой — ввод читается из /dev/tty, пайп остаётся интерактивным):
-#   wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
-# Для ЭТОГО форка HP_REPO по умолчанию = ezdizzy/re-homeproxy, поэтому приложение и
+#   wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | sh
+# Для ЭТОГО форка HP_REPO по умолчанию = ezdizzy/ravnex, поэтому приложение и
 # русская локаль ставятся именно из вашего репозитория; ядра/ByeDPI/Zapret — из апстрима.
 # Либо в два шага (надёжнее, если нужно переопределить репозиторий):
-#   wget -O /tmp/install.sh https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh
+#   wget -O /tmp/install.sh https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh
 #   HP_REPO=otheruser/re-homeproxy sh /tmp/install.sh
 #
 # При заблокированном/замедленном GitHub можно указать зеркало:
@@ -37,7 +37,7 @@
 # интернета — при отсутствии подписки включается прямой режим (direct) и автоматически
 # создаётся правило «YouTube → Zapret» (если Zapret установлен; иначе правило деградирует
 # в прямой доступ и просто ничего не блокирует).
-HP_REPO="${HP_REPO:-ezdizzy/re-homeproxy}"
+HP_REPO="${HP_REPO:-ezdizzy/ravnex}"
 SUFFIX="_all"   # суффикс имени пакета приложения в релизах
 
 # --local /path — оффлайн-режим: все загрузки заменяются файлами из каталога.

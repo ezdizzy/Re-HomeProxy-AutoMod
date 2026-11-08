@@ -161,7 +161,7 @@ tag_of() {
 echo "── versions ──────────────────────────────────────────────"
 HID_TAG=$(tag_of hiddify/hiddify-core);                 HID_VER=${HID_TAG#v}
 MOS_TAG=$(tag_of IrineSistiana/mosdns);                 MOS_VER=${MOS_TAG#v}
-HELP_TAG=$(tag_of ezdizzy/re-homeproxy);                HELP_VER=${HELP_TAG#v}
+HELP_TAG=$(tag_of ezdizzy/ravnex);                HELP_VER=${HELP_TAG#v}
 SBX_TAG=$(tag_of shtorm-7/sing-box-extended);           SBX_VER=${SBX_TAG#v}
 LITE_TAG=$(tag_of MANCrimSon/sing-box-extended-lite);   LITE_VER=${LITE_TAG#v}
 BYD_TAG=$(tag_of 1andrevich/ByeDPI-OpenWrt);            BYD_VER=${BYD_TAG#v}
@@ -203,8 +203,8 @@ pkg() { # <stageroot> <name> <version> <arch> <descr> <out.apk>
 	apk --root "$WORK/idroot" mkpkg --no-xattrs \
 		--info "name:$name" --info "version:$ver" --info "arch:$arch" \
 		--info "description:$descr" \
-		--info "url:https://github.com/ezdizzy/re-homeproxy" \
-		--info "maintainer:Ravnex feed <https://github.com/ezdizzy/re-homeproxy>" \
+		--info "url:https://github.com/ezdizzy/ravnex" \
+		--info "maintainer:Ravnex feed <https://github.com/ezdizzy/ravnex>" \
 		--info "depends:libc" \
 		--info "origin:ravnex-feed" \
 		${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} \
@@ -293,7 +293,7 @@ own_pkg() { # <stageroot> <name> <ver> <arch> <descr>
 	local D="$OUT/releases/$SERIES/$arch"; mkdir -p "$D"
 	pkg "$root" "$name" "$ver" "$arch" "$descr" "$D/$name-$ver.apk" || { echo "SKIP $name $arch (mkpkg failed)"; return 1; }
 	local M="$WORK/ownctl"; rm -rf "$M"; mkdir -p "$M"
-	printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: Ravnex feed <https://github.com/ezdizzy/re-homeproxy>\nDepends: libc\nDescription: %s\n' "$name" "$ver" "$arch" "$descr" > "$M/control"
+	printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: Ravnex feed <https://github.com/ezdizzy/ravnex>\nDepends: libc\nDescription: %s\n' "$name" "$ver" "$arch" "$descr" > "$M/control"
 	ipk_build "$M/control" "$root" "$D/$name-$ver.ipk"
 	local sha_a sha_i
 	sha_a=$(sha256sum "$D/$name-$ver.apk" | cut -d' ' -f1)
@@ -340,7 +340,7 @@ for A in "${ARCH_LIST[@]}"; do
 	fi
 	if [ -n "${GA:-}" ]; then
 		for T in probe_pool sni_sniffer; do
-			SRC=$(fetch_bin "$GHDL/ezdizzy/re-homeproxy/releases/latest/download/$T-linux-$GA.zip" "$T-$GA.zip" || true)
+			SRC=$(fetch_bin "$GHDL/ezdizzy/ravnex/releases/latest/download/$T-linux-$GA.zip" "$T-$GA.zip" || true)
 			if [ -n "${SRC:-}" ]; then
 				rm -rf "$WORK/x" "$WORK/root"; mkdir -p "$WORK/x" "$WORK/root/usr/bin"; unzip -qo "$SRC" -d "$WORK/x"
 				# release zips carry the binary named with the platform suffix

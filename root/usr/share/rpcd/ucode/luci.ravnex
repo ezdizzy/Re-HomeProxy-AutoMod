@@ -376,7 +376,7 @@ function app_github_release() {
 	let token = null;
 	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
 	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
-	const repos = ['ezdizzy/ravnex', 'ezdizzy/re-homeproxy'];
+	const repos = ['ezdizzy/ravnex', 'ezdizzy/ravnex'];
 	for (let i = 0; i < length(repos); i++) {
 		const fd = popen(`wget -qO- --timeout=10 ${auth} "https://api.github.com/repos/${repos[i]}/releases/latest" 2>/dev/null`);
 		if (!fd) continue;
@@ -2592,7 +2592,7 @@ const FEED_MANIFEST_FILE = '/var/run/ravnex/feed_manifest.json';
 const FEED_MANIFEST_TTL = 1800;      /* CI rebuilds daily; 30 min cache */
 const FEED_PROBE_TTL = 300;          /* reachability probe cache */
 const FEED_BRANCH = 'refs/heads/feed';
-const FEED_REPOS = ['ezdizzy/ravnex', 'ezdizzy/re-homeproxy'];
+const FEED_REPOS = ['ezdizzy/ravnex', 'ezdizzy/ravnex'];
 const FEED_PKGS = ['hiddify-core', 'hiddify-core-compact', 'mosdns', 'probe_pool',
 	'sni_sniffer', 'sing-box-extended', 'sing-box-extended-lite', 'byedpi', 'zapret2'];
 /* Post-install check path per feed package (access() after install). */
@@ -5106,7 +5106,7 @@ const methods = {
 			/* Ensure the signing key is present so apk can verify the package.
 			 * Best-effort: a throttled GitHub must not block the install. */
 			if (pkg_manager === 'apk' && !access('/etc/apk/keys/homeproxy-hiddify.pub')) {
-				gh_fetch('https://github.com/ezdizzy/re-homeproxy/releases/latest/download/homeproxy-hiddify.pub', '/tmp/homeproxy-hiddify.pub', 20000);
+				gh_fetch('https://github.com/ezdizzy/ravnex/releases/latest/download/homeproxy-hiddify.pub', '/tmp/homeproxy-hiddify.pub', 20000);
 				system('[ -s /tmp/homeproxy-hiddify.pub ] && cp /tmp/homeproxy-hiddify.pub /etc/apk/keys/ 2>/dev/null; rm -f /tmp/homeproxy-hiddify.pub');
 			}
 
@@ -9613,7 +9613,7 @@ const methods = {
 				const zip = '/tmp/' + tool + '-helper.zip';
 				const dest = '/tmp/' + tool + '_pkg';
 				system(`rm -rf ${shellquote(dest)}; rm -f ${shellquote(zip)}`);
-				if (gh_fetch(`https://github.com/ezdizzy/re-homeproxy/releases/latest/download/${tool}-linux-${goasset}.zip`, zip, 60000) !== 0) {
+				if (gh_fetch(`https://github.com/ezdizzy/ravnex/releases/latest/download/${tool}-linux-${goasset}.zip`, zip, 60000) !== 0) {
 					system(`rm -rf ${shellquote(dest)}; rm -f ${shellquote(zip)}`);
 					return { installed: false, error: 'download failed (GitHub unreachable?)' };
 				}

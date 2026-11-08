@@ -105,7 +105,7 @@ apk world (the router is not harmed). The correct path is installing the new ver
 the script:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | sh
 ```
 
 The installer clears the old world pins and migrates the app to the new name together with

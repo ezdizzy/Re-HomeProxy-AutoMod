@@ -71,7 +71,7 @@ opkg update && opkg install libustream-openssl ca-certificates
 ```
 
 Если сам `opkg` не имеет доступа к интернету — скачайте файл `.ipk` (OpenWrt 24.10) или `.apk`
-(OpenWrt 25.12+) на компьютере со [страницы релизов](https://github.com/ezdizzy/re-homeproxy/releases/latest)
+(OpenWrt 25.12+) на компьютере со [страницы релизов](https://github.com/ezdizzy/ravnex/releases/latest)
 и передайте на роутер через `scp`.
 
 ---
@@ -139,7 +139,7 @@ ucode /etc/ravnex/scripts/update_subscriptions.uc
 новое имя со всей конфигурацией:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | sh
 ```
 
 Подробно: [Ресурсы и производительность → Обновление с 3.0.x](Performance-and-Resources-ru).

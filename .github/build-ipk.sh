@@ -193,7 +193,7 @@ add_group_and_user
 		--info "description:Ravnex - modern multi-core proxy platform. Fork of ImmortalWrt HomeProxy" \
 		--info "arch:noarch" \
 		--info "origin:$PKG_NAME" \
-		--info "url:https://github.com/ezdizzy/re-homeproxy" \
+		--info "url:https://github.com/ezdizzy/ravnex" \
 		--info "maintainer:1andrevich <1andrevich.recede274@passmail.net>" \
 		--script "pre-upgrade:$TEMP_DIR/pre-upgrade" \
 		--script "post-install:$TEMP_DIR/post-install" \
@@ -234,7 +234,7 @@ else
 		Depends: $IPK_DEPS
 		Conflicts: luci-app-homeproxy luci-app-homeproxy-hiddify luci-app-re-homeproxy
 		Replaces: luci-app-homeproxy luci-app-homeproxy-hiddify luci-app-re-homeproxy
-		Source: https://github.com/ezdizzy/re-homeproxy
+		Source: https://github.com/ezdizzy/ravnex
 		SourceName: $PKG_NAME
 		Section: luci
 		SourceDateEpoch: $PKG_SOURCE_DATE_EPOCH
@@ -364,7 +364,7 @@ exit 0' > "$I18N_TEMP_DIR/post-install"
 		--info "description:Russian translation for luci-app-ravnex" \
 		--info "arch:noarch" \
 		--info "origin:$I18N_PKG_NAME" \
-		--info "url:https://github.com/ezdizzy/re-homeproxy" \
+		--info "url:https://github.com/ezdizzy/ravnex" \
 		--info "maintainer:1andrevich <1andrevich.recede274@passmail.net>" \
 		--info "depends:$PKG_NAME" \
 		--info "replaces:luci-i18n-homeproxy-ru" \
@@ -389,7 +389,7 @@ exit 0' > "$I18N_TEMP_PKG_DIR/CONTROL/postinst"
 		Version: $PKG_VERSION
 		Depends: $PKG_NAME
 		Replaces: luci-i18n-homeproxy-ru
-		Source: https://github.com/ezdizzy/re-homeproxy
+		Source: https://github.com/ezdizzy/ravnex
 		SourceName: $I18N_PKG_NAME
 		Section: luci
 		SourceDateEpoch: $PKG_SOURCE_DATE_EPOCH

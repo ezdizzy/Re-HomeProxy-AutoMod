@@ -70,7 +70,7 @@ Failed to allocate uclient context
 opkg update && opkg install libustream-openssl ca-certificates
 ```
 
-If `opkg` itself cannot reach the internet, download the `.ipk` (OpenWrt 24.10) or `.apk` (OpenWrt 25.12+) file on a PC from the [Releases page](https://github.com/ezdizzy/re-homeproxy/releases/latest) and transfer it to the router with `scp`.
+If `opkg` itself cannot reach the internet, download the `.ipk` (OpenWrt 24.10) or `.apk` (OpenWrt 25.12+) file on a PC from the [Releases page](https://github.com/ezdizzy/ravnex/releases/latest) and transfer it to the router with `scp`.
 
 ---
 
@@ -137,7 +137,7 @@ the solver level, so the transaction is rejected as a whole (the router is not h
 name with all of its configuration:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | sh
 ```
 
 Details: [Resources & performance → Updating from 3.0.x](Performance-and-Resources-en).

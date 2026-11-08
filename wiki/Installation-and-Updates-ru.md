@@ -10,7 +10,7 @@
 ## Быстрая установка (одной командой)
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | sh
 ```
 
 Интерактивный установщик проведёт по шагам: приложение + русский язык → ядро → подписка/узел →
@@ -25,7 +25,7 @@ Hot Swap → MultiDNS → Автоматизация → Zapret 2 с автот�
 Укажите зеркало (переменная ставится перед `sh`):
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | GH_MIRROR=https://your.mirror sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | GH_MIRROR=https://your.mirror sh
 ```
 
 Есть и локальный режим `--local` — установка из файлов на устройстве (например, скачанных
@@ -38,16 +38,16 @@ wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.
 APK (OpenWrt 25.12+):
 
 ```sh
-wget -O /tmp/homeproxy-hiddify.pub https://github.com/ezdizzy/re-homeproxy/releases/latest/download/homeproxy-hiddify.pub
+wget -O /tmp/homeproxy-hiddify.pub https://github.com/ezdizzy/ravnex/releases/latest/download/homeproxy-hiddify.pub
 cp /tmp/homeproxy-hiddify.pub /etc/apk/keys/
-wget -O /tmp/app.apk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/re-homeproxy/releases' | grep -o 'https://github\.com/[^"]*luci-app-ravnex[^"]*\.apk' | head -1)"
+wget -O /tmp/app.apk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/ravnex/releases' | grep -o 'https://github\.com/[^"]*luci-app-ravnex[^"]*\.apk' | head -1)"
 apk add /tmp/app.apk
 ```
 
 opkg (OpenWrt 24.10):
 
 ```sh
-wget -O /tmp/app.ipk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/re-homeproxy/releases' | grep -o 'https://github\.com/[^"]*luci-app-ravnex[^"]*\.ipk' | head -1)"
+wget -O /tmp/app.ipk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/ravnex/releases' | grep -o 'https://github\.com/[^"]*luci-app-ravnex[^"]*\.ipk' | head -1)"
 opkg install /tmp/app.ipk
 ```
 

@@ -9,9 +9,9 @@
 A multi-core proxy platform for OpenWrt: VPN subscriptions, VPN-free DPI bypass, automation,
 monitoring and diagnostics — all from the LuCI web interface, all local on the router.
 
-[![Release](https://img.shields.io/github/v/release/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](../../releases/latest)
-[![Stars](https://img.shields.io/github/stars/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](../../stargazers)
-[![License](https://img.shields.io/github/license/ezdizzy/re-homeproxy?style=for-the-badge&color=22C55E)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/ezdizzy/ravnex?style=for-the-badge&color=22C55E)](../../releases/latest)
+[![Stars](https://img.shields.io/github/stars/ezdizzy/ravnex?style=for-the-badge&color=22C55E)](../../stargazers)
+[![License](https://img.shields.io/github/license/ezdizzy/ravnex?style=for-the-badge&color=22C55E)](LICENSE)
 [![OpenWrt](docs/img/badge_openwrt.svg)](https://openwrt.org/)
 
 ## About
@@ -179,7 +179,7 @@ recommended.
 ### Quick install (one command)
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | sh
 ```
 
 The interactive installer walks you through: app + Russian locale → core → subscription/node →
@@ -188,7 +188,7 @@ Re-running the script opens the settings menu. If GitHub is blocked, point at a 
 (the variable goes before `sh`):
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | GH_MIRROR=https://your.mirror sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | GH_MIRROR=https://your.mirror sh
 ```
 
 ### Manual packages
@@ -196,16 +196,16 @@ wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.
 APK (OpenWrt 25.12+):
 
 ```sh
-wget -O /tmp/homeproxy-hiddify.pub https://github.com/ezdizzy/re-homeproxy/releases/latest/download/homeproxy-hiddify.pub
+wget -O /tmp/homeproxy-hiddify.pub https://github.com/ezdizzy/ravnex/releases/latest/download/homeproxy-hiddify.pub
 cp /tmp/homeproxy-hiddify.pub /etc/apk/keys/
-wget -O /tmp/app.apk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/re-homeproxy/releases' | grep -o 'https://github\.com/[^"]*luci-app-ravnex[^"]*\.apk' | head -1)"
+wget -O /tmp/app.apk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/ravnex/releases' | grep -o 'https://github\.com/[^"]*luci-app-ravnex[^"]*\.apk' | head -1)"
 apk add /tmp/app.apk
 ```
 
 opkg (OpenWrt 24.10):
 
 ```sh
-wget -O /tmp/app.ipk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/re-homeproxy/releases' | grep -o 'https://github\.com/[^"]*luci-app-ravnex[^"]*\.ipk' | head -1)"
+wget -O /tmp/app.ipk "$(wget -qO- 'https://api.github.com/repos/ezdizzy/ravnex/releases' | grep -o 'https://github\.com/[^"]*luci-app-ravnex[^"]*\.ipk' | head -1)"
 opkg install /tmp/app.ipk
 ```
 

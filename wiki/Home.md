@@ -7,8 +7,8 @@
 
 | | |
 |---|---|
-| ![Overview](https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/docs/img/overview.png) | ![Routing Master](https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/docs/img/wizard_dpi.png) |
-| ![Automation engine](https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/docs/img/automation_engine.png) | ![Advanced rules](https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/docs/img/wizard_advanced.png) |
+| ![Overview](https://raw.githubusercontent.com/ezdizzy/ravnex/master/docs/img/overview.png) | ![Routing Master](https://raw.githubusercontent.com/ezdizzy/ravnex/master/docs/img/wizard_dpi.png) |
+| ![Automation engine](https://raw.githubusercontent.com/ezdizzy/ravnex/master/docs/img/automation_engine.png) | ![Advanced rules](https://raw.githubusercontent.com/ezdizzy/ravnex/master/docs/img/wizard_advanced.png) |
 
 ---
 

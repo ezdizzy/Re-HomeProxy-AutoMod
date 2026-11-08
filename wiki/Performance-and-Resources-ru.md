@@ -105,7 +105,7 @@ Go-процессы (прокси-ядро, mosdns) получают soft-heap �
 apk world (роутер не страдает). Корректный путь — установить новую версию скриптом:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | sh
 ```
 
 Установщик снимет старые world-пины и перенесёт приложение на новое имя вместе с
