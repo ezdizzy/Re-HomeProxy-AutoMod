@@ -112,7 +112,11 @@ function run_action(action, args, timeout_ms, op_id) {
 	 * + mirror fallback 300 s) — a 420 s runner cap killed the mirror attempt
 	 * mid-flight on a slow link and left a partial tmp file (audit 2026-10-25);
 	 * 650 s covers the full budget. */
-	const caps = { download_pkg: 650000, install_pkg: 900000, install_feed_pkg: 650000 };
+	const caps = { download_pkg: 650000, install_pkg: 900000, install_feed_pkg: 650000,
+		/* 420 s: the FIRST exec of a freshly written ~100 MB Go binary is a
+		 * cold-flash read — the version probe alone took ~45 s live (worse on
+		 * slow flash); the restart cycle itself is ~12 s. */
+		postcheck_restart: 420000 };
 	const cap = caps[action] || timeout_ms || 420000;
 	/* Detached chain: the stage runs in background inside the subshell, $!
 	 * (the ucode pid) lands in the pidfile as its identity anchor, wait
@@ -271,16 +275,32 @@ function main() {
 			return;
 		}
 		const kmods = run_action('install_kmods', [prep.pkg_manager], null, op_id);
+		/* Field report 2026-11-08: the feed branch used to end HERE — the
+		 * binary on disk was replaced but the RUNNING core kept serving the
+		 * old version forever (the "caller restarts" contract had no
+		 * caller). Probe the new binary, restart the service and verify
+		 * identity liveness; only then is the op honestly verified. */
+		wstatus({ running: true, core: core, variant: variant, stage: 'postcheck', started: started, ts: time(), op_id: op_id });
+		if (op_id) {
+			try { op_stage(op_id, 'postcheck'); } catch (e) { /* journal hiccup */ }
+		}
+		const pc = run_action('postcheck_restart', [core, (inst.version || '')], null, op_id);
+		const ok_install = (pc && pc.result === true && pc.alive === true);
+		const tail_note = ok_install
+			? ((inst.note || 'feed install') + ((pc.version) ? `; ядро перезапущено (${pc.version})` : ''))
+			: ((pc && pc.error) || 'postcheck failed');
 		wstatus({
-			running: false, ok: true, core: core, stage: 'done',
+			running: false, ok: ok_install, core: core, stage: 'done',
 			started: started, finished: time(),
-			note: inst.note || null, warning: inst.warning || null,
+			note: ok_install ? tail_note : null,
+			error: ok_install ? null : tail_note,
+			warning: inst.warning || null,
 			kmods_ok: (kmods && kmods.result === true) ? true : false,
 			op_id: op_id
 		});
-		uev(true, core, variant, inst.note || 'установлено из своего apk-репозитория');
+		uev(ok_install, core, variant, tail_note);
 		if (op_id) {
-			try { op_finish(op_id, true, false, inst.note || 'feed install'); } catch (e) { /* journal hiccup */ }
+			try { op_finish(op_id, ok_install, ok_install, tail_note); } catch (e) { /* journal hiccup */ }
 		}
 		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 		rmdir(LOCK_DIR);

@@ -420,6 +420,39 @@ function feed_vercmp_base(a, b) {
 	return 0;
 }
 
+/* Installed version of a feed package — the same honest contract as the
+ * rpcd copy: the PM record when the package was installed through apk/opkg,
+ * else null (a binary probe lies here: the OLD binary is exactly what a
+ * failed install leaves behind). */
+function feed_installed_version(pkg) {
+	const pm = detect_pkg_manager();
+	if (pm === 'apk') {
+		const fd = popen(`apk info ${shellquote(pkg)} 2>/dev/null`);
+		if (fd) {
+			const out = fd.read('all');
+			fd.close();
+			/* scan every line for "<pkg>-<version>" (apk v3 info output) */
+			const prefix = pkg + '-';
+			for (let line in split(out, '\n')) {
+				if (substr(line, 0, length(prefix)) != prefix) continue;
+				const rest = trim(substr(line, length(prefix)));
+				const ver = (length(rest) > 0) ? split(rest, ' ')[0] : '';
+				if (length(ver))
+					return split(ver, ':')[0];
+			}
+		}
+	} else if (pm === 'opkg') {
+		const fd = popen(`opkg status ${shellquote(pkg)} 2>/dev/null`);
+		if (fd) {
+			const out = fd.read('all');
+			fd.close();
+			const m = match(out, /Version: (\S+)/);
+			if (m) return m[1];
+		}
+	}
+	return null;
+}
+
 /* V2 explicit-file install of one feed package (mirror of rpcd's
  * feed_install_pkg): manifest → exact file → ladder → sha256 gate →
  * `apk add ./x.apk` (signature checked by apk) | `opkg install ./x.ipk`
@@ -459,8 +492,14 @@ function feed_install_pkg(pkg) {
 		system(`${(pkg_manager === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib)} >/dev/null 2>&1; true`);
 	let rc;
 	if (pkg_manager === 'apk') {
-		const registered = (system(`apk info -e ${shellquote(pkg)} >/dev/null 2>&1`) === 0);
-		rc = system(`apk ${registered ? 'upgrade' : 'add'} ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
+		/* ч.248: `apk upgrade ./file` is NOT a file-target form on apk 3.x
+		 * (the path parses as a world constraint — a silent no-op), while
+		 * `apk add ./file` both installs AND upgrades from a file (proven
+		 * live 1.0.5.2→1.0.7). The rpcd copy was fixed then, but this copy
+		 * DRIFTED and a registered core got a false «успешно» with the old
+		 * binary still on disk (field report 2026-11-08: hiddify-core
+		 * 5.1.0→5.5.5 «updated» without changing a byte). ALWAYS add. */
+		rc = system(`apk add ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
 	} else {
 		rc = system(`opkg install --force-reinstall ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
 	}
@@ -471,6 +510,12 @@ function feed_install_pkg(pkg) {
 	 * trust the installed binary, report the rc only when it is absent. */
 	if (!(bin && access(bin)))
 		return { result: false, error: `feed install of ${pkg} failed (${pkg_manager} rc=${rc}, post-check failed)` };
+	/* Version honesty (mirror of the rpcd copy): a silent no-op must not
+	 * pass as an upgrade — the installed PM version has to match the
+	 * manifest entry. NULL is tolerated (binary-only installs). */
+	const got_ver = feed_installed_version(pkg);
+	if (got_ver != null && feed_vercmp_base(feed_strip_rev('' + got_ver), feed_strip_rev('' + entry.version)) !== 0)
+		return { result: false, error: `${pkg}: после установки версия ${got_ver} не совпала с фидом ${entry.version} — установка не прижилась` };
 	return { result: true, version: '' + entry.version, pkg_manager,
 		note: `installed from the update source: ${pkg} ${entry.version}` };
 }
@@ -954,6 +999,64 @@ let result;
 		result = { result: false, error: 'own feed is not configured' };
 	} else {
 		result = feed_install_pkg(feed_pkg);
+	}
+
+} else if (action === 'postcheck_restart') {
+	/* Field report 2026-11-08 (hiddify-core 5.1.0→5.5.5): the feed path used
+	 * to end on a replaced FILE while the RUNNING core kept serving the old
+	 * binary — nobody restarted the service on this branch (the "caller
+	 * restarts" contract had no caller). Tail of the feed core install:
+	 * probe the NEW binary FIRST — a broken build must never take the
+	 * service down (the old core keeps serving, the op fails honestly);
+	 * only a healthy probe earns the restart, then an identity liveness
+	 * wait with the same exe set the sentinel/registry uses. */
+	const core = ARGV[1];
+	const expect = trim(ARGV[2] || '');
+	if (!(core in ['hiddify', 'singbox', 'singbox-lite'])) {
+		result = { result: false, error: 'illegal core' };
+	} else {
+		const bin = (core === 'hiddify') ? '/usr/bin/hiddify-core' : '/usr/bin/sing-box';
+		if (!access(bin)) {
+			result = { result: false, error: `core binary ${bin} absent after install` };
+		} else {
+			/* the replaced file (mtime+size changed) re-probes automatically */
+			const info = core_features_cached(bin);
+			if (!info || !info.version)
+				result = { result: false, error: 'новый бинарник не отвечает на version — перезапуск отменён, прежнее ядро продолжает работать' };
+			else if (length(expect) && feed_vercmp_base(feed_strip_rev('' + info.version), feed_strip_rev('' + expect)) !== 0)
+				result = { result: false, error: `после установки бинарник отвечает ${info.version}, ожидалось ${expect} — перезапуск отменён` };
+			else {
+				/* Detached restart with rc collection — a 2-arg system()
+				 * deadline KILLS the init script mid-flight and leaves the
+				 * service STOPPED (field-proven 2026-11-09 01:35: the postcheck
+				 * restart stall outlived the 120 s cap, the killed shell
+				 * stopped the service and the start phase never ran). The
+				 * restart runs detached, we only POLL liveness and never
+				 * kill: an orphaned init script finishes its work, and the
+				 * sentinel auto-starts a dead core as a backstop. */
+				system('rm -f /tmp/hp_pc.rc /tmp/hp_pc.pid');
+				system('( /etc/init.d/ravnex restart >/dev/null 2>&1; echo $? > /tmp/hp_pc.rc ) </dev/null & echo $! > /tmp/hp_pc.pid');
+				let alive = false;
+				/* 🔴 ucode for..in over an ARRAY yields ELEMENTS (not indices —
+				 * the same construct feed_fetch relies on with `u.repo`), so
+				 * `exes[e]` inside for..in was undefined and pm_find was called
+				 * with a broken spec 48 times: the live core was never seen
+				 * (first E2E run, 2026-11-09). Classic indexed loop instead,
+				 * exe set identical to config_heal/zapret_autopilot. */
+				for (let i = 0; i < 48 && !alive; i++) {
+					sleep(5000);
+					if (core === 'hiddify')
+						alive = length(pm_find({ exe: 'hiddify-core' })) > 0;
+					else
+						alive = length(pm_find({ exe: 'sing-box' })) > 0 ||
+							length(pm_find({ exe: 'sing-box-core' })) > 0;
+				}
+				result = alive
+					? { result: true, alive: true, version: info.version }
+					: { result: true, alive: false, version: info.version,
+						error: 'новое ядро не поднялось за ~240 с — установка честно не завершена; рестарт продолжается в фоне, Sentinel также поднимет ядро (hiddify-c.log)' };
+			}
+		}
 	}
 
 } else if (action === 'install_kmods') {

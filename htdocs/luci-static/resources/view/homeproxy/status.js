@@ -2029,7 +2029,7 @@ return view.extend({
 		s = m.section(form.NamedSection, 'config', 'ravnex');
 		s.anonymous = true;
 
-		o = s.option(form.DummyValue, '_homeproxy_logview');
+		o = s.option(form.DummyValue, '_ravnex_logview');
 		o.render = L.bind(getRuntimeLog, this, o, _('Ravnex'));
 
 		o = s.option(form.DummyValue, '_hiddify-c_logview');
