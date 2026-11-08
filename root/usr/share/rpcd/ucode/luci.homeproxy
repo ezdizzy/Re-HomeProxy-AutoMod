@@ -267,9 +267,12 @@ function gh_mirror_base() {
  * TSPU selective hole that kills wget's fingerprint (session 159/161).
  * wget stays as the fallback (stock boxes may lack curl), then the mirror.
  * Mirrors core_mgmt.uc's helper. 2-arg system() is fine here (lesson 167
- * refuted for this context, ch.246). */
+ * refuted for this context, ch.246). ч.249b: return the PATH, not a boolean —
+ * the caller interpolates it into the command (the boolean "true" ran the
+ * shell builtin `true -fsL …`: rc=0 instantly, no file — the fake download
+ * success, live-proven ch.249b). */
 function gh_has_curl() {
-	return access('/usr/bin/curl') || access('/bin/curl');
+	return access('/usr/bin/curl') ? '/usr/bin/curl' : (access('/bin/curl') ? '/bin/curl' : null);
 }
 
 function curl_fetch(curl, dest, url, timeout_ms) {

@@ -35,9 +35,13 @@ function gh_mirror_of(url, base) {
  * to api.github.com times out while curl succeeds from the same box).
  * wget stays as the fallback (stock boxes may lack curl), then the mirror.
  * 2-arg system() is fine here (lesson 167 refuted for this context, ch.246:
- * the B6 rc=1 roots were the dead /etc path and the rcfile-vs-exit bug). */
+ * the B6 rc=1 roots were the dead /etc path and the rcfile-vs-exit bug).
+ * ч.249b: return the PATH, not a boolean — the caller interpolates it into
+ * the command; the boolean "true" turned every fetch into the shell builtin
+ * `true -fsL …` (rc=0 instantly, NO file — the 3.0.2→3.0.3 self-update
+ * download fake-success, live-proven by the DBG CMD print). */
 function gh_has_curl() {
-	return access('/usr/bin/curl') || access('/bin/curl');
+	return access('/usr/bin/curl') ? '/usr/bin/curl' : (access('/bin/curl') ? '/bin/curl' : null);
 }
 
 function curl_fetch(curl, dest, url, timeout_ms) {
