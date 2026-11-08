@@ -2018,12 +2018,28 @@ function upd_core_start(chat_id, core) {
 			esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
 }
 
-/* Engine package (byedpi/zapret/mosdns): prepare → download → install. */
+/* Engine package (byedpi/zapret/mosdns): prepare → download → install.
+ * 🔴 ч.248: when prepare returned the feed hit (source:'feed'), there is NO
+ * dl_url/tmp_path — the explicit-file install goes through install_feed_pkg
+ * (same RPC the UI uses; it is in the bot's ACL). Without this branch the bot
+ * reported «скачивание не удалось» exactly when a newer version existed. */
 function upd_pkg_chain(chat_id, name) {
 	const prep = ubus_call(name + '_prepare_install', {}, 30);
 	if (prep == null || prep.error != null) {
 		tg_send_html(chat_id, '⚠ ' + esc_html(name) + ': подготовка не удалась (' +
 			esc_html('' + ((prep && prep.error) || 'rpcd недоступен')) + ').', null);
+		return;
+	}
+	if (prep.source === 'feed' && prep.feed_pkg) {
+		tg_send_html(chat_id, '⬇ ' + esc_html(name) + ' ' + esc_html('' + (prep.version || '?')) +
+			' из источника обновлений… (1–2 мин, отчёт следующим сообщением)', null);
+		const finst = ubus_call('install_feed_pkg', { pkg: '' + prep.feed_pkg }, 300);
+		if (finst && finst.result === true)
+			tg_send_html(chat_id, '✅ ' + esc_html(name) + ': установлен ' +
+				esc_html('' + (finst.version || prep.version || '')) + '.', null);
+		else
+			tg_send_html(chat_id, '⚠ ' + esc_html(name) + ': установка не удалась: ' +
+				esc_html('' + ((finst && finst.error) || 'rpcd недоступен')), null);
 		return;
 	}
 	tg_send_html(chat_id, '⬇ Скачиваю ' + esc_html(name) + '… (бот занят ~1–2 мин, отчёт следующим сообщением)', null);
