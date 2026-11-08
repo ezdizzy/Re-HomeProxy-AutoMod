@@ -311,10 +311,15 @@ for A in "${ARCH_LIST[@]}"; do
 			SRC=$(fetch_bin "$GHDL/ezdizzy/re-homeproxy/releases/latest/download/$T-linux-$GA.zip" "$T-$GA.zip" || true)
 			if [ -n "${SRC:-}" ]; then
 				rm -rf "$WORK/x" "$WORK/root"; mkdir -p "$WORK/x" "$WORK/root/usr/bin"; unzip -qo "$SRC" -d "$WORK/x"
-				BIN=$(find "$WORK/x" -type f -name "$T" | head -1)
+				# release zips carry the binary named with the platform suffix
+				# (probe_pool-linux-arm64), not bare "$T" - runs 6-8 skipped the
+				# helpers silently when -name "$T" matched nothing
+				BIN=$(find "$WORK/x" -type f \( -name "$T" -o -name "$T-linux-*" \) | head -1)
 				if [ -n "${BIN:-}" ]; then
 					mkdir -p "$WORK/root/usr/bin"; cp "$BIN" "$WORK/root/usr/bin/$T"; chmod 755 "$WORK/root/usr/bin/$T"
-					own_pkg "$WORK/root" "$T" "$HELP_VER-$REV" "$A" "Ravnex $T (native automation helper)"
+					own_pkg "$WORK/root" "$T" "$HELP_VER-$REV" "$A" "Ravnex $T (native automation helper)" || echo "SKIP $T $A (packaging failed)"
+				else
+					echo "SKIP $T $GA (no $T binary in the release zip)"
 				fi
 			fi
 		done
