@@ -21,7 +21,7 @@ import {
 	wGET,
 	isBinary,
 	isEmpty
-} from '/etc/homeproxy/scripts/homeproxy.uc';
+} from '/etc/ravnex/scripts/homeproxy.uc';
 import {
 	RUN_DIR as HC_RUN_DIR, LOG_PATH as HC_LOG_PATH,
 	main_opt as hc_main_opt, get_sections as hc_get_sections, get_section as hc_get_section,
@@ -33,51 +33,51 @@ import {
 	wd_index as hc_wd_index, valid_ip4 as hc_valid_ip4, normalize_mac as hc_norm_mac,
 	read_arp as hc_read_arp, schedule_active as hc_sched_active,
 	bump_cursor as hc_bump_cursor
-} from '/etc/homeproxy/scripts/control.uc';
-import { read_state as ss_read_state, atomic_write as ss_atomic_write } from '/etc/homeproxy/scripts/statestore.uc';
-import { tail as ev_tail, clear as ev_clear, emit as ev_emit } from '/etc/homeproxy/scripts/eventbus.uc';
+} from '/etc/ravnex/scripts/control.uc';
+import { read_state as ss_read_state, atomic_write as ss_atomic_write } from '/etc/ravnex/scripts/statestore.uc';
+import { tail as ev_tail, clear as ev_clear, emit as ev_emit } from '/etc/ravnex/scripts/eventbus.uc';
 import {
 	begin as op_begin, get_op as op_get, list_ops as op_list,
 	get_revision as op_revision
-} from '/etc/homeproxy/scripts/opman.uc';
+} from '/etc/ravnex/scripts/opman.uc';
 import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, kill_matched as pm_kill_matched,
 	entry_alive as pm_entry_alive, reg_get as pm_reg_get, reg_del as pm_reg_del,
 	res_profile as pm_res_profile,
 	MEM_GATE_KB as PM_MEM_GATE_KB, mem_avail_kb as pm_mem_avail_kb
-} from '/etc/homeproxy/scripts/pmgr.uc';
+} from '/etc/ravnex/scripts/pmgr.uc';
 import {
 	HEALTH_PATH as HS_PATH, snapshot as hs_snapshot
-} from '/etc/homeproxy/scripts/health.uc';
-import { SENTINEL_PATH as SN_PATH, RES_PATH as RES_PATH } from '/etc/homeproxy/scripts/sentinel.uc';
+} from '/etc/ravnex/scripts/health.uc';
+import { SENTINEL_PATH as SN_PATH, RES_PATH as RES_PATH } from '/etc/ravnex/scripts/sentinel.uc';
 import {
 	RECOVERY_PATH as RC_PATH, request_manual as rc_request_manual
-} from '/etc/homeproxy/scripts/recovery.uc';
-import { compose as explain_compose } from '/etc/homeproxy/scripts/explain.uc';
+} from '/etc/ravnex/scripts/recovery.uc';
+import { compose as explain_compose } from '/etc/ravnex/scripts/explain.uc';
 /* Ф6.2 Discovery Engine: снимок обнаружения собирается этим модулем
  * (единый источник — automation.uc собирает тем же кодом кандидатов). */
 import { write_snapshot as discovery_write_snapshot }
-	from '/etc/homeproxy/scripts/discovery.uc';
+	from '/etc/ravnex/scripts/discovery.uc';
 /* Ф6.4 Test Resource Manager: владение тестовыми очередями/qnum (аудит 80)
  * и лабораторный лок против гонки import/generate (аудит 81). */
 import { acquire as resmgr_acquire, release as resmgr_release,
 	lab_lock as resmgr_lab_lock, lab_unlock as resmgr_lab_unlock,
 	status as resmgr_status }
-	from '/etc/homeproxy/scripts/test_resmgr.uc';
+	from '/etc/ravnex/scripts/test_resmgr.uc';
 /* Ф6.5 Service Path Optimizer: чистые вычисления плана цепочки
  * Service→Route→Engine→Strategy→Transport→Exit (аудит 70/78/92/93). */
 import { chain_plan as optimizer_chain_plan,
 	SERVICE_KEYS as OPT_SERVICE_KEYS,
 	current_lab_state as optimizer_current_state }
-	from '/etc/homeproxy/scripts/service_optimizer.uc';
+	from '/etc/ravnex/scripts/service_optimizer.uc';
 /* Ф9.11: единый набор парсеров узлов (share-link/sing-box/Xray/SIP008/clash
  * YAML/base64) — тот же, что у подписочного импортёра и import_link.uc.
  * Валидатор узлов — из homeproxy.uc. */
 import { parse_uri as np_parse_uri, parse_content as np_parse_content,
 	set_features as np_set_features }
-	from '/etc/homeproxy/scripts/node_parse.uc';
+	from '/etc/ravnex/scripts/node_parse.uc';
 import { validate_node_config as np_validate_node_config }
-	from '/etc/homeproxy/scripts/homeproxy.uc';
+	from '/etc/ravnex/scripts/homeproxy.uc';
 
 /* Ф10.2 OOM-грань для тяжёлых фоновых прогонов: ниже общей грани
  * (PM_MEM_GATE_KB) старт батарей/апдейтов честно отказывается —
@@ -97,8 +97,8 @@ function mem_gate_refusal() {
  * руннер по пути 'null/scripts/…' → op навсегда queued, а воркер rpcd падал
  * (Segmentation fault на консоли, ubus «Unknown error»). ПРАВИЛО: ВСЕ top-level
  * консты — НАВЕРХ ФАЙЛА, выше первой функции, которая их использует. */
-const HP_DIR = '/etc/homeproxy';
-const RUN_DIR = '/var/run/homeproxy';
+const HP_DIR = '/etc/ravnex';
+const RUN_DIR = '/var/run/ravnex';
 
 /* ── Ф1.4b: read-only liveness through the Process Manager ───────────────
  * Every former bare pidof / ps|grep display probe goes through these: a
@@ -138,10 +138,10 @@ function pm_script_alive(name, script) {
  * `-c` argument is the MultiDNS config (live or candidate). Every former
  * "pidof mosdns && kill" site goes through this; a foreign mosdns with a
  * different config is never touched (audit 11). */
-const MD_CONF = '/var/run/homeproxy/multidns/mosdns.yaml';
+const MD_CONF = '/var/run/ravnex/multidns/mosdns.yaml';
 /* Candidate keeps the .yaml extension — mosdns picks the config parser by
  * extension ('.yaml.candidate' was "Unsupported Config Type", ч.150). */
-const MD_CAND = '/var/run/homeproxy/multidns/mosdns.candidate.yaml';
+const MD_CAND = '/var/run/ravnex/multidns/mosdns.candidate.yaml';
 const MD_SPECS = () => ({ exe: '/usr/bin/mosdns', arg: [ MD_CONF, MD_CAND ] });
 
 /* Kanged from ucode/luci */
@@ -151,7 +151,7 @@ function shellquote(s) {
 
 /* ── Ф1.1 Operation/Apply Manager (plan 20 §3 Ф1.1; audit 1.6/1.7/18/48) ──
  * The ONE door for service configuration applies: an operation record is
- * created (/var/run/homeproxy/ops/), serialized by an opman lease-lock and
+ * created (/var/run/ravnex/ops/), serialized by an opman lease-lock and
  * executed by a detached runner (apply_runner.uc) that walks the stages
  * Applying→Verifying→Completed/Failed and marks verified ONLY after a live
  * check (hiddify-c instance / engine processes). No "applying anyway": busy
@@ -208,7 +208,7 @@ function op_spawn_dpi(light, note) {
  * returned apply descriptor {hot:true} | {result,op_id,busy?,error?}; the
  * generation itself happens inside the op (init.d start), LKG-protected. */
 function apply_learned_list_hot() {
-	if (!access('/var/run/homeproxy/.learned_hotreload')) {
+	if (!access('/var/run/ravnex/.learned_hotreload')) {
 		const ap = op_spawn('reload', 'learned lists apply (generate+reload)');
 		return { hot: false, result: ap.result === true, op_id: ap.op_id || '',
 			busy: ap.busy === true, error: ap.error || '' };
@@ -253,12 +253,12 @@ function auto_write_set(file, s) {
 	atomic_write(file, length(arr) ? join('\n', arr) + '\n' : '');
 }
 
-/* Optional GitHub mirror (uci homeproxy.config.github_mirror), used ONLY as a
+/* Optional GitHub mirror (uci ravnex.config.github_mirror), used ONLY as a
  * FALLBACK: gh_fetch tries GitHub first and swaps to the mirror only if GitHub
  * fails — a healthy GitHub is never bypassed. Mirrors core_mgmt.uc's helpers. */
 function gh_mirror_base() {
 	let base = null;
-	const fd = popen('uci -q get homeproxy.config.github_mirror 2>/dev/null');
+	const fd = popen('uci -q get ravnex.config.github_mirror 2>/dev/null');
 	if (fd) { base = trim(fd.read('all')); fd.close(); }
 	return (base && length(base)) ? replace(base, /\/+$/, '') : null;
 }
@@ -309,7 +309,7 @@ function hasKernelModule(kmod) {
  * (`version` = 1.5–3 s for UPX builds) otherwise runs on EVERY page of the
  * app. Entries are mtime+size-validated; a probe with no version is never
  * cached. Lesson 44: fs.stat fields carry NO st_ prefix. */
-const VERSION_CACHE_FILE = '/var/run/homeproxy/core_versions.json';
+const VERSION_CACHE_FILE = '/var/run/ravnex/core_versions.json';
 
 function hp_version_cache_read() {
 	if (!access(VERSION_CACHE_FILE))
@@ -372,7 +372,7 @@ function hp_core_features_cached(bin) {
  * repository rename (404 body has no tag_name -> fall through). Returns the parsed
  * JSON with tag_name, or null on failure. */
 function app_github_release() {
-	const token_fd = popen('uci -q get homeproxy.config.github_token 2>/dev/null');
+	const token_fd = popen('uci -q get ravnex.config.github_token 2>/dev/null');
 	let token = null;
 	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
 	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
@@ -409,7 +409,7 @@ function app_vercmp(a, b) {
  * Honors the optional GitHub token like app_github_release(). Returns the tag
  * ("v" prefix included) or null on failure. */
 function gh_latest_tag(repo) {
-	const token_fd = popen('uci -q get homeproxy.config.github_token 2>/dev/null');
+	const token_fd = popen('uci -q get ravnex.config.github_token 2>/dev/null');
 	let token = null;
 	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
 	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
@@ -484,7 +484,7 @@ function installed_pkg_version(pkg, rx) {
  * UI-pollable); the hot path stays a fast file sync + daemon ping. Returns the
  * apply descriptor {hot:true} | {hot:false,result,op_id,busy?,error?}. */
 function automation_apply_files(geo_too) {
-	if (!access('/var/run/homeproxy/.learned_hotreload')) {
+	if (!access('/var/run/ravnex/.learned_hotreload')) {
 		const ap = op_spawn('reload', 'automation lists apply (generate+reload)');
 		return { hot: false, result: ap.result === true, op_id: ap.op_id || '',
 			busy: ap.busy === true, error: ap.error || '' };
@@ -507,12 +507,12 @@ function automation_apply_files(geo_too) {
  * The ubus event is still fired for builds where it does work. */
 function restart_daemon_instance(script_name, instance_name) {
 	/* Ф1.4 (audit 36): identity kill — a ucode script daemon's cmdline has the
-	 * exact element /etc/homeproxy/scripts/<script_name>; busybox pidof does
+	 * exact element /etc/ravnex/scripts/<script_name>; busybox pidof does
 	 * not match script interpreters at all (lesson 23), and the old ps|grep
 	 * was a substring sweep over ps lines (rc.common-class casualties). procd
 	 * respawns the instance right after. */
 	pm_kill_matched({ script: script_name }, 3000);
-	system(`ubus call service event '{"type":"instance.restart","data":{"name":"homeproxy","instance":"` + instance_name + `"}}' 2>/dev/null`);
+	system(`ubus call service event '{"type":"instance.restart","data":{"name":"ravnex","instance":"` + instance_name + `"}}' 2>/dev/null`);
 }
 
 /* Validate a manual entry — Ф4.1: through the ONE classifier (homeproxy.uc
@@ -559,7 +559,7 @@ function list_sid_ok(sid) {
 }
 
 function list_section(c, sid) {
-	const s = c.get_all('homeproxy', sid);
+	const s = c.get_all('ravnex', sid);
 	return (s && s['.type'] === 'user_list') ? s : null;
 }
 
@@ -608,10 +608,10 @@ function list_store_content(sid, ctype, content) {
 	const sr = sync_user_list(HP_DIR + '/resources', sid, ctype);
 	const c = cursor();
 	if (list_section(c, sid)) {
-		c.set('homeproxy', sid, 'entries', '' + (sr.accepted ?? 0));
-		c.set('homeproxy', sid, 'dropped', '' + (sr.dropped ?? 0));
-		c.save('homeproxy');
-		c.commit('homeproxy');
+		c.set('ravnex', sid, 'entries', '' + (sr.accepted ?? 0));
+		c.set('ravnex', sid, 'dropped', '' + (sr.dropped ?? 0));
+		c.save('ravnex');
+		c.commit('ravnex');
 	}
 	return { accepted: parsed.accepted, dropped: parsed.dropped,
 		entries: sr.accepted ?? 0, sync_error: sr.error ?? '' };
@@ -623,7 +623,7 @@ function list_store_content(sid, ctype, content) {
 function list_backup_snapshot(reason) {
 	const c = cursor();
 	const sids = [];
-	c.foreach('homeproxy', 'user_list', (s) => {
+	c.foreach('ravnex', 'user_list', (s) => {
 		if (list_sid_ok('' + s['.name']))
 			push(sids, '' + s['.name']);
 	});
@@ -700,15 +700,15 @@ function list_node_check(c, kind, node) {
 		if (node === 'direct-out' || node === '' )
 			return null;
 		if (node === 'byedpi-out')
-			return (c.get('homeproxy', 'config', 'byedpi_enabled') === '1')
+			return (c.get('ravnex', 'config', 'byedpi_enabled') === '1')
 				? null : 'byedpi_disabled';
 		if (node === 'zapret-out')
-			return (c.get('homeproxy', 'config', 'zapret_enabled') === '1')
+			return (c.get('ravnex', 'config', 'zapret_enabled') === '1')
 				? null : 'zapret_disabled';
 		return 'bad node for a direct list';
 	}
 	/* proxy list */
-	const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+	const main_node = '' + (c.get('ravnex', 'config', 'main_node') || '');
 	if (node === 'main-out' || node === '') {
 		if (main_node === 'direct-out' || main_node === '' || main_node === 'nil')
 			return 'main_is_direct';
@@ -717,12 +717,12 @@ function list_node_check(c, kind, node) {
 	if (node === 'urltest')
 		return null;
 	if (node === 'byedpi-out')
-		return (c.get('homeproxy', 'config', 'byedpi_enabled') === '1')
+		return (c.get('ravnex', 'config', 'byedpi_enabled') === '1')
 			? null : 'byedpi_disabled';
 	if (node === 'zapret-out')
-		return (c.get('homeproxy', 'config', 'zapret_enabled') === '1')
+		return (c.get('ravnex', 'config', 'zapret_enabled') === '1')
 			? null : 'zapret_disabled';
-	const nc = c.get_all('homeproxy', node);
+	const nc = c.get_all('ravnex', node);
 	if (!nc || nc['.type'] !== 'node')
 		return 'unknown node';
 	return null;
@@ -733,7 +733,7 @@ function list_node_check(c, kind, node) {
  * captures reliably). */
 function list_proxy_nodes(c) {
 	const arr = [];
-	c.foreach('homeproxy', 'node', function(n) {
+	c.foreach('ravnex', 'node', function(n) {
 		push(arr, { id: '' + n['.name'],
 			label: '' + (n.label ?? ('' + n['.name'])),
 			type: '' + (n.type ?? '') });
@@ -810,7 +810,7 @@ function ru_geo_read_meta() {
 	}
 	meta.installed = access(HP_DIR + '/resources/ru_geoip.txt') && access(HP_DIR + '/resources/ru_geosite.txt');
 	meta.updating = access('/tmp/ru_geo_lock') || access('/tmp/ru_geo/updating');
-	let gfd = popen('uci -q get homeproxy.automation.geo_protect 2>/dev/null');
+	let gfd = popen('uci -q get ravnex.automation.geo_protect 2>/dev/null');
 	meta.protect = gfd ? (trim(gfd.read('all')) || '1') : '1';
 	if (gfd) gfd.close();
 	return meta;
@@ -821,7 +821,7 @@ function get_active_core() {
 	 * is installed, else auto (hiddify-core first, then sing-box).
 	 * Otherwise file presence alone would report the wrong core when several are installed. */
 	let preferred = null;
-	let pfd = popen('uci get homeproxy.config.preferred_core 2>/dev/null');
+	let pfd = popen('uci get ravnex.config.preferred_core 2>/dev/null');
 	if (pfd) { preferred = trim(pfd.read('all')); pfd.close(); }
 
 	const have_hiddify = access('/usr/bin/hiddify-core');
@@ -836,9 +836,9 @@ function get_active_core() {
 
 	let custom_path = null;
 	let custom_type = null;
-	let fd = popen('uci get homeproxy.config.custom_core_path 2>/dev/null');
+	let fd = popen('uci get ravnex.config.custom_core_path 2>/dev/null');
 	if (fd) { custom_path = trim(fd.read('all')); fd.close(); }
-	fd = popen('uci get homeproxy.config.custom_core_type 2>/dev/null');
+	fd = popen('uci get ravnex.config.custom_core_type 2>/dev/null');
 	if (fd) { custom_type = trim(fd.read('all')); fd.close(); }
 	if (length(custom_path) > 0 && access(custom_path))
 		return {
@@ -984,10 +984,10 @@ function hp_json_arg(v) {
  * rule_set_remote.go). These helpers back the status/seed RPC pair. */
 
 function rulesets_local_dir() {
-	const d = trim('' + (cursor().get('homeproxy', 'config', 'ruleset_local_path') || ''));
+	const d = trim('' + (cursor().get('ravnex', 'config', 'ruleset_local_path') || ''));
 	/* Absolute path only, no traversal — it ends up in shell commands. */
 	if (!length(d) || substr(d, 0, 1) !== '/' || index(d, '..') >= 0)
-		return '/etc/homeproxy/rulesets';
+		return '/etc/ravnex/rulesets';
 	return d;
 }
 
@@ -1111,7 +1111,7 @@ function hp_master_coverage(host) {
 		return out;
 	const ctx = cursor();
 	const seen = {};
-	ctx.foreach('homeproxy', 'proxy_ru_rule', (cfg) => {
+	ctx.foreach('ravnex', 'proxy_ru_rule', (cfg) => {
 		if (cfg.enabled !== '1')
 			return;
 		const src = trim('' + (cfg.source || ''));
@@ -1274,7 +1274,7 @@ function hp_route_trace(host, conf) {
 	const ctx = cursor();
 	const node_label = (tag) => {
 		const sid = replace(replace('' + tag, /^cfg-/, ''), /-out$/, '');
-		return ctx.get('homeproxy', sid, 'label') || sid;
+		return ctx.get('ravnex', sid, 'label') || sid;
 	};
 	const outbound_info = (tag) => {
 		for (let ob in (conf.outbounds || []))
@@ -1625,7 +1625,7 @@ function hp_zapret_queue_counters() {
 	return { packets: pkts, bytes: bytes };
 }
 
-/* The shipped strategy corpus (/etc/homeproxy/zapret_candidates.json —
+/* The shipped strategy corpus (/etc/ravnex/zapret_candidates.json —
  * package file, user-updatable by the Wizard import). Missing/corrupt file
  * degrades to an empty corpus; the UI keeps its builtin fallback. */
 function hp_corpus_read() {
@@ -1672,7 +1672,7 @@ const COMP_LISTS = {
 };
 
 /* Server-side apply snapshot: BOTH engines' current opts+enabled go to
- * /etc/homeproxy/backups/zapret_prev.json before any strategy or
+ * /etc/ravnex/backups/zapret_prev.json before any strategy or
  * composition apply. Deliberately a file, not a UCI option (no config-dump
  * pollution, atomic write); the Restore path reads it back server-side, so
  * rollback never depends on JS memory. */
@@ -1681,12 +1681,12 @@ function hp_apply_backup_write() {
 	const snap = {
 		ts: time(),
 		zapret: {
-			cmd_opts: '' + (c.get('homeproxy', 'config', 'zapret_cmd_opts') || ''),
-			enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1')
+			cmd_opts: '' + (c.get('ravnex', 'config', 'zapret_cmd_opts') || ''),
+			enabled: (c.get('ravnex', 'config', 'zapret_enabled') === '1')
 		},
 		byedpi: {
-			cmd_opts: '' + (c.get('homeproxy', 'config', 'byedpi_cmd_opts') || ''),
-			enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1')
+			cmd_opts: '' + (c.get('ravnex', 'config', 'byedpi_cmd_opts') || ''),
+			enabled: (c.get('ravnex', 'config', 'byedpi_enabled') === '1')
 		}
 	};
 	system('mkdir -p ' + shellquote(HP_DIR + '/backups'));
@@ -1728,7 +1728,7 @@ function hp_zapret_validate(strat) {
 function hp_autopilot_cfg() {
 	const c = cursor();
 	const get = (o, d) => {
-		const v = c.get('homeproxy', 'autopilot', o);
+		const v = c.get('ravnex', 'autopilot', o);
 		return (v == null) ? d : '' + v;
 	};
 	return {
@@ -2051,11 +2051,11 @@ function hp_zapret_blocks(args, corpus) {
  * HomeControl backend); free-text fields are sanitized (quotes, newlines
  * and shell metacharacters stripped). */
 
-const HC_CONF = 'homecontrol';
+const HC_CONF = 'ravcontrol';
 
 function ctrl_apply_async() {
 	/* Detached so rpcd never blocks on the apply (dnsmasq restart etc.). */
-	system(`( /usr/bin/ucode -L /etc/homeproxy/scripts /etc/homeproxy/scripts/control_apply.uc >/dev/null 2>&1 ) &`);
+	system(`( /usr/bin/ucode -L /etc/ravnex/scripts /etc/ravnex/scripts/control_apply.uc >/dev/null 2>&1 ) &`);
 }
 
 function ctrl_clean(s) {
@@ -2241,7 +2241,7 @@ const LAN_GLOBAL_LABEL = {
 };
 
 function hp_lan_list(c, opt) {
-	return map(c.get('homeproxy', 'control', opt) || [], (v) => '' + v);
+	return map(c.get('ravnex', 'control', opt) || [], (v) => '' + v);
 }
 
 /* One array write; returns true only when the value actually changed
@@ -2255,9 +2255,9 @@ function hp_lan_store(c, opt, arr) {
 	if (cur === nxt)
 		return false;
 	if (length(arr))
-		c.set('homeproxy', 'control', opt, arr);
+		c.set('ravnex', 'control', opt, arr);
 	else
-		c.delete('homeproxy', 'control', opt);
+		c.delete('ravnex', 'control', opt);
 	return true;
 }
 
@@ -2300,7 +2300,7 @@ function hp_lan_view(c) {
 }
 
 function hp_lan_global_mode(c) {
-	const m = '' + (c.get('homeproxy', 'control', 'lan_proxy_mode') || 'except_listed');
+	const m = '' + (c.get('ravnex', 'control', 'lan_proxy_mode') || 'except_listed');
 	return (m === 'listed_only') ? 'listed_only' : 'except_listed';
 }
 
@@ -2588,7 +2588,7 @@ const FEED_KEEP_FILE = '/lib/upgrade/keep.d/ravnex-feed';
 /* V1 leftover (repositories.d line) — never written again; removed on
  * setup/remove so a legacy config cannot keep resolving through repos. */
 const FEED_LIST_LEGACY = '/etc/apk/repositories.d/ravnex-feed.list';
-const FEED_MANIFEST_FILE = '/var/run/homeproxy/feed_manifest.json';
+const FEED_MANIFEST_FILE = '/var/run/ravnex/feed_manifest.json';
 const FEED_MANIFEST_TTL = 1800;      /* CI rebuilds daily; 30 min cache */
 const FEED_PROBE_TTL = 300;          /* reachability probe cache */
 const FEED_BRANCH = 'refs/heads/feed';
@@ -2726,7 +2726,7 @@ function feed_manifest(force) {
 	if (!man || type(man) != 'object' || !man.pkgs || man.arch != arch)
 		return (cache && cache.manifest) ? cache.manifest : null;
 	const entry = { ts: now, manifest: man };
-	mkdir('/var/run/homeproxy');
+	mkdir('/var/run/ravnex');
 	writefile(FEED_MANIFEST_FILE + '.tmp', sprintf('%.J', entry) + '\n');
 	rename(FEED_MANIFEST_FILE + '.tmp', FEED_MANIFEST_FILE);
 	return man;
@@ -3022,7 +3022,7 @@ const methods = {
 		args: { filename: 'filename' },
 		call: function(req) {
 			const writeCertificate = (filename, priv) => {
-				const tmpcert = '/tmp/homeproxy_certificate.tmp';
+				const tmpcert = '/tmp/ravnex_certificate.tmp';
 				const filestat = lstat(tmpcert);
 
 				if (!filestat || filestat.type !== 'file' || filestat.size <= 0) {
@@ -3097,8 +3097,8 @@ const methods = {
 			const dir = HP_DIR + '/certs';
 			const certp = dir + '/server_publickey.pem';
 			const keyp = dir + '/server_privatekey.pem';
-			const tcert = '/tmp/homeproxy_selfsign_cert.tmp';
-			const tkey = '/tmp/homeproxy_selfsign_key.tmp';
+			const tcert = '/tmp/ravnex_selfsign_cert.tmp';
+			const tkey = '/tmp/ravnex_selfsign_key.tmp';
 			system(`mkdir -p ${shellquote(dir)}`);
 			const ok_pem = (path, marker) => {
 				if (!access(path)) return false;
@@ -3185,7 +3185,7 @@ const methods = {
 	log_clean: {
 		args: { type: 'type' },
 		call: function(req) {
-			if (!(req.args?.type in ['homeproxy', 'hiddify-c']))
+			if (!(req.args?.type in ['ravnex', 'hiddify-c']))
 				return { result: false, error: 'illegal type' };
 
 			const filestat = lstat(`${RUN_DIR}/${req.args?.type}.log`);
@@ -3343,7 +3343,7 @@ const methods = {
 			 * this as a warning: those nodes are excluded from pools until a core
 			 * that supports them runs. */
 			let out = { core: null, version: null, skipped: [] };
-			const st = ss_read_state('/var/run/homeproxy/core_skipped.json').data;
+			const st = ss_read_state('/var/run/ravnex/core_skipped.json').data;
 			if (type(st) === 'object') {
 				out.core = st.core ?? null;
 				out.version = st.version ?? null;
@@ -3375,9 +3375,9 @@ const methods = {
 				return { result: false, error: 'Unknown binary type. Output: ' + substr(out, 0, 120) };
 			const verMatch = match(out, / version v?(\S+)/);
 			const version = verMatch ? verMatch[1] : null;
-			system('uci set homeproxy.config.custom_core_path=' + shellquote(path));
-			system('uci set homeproxy.config.custom_core_type=' + shellquote(core_type));
-			system('uci commit homeproxy');
+			system('uci set ravnex.config.custom_core_path=' + shellquote(path));
+			system('uci set ravnex.config.custom_core_type=' + shellquote(core_type));
+			system('uci commit ravnex');
 			return { result: true, type: core_type, version: version };
 		}
 	},
@@ -3607,7 +3607,7 @@ const methods = {
 	hotswap_status: {
 		call: function() {
 			const ctx = cursor();
-			const cfg = ctx.get_all('homeproxy', 'config') || {};
+			const cfg = ctx.get_all('ravnex', 'config') || {};
 			const opt = (k) => ((cfg[k] == null || cfg[k] === '') ? null : '' + cfg[k]);
 			const main_node = opt('main_node') || 'nil';
 			/* Ф9.16: applicable = main-узел вообще переключаемый (urltest-пул или
@@ -3616,7 +3616,7 @@ const methods = {
 			const is_real_node = (main_node === 'urltest' ||
 				(main_node !== 'direct-out' && main_node !== 'nil' &&
 				 main_node !== 'byedpi-out' && main_node !== 'zapret-out' &&
-				 ctx.get_all('homeproxy', main_node) != null));
+				 ctx.get_all('ravnex', main_node) != null));
 			const shape_mode = (main_node === 'urltest') ? 'urltest' :
 				(is_real_node ? 'node' : null);
 
@@ -3626,14 +3626,14 @@ const methods = {
 				const m = match(tag, /^cfg-(.+)-out$/);
 				if (!m)
 					return tag;
-				const lbl = ctx.get('homeproxy', m[1], 'label');
+				const lbl = ctx.get('ravnex', m[1], 'label');
 				return (lbl && length(lbl)) ? '' + lbl : m[1];
 			};
 
 			/* Daemon state (tmpfs; missing file = feature off or not yet generated).
 			 * Ф1.7: документ в конверте State Store (schema_version/config_revision);
 			 * read_state толерантен к легаси-документу. */
-			let st = ss_read_state('/var/run/homeproxy/hotswap_state.json').data;
+			let st = ss_read_state('/var/run/ravnex/hotswap_state.json').data;
 			const st_v2 = (st && st.engine_version === 2);
 			const enabled = st_v2 ? (st.enabled === true) : (opt('hotswap') === '1');
 			const applicable = (is_real_node && enabled);
@@ -3731,7 +3731,7 @@ const methods = {
 			const proxies = clash?.proxies || {};
 
 			const ctx = cursor();
-			const cfg = ctx.get_all('homeproxy', 'config') || {};
+			const cfg = ctx.get_all('ravnex', 'config') || {};
 			const opt = (k) => ((cfg[k] == null || cfg[k] === '') ? null : '' + cfg[k]);
 			const list_opt = (k) => (type(cfg[k]) === 'array') ? cfg[k] : [];
 
@@ -3791,7 +3791,7 @@ const methods = {
 			};
 
 			const nodes = [];
-			ctx.foreach('homeproxy', 'node', (s) => {
+			ctx.foreach('ravnex', 'node', (s) => {
 				const sid = s['.name'];
 				const ctype = s.type || '';
 				const tag = `cfg-${sid}-out`;
@@ -4097,7 +4097,7 @@ const methods = {
 
 	diag_dns_ru: {
 		call: function() {
-			let fd = popen('uci get homeproxy.config.routing_mode 2>/dev/null');
+			let fd = popen('uci get ravnex.config.routing_mode 2>/dev/null');
 			if (!fd) return { skip: true };
 			let mode = trim(fd.read('all'));
 			fd.close();
@@ -4174,7 +4174,7 @@ const methods = {
 			}
 
 			let uci_lines = [];
-			fd = popen('uci show homeproxy 2>&1');
+			fd = popen('uci show ravnex 2>&1');
 			if (fd) {
 				for (let line = fd.read('line'); length(line); line = fd.read('line')) {
 					const l = trim(line);
@@ -4186,11 +4186,11 @@ const methods = {
 
 			const nft_present = length(nft_lines) > 0;
 
-			/* Zapret queue chain: its counter rules don't contain the word "homeproxy",
+			/* Zapret queue chain: its counter rules don't contain the word "ravnex",
 			 * so they are NOT in nft_lines above. Pull the chain explicitly so the packet
 			 * counters (mark 110 tcp/udp → NFQUEUE) are visible. */
 			let zapret_enabled = false;
-			let zfd = popen('uci -q get homeproxy.config.zapret_enabled 2>/dev/null');
+			let zfd = popen('uci -q get ravnex.config.zapret_enabled 2>/dev/null');
 			if (zfd) { zapret_enabled = trim(zfd.read('all')) === '1'; zfd.close(); }
 			let zapret_running = pm_bin_alive('nfqws2');
 
@@ -4291,15 +4291,15 @@ const methods = {
 			add('## Zapret (zapret2/nfqws2)');
 			if (access('/opt/zapret2/nfq2/nfqws2')) {
 				add('Installed: yes');
-				fd = popen('uci -q get homeproxy.config.zapret_enabled 2>/dev/null');
+				fd = popen('uci -q get ravnex.config.zapret_enabled 2>/dev/null');
 				let zen = '0'; if (fd) { zen = trim(fd.read('all')); fd.close(); }
 				add('Enabled: ' + (zen === '1' ? 'yes' : 'no'));
 				const zpid = pm_bin_pid('nfqws2');
 				add('PID: ' + (length(zpid) > 0 ? zpid : 'not running'));
-				fd = popen('uci -q get homeproxy.config.zapret_voice 2>/dev/null');
+				fd = popen('uci -q get ravnex.config.zapret_voice 2>/dev/null');
 				let zvoice = '0'; if (fd) { zvoice = trim(fd.read('all')); fd.close(); }
 				add('Discord calls: ' + (zvoice === '1' ? 'on' : 'off'));
-				fd = popen('uci -q get homeproxy.config.zapret_cmd_opts 2>/dev/null');
+				fd = popen('uci -q get ravnex.config.zapret_cmd_opts 2>/dev/null');
 				if (fd) { const zstrat = trim(fd.read('all')); fd.close(); if (length(zstrat)) add('Strategy: ' + zstrat); }
 				fd = popen('nft list chain inet fw4 homeproxy_zapret_queue 2>/dev/null');
 				if (fd) {
@@ -4337,18 +4337,18 @@ const methods = {
 			add('');
 
 			add('## UCI Config (sanitized)');
-			fd = popen('uci show homeproxy 2>&1');
+			fd = popen('uci show ravnex 2>&1');
 			if (fd) {
 				/* uci show prints multi-line option values (PEM keys — ssh_priv_key /
 				 * ssh_host_key) across several physical lines; only the first carries
 				 * `key=`, so a naive per-line redaction leaks the whole key body on the
-				 * lines after it. Every real uci line begins with `homeproxy.`; the value
+				 * lines after it. Every real uci line begins with `ravnex.`; the value
 				 * continuation lines never do. So after redacting an option, drop the
-				 * following non-`homeproxy.` lines until the next option begins. */
+				 * following non-`ravnex.` lines until the next option begins. */
 				let skip_value_body = false;
 				for (let line = fd.read('line'); length(line); line = fd.read('line')) {
 					let out = trim(line);
-					let is_uci_line = match(out, /^homeproxy\./);
+					let is_uci_line = match(out, /^ravnex\./);
 					if (skip_value_body && !is_uci_line)
 						continue;
 					skip_value_body = false;
@@ -4376,7 +4376,7 @@ const methods = {
 			add('');
 
 			add('## DNS Tests');
-			let mode_fd = popen('uci get homeproxy.config.routing_mode 2>/dev/null');
+			let mode_fd = popen('uci get ravnex.config.routing_mode 2>/dev/null');
 			if (mode_fd) {
 				let routing_mode = trim(mode_fd.read('all'));
 				mode_fd.close();
@@ -4436,7 +4436,7 @@ const methods = {
 			add('');
 
 			add('## HomeProxy Log (last 50 lines)');
-			fd = popen('tail -n 50 ' + RUN_DIR + '/homeproxy.log 2>/dev/null');
+			fd = popen('tail -n 50 ' + RUN_DIR + '/ravnex.log 2>/dev/null');
 			if (fd) {
 				for (let line = fd.read('line'); length(line); line = fd.read('line'))
 					add(replace(trim(line), /https?:\/\/[^ \t\n]+/, '[REDACTED_URL]'));
@@ -4528,7 +4528,7 @@ const methods = {
 			if (!length(arch))
 				return { error: 'Cannot detect architecture' };
 
-			const token_fd = popen('uci get homeproxy.config.github_token 2>/dev/null');
+			const token_fd = popen('uci get ravnex.config.github_token 2>/dev/null');
 			let token = null;
 			if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
 			const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
@@ -4602,9 +4602,9 @@ const methods = {
 			 * homeproxy's procd instance stops and won't respawn), stop/disable the
 			 * standalone service, reload homeproxy, then kill any leftover (e.g.
 			 * strategy-test) instances — and only then remove the package. */
-			system("uci set homeproxy.config.byedpi_enabled='0'; uci commit homeproxy 2>/dev/null; true");
+			system("uci set ravnex.config.byedpi_enabled='0'; uci commit ravnex 2>/dev/null; true");
 			system('/etc/init.d/ciadpi stop 2>/dev/null; /etc/init.d/ciadpi disable 2>/dev/null; true');
-			system('/etc/init.d/homeproxy reload 2>/dev/null; true');
+			system('/etc/init.d/ravnex reload 2>/dev/null; true');
 			/* Lesson 23: busybox has NO pkill — the old `pkill -f` silently did
 			 * NOTHING here. Ф1.4: identity kill by exact exe (the prod instance
 			 * is already stopped above, so any ciadpi left is a leftover, e.g. a
@@ -4767,9 +4767,9 @@ const methods = {
 
 	zapret_remove: {
 		call: function(req) {
-			system("uci set homeproxy.config.zapret_enabled='0'; uci commit homeproxy 2>/dev/null; true");
+			system("uci set ravnex.config.zapret_enabled='0'; uci commit ravnex 2>/dev/null; true");
 			system('/etc/init.d/zapret2 stop 2>/dev/null; /etc/init.d/zapret2 disable 2>/dev/null; true');
-			system('/etc/init.d/homeproxy reload 2>/dev/null; true');
+			system('/etc/init.d/ravnex reload 2>/dev/null; true');
 			/* Lesson 23 + Ф1.4: `pkill -f` does not exist on busybox and swept by
 			 * name — replaced with the identity kill by exact exe (leftovers only,
 			 * the prod instance is stopped above). */
@@ -4792,7 +4792,7 @@ const methods = {
 			 * config uses for these blocked domains, so the IP stays representative for
 			 * the TLS probe. The full test calls this up front and feeds the IPs to
 			 * every candidate, so the sweep doesn't re-hit DNS 36×. */
-			const fd = popen(`sh /etc/homeproxy/scripts/zapret_resolve.sh 2>/dev/null`);
+			const fd = popen(`sh /etc/ravnex/scripts/zapret_resolve.sh 2>/dev/null`);
 			let out = '';
 			if (fd) { out = trim(fd.read('all')); fd.close(); }
 			if (!length(out))
@@ -4821,7 +4821,7 @@ const methods = {
 			 * test IPs, probes the TLS handshakes, and prints one JSON line. It self-
 			 * tears-down (trap + 30s watchdog), so live traffic/queue is never left
 			 * touched. We just relay its JSON for the UI to parse. */
-			const fd = popen(`TEST_QNUM=${int(qa.qnum)} sh /etc/homeproxy/scripts/zapret_test.sh ${shellquote(cmd_opts)} ${shellquote(ips)} 2>/dev/null`);
+			const fd = popen(`TEST_QNUM=${int(qa.qnum)} sh /etc/ravnex/scripts/zapret_test.sh ${shellquote(cmd_opts)} ${shellquote(ips)} 2>/dev/null`);
 			let out = '';
 			if (fd) { out = trim(fd.read('all')); fd.close(); }
 			if (!length(out))
@@ -4879,11 +4879,11 @@ const methods = {
 			/* The flush also wiped the ByeDPI skgid exclusion (if present) — capture the gid
 			 * so we can rebuild it on restore, or the live ByeDPI egress would loop afterwards. */
 			let byedpi_gid = null;
-			const efd = popen('uci get homeproxy.config.byedpi_enabled 2>/dev/null');
+			const efd = popen('uci get ravnex.config.byedpi_enabled 2>/dev/null');
 			if (efd) {
 				if (trim(efd.read('all')) === '1') {
 					byedpi_gid = '8181';
-					const gfd = popen('uci get homeproxy.infra.byedpi_gid 2>/dev/null');
+					const gfd = popen('uci get ravnex.infra.byedpi_gid 2>/dev/null');
 					if (gfd) { const g = trim(gfd.read('all')); if (length(g)) byedpi_gid = g; gfd.close(); }
 				}
 				efd.close();
@@ -5215,7 +5215,7 @@ const methods = {
 
 	/* ── Ф2.1 Health Monitor: единый реестр наблюдаемых подсистем ──────────
 	 * Демон (procd-инстанс "health") считает реестр адаптивно и пишет
-	 * /var/run/homeproxy/health.json КАЖДЫЙ тик — ts документа служит
+	 * /var/run/ravnex/health.json КАЖДЫЙ тик — ts документа служит
 	 * живым свидетельством работы самого монитора. Здесь: свежий (≤90 с)
 	 * документ отдаётся как есть; протухший/отсутствующий честно
 	 * пересчитывается глубоким снапшотом (никогда НЕ пишется — писатель
@@ -5238,7 +5238,7 @@ const methods = {
 	},
 
 	/* ── Ф2.2 Sentinel: сторож здоровья самого Ravnex ──────────────────────
-	 * Демон (procd-инстанс "sentinel") пишет /var/run/homeproxy/sentinel.json
+	 * Демон (procd-инстанс "sentinel") пишет /var/run/ravnex/sentinel.json
 	 * КАЖДЫЙ проход — ts документа = живое свидетельство сторожа. Документ
 	 * отдаётся как есть; протухший честно помечается fresh:false. Пересчёта в
 	 * rpcd НЕТ намеренно: документ и ЕСТЬ вердикт сторожа, а его живость
@@ -5258,7 +5258,7 @@ const methods = {
 	},
 
 	/* ── Ф10.3: снапшот ресурсов демонов ───────────────────────────────────
-	 * Sentinel пишет /var/run/homeproxy/resources.json на полном проходе
+	 * Sentinel пишет /var/run/ravnex/resources.json на полном проходе
 	 * (~5 мин; lite — до ~15 мин) и на каждом light-проходе при активном
 	 * перерасходе. Документ отдаётся как есть (пересчёта в rpcd нет —
 	 * паттерн sentinel_status); budgets едут в каждой строке, UI не знает
@@ -5277,7 +5277,7 @@ const methods = {
 	},
 
 	/* ── Ф2.3 Recovery Manager: статус координатора восстановления ─────────
-	 * Демон (procd-инстанс "recovery") пишет /var/run/homeproxy/recovery.json
+	 * Демон (procd-инстанс "recovery") пишет /var/run/ravnex/recovery.json
 	 * каждый тик (15 с; тик может затянуться исполнением ремонта до 150 с —
 	 * порог свежести 180 с с запасом). Документ отдаётся как есть; пересчёта
 	 * в rpcd НЕТ — документ и ЕСТЬ вердикт координатора (его живость =
@@ -5319,9 +5319,7 @@ const methods = {
 			if (fd) { svcraw = fd.read('all') || ''; fd.close(); }
 			let svc_doc = null;
 			try { svc_doc = json(svcraw || '{}'); } catch (e) { svc_doc = null; }
-			const inst = (svc_doc != null && type(svc_doc.homeproxy) === 'object' &&
-				type(svc_doc.homeproxy.instances) === 'object')
-				? svc_doc.homeproxy.instances.recovery : null;
+			const inst = ((svc_doc.ravnex && type(svc_doc.ravnex.instances) === 'object') ||		(svc_doc.homeproxy && type(svc_doc.homeproxy.instances) === 'object'))		? (svc_doc.ravnex || svc_doc.homeproxy).instances.recovery : null;
 			if (inst == null || inst.running !== true)
 				return { result: false, error: 'координатор восстановления не работает — исправьте службу и повторите' };
 			const r = rc_request_manual(action, target, note);
@@ -5380,8 +5378,8 @@ const methods = {
 	},
 
 	/* Snapshot management (ч.69): point-in-time copies of the app configuration
-	 * (/etc/config/homeproxy) + the routing resources (learned lists, manual
-	 * pins, geo seeds) into /etc/homeproxy/backups/snapshot-<ts>/. Restores
+	 * (/etc/config/ravnex) + the routing resources (learned lists, manual
+	 * pins, geo seeds) into /etc/ravnex/backups/snapshot-<ts>/. Restores
 	 * bring both back and reload the service. */
 	app_snapshot_create: {
 		call: function(req) {
@@ -5394,7 +5392,7 @@ const methods = {
 			if (!length(ts))
 				return { result: false, error: 'date failed' };
 			const dir = BK + '/snapshot-' + ts;
-			system('mkdir -p ' + shellquote(dir) + ' && cp /etc/config/homeproxy ' + shellquote(dir + '/config') +
+			system('mkdir -p ' + shellquote(dir) + ' && cp /etc/config/ravnex ' + shellquote(dir + '/config') +
 			       ' && cp -r ' + HP_DIR + '/resources ' + shellquote(dir + '/resources') + ' 2>/dev/null');
 			if (!access(dir + '/config'))
 				return { result: false, error: 'snapshot copy failed' };
@@ -5445,7 +5443,7 @@ const methods = {
 			const dir = BK + '/snapshot-' + name;
 			if (!access(dir + '/config'))
 				return { result: false, error: 'snapshot not found: ' + name };
-			system('cp ' + shellquote(dir + '/config') + ' /etc/config/homeproxy');
+			system('cp ' + shellquote(dir + '/config') + ' /etc/config/ravnex');
 			if (access(dir + '/resources'))
 				system(`rm -rf ${HP_DIR}/resources.new; cp -r ${shellquote(dir + '/resources')} ${HP_DIR}/resources.new && rm -rf ${HP_DIR}/resources.old && mv ${HP_DIR}/resources ${HP_DIR}/resources.old && mv ${HP_DIR}/resources.new ${HP_DIR}/resources; rm -rf ${HP_DIR}/resources.old`);
 			const ap = op_spawn('restart', 'snapshot restore ' + name);
@@ -5465,7 +5463,7 @@ const methods = {
 	app_rulesets_local_status: {
 		call: function() {
 			const dir = rulesets_local_dir();
-			const enabled = ('' + (cursor().get('homeproxy', 'config', 'ruleset_local') || '')) !== '0';
+			const enabled = ('' + (cursor().get('ravnex', 'config', 'ruleset_local') || '')) !== '0';
 			const list = rulesets_remote_list();
 			for (let r in list) {
 				r.local_path = dir + '/' + r.tag + '.srs';
@@ -5534,7 +5532,7 @@ const methods = {
 			}
 			const c = cursor();
 			const groups = {};
-			c.foreach('homeproxy', 'node', (s) => {
+			c.foreach('ravnex', 'node', (s) => {
 				if (!s.grouphash)
 					return null;
 				const g = '' + s.grouphash;
@@ -5548,13 +5546,13 @@ const methods = {
 			 * canonical group id (the twin line of app_subscription_remove);
 			 * its 8-hex prefix rides a 64-byte callback_data token. */
 			const urls = [];
-			const url_list = map(c.get('homeproxy', 'subscription', 'subscription_url') || [], (u) => '' + u);
+			const url_list = map(c.get('ravnex', 'subscription', 'subscription_url') || [], (u) => '' + u);
 			for (let i = 0; i < length(url_list); i++) {
 				const ghash = hp_sub_strhash(replace(url_list[i], /#.*$/, ''));
 				push(urls, { url: url_list[i], ghash: ghash, count: groups[ghash] || 0 });
 			}
 			return { last: st, node_total: total, groups: groups, urls: urls,
-				auto_update: ('' + (c.get('homeproxy', 'subscription', 'auto_update') || '')) === '1' };
+				auto_update: ('' + (c.get('ravnex', 'subscription', 'auto_update') || '')) === '1' };
 		}
 	},
 
@@ -5601,7 +5599,7 @@ const methods = {
 			if (!match(url, /^https?:\/\/\S+$/))
 				return { result: false, error: 'ожидается ссылка вида http(s)://…' };
 			const c = cursor();
-			const urls = map(c.get('homeproxy', 'subscription', 'subscription_url') || [], (u) => '' + u);
+			const urls = map(c.get('ravnex', 'subscription', 'subscription_url') || [], (u) => '' + u);
 			for (let u in urls)
 				if (u === url)
 					return { result: false, error: 'эта подписка уже есть в списке' };
@@ -5610,8 +5608,8 @@ const methods = {
 			 * sets collapse into ONE value — a list is written by set() with
 			 * an ARRAY (then the array replaces the list wholesale). */
 			push(urls, url);
-			c.set('homeproxy', 'subscription', 'subscription_url', urls);
-			c.commit('homeproxy');
+			c.set('ravnex', 'subscription', 'subscription_url', urls);
+			c.commit('ravnex');
 			return { result: true };
 		}
 	},
@@ -5623,58 +5621,58 @@ const methods = {
 			if (!length(url))
 				return { result: false, error: 'пустой URL' };
 			const c = cursor();
-			const urls = map(c.get('homeproxy', 'subscription', 'subscription_url') || [], (u) => '' + u);
+			const urls = map(c.get('ravnex', 'subscription', 'subscription_url') || [], (u) => '' + u);
 			const kept = filter(urls, (u) => u !== url);
 			if (length(kept) === length(urls))
 				return { result: false, error: 'эта подписка не найдена в списке' };
 			if (length(kept))
-				c.set('homeproxy', 'subscription', 'subscription_url', kept);
+				c.set('ravnex', 'subscription', 'subscription_url', kept);
 			else
-				c.delete('homeproxy', 'subscription', 'subscription_url');
+				c.delete('ravnex', 'subscription', 'subscription_url');
 
 			/* Remove the group's nodes + prune the pointers (the same
 			 * semantics the update cycle uses). */
 			const ghash = hp_sub_strhash(replace(url, /#.*$/, ''));
 			const removed = [];
-			c.foreach('homeproxy', 'node', (s) => {
+			c.foreach('ravnex', 'node', (s) => {
 				if (('' + s.grouphash) === ghash)
 					push(removed, '' + s['.name']);
 				return null;
 			});
 			for (let sid in removed)
-				c.delete('homeproxy', sid);
+				c.delete('ravnex', sid);
 			const gone = {};
 			for (let sid in removed)
 				gone[sid] = true;
 			const set_nil = (opt) => {
-				const v = c.get('homeproxy', 'control', opt);
+				const v = c.get('ravnex', 'control', opt);
 				if (v != null && ('' + v) in gone) {
-					c.delete('homeproxy', 'config', opt);
-					c.set('homeproxy', 'config', opt, 'nil');
+					c.delete('ravnex', 'config', opt);
+					c.set('ravnex', 'config', opt, 'nil');
 				}
 			};
 			set_nil('main_node');
 			set_nil('main_udp_node');
 			set_nil('exit_preferred');
 			set_nil('exit_udp_preferred');
-			const reserves = map(c.get('homeproxy', 'config', 'exit_reserves') || [], (v) => '' + v);
+			const reserves = map(c.get('ravnex', 'config', 'exit_reserves') || [], (v) => '' + v);
 			const kept_res = filter(reserves, (v) => !(v in gone));
 			if (length(kept_res))
-				c.set('homeproxy', 'config', 'exit_reserves', kept_res);
+				c.set('ravnex', 'config', 'exit_reserves', kept_res);
 			else
-				c.delete('homeproxy', 'config', 'exit_reserves');
+				c.delete('ravnex', 'config', 'exit_reserves');
 			const leg_lists = ['main_urltest_nodes', 'main_udp_urltest_nodes'];
 			for (let lo in leg_lists) {
-				const lv = map(c.get('homeproxy', 'config', lo) || [], (v) => '' + v);
+				const lv = map(c.get('ravnex', 'config', lo) || [], (v) => '' + v);
 				const kept_leg = filter(lv, (v) => !(v in gone));
 				if (length(kept_leg) !== length(lv)) {
 					if (length(kept_leg))
-						c.set('homeproxy', 'config', lo, kept_leg);
+						c.set('ravnex', 'config', lo, kept_leg);
 					else
-						c.delete('homeproxy', 'config', lo);
+						c.delete('ravnex', 'config', lo);
 				}
 			}
-			c.commit('homeproxy');
+			c.commit('ravnex');
 			return { result: true, removed_nodes: length(removed),
 				need_restart: length(removed) > 0 };
 		}
@@ -5725,17 +5723,17 @@ const methods = {
 
 	/* Emergency internet recovery (ч.69): stop the proxy stack and remove the
 	 * DNS / traffic interception so the LAN goes back to a plain direct
-	 * connection. The service configuration is kept — /etc/init.d/homeproxy
+	 * connection. The service configuration is kept — /etc/init.d/ravnex
 	 * start brings everything back. */
 	app_restore_internet: {
 		call: function(req) {
-			system('/etc/init.d/homeproxy stop >/dev/null 2>&1');
+			system('/etc/init.d/ravnex stop >/dev/null 2>&1');
 			/* Remove the dnsmasq hook (conf-dir pointer) + the redirection
 			 * configs the service installs (DNS went through the core). */
-			system('rm -f /tmp/dnsmasq.d/dnsmasq-homeproxy.conf 2>/dev/null');
-			system('rm -rf /tmp/dnsmasq.d/dnsmasq-homeproxy.d 2>/dev/null');
+			system('rm -f /tmp/dnsmasq.d/dnsmasq-ravnex.conf 2>/dev/null');
+			system('rm -rf /tmp/dnsmasq.d/dnsmasq-ravnex.d 2>/dev/null');
 			system('/etc/init.d/dnsmasq restart >/dev/null 2>&1');
-			return { result: true, note: 'service stopped, DNS interception removed — direct internet restored; /etc/init.d/homeproxy start brings the proxy back' };
+			return { result: true, note: 'service stopped, DNS interception removed — direct internet restored; /etc/init.d/ravnex start brings the proxy back' };
 		}
 	},
 
@@ -5812,13 +5810,13 @@ const methods = {
 	 * реально работающая стратегия в лидеры не попадала. Метки пользователя
 	 * («работает / не работает на устройстве») — единственный канал
 	 * подтверждения и НАИВЫСШИЙ вес выбора: хранятся в
-	 * /etc/homeproxy/device_verdicts.json (переживает ребут, в отличие от
+	 * /etc/ravnex/device_verdicts.json (переживает ребут, в отличие от
 	 * /var/run), читаются merge'ем фаззинга (порядок + вердикты),
 	 * wizard_autopick (не применять опровергнутую / не заменять
 	 * подтверждённую текущую), авто-пилотом и оптимизатором. */
 	zapret_device_verdicts: {
 		call: function(req) {
-			const dp = '/etc/homeproxy/device_verdicts.json';
+			const dp = '/etc/ravnex/device_verdicts.json';
 			let dev = null;
 			if (access(dp)) {
 				try { dev = json(readfile(dp) || ''); } catch (e) { dev = null; }
@@ -5844,7 +5842,7 @@ const methods = {
 			if (!length(strategy) || length(strategy) > 2000 ||
 				match(strategy, /[`$;&|<>\n\r]/) || !match(strategy, /^--[a-z]/))
 				return { result: false, error: 'invalid strategy' };
-			const dp = '/etc/homeproxy/device_verdicts.json';
+			const dp = '/etc/ravnex/device_verdicts.json';
 			let dev = { ts: time(), resources: {} };
 			if (access(dp)) {
 				try {
@@ -5892,7 +5890,7 @@ const methods = {
 			/* Ф8-F4: snapshot the current engines server-side BEFORE writing —
 			 * the Restore button reads this file back on every page load. */
 			hp_apply_backup_write();
-			system(`uci set homeproxy.config.zapret_cmd_opts=${shellquote(strat)}`);
+			system(`uci set ravnex.config.zapret_cmd_opts=${shellquote(strat)}`);
 			/* Light apply when the engine instance already exists: the launcher
 			 * (dpi_engine.sh) re-reads UCI on respawn, so a strategy change is a
 			 * kill — NOT a service reload that RSTs every tunneled connection
@@ -5906,9 +5904,9 @@ const methods = {
 			};
 			/* Ф1.4b: the live queue pinned by the exact --qnum element — the
 			 * tester's temp instance (qnum 209) can never read as "running". */
-			const z_alive = (uci_get('homeproxy.config.zapret_enabled', '0') === '1') &&
-				length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + uci_get('homeproxy.config.zapret_qnum', '200') ] })) > 0;
-			system('uci commit homeproxy');
+			const z_alive = (uci_get('ravnex.config.zapret_enabled', '0') === '1') &&
+				length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + uci_get('ravnex.config.zapret_qnum', '200') ] })) > 0;
+			system('uci commit ravnex');
 			return (z_alive)
 				? op_spawn_dpi(true, 'zapret strategy apply')
 				: op_spawn_dpi(false, 'zapret strategy apply');
@@ -6016,9 +6014,9 @@ const methods = {
 			 * dead engine needs the full start path to (re)register instances. */
 			/* Ф1.4b: engine liveness by exact exe identity (was a ps|grep
 			 * substring that matched test instances and reused PIDs alike). */
-			const prev_z = c.get('homeproxy', 'config', 'zapret_enabled');
-			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
-			const zq = trim('' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200'));
+			const prev_z = c.get('ravnex', 'config', 'zapret_enabled');
+			const prev_b = c.get('ravnex', 'config', 'byedpi_enabled');
+			const zq = trim('' + (c.get('ravnex', 'config', 'zapret_qnum') || '200'));
 			const z_engine_alive = () => (('' + (prev_z || '')) === '1') && pm_bin_alive('nfqws2');
 			const b_engine_alive = () => (('' + (prev_b || '')) === '1') && pm_bin_alive('ciadpi');
 			const z_ok = !length(z) || (z_engine_alive() &&
@@ -6026,14 +6024,14 @@ const methods = {
 			const b_ok = !length(b) || b_engine_alive();
 			const light = !!(z_ok && b_ok && (length(z) || length(b)));
 			if (length(z)) {
-				c.set('homeproxy', 'config', 'zapret_cmd_opts', z);
-				c.set('homeproxy', 'config', 'zapret_enabled', '1');
+				c.set('ravnex', 'config', 'zapret_cmd_opts', z);
+				c.set('ravnex', 'config', 'zapret_enabled', '1');
 			}
 			if (length(b)) {
-				c.set('homeproxy', 'config', 'byedpi_cmd_opts', b);
-				c.set('homeproxy', 'config', 'byedpi_enabled', '1');
+				c.set('ravnex', 'config', 'byedpi_cmd_opts', b);
+				c.set('ravnex', 'config', 'byedpi_enabled', '1');
 			}
-			c.commit('homeproxy');
+			c.commit('ravnex');
 			const ap = op_spawn_dpi(light, 'engine cmd-opts apply');
 			ap.applied = { zapret: z, byedpi: b };
 			return ap;
@@ -6057,9 +6055,9 @@ const methods = {
 			 * every enabled engine is actually running (a kill respawns it with
 			 * the rolled-back args); any enable/disable needs the full start
 			 * path to add/remove the procd instances. */
-			const prev_z = c.get('homeproxy', 'config', 'zapret_enabled');
-			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
-			const zq = trim('' + (c.get('homeproxy', 'config', 'zapret_qnum') || '200'));
+			const prev_z = c.get('ravnex', 'config', 'zapret_enabled');
+			const prev_b = c.get('ravnex', 'config', 'byedpi_enabled');
+			const zq = trim('' + (c.get('ravnex', 'config', 'zapret_qnum') || '200'));
 			const new_z = bak.zapret.enabled ? '1' : '0';
 			const new_b = bak.byedpi.enabled ? '1' : '0';
 			/* Ф1.4b: engine liveness by exact exe identity (was ps|grep). */
@@ -6070,11 +6068,11 @@ const methods = {
 			const b_ok = (new_b === '1') ? b_engine_alive() : true;
 			const light = (new_z === ('' + (prev_z || ''))) && (new_b === ('' + (prev_b || ''))) &&
 				z_ok && b_ok;
-			c.set('homeproxy', 'config', 'zapret_cmd_opts', '' + (bak.zapret.cmd_opts || ''));
-			c.set('homeproxy', 'config', 'zapret_enabled', new_z);
-			c.set('homeproxy', 'config', 'byedpi_cmd_opts', '' + (bak.byedpi.cmd_opts || ''));
-			c.set('homeproxy', 'config', 'byedpi_enabled', new_b);
-			c.commit('homeproxy');
+			c.set('ravnex', 'config', 'zapret_cmd_opts', '' + (bak.zapret.cmd_opts || ''));
+			c.set('ravnex', 'config', 'zapret_enabled', new_z);
+			c.set('ravnex', 'config', 'byedpi_cmd_opts', '' + (bak.byedpi.cmd_opts || ''));
+			c.set('ravnex', 'config', 'byedpi_enabled', new_b);
+			c.commit('ravnex');
 			const ap = op_spawn_dpi(light, 'ByeDPI/Zapret restore');
 			ap.restored = { zapret: bak.zapret, byedpi: bak.byedpi };
 			return ap;
@@ -6303,25 +6301,25 @@ const methods = {
 			      (int(wm[1]) * 60 + int(wm[2])) != (int(wm[3]) * 60 + int(wm[4]))))
 				return { result: false, error: 'некорректное окно (формат HH:MM-HH:MM или пусто)' };
 			const c = cursor();
-			if (!c.get_all('homeproxy', 'autopilot'))
-				c.set('homeproxy', 'autopilot', 'homeproxy');
-			c.set('homeproxy', 'autopilot', 'enabled', enabled);
-			c.set('homeproxy', 'autopilot', 'resources', join(' ', resources));
-			c.set('homeproxy', 'autopilot', 'set_rules', set_rules);
-			c.set('homeproxy', 'autopilot', 'interval_h', '' + interval_h);
-			c.set('homeproxy', 'autopilot', 'check_min', '' + check_min);
-			c.set('homeproxy', 'autopilot', 'fail_strikes', '' + fail_strikes);
-			c.set('homeproxy', 'autopilot', 'fuzz_mode', fuzz_mode);
+			if (!c.get_all('ravnex', 'autopilot'))
+				c.set('ravnex', 'autopilot', 'ravnex');
+			c.set('ravnex', 'autopilot', 'enabled', enabled);
+			c.set('ravnex', 'autopilot', 'resources', join(' ', resources));
+			c.set('ravnex', 'autopilot', 'set_rules', set_rules);
+			c.set('ravnex', 'autopilot', 'interval_h', '' + interval_h);
+			c.set('ravnex', 'autopilot', 'check_min', '' + check_min);
+			c.set('ravnex', 'autopilot', 'fail_strikes', '' + fail_strikes);
+			c.set('ravnex', 'autopilot', 'fuzz_mode', fuzz_mode);
 			/* Ф6.7: ночной автоподбор (01:00–06:00, только если лучше) — опция.
 			 * Не передан (старый вызывающий) — прежнее значение не трогаем. */
 			const night_pick = flag(a.night_pick);
 			if (night_pick != null)
-				c.set('homeproxy', 'autopilot', 'night_pick', night_pick);
+				c.set('ravnex', 'autopilot', 'night_pick', night_pick);
 			if (length(win))
-				c.set('homeproxy', 'autopilot', 'window', win);
+				c.set('ravnex', 'autopilot', 'window', win);
 			else
-				c.delete('homeproxy', 'autopilot', 'window');
-			c.commit('homeproxy');
+				c.delete('ravnex', 'autopilot', 'window');
+			c.commit('ravnex');
 			/* The daemon hot-reads the section each tick — no restart needed. */
 			return { result: true, config: hp_autopilot_cfg() };
 		}
@@ -6339,7 +6337,7 @@ const methods = {
 			 * с ч.231-фиксом оптимизатора: вью честно показывает текущую
 			 * композицию, когда автопилот не управляет «Общим» (winner null). */
 			let cur_zapret = '';
-			const cz = cursor().get('homeproxy', 'config', 'zapret_cmd_opts');
+			const cz = cursor().get('ravnex', 'config', 'zapret_cmd_opts');
 			if (cz != null && length('' + cz))
 				cur_zapret = '' + cz;
 			/* ч.249 UI honesty: the freshest LAB measurement travels to the panel.
@@ -6442,27 +6440,27 @@ const methods = {
 			 * ANY flag change is a full reload; identical flags only swap the
 			 * ciadpi args — a kill + respawn (no core/DNS teardown). Nothing
 			 * changed at all → no action at all. */
-			const prev_opts = c.get('homeproxy', 'config', 'byedpi_cmd_opts');
-			const prev_uot = c.get('homeproxy', 'config', 'byedpi_udp_over_tcp');
-			const prev_bquic = c.get('homeproxy', 'config', 'byedpi_block_quic');
-			const prev_zvoice = c.get('homeproxy', 'config', 'zapret_voice');
+			const prev_opts = c.get('ravnex', 'config', 'byedpi_cmd_opts');
+			const prev_uot = c.get('ravnex', 'config', 'byedpi_udp_over_tcp');
+			const prev_bquic = c.get('ravnex', 'config', 'byedpi_block_quic');
+			const prev_zvoice = c.get('ravnex', 'config', 'zapret_voice');
 			/* Absent UCI flags mean '0' (the generator treats them so) — a
 			 * first save must not count as a flag change. */
 			const same = (a, b) => ('' + (a == null ? '0' : a)) === ('' + (b == null ? '0' : b));
 			const flags_changed = !same(prev_uot, uot) || !same(prev_bquic, bquic) || !same(prev_zvoice, zvoice);
 			const opts_changed = !(length(opts) ? same(prev_opts, opts) : !length('' + (prev_opts || '')));
 			if (length(opts))
-				c.set('homeproxy', 'config', 'byedpi_cmd_opts', opts);
+				c.set('ravnex', 'config', 'byedpi_cmd_opts', opts);
 			else
-				c.delete('homeproxy', 'config', 'byedpi_cmd_opts');
-			c.set('homeproxy', 'config', 'byedpi_udp_over_tcp', uot);
-			c.set('homeproxy', 'config', 'byedpi_block_quic', bquic);
-			c.set('homeproxy', 'config', 'zapret_voice', zvoice);
-			c.commit('homeproxy');
+				c.delete('ravnex', 'config', 'byedpi_cmd_opts');
+			c.set('ravnex', 'config', 'byedpi_udp_over_tcp', uot);
+			c.set('ravnex', 'config', 'byedpi_block_quic', bquic);
+			c.set('ravnex', 'config', 'zapret_voice', zvoice);
+			c.commit('ravnex');
 			if (!flags_changed && !opts_changed)
 				return { result: true, unchanged: true, applied: { cmd_opts: opts, udp_over_tcp: uot,
 					block_quic: bquic, zapret_voice: zvoice } };
-			const prev_b = c.get('homeproxy', 'config', 'byedpi_enabled');
+			const prev_b = c.get('ravnex', 'config', 'byedpi_enabled');
 			/* Ф1.4b: engine liveness by exact exe identity (was ps|grep). */
 			const light = !flags_changed && same(prev_b, '1') &&
 				pm_bin_alive('ciadpi');
@@ -6514,7 +6512,7 @@ const methods = {
 				 * "Bypass blocking" (proxy_banned_ru). A missing/empty value is
 				 * the working mode as well (lesson 209 — one default in every
 				 * reader; the migrator never writes a missing value). */
-				const rm = cursor().get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
+				const rm = cursor().get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru';
 				if (rm !== 'proxy_banned_ru')
 					return { result: false, error: 'rules_mode' };
 			}
@@ -6704,7 +6702,7 @@ const methods = {
 			}
 
 			let enabled = null;
-			let efd = popen('uci -q get homeproxy.automation.enabled 2>/dev/null');
+			let efd = popen('uci -q get ravnex.automation.enabled 2>/dev/null');
 			if (efd) { enabled = trim(efd.read('all')); efd.close(); }
 
 			/* Why the engine is (or is not) allowed to learn right now — mirrors the
@@ -6714,10 +6712,10 @@ const methods = {
 			let paused = '';
 			if (enabled !== '1')
 				paused = 'disabled';
-			let rmfd = popen('uci -q get homeproxy.config.routing_mode 2>/dev/null');
+			let rmfd = popen('uci -q get ravnex.config.routing_mode 2>/dev/null');
 			let rmode = 'proxy_banned_ru';
 			if (rmfd) { rmode = trim(rmfd.read('all')) || 'proxy_banned_ru'; rmfd.close(); }
-			let mnfd = popen('uci -q get homeproxy.config.main_node 2>/dev/null');
+			let mnfd = popen('uci -q get ravnex.config.main_node 2>/dev/null');
 			let mnode = 'nil';
 			if (mnfd) { mnode = trim(mnfd.read('all')) || 'nil'; mnfd.close(); }
 			if (paused === '')
@@ -6754,7 +6752,7 @@ const methods = {
 			/* Engine performance profile — the same detection the daemon runs at
 			 * startup: explicit UCI value first, then cores/memory autodetect. */
 			let perf_cfg = 'auto';
-			let pcfd = popen('uci -q get homeproxy.automation.performance 2>/dev/null');
+			let pcfd = popen('uci -q get ravnex.automation.performance 2>/dev/null');
 			if (pcfd) { perf_cfg = trim(pcfd.read('all')) || 'auto'; pcfd.close(); }
 			let profile = perf_cfg;
 			if (profile !== 'eco' && profile !== 'perf') {
@@ -6899,7 +6897,7 @@ const methods = {
 			 * resource (D6: no guessing in the UI). */
 			const rules = {};
 			const c = cursor();
-			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+			c.foreach('ravnex', 'proxy_ru_rule', (s) => {
 				const src = '' + (s.source || '');
 				if (!length(src) || rules[src]) return;
 				rules[src] = { enabled: (s.enabled !== '0'), node: ('' + (s.node || 'main-out')) };
@@ -6922,7 +6920,7 @@ const methods = {
 				try { dpi_status = json(readfile(dpi_status_file) || ''); } catch (e) { dpi_status = null; }
 			}
 			return { status: status, result: result, rules: rules,
-				routing_mode: ('' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru')),
+				routing_mode: ('' + (c.get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru')),
 				dpi_detect: { count: dpi_count, status: dpi_status } };
 		}
 	},
@@ -7021,7 +7019,7 @@ const methods = {
 		call: function(req) {
 			const c = cursor();
 			const rules = {};
-			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+			c.foreach('ravnex', 'proxy_ru_rule', (s) => {
 				const src = trim('' + (s.source || ''));
 				if (index(OPT_SERVICE_KEYS, src) < 0)
 					return;
@@ -7064,13 +7062,13 @@ const methods = {
 						int(summaries[k].unprobed) + int(summaries[k].unusable)) === 0)
 						summaries[k] = null;
 			}
-			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || 'nil');
-			const rmode = '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
-			const z_on = (c.get('homeproxy', 'config', 'zapret_enabled') === '1');
+			const main_node = '' + (c.get('ravnex', 'config', 'main_node') || 'nil');
+			const rmode = '' + (c.get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru');
+			const z_on = (c.get('ravnex', 'config', 'zapret_enabled') === '1');
 			/* ч.232: метки с устройства — вход честной сверки (работающая на
 			 * устройстве стратегия не заменяется лабораторным лидером). */
 			let devres = {};
-			const dvp = '/etc/homeproxy/device_verdicts.json';
+			const dvp = '/etc/ravnex/device_verdicts.json';
 			if (access(dvp)) {
 				try {
 					const dj = json(readfile(dvp) || '');
@@ -7080,7 +7078,7 @@ const methods = {
 			}
 			/* ч.231: подтверждённость ТЕКУЩЕЙ применённой стратегии — вход
 			 * честной сверки optimizer'а (замена подтверждённой = churn). */
-			const opt_cur_args = trim('' + (c.get('homeproxy', 'config', 'zapret_cmd_opts') || ''));
+			const opt_cur_args = trim('' + (c.get('ravnex', 'config', 'zapret_cmd_opts') || ''));
 			const services = {};
 			for (let k in OPT_SERVICE_KEYS) {
 				const lv = (lab != null && type(lab.verdicts) === 'object' &&
@@ -7134,7 +7132,7 @@ const methods = {
 				return { result: false, error: 'unknown service' };
 
 			const lports = hp_listen_ports();
-			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
+			let mfd = popen('uci -q get ravnex.infra.mixed_port 2>/dev/null');
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
 			/* Lesson 355: the loopback 5337 inbound is pinned to main-out
@@ -7431,7 +7429,7 @@ const methods = {
 			/* The node the google_ai rule currently points at (for the UI mark). */
 			let current = null;
 			const c = cursor();
-			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+			c.foreach('ravnex', 'proxy_ru_rule', (s) => {
 				if (('' + (s.source || '')) === 'google_ai')
 					current = '' + (s.node || 'main-out');
 			});
@@ -7453,7 +7451,7 @@ const methods = {
 			 * "same service through two exits" shape) are shown INSIDE the
 			 * preset row, not in a duplicate editor below. */
 			const extras = {};
-			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+			c.foreach('ravnex', 'proxy_ru_rule', (s) => {
 				const src = '' + (s.source || '');
 				if (!length(src)) return;
 				counts[src] = (counts[src] || 0) + 1;
@@ -7461,7 +7459,7 @@ const methods = {
 					const r = { section_id: s['.name'], enabled: (s.enabled !== '0'), node: ('' + (s.node || 'main-out')) };
 					if (r.node === 'urltest') {
 						/* List option: cursor().get returns an array (or null). */
-						const pool = c.get('homeproxy', s['.name'], 'urltest_nodes');
+						const pool = c.get('ravnex', s['.name'], 'urltest_nodes');
 						if (type(pool) === 'array')
 							r.urltest_nodes = pool;
 					}
@@ -7470,7 +7468,7 @@ const methods = {
 				} else {
 					const ex = { section_id: s['.name'], enabled: (s.enabled !== '0'), node: ('' + (s.node || 'main-out')) };
 					if (ex.node === 'urltest') {
-						const epool = c.get('homeproxy', s['.name'], 'urltest_nodes');
+						const epool = c.get('ravnex', s['.name'], 'urltest_nodes');
 						if (type(epool) === 'array')
 							ex.urltest_nodes = epool;
 					}
@@ -7478,7 +7476,7 @@ const methods = {
 				}
 			});
 			const nodes = [];
-			c.foreach('homeproxy', 'node', (n) => {
+			c.foreach('ravnex', 'node', (n) => {
 				const addr = (n.type === 'direct') ? (n.override_address || '') : (n.address || '');
 				const port = (n.type === 'direct') ? (n.override_port || '') : (n.port || '');
 				push(nodes, {
@@ -7487,19 +7485,19 @@ const methods = {
 					type: '' + (n.type || '')
 				});
 			});
-			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
-			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
+			const main_node = '' + (c.get('ravnex', 'config', 'main_node') || '');
+			let mfd = popen('uci -q get ravnex.infra.mixed_port 2>/dev/null');
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
 			const lports = hp_listen_ports();
 			return {
 				result: true,
 				env: {
-					routing_mode: '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru'),
+					routing_mode: '' + (c.get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru'),
 					main_node: main_node,
 					main_is_direct: (main_node === 'direct-out' || main_node === '' || main_node === 'nil'),
-					zapret_enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1'),
-					byedpi_enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1'),
+					zapret_enabled: (c.get('ravnex', 'config', 'zapret_enabled') === '1'),
+					byedpi_enabled: (c.get('ravnex', 'config', 'byedpi_enabled') === '1'),
 					mixed_port: mixed,
 					direct_in: hp_inbound_listening(lports, 5336),
 					proxy_in: hp_inbound_listening(lports, 5337)
@@ -7547,19 +7545,19 @@ const methods = {
 				return { result: false, error: 'unknown source' };
 
 			const c = cursor();
-			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			const main_node = '' + (c.get('ravnex', 'config', 'main_node') || '');
 			if (node === 'main-out' && (main_node === 'direct-out' || main_node === '' || main_node === 'nil'))
 				return { result: false, error: 'main_is_direct' };
 
 			if (node !== '' && node !== 'main-out' && node !== 'byedpi-out' &&
 			    node !== 'zapret-out' && node !== 'urltest') {
-				const nc = c.get_all('homeproxy', node);
+				const nc = c.get_all('ravnex', node);
 				if (!nc || nc['.type'] !== 'node')
 					return { result: false, error: 'unknown node' };
 			}
-			if (node === 'byedpi-out' && c.get('homeproxy', 'config', 'byedpi_enabled') !== '1')
+			if (node === 'byedpi-out' && c.get('ravnex', 'config', 'byedpi_enabled') !== '1')
 				return { result: false, error: 'byedpi_disabled' };
-			if (node === 'zapret-out' && c.get('homeproxy', 'config', 'zapret_enabled') !== '1')
+			if (node === 'zapret-out' && c.get('ravnex', 'config', 'zapret_enabled') !== '1')
 				return { result: false, error: 'zapret_disabled' };
 			/* URLTest pool: the generator needs ≥1 usable member node on the
 			 * rule section. Validate every id as a real node section. */
@@ -7569,7 +7567,7 @@ const methods = {
 				if (!length(pool))
 					return { result: false, error: 'urltest_pool_empty' };
 				for (let n in pool) {
-					const nc = c.get_all('homeproxy', '' + n);
+					const nc = c.get_all('ravnex', '' + n);
 					if (!nc || nc['.type'] !== 'node')
 						return { result: false, error: 'unknown node' };
 				}
@@ -7577,7 +7575,7 @@ const methods = {
 
 			let target = null;
 			let count = 0;
-			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+			c.foreach('ravnex', 'proxy_ru_rule', (s) => {
 				if (('' + (s.source || '')) === src) {
 					count++;
 					if (!target) target = s['.name'];
@@ -7591,7 +7589,7 @@ const methods = {
 			 * actually changed). */
 			let unchanged = false;
 			if (target) {
-				const cur = c.get_all('homeproxy', target);
+				const cur = c.get_all('ravnex', target);
 				unchanged = !!cur && cur.enabled === '1' && ('' + (cur.node || '')) === node;
 				if (unchanged && node === 'urltest') {
 					const cur_pool = (type(cur.urltest_nodes) === 'array') ? cur.urltest_nodes : [];
@@ -7609,8 +7607,8 @@ const methods = {
 			if (node === '') {
 				/* "Direct" preset = no rule at all (default route IS direct). */
 				if (target) {
-					c.delete('homeproxy', target);
-					c.commit('homeproxy');
+					c.delete('ravnex', target);
+					c.commit('ravnex');
 					/* Ф1.1b: apply through the opman door (was a synchronous
 					 * generate+reload inside rpcd — unserialized, unverified,
 					 * 20 s client XHR window). The op runner regenerates inside
@@ -7626,29 +7624,29 @@ const methods = {
 			}
 
 			if (target) {
-				c.set('homeproxy', target, 'enabled', '1');
-				c.set('homeproxy', target, 'source', src);
-				c.set('homeproxy', target, 'node', node);
+				c.set('ravnex', target, 'enabled', '1');
+				c.set('ravnex', target, 'source', src);
+				c.set('ravnex', target, 'node', node);
 			} else {
-				target = c.add('homeproxy', 'proxy_ru_rule');
-				c.set('homeproxy', target, 'enabled', '1');
-				c.set('homeproxy', target, 'source', src);
-				c.set('homeproxy', target, 'node', node);
+				target = c.add('ravnex', 'proxy_ru_rule');
+				c.set('ravnex', target, 'enabled', '1');
+				c.set('ravnex', target, 'source', src);
+				c.set('ravnex', target, 'node', node);
 			}
-			c.commit('homeproxy');
+			c.commit('ravnex');
 
 			/* URLTest pool members: a LIST option — write through the uci CLI
 			 * (delete + add_list), the path the manual editor relies on for
 			 * list values. When the rule stops being urltest-shaped, drop the
 			 * stale member list so the section stays clean. */
 			if (node === 'urltest') {
-				system('uci -q delete homeproxy.' + target + '.urltest_nodes');
+				system('uci -q delete ravnex.' + target + '.urltest_nodes');
 				for (let n in pool)
-					system(`uci add_list homeproxy.${target}.urltest_nodes=${shellquote('' + n)}`);
-				system('uci -q commit homeproxy');
+					system(`uci add_list ravnex.${target}.urltest_nodes=${shellquote('' + n)}`);
+				system('uci -q commit ravnex');
 			} else {
-				system('uci -q delete homeproxy.' + target + '.urltest_nodes');
-				system('uci -q commit homeproxy');
+				system('uci -q delete ravnex.' + target + '.urltest_nodes');
+				system('uci -q commit ravnex');
 			}
 
 			/* Apply IMMEDIATELY (same path as the manual editor: regenerate +
@@ -7677,11 +7675,11 @@ const methods = {
 			if (!length(sid))
 				return { result: false, error: 'no section id' };
 			const c = cursor();
-			const sec = c.get_all('homeproxy', sid);
+			const sec = c.get_all('ravnex', sid);
 			if (!sec || sec['.type'] !== 'proxy_ru_rule')
 				return { result: false, error: 'not a routing rule section' };
-			c.delete('homeproxy', sid);
-			c.commit('homeproxy');
+			c.delete('ravnex', sid);
+			c.commit('ravnex');
 			/* Ф1.1b: apply through the opman door (was a synchronous
 			 * generate+reload inside rpcd). */
 			const ap = op_spawn('reload', 'routing rule delete');
@@ -7708,7 +7706,7 @@ const methods = {
 			 * must be in the running config before the UI shows anything. */
 			let migration = null;
 			if (!access(HP_DIR + '/resources/.lists_migrated')) {
-				const out = list_capture('/usr/bin/ucode /etc/homeproxy/scripts/migrate_user_lists.uc 2>&1');
+				const out = list_capture('/usr/bin/ucode /etc/ravnex/scripts/migrate_user_lists.uc 2>&1');
 				if (match('' + out, /user lists migration: /)) {
 					const ap = op_spawn('reload', 'user lists migration (legacy textareas)');
 					migration = { done: true, log: trim('' + out),
@@ -7721,7 +7719,7 @@ const methods = {
 			}
 			const c = cursor();
 			const out = [];
-			c.foreach('homeproxy', 'user_list', (s) => {
+			c.foreach('ravnex', 'user_list', (s) => {
 				const sid = '' + s['.name'];
 				if (!list_sid_ok(sid))
 					return;
@@ -7739,14 +7737,14 @@ const methods = {
 					source_ts: int(s.source_ts ?? '0') || 0
 				});
 			});
-			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			const main_node = '' + (c.get('ravnex', 'config', 'main_node') || '');
 			return {
 				lists: out,
 				migration: migration,
 				env: {
 					main_is_direct: (main_node === 'direct-out' || main_node === '' || main_node === 'nil'),
-					byedpi_enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1'),
-					zapret_enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1'),
+					byedpi_enabled: (c.get('ravnex', 'config', 'byedpi_enabled') === '1'),
+					zapret_enabled: (c.get('ravnex', 'config', 'zapret_enabled') === '1'),
 					proxy_nodes: list_proxy_nodes(c)
 				}
 			};
@@ -7779,7 +7777,7 @@ const methods = {
 				if (!length(pool))
 					return { result: false, error: 'urltest_pool_empty' };
 				for (let n in pool) {
-					const nc = c.get_all('homeproxy', '' + n);
+					const nc = c.get_all('ravnex', '' + n);
 					if (!nc || nc['.type'] !== 'node')
 						return { result: false, error: 'unknown node' };
 				}
@@ -7790,7 +7788,7 @@ const methods = {
 			let sid = '';
 			for (let attempt = 0; attempt < 100; attempt++) {
 				const cand = 'ul_' + time() + (attempt ? ('_' + attempt) : '');
-				if (!c.get_all('homeproxy', cand)) { sid = cand; break; }
+				if (!c.get_all('ravnex', cand)) { sid = cand; break; }
 			}
 			if (!sid)
 				return { result: false, error: 'cannot allocate list id' };
@@ -7798,19 +7796,19 @@ const methods = {
 			/* UCI named section — `uci set <conf>.<sid>=<type>` (busybox uci add
 			 * is anonymous-only; the section id is derived from the timestamp
 			 * and pre-checked against the cursor). */
-			const rc = system(`uci -q set homeproxy.${sid}=user_list`);
+			const rc = system(`uci -q set ravnex.${sid}=user_list`);
 			if (rc !== 0)
 				return { result: false, error: 'cannot create the list section' };
-			system(`uci -q set homeproxy.${sid}.name=${shellquote(name)}`);
-			system(`uci -q set homeproxy.${sid}.kind=${shellquote(kind)}`);
-			system(`uci -q set homeproxy.${sid}.ctype=${shellquote(ctype)}`);
-			system(`uci -q set homeproxy.${sid}.node=${shellquote(node || (kind === 'direct' ? 'direct-out' : 'main-out'))}`);
-			system(`uci -q set homeproxy.${sid}.enabled=1`);
+			system(`uci -q set ravnex.${sid}.name=${shellquote(name)}`);
+			system(`uci -q set ravnex.${sid}.kind=${shellquote(kind)}`);
+			system(`uci -q set ravnex.${sid}.ctype=${shellquote(ctype)}`);
+			system(`uci -q set ravnex.${sid}.node=${shellquote(node || (kind === 'direct' ? 'direct-out' : 'main-out'))}`);
+			system(`uci -q set ravnex.${sid}.enabled=1`);
 			if (node === 'urltest') {
 				for (let n in pool)
-					system(`uci add_list homeproxy.${sid}.urltest_nodes=${shellquote('' + n)}`);
+					system(`uci add_list ravnex.${sid}.urltest_nodes=${shellquote('' + n)}`);
 			}
-			system('uci -q commit homeproxy');
+			system('uci -q commit ravnex');
 
 			/* Content (optional at create) + the watched JSON must exist even
 			 * when empty — the generator always references the file. */
@@ -7870,7 +7868,7 @@ const methods = {
 			 * references the watched file (the .learned_hotreload marker proves
 			 * a full pass happened at least once); otherwise the opman door. */
 			let apply;
-			if (access('/var/run/homeproxy/.learned_hotreload')) {
+			if (access('/var/run/ravnex/.learned_hotreload')) {
 				apply = { hot: true };
 			} else {
 				const ap = op_spawn('reload', 'user list apply (generate+reload)');
@@ -7912,12 +7910,12 @@ const methods = {
 			if (!parsed.accepted && !parsed.dropped)
 				return { result: false, error: 'в ответе нет записей — список не применён' };
 			const wr = list_store_content(sid, ctype, body);
-			c.set('homeproxy', sid, 'source_url', trim('' + ((req && req.args && req.args.url) ?? '')));
-			c.set('homeproxy', sid, 'source_ts', '' + time());
-			c.save('homeproxy');
-			c.commit('homeproxy');
+			c.set('ravnex', sid, 'source_url', trim('' + ((req && req.args && req.args.url) ?? '')));
+			c.set('ravnex', sid, 'source_ts', '' + time());
+			c.save('ravnex');
+			c.commit('ravnex');
 			let apply;
-			if (access('/var/run/homeproxy/.learned_hotreload')) {
+			if (access('/var/run/ravnex/.learned_hotreload')) {
 				apply = { hot: true };
 			} else {
 				const ap = op_spawn('reload', 'user list import (generate+reload)');
@@ -7947,7 +7945,7 @@ const methods = {
 				if (!length(name) || length(name) > 64)
 					return { result: false, error: 'имя списка — до 64 символов' };
 				if (name !== '' + (sec.name ?? '')) {
-					system(`uci -q set homeproxy.${sid}.name=${shellquote(name)}`);
+					system(`uci -q set ravnex.${sid}.name=${shellquote(name)}`);
 					changed = true;
 				}
 			}
@@ -7957,32 +7955,32 @@ const methods = {
 				if (nerr)
 					return { result: false, error: nerr };
 				if (node !== '' + (sec.node ?? '')) {
-					system(`uci -q set homeproxy.${sid}.node=${shellquote(node)}`);
+					system(`uci -q set ravnex.${sid}.node=${shellquote(node)}`);
 					changed = true;
 				}
 			}
 			if ((req?.args?.enabled ?? '') !== '') {
 				const en = ('' + req.args.enabled === '1') ? '1' : '0';
 				if (en !== '' + (sec.enabled ?? '1')) {
-					system(`uci -q set homeproxy.${sid}.enabled=${en}`);
+					system(`uci -q set ravnex.${sid}.enabled=${en}`);
 					changed = true;
 				}
 			}
 			if (trim('' + ((req?.args?.urltest_nodes) ?? '')) !== '') {
 				const pool = hp_json_arg(req?.args?.urltest_nodes) || [];
 				for (let n in pool) {
-					const nc = c.get_all('homeproxy', '' + n);
+					const nc = c.get_all('ravnex', '' + n);
 					if (!nc || nc['.type'] !== 'node')
 						return { result: false, error: 'unknown node' };
 				}
-				system(`uci -q delete homeproxy.${sid}.urltest_nodes`);
+				system(`uci -q delete ravnex.${sid}.urltest_nodes`);
 				for (let n in pool)
-					system(`uci add_list homeproxy.${sid}.urltest_nodes=${shellquote('' + n)}`);
+					system(`uci add_list ravnex.${sid}.urltest_nodes=${shellquote('' + n)}`);
 				changed = true;
 			}
 			if (!changed)
 				return { result: true, unchanged: true };
-			system('uci -q commit homeproxy');
+			system('uci -q commit ravnex');
 			const ap = op_spawn('reload', 'user list update');
 			return { result: true,
 				apply: { hot: false, result: ap.result === true,
@@ -8004,8 +8002,8 @@ const methods = {
 			/* Auto-backup BEFORE the destructive action (restore is possible
 			 * through list_backup_read + list_write). */
 			const bk = list_backup_snapshot('delete: ' + ('' + (sec.name ?? sid)));
-			c.delete('homeproxy', sid);
-			c.commit('homeproxy');
+			c.delete('ravnex', sid);
+			c.commit('ravnex');
 			system('rm -f ' + shellquote(LISTS_DIR + '/' + sid + '.txt') +
 				' ' + shellquote(LISTS_DIR + '/' + sid + '.json'));
 			const ap = op_spawn('reload', 'user list delete');
@@ -8123,15 +8121,15 @@ const methods = {
 				const sec = list_section(c, sid);
 				if (!sec) {
 					/* Recreate the section from the snapshot meta. */
-					const rc = system(`uci -q set homeproxy.${sid}=user_list`);
+					const rc = system(`uci -q set ravnex.${sid}=user_list`);
 					if (rc !== 0)
 						continue;
-					system(`uci -q set homeproxy.${sid}.name=${shellquote('' + (item.name ?? sid))}`);
-					system(`uci -q set homeproxy.${sid}.kind=${shellquote('' + (item.kind ?? 'proxy'))}`);
-					system(`uci -q set homeproxy.${sid}.ctype=${shellquote('' + (item.ctype ?? 'domains'))}`);
-					system(`uci -q set homeproxy.${sid}.node=${shellquote('' + (item.node ?? ''))}`);
-					system(`uci -q set homeproxy.${sid}.enabled=${shellquote('' + (item.enabled ?? '1'))}`);
-					system('uci -q commit homeproxy');
+					system(`uci -q set ravnex.${sid}.name=${shellquote('' + (item.name ?? sid))}`);
+					system(`uci -q set ravnex.${sid}.kind=${shellquote('' + (item.kind ?? 'proxy'))}`);
+					system(`uci -q set ravnex.${sid}.ctype=${shellquote('' + (item.ctype ?? 'domains'))}`);
+					system(`uci -q set ravnex.${sid}.node=${shellquote('' + (item.node ?? ''))}`);
+					system(`uci -q set ravnex.${sid}.enabled=${shellquote('' + (item.enabled ?? '1'))}`);
+					system('uci -q commit ravnex');
 					created++;
 				}
 				const ctype = ('' + (item.ctype ?? 'domains') === 'ips') ? 'ips' : 'domains';
@@ -8174,18 +8172,18 @@ const methods = {
 			if (!SOURCES[src])
 				return { result: false, error: 'unknown source' };
 			const c = cursor();
-			const main_node = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			const main_node = '' + (c.get('ravnex', 'config', 'main_node') || '');
 			if (node === 'main-out' && (main_node === 'direct-out' || main_node === '' || main_node === 'nil'))
 				return { result: false, error: 'main_is_direct' };
 			if (node !== '' && node !== 'main-out' && node !== 'byedpi-out' &&
 			    node !== 'zapret-out' && node !== 'urltest') {
-				const nc = c.get_all('homeproxy', node);
+				const nc = c.get_all('ravnex', node);
 				if (!nc || nc['.type'] !== 'node')
 					return { result: false, error: 'unknown node' };
 			}
-			if (node === 'byedpi-out' && c.get('homeproxy', 'config', 'byedpi_enabled') !== '1')
+			if (node === 'byedpi-out' && c.get('ravnex', 'config', 'byedpi_enabled') !== '1')
 				return { result: false, error: 'byedpi_disabled' };
-			if (node === 'zapret-out' && c.get('homeproxy', 'config', 'zapret_enabled') !== '1')
+			if (node === 'zapret-out' && c.get('ravnex', 'config', 'zapret_enabled') !== '1')
 				return { result: false, error: 'zapret_disabled' };
 			let pool = [];
 			if (node === 'urltest') {
@@ -8193,7 +8191,7 @@ const methods = {
 				if (!length(pool))
 					return { result: false, error: 'urltest_pool_empty' };
 				for (let n in pool) {
-					const nc = c.get_all('homeproxy', '' + n);
+					const nc = c.get_all('ravnex', '' + n);
 					if (!nc || nc['.type'] !== 'node')
 						return { result: false, error: 'unknown node' };
 				}
@@ -8202,7 +8200,7 @@ const methods = {
 			 * mistake — the generator dedups the ruleset but emits two identical
 			 * rules, and the UI already shows the same exit in the main row. */
 			let dup = false;
-			c.foreach('homeproxy', 'proxy_ru_rule', (s) => {
+			c.foreach('ravnex', 'proxy_ru_rule', (s) => {
 				if (('' + (s.source ?? '')) === src && ('' + (s.node ?? '')) === node)
 					dup = true;
 			});
@@ -8210,23 +8208,23 @@ const methods = {
 				return { result: false, error: 'duplicate rule' };
 			/* Anonymous section via the proven popen path (lesson 185): uci add
 			 * prints the generated section name on stdout. */
-			const fd = popen('uci -q add homeproxy proxy_ru_rule');
+			const fd = popen('uci -q add ravnex proxy_ru_rule');
 			const target = fd ? trim((fd.read('line') || '')) : '';
 			if (fd)
 				fd.close();
 			if (!length(target) || !ctrl_valid_name(target))
 				return { result: false, error: 'uci add failed' };
 			const cw = cursor();
-			cw.set('homeproxy', target, 'enabled', '1');
-			cw.set('homeproxy', target, 'source', src);
-			cw.set('homeproxy', target, 'node', node);
-			cw.save('homeproxy');
-			cw.commit('homeproxy');
+			cw.set('ravnex', target, 'enabled', '1');
+			cw.set('ravnex', target, 'source', src);
+			cw.set('ravnex', target, 'node', node);
+			cw.save('ravnex');
+			cw.commit('ravnex');
 			if (node === 'urltest') {
-				system(`uci -q delete homeproxy.${target}.urltest_nodes`);
+				system(`uci -q delete ravnex.${target}.urltest_nodes`);
 				for (let n in pool)
-					system(`uci add_list homeproxy.${target}.urltest_nodes=${shellquote('' + n)}`);
-				system('uci -q commit homeproxy');
+					system(`uci add_list ravnex.${target}.urltest_nodes=${shellquote('' + n)}`);
+				system('uci -q commit ravnex');
 			}
 			const ap = op_spawn('reload', 'routing rule add (master)');
 			return { result: true, action: 'added', section_id: target,
@@ -8247,8 +8245,8 @@ const methods = {
 	wizard_dpi_status: {
 		call: function(req) {
 			const c = cursor();
-			const zstrat = trim('' + (c.get('homeproxy', 'config', 'zapret_cmd_opts') || ''));
-			const bopts = trim('' + (c.get('homeproxy', 'config', 'byedpi_cmd_opts') || ''));
+			const zstrat = trim('' + (c.get('ravnex', 'config', 'zapret_cmd_opts') || ''));
+			const bopts = trim('' + (c.get('ravnex', 'config', 'byedpi_cmd_opts') || ''));
 			/* Corpus meta: counts per group + file mtime (import freshness). */
 			const corpus = hp_corpus_read();
 			/* Human strategy name: the corpus entry whose args match the
@@ -8300,7 +8298,7 @@ const methods = {
 			return {
 				result: true,
 				zapret: {
-					enabled: (c.get('homeproxy', 'config', 'zapret_enabled') === '1'),
+					enabled: (c.get('ravnex', 'config', 'zapret_enabled') === '1'),
 					installed: access('/opt/zapret2/nfq2/nfqws2'),
 					running: hp_proc_running('nfqws2'),
 					strategy: zstrat,
@@ -8312,7 +8310,7 @@ const methods = {
 					nfqueue: hp_zapret_queue_counters()
 				},
 				byedpi: {
-					enabled: (c.get('homeproxy', 'config', 'byedpi_enabled') === '1'),
+					enabled: (c.get('ravnex', 'config', 'byedpi_enabled') === '1'),
 					installed: access('/usr/bin/ciadpi'),
 					running: hp_proc_running('ciadpi'),
 					opts: bopts
@@ -8677,7 +8675,7 @@ const methods = {
 			 * Process Manager answers for ucode scripts (busybox pidof does
 			 * NOT match them at all, lesson 23): registry heartbeat first,
 			 * then the exact script-element scan. */
-			let efd = popen('uci -q get homeproxy.telegram.enabled 2>/dev/null');
+			let efd = popen('uci -q get ravnex.telegram.enabled 2>/dev/null');
 			if (efd) {
 				const v = trim(efd.read('all'));
 				efd.close();
@@ -8799,7 +8797,7 @@ const methods = {
 			    mode !== 'balanced' && mode !== 'performance')
 				return { result: false, error: 'illegal mode' };
 			const c = cursor();
-			const raw = c.get('homeproxy', 'config', 'res_profile_mode');
+			const raw = c.get('ravnex', 'config', 'res_profile_mode');
 			const cur = (raw != null && length('' + raw) &&
 				(raw === 'lite' || raw === 'balanced' || raw === 'performance'))
 				? '' + raw : 'auto';
@@ -8807,11 +8805,11 @@ const methods = {
 				return { result: true, changed: false, mode: mode };
 			if (mode === 'auto') {
 				if (raw != null)
-					c.delete('homeproxy', 'config', 'res_profile_mode');
+					c.delete('ravnex', 'config', 'res_profile_mode');
 			} else {
-				c.set('homeproxy', 'config', 'res_profile_mode', mode);
+				c.set('ravnex', 'config', 'res_profile_mode', mode);
 			}
-			c.commit('homeproxy');
+			c.commit('ravnex');
 			hc_add_event('system', '', 'профиль ресурсов: ' + mode);
 			return { result: true, changed: true, mode: mode };
 		}
@@ -8831,7 +8829,7 @@ const methods = {
 			};
 			const c = cursor();
 			const g = (opt, def) => {
-				const v = c.get('homeproxy', 'telegram', opt);
+				const v = c.get('ravnex', 'telegram', opt);
 				return (v != null && length('' + v)) ? '' + v : def;
 			};
 			reply.enabled = (g('enabled', '0') === '1');
@@ -8868,7 +8866,7 @@ const methods = {
 			reply.users = { owner: [], admin: [], operator: [], viewer: [] };
 			const roles = [ 'owner', 'admin', 'operator', 'viewer' ];
 			for (let i = 0; i < length(roles); i++) {
-				const arr = c.get('homeproxy', 'telegram', roles[i] + '_user');
+				const arr = c.get('ravnex', 'telegram', roles[i] + '_user');
 				if (type(arr) === 'array') {
 					const ids = [];
 					for (let k = 0; k < length(arr); k++)
@@ -8877,8 +8875,8 @@ const methods = {
 				}
 			}
 			reply.pair = null;
-			const pc = trim('' + (c.get('homeproxy', 'telegram', 'pair_code') || ''));
-			const pu = int('' + (c.get('homeproxy', 'telegram', 'pair_until') || '0'));
+			const pc = trim('' + (c.get('ravnex', 'telegram', 'pair_code') || ''));
+			const pu = int('' + (c.get('ravnex', 'telegram', 'pair_until') || '0'));
 			if (length(pc) && pu > time())
 				reply.pair = { code: pc, role: g('pair_role', 'owner'), expires_in: pu - time() };
 			return reply;
@@ -8955,45 +8953,45 @@ const methods = {
 			const c = cursor();
 			/* Empty token field = keep the stored one (masked input); the
 			 * '!' sentinel explicitly clears it. */
-			let cur_token = '' + (c.get('homeproxy', 'telegram', 'token') || '');
+			let cur_token = '' + (c.get('ravnex', 'telegram', 'token') || '');
 			if (token === '!') {
 				cur_token = '';
 				token = '';
 			} else if (!length(token) && length(cur_token)) {
 				token = cur_token;
 			}
-			c.set('homeproxy', 'telegram', 'enabled', enabled);
+			c.set('ravnex', 'telegram', 'enabled', enabled);
 			if (length(token))
-				c.set('homeproxy', 'telegram', 'token', token);
+				c.set('ravnex', 'telegram', 'token', token);
 			else
-				c.delete('homeproxy', 'telegram', 'token');
+				c.delete('ravnex', 'telegram', 'token');
 			/* An EMPTY chat_id UNBINDS (delete the option — the UI placeholder
 			 * promises exactly this: «leave empty — the first message pins
 			 * the chat»). Ignoring the empty value here kept the old binding
 			 * alive and made re-binding impossible (caught by the user, ч.190). */
 			if (length(chat_id))
-				c.set('homeproxy', 'telegram', 'chat_id', chat_id);
+				c.set('ravnex', 'telegram', 'chat_id', chat_id);
 			else
-				c.delete('homeproxy', 'telegram', 'chat_id');
-			c.set('homeproxy', 'telegram', 'mute', mute);
-			c.set('homeproxy', 'telegram', 'push_hotswap', pushes.push_hotswap);
-			c.set('homeproxy', 'telegram', 'push_watchdog', pushes.push_watchdog);
-			c.set('homeproxy', 'telegram', 'push_learn', pushes.push_learn);
-			c.set('homeproxy', 'telegram', 'push_service', pushes.push_service);
-			c.set('homeproxy', 'telegram', 'push_control', pushes.push_control);
-			c.set('homeproxy', 'telegram', 'push_exec', pushes.push_exec);
+				c.delete('ravnex', 'telegram', 'chat_id');
+			c.set('ravnex', 'telegram', 'mute', mute);
+			c.set('ravnex', 'telegram', 'push_hotswap', pushes.push_hotswap);
+			c.set('ravnex', 'telegram', 'push_watchdog', pushes.push_watchdog);
+			c.set('ravnex', 'telegram', 'push_learn', pushes.push_learn);
+			c.set('ravnex', 'telegram', 'push_service', pushes.push_service);
+			c.set('ravnex', 'telegram', 'push_control', pushes.push_control);
+			c.set('ravnex', 'telegram', 'push_exec', pushes.push_exec);
 			/* Ф8.7: новые категории + окно тихих часов. */
-			c.set('homeproxy', 'telegram', 'push_health', pushes.push_health);
-			c.set('homeproxy', 'telegram', 'push_autopilot', pushes.push_autopilot);
-			c.set('homeproxy', 'telegram', 'push_safe', pushes.push_safe);
-			c.set('homeproxy', 'telegram', 'push_update', pushes.push_update);
-			c.set('homeproxy', 'telegram', 'push_security', pushes.push_security);
-			c.set('homeproxy', 'telegram', 'quiet_enabled', qen);
-			c.set('homeproxy', 'telegram', 'quiet_from', qfrom);
-			c.set('homeproxy', 'telegram', 'quiet_to', qto);
-			c.set('homeproxy', 'telegram', 'poll_timeout', sprintf('%d', poll));
-			c.set('homeproxy', 'telegram', 'push_interval', sprintf('%d', pival));
-			c.commit('homeproxy');
+			c.set('ravnex', 'telegram', 'push_health', pushes.push_health);
+			c.set('ravnex', 'telegram', 'push_autopilot', pushes.push_autopilot);
+			c.set('ravnex', 'telegram', 'push_safe', pushes.push_safe);
+			c.set('ravnex', 'telegram', 'push_update', pushes.push_update);
+			c.set('ravnex', 'telegram', 'push_security', pushes.push_security);
+			c.set('ravnex', 'telegram', 'quiet_enabled', qen);
+			c.set('ravnex', 'telegram', 'quiet_from', qfrom);
+			c.set('ravnex', 'telegram', 'quiet_to', qto);
+			c.set('ravnex', 'telegram', 'poll_timeout', sprintf('%d', poll));
+			c.set('ravnex', 'telegram', 'push_interval', sprintf('%d', pival));
+			c.commit('ravnex');
 			/* No service restart: the daemon re-reads UCI every loop (≤15 s). */
 			return { result: true };
 		}
@@ -9018,10 +9016,10 @@ const methods = {
 			if (match(code, /^[0-9]{6}$/) == null)
 				return { result: false, error: 'entropy unavailable' };
 			const c = cursor();
-			c.set('homeproxy', 'telegram', 'pair_code', code);
-			c.set('homeproxy', 'telegram', 'pair_until', sprintf('%d', time() + 60));
-			c.set('homeproxy', 'telegram', 'pair_role', role);
-			c.commit('homeproxy');
+			c.set('ravnex', 'telegram', 'pair_code', code);
+			c.set('ravnex', 'telegram', 'pair_until', sprintf('%d', time() + 60));
+			c.set('ravnex', 'telegram', 'pair_role', role);
+			c.commit('ravnex');
 			/* Ф8.7: security-событие — владелец должен знать, что кто-то
 			 * на этой странице открыл окно привязки (и под какой ролью). */
 			try { ev_emit('security', 'code_gen', role,
@@ -9045,7 +9043,7 @@ const methods = {
 			let changed = false;
 			for (let i = 0; i < length(roles); i++) {
 				const opt = roles[i] + '_user';
-				const arr = c.get('homeproxy', 'telegram', opt);
+				const arr = c.get('ravnex', 'telegram', opt);
 				if (type(arr) !== 'array')
 					continue;
 				const keep = [];
@@ -9058,13 +9056,13 @@ const methods = {
 				if (length(keep) !== length(arr)) {
 					changed = true;
 					if (length(keep))
-						c.set('homeproxy', 'telegram', opt, keep);
+						c.set('ravnex', 'telegram', opt, keep);
 					else
-						c.delete('homeproxy', 'telegram', opt);
+						c.delete('ravnex', 'telegram', opt);
 				}
 			}
 			if (changed)
-				c.commit('homeproxy');
+				c.commit('ravnex');
 			/* Ф8.7: удаление из RBAC — security-событие (когда что-то
 			 * реально изменилось; идемпотентный вызов не спамит). */
 			if (changed) {
@@ -9098,8 +9096,8 @@ const methods = {
 			if (val !== '0' && val !== '1')
 				return { result: false, error: 'bad value' };
 			const c = cursor();
-			c.set('homeproxy', 'telegram', key, val);
-			c.commit('homeproxy');
+			c.set('ravnex', 'telegram', key, val);
+			c.commit('ravnex');
 			return { result: true };
 		}
 	},
@@ -9118,22 +9116,22 @@ const methods = {
 			if (length(uid) && match(uid, /^[0-9]+$/) == null)
 				return { result: false, error: 'bad owner_uid' };
 			const c = cursor();
-			c.set('homeproxy', 'telegram', 'chat_id', chat);
+			c.set('ravnex', 'telegram', 'chat_id', chat);
 			let seeded = false;
 			if (length(uid)) {
 				const roles = [ 'owner', 'admin', 'operator', 'viewer' ];
 				let any = 0;
 				for (let i = 0; i < length(roles); i++) {
-					const arr = c.get('homeproxy', 'telegram', roles[i] + '_user');
+					const arr = c.get('ravnex', 'telegram', roles[i] + '_user');
 					if (type(arr) === 'array')
 						any += length(arr);
 				}
 				if (any === 0) {
-					c.set('homeproxy', 'telegram', 'owner_user', [ uid ]);
+					c.set('ravnex', 'telegram', 'owner_user', [ uid ]);
 					seeded = true;
 				}
 			}
-			c.commit('homeproxy');
+			c.commit('ravnex');
 			return { result: true, owner_seeded: seeded };
 		}
 	},
@@ -9153,9 +9151,9 @@ const methods = {
 			if (match(uid, /^[0-9]+$/) == null)
 				return { result: false, error: 'bad uid' };
 			const c = cursor();
-			const stored = trim('' + (c.get('homeproxy', 'telegram', 'pair_code') || ''));
-			const until = int('' + (c.get('homeproxy', 'telegram', 'pair_until') || '0') || '0');
-			const role = trim('' + (c.get('homeproxy', 'telegram', 'pair_role') || 'owner'));
+			const stored = trim('' + (c.get('ravnex', 'telegram', 'pair_code') || ''));
+			const until = int('' + (c.get('ravnex', 'telegram', 'pair_until') || '0') || '0');
+			const role = trim('' + (c.get('ravnex', 'telegram', 'pair_role') || 'owner'));
 			const roles = { owner: 1, admin: 1, operator: 1, viewer: 1 };
 			if (!length(stored) || stored !== code || time() > until ||
 			    roles[role] == null) {
@@ -9165,7 +9163,7 @@ const methods = {
 				return { result: false, error: 'wrong or expired code' };
 			}
 			const opt = role + '_user';
-			const arr = c.get('homeproxy', 'telegram', opt);
+			const arr = c.get('ravnex', 'telegram', opt);
 			const cur = (type(arr) === 'array') ? arr : [];
 			let have = false;
 			for (let k = 0; k < length(cur); k++)
@@ -9173,11 +9171,11 @@ const methods = {
 					have = true;
 			if (!have)
 				push(cur, uid);
-			c.set('homeproxy', 'telegram', opt, cur);
-			c.delete('homeproxy', 'telegram', 'pair_code');
-			c.delete('homeproxy', 'telegram', 'pair_until');
-			c.delete('homeproxy', 'telegram', 'pair_role');
-			c.commit('homeproxy');
+			c.set('ravnex', 'telegram', opt, cur);
+			c.delete('ravnex', 'telegram', 'pair_code');
+			c.delete('ravnex', 'telegram', 'pair_until');
+			c.delete('ravnex', 'telegram', 'pair_role');
+			c.commit('ravnex');
 			/* Ф8.7: успешная привязка — security-событие (роль видна). */
 			try { ev_emit('security', 'pair_ok', uid,
 				'привязан по одноразовому коду, роль: ' + role); } catch (e) { /* best-effort */ }
@@ -9194,7 +9192,7 @@ const methods = {
 			const action = trim('' + ((req && req.args && req.args.action) || ''));
 			if (action !== 'start' && action !== 'stop' && action !== 'restart')
 				return { result: false, error: 'bad action' };
-			system(`/etc/init.d/homeproxy ${action} >/dev/null 2>&1 &`);
+			system(`/etc/init.d/ravnex ${action} >/dev/null 2>&1 &`);
 			return { result: true, action: action };
 		}
 	},
@@ -9211,7 +9209,7 @@ const methods = {
 			if (modes[mode] == null)
 				return { result: false, error: 'bad mode' };
 			const c = cursor();
-			const cur = '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
+			const cur = '' + (c.get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru');
 			if (cur === mode)
 				return { result: true, unchanged: true, mode: mode };
 			const BK = HP_DIR + '/backups';
@@ -9223,12 +9221,12 @@ const methods = {
 			if (!length(ts))
 				return { result: false, error: 'date failed' };
 			const dir = BK + '/mode-change-' + ts;
-			system('mkdir -p ' + shellquote(dir) + ' && cp /etc/config/homeproxy ' + shellquote(dir + '/config'));
+			system('mkdir -p ' + shellquote(dir) + ' && cp /etc/config/ravnex ' + shellquote(dir + '/config'));
 			if (!access(dir + '/config'))
 				return { result: false, error: 'snapshot failed — mode NOT changed' };
-			c.set('homeproxy', 'config', 'routing_mode', mode);
-			c.commit('homeproxy');
-			system(`/etc/init.d/homeproxy restart >/dev/null 2>&1 &`);
+			c.set('ravnex', 'config', 'routing_mode', mode);
+			c.commit('ravnex');
+			system(`/etc/init.d/ravnex restart >/dev/null 2>&1 &`);
 			return { result: true, mode: mode, prev: cur, snapshot: dir };
 		}
 	},
@@ -9249,27 +9247,27 @@ const methods = {
 			const by = (trim('' + ((req && req.args && req.args.by) || '')) === 'tg') ? 'tg' : 'ui';
 			const c = cursor();
 			if (!on) {
-				const prev = trim('' + (c.get('homeproxy', 'telegram', 'safe_prev') || ''));
+				const prev = trim('' + (c.get('ravnex', 'telegram', 'safe_prev') || ''));
 				if (!length(prev))
 					return { result: false, error: 'safe mode is not active' };
 				if (match(prev, /^[A-Za-z0-9_-]+$/) == null)
 					return { result: false, error: 'corrupt safe_prev — восстановите main node в UI' };
-				c.set('homeproxy', 'config', 'main_node', prev);
-				c.delete('homeproxy', 'telegram', 'safe');
-				c.delete('homeproxy', 'telegram', 'safe_prev');
-				c.commit('homeproxy');
+				c.set('ravnex', 'config', 'main_node', prev);
+				c.delete('ravnex', 'telegram', 'safe');
+				c.delete('ravnex', 'telegram', 'safe_prev');
+				c.commit('ravnex');
 				/* Ф8.7: честное событие шины (категория safe) — владелец
 				 * узнаёт о возврате узла даже если действие шло из UI.
 				 * Тип safe_off — самодокументируемый в журнале. */
 				try { ev_emit('safe', 'safe_off', by,
 					'возвращён узел: ' + prev + '; служба перезапускается'); } catch (e) { /* best-effort */ }
-				system(`/etc/init.d/homeproxy restart >/dev/null 2>&1 &`);
+				system(`/etc/init.d/ravnex restart >/dev/null 2>&1 &`);
 				return { result: true, restored: prev };
 			}
-			const rmode = '' + (c.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru');
+			const rmode = '' + (c.get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru');
 			if (rmode === 'direct')
 				return { result: false, error: 'режим «Напрямую» — прокси уже выключен целиком, safe mode не требуется' };
-			const cur = '' + (c.get('homeproxy', 'config', 'main_node') || '');
+			const cur = '' + (c.get('ravnex', 'config', 'main_node') || '');
 			if (cur === 'direct-out')
 				return { result: true, unchanged: true, note: 'main node уже direct' };
 			if (!length(cur) || match(cur, /^[A-Za-z0-9_-]+$/) == null)
@@ -9283,13 +9281,13 @@ const methods = {
 			if (!length(ts))
 				return { result: false, error: 'date failed' };
 			const dir = BK + '/safe-mode-' + ts;
-			system('mkdir -p ' + shellquote(dir) + ' && cp /etc/config/homeproxy ' + shellquote(dir + '/config'));
+			system('mkdir -p ' + shellquote(dir) + ' && cp /etc/config/ravnex ' + shellquote(dir + '/config'));
 			if (!access(dir + '/config'))
 				return { result: false, error: 'snapshot failed — safe mode NOT enabled' };
-			c.set('homeproxy', 'config', 'main_node', 'direct-out');
-			c.set('homeproxy', 'telegram', 'safe', '1');
-			c.set('homeproxy', 'telegram', 'safe_prev', cur);
-			c.commit('homeproxy');
+			c.set('ravnex', 'config', 'main_node', 'direct-out');
+			c.set('ravnex', 'telegram', 'safe', '1');
+			c.set('ravnex', 'telegram', 'safe_prev', cur);
+			c.commit('ravnex');
 			/* Ф8.7: событие шины ДО рестарта (durable-курсор бота доставит
 			 * пуш, когда ответит какой-нибудь канал доставки; честная
 			 * граница D33b: в Safe Mode цепочка ушла в direct — прямой
@@ -9298,7 +9296,7 @@ const methods = {
 			try { ev_emit('safe', 'safe_on', by,
 				'выход напрямую (был узел: ' + cur + '); DNS/firewall не тронуты; снапшот: safe-mode-' + ts);
 			} catch (e) { /* best-effort */ }
-			system(`/etc/init.d/homeproxy restart >/dev/null 2>&1 &`);
+			system(`/etc/init.d/ravnex restart >/dev/null 2>&1 &`);
 			return { result: true, prev: cur, snapshot: dir };
 		}
 	},
@@ -9405,8 +9403,8 @@ const methods = {
 	telegram_test: {
 		call: function() {
 			const c = cursor();
-			const token = trim('' + (c.get('homeproxy', 'telegram', 'token') || ''));
-			const chat_raw = trim('' + (c.get('homeproxy', 'telegram', 'chat_id') || ''));
+			const token = trim('' + (c.get('ravnex', 'telegram', 'token') || ''));
+			const chat_raw = trim('' + (c.get('ravnex', 'telegram', 'chat_id') || ''));
 			if (!length(token) || match(token, /^[0-9]+:[A-Za-z0-9_-]+$/) == null)
 				return { result: false, error: 'no token' };
 			const cfgf = RUN_DIR + '/.tg.curl.test';
@@ -9503,8 +9501,8 @@ const methods = {
 			if (SAMPLES[cat] == null)
 				return { result: false, error: 'bad category' };
 			const c = cursor();
-			const token = trim('' + (c.get('homeproxy', 'telegram', 'token') || ''));
-			const chat_raw = trim('' + (c.get('homeproxy', 'telegram', 'chat_id') || ''));
+			const token = trim('' + (c.get('ravnex', 'telegram', 'token') || ''));
+			const chat_raw = trim('' + (c.get('ravnex', 'telegram', 'chat_id') || ''));
 			if (!length(token) || match(token, /^[0-9]+:[A-Za-z0-9_-]+$/) == null)
 				return { result: false, error: 'no token' };
 			if (!length(chat_raw))
@@ -9548,7 +9546,7 @@ const methods = {
 	automation_geo_diag: {
 		call: function(req) {
 			const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
-			let mfd = popen('uci -q get homeproxy.infra.mixed_port 2>/dev/null');
+			let mfd = popen('uci -q get ravnex.infra.mixed_port 2>/dev/null');
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
 
@@ -10055,7 +10053,7 @@ const methods = {
 			/* Disable MultiDNS first (DNS falls back to the direct upstreams via the
 			 * mdns_ok guard), stop the running mosdns, then delete the binary. Ф1.4
 			 * (audit 11): identity-verified stop, a foreign mosdns is never touched. */
-			system("uci -q set homeproxy.multidns.enabled=0; uci -q commit homeproxy 2>/dev/null; true");
+			system("uci -q set ravnex.multidns.enabled=0; uci -q commit ravnex 2>/dev/null; true");
 			let pmf = pm_reg_get('mosdns');
 			if (pmf != null && pm_entry_alive(pmf))
 				pm_kill_entry(pmf, 5000);
@@ -10066,7 +10064,7 @@ const methods = {
 			system('rm -f /usr/bin/mosdns');
 			/* Regenerate the client config so russia-dns/secure-dns revert to direct
 			 * upstreams right away (instead of pointing at the dead 5453/5454). */
-			system('/etc/init.d/homeproxy reload 2>/dev/null; true');
+			system('/etc/init.d/ravnex reload 2>/dev/null; true');
 			return { result: !access('/usr/bin/mosdns') };
 		}
 	},
@@ -10080,7 +10078,7 @@ const methods = {
 				try { state = json(readfile(state_file)) || {}; } catch (e) { state = {}; }
 			}
 			let enabled = null;
-			let efd = popen('uci -q get homeproxy.multidns.enabled 2>/dev/null');
+			let efd = popen('uci -q get ravnex.multidns.enabled 2>/dev/null');
 			if (efd) { enabled = trim(efd.read('all')); efd.close(); }
 
 			/* Ф1.6 (audits 13/14): the FACTUAL secure-DNS transport + per-upstream
@@ -10092,11 +10090,11 @@ const methods = {
 			 * only carries TCP-based transports (DoH/DoT), so DoQ/DoH3 stay direct
 			 * — each row reports where its queries really egress. */
 			let md_node = null, md_svp = null, md_use_secure = null;
-			let vfd = popen('uci -q get homeproxy.config.main_node 2>/dev/null');
+			let vfd = popen('uci -q get ravnex.config.main_node 2>/dev/null');
 			if (vfd) { md_node = trim(vfd.read('all')); vfd.close(); }
-			vfd = popen('uci -q get homeproxy.multidns.secure_via_proxy 2>/dev/null');
+			vfd = popen('uci -q get ravnex.multidns.secure_via_proxy 2>/dev/null');
 			if (vfd) { md_svp = trim(vfd.read('all')); vfd.close(); }
-			vfd = popen('uci -q get homeproxy.multidns.use_secure 2>/dev/null');
+			vfd = popen('uci -q get ravnex.multidns.use_secure 2>/dev/null');
 			if (vfd) { md_use_secure = trim(vfd.read('all')); vfd.close(); }
 			/* Default-ON (missing option = '1'), mirroring generate_client.uc —
 			 * the old "missing = off" read lied "proxied: false" for every
@@ -10236,7 +10234,7 @@ const methods = {
 				 * switch (missing = on, like the daemon reads it). */
 				chain_down: (state.secure_chain_down === '1'),
 				emergency_direct: (function() {
-					let ef = popen('uci -q get homeproxy.multidns.emergency_direct 2>/dev/null');
+					let ef = popen('uci -q get ravnex.multidns.emergency_direct 2>/dev/null');
 					let v = ef ? trim(ef.read('all')) : '';
 					if (ef) ef.close();
 					return (v !== '0');
@@ -10251,7 +10249,7 @@ const methods = {
 	 * MultiDNS is actually accelerating + de-poisoning resolution. */
 	diag_dns_multidns: {
 		call: function() {
-			let fd = popen('uci -q get homeproxy.multidns.enabled 2>/dev/null');
+			let fd = popen('uci -q get ravnex.multidns.enabled 2>/dev/null');
 			let enabled = fd ? trim(fd.read('all')) : '0';
 			if (fd) fd.close();
 			if (enabled !== '1')
@@ -10259,9 +10257,9 @@ const methods = {
 
 			let plain_port = '5453';
 			let secure_port = '5454';
-			let pf = popen('uci -q get homeproxy.multidns.plain_port 2>/dev/null');
+			let pf = popen('uci -q get ravnex.multidns.plain_port 2>/dev/null');
 			if (pf) { let pv = trim(pf.read('all')); if (length(pv)) plain_port = pv; pf.close(); }
-			let sf = popen('uci -q get homeproxy.multidns.secure_port 2>/dev/null');
+			let sf = popen('uci -q get ravnex.multidns.secure_port 2>/dev/null');
 			if (sf) { let sv = trim(sf.read('all')); if (length(sv)) secure_port = sv; sf.close(); }
 
 			/* Ф1.4 (audit 11): ownership-grade liveness — registry identity or
@@ -10338,8 +10336,8 @@ const methods = {
 	 * is out of sync, giving the user a guaranteed way to recover connectivity. */
 		multidns_disable: {
 			call: function(req) {
-				system('uci -q set homeproxy.multidns.enabled=0');
-				system('uci -q commit homeproxy');
+				system('uci -q set ravnex.multidns.enabled=0');
+				system('uci -q commit ravnex');
 				let pidf = RUN_DIR + '/multidns/mosdns.pid';
 				if (access(pidf)) {
 					let c = trim(readfile(pidf));
@@ -10688,25 +10686,25 @@ const methods = {
 					return { result: false, error: 'некорректный интервал (1..720 часов)' };
 			}
 			const c = cursor();
-			if (!c.get_all('homeproxy', 'automation'))
-				c.set('homeproxy', 'automation', 'homeproxy');
-			const cur_protect = '' + (c.get('homeproxy', 'automation', 'geo_protect') == null
-				? '1' : c.get('homeproxy', 'automation', 'geo_protect'));
-			const cur_auto = '' + (c.get('homeproxy', 'automation', 'geo_auto_update') == null
-				? '0' : c.get('homeproxy', 'automation', 'geo_auto_update'));
-			const cur_hours = '' + (c.get('homeproxy', 'automation', 'geo_update_hours') == null
-				? '24' : c.get('homeproxy', 'automation', 'geo_update_hours'));
+			if (!c.get_all('ravnex', 'automation'))
+				c.set('ravnex', 'automation', 'ravnex');
+			const cur_protect = '' + (c.get('ravnex', 'automation', 'geo_protect') == null
+				? '1' : c.get('ravnex', 'automation', 'geo_protect'));
+			const cur_auto = '' + (c.get('ravnex', 'automation', 'geo_auto_update') == null
+				? '0' : c.get('ravnex', 'automation', 'geo_auto_update'));
+			const cur_hours = '' + (c.get('ravnex', 'automation', 'geo_update_hours') == null
+				? '24' : c.get('ravnex', 'automation', 'geo_update_hours'));
 			/* Honest unchanged path: identical values → NO commit at all —
 			 * an innocent save must not churn the UCI file (md5 discipline). */
 			const hours_same = (auto_update === '0') ||
 				('' + hours === cur_hours);
 			if (cur_protect === protect && cur_auto === auto_update && hours_same)
 				return { result: true, unchanged: true };
-			c.set('homeproxy', 'automation', 'geo_protect', protect);
-			c.set('homeproxy', 'automation', 'geo_auto_update', auto_update);
+			c.set('ravnex', 'automation', 'geo_protect', protect);
+			c.set('ravnex', 'automation', 'geo_auto_update', auto_update);
 			if (hours != null)
-				c.set('homeproxy', 'automation', 'geo_update_hours', '' + hours);
-			c.commit('homeproxy');
+				c.set('ravnex', 'automation', 'geo_update_hours', '' + hours);
+			c.commit('ravnex');
 			/* The daemon re-reads the auto-update knobs on its own hourly
 			 * check — only a GUARD change regenerates the core config. */
 			if (cur_protect === protect)
@@ -11307,8 +11305,8 @@ const methods = {
 			if (cur === mode)
 				return { result: true, changed: false, mode: mode,
 					global_mode: cur, lists: hp_lan_view(c) };
-			c.set('homeproxy', 'control', 'lan_proxy_mode', mode);
-			c.commit('homeproxy');
+			c.set('ravnex', 'control', 'lan_proxy_mode', mode);
+			c.commit('ravnex');
 			hc_add_event('system', '', 'режим устройств: ' + (LAN_GLOBAL_LABEL[mode] || mode));
 			const ap = op_spawn('fw_refresh', 'device filter mode (' + mode + ')');
 			return { result: true, changed: true, mode: mode,
@@ -11353,7 +11351,7 @@ const methods = {
 			if (!changed)
 				return { result: true, changed: false, mode: mode,
 					global_mode: hp_lan_global_mode(c), lists: hp_lan_view(c) };
-			c.commit('homeproxy');
+			c.commit('ravnex');
 			hc_add_event('system', cl.name || ip || mac,
 				'режим прокси: ' + (LAN_MODE_LABEL[mode] || mode));
 			const ap = op_spawn('fw_refresh', 'device proxy mode (' + (LAN_MODE_LABEL[mode] || mode) + ')');
@@ -11409,7 +11407,7 @@ const methods = {
 			if (!changed)
 				return { result: true, changed: false,
 					global_mode: hp_lan_global_mode(c), lists: hp_lan_view(c) };
-			c.commit('homeproxy');
+			c.commit('ravnex');
 			hc_add_event('system', '', 'экспертные списки устройств обновлены');
 			const ap = op_spawn('fw_refresh', 'device lists apply (nft re-render, flows kept)');
 			return { result: true, changed: true,

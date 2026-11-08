@@ -104,7 +104,7 @@ return view.extend({
 		 * showing live RPC truth — the "settings don't save" report. */
 		return Promise.all([
 			L.resolveDefault(callTelegramStatus(), null),
-			uci.load('homeproxy')
+			uci.load('ravnex')
 		]);
 	},
 
@@ -156,7 +156,7 @@ return view.extend({
 		const tgPival = E('input', { type: 'number', min: '1', max: '30', style: 'width:110px', 'class': 'cbi-input-text' });
 
 		const tgU = (opt, def) => {
-			const v = uci.get('homeproxy', 'telegram', opt);
+			const v = uci.get('ravnex', 'telegram', opt);
 			return (v != null && String(v).length && String(v) !== '0') ? String(v) : def;
 		};
 		/* ч.119: boolean fields need '0' to mean OFF — tgU() was built for
@@ -165,7 +165,7 @@ return view.extend({
 		 * («Автоматизация: выученные блокировки» re-appeared after save) and
 		 * the NEXT save silently re-enabled it. */
 		const tgB = (opt, def) => {
-			const v = uci.get('homeproxy', 'telegram', opt);
+			const v = uci.get('ravnex', 'telegram', opt);
 			return (v != null && String(v).length) ? (String(v) === '1') : (def === '1');
 		};
 		tgEnabled.checked = tgB('enabled', '0');

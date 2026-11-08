@@ -5,25 +5,25 @@
    run, so the legacy interface never flashes while the Ravnex shell boots.
    Other LuCI pages keep the stock bootstrap look. :not(#hp-topbar) keeps
    our own shell topbar visible (lesson ch.134). */
-body[data-page^="admin-services-homeproxy"] > header:not(#hp-topbar),
-body[data-page^="admin-services-homeproxy"] #tabmenu,
-body[data-page^="admin-services-homeproxy"] footer {
+body[data-page^="admin-services-ravnex"] > header:not(#hp-topbar),
+body[data-page^="admin-services-ravnex"] #tabmenu,
+body[data-page^="admin-services-ravnex"] footer {
 	display: none !important;
 }
-body[data-page^="admin-services-homeproxy"] {
+body[data-page^="admin-services-ravnex"] {
 	background: #f2f4f8;
 	color: #1b2431;
 }
-html[data-hp-theme="dark"] body[data-page^="admin-services-homeproxy"] {
+html[data-hp-theme="dark"] body[data-page^="admin-services-ravnex"] {
 	background: #0c1117;
 	color: #e2e8f0;
 }
-html[data-hp-theme="light"] body[data-page^="admin-services-homeproxy"] {
+html[data-hp-theme="light"] body[data-page^="admin-services-ravnex"] {
 	background: #f2f4f8;
 	color: #1b2431;
 }
 @media (prefers-color-scheme: dark) {
-	html:not([data-hp-theme]) body[data-page^="admin-services-homeproxy"] {
+	html:not([data-hp-theme]) body[data-page^="admin-services-ravnex"] {
 		background: #0c1117;
 		color: #e2e8f0;
 	}

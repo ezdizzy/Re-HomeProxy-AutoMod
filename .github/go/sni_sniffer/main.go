@@ -38,7 +38,7 @@ const version = "1.1.0"
 
 const (
 	defaultIface  = "br-lan"
-	defaultFile   = "/var/run/homeproxy/sni_events.jsonl"
+	defaultFile   = "/var/run/ravnex/sni_events.jsonl"
 	rotateSize    = 512 * 1024 // rotate the event file above this size
 	dedupWindow   = 10 * time.Minute
 	dedupMax      = 8192

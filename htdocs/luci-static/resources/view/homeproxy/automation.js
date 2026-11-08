@@ -165,7 +165,7 @@ function downloadList(content) {
 	const blob = new Blob([content || ''], { type: 'text/plain' });
 	const a = document.createElement('a');
 	a.href = URL.createObjectURL(blob);
-	a.download = 'homeproxy_learned_list.txt';
+	a.download = 'ravnex_learned_list.txt';
 	document.body.appendChild(a);
 	a.click();
 	a.remove();
@@ -326,7 +326,7 @@ function injectStyle() {
 return view.extend({
 	load: function() {
 		return Promise.all([
-			uci.load('homeproxy')
+			uci.load('ravnex')
 		]);
 	},
 
@@ -334,13 +334,13 @@ return view.extend({
 		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
 		hp.uiShell();
 
-		const m = new form.Map('homeproxy');
+		const m = new form.Map('ravnex');
 		/* Ф7.1/U4: TWO sections over the SAME UCI section — the master switch
 		 * stays visible on the level, every other knob is EXPERT (collapsed
 		 * into a <details> after render). The geo/RU-protection options moved
 		 * to the Connection page card (Ф7.2 — a routing invariant, not an
 		 * automation setting; the UCI keys stay automation.*). */
-		const s = m.section(form.NamedSection, 'automation', 'homeproxy', '');
+		const s = m.section(form.NamedSection, 'automation', 'ravnex', '');
 
 		let o = s.option(form.Flag, 'enabled', _('Enable automation'),
 			_('Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br>'
@@ -348,7 +348,7 @@ return view.extend({
 		o.rmempty = false;
 
 		/* The expert section: SAME UCI section, every knob hidden by default. */
-		const sx = m.section(form.NamedSection, 'automation', 'homeproxy', _('Expert settings'));
+		const sx = m.section(form.NamedSection, 'automation', 'ravnex', _('Expert settings'));
 
 		o = sx.option(form.ListValue, 'mode', _('Mode'));
 		o.value('balanced', _('Balanced'));
@@ -372,7 +372,7 @@ return view.extend({
 		/* Legacy configs store a single string ('all' | 'both' | 'clash' | ...) — map
 		 * it to the equivalent checkbox set for display, so nothing looks unchecked. */
 		o.cfgvalue = function() {
-			let v = uci.get('homeproxy', 'automation', 'discover');
+			let v = uci.get('ravnex', 'automation', 'discover');
 			if (v == null) return this.default;
 			if (!Array.isArray(v)) v = [ v ];
 			if (v.length === 0 || v.includes('all')) return [ 'dns', 'clash', 'sni' ];
@@ -411,7 +411,7 @@ return view.extend({
 		o.rmempty = false;
 
 		o = sx.option(form.Flag, 'poison_asn_check', _('Cymru origin-ASN check (second layer)'),
-			_('For mismatches the first layers cannot classify: the plain-view IP is looked up via Team Cymru origin ASN (TXT over DoH through the tunnel) and cached by network prefix — one answer covers the whole range. If the ASN belongs to a CDN/anycast network (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), the mismatch is not poisoning. Adds an external lookup only for candidates that stayed ambiguous; extend the list via /etc/homeproxy/resources/cdn_asn.txt (one ASN number per line). Applied after Restart service.'));
+			_('For mismatches the first layers cannot classify: the plain-view IP is looked up via Team Cymru origin ASN (TXT over DoH through the tunnel) and cached by network prefix — one answer covers the whole range. If the ASN belongs to a CDN/anycast network (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), the mismatch is not poisoning. Adds an external lookup only for candidates that stayed ambiguous; extend the list via /etc/ravnex/resources/cdn_asn.txt (one ASN number per line). Applied after Restart service.'));
 		o.default = o.disabled;
 
 		o = sx.option(form.Value, 'sni_sniffer_interface', _('SNI capture interface'),

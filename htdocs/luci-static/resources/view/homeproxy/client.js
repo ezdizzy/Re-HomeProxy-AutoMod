@@ -113,10 +113,10 @@ function callCoreDownload(url, tmpPath) {
 }
 
 function getServiceStatus() {
-	return L.resolveDefault(callServiceList('homeproxy'), {}).then((res) => {
+	return L.resolveDefault(callServiceList('ravnex'), {}).then((res) => {
 		let isRunning = false;
 		try {
-			isRunning = res['homeproxy']['instances']['hiddify-c']['running'];
+			isRunning = res['ravnex']['instances']['hiddify-c']['running'];
 		} catch (e) { }
 		return isRunning;
 	});
@@ -153,7 +153,7 @@ let stubValidator = {
 return view.extend({
 	load() {
 		return Promise.all([
-			uci.load('homeproxy'),
+			uci.load('ravnex'),
 			uci.load('luci'),
 			hp.getBuiltinFeatures(),
 			network.getHostHints()
@@ -186,7 +186,7 @@ return view.extend({
 					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport));
 		});
 
-		m = new form.Map('homeproxy');
+		m = new form.Map('ravnex');
 
 		s = m.section(form.TypedSection);
 		s.render = function () {
@@ -202,7 +202,7 @@ return view.extend({
 			]);
 		}
 
-		s = m.section(form.NamedSection, 'config', 'homeproxy');
+		s = m.section(form.NamedSection, 'config', 'ravnex');
 
 		s.tab('routing', _('Routing Settings'),
 			_('The main connection: the main server, the routing mode, and what keeps the connection alive when a server dies (URLTest groups, Hot Swap). New servers are added on the Servers page.'));
@@ -229,7 +229,7 @@ return view.extend({
 			o.rawhtml = true;
 			o.cfgvalue = function() {
 				const cores = features.cores || {};
-				let sel = this.map.data.get('homeproxy', 'config', 'preferred_core') || 'auto';
+				let sel = this.map.data.get('ravnex', 'config', 'preferred_core') || 'auto';
 				if (sel === 'auto')
 					sel = (cores.hiddify?.installed) ? 'hiddify' :
 					      (cores.singbox?.installed) ? 'singbox' : null;
@@ -345,9 +345,9 @@ return view.extend({
 		 * field is visible with no selectable nodes. The guarded validate below
 		 * keeps a proper error for the actively-misconfigured case instead. */
 		o.validate = function(section_id) {
-			if (this.map.data.get('homeproxy', 'config', 'main_node') !== 'urltest')
+			if (this.map.data.get('ravnex', 'config', 'main_node') !== 'urltest')
 				return true;
-			if (this.map.data.get('homeproxy', 'config', 'exit_mode') !== 'prefer')
+			if (this.map.data.get('ravnex', 'config', 'exit_mode') !== 'prefer')
 				return true;
 			let value = this.section.formvalue(section_id, 'exit_preferred');
 			if (section_id && !value)
@@ -639,7 +639,7 @@ return view.extend({
 
 		o = s.taboption('routing', form.Value, 'ruleset_local_path', _('Local rule-sets folder'),
 			_('Folder with the local .srs copies, one file per rule-set named by its tag (the Rule-sets card on the Core & Tools page lists the exact names and can download them). Only used when the folder exists; absolute path.'));
-		o.placeholder = '/etc/homeproxy/rulesets';
+		o.placeholder = '/etc/ravnex/rulesets';
 		o.rmempty = true;
 		o.retain = true;
 		o.depends('ruleset_local', '1');
@@ -717,9 +717,9 @@ return view.extend({
 		 * from UCI, silently losing the user's IPv6 choice. */
 		o.retain = true;
 		o.cfgvalue = function(section_id) {
-			const stored = uci.get('homeproxy', section_id, 'ipv6_support');
+			const stored = uci.get('ravnex', section_id, 'ipv6_support');
 			if (stored != null) return stored;
-			return (uci.get('homeproxy', section_id, 'routing_mode') === 'proxy_banned_ru')
+			return (uci.get('ravnex', section_id, 'routing_mode') === 'proxy_banned_ru')
 				? this.disabled : this.enabled;
 		};
 
@@ -915,7 +915,7 @@ return view.extend({
 		 * (writing them to 'config' is invisible to the template; caught
 		 * live in the Ф9.14 acceptance). The section node is moved into a
 		 * collapsed <details> after render (automation.js pattern). */
-		const sxw = m.section(form.NamedSection, 'control', 'homeproxy', _('Expert: WAN & interfaces'));
+		const sxw = m.section(form.NamedSection, 'control', 'ravnex', _('Expert: WAN & interfaces'));
 		sxw.description = _('WAN-wide destinations and interface binding for the whole service.');
 
 		so = sxw.option(form.DynamicList, 'wan_proxy_ipv4_ips', _('Proxy IPv4 IP-s'),
@@ -924,7 +924,7 @@ return view.extend({
 
 		so = sxw.option(form.DynamicList, 'wan_proxy_ipv6_ips', _('Proxy IPv6 IP-s'));
 		so.datatype = 'or(ip6addr, cidr6)';
-		so.depends('homeproxy.config.ipv6_support', '1');
+		so.depends('ravnex.config.ipv6_support', '1');
 
 		so = sxw.option(form.DynamicList, 'wan_direct_ipv4_ips', _('Direct IPv4 IP-s'),
 			_('Force these WAN destinations direct (the "Global proxy" devices still pass).'));
@@ -932,7 +932,7 @@ return view.extend({
 
 		so = sxw.option(form.DynamicList, 'wan_direct_ipv6_ips', _('Direct IPv6 IP-s'));
 		so.datatype = 'or(ip6addr, cidr6)';
-		so.depends('homeproxy.config.ipv6_support', '1');
+		so.depends('ravnex.config.ipv6_support', '1');
 
 		so = sxw.option(widgets.DeviceSelect, 'listen_interfaces', _('Listen interfaces'),
 			_('Only process traffic from specific interfaces. Leave empty for all.'));
@@ -1008,10 +1008,10 @@ return view.extend({
 			const geoHours = E('input', { type: 'number', min: '1', max: '720', 'class': 'cbi-input-text', style: 'width:80px' });
 			const ruSave = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' }, [ _('Save RU-protection') ]);
 			const ruUpdate = E('button', { 'class': 'btn cbi-button', type: 'button' }, [ _('Update databases now') ]);
-			geoProtect.checked = (uci.get('homeproxy', 'automation', 'geo_protect') != null)
-				? (uci.get('homeproxy', 'automation', 'geo_protect') !== '0') : true;
-			geoAuto.checked = (uci.get('homeproxy', 'automation', 'geo_auto_update') === '1');
-			geoHours.value = uci.get('homeproxy', 'automation', 'geo_update_hours') || '24';
+			geoProtect.checked = (uci.get('ravnex', 'automation', 'geo_protect') != null)
+				? (uci.get('ravnex', 'automation', 'geo_protect') !== '0') : true;
+			geoAuto.checked = (uci.get('ravnex', 'automation', 'geo_auto_update') === '1');
+			geoHours.value = uci.get('ravnex', 'automation', 'geo_update_hours') || '24';
 			const ruRow = E('div', { 'class': 'rurow' }, [
 				E('label', { 'class': 'hpui-hint', style: 'margin:0; cursor:pointer; font-weight:600' },
 					[ geoProtect, ' ' + _('RU traffic does NOT go through the proxy') ]),
@@ -1031,8 +1031,8 @@ return view.extend({
 			]);
 			ruSave.addEventListener('click', function() {
 				ruSave.disabled = true;
-				const wasProtect = (uci.get('homeproxy', 'automation', 'geo_protect') != null)
-					? (uci.get('homeproxy', 'automation', 'geo_protect') !== '0') : true;
+				const wasProtect = (uci.get('ravnex', 'automation', 'geo_protect') != null)
+					? (uci.get('ravnex', 'automation', 'geo_protect') !== '0') : true;
 				L.resolveDefault(callGeoProtectSet(
 					geoProtect.checked ? '1' : '0',
 					geoAuto.checked ? '1' : '0',

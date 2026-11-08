@@ -1,5 +1,11 @@
 #!/bin/sh
 
-ucode "/etc/homeproxy/scripts/migrate_config.uc"
+# Р9 ШАГ 3 (ч.253): сначала переезд UCI/каталогов homeproxy → ravnex,
+# затем обычные option-миграции migrate_config.uc (уже на ravnex).
+# Оба скрипта идемпотентны; migrate_ravnex.uc выходит сразу, если
+# /etc/config/homeproxy отсутствует (свежая установка / уже мигрировано).
+
+ucode "/etc/ravnex/scripts/migrate_ravnex.uc"
+ucode "/etc/ravnex/scripts/migrate_config.uc"
 
 exit 0

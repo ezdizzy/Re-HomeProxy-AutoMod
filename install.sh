@@ -188,7 +188,7 @@ feed_install() { # <pkg> — явный файл из манифеста + sha25
 # ------------------------------------------------------------------ helpers
 
 count_nodes() {
-	uci show homeproxy 2>/dev/null | grep -cE "^homeproxy\.[^.]+=node$"
+	uci show ravnex 2>/dev/null | grep -cE "^ravnex\.[^.]+=node$"
 }
 
 # Домен/адрес узла -> IPv4 (пусто, если не резолвится)
@@ -219,10 +219,10 @@ list_nodes() {
 	# имя секции — в конце строки (его просят ввести в меню выбора узла).
 	local GEO=/tmp/hp_geo.$$
 	: > "$GEO"
-	uci show homeproxy 2>/dev/null | sed -n 's/^homeproxy\.\([^.]*\)=node$/\1/p' | while read -r sec; do
-		LBL=$(uci -q get "homeproxy.$sec.label" 2>/dev/null)
+	uci show ravnex 2>/dev/null | sed -n 's/^ravnex\.\([^.]*\)=node$/\1/p' | while read -r sec; do
+		LBL=$(uci -q get "ravnex.$sec.label" 2>/dev/null)
 		[ -z "$LBL" ] && LBL=$sec
-		ADDR=$(uci -q get "homeproxy.$sec.address" 2>/dev/null)
+		ADDR=$(uci -q get "ravnex.$sec.address" 2>/dev/null)
 		INFO=""
 		if [ -n "$ADDR" ]; then
 			IP=$(resolve4 "$ADDR")
@@ -235,18 +235,18 @@ list_nodes() {
 
 # Добавить правило прокси, если правила с таким источником ещё нет. add_rule <source> <node>
 add_rule() {
-	# uci show prints auto-generated section ids (homeproxy.cfgXXXX.source='…'),
+	# uci show prints auto-generated section ids (ravnex.cfgXXXX.source='…'),
 	# NOT the section type — matching on "proxy_ru_rule" never matched, so every
 	# re-run appended another duplicate rule.
-	if uci show homeproxy 2>/dev/null | grep -q "\.source='$1'"; then
+	if uci show ravnex 2>/dev/null | grep -q "\.source='$1'"; then
 		return 0
 	fi
-	SEC=$(uci add homeproxy proxy_ru_rule 2>/dev/null)
+	SEC=$(uci add ravnex proxy_ru_rule 2>/dev/null)
 	[ -n "$SEC" ] || { warn "  не удалось добавить правило $1 → $2."; return 1; }
-	uci -q set "homeproxy.$SEC.source=$1"
-	uci -q set "homeproxy.$SEC.node=$2"
-	uci -q set "homeproxy.$SEC.enabled=1"
-	uci -q commit homeproxy
+	uci -q set "ravnex.$SEC.source=$1"
+	uci -q set "ravnex.$SEC.node=$2"
+	uci -q set "ravnex.$SEC.enabled=1"
+	uci -q commit ravnex
 	ok "  добавлено правило: Источник $1 → Узел $2"
 	return 0
 }
@@ -255,57 +255,57 @@ add_rule() {
 # и правило YouTube → Zapret. Ничего уже настроенного не трогает.
 ensure_baseline() {
 	apply_gh_mirror
-	[ -z "$(uci -q get homeproxy.config.routing_mode)" ] && uci -q set homeproxy.config.routing_mode=proxy_banned_ru
-	[ -z "$(uci -q get homeproxy.config.main_udp_node)" ] && uci -q set homeproxy.config.main_udp_node=same
-	MN=$(uci -q get homeproxy.config.main_node)
+	[ -z "$(uci -q get ravnex.config.routing_mode)" ] && uci -q set ravnex.config.routing_mode=proxy_banned_ru
+	[ -z "$(uci -q get ravnex.config.main_udp_node)" ] && uci -q set ravnex.config.main_udp_node=same
+	MN=$(uci -q get ravnex.config.main_node)
 	if [ -z "$MN" ] || [ "$MN" = nil ]; then
 		if [ "$(count_nodes)" -gt 0 ]; then
-			uci -q set homeproxy.config.main_node=urltest
-			uci -q set homeproxy.config.main_urltest_mode=auto
+			uci -q set ravnex.config.main_node=urltest
+			uci -q set ravnex.config.main_urltest_mode=auto
 			ok "  узлы найдены — включён URLTest (авто, все узлы)."
-			[ "$(uci -q get homeproxy.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
-		elif [ "$(uci -q get homeproxy.config.zapret_enabled)" = 1 ]; then
+			[ "$(uci -q get ravnex.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
+		elif [ "$(uci -q get ravnex.config.zapret_enabled)" = 1 ]; then
 			# Zapret is an engine, not a main node: direct main keeps the internet up.
 			# NO unconditional YouTube→Zapret rule here: per policy that rule is added
 			# ONLY after a strategy passed its live test (install_zapret does exactly
 			# that); re-running the installer must not route YouTube into an untested
 			# engine.
-			uci -q set homeproxy.config.main_node=direct-out
+			uci -q set ravnex.config.main_node=direct-out
 			info "  нет подписки: интернет напрямую."
 			info "  YouTube через Zapret добавится после успешного теста стратегии (пункт меню Zapret)."
 		else
-			uci -q set homeproxy.config.main_node=direct-out
+			uci -q set ravnex.config.main_node=direct-out
 			info "  нет подписки: интернет работает как обычно (напрямую)."
 			info "  Заблокированные сайты станут доступны после добавления подписки/узла."
 		fi
-		uci -q commit homeproxy
+		uci -q commit ravnex
 	fi
 }
 
 # Дефолтные DNS-пулы MultiDNS/резолверов: 3 обычных + 3 защищённых (только если не заданы)
 set_dns_defaults() {
-	CUR=$(uci -q get homeproxy.config.russia_dns_server)
+	CUR=$(uci -q get ravnex.config.russia_dns_server)
 	if [ -z "$CUR" ]; then
-		uci -q delete homeproxy.config.russia_dns_server 2>/dev/null
-		uci -q add_list homeproxy.config.russia_dns_server=77.88.8.8
-		uci -q add_list homeproxy.config.russia_dns_server=8.8.8.8
-		uci -q add_list homeproxy.config.russia_dns_server=https://cloudflare-dns.com/dns-query
+		uci -q delete ravnex.config.russia_dns_server 2>/dev/null
+		uci -q add_list ravnex.config.russia_dns_server=77.88.8.8
+		uci -q add_list ravnex.config.russia_dns_server=8.8.8.8
+		uci -q add_list ravnex.config.russia_dns_server=https://cloudflare-dns.com/dns-query
 		ok "  обычный DNS-пул: Яндекс 77.88.8.8, Google 8.8.8.8, Cloudflare DoH (прямой)"
 	fi
-	CUR=$(uci -q get homeproxy.config.secure_dns_server)
+	CUR=$(uci -q get ravnex.config.secure_dns_server)
 	if [ -z "$CUR" ]; then
-		uci -q delete homeproxy.config.secure_dns_server 2>/dev/null
-		uci -q add_list homeproxy.config.secure_dns_server=https://dns.google/dns-query
-		uci -q add_list homeproxy.config.secure_dns_server=https://cloudflare-dns.com/dns-query
-		uci -q add_list homeproxy.config.secure_dns_server=https://dns.quad9.net/dns-query
+		uci -q delete ravnex.config.secure_dns_server 2>/dev/null
+		uci -q add_list ravnex.config.secure_dns_server=https://dns.google/dns-query
+		uci -q add_list ravnex.config.secure_dns_server=https://cloudflare-dns.com/dns-query
+		uci -q add_list ravnex.config.secure_dns_server=https://dns.quad9.net/dns-query
 		ok "  защищённый DNS-пул: Google, Cloudflare, Quad9 (DoH)"
 	fi
-	CUR=$(uci -q get homeproxy.config.russia_dns_use_wan)
+	CUR=$(uci -q get ravnex.config.russia_dns_use_wan)
 	if [ -z "$CUR" ]; then
-		uci -q set homeproxy.config.russia_dns_use_wan='1'
+		uci -q set ravnex.config.russia_dns_use_wan='1'
 		ok "  DNS провайдера (WAN) добавлен в обычный пул по умолчанию"
 	fi
-	uci -q commit homeproxy
+	uci -q commit ravnex
 }
 
 wait_core() {
@@ -337,7 +337,7 @@ internet_check() {
 # Проверка, что прокси-путь реально работает (если есть узлы)
 validate_proxy() {
 	if [ "$(count_nodes)" -eq 0 ]; then return 0; fi
-	MIX=$(uci -q get homeproxy.infra.mixed_port)
+	MIX=$(uci -q get ravnex.infra.mixed_port)
 	[ -z "$MIX" ] && MIX=5330
 	if command -v curl >/dev/null 2>&1; then
 		CODE=$(curl -sx "socks5://127.0.0.1:$MIX" -o /dev/null -w '%{http_code}' \
@@ -357,8 +357,8 @@ validate_proxy() {
 
 apply_and_check() {
 	info "  применяю настройки (перезапуск службы)..."
-	/etc/init.d/homeproxy enable >/dev/null 2>&1
-	/etc/init.d/homeproxy restart >/dev/null 2>&1
+	/etc/init.d/ravnex enable >/dev/null 2>&1
+	/etc/init.d/ravnex restart >/dev/null 2>&1
 	wait_core
 	sleep 3
 	validate_proxy
@@ -377,13 +377,13 @@ apply_and_check() {
 	ZAP="нет"; [ -x /opt/zapret2/nfq2/nfqws2 ] && ZAP="да"
 	BYE="нет"; [ -x /usr/bin/ciadpi ] && BYE="да"
 	CURL="нет"; command -v curl >/dev/null 2>&1 && CURL="да"
-	MN=$(uci -q get homeproxy.config.main_node); [ -z "$MN" ] && MN="(не задан)"
-	MD="выкл"; [ "$(uci -q get homeproxy.multidns.enabled)" = 1 ] && MD="вкл"
-	AU="выкл"; [ "$(uci -q get homeproxy.automation.enabled)" = 1 ] && AU="вкл"
-	ZN="выкл"; [ "$(uci -q get homeproxy.config.zapret_enabled)" = 1 ] && ZN="вкл"
-	TG="выкл"; [ "$(uci -q get homeproxy.telegram.enabled)" = 1 ] && TG="вкл"
-	KC="выкл"; [ "$(uci -q get homecontrol.main.enabled)" = 1 ] && KC="вкл"
-	AP="выкл"; [ "$(uci -q get homeproxy.autopilot.enabled)" = 1 ] && AP="вкл"
+	MN=$(uci -q get ravnex.config.main_node); [ -z "$MN" ] && MN="(не задан)"
+	MD="выкл"; [ "$(uci -q get ravnex.multidns.enabled)" = 1 ] && MD="вкл"
+	AU="выкл"; [ "$(uci -q get ravnex.automation.enabled)" = 1 ] && AU="вкл"
+	ZN="выкл"; [ "$(uci -q get ravnex.config.zapret_enabled)" = 1 ] && ZN="вкл"
+	TG="выкл"; [ "$(uci -q get ravnex.telegram.enabled)" = 1 ] && TG="вкл"
+	KC="выкл"; [ "$(uci -q get ravcontrol.main.enabled)" = 1 ] && KC="вкл"
+	AP="выкл"; [ "$(uci -q get ravnex.autopilot.enabled)" = 1 ] && AP="вкл"
 	echo "  Ядро: $CORE | mosdns: $MOS | Zapret: $ZAP ($ZN) | ByeDPI: $BYE | curl: $CURL"
 	echo "  Узлов: $(count_nodes) | Основной узел: $MN | MultiDNS: $MD | Автоматизация: $AU"
 	echo "  Автопилот: $AP | Telegram-бот: $TG | Контроль: $KC"
@@ -426,12 +426,12 @@ fi
 
 # Прописываем зеркало в бэкенд, чтобы делегированные загрузки тоже его использовали
 # Зеркало GitHub для бэкенда приложения пишем в UCI ПОСЛЕ установки пакета:
-# ранняя запись при отсутствии /etc/config/homeproxy создавала пустой конфиг,
+# ранняя запись при отсутствии /etc/config/ravnex создавала пустой конфиг,
 # который (как conffile) блокировал поставку shipped-дефолтов из пакета.
 apply_gh_mirror() {
-	if [ -n "$GH_MIRROR" ] && [ -f /etc/config/homeproxy ]; then
-		uci set homeproxy.config.github_mirror="$GH_MIRROR"
-		uci commit homeproxy 2>/dev/null
+	if [ -n "$GH_MIRROR" ] && [ -f /etc/config/ravnex ]; then
+		uci set ravnex.config.github_mirror="$GH_MIRROR"
+		uci commit ravnex 2>/dev/null
 	fi
 }
 
@@ -457,7 +457,7 @@ own_pkg_installed() {
 }
 
 # Чужая (оригинальная) homeproxy-версия: другой пакет с теми же файлами.
-# Его наличие нельзя молча игнорировать — файлы (/etc/config/homeproxy,
+# Его наличие нельзя молча игнорировать — файлы (/etc/config/ravnex,
 # rpcd-объект) конфликтуют, и «установка поверх» не происходит на самом деле.
 foreign_homeproxy_pkg() {
 	for _p in luci-app-homeproxy luci-app-homeproxy-hiddify; do
@@ -490,17 +490,17 @@ if [ "$APP_INSTALLED" = 0 ] && [ -n "$FOREIGN_PKG" ]; then
 		die "Установка отменена. Сначала удалите '$FOREIGN_PKG': $( [ "$PM" = apk ] && echo "apk del $FOREIGN_PKG" || echo "opkg remove $FOREIGN_PKG" )."
 	fi
 	info "  останавливаю службу и удаляю '$FOREIGN_PKG'..."
-	/etc/init.d/homeproxy stop >/dev/null 2>&1
+	/etc/init.d/ravnex stop >/dev/null 2>&1
 	if [ "$PM" = apk ]; then apk del "$FOREIGN_PKG" >/dev/null 2>&1; else opkg remove "$FOREIGN_PKG" >/dev/null 2>&1; fi
 	# Чужой пакет часто остаётся в списке (conffiles не даёт удалить) — жёстко добиваем.
 	if [ -n "$(foreign_homeproxy_pkg)" ]; then
 		if [ "$PM" = apk ]; then apk del --force "$FOREIGN_PKG" >/dev/null 2>&1; else opkg remove --force-removal-of-dependent-packages "$FOREIGN_PKG" >/dev/null 2>&1; fi
 	fi
-	if [ -f /etc/config/homeproxy ]; then
-		ask "  Сохранить текущий конфиг /etc/config/homeproxy как homeproxy.foreign.bak? [Д/н]: (рекомендуется — чтобы поставились наши дефолты)"
+	if [ -f /etc/config/ravnex ]; then
+		ask "  Сохранить текущий конфиг /etc/config/ravnex как homeproxy.foreign.bak? [Д/н]: (рекомендуется — чтобы поставились наши дефолты)"
 		if ! is_no "$REPLY"; then
-			mv /etc/config/homeproxy /etc/config/homeproxy.foreign.bak
-			ok "  конфиг сохранён как /etc/config/homeproxy.foreign.bak"
+			mv /etc/config/ravnex /etc/config/ravnex.foreign.bak
+			ok "  конфиг сохранён как /etc/config/ravnex.foreign.bak"
 		fi
 	fi
 	# Убедимся, что чужой пакет ушёл
@@ -516,7 +516,7 @@ if [ "$APP_INSTALLED" = 1 ] && [ -n "$FOREIGN_PKG" ]; then
 	ask "  Удалить '$FOREIGN_PKG' сейчас и переустановить Ravnex? [Д/н]:"
 	if is_yes "$REPLY"; then
 		info "  останавливаю службу и удаляю '$FOREIGN_PKG'..."
-		/etc/init.d/homeproxy stop >/dev/null 2>&1
+		/etc/init.d/ravnex stop >/dev/null 2>&1
 		if [ "$PM" = apk ]; then apk del "$FOREIGN_PKG" >/dev/null 2>&1; else opkg remove "$FOREIGN_PKG" >/dev/null 2>&1; fi
 		# apk/opkg могут упереться в «общие» файлы — жёсткий второй заход.
 		if [ -n "$(foreign_homeproxy_pkg)" ]; then
@@ -637,14 +637,14 @@ app_reinstall() {
 # Проверить и восстановить критические конфиги (firewall includes и др.).
 heal_configs() {
 	info "  проверяю критические конфиги (firewall includes и др.)..."
-	RES=$(ucode /etc/homeproxy/scripts/config_heal.uc repair 2>/dev/null)
+	RES=$(ucode /etc/ravnex/scripts/config_heal.uc repair 2>/dev/null)
 	if printf '%s' "$RES" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
 		ok "  конфигурация в порядке."
 	elif [ -n "$RES" ]; then
 		if printf '%s' "$RES" | grep -q '"repaired":[[:space:]]*\[[^]]'; then
 			ok "  критические конфиги восстановлены."
 			info "  применяю правила (рестарт службы)..."
-			/etc/init.d/homeproxy restart >/dev/null 2>&1
+			/etc/init.d/ravnex restart >/dev/null 2>&1
 		else
 			warn "  часть проблем не удалось исправить автоматически:"
 			echo "$RES"
@@ -875,20 +875,20 @@ subscription_add() {
 	ask "  Вставьте URL подписки (например https://ваш-провайдер/sub):"
 	URL=$(echo "$REPLY" | tr -d ' ')
 	if [ -z "$URL" ]; then warn "  URL пуст — пропускаю."; return 1; fi
-	uci -q add_list homeproxy.subscription.subscription_url="$URL"
-	uci -q commit homeproxy
+	uci -q add_list ravnex.subscription.subscription_url="$URL"
+	uci -q commit ravnex
 	info "  загружаю узлы из подписки (может занять минуту)..."
-	ucode /etc/homeproxy/scripts/update_subscriptions.uc >/dev/null 2>&1
+	ucode /etc/ravnex/scripts/update_subscriptions.uc >/dev/null 2>&1
 	if [ "$(count_nodes)" -gt 0 ]; then
 		ok "  подписка добавлена: узлов $(count_nodes)."
-		MN=$(uci -q get homeproxy.config.main_node)
+		MN=$(uci -q get ravnex.config.main_node)
 		if [ -z "$MN" ] || [ "$MN" = nil ]; then
-			uci -q set homeproxy.config.main_node=urltest
-			uci -q set homeproxy.config.main_urltest_mode=auto
+			uci -q set ravnex.config.main_node=urltest
+			uci -q set ravnex.config.main_urltest_mode=auto
 			ok "  включён URLTest (авто) по всем узлам — выбирается самый быстрый."
 		fi
-		[ "$(uci -q get homeproxy.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
-		uci -q commit homeproxy
+		[ "$(uci -q get ravnex.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
+		uci -q commit ravnex
 		return 0
 	fi
 	warn "  подписка не дала узлов — проверьте URL и доступность сайта подписки."
@@ -900,17 +900,17 @@ share_link_add() {
 	ask "  Вставьте строку подключения (vless://, vmess://, trojan://, ss://, hysteria2:// …):"
 	LINK=$(echo "$REPLY" | tr -d ' ')
 	if [ -z "$LINK" ]; then warn "  строка пуста — пропускаю."; return 1; fi
-	RES=$(ucode /etc/homeproxy/scripts/import_link.uc "$LINK" 2>/dev/null)
+	RES=$(ucode /etc/ravnex/scripts/import_link.uc "$LINK" 2>/dev/null)
 	if printf '%s' "$RES" | grep -q '"result"[[:space:]]*:[[:space:]]*true'; then
 		ok "  узел импортирован ($(printf '%s' "$RES" | sed -n 's/.*"imported":\[{"section":"\([^"]*\)".*/\1/p'))."
-		MN=$(uci -q get homeproxy.config.main_node)
+		MN=$(uci -q get ravnex.config.main_node)
 		if [ -z "$MN" ] || [ "$MN" = nil ]; then
-			uci -q set homeproxy.config.main_node=urltest
-			uci -q set homeproxy.config.main_urltest_mode=auto
+			uci -q set ravnex.config.main_node=urltest
+			uci -q set ravnex.config.main_urltest_mode=auto
 			ok "  включён URLTest (авто)."
 		fi
-		[ "$(uci -q get homeproxy.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
-		uci -q commit homeproxy
+		[ "$(uci -q get ravnex.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
+		uci -q commit ravnex
 		return 0
 	fi
 	warn "  импорт не удался: $(printf '%s' "$RES" | head -1)"
@@ -931,10 +931,10 @@ choose_main_node() {
 		2)
 			list_nodes
 			ask "  Приоритетный узел (имя секции из списка):"
-			if [ -n "$(uci -q get "homeproxy.$REPLY" 2>/dev/null)" ]; then
-				uci -q set homeproxy.config.main_node=urltest
-				uci -q set homeproxy.config.main_urltest_mode=prefer
-				uci -q set homeproxy.config.main_urltest_preferred="$REPLY"
+			if [ -n "$(uci -q get "ravnex.$REPLY" 2>/dev/null)" ]; then
+				uci -q set ravnex.config.main_node=urltest
+				uci -q set ravnex.config.main_urltest_mode=prefer
+				uci -q set ravnex.config.main_urltest_preferred="$REPLY"
 				ok "  URLTest: приоритетный узел $REPLY + авто-пул остальных."
 			else
 				warn "  секция не найдена — отменено."; return 1
@@ -942,20 +942,20 @@ choose_main_node() {
 		3)
 			list_nodes
 			ask "  Узел (имя секции из списка):"
-			if [ -n "$(uci -q get "homeproxy.$REPLY" 2>/dev/null)" ]; then
-				uci -q set homeproxy.config.main_node="$REPLY"
+			if [ -n "$(uci -q get "ravnex.$REPLY" 2>/dev/null)" ]; then
+				uci -q set ravnex.config.main_node="$REPLY"
 				ok "  основной узел: $REPLY."
 			else
 				warn "  секция не найдена — отменено."; return 1
 			fi ;;
 		*)
-			uci -q set homeproxy.config.main_node=urltest
-			uci -q set homeproxy.config.main_urltest_mode=auto
+			uci -q set ravnex.config.main_node=urltest
+			uci -q set ravnex.config.main_urltest_mode=auto
 			ok "  URLTest: авто (все узлы)." ;;
 	esac
-	uci -q set homeproxy.config.main_udp_node=same
-	[ "$(uci -q get homeproxy.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
-	uci -q commit homeproxy
+	uci -q set ravnex.config.main_udp_node=same
+	[ "$(uci -q get ravnex.config.routing_mode)" = proxy_banned_ru ] && add_rule refilter main-out
+	uci -q commit ravnex
 	return 0
 }
 
@@ -972,10 +972,10 @@ ask_hotswap() {
 		info "  Включить позже: Client Settings → Routing → Hot Swap."
 		return 0
 	fi
-	uci -q set homeproxy.config.hotswap=1
-	uci -q set homeproxy.config.hotswap_count=3
-	uci -q set homeproxy.config.hotswap_failback=1
-	uci -q commit homeproxy
+	uci -q set ravnex.config.hotswap=1
+	uci -q set ravnex.config.hotswap_count=3
+	uci -q set ravnex.config.hotswap_failback=1
+	uci -q commit ravnex
 	ok "  Hot Swap включён (3 горячих соединения, автоматический возврат на основной)."
 	return 0
 }
@@ -990,9 +990,9 @@ ask_multidns() {
 	if is_no "$REPLY"; then info "  Включить позже: Client Settings → MultiDNS."; return 0; fi
 	install_mosdns || return 1
 	if [ -x /usr/bin/mosdns ]; then
-		uci -q set homeproxy.multidns.enabled=1
-		uci -q set homeproxy.multidns.bench_interval=600
-		uci -q commit homeproxy
+		uci -q set ravnex.multidns.enabled=1
+		uci -q set ravnex.multidns.bench_interval=600
+		uci -q commit ravnex
 		ok "  MultiDNS включён (проверка качества каждые 600 секунд)."
 	fi
 	return 0
@@ -1010,17 +1010,17 @@ if is_no "$REPLY"; then info "  Включить позже: Automation."; retur
 	# без него SNI молча неактивен, остальные источники работают.
 	# probe_pool — нативный батч-пробировщик (HTTP/2, один процесс на волну вместо кучи shell-воркеров)
 	install_native_helpers
-	uci -q set homeproxy.automation.enabled=1
+	uci -q set ravnex.automation.enabled=1
 	# Источники кандидатов: канонический СПИСОК (dns/clash/sni) под новый MultiValue-UI.
 	# Старое значение 'all' демон понимает, но виджет его не показывает как выбранные пункты.
-	uci -q delete homeproxy.automation.discover 2>/dev/null
-	uci -q add_list homeproxy.automation.discover=dns
-	uci -q add_list homeproxy.automation.discover=clash
-	uci -q add_list homeproxy.automation.discover=sni
+	uci -q delete ravnex.automation.discover 2>/dev/null
+	uci -q add_list ravnex.automation.discover=dns
+	uci -q add_list ravnex.automation.discover=clash
+	uci -q add_list ravnex.automation.discover=sni
 	# IP-обучение включено по умолчанию: conntrack-кандидаты фильтруются (повторы >=2 раз,
 	# shared-CDN исключены, кап 8/цикл, min_confirm>=2) — безопасно и ловит Telegram DC/игры.
-	uci -q set homeproxy.automation.ip_learn=1
-	uci -q commit homeproxy
+	uci -q set ravnex.automation.ip_learn=1
+	uci -q commit ravnex
 	ok "  Автоматизация включена (источники: DNS-лог + Clash + SNI; IP-изучение: вкл)."
 	return 0
 }
@@ -1037,11 +1037,11 @@ zapret_test() {
 # Поставить Hostfakesplit по умолчанию, проверить YouTube; если не работает —
 # перебрать встроенные стратегии до первой прошедшей.
 zapret_pick_strategy() {
-	[ -f /etc/homeproxy/zapret_candidates.json ] || { warn "  нет списка стратегий — оставляю значение по умолчанию."; return 1; }
+	[ -f /etc/ravnex/zapret_candidates.json ] || { warn "  нет списка стратегий — оставляю значение по умолчанию."; return 1; }
 	command -v curl >/dev/null 2>&1 || { info "  ставлю curl (нужен тестеру)..."; [ "$PM" = apk ] && apk add curl >/dev/null 2>&1 || opkg install curl >/dev/null 2>&1; }
 
-	HOSTFAKE=$(ucode -e 'import { readfile } from "fs"; let j = json(readfile("/etc/homeproxy/zapret_candidates.json") || "{}"); for (let c in (j.candidates || [])) { if (c.name == "Hostfakesplit") { printf("%s", c.args); break; } }')
-	[ -n "$HOSTFAKE" ] && uci -q set homeproxy.config.zapret_cmd_opts="$HOSTFAKE"
+	HOSTFAKE=$(ucode -e 'import { readfile } from "fs"; let j = json(readfile("/etc/ravnex/zapret_candidates.json") || "{}"); for (let c in (j.candidates || [])) { if (c.name == "Hostfakesplit") { printf("%s", c.args); break; } }')
+	[ -n "$HOSTFAKE" ] && uci -q set ravnex.config.zapret_cmd_opts="$HOSTFAKE"
 
 	# Гарантия чистого прямого пути: на время тестов останавливаем сервис, чтобы
 	# YouTube-проверка измеряла ТОЛЬКО стратегию Zapret, а не работающий прокси
@@ -1049,17 +1049,17 @@ zapret_pick_strategy() {
 	HP_WAS_RUNNING=0
 	pidof hiddify-core >/dev/null 2>&1 && HP_WAS_RUNNING=1
 	pidof sing-box >/dev/null 2>&1 && HP_WAS_RUNNING=1
-	[ "$HP_WAS_RUNNING" = 1 ] && /etc/init.d/homeproxy stop >/dev/null 2>&1
+	[ "$HP_WAS_RUNNING" = 1 ] && /etc/init.d/ravnex stop >/dev/null 2>&1
 
 	RC=1
 	info "  тестирую стратегию по умолчанию (Hostfakesplit) на YouTube (прямой путь)..."
 	if [ "$(zapret_test "$HOSTFAKE")" = 1 ]; then
-		uci -q commit homeproxy
+		uci -q commit ravnex
 		ok "  Hostfakesplit работает — YouTube открывается."
 		RC=0
 	else
 		info "  YouTube не открылся — перебираю встроенные стратегии (Recommended → остальные)..."
-		ucode -e 'import { readfile } from "fs"; let j = json(readfile("/etc/homeproxy/zapret_candidates.json") || "{}"); for (let c in (j.candidates || [])) { if (c.name != "Hostfakesplit") printf("%s\t%s\t%s\n", c.name, c.args, (c.group || "auto")); }' > /tmp/zcand.txt
+		ucode -e 'import { readfile } from "fs"; let j = json(readfile("/etc/ravnex/zapret_candidates.json") || "{}"); for (let c in (j.candidates || [])) { if (c.name != "Hostfakesplit") printf("%s\t%s\t%s\n", c.name, c.args, (c.group || "auto")); }' > /tmp/zcand.txt
 		TRIED=0
 		FOUND=0
 		while IFS="$(printf '\t')" read -r NAME ARGS GROUP; do
@@ -1069,14 +1069,14 @@ zapret_pick_strategy() {
 			printf '    %2d) %s: ' "$TRIED" "$NAME"
 			if [ "$(zapret_test "$ARGS")" = 1 ]; then
 				echo "YouTube OK"
-				uci -q set homeproxy.config.zapret_cmd_opts="$ARGS"
+				uci -q set ravnex.config.zapret_cmd_opts="$ARGS"
 				FOUND=1
 				break
 			fi
 			echo "нет"
 		done < /tmp/zcand.txt
 		rm -f /tmp/zcand.txt
-		uci -q commit homeproxy
+		uci -q commit ravnex
 		if [ "$FOUND" = 1 ]; then
 			ok "  выбрана стратегия: $NAME"
 			RC=0
@@ -1087,7 +1087,7 @@ zapret_pick_strategy() {
 	fi
 
 	# Возвращаем сервис (финальный рестарт в конце всё равно перечитает конфиг)
-	[ "$HP_WAS_RUNNING" = 1 ] && { /etc/init.d/homeproxy start >/dev/null 2>&1; sleep 3; }
+	[ "$HP_WAS_RUNNING" = 1 ] && { /etc/init.d/ravnex start >/dev/null 2>&1; sleep 3; }
 	return $RC
 }
 
@@ -1114,8 +1114,8 @@ install_zapret() {
 					warn "  модуль NFQUEUE не загружен — Zapret не включаю (иначе сломается firewall)."
 					warn "  Включите вручную после kmod-nft-queue (Client Settings → Routing → Enable Zapret)."
 				else
-					uci -q set homeproxy.config.zapret_enabled=1
-					uci -q commit homeproxy
+					uci -q set ravnex.config.zapret_enabled=1
+					uci -q commit ravnex
 					ok "  Zapret включён."
 					if zapret_pick_strategy; then
 						add_rule youtube zapret-out
@@ -1140,8 +1140,8 @@ install_zapret() {
 					warn "  модуль NFQUEUE не загружен — Zapret не включаю (иначе сломается firewall)."
 					warn "  Включите вручную после kmod-nft-queue (Client Settings → Routing → Enable Zapret)."
 				else
-					uci -q set homeproxy.config.zapret_enabled=1
-					uci -q commit homeproxy
+					uci -q set ravnex.config.zapret_enabled=1
+					uci -q commit ravnex
 					ok "  Zapret включён."
 					if zapret_pick_strategy; then
 						# Стратегия подтверждена на прямом пути — YouTube идёт через
@@ -1175,15 +1175,15 @@ ask_autopilot() {
 		info "  Включить позже: Мастер → Обход DPI → Автопилот (по расписанию)."
 		return 0
 	fi
-	uci -q set homeproxy.autopilot=homeproxy
-	uci -q set homeproxy.autopilot.enabled=1
-	uci -q set "homeproxy.autopilot.resources=youtube discord telegram"
-	uci -q set homeproxy.autopilot.set_rules=1
-	uci -q set homeproxy.autopilot.interval_h=6
-	uci -q set homeproxy.autopilot.check_min=15
-	uci -q set homeproxy.autopilot.fail_strikes=2
-	uci -q set homeproxy.autopilot.fuzz_mode=quick
-	uci -q commit homeproxy
+	uci -q set ravnex.autopilot=ravnex
+	uci -q set ravnex.autopilot.enabled=1
+	uci -q set "ravnex.autopilot.resources=youtube discord telegram"
+	uci -q set ravnex.autopilot.set_rules=1
+	uci -q set ravnex.autopilot.interval_h=6
+	uci -q set ravnex.autopilot.check_min=15
+	uci -q set ravnex.autopilot.fail_strikes=2
+	uci -q set ravnex.autopilot.fuzz_mode=quick
+	uci -q commit ravnex
 	ok "  Автопилот включён (цикл 6 ч, проверки каждые 15 мин)."
 	info "  Настроить тонко: Мастер → Обход DPI → Автопилот (ресурсы, интервалы, окно)."
 	return 0
@@ -1206,7 +1206,7 @@ install_byedpi() {
 			info "  ByeDPI: ставлю из источника обновлений ($BFPKG $(jget "$BP" version))..."
 			if jtrue "$(ubus call luci.ravnex install_feed_pkg "{\"pkg\":\"$BFPKG\"}" 2>/dev/null)"; then
 				ok "  ByeDPI установлен (источник обновлений)."
-				uci set homeproxy.config.byedpi_enabled=1; uci commit homeproxy; ok "  ByeDPI включён."
+				uci set ravnex.config.byedpi_enabled=1; uci commit ravnex; ok "  ByeDPI включён."
 				return 0
 			fi
 			warn "  установка из источника обновлений не удалась — возврат к обычным путям."
@@ -1218,7 +1218,7 @@ install_byedpi() {
 			RES=$(ubus call luci.ravnex byedpi_install_pkg "{\"tmp_path\":\"$BTMP\",\"pkg_manager\":\"$BPMG\"}" 2>/dev/null)
 			if jtrue "$RES"; then
 				ok "  ByeDPI установлен."
-				uci set homeproxy.config.byedpi_enabled=1; uci commit homeproxy; ok "  ByeDPI включён."
+				uci set ravnex.config.byedpi_enabled=1; uci commit ravnex; ok "  ByeDPI включён."
 			else warn "  установка ByeDPI не удалась."; fi
 		else warn "  не удалось скачать ByeDPI — пропускаю."; fi
 	fi
@@ -1232,7 +1232,7 @@ install_byedpi() {
 telegram_setup() {
 	# Боту нужен curl (tg_call ходит в Bot API через curl); если нет — ставим.
 	command -v curl >/dev/null 2>&1 || { [ "$PM" = apk ] && apk add curl >/dev/null 2>&1 || opkg install curl >/dev/null 2>&1; }
-	uci -q get homeproxy.telegram >/dev/null 2>&1 || uci -q set homeproxy.telegram=homeproxy
+	uci -q get ravnex.telegram >/dev/null 2>&1 || uci -q set ravnex.telegram=ravnex
 	ask "  Вставьте токен бота от @BotFather (123456:ABC-DEF…), пусто — пропустить:"
 	TOK=$(echo "$REPLY" | tr -d ' \t')
 	if [ -z "$TOK" ]; then
@@ -1250,9 +1250,9 @@ telegram_setup() {
 	else
 		warn "  api.telegram.org не ответил (заблокирован провайдером/нет сети) — токен сохраняю, бот подключится сам."
 	fi
-	uci -q set homeproxy.telegram.token="$TOK"
-	uci -q set homeproxy.telegram.enabled=1
-	uci -q commit homeproxy
+	uci -q set ravnex.telegram.token="$TOK"
+	uci -q set ravnex.telegram.enabled=1
+	uci -q commit ravnex
 	ok "  Telegram-бот включён."
 	info "  Привяжите чат: отправьте боту /start — первый написавший привязывается автоматически."
 	info "  Держите токен в секрете: кто первый напишет боту, тот и получит управление."
@@ -1260,29 +1260,29 @@ telegram_setup() {
 }
 
 telegram_toggle() {
-	if [ "$(uci -q get homeproxy.telegram.enabled)" = 1 ]; then
+	if [ "$(uci -q get ravnex.telegram.enabled)" = 1 ]; then
 		ask "  Бот включён. Выключить? [y/N]:"
 		if is_yes "$REPLY"; then
-			uci -q set homeproxy.telegram.enabled=0; uci -q commit homeproxy
+			uci -q set ravnex.telegram.enabled=0; uci -q commit ravnex
 			ok "  Telegram-бот выключен (демон остаётся в спящем цикле, токен сохранён)."
 		fi
 	else
 		telegram_setup || true
-		if [ "$(uci -q get homeproxy.telegram.enabled)" = 1 ]; then
+		if [ "$(uci -q get ravnex.telegram.enabled)" = 1 ]; then
 			info "  применяю (рестарт службы)..."
-			/etc/init.d/homeproxy restart >/dev/null 2>&1
+			/etc/init.d/ravnex restart >/dev/null 2>&1
 		fi
 	fi
 	return 0
 }
 
 control_setup() {
-	uci -q get homecontrol.main >/dev/null 2>&1 || uci -q set homecontrol.main=main
-	uci -q set homecontrol.main.enabled=1
-	uci -q set homecontrol.main.paused=0
-	uci -q set homecontrol.main.log_enabled=1
-	uci -q set homecontrol.main.log_max=500
-	uci -q commit homecontrol
+	uci -q get ravcontrol.main >/dev/null 2>&1 || uci -q set ravcontrol.main=main
+	uci -q set ravcontrol.main.enabled=1
+	uci -q set ravcontrol.main.paused=0
+	uci -q set ravcontrol.main.log_enabled=1
+	uci -q set ravcontrol.main.log_max=500
+	uci -q commit ravcontrol
 	ok "  «Контроль» включён (без правил пока ничего не блокирует)."
 	info "  Устройства / правила / расписания / Wi-Fi: LuCI → Контроль или прямо из бота"
 	info "  (/devices, /blocksite, /wifi). Движок применения правил запускается службой сам."
@@ -1290,10 +1290,10 @@ control_setup() {
 }
 
 control_toggle() {
-	if [ "$(uci -q get homecontrol.main.enabled)" = 1 ]; then
+	if [ "$(uci -q get ravcontrol.main.enabled)" = 1 ]; then
 		ask "  «Контроль» включён. Выключить? [y/N]:"
 		if is_yes "$REPLY"; then
-			uci -q set homecontrol.main.enabled=0; uci -q commit homecontrol
+			uci -q set ravcontrol.main.enabled=0; uci -q commit ravcontrol
 			ok "  «Контроль» выключен (все правила сняты при следующем проходе движка)."
 		fi
 	else
@@ -1341,37 +1341,37 @@ menu() {
 			2) share_link_add && apply_and_check ;;
 			3) choose_main_node && apply_and_check ;;
 			4)
-				if [ "$(uci -q get homeproxy.multidns.enabled)" = 1 ]; then
+				if [ "$(uci -q get ravnex.multidns.enabled)" = 1 ]; then
 					ask "  MultiDNS включён. Выключить? [y/N]:"
 					if is_yes "$REPLY"; then
-						uci -q set homeproxy.multidns.enabled=0; uci -q commit homeproxy
-						/etc/init.d/homeproxy restart >/dev/null 2>&1
+						uci -q set ravnex.multidns.enabled=0; uci -q commit ravnex
+						/etc/init.d/ravnex restart >/dev/null 2>&1
 						ok "  MultiDNS выключен."
 					fi
 				else
 					install_mosdns && ask "  Включить MultiDNS? [Д/н]:" && \
 						if ! is_no "$REPLY"; then
-							uci -q set homeproxy.multidns.enabled=1
-							uci -q set homeproxy.multidns.bench_interval=600
-							uci -q commit homeproxy
-							/etc/init.d/homeproxy restart >/dev/null 2>&1
+							uci -q set ravnex.multidns.enabled=1
+							uci -q set ravnex.multidns.bench_interval=600
+							uci -q commit ravnex
+							/etc/init.d/ravnex restart >/dev/null 2>&1
 							ok "  MultiDNS включён."
 						fi
 				fi ;;
 			5)
-				if [ "$(uci -q get homeproxy.automation.enabled)" = 1 ]; then
+				if [ "$(uci -q get ravnex.automation.enabled)" = 1 ]; then
 					ask "  Автоматизация включена. Выключить? [y/N]:"
 					if is_yes "$REPLY"; then
-						uci -q set homeproxy.automation.enabled=0; uci -q commit homeproxy
-						/etc/init.d/homeproxy restart >/dev/null 2>&1
+						uci -q set ravnex.automation.enabled=0; uci -q commit ravnex
+						/etc/init.d/ravnex restart >/dev/null 2>&1
 						ok "  Автоматизация выключена."
 					fi
 				else
 					ask "  Включить Автоматизацию? [Д/н]:"
 					if ! is_no "$REPLY"; then
 						install_native_helpers
-						uci -q set homeproxy.automation.enabled=1; uci -q commit homeproxy
-						/etc/init.d/homeproxy restart >/dev/null 2>&1
+						uci -q set ravnex.automation.enabled=1; uci -q commit ravnex
+						/etc/init.d/ravnex restart >/dev/null 2>&1
 						ok "  Автоматизация включена."
 					fi
 				fi ;;
@@ -1382,21 +1382,21 @@ menu() {
 					ask "  Zapret установлен. Подобрать стратегию заново? [Д/н]:"
 					if ! is_no "$REPLY"; then
 						zapret_pick_strategy && add_rule youtube zapret-out
-					elif [ "$(uci -q get homeproxy.config.zapret_enabled)" = 1 ] && [ -n "$(uci -q get homeproxy.config.zapret_cmd_opts)" ]; then
+					elif [ "$(uci -q get ravnex.config.zapret_enabled)" = 1 ] && [ -n "$(uci -q get ravnex.config.zapret_cmd_opts)" ]; then
 						info "  стратегия уже задана — проверяю правило YouTube → Zapret..."
 						add_rule youtube zapret-out
 					fi
 					ask "  Включить автоподбор стратегий (автопилот)? [Д/н]:"
 					if ! is_no "$REPLY"; then
-						uci -q set homeproxy.autopilot=homeproxy
-						uci -q set homeproxy.autopilot.enabled=1
-						uci -q set "homeproxy.autopilot.resources=youtube discord telegram"
-						uci -q set homeproxy.autopilot.set_rules=1
-						uci -q set homeproxy.autopilot.interval_h=6
-						uci -q set homeproxy.autopilot.check_min=15
-						uci -q set homeproxy.autopilot.fail_strikes=2
-						uci -q set homeproxy.autopilot.fuzz_mode=quick
-						uci -q commit homeproxy
+						uci -q set ravnex.autopilot=ravnex
+						uci -q set ravnex.autopilot.enabled=1
+						uci -q set "ravnex.autopilot.resources=youtube discord telegram"
+						uci -q set ravnex.autopilot.set_rules=1
+						uci -q set ravnex.autopilot.interval_h=6
+						uci -q set ravnex.autopilot.check_min=15
+						uci -q set ravnex.autopilot.fail_strikes=2
+						uci -q set ravnex.autopilot.fuzz_mode=quick
+						uci -q commit ravnex
 						ok "  Автопилот включён (цикл 6 ч, проверки каждые 15 мин)."
 					fi
 				fi
@@ -1404,11 +1404,11 @@ menu() {
 			7) install_byedpi; apply_and_check ;;
 			8) install_core; apply_and_check ;;
 			9)
-				if [ -z "$(uci -q get homeproxy.subscription.subscription_url)" ]; then
+				if [ -z "$(uci -q get ravnex.subscription.subscription_url)" ]; then
 					warn "  подписок не настроено — добавьте через п.1."
 				else
 					info "  обновляю узлы из подписок..."
-					ucode /etc/homeproxy/scripts/update_subscriptions.uc >/dev/null 2>&1
+					ucode /etc/ravnex/scripts/update_subscriptions.uc >/dev/null 2>&1
 					ok "  готово: узлов $(count_nodes)."
 					apply_and_check
 				fi ;;
@@ -1418,18 +1418,18 @@ menu() {
 			12)
 				install_native_helpers force
 				# Новые бинарники подхватит следующий проход демона; рестарт ускоряет.
-				if [ "$(uci -q get homeproxy.automation.enabled)" = 1 ]; then
+				if [ "$(uci -q get ravnex.automation.enabled)" = 1 ]; then
 					info "  перезапускаю службу, чтобы помощники подхватились сразу..."
-					/etc/init.d/homeproxy restart >/dev/null 2>&1
+					/etc/init.d/ravnex restart >/dev/null 2>&1
 				fi ;;
 			13) telegram_toggle; apply_and_check ;;
 			14)
 				control_toggle
 				# Движок контроля гейтится сам на каждом тике — рестарт не нужен,
 				# но разовый apply ускоряет первое применение.
-				if [ "$(uci -q get homecontrol.main.enabled)" = 1 ]; then
+				if [ "$(uci -q get ravcontrol.main.enabled)" = 1 ]; then
 					info "  применяю состояние контроля..."
-					( /usr/bin/ucode -L /etc/homeproxy/scripts /etc/homeproxy/scripts/control_apply.uc >/dev/null 2>&1 & )
+					( /usr/bin/ucode -L /etc/ravnex/scripts /etc/ravnex/scripts/control_apply.uc >/dev/null 2>&1 & )
 				fi ;;
 			*) warn "  неизвестный пункт." ;;
 		esac
@@ -1497,8 +1497,8 @@ ask_telegram_control
 ensure_baseline
 
 echo; ok "[финал] Применяю настройки"
-/etc/init.d/homeproxy enable >/dev/null 2>&1
-/etc/init.d/homeproxy restart >/dev/null 2>&1
+/etc/init.d/ravnex enable >/dev/null 2>&1
+/etc/init.d/ravnex restart >/dev/null 2>&1
 wait_core
 sleep 4
 validate_proxy

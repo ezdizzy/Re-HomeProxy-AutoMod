@@ -1,0 +1,1271 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Copyright (C) 2022-2023 ImmortalWrt.org
+
+USE_PROCD=1
+
+START=99
+STOP=10
+
+# engine_restart: light strategy-apply path (see the function below).
+# rpcd_heal: self-heal for a missing /etc/init.d/rpcd (see the function below).
+EXTRA_COMMANDS="engine_restart rpcd_heal fw_refresh"
+
+CONF="ravnex"
+PROG_HIDDIFY="/usr/bin/hiddify-core"
+PROG_SINGBOX="/usr/bin/sing-box"
+
+HP_DIR="/etc/ravnex"
+RUN_DIR="/var/run/ravnex"
+LOG_PATH="$RUN_DIR/ravnex.log"
+
+# we don't know which is the default server, just take the first one
+DNSMASQ_UCI_CONFIG="$(uci -q show "dhcp.@dnsmasq[0]" | awk 'NR==1 {split($0, conf, /[.=]/); print conf[2]}')"
+if [ -f "/tmp/etc/dnsmasq.conf.$DNSMASQ_UCI_CONFIG" ]; then
+	DNSMASQ_DIR="$(awk -F '=' '/^conf-dir=/ {print $2}' "/tmp/etc/dnsmasq.conf.$DNSMASQ_UCI_CONFIG")/dnsmasq-ravnex.d"
+else
+	DNSMASQ_DIR="/tmp/dnsmasq.d/dnsmasq-ravnex.d"
+fi
+
+log() {
+	echo -e "$(date "+%Y-%m-%d %H:%M:%S") [DAEMON] $*" >> "$LOG_PATH"
+}
+
+# Р¤1.2 (Р°СѓРґРёС‚ 27): is a named procd instance of this service actually running?
+# `ubus call service get <name>` breaks on this build ("Parsing message data
+# failed"), so read the service list: in its pretty JSON "running" is the first
+# field of the instance object (verified live).
+hp_instance_running() {
+	ubus call service list 2>/dev/null | grep -A1 "\"$1\": {" | grep -q '"running": true'
+}
+
+# Deadlock note: rc.common gates start/stop/reload through procd_lock()
+# (/lib/functions/procd.sh) вЂ” an UNBOUNDED `flock 1000`. The lock is inherited
+# (fd 1000, no CLOEXEC) by every child spawned while it is held, so a
+# long-lived synchronous child pins ALL service actions until it dies
+# (observed live: a bootstrap-spawned mosdns wedged start for 20+ minutes).
+# The guard below is therefore a no-op for the procd flow (procd.sh overrides
+# it after sourcing this script); the REAL fix is closing fd 1000 for the
+# bootstrap subshell below вЂ” do not spawn long-lived children while the lock
+# is held without doing the same.
+lock() {
+	flock -w 90 1000 || log "Warning: init lock busy >90s (wedged holder?) вЂ” proceeding without exclusive lock."
+}
+
+# rpcd_heal: /etc/init.d/rpcd is the ONLY boot-time starter of rpcd (S12) and rpcd owns
+# every LuCI RPC (uci/get, session, file, luci.*). When that init script goes missing,
+# the router boots WITHOUT rpcd and LuCI dies on the first view with
+#   "RPC call to uci/get failed with error -32000: Object not found"
+# (live 2026-10-26, power-cut reboot: a whiteout in the f2fs overlay upperdir shadowed
+# the ROM's /etc/init.d/rpcd after the day's apk transaction; every /etc/config file was
+# intact вЂ” the only casualty was the missing rpcd start). Self-heal: restore the
+# canonical script from the embedded copy, re-arm the S12 hook, and start the instance
+# only when rpcd is actually down. A working rpcd is never touched.
+RPCD_INIT="/etc/init.d/rpcd"
+rpcd_heal() {
+	if [ ! -f "$RPCD_INIT" ]; then
+		logger -t ravnex "rpcd_heal: $RPCD_INIT missing (whiteout/deleted) вЂ” restoring embedded copy"
+		cat > "$RPCD_INIT" <<'RPCD_INIT_EOF'
+#!/bin/sh /etc/rc.common
+
+START=12
+USE_PROCD=1
+
+NAME=rpcd
+PROG=/sbin/rpcd
+
+start_service() {
+	local socket timeout
+	config_load rpcd
+	config_get socket rpcd socket "/var/run/ubus/ubus.sock"
+	config_get timeout rpcd timeout 30
+
+	procd_open_instance
+	procd_set_param command "$PROG" -s "$socket" -t "$timeout"
+	procd_set_param respawn
+	procd_close_instance
+}
+
+stop_service() {
+	service_stop "$PROG"
+}
+
+reload_service() {
+	procd_send_signal "$NAME"
+}
+RPCD_INIT_EOF
+		chmod 755 "$RPCD_INIT"
+		"$RPCD_INIT" enable
+		log "rpcd_heal: restored $RPCD_INIT (enable done)."
+	fi
+	# Deadlock-safe: callers inside start_service() must run this in a detached
+	# subshell with fd 1000 closed (ch.109 wedge class) вЂ” see start_service().
+	if ! pidof rpcd >/dev/null 2>&1; then
+		"$RPCD_INIT" start
+		log "rpcd_heal: rpcd was down вЂ” started under procd (S12 had skipped it)."
+	fi
+}
+
+# в”Ђв”Ђ App-plane instances (Р¤3.1) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# UI/orchestrator support that must run in EVERY routing mode вЂ” including
+# В«РќР°РїСЂСЏРјСѓСЋВ» (direct), where the orchestrator IS the diagnostic tool: the user
+# switches to direct mode to REPAIR, and repairs are exactly what health/
+# sentinel/recovery/metrics serve. None of these are bypass mechanisms.
+open_app_plane() {
+	mkdir -p "$RUN_DIR"
+
+	procd_open_instance "log-cleaner"
+	procd_set_param command "$HP_DIR/scripts/clean_log.sh"
+	procd_set_param respawn
+	procd_close_instance
+
+	# Overview metrics sampler (Р¤4, С‡.76): tiny always-on ring buffer of
+	# CPU/RAM/temperature/connections/node delay/learned-records into
+	# $RUN_DIR/overview_metrics.json, feeding the "Overview" tab charts
+	# (inline SVG on the client вЂ” D5: everything local). Nothing here is
+	# config-gated: it is UI-support data, not engine logic, and it is
+	# tolerant of the core being down (nulls, not failures).
+	procd_open_instance "metrics"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/metrics.uc"
+	procd_set_param respawn
+	procd_close_instance
+
+	# Telegram control bot (С‡.69, v2 С‡.78): ALWAYS-ON instance (like the
+	# metrics sampler вЂ” UI-support, not the engine). The daemon gates itself
+	# on UCI every loop: enabled=0 or a missing/bad token means an idle
+	# 15 s loop, so every bot setting is hot-reloadable and saving the
+	# settings never restarts the service (the full reload would kill the
+	# core; procd would also respawn-spam a self-exiting daemon).
+	procd_open_instance "telegram"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/telegram.uc"
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
+	# Zapret strategy auto-pilot (С‡.97): ALWAYS-ON instance like the telegram
+	# bot вЂ” the daemon gates itself on homeproxy.autopilot.enabled EVERY tick,
+	# so the Wizard card toggles apply without a service restart. Its pending
+	# journal lets the respawn resume an apply interrupted by the very
+	# service restart the apply itself triggers.
+	procd_open_instance "autopilot"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/zapret_autopilot.uc"
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
+	# В«РљРѕРЅС‚СЂРѕР»СЊВ» watcher (plan 14): ALWAYS-ON instance like the telegram
+	# bot вЂ” the daemon gates itself on ravcontrol.main.enabled EVERY tick,
+	# so enabling/disabling or editing rules never restarts the service.
+	# It re-applies the enforcement state only when its signature changes
+	# (schedule boundaries, temp-block expiry, DHCP address changes).
+	mkdir -p "$RUN_DIR" /var/run/homecontrol
+	procd_open_instance "control"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/control_engine.uc"
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
+	# Health Monitor (Р¤2.1, С‡.164): ALWAYS-ON instance like the telegram bot вЂ”
+	# the single observer of ALL subsystems (core, engines, mosdns listeners,
+	# tg-bot, automation children, TUN/route/fw4, generators, memory).
+	# The set of procd instances ITSELF is its source of expectations (service
+	# list = what should run), so the watcher must exist unconditionally. Its
+	# own health is witnessed by the ts of the status document it writes every
+	# tick (the RPC flags the data stale when the writer dies). Adaptive load:
+	# forkless light pass most of the time, deep pass rare, skipped under
+	# memory pressure (OOM edge, lesson 197).
+	procd_open_instance "health"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/health_cli.uc" run
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
+	# Sentinel (Р¤2.2, С‡.165): ALWAYS-ON instance вЂ” the guard OF the guard (A.1,
+	# B0 idea #1). Watches the health monitor itself (health.json ts staleness),
+	# verifies procd expectations independently (service list), checks mandatory
+	# configs, honestly finishes stuck opman ops; one-shot repairs ONLY, through
+	# the opman door (never parallel with an apply) with a repair-loop guard;
+	# every repair emits a bus event (src='sentinel'). Does NOT import
+	# health.uc вЂ” a broken health deploy cannot take the guard down with the
+	# guarded. The Recovery coordinator (hysteresis, exponential retries,
+	# manual-action priority) is Р¤2.3.
+	procd_open_instance "sentinel"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/sentinel_cli.uc" run
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+
+	# Recovery Manager (Р¤2.3, С‡.166): ALWAYS-ON instance вЂ” the SINGLE repair
+	# coordinator (A.1 В«Recovery ManagerВ»). Collects findings from the sentinel
+	# and health DOCUMENTS (no imports of those modules), settles campaigns
+	# (stabilization hysteresis 45 s, exponential retries 30 s в†’ 30 min, hard
+	# limit 3 auto-restarts per key per 30 min with a 2 h TTL block вЂ” procd
+	# retry budget is never exhausted, lessons 23/198), gives MANUAL actions
+	# absolute priority (10 min freeze of auto-repairs after any manual action
+	# or verified apply; a verified apply resets all campaigns), never runs two
+	# repairs in parallel (one action per tick + the opman 'repair' lease).
+	# While this instance is alive the Sentinel only detects (its findings are
+	# picked up from its document); if the coordinator dies the Sentinel falls
+	# back to one-shot repairs (Р¤2.2 contract unchanged).
+	procd_open_instance "recovery"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/recovery_cli.uc" run
+	procd_set_param respawn
+	procd_set_param respawn_threshold 3600
+	procd_set_param respawn_retry 0
+	procd_close_instance
+}
+
+# Subscription auto-update cron: refreshes NODE LISTS (not a bypass mechanism)
+# вЂ” kept working in every routing mode, В«РќР°РїСЂСЏРјСѓСЋВ» included. The #${CONF}_
+# autosetup marker lets stop_service remove only our line.
+open_subscription_cron() {
+	local auto_update auto_update_time
+	config_get_bool auto_update "subscription" "auto_update" "0"
+	if [ "$auto_update" = "1" ]; then
+		config_get auto_update_time "subscription" "auto_update_time" "2"
+		sed -i "/#${CONF}_autosetup/d" "/etc/crontabs/root" 2>"/dev/null"
+		echo -e "0 $auto_update_time * * * $HP_DIR/scripts/update_crond.sh #${CONF}_autosetup" >> "/etc/crontabs/root"
+		/etc/init.d/cron restart >"/dev/null" 2>&1
+	fi
+}
+
+# в”Ђв”Ђ Interception/DNS teardown (Р¤3.1) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# Shared by stop_service and the direct-mode start. Requires config_load first.
+# Two DELETE passes: a single pass can fail while a cross-referencing jump rule
+# still exists (nft refuses to delete a referenced chain; the list order cannot
+# be fully acyclic) вЂ” the second pass removes the now-unreferenced remainder.
+# fw4's reload MERGES (it does not purge unknown chains вЂ” verified live in
+# Р¤3.1), so the explicit deletes are the only honest cleanup. The chain list
+# includes homeproxy_zapret_queue / homeproxy_mangle_lanac, which the old stop
+# list missed entirely (leftovers survived every service stop until now).
+teardown_interception() {
+	local table_mark tproxy_mark tun_name tun_mark tun_table
+	config_get table_mark "infra" "table_mark" "100"
+	config_get tproxy_mark "infra" "tproxy_mark" "101"
+	config_get tun_name "infra" "tun_name" "singtun0"
+	config_get tun_mark "infra" "tun_mark" "102"
+	config_get tun_table "infra" "tun_table" "104"
+
+	# Tproxy policy routing
+	ip rule del fwmark "$tproxy_mark" table "$table_mark" 2>"/dev/null"
+	ip route del local 0.0.0.0/0 dev lo table "$table_mark" 2>"/dev/null"
+	ip -6 rule del fwmark "$tproxy_mark" table "$table_mark" 2>"/dev/null"
+	ip -6 route del local ::/0 dev lo table "$table_mark" 2>"/dev/null"
+
+	# TUN policy route + the Р¤1.3 fail-closed floor
+	if [ -n "$tun_name" ]; then
+		ip rule del fwmark "$tun_mark" table "$tun_table" 2>"/dev/null"
+		ip route del 0.0.0.0/0 dev "$tun_name" table "$tun_table" 2>"/dev/null"
+		ip -6 rule del fwmark "$tun_mark" table "$tun_table" 2>"/dev/null"
+		ip -6 route del ::/0 dev "$tun_name" table "$tun_table" 2>"/dev/null"
+		ip route del unreachable default metric 42780 table "$tun_table" 2>"/dev/null"
+		ip -6 route del unreachable default metric 42780 table "$tun_table" 2>"/dev/null"
+	fi
+
+	local pass i
+	for pass in 1 2; do
+		for i in "homeproxy_dstnat_redir" "homeproxy_output_redir" \
+			 "homeproxy_redirect" "homeproxy_redirect_proxy" \
+			 "homeproxy_redirect_proxy_port" "homeproxy_redirect_lanac" \
+			 "homeproxy_mangle_prerouting" "homeproxy_mangle_output" \
+			 "homeproxy_mangle_tproxy" "homeproxy_mangle_tproxy_port" \
+			 "homeproxy_mangle_tproxy_lanac" "homeproxy_mangle_mark" \
+			 "homeproxy_mangle_tun" "homeproxy_mangle_tun_mark" \
+			 "homeproxy_mangle_lanac" "homeproxy_quic" \
+			 "homeproxy_zapret_queue"; do
+			nft flush chain inet fw4 "$i" 2>"/dev/null"
+			nft delete chain inet fw4 "$i" 2>"/dev/null"
+		done
+		for i in "homeproxy_local_addr_v4" "homeproxy_local_addr_v6" \
+			 "homeproxy_wan_proxy_addr_v4" "homeproxy_wan_proxy_addr_v6" \
+			 "homeproxy_wan_direct_addr_v4" "homeproxy_wan_direct_addr_v6" \
+			 "homeproxy_routing_port"; do
+			nft flush set inet fw4 "$i" 2>"/dev/null"
+			nft delete set inet fw4 "$i" 2>"/dev/null"
+		done
+	done 2>"/dev/null"
+	echo 2>"/dev/null" > "$RUN_DIR/fw4_forward.nft"
+	echo 2>"/dev/null" > "$RUN_DIR/fw4_input.nft"
+	echo 2>"/dev/null" > "$RUN_DIR/fw4_post.nft"
+	fw4 reload >"/dev/null" 2>&1
+
+	# Remove the DNS hijack: dnsmasq goes back to the plain upstreams (its own
+	# WAN resolvers) вЂ” the В«РќР°РїСЂСЏРјСѓСЋВ» invariant is plain provider internet.
+	rm -rf "$DNSMASQ_DIR/../dnsmasq-ravnex.conf" "$DNSMASQ_DIR"
+	/etc/init.d/dnsmasq restart >"/dev/null" 2>&1
+
+	# MultiDNS mosdns: identity-verified stop (audits 11/25) вЂ” a foreign
+	# mosdns is never touched.
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" mosdns_stop >/dev/null 2>&1 || true
+}
+
+start_service() {
+	mkdir -p "$RUN_DIR"
+
+	# F10.2: on a lite-class box (MemTotal <= 256 MB) the kernel-default
+	# min_free is so small that the OOM killer fires only after the box is
+	# already thrashing (the "LuCI locked up" shape). Raise the trigger
+	# point once per start, ONLY when it sits below the target вЂ” big boxes
+	# (kernel auto-tunes min_free high there) are never touched.
+	MT=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
+	case "$MT" in ''|*[!0-9]*) MT=0;; esac
+	if [ "$MT" -gt 0 ] && [ "$MT" -le 262144 ]; then
+		CUR=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null)
+		case "$CUR" in ''|*[!0-9]*) CUR=0;; esac
+		if [ "$CUR" -lt 8192 ]; then
+			echo 8192 > /proc/sys/vm/min_free_kbytes 2>/dev/null && \
+				log "lite RAM: vm.min_free_kbytes raised to 8192 (was $CUR) вЂ” the OOM killer fires earlier, before the box gridlocks"
+		fi
+	fi
+
+	# Service epoch (Р¤3.1): bumped on EVERY start вЂ” the Sentinel's drift
+	# discriminator. A service start is the ONLY legitimate way the procd
+	# instance set changes (init.d re-evaluates every gate from UCI); an
+	# instance vanishing WITHOUT a start (ubus service delete, lesson 219)
+	# leaves the epoch untouched and stays an anomaly. tmpfs: a reboot resets
+	# it together with the sentinel document (fresh baseline either way).
+	local _epoch
+	_epoch=$(( $(cat "$RUN_DIR/.service_epoch" 2>/dev/null || echo 0) + 1 ))
+	printf '%s\n' "$_epoch" > "$RUN_DIR/.service_epoch.tmp"
+	mv -f "$RUN_DIR/.service_epoch.tmp" "$RUN_DIR/.service_epoch"
+
+	# Self-heal rpcd BEFORE anything else: without it the LuCI/RPC plane is dead
+	# (every view fails on uci/get "Object not found"), even though the proxy itself
+	# is fine. Detached subshell + closed lock fd: the nested rc.common invocation
+	# takes its own procd lock and must not inherit ours (ch.109 wedge class).
+	( rpcd_heal ) 1000>&- &
+
+	# Self-heal a missing/empty config: /etc/config/ravnex is a conffile, so a manual
+	# delete (or a wiped overlay) leaves the service with nothing and it won't regenerate.
+	# Restore defaults from the packaged backup. Only when there are no homeproxy sections,
+	# so a populated (even if odd) user config is never overwritten.
+	if ! grep -q "config ravnex" "/etc/config/$CONF" 2>/dev/null; then
+		if [ -f "/usr/share/homeproxy/homeproxy.default" ]; then
+			cp "/usr/share/homeproxy/homeproxy.default" "/etc/config/$CONF"
+			log "config /etc/config/$CONF was missing/empty вЂ” restored defaults."
+		fi
+	fi
+
+	# Heal critical configs (firewall includes etc.) before anything else. The
+	# firewall includes are normally written ONCE at package install (uci-defaults);
+	# a damaged /etc/config/firewall silently kills all interception. Repair mode
+	# without fw4 reload: start_service renders + reloads fw4 below anyway.
+	# sprintf('%J') emits '"ok": true' with a space вЂ” match accordingly.
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/config_heal.uc" ]; then
+		_heal="$(/usr/bin/ucode "$HP_DIR/scripts/config_heal.uc" repair-noreload 2>/dev/null)"
+		case "$_heal" in
+			*'"ok": true'*) : ;;
+			*"issues"*) log "config heal: ISSUES: $_heal" ;;
+			"") log "config heal: no report (config_heal.uc failed?)" ;;
+		esac
+		case "$_heal" in
+			*'"repaired": ["'*) log "config heal: repaired: $_heal" ;;
+		esac
+	fi
+
+	# Ensure the automation section exists. The LuCI Automation tab renders a NamedSection
+	# for `homeproxy.automation`; if that section is absent from /etc/config/ravnex
+	# (e.g. carried over from an older build or the upstream core package, since conffiles
+	# are never overwritten on reinstall), the tab shows only its heading and none of its
+	# options вЂ” including the master "Enable automation" switch. Create it with safe
+	# defaults so the tab is always usable. Idempotent.
+	if ! uci -q get "$CONF.automation" >/dev/null 2>&1; then
+		uci -q set "$CONF.automation=ravnex"
+		uci -q set "$CONF.automation.enabled=0"
+		uci -q commit "$CONF"
+		log "created missing $CONF.automation section (defaults)."
+	fi
+
+	# Same for the MultiDNS section (the MultiDNS tab renders NamedSection
+	# `homeproxy.multidns`; without it the tab's options error out). Idempotent.
+	if ! uci -q get "$CONF.multidns" >/dev/null 2>&1; then
+		uci -q set "$CONF.multidns=ravnex"
+		uci -q set "$CONF.multidns.enabled=0"
+		uci -q set "$CONF.multidns.use_plain=1"
+		uci -q set "$CONF.multidns.use_secure=1"
+		uci -q set "$CONF.multidns.secure_via_proxy=1"
+		uci -q set "$CONF.multidns.emergency_direct=1"
+		uci -q set "$CONF.multidns.bench_interval=600"
+		uci -q commit "$CONF"
+		log "created missing $CONF.multidns section (defaults)."
+	fi
+
+	# Same for the Telegram bot section (С‡.69, status.js renders NamedSection
+	# `homeproxy.telegram`). Idempotent.
+	if ! uci -q get "$CONF.telegram" >/dev/null 2>&1; then
+		uci -q set "$CONF.telegram=ravnex"
+		uci -q set "$CONF.telegram.enabled=0"
+		uci -q commit "$CONF"
+		log "created missing $CONF.telegram section (defaults)."
+	fi
+
+	# Same for the Zapret strategy auto-pilot section (С‡.97, the Wizard DPI
+	# tab renders the card from `homeproxy.autopilot`). Disabled by default вЂ”
+	# enabling is an explicit user decision (install.sh asks, the Wizard
+	# card toggles). Idempotent.
+	if ! uci -q get "$CONF.autopilot" >/dev/null 2>&1; then
+		uci -q set "$CONF.autopilot=ravnex"
+		uci -q set "$CONF.autopilot.enabled=0"
+		# С‡.233: telegram СѓР±СЂР°РЅ РёР· Р°РІС‚РѕРїРёР»РѕС‚Р° (СЂРµС€РµРЅРёРµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ).
+		uci -q set "$CONF.autopilot.resources=youtube discord general"
+		uci -q set "$CONF.autopilot.set_rules=1"
+		uci -q set "$CONF.autopilot.interval_h=6"
+		uci -q set "$CONF.autopilot.check_min=15"
+		uci -q set "$CONF.autopilot.fail_strikes=2"
+		uci -q set "$CONF.autopilot.fuzz_mode=quick"
+		uci -q commit "$CONF"
+		log "created missing $CONF.autopilot section (defaults)."
+	fi
+
+	# В«РљРѕРЅС‚СЂРѕР»СЊВ» (HomeControl integration, plan 14): self-heal the SEPARATE
+	# UCI config /etc/config/ravcontrol (conffile). The control engine and
+	# the RPC layer need the `main` section to exist even if the conffile
+	# was deleted or the overlay wiped. Idempotent; the rest of the schema
+	# (client/wifi/rule/schedule sections) is created on demand by the RPC.
+	if ! uci -q get ravcontrol.main >/dev/null 2>&1; then
+		uci -q set ravcontrol.main=main
+		uci -q set ravcontrol.main.enabled='0'
+		uci -q set ravcontrol.main.paused='0'
+		uci -q set ravcontrol.main.log_enabled='1'
+		uci -q set ravcontrol.main.log_max='500'
+		uci -q commit ravcontrol
+		log "created missing ravcontrol.main section (defaults)."
+	fi
+
+	# Auto-enable the AntiDPI engines when a *-out node/rule reference exists but the
+	# master switch is off. Without this the reference is inert (falls back to direct-out)
+	# and the engine (ciadpi / nfqws2) is never launched вЂ” so "add a Zapret/ByeDPI rule"
+	# silently does nothing. Idempotent; the values are re-read by config_load below.
+	if [ "$(uci -q get "$CONF.config.zapret_enabled")" != "1" ] && \
+	   uci show "$CONF" 2>/dev/null | grep -q "='zapret-out'"; then
+		uci -q set "$CONF.config.zapret_enabled=1"
+		uci -q commit "$CONF"
+		log "auto-enabled $CONF.config.zapret_enabled (zapret-out reference found)."
+	fi
+	if [ "$(uci -q get "$CONF.config.byedpi_enabled")" != "1" ] && \
+	   uci show "$CONF" 2>/dev/null | grep -q "='byedpi-out'"; then
+		uci -q set "$CONF.config.byedpi_enabled=1"
+		uci -q commit "$CONF"
+		log "auto-enabled $CONF.config.byedpi_enabled (byedpi-out reference found)."
+	fi
+
+	# Р¤3.4 (D23): migrate the RETIRED routing_mode values (custom/custom_json)
+	# to the working mode BEFORE the gates evaluate. The migrator snapshots
+	# /etc/config/ravnex into /etc/ravnex/backups/routing_mode-migration-<ts>/
+	# and emits an honest Event Bus record (src=init) with the rollback recipe;
+	# idempotent (silent no-op on canonical values вЂ” runs on every start).
+	# A failing migration must NOT block the start: the gates below still
+	# normalize a legacy value defensively for this start (case at the
+	# routing_mode read), and the next start retries the migration.
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/migrate_routing_mode.uc" ]; then
+		_mig="$(/usr/bin/ucode "$HP_DIR/scripts/migrate_routing_mode.uc" 2>"$RUN_DIR/migrate_rm.err")"
+		[ -n "$_mig" ] && log "routing_mode migration: $_mig"
+		if [ -s "$RUN_DIR/migrate_rm.err" ]; then
+			log "routing_mode migration stderr: $(cat "$RUN_DIR/migrate_rm.err")"
+		fi
+		rm -f "$RUN_DIR/migrate_rm.err"
+	fi
+
+	# Р¤4.2 (U7): one-shot migration of the legacy static textareas
+	# (proxy_list.txt / direct_list.txt) into NAMED user lists. Runs BEFORE
+	# config generation, so the new list rules are picked up by THIS start;
+	# snapshot-first, fail closed (a failed snapshot delays the migration to
+	# the next start вЂ” the legacy files keep working until then).
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/migrate_user_lists.uc" ]; then
+		_mig="$(/usr/bin/ucode "$HP_DIR/scripts/migrate_user_lists.uc" 2>"$RUN_DIR/migrate_ul.err")"
+		[ -n "$_mig" ] && log "user lists migration: $_mig"
+		if [ -s "$RUN_DIR/migrate_ul.err" ]; then
+			log "user lists migration stderr: $(cat "$RUN_DIR/migrate_ul.err")"
+		fi
+		rm -f "$RUN_DIR/migrate_ul.err"
+	fi
+
+	# Р¤9.16 (D35a): РєРѕРїРёСЂСѓСЋС‰Р°СЏ РјРёРіСЂР°С†РёСЏ Р»РµРіР°СЃРё-РѕРїС†РёР№ РІС‹С…РѕРґР° (main_urltest_* /
+	# hotswap_* в†’ exit_*) РїРµСЂРµРґ РіРµРЅРµСЂР°С†РёРµР№ РєРѕРЅС„РёРіР°. РРґРµРјРїРѕС‚РµРЅС‚РЅР°, Р»РµРіР°СЃРё-РєР»СЋС‡Рё
+	# РќР• СѓРґР°Р»СЏРµС‚ (РѕС‚РєР°С‚ РїР°РєРµС‚Р° СЃРѕС…СЂР°РЅСЏРµС‚ С‚РѕС‡РЅРѕРµ РїРѕРІРµРґРµРЅРёРµ); РіРµРЅРµСЂР°С‚РѕСЂ С‡РёС‚Р°РµС‚
+	# exit_* РїРµСЂРІС‹РјРё. РџСЂРѕРІР°Р» РјРёРіСЂР°С†РёРё СЃС‚Р°СЂС‚ РЅРµ Р±Р»РѕРєРёСЂСѓРµС‚: РіРµРЅРµСЂР°С‚РѕСЂ РїР°РґР°РµС‚
+	# РЅР°Р·Р°Рґ РЅР° Р»РµРіР°СЃРё-С‡С‚РµРЅРёРµ.
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/migrate_config.uc" ]; then
+		_mig="$(/usr/bin/ucode "$HP_DIR/scripts/migrate_config.uc" 2>"$RUN_DIR/migrate_cfg.err")"
+		[ -n "$_mig" ] && log "config migration: $_mig"
+		if [ -s "$RUN_DIR/migrate_cfg.err" ]; then
+			log "config migration stderr: $(cat "$RUN_DIR/migrate_cfg.err")"
+		fi
+		rm -f "$RUN_DIR/migrate_cfg.err"
+	fi
+
+	# Р¤9.14 (D34d): legacy lan_proxy_mode В«disabledВ»/РЅРµ Р·Р°РґР°РЅРѕ в†’ except_listed.
+	# В«disabledВ» РѕР·РЅР°С‡Р°Р» В«С„РёР»СЊС‚СЂ РІС‹РєР»СЋС‡РµРЅ вЂ” РІСЃРµ С‡РµСЂРµР· РїСЂРѕРєСЃРё, СЃРїРёСЃРєРё
+	# РёРіРЅРѕСЂРёСЂСѓСЋС‚СЃСЏВ»; РІ РЅРѕРІРѕР№ РєР°СЂС‚РѕС‡РЅРѕР№ РјРѕРґРµР»Рё В«РќР°РїСЂСЏРјСѓСЋВ» РѕР±СЏР·Р°РЅ СЂР°Р±РѕС‚Р°С‚СЊ.
+	# except_listed СЃ РїСѓСЃС‚С‹Рј СЃРїРёСЃРєРѕРј РІРµРґС‘С‚ СЃРµР±СЏ РёРґРµРЅС‚РёС‡РЅРѕ вЂ” РїРѕРІРµРґРµРЅРёРµ СѓСЃС‚Р°РЅРѕРІРѕРє
+	# РЅРµ РјРµРЅСЏРµС‚СЃСЏ. РРґРµРјРїРѕСЂС‚РµРЅС‚РЅРѕ, СЃРѕ СЃРЅРёРјРєРѕРј (СЃРј. migrate_lan_mode.uc).
+	if [ -x /usr/bin/ucode ] && [ -f "$HP_DIR/scripts/migrate_lan_mode.uc" ]; then
+		_mig="$(/usr/bin/ucode "$HP_DIR/scripts/migrate_lan_mode.uc" 2>"$RUN_DIR/migrate_lan.err")"
+		[ -n "$_mig" ] && log "lan_proxy_mode migration: $_mig"
+		if [ -s "$RUN_DIR/migrate_lan.err" ]; then
+			log "lan_proxy_mode migration stderr: $(cat "$RUN_DIR/migrate_lan.err")"
+		fi
+		rm -f "$RUN_DIR/migrate_lan.err"
+	fi
+
+	config_load "$CONF"
+
+	local preferred_core
+	config_get preferred_core "config" "preferred_core" "auto"
+
+	# Try the preferred core first; fall back to whichever is installed
+	case "$preferred_core" in
+	hiddify)
+		if [ -x "$PROG_HIDDIFY" ]; then
+			PROG="$PROG_HIDDIFY"; RUN_CMD="srun"; CORE_TYPE="hiddify"
+		fi
+		;;
+	singbox)
+		if [ -x "$PROG_SINGBOX" ]; then
+			PROG="$PROG_SINGBOX"; RUN_CMD="run"; CORE_TYPE="singbox"
+		fi
+		;;
+	esac
+
+	if [ -z "$PROG" ]; then
+		if [ -x "$PROG_HIDDIFY" ]; then
+			PROG="$PROG_HIDDIFY"; RUN_CMD="srun"; CORE_TYPE="hiddify"
+		elif [ -x "$PROG_SINGBOX" ]; then
+			PROG="$PROG_SINGBOX"; RUN_CMD="run"; CORE_TYPE="singbox"
+		else
+			log "Error: No supported core found. Install hiddify-core or sing-box first."
+			return 1
+		fi
+	fi
+
+	local routing_mode proxy_mode
+	config_get routing_mode "config" "routing_mode" "proxy_banned_ru"
+	config_get proxy_mode "config" "proxy_mode" "redirect_tproxy"
+
+	# Р¤3.1/Р¤3.4 (D23): Custom routing / Custom JSON are RETIRED. The migrator
+	# above (migrate_routing_mode.uc) is the PRIMARY normalizer вЂ” it snapshots
+	# the config and rewrites UCI. This branch is the defensive fallback for
+	# the start where the migrator could not complete (snapshot failure etc.):
+	# the gates keep working on the working mode, the next start retries.
+	case "$routing_mode" in
+		custom|custom_json)
+			log "routing_mode '$routing_mode' is retired (D23) вЂ” the migrator did not rewrite it; treating it as proxy_banned_ru for this start."
+			routing_mode="proxy_banned_ru"
+			;;
+	esac
+
+	# в”Ђв”Ђ В«РќР°РїСЂСЏРјСѓСЋВ» (Р¤3.1): Р’РЎР• РјРµС…Р°РЅРёР·РјС‹ РІС‹РєР»СЋС‡РµРЅС‹ вЂ” СЂРµР¶РёРј СЂРµРјРѕРЅС‚Р°/РґРёР°РіРЅРѕСЃС‚РёРєРё в”Ђв”Ђ
+	# No MultiDNS bootstrap, no config generation, no dnsmasq hijack, no tproxy
+	# policy routes, no core, no firewall render, no engines, no automation.
+	# A mode switch always goes through stop+start (procd reload trigger or the
+	# apply door), but the direct start is SELF-SUFFICIENT: it re-runs the
+	# interception teardown itself, so stale chains/DNS hijack cannot survive
+	# any path into this mode (a fresh start included). The app plane stays
+	# alive: the orchestrator is what the user diagnoses WITH.
+	if [ "$routing_mode" = "direct" ]; then
+		teardown_interception
+		open_app_plane
+		open_subscription_cron
+		log "Routing mode 'direct': bypass mechanisms are OFF (core, engines, interception, DNS hijack) вЂ” app plane running."
+		return 0
+	fi
+
+	# Write core info for LuCI. hiddify/sing-box print "name version X".
+	local core_version
+	core_version="$("$PROG" version 2>/dev/null | head -1 | awk '{print $3; exit}')"
+	printf '{"core_type":"%s","version":"%s"}\n' "$CORE_TYPE" "$core_version" > "$RUN_DIR/core.info"
+
+	# MultiDNS: bootstrap the dedicated mosdns instance NOW (synchronously) so the
+	# generated client config can repoint its resolvers at the live racing listener.
+	# The full analyzer daemon (procd instance, registered further below) takes over
+	# afterwards and keeps mosdns alive/pruned. If mosdns cannot start, we skip
+	# and generate_client.uc falls back to direct upstreams (no DNS black-hole / no
+	# loss of internet). The daemon's bootstrap mode builds the conf + starts mosdns
+	# then exits; the procd daemon reuses that instance.
+	#
+	# Mode gating: MultiDNS accelerates the PRESET DNS pools (russia / region /
+	# secure), which only exist in proxy_banned_ru and bypass_cn/bypass_ir. In
+	# global nothing queries its listeners вЂ” bootstrapping mosdns there is
+	# pure RAM/startup waste, so skip it.
+	local md_en mdns_wired
+	config_get_bool md_en "multidns" "enabled" "0"
+	mdns_wired=0
+	case "$routing_mode" in
+		proxy_banned_ru|bypass_cn|bypass_ir) mdns_wired=1 ;;
+	esac
+	if [ "$md_en" = "1" ] && [ "$mdns_wired" != "1" ]; then
+		log "MultiDNS enabled but not wired into '$routing_mode' DNS (no preset pools there) вЂ” skipping mosdns."
+	fi
+	if [ "$md_en" = "1" ] && [ "$mdns_wired" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
+		mkdir -p "$RUN_DIR/multidns"
+		# Bootstrap the dedicated mosdns instance synchronously so generate_client
+		# can repoint DNS at the live racing listener. Bounded by a watchdog: if the
+		# bootstrap ever hangs it must NOT block start_service, so kill it after 25s.
+		# mosdns is launched detached (setsid) so it survives the kill and keeps
+		# serving; generate_client's mdns_ok guard then repoints to it safely.
+		#
+		# 1000>&- вЂ” CRITICAL: procd_lock() holds flock on fd 1000 while this child
+		# runs; mosdns (detached, never exits) must NOT inherit the locked fd or it
+		# pins the lock forever and every later start/stop/reload hangs (live wedge
+		# 2026-10-22, unwedged by killing the bootstrap-spawned mosdns).
+		(
+			/usr/bin/ucode "$HP_DIR/scripts/multidns.uc" bootstrap &
+			_bp=$!
+			( sleep 25; kill -9 "$_bp" 2>/dev/null ) &
+			wait "$_bp"
+		) 1000>&- 2>/dev/null || true
+	fi
+
+	# Generate client config
+	# Р¤1.2 (Р°СѓРґРёС‚ 27/52): the LKG pipeline вЂ” candidate в†’ validate в†’ atomic
+	# replace в†’ start в†’ verify (background, below) в†’ only a core that actually
+	# STARTS makes the new config the next .lastgood.
+	# Р¤1.2 (Р°СѓРґРёС‚ 27): the .lastgood file is promoted ONLY by the background
+	# verifier after a core that actually started вЂ” never copied here. A
+	# stale/broken config sitting in RUN_DIR while the service is stopped
+	# (or after a failed generation) must not poison the last-known-good.
+	# The previous live config is already in .lastgood (the verifier wrote
+	# it after the previous successful start).
+	# Р¤3.1: the custom_json branch (user-supplied config at $HP_DIR) was
+	# retired with the mode; a leftover hand-made file is NOT overwritten вЂ”
+	# only the generated RUN_DIR copy is.
+	rm -f "$RUN_DIR/hiddify-c.json.candidate"
+	rm -f "$RUN_DIR/hiddify-c.json"
+	# The generator writes hiddify-c.json.candidate and atomically renames it
+	# to hiddify-c.json ONLY after the core check passed (audit 27); a fatal
+	# check leaves the running config untouched and exits non-zero.
+	ucode "$HP_DIR/scripts/generate_client.uc"
+	if [ ! -e "$RUN_DIR/hiddify-c.json" ]; then
+		if [ -e "$RUN_DIR/hiddify-c.json.lastgood" ]; then
+			cp "$RUN_DIR/hiddify-c.json.lastgood" "$RUN_DIR/hiddify-c.json"
+			log "Error: failed to generate client config вЂ” rolled back to last good config; service keeps running with previous nodes."
+		else
+			log "Error: failed to generate client config."
+			return 1
+		fi
+	fi
+
+	# DNSMasq rules
+	local ipv6_support dns_port
+	config_get_bool ipv6_support "config" "ipv6_support" "0"
+	config_get dns_port "infra" "dns_port" "5333"
+	mkdir -p "$DNSMASQ_DIR"
+	# conf-dir loads files ALPHABETICALLY. The legacy unprefixed pair sorted the
+	# frozen WAN fallback BEFORE the primary resolvers ("redirect-dns-" <
+	# "redirect-dns."), turning the emergency floor into the PRIMARY dnsmasq
+	# upstream (DNS-regression 2026-11-03). The numeric prefixes pin the order:
+	# 10- primary resolvers first, 90- frozen fallback last. Remove the legacy
+	# names so dnsmasq never loads a stale copy alongside the new ones.
+	rm -f "$DNSMASQ_DIR/redirect-dns.conf" \
+		"$DNSMASQ_DIR/redirect-dns-fallback.conf" \
+		"$DNSMASQ_DIR/redirect-dns-fallback.cand"
+	echo -e "conf-dir=$DNSMASQ_DIR" > "$DNSMASQ_DIR/../dnsmasq-ravnex.conf"
+	case "$routing_mode" in
+	"bypass_cn"|"bypass_ir"|"global"|"proxy_banned_ru")
+		# All modes do DNS inside sing-box; dnsmasq just redirects to its inbound.
+		# strict-order pins 5333 as the primary server (default dnsmasq prefers
+		# whichever upstream answered fastest, which would let LAN queries drift
+		# onto the fallback below and bypass the core's split-DNS routing).
+		cat <<-EOF >> "$DNSMASQ_DIR/10-redirect-dns.conf"
+			no-poll
+			no-resolv
+			strict-order
+			server=127.0.0.1#$dns_port
+		EOF
+		# DNS resilience (С‡.59): when MultiDNS owns the independent mosdns plain
+		# listener, register it as a SECOND resolver. dnsmasq falls to it only
+		# when :5333 does not answer (core restart / crash window), so LAN DNS
+		# keeps working instead of going dark for the whole restart. The plain
+		# pool itself races direct upstreams and falls back to its secure pool,
+		# and learned proxy-domains are routed to secure within mosdns, so the
+		# emergency path is still a proper resolver.
+		if [ "$md_en" = "1" ] && [ "$mdns_wired" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
+			local mdns_fb_port
+			config_get mdns_fb_port "multidns" "plain_port" "5453"
+			echo "server=127.0.0.1#${mdns_fb_port}" >> "$DNSMASQ_DIR/10-redirect-dns.conf"
+		fi
+
+		# Emergency DNS floor (Р¤1.3, audits 45/49): freeze the WAN resolvers as
+		# the LAST server. dnsmasq reaches it only when :5333 (core) AND :5453
+		# (MultiDNS, if wired) both timeout вЂ” e.g. a dead core after a crash вЂ”
+		# so LAN DNS and the always-RU-internet invariant survive a full chain
+		# death. Two details make the floor REAL:
+		#   - the snapshot is FROZEN per service start (a flapping WAN cannot
+		#     churn dnsmasq config) and kept as last-known-good when
+		#     resolv.conf.auto is unusable at start (WAN down at boot);
+		#   - the "90-" filename prefix pins it as the LAST conf-dir entry
+		#     (alphabetical load order): the unprefixed name loaded BEFORE the
+		#     primaries and made the floor the primary resolver;
+		#   - dnsmasq's own egress escapes the interception via the skuid rule
+		#     in firewall_post.ut вЂ” otherwise a dead core would intercept the
+		#     fallback queries too and the floor would die with the chain.
+		# Tradeoff (same class as the С‡.59 fallback): a query the core answers
+		# too slowly can leak to the direct WAN resolver; as the LAST entry it
+		# is reachable only when the earlier resolvers timed out.
+		local wan_resolv dns_fb dns_fb_cand dns_fb_n ns
+		wan_resolv="/tmp/resolv.conf.d/resolv.conf.auto"
+		dns_fb="$DNSMASQ_DIR/90-redirect-dns-fallback.conf"
+		dns_fb_cand="$DNSMASQ_DIR/90-redirect-dns-fallback.cand"
+		dns_fb_n=0
+		rm -f "$dns_fb_cand"
+		if [ -r "$wan_resolv" ]; then
+			for ns in $(sed -n 's/^nameserver \([0-9a-fA-F.:]*\)$/\1/p' "$wan_resolv"); do
+				case "$ns" in 127.*|0.0.0.0|::1|::) continue ;; esac
+				echo "server=$ns" >> "$dns_fb_cand"
+				dns_fb_n=$((dns_fb_n + 1))
+			done
+		fi
+		if [ "$dns_fb_n" -gt 0 ]; then
+			mv -f "$dns_fb_cand" "$dns_fb"
+			printf '{"frozen":1,"servers":%d,"ts":%s}\n' "$dns_fb_n" "$(date +%s)" > "$RUN_DIR/dns_fallback.json.tmp" &&
+				mv -f "$RUN_DIR/dns_fallback.json.tmp" "$RUN_DIR/dns_fallback.json"
+		else
+			rm -f "$dns_fb_cand"
+			# resolv.conf.auto unusable at start вЂ” the previous frozen snapshot
+			# stays: it is the last-known-good emergency list.
+		fi
+		if [ -s "$dns_fb" ]; then
+			log "DNS emergency fallback frozen: $(grep -c '^server=' "$dns_fb") WAN resolver(s)."
+		fi
+		;;
+	esac
+	/etc/init.d/dnsmasq restart >"/dev/null" 2>&1
+
+	# Setup tproxy routing table
+	local table_mark tproxy_mark
+	config_get table_mark "infra" "table_mark" "100"
+	config_get tproxy_mark "infra" "tproxy_mark" "101"
+
+	# рџ”ґ Р¤3.2 (Р¶РёРІРѕР№ Р»РѕРІ 2026-11-04): `ip rule add` РќР• РёРґРµРјРїРѕС‚РµРЅС‚РµРЅ вЂ” РєР°Р¶РґС‹Р№
+	# start (Recovery/Sentinel svc_start, LKG-СЂРµСЃС‚Р°СЂС‚С‹ РІРµСЂРёС„РёРєР°С‚РѕСЂР°) РґРѕР±Р°РІР»СЏР»
+	# Р•Р©РЃ РћР”РќРћ РёРґРµРЅС‚РёС‡РЅРѕРµ РїСЂР°РІРёР»Рѕ; РЅР° Р±РѕРµРІРѕР№ РєРѕСЂРѕР±РєРµ РЅР°РєРѕРїРёР»РѕСЃСЊ 7 РґСѓР±Р»РёРєР°С‚РѕРІ
+	# fwmark 101. Р§РµСЃС‚РЅР°СЏ СЂРµ-Р°РєРєР»Р°РјР°С†РёСЏ: СЃРЅРµСЃС‚Рё РЅР°С€Рё РєРѕРїРёРё Рё РґРѕР±Р°РІРёС‚СЊ РѕРґРЅСѓ.
+	# (`ip route add`, РІ РѕС‚Р»РёС‡РёРµ РѕС‚ rule, СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ РјР°СЂС€СЂСѓС‚ РЅРµ РґСѓР±Р»РёСЂСѓРµС‚ вЂ”
+	# РїР°РґР°РµС‚ СЃ "File exists", РїРѕС‚РѕРјСѓ || true.)
+	while ip rule del fwmark "$tproxy_mark" table "$table_mark" 2>"/dev/null"; do :; done
+	ip rule add fwmark "$tproxy_mark" table "$table_mark"
+	ip route add local 0.0.0.0/0 dev lo table "$table_mark" 2>"/dev/null" || true
+
+	if [ "$ipv6_support" -eq "1" ]; then
+		while ip -6 rule del fwmark "$tproxy_mark" table "$table_mark" 2>"/dev/null"; do :; done
+		ip -6 rule add fwmark "$tproxy_mark" table "$table_mark"
+		ip -6 route add local ::/0 dev lo table "$table_mark" 2>"/dev/null" || true
+	fi
+
+	# TUN policy routing is installed LATER (after the core brings up the tun device).
+
+	# hiddify-core (client)
+	procd_open_instance "hiddify-c"
+
+	# F10.2 OOM victim ordering: the core is the biggest RSS and the FIRST
+	# legitimate OOM victim (respawnable, LKG-protected) вЂ” the wrapper also
+	# sets GOMEMLIMIT=64M on lite-class boxes (MemTotal <= 256 MB) so the Go
+	# heap cannot grow into a global OOM on small RAM (lesson 197: the core
+	# was OOM-killed at 727 MB anon). exec keeps the pid вЂ” procd still
+	# watches the real binary.
+	procd_set_param command /bin/sh "$HP_DIR/scripts/oom_adj.sh" 300 64
+	procd_append_param command "$PROG" $RUN_CMD --config "$RUN_DIR/hiddify-c.json"
+
+	# QUIC-GO GSO is broken on kernel 6.6 currently
+	uname -r | grep -Eq "^6\.6" && procd_set_param env "QUIC_GO_DISABLE_GSO"="true"
+
+	procd_set_param limits core="unlimited"
+	procd_set_param limits nofile="1000000 1000000"
+	procd_set_param stderr 1
+	procd_set_param respawn
+
+	procd_close_instance
+
+	# App plane (log-cleaner, metrics, telegram, autopilot, control, health,
+	# sentinel, recovery) вЂ” one shared definition, see open_app_plane().
+	open_app_plane
+
+	echo > "$RUN_DIR/hiddify-c.log"
+
+	# Setup firewall
+	# Strip CR: a CRLF-tainted template (e.g. transferred from Windows) would otherwise
+	# emit CRLF into the nft file, which nft rejects wholesale вЂ” silently dropping every
+	# homeproxy chain since fw4 loads all-or-nothing.
+	ucode "$HP_DIR/scripts/firewall_pre.uc"
+	local _fwtmp="$RUN_DIR/fw4_post.raw"
+	utpl -S "$HP_DIR/scripts/firewall_post.ut" > "$_fwtmp" 2>"$RUN_DIR/fw4_render.err"
+	if [ $? -eq 0 ]; then
+		tr -d '\r' < "$_fwtmp" > "$RUN_DIR/fw4_post.nft"
+	else
+		log "Warning: firewall template render FAILED вЂ” interception chains may be missing (see $RUN_DIR/fw4_render.err)."
+	fi
+	rm -f "$_fwtmp"
+	# Capture fw4 output instead of discarding it: a failed nft render/reload used to
+	# vanish without a trace while the whole interception silently stayed down.
+	fw4 reload >"$RUN_DIR/fw4_reload.log" 2>&1 || \
+		log "Warning: fw4 reload returned an error вЂ” check $RUN_DIR/fw4_reload.log."
+
+	# Self-heal pass 2: if interception rules are STILL absent from the live fw4
+	# table after reload, the whole ruleset failed to assemble вЂ” in the wild this
+	# was a FOREIGN broken firewall include (another package's bad .nft file makes
+	# nft reject the entire ruleset, so every homeproxy chain silently disappears).
+	# config_heal repair-rules finds the offender via fw4 stderr, disables it and
+	# re-applies the ruleset. Bounded to the ucode presence check.
+	if ! nft list table inet fw4 2>/dev/null | grep -q homeproxy; then
+		log "config heal: interception rules missing after fw4 reload вЂ” running repair-rules."
+		/usr/bin/ucode "$HP_DIR/scripts/config_heal.uc" repair-rules 2>/dev/null \
+			>> "$RUN_DIR/fw4_reload.log"
+		nft list table inet fw4 2>/dev/null | grep -q homeproxy \
+			&& log "config heal: interception rules RESTORED." \
+			|| log "Warning: interception rules still missing вЂ” check fw4_reload.log."
+	fi
+
+	# Kick the Clash health-check for main-out once the core is up: at cold start the
+	# Fallback/GLOBAL groups race the tunnel coming up and can pin themselves to
+	# direct-out with a stale "dead node" verdict until their next interval.
+	( sleep 8
+	  wget -qO- --timeout=8 'http://127.0.0.1:9090/proxies/main-out/delay?timeout=5000&url=http://www.gstatic.com/generate_204' >/dev/null 2>&1
+	) >/dev/null 2>&1 &
+
+	# Р¤1.2 (Р°СѓРґРёС‚ 27): confirm-or-rollback. procd starts the core only after
+	# start_service() returns, so the verification runs detached: alive after 8 s
+	# в†’ the new config becomes the next .lastgood; dead в†’ roll back to
+	# .lastgood and restart. A 60 s rollback marker guards against a restart
+	# storm: a config that kills the core twice stops the chain with a log line.
+	(
+		sleep 8
+		if hp_instance_running hiddify-c; then
+			[ -e "$RUN_DIR/hiddify-c.json" ] && cp "$RUN_DIR/hiddify-c.json" "$RUN_DIR/hiddify-c.json.lastgood"
+		elif [ -e "$RUN_DIR/hiddify-c.json.lastgood" ] && [ -e "$RUN_DIR/hiddify-c.json" ]; then
+			if [ -e "$RUN_DIR/.lkg_rollback" ] &&
+			   [ "$(( $(date +%s) - $(cat "$RUN_DIR/.lkg_rollback" 2>/dev/null || echo 0) ))" -lt 60 ]; then
+				log "config verify: core still failing after the rollback вЂ” stopping here (loop guard)."
+			else
+				date +%s > "$RUN_DIR/.lkg_rollback"
+				cp "$RUN_DIR/hiddify-c.json.lastgood" "$RUN_DIR/hiddify-c.json"
+				log "config verify: core failed to start with the new config вЂ” rolled back to the last good config."
+				sleep 3
+				if ! hp_instance_running hiddify-c; then
+					log "config verify: restarting the service with the rolled-back config."
+					/etc/init.d/ravnex restart >/dev/null 2>&1
+				fi
+			fi
+		fi
+	) 1000>&- 2>/dev/null &
+
+	# Setup TUN policy routing вЂ” handled by the `tun-route` watcher instance
+	# (С‡.72): a tun-mode core brings its tun device up LATE (remote rule-sets
+	# may initialize before inbounds вЂ” well past 40 s on a slow start), and the old
+	# one-shot blocking wait missed it в†’ the policy route was never installed в†’
+	# every marked packet fell through to the main table and egressed DIRECTLY,
+	# so every site that should go through the proxy was dead. The watcher waits
+	# for the device and (re)installs the rule/route for the whole service
+	# lifetime (it must steer the tun_mark'd traffic into the tun device so the
+	# core reads and routes it вЂ” direct-out vs main-out).
+	local tun_name tun_mark tun_table
+	config_get tun_name "infra" "tun_name" "singtun0"
+	config_get tun_mark "infra" "tun_mark" "102"
+	config_get tun_table "infra" "tun_table" "104"
+	if [ -n "$tun_name" ] && echo "$proxy_mode" | grep -q "tun"; then
+		procd_open_instance "tun-route"
+		procd_set_param command /bin/sh "$HP_DIR/scripts/tun_route_watch.sh" \
+			"$tun_name" "$tun_mark" "$tun_table" "$ipv6_support"
+		procd_set_param respawn 3600 5 5
+		procd_close_instance
+	fi
+
+	# ByeDPI
+	local byedpi_enabled byedpi_cmd_opts byedpi_block_quic byedpi_gid
+	config_get_bool byedpi_enabled "config" "byedpi_enabled" "0"
+	if [ "$byedpi_enabled" = "1" ] && [ -x "/usr/bin/ciadpi" ]; then
+		config_get byedpi_gid "infra" "byedpi_gid" "8181"
+
+		/etc/init.d/ciadpi stop 2>/dev/null; /etc/init.d/ciadpi disable 2>/dev/null; true
+
+		# ByeDPI runs as root (needed for TCP_MD5SIG and other desync) but under a dedicated
+		# group, so its egress can be excluded from the proxy redirect by socket group (skgid).
+		# ciadpi has no fwmark option, and without this exclusion its outbound connections
+		# loop back through sing-box (conntrack table full / packet flood).
+		# GID mismatch fix (Р¤1.3, audit B9): infra.byedpi_gid is the SINGLE source of
+		# truth вЂ” the nft skgid rules read the same UCI option. The /etc/group entry
+		# (procd's `group` param takes the gid from there) is now synced to it, not
+		# just created once: a changed UCI gid previously left ciadpi running under
+		# the old gid while nft matched the new one.
+		if ! grep -q "^byedpi:" /etc/group; then
+			echo "byedpi:x:${byedpi_gid}:" >> /etc/group
+		else
+			local cur_gid
+			cur_gid="$(sed -n 's/^byedpi:x:\([0-9][0-9]*\):.*/\1/p' /etc/group)"
+			if [ -n "$cur_gid" ] && [ "$cur_gid" != "$byedpi_gid" ]; then
+				sed -i "s/^byedpi:x:${cur_gid}:/byedpi:x:${byedpi_gid}:/" /etc/group
+				log "byedpi group gid synced ${cur_gid} -> ${byedpi_gid} (infra.byedpi_gid)."
+			fi
+		fi
+
+		# The instance command is the LAUNCHER (dpi_engine.sh), not ciadpi itself:
+		# the wrapper re-reads the CURRENT UCI strategy on every procd respawn,
+		# which is what makes engine_restart() able to apply a new strategy with
+		# a single kill вЂ” no service reload. exec keeps the wrapper's PID, so
+		# procd keeps watching the same process. Args move out of the
+		# registration into the wrapper; quoting stays eval-based there.
+		procd_open_instance "byedpi"
+		procd_set_param command /bin/sh "$HP_DIR/scripts/dpi_engine.sh" byedpi
+		procd_set_param group "byedpi"
+		procd_set_param respawn 3600 1 5
+		procd_close_instance
+
+		# byedpi_block_quic: the QUIC hard-block chain moved INTO the rendered
+		# fw4_post include (firewall_post.ut, Р¤1.3 audit B9): the raw `nft add
+		# chain` it used to be was added once at start and silently vanished on
+		# any full firewall restart (LuCI firewall apply / netifd reload) while
+		# the service kept running вЂ” QUIC unblocked without a trace. The include
+		# survives every reload and is nft-validated with the rest of the render.
+	fi
+
+	# Zapret (nfqws2): HomeProxy runs its OWN nfqws2 on a dedicated NFQUEUE. Which flows
+	# reach the queue is decided upstream by sing-box (zapret-out routing_mark) + nft
+	# (firewall_post.ut), so nfqws2 runs WITHOUT hostlists вЂ” it desyncs whatever it's fed.
+	# The zapret2 package only supplies the binary + lua; its own service/firewall stays
+	# disabled so it can't fight us for the queue or install conflicting nft rules.
+	local zapret_enabled zapret_qnum
+	config_get_bool zapret_enabled "config" "zapret_enabled" "0"
+	if [ "$zapret_enabled" = "1" ] && [ -x "/opt/zapret2/nfq2/nfqws2" ]; then
+		config_get zapret_qnum "config" "zapret_qnum" "200"
+
+		/etc/init.d/zapret2 stop 2>/dev/null; /etc/init.d/zapret2 disable 2>/dev/null; true
+
+		# Same launcher pattern as the byedpi instance above: the strategy
+		# (zapret_cmd_opts or the packaged default) is read by the wrapper on
+		# every respawn, so engine_restart() applies a new strategy with a kill
+		# instead of a full service reload.
+		procd_open_instance "zapret"
+		procd_set_param command /bin/sh "$HP_DIR/scripts/dpi_engine.sh" zapret
+		procd_set_param respawn 3600 1 5
+		procd_close_instance
+	fi
+
+	# Automation (auto blocked-site detection). Runs only while enabled; it owns the two
+	# loopback test inbounds (auto-direct-in / auto-proxy-in) that generate_client.uc emits.
+	# It is a separate procd instance so it respawns on crash and is torn down with the service.
+	local automation_enabled
+	config_get_bool automation_enabled "automation" "enabled" "0"
+	if [ "$automation_enabled" = "1" ]; then
+		procd_open_instance "automation"
+		# F10.2 OOM victim ordering: automation is the heaviest ucode daemon
+		# (tens of MB heap on long runs) and fully respawnable (state lives
+		# on tmpfs) вЂ” it dies BEFORE the DNS/UI plane under memory pressure.
+		procd_set_param command /bin/sh "$HP_DIR/scripts/oom_adj.sh" 200 0
+		procd_append_param command /usr/bin/ucode "$HP_DIR/scripts/automation.uc"
+		procd_set_param respawn
+		procd_close_instance
+	fi
+
+	# MultiDNS analyzer: races the DNS servers in each pool (plain + secure) via a
+	# dedicated mosdns instance and continuously scores/ranks them by latency + HTTP
+	# "site opens" verification + trends. Runs only while enabled AND only in modes
+	# whose preset DNS pools it actually accelerates (see the mdns_wired gate above).
+	local multidns_enabled
+	config_get_bool multidns_enabled "multidns" "enabled" "0"
+	if [ "$multidns_enabled" = "1" ] && [ "$mdns_wired" = "1" ] && [ -x "/usr/bin/mosdns" ]; then
+		mkdir -p "$RUN_DIR/multidns"
+		procd_open_instance "multidns"
+		procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/multidns.uc"
+		procd_set_param respawn
+		procd_close_instance
+	fi
+
+	# Exit Engine (Р¤9.16, D35a): РµРґРёРЅС‹Р№ РІС‹С…РѕРґ-РґРІРёР¶РѕРє вЂ” СЌРІРѕР»СЋС†РёСЏ Hot Swap
+	# (hotswap.uc); urltest_watchdog.uc СЃРЅРµСЃС‘РЅ (РµРіРѕ dead-РјР°СЂРєРёСЂРѕРІР°РЅРёРµ РїРµСЂРµРµС…Р°Р»Рѕ
+	# РІ РґРІРёР¶РѕРє, СЂРµСЃС‚Р°СЂС‚-РїСѓС‚СЊ Р±РѕР»СЊС€Рµ РЅРµ РЅСѓР¶РµРЅ вЂ” РґРІРёР¶РѕРє РІР»Р°РґРµРµС‚ СЃРµР»РµРєС‚РѕСЂРѕРј).
+	# Р”РІРёР¶РѕРє РїРёРЅРЅРёС‚ main-out (Рё main-udp-out РїСЂРё РІС‹РґРµР»РµРЅРЅРѕРј UDP-РІС‹С…РѕРґРµ), СЂРµР¶РёРјС‹
+	# auto/prefer/manual + СЂРµР·РµСЂРІ-СЃРїРёСЃРѕРє. РРЅСЃС‚Р°РЅСЃ СЃС‚Р°СЂС‚СѓРµС‚ Р’РЎР•Р“Р”Рђ: Р±РµР· РєРѕРЅС‚СЂР°РєС‚Р°
+	# (exit_engine.json) РґРІРёР¶РѕРє РёРґС‘С‚ РІ idle-С†РёРєР» 30 СЃ, С‚Р°Рє С‡С‚Рѕ СЃРёРЅС‚РµС‚РёРєР° main
+	# (direct/ByeDPI/Zapret) Рё РїСѓСЃС‚РѕР№ РїСѓР» Р±РµР·РѕРїР°СЃРЅС‹.
+	mkdir -p "$RUN_DIR"
+	procd_open_instance "hotswap"
+	procd_set_param command /usr/bin/ucode "$HP_DIR/scripts/hotswap.uc"
+	procd_set_param respawn
+	procd_close_instance
+
+	# Telegram/autopilot/control/health/sentinel/recovery вЂ” the shared
+	# app-plane definition (already opened above, right after the core).
+	# Kept here as a no-op marker: the main flow order documents that the
+	# app plane comes after every engine/automation instance.
+
+	# Subscription auto-update cron (shared definition вЂ” open_subscription_cron()).
+	open_subscription_cron
+
+	log "$(basename $PROG) started."
+}
+
+# Snapshot the CURRENT urltest group picks (Clash API, core still alive) into
+# $RUN_DIR/urltest_sticky. generate_client.uc fronts that node in each pool, so
+# a regen+restart keeps the running selection unless it is slower than another
+# node by more than the configured tolerance вЂ” otherwise every restart re-picked
+# "fastest right now" and the node changed although the tolerance said otherwise.
+# The core keeps urltest state in RAM only (cache_file does NOT persist it).
+# main-out-auto / -alt are the URLTest group tags when Hot Swap restructures
+# main-out into a selector over the group (С‡.60); snapshotting the selector
+# 'main-out' itself preserves the daemon's last pick too.
+snapshot_urltest_picks() {
+	local base="http://127.0.0.1:9090/proxies" tmp="$RUN_DIR/urltest_sticky.tmp" tag now
+	: > "$tmp"
+	for tag in main-out main-out-alt main-out-auto main-out-auto-alt \
+	           main-udp-out main-udp-out-alt; do
+		now=$(wget -qO- --timeout=2 "$base/$tag" 2>/dev/null | sed -ne 's/.*"now":[ ]*"\([^"]*\)".*/\1/p')
+		[ -n "$now" ] && printf '%s=%s\n' "$tag" "$now" >> "$tmp"
+	done
+	# Only replace when the core answered at least once: a dead core (boot,
+	# crash-respawn) must not wipe the last known picks.
+	if [ -s "$tmp" ]; then
+		mv -f "$tmp" "$RUN_DIR/urltest_sticky"
+	else
+		rm -f "$tmp"
+	fi
+}
+
+stop_service() {
+	# Must run BEFORE procd kills the core instance: it reads the live Clash API.
+	snapshot_urltest_picks
+
+	sed -i "/#${CONF}_autosetup/d" "/etc/crontabs/root" 2>"/dev/null"
+	/etc/init.d/cron restart >"/dev/null" 2>&1
+
+	# Load config
+	config_load "$CONF"
+
+	# Interception/DNS teardown вЂ” the shared Р¤3.1 helper (ip rules, nft
+	# chains/sets with a two-pass delete, fw4 include files truncated + reload,
+	# dnsmasq hijack removal + restart, identity-verified mosdns stop).
+	teardown_interception
+
+	# The automation daemon enables dnsmasq query logging (logqueries/logfacility)
+	# in UCI while it runs and removes them on graceful exit вЂ” but procd kills it
+	# with SIGTERM, so on service stop the flags would stay behind: dnsmasq keeps
+	# logging every LAN query to /var/run/ravnex/dnsmasq-q.log with nobody left
+	# to rotate it. Tear the logging down here unconditionally.
+	if [ "$(uci -q get dhcp.@dnsmasq[0].logqueries)" = "1" ] || uci -q get dhcp.@dnsmasq[0].logfacility >/dev/null 2>&1; then
+		uci -q delete dhcp.@dnsmasq[0].logqueries
+		uci -q delete dhcp.@dnsmasq[0].logfacility
+		uci commit dhcp
+		log "removed leftover dnsmasq query logging (automation teardown)."
+	fi
+	/etc/init.d/dnsmasq restart >"/dev/null" 2>&1
+
+	# Stop MultiDNS mosdns (the analyzer daemon itself is stopped by procd).
+	# Р¤1.4 (audits 11/25): the identity-verified stop вЂ” registry entry + the
+	# instance whose -c argument is OUR config; a foreign mosdns (a different
+	# config) is NEVER touched, and a reused pidfile PID is never signalled.
+	# The old `pidof mosdns && kill $(pidof mosdns)` swept every mosdns.
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" mosdns_stop >/dev/null 2>&1 || true
+
+	# Only remove the log; hiddify-c.json is manually placed by the user
+	rm -f "$RUN_DIR/hiddify-c.log"
+
+	# В«РљРѕРЅС‚СЂРѕР»СЊВ» (plan 14): tear down the enforcement of the separate nft
+	# table, the per-client dnsmasq filter instances and the Wi-Fi we
+	# switched вЂ” same cleanup the standalone HomeControl service did on
+	# stop. Stopping homeproxy stops the parental control with it.
+	HC_RUN="/var/run/homecontrol"
+	HC_WIFI=0
+	nft delete table inet ravcontrol 2>"/dev/null"
+	# Р¤1.4 (audit 34): the filter instances live in $RUN_DIR/dnsf (control_apply
+	# DNSF_DIR) вЂ” the loop below only swept the LEGACY /var/run/homecontrol/dnsf
+	# and left every live filter dnsmasq running after a service stop. The
+	# identity-verified sweep kills each instance from its .pid.json (or from a
+	# legacy text pidfile only when /proc still shows OUR -C conf), PID reuse
+	# can never redirect the signal.
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" dnsf_stop >/dev/null 2>&1 || true
+	if [ -d "$HC_RUN/dnsf" ]; then
+		for f in "$HC_RUN"/dnsf/*.pid; do
+			[ -e "$f" ] || break
+			pid="$(cat "$f" 2>/dev/null)"
+			[ -n "$pid" ] && kill "$pid" 2>/dev/null
+			rm -f "$f"
+		done
+		rm -rf "$HC_RUN/dnsf"
+	fi
+	for f in "$HC_RUN"/wifi.off.*; do
+		[ -e "$f" ] || break
+		iface="${f##*wifi.off.}"
+		uci -q delete "wireless.$iface.disabled"
+		rm -f "$f"
+		HC_WIFI=1
+	done
+	if [ "$HC_WIFI" = "1" ]; then
+		uci -q commit wireless
+		wifi reload 2>"/dev/null"
+	fi
+
+	log "Service stopped."
+}
+
+service_stopped() {
+	config_load "$CONF"
+	local tun_name
+	config_get tun_name "infra" "tun_name" "singtun0"
+
+	ip link set "$tun_name" down 2>"/dev/null"
+	ip tuntap del mode tun name "$tun_name" 2>"/dev/null"
+
+	# Р¤1.3 state files: cleaned HERE (not in stop_service) вЂ” procd kills the
+	# instances only after stop_service returns, so the tun watcher could still
+	# rewrite its state file in its last tick and a stale json would survive.
+	rm -f "$RUN_DIR/tun_state.json" "$RUN_DIR/dns_fallback.json" 2>"/dev/null"
+}
+
+reload_service() {
+	# Debounce rapid duplicate reloads. The automation DNS-failover path commits UCI
+	# AND calls reload manually; the procd reload-trigger on the same config fires a
+	# SECOND full stop/start right after. rc.common SERIALIZES init.d calls, so the
+	# duplicate always lands shortly AFTER the previous reload finished вЂ” hence the
+	# stamp is written on COMPLETION, not on start. A reload arriving this soon after
+	# a completed one is always a redundant duplicate (the finished reload already
+	# applied the current config); legitimate user actions are spaced far wider.
+	local stamp="$RUN_DIR/.last_reload"
+	local now last=0
+	now=$(date +%s)
+	[ -f "$stamp" ] && last=$(cat "$stamp" 2>/dev/null)
+	last=${last:-0}
+	# (a) another reload is literally still running (calls are NOT serialized);
+	local rpid
+	rpid=$(cat "$RUN_DIR/.reload_running" 2>/dev/null)
+	if [ -n "$rpid" ] && kill -0 "$rpid" 2>/dev/null; then
+		log "reload suppressed (debounce: another reload is in progress) вЂ” scheduling a deferred retry."
+		# 1000>&-: procd_lock() holds fd 1000 for the whole action; a child
+		# subshell inherits the LOCKED fd and pins the lock for its whole
+		# sleep (the ch.109 wedge class вЂ” lessons 100-104).
+		( sleep 30; /etc/init.d/$CONF reload ) >/dev/null 2>&1 1000>&- &
+		return
+	fi
+	# (b) a reload finished moments ago вЂ” its config state is already current.
+	if [ $((now - last)) -lt 20 ]; then
+		log "reload suppressed (debounce: $((now - last))s since previous reload finished) вЂ” scheduling a deferred retry."
+		# A suppressed reload used to be DROPPED entirely: rapid mode flips could
+		# leave the service running the pre-flip config with no further trigger.
+		# Re-arm one retry after the debounce window instead.
+		# 1000>&- вЂ” same locked-fd inheritance guard as above.
+		( sleep $((25 - (now - last))); /etc/init.d/$CONF reload ) >/dev/null 2>&1 1000>&- &
+		return
+	fi
+
+	echo "$$" > "$RUN_DIR/.reload_running"
+	log "Reloading service..."
+
+	stop
+	start
+	rm -f "$RUN_DIR/.reload_running"
+	date +%s > "$stamp"
+}
+
+# Light strategy-apply path. User report: every strategy apply (Strategy Lab,
+# Composition, auto-pick, auto-pilot repair) restarted the WHOLE service вЂ”
+# the core stop RSTs all tunneled connections (a Minecraft session gets
+# kicked), dnsmasq restarts, nft chains are torn down and rebuilt. A strategy
+# change touches ONLY the engine args (dpi_engine.sh re-reads UCI on every
+# respawn) and the UDP-queue shape (a strategy with/without --filter-udp
+# changes the firewall_post.ut render). So: kill the engine processes вЂ” procd
+# respawns the wrappers with the fresh UCI вЂ” then re-render the nft includes
+# and reload fw4. The core, dnsmasq, ip rules and ESTABLISHED flows are NOT
+# touched: direct and tunneled connections survive; only new zapret
+# handshakes during the ~1 s respawn window pass un-desynced and retry.
+engine_restart() {
+	# Guard: never re-render interception chains over a STOPPED service вЂ” the
+	# stop path removes them on purpose, and the next start applies the
+	# strategy anyway.
+	local core_alive=0
+	# Р¤1.4b: identity liveness through the Process Manager CLI вЂ” exact exe,
+	# both core runtime names (the compressed lite build runs as sing-box-core).
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" find hiddify-core,sing-box,sing-box-core >/dev/null 2>&1 && core_alive=1
+	if [ "$core_alive" != "1" ]; then
+		log "engine_restart: core not running вЂ” skipped (the next start applies the strategy)."
+		return 0
+	fi
+
+	config_load "$CONF"
+	local zapret_enabled byedpi_enabled zapret_qnum killed=0
+	config_get_bool zapret_enabled "config" "zapret_enabled" "0"
+	config_get_bool byedpi_enabled "config" "byedpi_enabled" "0"
+	if [ "$zapret_enabled" = "1" ] && [ -x /opt/zapret2/nfq2/nfqws2 ]; then
+		config_get zapret_qnum "config" "zapret_qnum" "200"
+		# Р¤1.4b: identity kill вЂ” the engine whose --qnum ELEMENT is the live
+		# queue (the tester's temp instance runs qnum 209 and never matches);
+		# (pid, starttime) re-verified per signal, a reused PID is skipped.
+		# kill_args exit codes: 0 = killed в‰Ґ1, 2 = nothing matched, 1 = failure.
+		ucode "$HP_DIR/scripts/pmgr_cli.uc" kill_args /opt/zapret2/nfq2/nfqws2 "--qnum=$zapret_qnum" >/dev/null 2>&1
+		[ $? -eq 0 ] && killed=1
+	fi
+	if [ "$byedpi_enabled" = "1" ] && [ -x /usr/bin/ciadpi ]; then
+		# Р¤1.4b: identity kill вЂ” our loopback instance (elements -i 127.0.0.1
+		# -p 5335); the wizard's test instance (port 15335) never matches.
+		ucode "$HP_DIR/scripts/pmgr_cli.uc" kill_args /usr/bin/ciadpi -i 127.0.0.1 -p 5335 >/dev/null 2>&1
+		[ $? -eq 0 ] && killed=1
+	fi
+	[ "$killed" = "1" ] && log "engine_restart: engines killed вЂ” procd respawns the launcher with the current UCI strategy."
+
+	# Firewall-only refresh (same render recipe as start_service).
+	ucode "$HP_DIR/scripts/firewall_pre.uc"
+	local _fwtmp="$RUN_DIR/fw4_post.raw"
+	utpl -S "$HP_DIR/scripts/firewall_post.ut" > "$_fwtmp" 2>"$RUN_DIR/fw4_render.err"
+	if [ $? -eq 0 ]; then
+		tr -d '\r' < "$_fwtmp" > "$RUN_DIR/fw4_post.nft"
+	else
+		log "Warning: firewall template render FAILED вЂ” keeping the previous render (see $RUN_DIR/fw4_render.err)."
+		rm -f "$_fwtmp"
+		return 0
+	fi
+	rm -f "$_fwtmp"
+	fw4 reload >"$RUN_DIR/fw4_reload.log" 2>&1 || \
+		log "Warning: fw4 reload returned an error вЂ” check $RUN_DIR/fw4_reload.log."
+	log "engine_restart: done."
+}
+
+# Р¤9.14: firewall-ONLY refresh for the device-policy changes (lan_* lists).
+# Re-renders firewall_post.ut + fw4 reload вЂ” exactly the engine_restart
+# recipe WITHOUT the engine kill: the DPI engines do not read the lan_*
+# lists, and a rapid series of list edits must not burn the procd respawn
+# budget (caught live in the Р¤9.14 acceptance: 5 engine kills in 3 min left
+# both engines down вЂ” lesson 23/316 class). Guard: never re-render over a
+# STOPPED service (same as engine_restart). A render failure returns 1 вЂ”
+# for a firewall-only refresh the fresh render IS the whole apply.
+fw_refresh() {
+	local core_alive=0
+	ucode "$HP_DIR/scripts/pmgr_cli.uc" find hiddify-core,sing-box,sing-box-core >/dev/null 2>&1 && core_alive=1
+	if [ "$core_alive" != "1" ]; then
+		log "fw_refresh: core not running вЂ” skipped (the next start applies the policy)."
+		return 0
+	fi
+
+	ucode "$HP_DIR/scripts/firewall_pre.uc"
+	local _fwtmp="$RUN_DIR/fw4_post.raw"
+	utpl -S "$HP_DIR/scripts/firewall_post.ut" > "$_fwtmp" 2>"$RUN_DIR/fw4_render.err"
+	if [ $? -eq 0 ]; then
+		tr -d '\r' < "$_fwtmp" > "$RUN_DIR/fw4_post.nft"
+	else
+		log "Warning: fw_refresh: firewall template render FAILED (see $RUN_DIR/fw4_render.err)."
+		rm -f "$_fwtmp"
+		return 1
+	fi
+	rm -f "$_fwtmp"
+	fw4 reload >"$RUN_DIR/fw4_reload.log" 2>&1 || \
+		log "Warning: fw_refresh: fw4 reload returned an error вЂ” check $RUN_DIR/fw4_reload.log."
+	log "fw_refresh: done."
+}
+
+service_triggers() {
+	procd_add_reload_trigger "$CONF"
+	# Heritage behavior reloaded the WHOLE service on every WAN interface up
+	# event вЂ” every PPPoE redial / carrier flap tore down ALL connections
+	# (direct included) and LAN DNS for the restart window. The core survives
+	# WAN changes on its own (auto_detect_interface re-binds; the fwmark policy
+	# routing and nft rules are interface-independent), so the reload is
+	# opt-in via config.reload_on_wan (default off, С‡.59).
+	config_load "$CONF"
+	local reload_on_wan
+	config_get_bool reload_on_wan "config" "reload_on_wan" "0"
+	if [ "$reload_on_wan" = "1" ]; then
+		procd_add_interface_trigger "interface.*.up" wan /etc/init.d/$CONF reload
+	fi
+	return 0
+}

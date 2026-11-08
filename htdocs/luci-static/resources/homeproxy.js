@@ -940,7 +940,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 				/* Ф3.1: in the direct mode («Напрямую») the core being down is
 				 * the CHOSEN state — the status line says so instead of
 				 * alarming on every page of the app. */
-				const direct = (uci.get('homeproxy', 'config', 'routing_mode') === 'direct');
+				const direct = (uci.get('ravnex', 'config', 'routing_mode') === 'direct');
 				dotEl.className = 'hpui-dot' + (seen ? ((ok || direct) ? ' ok' : ' bad') : '');
 				textEl.textContent = direct ? _('Direct mode is on — bypass is off')
 					: (ok ? _('System is running') : _('Core is not responding'));
@@ -1306,7 +1306,7 @@ body.hp-shell .cbi-tooltip {
 			/* If RPC failed or returned no core_type, fall back to core.info file */
 			if (features.core_type)
 				return features;
-			return L.resolveDefault(fs.read_direct('/var/run/homeproxy/core.info', 'text'), null)
+			return L.resolveDefault(fs.read_direct('/var/run/ravnex/core.info', 'text'), null)
 				.then((text) => {
 					if (text) {
 						try {
@@ -1387,7 +1387,7 @@ body.hp-shell .cbi-tooltip {
 			expect: { '': {} }
 		});
 
-		return ui.uploadFile('/tmp/homeproxy_certificate.tmp', ev.target)
+		return ui.uploadFile('/tmp/ravnex_certificate.tmp', ev.target)
 		.then(L.bind((_btn, res) => {
 			return L.resolveDefault(callWriteCertificate(filename), {}).then((ret) => {
 				if (ret.result === true)
@@ -1410,8 +1410,8 @@ body.hp-shell .cbi-tooltip {
 
 	validateCertificatePath(section_id, value) {
 		if (section_id && value)
-			if (!value.match(/^(\/etc\/homeproxy\/certs\/|\/etc\/acme\/|\/etc\/ssl\/).+$/))
-				return _('Expecting: %s').format(_('/etc/homeproxy/certs/..., /etc/acme/..., /etc/ssl/...'));
+			if (!value.match(/^(\/etc\/ravnex\/certs\/|\/etc\/acme\/|\/etc\/ssl\/).+$/))
+				return _('Expecting: %s').format(_('/etc/ravnex/certs/..., /etc/acme/..., /etc/ssl/...'));
 
 		return true;
 	},

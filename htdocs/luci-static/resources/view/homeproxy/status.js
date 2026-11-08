@@ -36,10 +36,10 @@ const callServiceList = rpc.declare({
 });
 
 function getServiceStatus() {
-	return L.resolveDefault(callServiceList('homeproxy'), {}).then((res) => {
+	return L.resolveDefault(callServiceList('ravnex'), {}).then((res) => {
 		let isRunning = false;
 		try {
-			isRunning = res['homeproxy']['instances']['hiddify-c']['running'];
+			isRunning = res['ravnex']['instances']['hiddify-c']['running'];
 		} catch (e) { }
 		return isRunning;
 	});
@@ -205,7 +205,7 @@ function buildResProfileCard() {
 }
 
 /* Thanks to luci-app-aria2 */
-const hp_dir = '/var/run/homeproxy';
+const hp_dir = '/var/run/ravnex';
 
 /* v3 (Ф9.2/Ф9.3): shared card-tool button (hpui family). variant:
  * 'primary' | 'danger' | 'ghost' | '' (plain). Disabled states and click
@@ -235,7 +235,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 
 	let section, log_level_el;
 	switch (filename) {
-	case 'homeproxy':
+	case 'ravnex':
 		section = null;
 		break;
 	case 'hiddify-c':
@@ -244,7 +244,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 	}
 
 	if (section) {
-		const selected = uci.get('homeproxy', section, 'log_level') || 'warn';
+		const selected = uci.get('ravnex', section, 'log_level') || 'warn';
 		const choices = {
 			trace: _('Trace'),
 			debug: _('Debug'),
@@ -260,7 +260,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 			'class': 'cbi-input-select',
 			'style': 'margin-left: 4px; width: 6em;',
 			'change': ui.createHandlerFn(this, (ev) => {
-				uci.set('homeproxy', section, 'log_level', ev.target.value);
+				uci.set('ravnex', section, 'log_level', ev.target.value);
 				return o.map.save(null, true).then(() => {
 					ui.changes.apply(true);
 				});
@@ -684,7 +684,7 @@ const callCoreSkipped = rpc.declare({
 
 /* Background core install (hiddify / sing-box / sing-box-lite): the runner
  * does prepare → download → install → kmods detached and writes stage
- * status into /var/run/homeproxy/core_install.json; the card polls it.
+ * status into /var/run/ravnex/core_install.json; the card polls it.
  * A ~46-95 MB download used to freeze the tab for minutes. */
 const callCoreInstallStart = rpc.declare({
 	object: 'luci.ravnex',
@@ -1798,7 +1798,7 @@ return view.extend({
 		return Promise.all([
 			hp.getBuiltinFeatures(),
 			L.resolveDefault(callCoreInfo(), {}),
-			uci.load('homeproxy'),
+			uci.load('ravnex'),
 			L.resolveDefault(callByeDPIStatus(), {}),
 			L.resolveDefault(callCurlStatus(), {}),
 			L.resolveDefault(callZapretStatus(), {}),
@@ -1816,9 +1816,9 @@ return view.extend({
 		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
 		hp.uiShell();
 
-		m = new form.Map('homeproxy');
+		m = new form.Map('ravnex');
 
-		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Resources management'));
+		s = m.section(form.NamedSection, 'config', 'ravnex', _('Resources management'));
 		s.anonymous = true;
 		s.description = _('What runs on the router right now: the active core and its version. The rest of the page installs and updates the moving parts.');
 
@@ -1860,7 +1860,7 @@ return view.extend({
 				expect: { '': {} }
 			});
 
-			const savedPath = uci.get('homeproxy', 'config', 'custom_core_path') || '';
+			const savedPath = uci.get('ravnex', 'config', 'custom_core_path') || '';
 			const pathInput = E('input', {
 				'type': 'text',
 				'class': 'cbi-input-text',
@@ -1937,14 +1937,14 @@ return view.extend({
 				return node;
 			}
 
-		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Application'));
+		s = m.section(form.NamedSection, 'config', 'ravnex', _('Application'));
 		s.anonymous = true;
 		s.description = _('The app itself: check for updates, install or reinstall the package.');
 
 		o = s.option(form.DummyValue, '_app_card');
 		o.default = buildAppCard(appStatus);
 
-		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Core management'));
+		s = m.section(form.NamedSection, 'config', 'ravnex', _('Core management'));
 		s.anonymous = true;
 		s.description = _('The cores that run the proxy (only one is active at a time), rule-set seeds for a cold boot, configuration snapshots and the emergency internet recovery.');
 
@@ -1994,20 +1994,20 @@ return view.extend({
 		 * "Advanced" tab (wizard.js) — the Master now covers it; no duplicate
 		 * editor here. The status card on the Overview page stays. */
 
-		s = m.section(form.NamedSection, 'config', 'homeproxy', _('AntiDPI'));
+		s = m.section(form.NamedSection, 'config', 'ravnex', _('AntiDPI'));
 		s.anonymous = true;
 		s.description = _('Install, update and manage the two bypass engines — ByeDPI and Zapret. Which one actually serves the traffic is configured on the Blocking bypass page.');
 
 		o = s.option(form.DummyValue, '_byedpi_card');
-		o.default = buildByeDPICard(byedpiStatus, uci.get('homeproxy', 'config', 'main_node') === 'byedpi-out');
+		o.default = buildByeDPICard(byedpiStatus, uci.get('ravnex', 'config', 'main_node') === 'byedpi-out');
 
 		o = s.option(form.DummyValue, '_curl_card', _('ByeDPI strategy tester'));
 		o.default = buildCurlCard(curlStatus);
 
 		o = s.option(form.DummyValue, '_zapret_card');
-		o.default = buildZapretCard(zapretStatus, uci.get('homeproxy', 'config', 'main_node') === 'zapret-out');
+		o.default = buildZapretCard(zapretStatus, uci.get('ravnex', 'config', 'main_node') === 'zapret-out');
 
-		s = m.section(form.NamedSection, 'config', 'homeproxy', _('MultiDNS / mosdns'));
+		s = m.section(form.NamedSection, 'config', 'ravnex', _('MultiDNS / mosdns'));
 		s.anonymous = true;
 		s.description = _('Install, update and manage the engines behind MultiDNS — the racing DNS resolver.');
 
@@ -2019,14 +2019,14 @@ return view.extend({
 		 * Installs that ride the feed fall back to the original sources
 		 * automatically when the feed is unavailable (apk-native behavior:
 		 * an unreachable index only warns). */
-		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Update source'));
+		s = m.section(form.NamedSection, 'config', 'ravnex', _('Update source'));
 		s.anonymous = true;
 		s.description = _('Own signed package source: every component (hiddify-core full and compact, sing-box-extended and lite, mosdns, helpers, byedpi, zapret2) installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. When the source is unavailable, installs automatically fall back to the original paths.');
 
 		o = s.option(form.DummyValue, '_feed_card');
 		o.default = buildFeedCard(feedStatus);
 
-		s = m.section(form.NamedSection, 'config', 'homeproxy');
+		s = m.section(form.NamedSection, 'config', 'ravnex');
 		s.anonymous = true;
 
 		o = s.option(form.DummyValue, '_homeproxy_logview');

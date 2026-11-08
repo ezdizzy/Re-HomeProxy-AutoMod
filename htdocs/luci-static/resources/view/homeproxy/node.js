@@ -732,7 +732,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'vless');
 	o.depends('type', 'vmess');
 	o.onchange = function(ev, section_id, value) {
-		let desc = this.map.findElement('id', 'cbid.homeproxy.%s.transport'.format(section_id)).nextElementSibling;
+		let desc = this.map.findElement('id', 'cbid.ravnex.%s.transport'.format(section_id)).nextElementSibling;
 		if (value === 'http')
 			desc.innerHTML = _('TLS is not enforced. If TLS is not configured, plain HTTP 1.1 is used.');
 		else if (value === 'quic')
@@ -740,20 +740,20 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		else
 			desc.innerHTML = _('No TCP transport, plain HTTP is merged into the HTTP transport.');
 
-		let tls = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
+		let tls = this.map.findElement('id', 'cbid.ravnex.%s.tls'.format(section_id)).firstElementChild;
 		if ((value === 'http' && tls.checked) || (value === 'grpc' && !features.with_grpc)) {
-			this.map.findElement('id', 'cbid.homeproxy.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
+			this.map.findElement('id', 'cbid.ravnex.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
 				_('Specifies the period of time (in seconds) after which a health check will be performed using a ping frame if no frames have been received on the connection.<br/>' +
 					'Please note that a ping response is considered a received frame, so if there is no other traffic on the connection, the health check will be executed every interval.');
 
-			this.map.findElement('id', 'cbid.homeproxy.%s.http_ping_timeout'.format(section_id)).nextElementSibling.innerHTML =
+			this.map.findElement('id', 'cbid.ravnex.%s.http_ping_timeout'.format(section_id)).nextElementSibling.innerHTML =
 				_('Specifies the timeout duration (in seconds) after sending a PING frame, within which a response must be received.<br/>' +
 					'If a response to the PING frame is not received within the specified timeout duration, the connection will be closed.');
 		} else if (value === 'grpc' && features.with_grpc) {
-			this.map.findElement('id', 'cbid.homeproxy.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
+			this.map.findElement('id', 'cbid.ravnex.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
 				_('If the transport doesn\'t see any activity after a duration of this time (in seconds), it pings the client to check if the connection is still active.');
 
-			this.map.findElement('id', 'cbid.homeproxy.%s.http_ping_timeout'.format(section_id)).nextElementSibling.innerHTML =
+			this.map.findElement('id', 'cbid.ravnex.%s.http_ping_timeout'.format(section_id)).nextElementSibling.innerHTML =
 				_('The timeout (in seconds) that after performing a keepalive check, the client will wait for activity. If no activity is detected, the connection will be closed.');
 		}
 	}
@@ -1168,7 +1168,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.validate = function(section_id, _value) {
 		if (section_id) {
 			let type = this.map.lookupOption('type', section_id)[0].formvalue(section_id);
-			let tls = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
+			let tls = this.map.findElement('id', 'cbid.ravnex.%s.tls'.format(section_id)).firstElementChild;
 
 			if (['anytls', 'hysteria', 'hysteria2', 'shadowtls', 'trusttunnel', 'tuic'].includes(type)) {
 				tls.checked = true;
@@ -1233,7 +1233,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 
 	o = s.option(form.Value, 'tls_cert_path', _('Certificate path'),
 		_('The path to the server certificate, in PEM format.'));
-	o.value('/etc/homeproxy/certs/client_ca.pem');
+	o.value('/etc/ravnex/certs/client_ca.pem');
 	o.depends('tls_self_sign', '1');
 	o.validate = hp.validateCertificatePath;
 	o.rmempty = false;
@@ -1243,7 +1243,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		_('<strong>Save your configuration before uploading files!</strong>'));
 	o.inputstyle = 'action';
 	o.inputtitle = _('Upload...');
-	o.depends({'tls_self_sign': '1', 'tls_cert_path': '/etc/homeproxy/certs/client_ca.pem'});
+	o.depends({'tls_self_sign': '1', 'tls_cert_path': '/etc/ravnex/certs/client_ca.pem'});
 	o.onclick = L.bind(hp.uploadCertificate, this, _('certificate'), 'client_ca');
 	o.modalonly = true;
 
@@ -1254,7 +1254,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 
 	o = s.option(form.Value, 'tls_ech_config_path', _('ECH config path'),
 		_('The path to the ECH config, in PEM format. If empty, load from DNS will be attempted.'));
-	o.value('/etc/homeproxy/certs/client_ech_conf.pem');
+	o.value('/etc/ravnex/certs/client_ech_conf.pem');
 	o.depends('tls_ech', '1');
 	o.modalonly = true;
 
@@ -1262,7 +1262,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		_('<strong>Save your configuration before uploading files!</strong>'));
 	o.inputstyle = 'action';
 	o.inputtitle = _('Upload...');
-	o.depends({'tls_ech': '1', 'tls_ech_config_path': '/etc/homeproxy/certs/client_ech_conf.pem'});
+	o.depends({'tls_ech': '1', 'tls_ech_config_path': '/etc/ravnex/certs/client_ech_conf.pem'});
 	o.onclick = L.bind(hp.uploadCertificate, this, _('ECH config'), 'client_ech_conf');
 	o.modalonly = true;
 
@@ -1284,7 +1284,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		o.depends({'type': 'shadowsocks', 'shadowtls_enabled': '1'});
 		o.validate = function(section_id, value) {
 			if (section_id) {
-				let tls_reality = this.map.findElement('id', 'cbid.homeproxy.%s.tls_reality'.format(section_id)).firstElementChild;
+				let tls_reality = this.map.findElement('id', 'cbid.ravnex.%s.tls_reality'.format(section_id)).firstElementChild;
 				if (tls_reality.checked && !value)
 					return _('Expecting: %s').format(_('non-empty value'));
 
@@ -1446,7 +1446,7 @@ const SUB_CHIP = {
 return view.extend({
 	load() {
 		return Promise.all([
-			uci.load('homeproxy'),
+			uci.load('ravnex'),
 			hp.getBuiltinFeatures(),
 			L.resolveDefault(callSubscriptionStatus(), null)
 		]);
@@ -1940,9 +1940,9 @@ return view.extend({
 		/* ── The form: subscription settings + node grids (NO tabs — Ф9.11) ── */
 		let m, s, o, ss;
 
-		m = new form.Map('homeproxy');
+		m = new form.Map('ravnex');
 
-		s = m.section(form.NamedSection, 'subscription', 'homeproxy');
+		s = m.section(form.NamedSection, 'subscription', 'ravnex');
 		s.title = _('Subscription settings');
 		s.description = _('Auto update, the fetch path (direct or via proxy), filters and defaults for imported nodes.');
 

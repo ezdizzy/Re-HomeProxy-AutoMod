@@ -5,7 +5,7 @@
  *
  * Ravnex — Devices (R3 v3d, 19-UX_REDESIGN §5; Ф9.3 v3 rework; Ф9.14/D34d):
  * the ONE home page for devices. Two former places are merged here:
- *  - the homecontrol registry (the "Devices" pane of Parental control):
+ *  - the ravcontrol registry (the "Devices" pane of Parental control):
  *    add devices from the live network (MAC identity), rename/remove,
  *    per-device internet actions (block/temp/wifi) shared with the
  *    control engine and the Telegram bot;
@@ -280,10 +280,10 @@ function lanLoad() {
 	for (let i = 0; i < LAN_MODES.length; i++)
 		for (let k = 0; k < LAN_KINDS.length; k++) {
 			const opt = LAN_OPTS[LAN_MODES[i]][LAN_KINDS[k]];
-			const v = uci.get('homeproxy', 'control', opt);
+			const v = uci.get('ravnex', 'control', opt);
 			LANVAL[opt] = (v == null) ? [] : (Array.isArray(v) ? v.map(String) : [ String(v) ]);
 		}
-	const m = uci.get('homeproxy', 'control', 'lan_proxy_mode');
+	const m = uci.get('ravnex', 'control', 'lan_proxy_mode');
 	/* The legacy «disabled» (before migrate_lan_mode.uc ran) displays as
 	 * except_listed: with an empty Direct list the nft behavior is identical. */
 	globalMode = (m === 'listed_only') ? 'listed_only' : 'except_listed';
@@ -330,7 +330,7 @@ function deviceMode(c) {
 
 /* The resolved outcome for the device RIGHT NOW (honest badge). */
 function proxyState(c) {
-	if (uci.get('homeproxy', 'config', 'routing_mode') === 'direct')
+	if (uci.get('ravnex', 'config', 'routing_mode') === 'direct')
 		return { cls: 'hpui-b-grey', label: _('No proxy') };
 	if (inModeList(c, 'global'))
 		return { cls: 'hpui-b-blue', label: _('Global proxy') };
@@ -355,7 +355,7 @@ return view.extend({
 
 	load() {
 		return Promise.all([
-			uci.load('homeproxy'),
+			uci.load('ravnex'),
 			uci.load('luci'),
 			hp.getBuiltinFeatures(),
 			L.resolveDefault(callStatus(), null),
@@ -792,7 +792,7 @@ return view.extend({
 		/* Expert chips editor: staged locally, saved as ONE batch RPC. The
 		 * server re-validates every value (the ONE classifier) — the client
 		 * checks are convenience only. */
-		const ipv6 = (uci.get('homeproxy', 'config', 'ipv6_support') === '1');
+		const ipv6 = (uci.get('ravnex', 'config', 'ipv6_support') === '1');
 		const EXPERT = {};
 
 		function expertReset() {

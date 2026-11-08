@@ -8,19 +8,19 @@
 'use strict';
 
 import { access, popen, readfile, writefile, rename, stat, mkdir, unlink, opendir } from 'fs';
-import { find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
+import { find_daemons as pm_find } from '/etc/ravnex/scripts/pmgr.uc';
 
 function shellquote(s) {
 	return `'${replace(s, "'", "'\\''")}'`;
 }
 
 /* Optional GitHub mirror (set by a provisioning tool or the user as
- * uci homeproxy.config.github_mirror). Used ONLY as a FALLBACK: every fetch tries
+ * uci ravnex.config.github_mirror). Used ONLY as a FALLBACK: every fetch tries
  * GitHub first and only swaps to the mirror if GitHub fails — so a healthy GitHub is
  * never bypassed, but a blocked/failed one still gets the file via the mirror. */
 function gh_mirror_base() {
 	let base = null;
-	const fd = popen('uci -q get homeproxy.config.github_mirror 2>/dev/null');
+	const fd = popen('uci -q get ravnex.config.github_mirror 2>/dev/null');
 	if (fd) { base = trim(fd.read('all')); fd.close(); }
 	return (base && length(base)) ? replace(base, /\/+$/, '') : null;
 }
@@ -192,7 +192,7 @@ function bin_bytes(path) {
  * binary's mtime+size: replacing the core invalidates its entry. The same
  * file/schema is used by rpcd's singbox_get_features (lesson 44: fs.stat
  * fields carry NO st_ prefix). */
-const VERSION_CACHE = '/var/run/homeproxy/core_versions.json';
+const VERSION_CACHE = '/var/run/ravnex/core_versions.json';
 
 function read_version_cache() {
 	if (!access(VERSION_CACHE))
@@ -203,7 +203,7 @@ function read_version_cache() {
 }
 
 function write_version_cache(cache) {
-	mkdir('/var/run/homeproxy');
+	mkdir('/var/run/ravnex');
 	const tmp = VERSION_CACHE + '.tmp';
 	writefile(tmp, sprintf('%.J', cache) + '\n');
 	rename(tmp, VERSION_CACHE);
@@ -292,7 +292,7 @@ function core_features_cached(bin) {
  * level, lesson 93/126). */
 const FEED_KEY_FILE = '/etc/apk/keys/ravnex-feed.pub';
 const FEED_LIST_LEGACY = '/etc/apk/repositories.d/ravnex-feed.list';
-const FEED_MANIFEST_FILE = '/var/run/homeproxy/feed_manifest.json';
+const FEED_MANIFEST_FILE = '/var/run/ravnex/feed_manifest.json';
 const FEED_MANIFEST_TTL = 1800;
 const FEED_BRANCH = 'refs/heads/feed';
 const FEED_REPOS = ['ezdizzy/ravnex', 'ezdizzy/re-homeproxy'];
@@ -378,7 +378,7 @@ function feed_manifest(force) {
 	if (!man || type(man) != 'object' || !man.pkgs || man.arch != arch)
 		return (cache && cache.manifest) ? cache.manifest : null;
 	const entry = { ts: now, manifest: man };
-	mkdir('/var/run/homeproxy');
+	mkdir('/var/run/ravnex');
 	writefile(FEED_MANIFEST_FILE + '.tmp', sprintf('%.J', entry) + '\n');
 	rename(FEED_MANIFEST_FILE + '.tmp', FEED_MANIFEST_FILE);
 	return man;
@@ -870,7 +870,7 @@ let result;
 				const lite_now = !!match(vout, /-extended-/) &&
 					!match(vout, /with_gvisor/) && !match(vout, /with_tailscale/);
 				if (lite_now) {
-					system('/etc/init.d/homeproxy start >/dev/null 2>&1');
+					system('/etc/init.d/ravnex start >/dev/null 2>&1');
 					result = { result: true,
 						note: 'installed; the installer health-check only watches sing-box and returned an error (the active core is not sing-box) — the service was restarted' };
 				} else {
@@ -995,7 +995,7 @@ let result;
 		} else {
 			/* Stop the service first: procd must not respawn the (deleted)
 			 * core, and a restart after removal may have no core left. */
-			system('/etc/init.d/homeproxy stop >/dev/null 2>&1');
+			system('/etc/init.d/ravnex stop >/dev/null 2>&1');
 			const targets = [sb, '/usr/libexec/sing-box-core', '/etc/sing-box-version.cache'];
 			let removed = [];
 			for (let f in targets)
@@ -1007,7 +1007,7 @@ let result;
 			 * the service stopped (interception is down either way) and say
 			 * so honestly. */
 			if (access('/usr/bin/hiddify-core')) {
-				system('/etc/init.d/homeproxy start >/dev/null 2>&1');
+				system('/etc/init.d/ravnex start >/dev/null 2>&1');
 				result = { result: true, removed };
 			} else {
 				result = { result: true, removed, warning: 'no other core installed — the service is stopped; install hiddify-core or sing-box-extended to run the proxy' };

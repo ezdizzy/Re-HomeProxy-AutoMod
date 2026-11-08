@@ -31,7 +31,7 @@ body:
       label: HomeProxy configuration
       description: |
         The HomeProxy configuration file where the error occurred (use command below).
-        ```cat /etc/config/homeproxy```
+        ```cat /etc/config/ravnex```
     validations:
       required: true
   - type: textarea
@@ -40,8 +40,8 @@ body:
       label: sing-box configuration
       description: |
         The sing-box configuration file where the error occurred (use command below).
-        For client: ```cat /var/run/homeproxy/sing-box-c.json```
-        For server: ```cat /var/run/homeproxy/sing-box-s.json```
+        For client: ```cat /var/run/ravnex/sing-box-c.json```
+        For server: ```cat /var/run/ravnex/sing-box-s.json```
     validations:
       required: true
   - type: textarea
@@ -50,7 +50,7 @@ body:
       label: HomeProxy log
       description: |
         The HomeProxy log file where the error occurred (use command below).
-        ```cat /var/run/homeproxy/homeproxy.log```
+        ```cat /var/run/ravnex/ravnex.log```
     validations:
       required: false
   - type: textarea
@@ -59,8 +59,8 @@ body:
       label: sing-box log
       description: |
         The sing-box log file where the error occurred (use command below).
-        For client: ```cat /var/run/homeproxy/sing-box-c.log```
-        For server: ```cat /var/run/homeproxy/sing-box-s.log```
+        For client: ```cat /var/run/ravnex/sing-box-c.log```
+        For server: ```cat /var/run/ravnex/sing-box-s.log```
     validations:
       required: true
 

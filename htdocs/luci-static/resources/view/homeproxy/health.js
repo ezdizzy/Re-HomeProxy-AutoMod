@@ -211,24 +211,24 @@ function nodeText(node) {
 function resolveTag(tag) {
 	const m = tag && tag.match(/^cfg-(.+)-out$/);
 	if (m) {
-		const label = uci.get('homeproxy', m[1], 'label');
+		const label = uci.get('ravnex', m[1], 'label');
 		if (label) return label;
 	}
 	/* Fixed aggregate tags → name the configured node behind them. */
 	const specials = { 'main-out': 'main_node', 'main-udp-out': 'main_udp_node' };
 	if (specials[tag]) {
-		const v = uci.get('homeproxy', 'config', specials[tag]);
+		const v = uci.get('ravnex', 'config', specials[tag]);
 		if (v === 'byedpi-out') return 'ByeDPI';
 		if (v === 'zapret-out') return 'Zapret';
 		if (v && !['urltest', 'same', 'nil', ''].includes(v)) {
-			const label = uci.get('homeproxy', v, 'label');
+			const label = uci.get('ravnex', v, 'label');
 			if (label) return label;
 		}
 	}
 	/* Bare node section id (rules written by the advanced editor store the
 	 * plain section name) — resolve its label, never show a raw cfg-id
 	 * (hotswap.messages_node_names_not_cfg_ids). */
-	const label = tag ? uci.get('homeproxy', String(tag), 'label') : null;
+	const label = tag ? uci.get('ravnex', String(tag), 'label') : null;
 	if (label) return label;
 	return tag;
 }
@@ -1241,8 +1241,8 @@ function buildConnectivitySection(view, coreType) {
 	/* Dedicated UDP node — only the modes that expose "Main UDP node" in the UI set it
 	   (Global + the bypass_cn/bypass_ir reverse modes; proxy_banned_ru doesn't, and
 	   'redirect' proxy mode has no UDP path). Show which node currently carries UDP. */
-	const udpNode   = uci.get('homeproxy', 'config', 'main_udp_node');
-	const proxyMode = uci.get('homeproxy', 'config', 'proxy_mode');
+	const udpNode   = uci.get('ravnex', 'config', 'main_udp_node');
+	const proxyMode = uci.get('ravnex', 'config', 'proxy_mode');
 	if (udpNode && !['nil', 'same', ''].includes(udpNode) && proxyMode !== 'redirect')
 		rows.push(activeNodeRow(_('Active UDP Node'), 'main-udp-out'));
 
@@ -1984,7 +1984,7 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			L.resolveDefault(hp.getBuiltinFeatures(), {}),
-			uci.load('homeproxy')
+			uci.load('ravnex')
 		]);
 	},
 

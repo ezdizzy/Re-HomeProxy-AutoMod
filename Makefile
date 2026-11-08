@@ -28,14 +28,14 @@ PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
 
 define Package/luci-app-re-homeproxy/conffiles
-/etc/config/homeproxy
-/etc/config/homecontrol
-/etc/homeproxy/certs/
-/etc/homeproxy/ruleset/
-	/etc/homeproxy/resources/direct_list.txt
-	/etc/homeproxy/resources/proxy_list.txt
-	/etc/homeproxy/resources/auto_proxy_list.txt
-	/etc/homeproxy/resources/auto_proxy_ip.txt
+/etc/config/ravnex
+/etc/config/ravcontrol
+/etc/ravnex/certs/
+/etc/ravnex/ruleset/
+	/etc/ravnex/resources/direct_list.txt
+	/etc/ravnex/resources/proxy_list.txt
+	/etc/ravnex/resources/auto_proxy_list.txt
+	/etc/ravnex/resources/auto_proxy_ip.txt
 endef
 
 define Package/luci-app-re-homeproxy/postinst
@@ -66,8 +66,8 @@ define Package/luci-app-re-homeproxy/postinst
 # blanket chmod heals every already-broken 3.0.1 box on upgrade to 3.0.2.
 # Removing the crash-guard flag lets multidns respawn mosdns within its
 # next tick (~60 s) without any manual SSH step.
-chmod 755 /etc/homeproxy/scripts/*.sh 2>/dev/null
-rm -f /var/run/homeproxy/multidns/mosdns.broken 2>/dev/null
+chmod 755 /etc/ravnex/scripts/*.sh 2>/dev/null
+rm -f /var/run/ravnex/multidns/mosdns.broken 2>/dev/null
 if command -v setsid >/dev/null 2>&1; then
 	setsid sh -c 'sleep 3; /etc/init.d/rpcd restart' >/dev/null 2>&1 &
 	setsid sh -c 'sleep 4; /etc/init.d/uhttpd restart' >/dev/null 2>&1 &

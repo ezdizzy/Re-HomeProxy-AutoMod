@@ -45,11 +45,11 @@ return view.extend({
 		/* App shell (R3 v2): sidebar + topbar + dual theme (implies uiStyle). */
 		hp.uiShell();
 
-		const m = new form.Map('homeproxy');
+		const m = new form.Map('ravnex');
 
 		const mdDisable = rpc.declare({ object: 'luci.ravnex', method: 'multidns_disable', expect: { '': {} } });
 
-		const s = m.section(form.NamedSection, 'config', 'homeproxy', null);
+		const s = m.section(form.NamedSection, 'config', 'ravnex', null);
 		s.addremove = false;
 
 		s.tab('pools', _('DNS servers'),
@@ -178,7 +178,7 @@ return view.extend({
 		};
 
 		/* ── Tab: MultiDNS (embedded exactly like the previous Client-tab layout) ── */
-		o = s.taboption('multidns', form.SectionValue, '_multidns', form.NamedSection, 'multidns', 'homeproxy');
+		o = s.taboption('multidns', form.SectionValue, '_multidns', form.NamedSection, 'multidns', 'ravnex');
 
 		let ss = o.subsection;
 		let so = ss.option(form.Flag, 'enabled', _('Enable MultiDNS'),

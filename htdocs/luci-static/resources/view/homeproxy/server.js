@@ -42,10 +42,10 @@ const CBIGenValue = form.Value.extend({
 });
 
 function getServiceStatus() {
-	return L.resolveDefault(callServiceList('homeproxy'), {}).then((res) => {
+	return L.resolveDefault(callServiceList('ravnex'), {}).then((res) => {
 		let isRunning = false;
 		try {
-			isRunning = res['homeproxy']['instances']['hiddify-c']['running'];
+			isRunning = res['ravnex']['instances']['hiddify-c']['running'];
 		} catch (e) { }
 		return isRunning;
 	});
@@ -138,7 +138,7 @@ const CSS = `
 
 function suggestPort() {
 	const used = {};
-	uci.sections('homeproxy', 'server', (sec) => {
+	uci.sections('ravnex', 'server', (sec) => {
 		if (sec.port)
 			used['' + sec.port] = true;
 	});
@@ -229,7 +229,7 @@ function openWizard(preset, grid) {
 		}
 
 		let dup = false;
-		uci.sections('homeproxy', 'server', (sec) => {
+		uci.sections('ravnex', 'server', (sec) => {
 			if (('' + sec.port) === port)
 				dup = true;
 		});
@@ -256,42 +256,42 @@ function openWizard(preset, grid) {
 			let sid;
 			do {
 				sid = 'srv_' + hp.generateRand('hex', 4);
-			} while (uci.get('homeproxy', sid));
+			} while (uci.get('ravnex', sid));
 
-			uci.add('homeproxy', 'server', sid);
-			uci.set('homeproxy', sid, 'label', label);
-			uci.set('homeproxy', sid, 'enabled', '1');
-			uci.set('homeproxy', sid, 'port', port);
-			uci.set('homeproxy', sid, 'firewall', wFw.checked ? '1' : '0');
+			uci.add('ravnex', 'server', sid);
+			uci.set('ravnex', sid, 'label', label);
+			uci.set('ravnex', sid, 'enabled', '1');
+			uci.set('ravnex', sid, 'port', port);
+			uci.set('ravnex', sid, 'firewall', wFw.checked ? '1' : '0');
 
 			if (preset === 'home') {
-				uci.set('homeproxy', sid, 'type', 'mixed');
-				uci.set('homeproxy', sid, 'username', (wUser.value || '').trim() || 'user');
-				uci.set('homeproxy', sid, 'password', wPass.value);
+				uci.set('ravnex', sid, 'type', 'mixed');
+				uci.set('ravnex', sid, 'username', (wUser.value || '').trim() || 'user');
+				uci.set('ravnex', sid, 'password', wPass.value);
 			} else if (preset === 'anytls') {
-				uci.set('homeproxy', sid, 'type', 'anytls');
-				uci.set('homeproxy', sid, 'password', wPass.value);
-				uci.set('homeproxy', sid, 'tls', '1');
-				uci.set('homeproxy', sid, 'tls_reality', '1');
-				uci.set('homeproxy', sid, 'tls_reality_private_key', keys.private_key);
-				uci.set('homeproxy', sid, 'tls_reality_public_key', keys.public_key);
-				uci.set('homeproxy', sid, 'tls_reality_short_id', [ hp.generateRand('hex', 4) ]);
-				uci.set('homeproxy', sid, 'tls_reality_server_addr', 'www.microsoft.com');
-				uci.set('homeproxy', sid, 'tls_reality_server_port', '443');
+				uci.set('ravnex', sid, 'type', 'anytls');
+				uci.set('ravnex', sid, 'password', wPass.value);
+				uci.set('ravnex', sid, 'tls', '1');
+				uci.set('ravnex', sid, 'tls_reality', '1');
+				uci.set('ravnex', sid, 'tls_reality_private_key', keys.private_key);
+				uci.set('ravnex', sid, 'tls_reality_public_key', keys.public_key);
+				uci.set('ravnex', sid, 'tls_reality_short_id', [ hp.generateRand('hex', 4) ]);
+				uci.set('ravnex', sid, 'tls_reality_server_addr', 'www.microsoft.com');
+				uci.set('ravnex', sid, 'tls_reality_server_port', '443');
 			} else if (preset === 'ss') {
-				uci.set('homeproxy', sid, 'type', 'shadowsocks');
-				uci.set('homeproxy', sid, 'shadowsocks_encrypt_method', '2022-blake3-aes-128-gcm');
-				uci.set('homeproxy', sid, 'password', wPass.value);
+				uci.set('ravnex', sid, 'type', 'shadowsocks');
+				uci.set('ravnex', sid, 'shadowsocks_encrypt_method', '2022-blake3-aes-128-gcm');
+				uci.set('ravnex', sid, 'password', wPass.value);
 			} else {
-				uci.set('homeproxy', sid, 'type', 'vless');
-				uci.set('homeproxy', sid, 'uuid', wUuid.value);
-				uci.set('homeproxy', sid, 'tls', '1');
-				uci.set('homeproxy', sid, 'tls_reality', '1');
-				uci.set('homeproxy', sid, 'tls_reality_private_key', keys.private_key);
-				uci.set('homeproxy', sid, 'tls_reality_public_key', keys.public_key);
-				uci.set('homeproxy', sid, 'tls_reality_short_id', [ hp.generateRand('hex', 4) ]);
-				uci.set('homeproxy', sid, 'tls_reality_server_addr', 'www.microsoft.com');
-				uci.set('homeproxy', sid, 'tls_reality_server_port', '443');
+				uci.set('ravnex', sid, 'type', 'vless');
+				uci.set('ravnex', sid, 'uuid', wUuid.value);
+				uci.set('ravnex', sid, 'tls', '1');
+				uci.set('ravnex', sid, 'tls_reality', '1');
+				uci.set('ravnex', sid, 'tls_reality_private_key', keys.private_key);
+				uci.set('ravnex', sid, 'tls_reality_public_key', keys.public_key);
+				uci.set('ravnex', sid, 'tls_reality_short_id', [ hp.generateRand('hex', 4) ]);
+				uci.set('ravnex', sid, 'tls_reality_server_addr', 'www.microsoft.com');
+				uci.set('ravnex', sid, 'tls_reality_server_port', '443');
 			}
 
 			/* The framework-native add flow: mark the staged section, close
@@ -327,7 +327,7 @@ function openWizard(preset, grid) {
 return view.extend({
 	load() {
 		return Promise.all([
-			uci.load('homeproxy'),
+			uci.load('ravnex'),
 			hp.getBuiltinFeatures()
 		]);
 	},
@@ -343,11 +343,11 @@ return view.extend({
 		if (!document.getElementById('hp-srv-style'))
 			document.head.appendChild(E('style', { 'id': 'hp-srv-style' }, [ CSS ]));
 
-		m = new form.Map('homeproxy');
+		m = new form.Map('ravnex');
 
 		/* ── Panel 1: live status + the master switch (+ honest warnings) ── */
 
-		s = m.section(form.NamedSection, 'server', 'homeproxy');
+		s = m.section(form.NamedSection, 'server', 'ravnex');
 
 		s.render = function() {
 			poll.add(() => {
@@ -748,7 +748,7 @@ return view.extend({
 		o.depends('type', 'vless');
 		o.depends('type', 'vmess');
 		o.onchange = function(ev, section_id, value) {
-			let desc = this.map.findElement('id', 'cbid.homeproxy.%s.transport'.format(section_id)).nextElementSibling;
+			let desc = this.map.findElement('id', 'cbid.ravnex.%s.transport'.format(section_id)).nextElementSibling;
 			if (value === 'http')
 				desc.innerHTML = _('TLS is not enforced. If TLS is not configured, plain HTTP 1.1 is used.');
 			else if (value === 'quic')
@@ -756,12 +756,12 @@ return view.extend({
 			else
 				desc.innerHTML = _('No TCP transport, plain HTTP is merged into the HTTP transport.');
 
-			let tls_element = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
+			let tls_element = this.map.findElement('id', 'cbid.ravnex.%s.tls'.format(section_id)).firstElementChild;
 			if ((value === 'http' && tls_element.checked) || (value === 'grpc' && !features.with_grpc))
-				this.map.findElement('id', 'cbid.homeproxy.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
+				this.map.findElement('id', 'cbid.ravnex.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
 					_('Specifies the time (in seconds) until idle clients should be closed with a GOAWAY frame. PING frames are not considered as activity.');
 			else if (value === 'grpc' && features.with_grpc)
-				this.map.findElement('id', 'cbid.homeproxy.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
+				this.map.findElement('id', 'cbid.ravnex.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
 					_('If the transport doesn\'t see any activity after a duration of this time (in seconds), it pings the client to check if the connection is still active.');
 		}
 		o.modalonly = true;
@@ -883,7 +883,7 @@ return view.extend({
 		o.validate = function(section_id, value) {
 			if (section_id) {
 				let type = this.map.lookupOption('type', section_id)[0].formvalue(section_id);
-				let tls = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
+				let tls = this.map.findElement('id', 'cbid.ravnex.%s.tls'.format(section_id)).firstElementChild;
 
 				if (['hysteria', 'hysteria2', 'tuic'].includes(type)) {
 					tls.checked = true;
@@ -1094,7 +1094,7 @@ return view.extend({
 
 		o = srvGrid.option(form.Value, 'tls_cert_path', _('Certificate path'),
 			_('The server public key, in PEM format.'));
-		o.value('/etc/homeproxy/certs/server_publickey.pem');
+		o.value('/etc/ravnex/certs/server_publickey.pem');
 		o.depends({'tls': '1', 'tls_acme': '0', 'tls_reality': null});
 		o.depends({'tls': '1', 'tls_acme': '0', 'tls_reality': '0'});
 		o.depends({'tls': '1', 'tls_acme': null, 'tls_reality': '0'});
@@ -1107,7 +1107,7 @@ return view.extend({
 			_('<strong>Save your configuration before uploading files!</strong>'));
 		o.inputstyle = 'action';
 		o.inputtitle = _('Upload...');
-		o.depends({'tls': '1', 'tls_cert_path': '/etc/homeproxy/certs/server_publickey.pem'});
+		o.depends({'tls': '1', 'tls_cert_path': '/etc/ravnex/certs/server_publickey.pem'});
 		o.onclick = L.bind(hp.uploadCertificate, this, _('certificate'), 'server_publickey');
 		o.modalonly = true;
 
@@ -1115,7 +1115,7 @@ return view.extend({
 			_('Generate a self-signed certificate and key pair on the router (EC, 10 years) — no domain needed. A self-signed cert is NOT publicly trusted: on the clients enable "Allow insecure TLS" (insecure) or pin the certificate. ACME on this page stays the way to get a publicly-trusted one.'));
 		o.inputstyle = 'action';
 		o.inputtitle = _('Generate');
-		o.depends({'tls': '1', 'tls_cert_path': '/etc/homeproxy/certs/server_publickey.pem'});
+		o.depends({'tls': '1', 'tls_cert_path': '/etc/ravnex/certs/server_publickey.pem'});
 		o.onclick = L.bind(function(ev) {
 			const callServerCertGenerate = rpc.declare({
 				object: 'luci.ravnex',
@@ -1138,7 +1138,7 @@ return view.extend({
 
 		o = srvGrid.option(form.Value, 'tls_key_path', _('Key path'),
 			_('The server private key, in PEM format.'));
-		o.value('/etc/homeproxy/certs/server_privatekey.pem');
+		o.value('/etc/ravnex/certs/server_privatekey.pem');
 		o.depends({'tls': '1', 'tls_acme': '0', 'tls_reality': '0'});
 		o.depends({'tls': '1', 'tls_acme': '0', 'tls_reality': null});
 		o.depends({'tls': '1', 'tls_acme': null, 'tls_reality': '0'});
@@ -1151,7 +1151,7 @@ return view.extend({
 			_('<strong>Save your configuration before uploading files!</strong>'));
 		o.inputstyle = 'action';
 		o.inputtitle = _('Upload...');
-		o.depends({'tls': '1', 'tls_key_path': '/etc/homeproxy/certs/server_privatekey.pem'});
+		o.depends({'tls': '1', 'tls_key_path': '/etc/ravnex/certs/server_privatekey.pem'});
 		o.onclick = L.bind(hp.uploadCertificate, this, _('private key'), 'server_privatekey');
 		o.modalonly = true;
 

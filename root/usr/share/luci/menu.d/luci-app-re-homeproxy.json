@@ -7,7 +7,7 @@
 		},
 		"depends": {
 			"acl": [ "luci-app-re-homeproxy" ],
-			"uci": { "homeproxy": true }
+			"uci": { "ravnex": true }
 		}
 	},
 	"admin/services/ravnex/overview": {

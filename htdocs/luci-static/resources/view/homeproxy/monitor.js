@@ -83,7 +83,7 @@ function fmtBytes(n) {
 function chainLabel(tag) {
 	const m = (tag || '').match(/^cfg-(.+)-out$/);
 	if (m) {
-		const label = uci.get('homeproxy', m[1], 'label');
+		const label = uci.get('ravnex', m[1], 'label');
 		if (label) return label;
 	}
 	return tag;
@@ -147,7 +147,7 @@ function addRow(table, cells) {
 
 return view.extend({
 	load: function() {
-		return Promise.all([ uci.load('homeproxy') ]);
+		return Promise.all([ uci.load('ravnex') ]);
 	},
 
 	render: function() {

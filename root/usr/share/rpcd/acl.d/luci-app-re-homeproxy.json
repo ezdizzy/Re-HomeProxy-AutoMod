@@ -1,13 +1,13 @@
 {
 	"luci-app-re-homeproxy": {
-		"description": "Grant access to homeproxy configuration",
+		"description": "Grant access to ravnex configuration",
 		"read": {
 			"file": {
-				"/etc/homeproxy/scripts/update_subscriptions.uc": [ "exec" ],
+				"/etc/ravnex/scripts/update_subscriptions.uc": [ "exec" ],
 				"/usr/bin/ucode": [ "exec" ],
-				"/etc/homeproxy/zapret_candidates.json": [ "read" ],
-				"/var/run/homeproxy/homeproxy.log": [ "read" ],
-				"/var/run/homeproxy/hiddify-c.log": [ "read" ]
+				"/etc/ravnex/zapret_candidates.json": [ "read" ],
+				"/var/run/ravnex/ravnex.log": [ "read" ],
+				"/var/run/ravnex/hiddify-c.log": [ "read" ]
 			},
 			"ubus": {
 				"service": [ "list" ],
@@ -36,11 +36,11 @@
 					"feed_status"
 				]
 			},
-			"uci": [ "homeproxy" ]
+			"uci": [ "ravnex" ]
 		},
 		"write": {
 			"file": {
-				"/tmp/homeproxy_certificate.tmp": [ "write" ]
+				"/tmp/ravnex_certificate.tmp": [ "write" ]
 			},
 			"ubus": {
 				"luci.ravnex": [
@@ -84,7 +84,7 @@
 					"app_support_bundle_start", "app_support_bundle_text_start"
 				]
 			},
-			"uci": [ "homeproxy" ]
+			"uci": [ "ravnex" ]
 		}
 	}
 }

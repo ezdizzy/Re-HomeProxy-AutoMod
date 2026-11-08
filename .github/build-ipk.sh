@@ -56,15 +56,18 @@ cp -fpR "$PKG_DIR/htdocs"/* "$TEMP_PKG_DIR/www/"
 cp -fpR "$PKG_DIR/root"/* "$TEMP_PKG_DIR/"
 
 cat > "$TEMP_PKG_DIR/lib/upgrade/keep.d/$PKG_NAME" <<-EOF
-/etc/homeproxy/certs/
-/etc/homeproxy/ruleset/
-/etc/homeproxy/resources/direct_list.txt
-/etc/homeproxy/resources/proxy_list.txt
+/etc/ravnex/certs/
+/etc/ravnex/ruleset/
+/etc/ravnex/resources/direct_list.txt
+/etc/ravnex/resources/proxy_list.txt
+/etc/ravnex/resources/auto_proxy_list.txt
+/etc/ravnex/resources/auto_proxy_ip.txt
 EOF
 
 if [ "$PKG_MGR" == "apk" ]; then
 	find "$TEMP_PKG_DIR" -type f,l -printf '/%P\n' | sort > "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.list"
-	echo "/etc/config/homeproxy" >> "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles"
+	echo "/etc/config/ravnex" >> "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles"
+	echo "/etc/config/ravcontrol" >> "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles"
 	cat "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles" | while IFS= read -r file; do
 		[ -f "$TEMP_PKG_DIR/$file" ] || continue
 		sha256sum "$TEMP_PKG_DIR/$file" | sed "s,$TEMP_PKG_DIR/,," >> "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles_static"
@@ -77,7 +80,7 @@ if [ "$PKG_MGR" == "apk" ]; then
 export root="${IPKG_INSTROOT}"
 export pkgname="'"$PKG_NAME"'"
 add_group_and_user
-# Deliberately NOT default_postinst: its init.d loop runs "/etc/init.d/homeproxy
+# Deliberately NOT default_postinst: its init.d loop runs "/etc/init.d/ravnex
 # start" synchronously, and the service start is slow (mosdns bootstrap +
 # rule-set downloads + fw4) — slow enough to blow the 120s ubus timeout and
 # kill apk mid-transaction (observed: update failed, i18n updated, app stayed
@@ -90,7 +93,13 @@ add_group_and_user
 fi
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
-	killall -HUP rpcd 2>/dev/null
+	# ch.253 Р9: the RPC object name changed (luci.homeproxy -> luci.ravnex);
+	# SIGHUP does NOT reload the ucode method set (Makefile postinst lesson),
+	# a full restart is required. Delayed+setsid: survives apk teardown and
+	# does not block when the install runs THROUGH rpcd.
+	if command -v setsid >/dev/null 2>&1; then
+		setsid sh -c "sleep 3; /etc/init.d/rpcd restart" >/dev/null 2>&1 &
+	fi
 	# Menu hardening (ch.252): the ucode menu tree lives inside the uhttpd
 	# process and never un-bakes a poisoned satisfied=false (menu dies for
 	# all sessions, incl. fresh logins, until uhttpd restarts). Restart it
@@ -107,20 +116,46 @@ export root="${IPKG_INSTROOT}"
 export pkgname="'"$PKG_NAME"'"
 add_group_and_user
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
-	# Upgrade path (ch.250): apk upgrades run post-upgrade, not post-install,
-	# so the theme uci-defaults used to wait for the next reboot - upgraders
-	# stayed on bootstrap until then (the "theme flicker" report). Activate
-	# the theme right away; the script itself switches away ONLY from the
-	# stock bootstrap, an own theme choice is never overridden.
-	[ -f /etc/uci-defaults/luci-homeproxy-theme ] && ( . /etc/uci-defaults/luci-homeproxy-theme ) && rm -f /etc/uci-defaults/luci-homeproxy-theme
+	# Upgrade path (ch.253 Р9): apk upgrades run post-upgrade, not
+	# post-install - this hook now runs the FULL uci-defaults loop, because
+	# the UCI/directory migrator lives in luci-homeproxy-migration (it runs
+	# BEFORE migrate_config.uc; see the stub). Idempotent and gated: on a
+	# fresh box (no /etc/config/homeproxy) the migrator exits immediately.
+	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
+		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
+	done
 	uci commit
 fi
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
-	killall -HUP rpcd 2>/dev/null
+	# ch.253 Р9: renamed RPC object - full rpcd restart, not SIGHUP
+	# (SIGHUP only reloads ACLs/session; the ucode method set stays stale).
+	if command -v setsid >/dev/null 2>&1; then
+		setsid sh -c "sleep 3; /etc/init.d/rpcd restart" >/dev/null 2>&1 &
+	fi
+	# ch.252 menu hardening: clean menu tree for every updater.
 	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	exit 0
 }' > "$TEMP_DIR/post-upgrade"
+
+	# ch.253 Р9: snapshot the ENTIRE old tree BEFORE apk unpacks (old
+	# non-conffile files vanish with the old package - lesson 389; modified
+	# conffiles survive, unmodified ones are replaced). The migrator overlays
+	# user state FROM this snapshot, so nothing user-owned is lost. Also
+	# stops the OLD service cleanly before the file swap (the new service is
+	# started by the update flow / hooks afterwards).
+	cat > "$TEMP_DIR/pre-upgrade" <<-'PREEOF'
+	#!/bin/sh
+	[ -n "${IPKG_INSTROOT}" ] && exit 0
+	TS=$(date +%s)
+	SD="/root/ravnex-premigrate-$TS"
+	mkdir -p "$SD"
+	[ -d /etc/homeproxy ] && cp -a /etc/homeproxy "$SD/homeproxy" 2>/dev/null
+	cp -p /etc/config/homeproxy /etc/config/homecontrol /etc/config/firewall "$SD/" 2>/dev/null
+	/etc/init.d/homeproxy stop 2>/dev/null
+	exit 0
+	PREEOF
+	chmod 0755 "$TEMP_DIR/pre-upgrade"
 
 	echo -e '#!/bin/sh
 [ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
@@ -143,6 +178,7 @@ add_group_and_user
 		--info "origin:$PKG_NAME" \
 		--info "url:https://github.com/ezdizzy/re-homeproxy" \
 		--info "maintainer:1andrevich <1andrevich.recede274@passmail.net>" \
+		--script "pre-upgrade:$TEMP_DIR/pre-upgrade" \
 		--script "post-install:$TEMP_DIR/post-install" \
 		--script "post-upgrade:$TEMP_DIR/post-upgrade" \
 		--script "pre-deinstall:$TEMP_DIR/pre-deinstall" \
@@ -187,7 +223,7 @@ else
 	EOF
 	chmod 0644 "$TEMP_PKG_DIR/CONTROL/control"
 
-	echo -e "/etc/config/homeproxy" > "$TEMP_PKG_DIR/CONTROL/conffiles"
+	echo -e "/etc/config/ravnex`n/etc/config/ravcontrol" > "$TEMP_PKG_DIR/CONTROL/conffiles"
 
 	echo -e '#!/bin/sh
 [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
@@ -196,7 +232,7 @@ else
 export root="${IPKG_INSTROOT}"
 export pkgname="'"$PKG_NAME"'"
 add_group_and_user
-# Not default_postinst: its init.d loop would start /etc/init.d/homeproxy
+# Not default_postinst: its init.d loop would start /etc/init.d/ravnex
 # synchronously (slow: bootstrap + rule-set downloads + fw4) and can blow the
 # update timeout. The app update flow restarts the service in the background.
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
@@ -254,7 +290,7 @@ else
 	mkdir -p "$I18N_TEMP_PKG_DIR/CONTROL/"
 fi
 
-po2lmo "$PKG_DIR/po/ru/homeproxy.po" "$I18N_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/homeproxy.ru.lmo"
+po2lmo "$PKG_DIR/po/ru/homeproxy.po" "$I18N_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/ravnex.ru.lmo"
 
 if [ "$PKG_MGR" == "apk" ]; then
 	find "$I18N_TEMP_PKG_DIR" -type f,l -printf '/%P\n' | sort > "$I18N_TEMP_PKG_DIR/lib/apk/packages/$I18N_PKG_NAME.list"

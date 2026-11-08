@@ -149,7 +149,7 @@ const callAppCheckUpdate = rpc.declare({
 function resolveTag(tag) {
 	const m = tag && String(tag).match(/^cfg-(.+)-out$/);
 	if (m) {
-		const label = uci.get('homeproxy', m[1], 'label');
+		const label = uci.get('ravnex', m[1], 'label');
 		if (label) return label;
 	}
 	return tag;
@@ -216,7 +216,7 @@ return view.extend({
 
 	load: function() {
 		return Promise.all([
-			uci.load('homeproxy'),
+			uci.load('ravnex'),
 			hp.getBuiltinFeatures()
 		]);
 	},
@@ -790,8 +790,8 @@ return view.extend({
 
 		function renderCards(sys, node, dpi, mdns, ctl) {
 			const z = (dpi && dpi.zapret) || {}, b = (dpi && dpi.byedpi) || {};
-			const cfgMode = uci.get('homeproxy', 'config', 'routing_mode') || 'proxy_banned_ru';
-			const cfgMainNode = uci.get('homeproxy', 'config', 'main_node') || '';
+			const cfgMode = uci.get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru';
+			const cfgMainNode = uci.get('ravnex', 'config', 'main_node') || '';
 			const last = (metrics.points.length) ? metrics.points[metrics.points.length - 1] : null;
 
 			/* Core (hero + metric card). */
@@ -852,7 +852,7 @@ return view.extend({
 				(last && last.vpn_b > 0) ? 'hpui-c-green' : '');
 
 			/* Routing mode chip (hero). */
-			const proxyMode = uci.get('homeproxy', 'config', 'proxy_mode') || '';
+			const proxyMode = uci.get('ravnex', 'config', 'proxy_mode') || '';
 			const pmLabels = { redirect: _('Redirect TCP'), redirect_tproxy: _('Redirect TCP + TProxy UDP'),
 				redirect_tun: _('Redirect TCP + Tun UDP'), tun: _('Tun TCP/UDP') };
 			modeChipState.textContent = routingModeLabel(cfgMode);
@@ -877,7 +877,7 @@ return view.extend({
 			 * carried before — now a full card with a jump. "restarting..."
 			 * is the routine quality-cycle rebuild window — neutral, NOT the
 			 * alarming red. */
-			const mdEnabled = (mdns && mdns.enabled === '1') || (uci.get('homeproxy', 'multidns', 'enabled') === '1');
+			const mdEnabled = (mdns && mdns.enabled === '1') || (uci.get('ravnex', 'multidns', 'enabled') === '1');
 			const mdRunning = !!(mdEnabled && mdns && mdns.mosdns);
 			const mdRestart = !!(mdEnabled && !mdRunning && mdns && mdns.restarting);
 			const mdRu = (mdEnabled && mdns && mdns.active && mdns.active.ru) ? mdns.active.ru.length : 0;
@@ -893,7 +893,7 @@ return view.extend({
 			/* Auto-bypass (concern card 3) + the automation-family monitors
 			 * (Ф7.4): the health-doc pass-through gives the live status of
 			 * the four automation services — data here, polish in Ф9. */
-			const auEnabled = (uci.get('homeproxy', 'automation', 'enabled') === '1');
+			const auEnabled = (uci.get('ravnex', 'automation', 'enabled') === '1');
 			const auRunning = !!sys.automation_running;
 			const learned = (last && last.learned != null) ? Math.floor(last.learned) : null;
 			hub.learn.dot.className = 'hpui-dot' + (auEnabled ? (auRunning ? ' ok' : ' bad') : '');
@@ -906,7 +906,7 @@ return view.extend({
 				const words = { ok: _('running'), off: _('off'), down: _('down'), degraded: _('degraded') };
 				/* The autopilot daemon idles by design when disabled — the
 				 * card must show the FUNCTION, not the idle process. */
-				const apOn = (uci.get('homeproxy', 'autopilot', 'enabled') === '1');
+				const apOn = (uci.get('ravnex', 'autopilot', 'enabled') === '1');
 				const bit = (k) => (fam[k] ? (words[fam[k].status] || '—') : '—');
 				hub.learn.state.textContent += ' · ' + _('DPI auto-pilot') + ': ' +
 					(apOn ? bit('autopilot') : _('off')) +
@@ -987,7 +987,7 @@ return view.extend({
 
 			/* Quick setup strip: visible until servers + main node exist. */
 			let nodeCount = 0;
-			uci.sections('homeproxy', 'node', function() { nodeCount++; });
+			uci.sections('ravnex', 'node', function() { nodeCount++; });
 			const doneNodes = nodeCount > 0;
 			const doneMain = !!cfgMainNode;
 			const doneByp = (z.enabled === true) || (b.enabled === true) || auEnabled;

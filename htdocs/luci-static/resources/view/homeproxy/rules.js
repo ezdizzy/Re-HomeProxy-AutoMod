@@ -185,23 +185,23 @@ const callOpStatus = rpc.declare({
 function resolveTag(tag) {
 	const m = tag && String(tag).match(/^cfg-(.+)-out$/);
 	if (m) {
-		const label = uci.get('homeproxy', m[1], 'label');
+		const label = uci.get('ravnex', m[1], 'label');
 		if (label) return label;
 	}
 	const specials = { 'main-out': 'main_node', 'main-udp-out': 'main_udp_node' };
 	if (specials[tag]) {
-		const v = uci.get('homeproxy', 'config', specials[tag]);
+		const v = uci.get('ravnex', 'config', specials[tag]);
 		if (v === 'byedpi-out') return 'ByeDPI';
 		if (v === 'zapret-out') return 'Zapret';
 		if (v && ![ 'urltest', 'same', 'nil', '' ].includes(v)) {
-			const label = uci.get('homeproxy', v, 'label');
+			const label = uci.get('ravnex', v, 'label');
 			if (label) return label;
 		}
 	}
 	/* Bare node section id (rules written by the advanced editor store the
 	 * plain section name) — resolve its label, never show a raw cfg-id
 	 * (hotswap.messages_node_names_not_cfg_ids). */
-	const label = tag ? uci.get('homeproxy', String(tag), 'label') : null;
+	const label = tag ? uci.get('ravnex', String(tag), 'label') : null;
 	if (label) return label;
 	return tag;
 }
@@ -320,7 +320,7 @@ function webBadge(w) {
 return view.extend({
 	load: function() {
 		return Promise.all([
-			uci.load('homeproxy')
+			uci.load('ravnex')
 		]);
 	},
 
@@ -1674,9 +1674,9 @@ return view.extend({
 				if (pc && (Date.now() - pc.since > 8000)) {
 					const proceed = function() {
 						state.pendingCheck = null;
-						callServiceList('homeproxy').then(function(res) {
+						callServiceList('ravnex').then(function(res) {
 							let running = false;
-							try { running = !!res['homeproxy']['instances']['hiddify-c']['running']; } catch (e) {}
+							try { running = !!res['ravnex']['instances']['hiddify-c']['running']; } catch (e) {}
 							if (running) {
 								if (pc.preset.check)
 									return runServiceCheck(pc.preset.check);
@@ -1728,7 +1728,7 @@ return view.extend({
 		 * asynchronously into a host node (form.Map.render() is a Promise —
 		 * lesson 148). */
 		const proxyNodes = {};
-		uci.sections('homeproxy', 'node', function(res) {
+		uci.sections('ravnex', 'node', function(res) {
 			const nodeaddr = ((res.type === 'direct') ? res.override_address : res.address) || '',
 			    nodeport = ((res.type === 'direct') ? res.override_port : res.port) || '';
 			proxyNodes[res['.name']] = String.format('[%s] %s', res.type, res.label ||
@@ -1736,8 +1736,8 @@ return view.extend({
 					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport);
 		});
 
-		const advMap = new form.Map('homeproxy');
-		const advSec = advMap.section(form.NamedSection, 'config', 'homeproxy', null);
+		const advMap = new form.Map('ravnex');
+		const advSec = advMap.section(form.NamedSection, 'config', 'ravnex', null);
 		advSec.addremove = false;
 
 		let av, ag, ags, ar, ars, so;
@@ -1755,13 +1755,13 @@ return view.extend({
 		ags.rowcolors = true;
 		ags.sortable = true;
 		ags.nodescriptions = true;
-		ags.modaltitle = L.bind(hp.loadModalTitle, this, _('Routing node'), _('Add a routing node'), 'homeproxy');
-		ags.sectiontitle = L.bind(hp.loadDefaultLabel, this, 'homeproxy');
+		ags.modaltitle = L.bind(hp.loadModalTitle, this, _('Routing node'), _('Add a routing node'), 'ravnex');
+		ags.sectiontitle = L.bind(hp.loadDefaultLabel, this, 'ravnex');
 		ags.renderSectionAdd = L.bind(hp.renderSectionAdd, this, ags);
 
 		so = ags.option(form.Value, 'label', _('Label'));
-		so.load = L.bind(hp.loadDefaultLabel, this, 'homeproxy');
-		so.validate = L.bind(hp.validateUniqueValue, this, 'homeproxy', 'routing_node', 'label');
+		so.load = L.bind(hp.loadDefaultLabel, this, 'ravnex');
+		so.validate = L.bind(hp.validateUniqueValue, this, 'ravnex', 'routing_node', 'label');
 		so.modalonly = true;
 
 		so = ags.option(form.Flag, 'enabled', _('Enable'));
@@ -1783,7 +1783,7 @@ return view.extend({
 				this.value(i, proxyNodes[i]);
 			return this.super('load', section_id);
 		};
-		so.validate = L.bind(hp.validateUniqueValue, this, 'homeproxy', 'routing_node', 'node');
+		so.validate = L.bind(hp.validateUniqueValue, this, 'ravnex', 'routing_node', 'node');
 		so.editable = true;
 
 		so = ags.option(form.ListValue, 'domain_resolver', _('Domain resolver'),
@@ -1795,13 +1795,13 @@ return view.extend({
 			this.value('', _('Default'));
 			this.value('default-dns', _('Default DNS (issued by WAN)'));
 			this.value('system-dns', _('System DNS'));
-			const _rm = uci.get('homeproxy', 'config', 'routing_mode');
+			const _rm = uci.get('ravnex', 'config', 'routing_mode');
 			if (_rm === 'proxy_banned_ru') {
 				this.value('russia-dns', _('Russia DNS server') + ' 🔓');
 				this.value('secure-dns', _('Secure DNS server') + ' 🔒');
 			}
 
-			uci.sections('homeproxy', 'dns_server', function(res) {
+			uci.sections('ravnex', 'dns_server', function(res) {
 				if (res.enabled === '1')
 					this.value(res['.name'], res.label);
 			});
@@ -1832,9 +1832,9 @@ return view.extend({
 			delete this.vallist;
 
 			this.value('', _('Direct'));
-			if (uci.get('homeproxy', 'config', 'routing_mode') === 'proxy_banned_ru')
+			if (uci.get('ravnex', 'config', 'routing_mode') === 'proxy_banned_ru')
 				this.value('main-out', _('Same as main node') + ' 🔗');
-			uci.sections('homeproxy', 'routing_node', function(res) {
+			uci.sections('ravnex', 'routing_node', function(res) {
 				if (res['.name'] !== section_id && res.enabled === '1')
 					this.value(res['.name'], res.label);
 			});
@@ -1849,7 +1849,7 @@ return view.extend({
 				let node = this.section.formvalue(section_id, 'node');
 
 				let conflict = false;
-				uci.sections('homeproxy', 'routing_node', function(res) {
+				uci.sections('ravnex', 'routing_node', function(res) {
 					if (res['.name'] !== section_id) {
 						if (res.outbound === section_id && res['.name'] == value)
 							conflict = true;
@@ -1947,8 +1947,8 @@ return view.extend({
 		ars.rowcolors = true;
 		ars.sortable = true;
 		ars.nodescriptions = true;
-		ars.modaltitle = L.bind(hp.loadModalTitle, this, _('Routing rule'), _('Add a routing rule'), 'homeproxy');
-		ars.sectiontitle = L.bind(hp.loadDefaultLabel, this, 'homeproxy');
+		ars.modaltitle = L.bind(hp.loadModalTitle, this, _('Routing rule'), _('Add a routing rule'), 'ravnex');
+		ars.sectiontitle = L.bind(hp.loadDefaultLabel, this, 'ravnex');
 		ars.renderSectionAdd = L.bind(hp.renderSectionAdd, this, ars);
 
 		ars.tab('field_other', _('Other fields'));
@@ -1957,8 +1957,8 @@ return view.extend({
 		ars.tab('fields_process', _('Process fields'));
 
 		so = ars.taboption('field_other', form.Value, 'label', _('Label'));
-		so.load = L.bind(hp.loadDefaultLabel, this, 'homeproxy');
-		so.validate = L.bind(hp.validateUniqueValue, this, 'homeproxy', 'routing_rule', 'label');
+		so.load = L.bind(hp.loadDefaultLabel, this, 'ravnex');
+		so.validate = L.bind(hp.validateUniqueValue, this, 'ravnex', 'routing_rule', 'label');
 		so.modalonly = true;
 
 		so = ars.taboption('field_other', form.Flag, 'enabled', _('Enable'));
@@ -2025,7 +2025,7 @@ return view.extend({
 			this.value('tproxy-in', _('TProxy inbound'));
 			this.value('tun-in', _('TUN inbound'));
 
-			uci.sections('homeproxy', 'server', function(res) {
+			uci.sections('ravnex', 'server', function(res) {
 				if (res.enabled === '1')
 					this.value('cfg-' + res['.name'] + '-in', res.label || res['.name']);
 			});
@@ -2044,7 +2044,7 @@ return view.extend({
 			delete this.keylist;
 			delete this.vallist;
 
-			uci.sections('homeproxy', 'ruleset', function(res) {
+			uci.sections('ravnex', 'ruleset', function(res) {
 				if (res.enabled === '1')
 					this.value(res['.name'], res.label);
 			});
@@ -2080,15 +2080,15 @@ return view.extend({
 			/* "Same as main node" (main-out) exists in every app-managed mode (Ф3.1);
 			 * gate it on the main-node VALUE being set, not on a mode, to avoid
 			 * offering a tag that won't exist. */
-			if (uci.get('homeproxy', 'config', 'main_node'))
+			if (uci.get('ravnex', 'config', 'main_node'))
 				this.value('main-out', _('Same as main node') + ' 🔗');
 			/* byedpi-out IS emitted in every routing mode whenever ByeDPI is
 			 * enabled — a rule can target it directly, no routing node needed. */
-			if (uci.get('homeproxy', 'config', 'byedpi_enabled') === '1')
+			if (uci.get('ravnex', 'config', 'byedpi_enabled') === '1')
 				this.value('byedpi-out', _('ByeDPI'));
-			if (uci.get('homeproxy', 'config', 'zapret_enabled') === '1')
+			if (uci.get('ravnex', 'config', 'zapret_enabled') === '1')
 				this.value('zapret-out', _('Zapret'));
-			uci.sections('homeproxy', 'routing_node', function(res) {
+			uci.sections('ravnex', 'routing_node', function(res) {
 				if (res.enabled === '1')
 					this.value(res['.name'], res.label);
 			});
@@ -2161,7 +2161,7 @@ return view.extend({
 			this.value('', _('Default'));
 			this.value('default-dns', _('Default DNS (issued by WAN)'));
 			this.value('system-dns', _('System DNS'));
-			uci.sections('homeproxy', 'dns_server', function(res) {
+			uci.sections('ravnex', 'dns_server', function(res) {
 				if (res.enabled === '1')
 					this.value(res['.name'], res.label);
 			});

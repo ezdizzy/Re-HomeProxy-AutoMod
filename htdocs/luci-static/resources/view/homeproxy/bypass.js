@@ -278,23 +278,23 @@ const callComposeRollback = rpc.declare({
 function resolveTag(tag) {
 	const m = tag && String(tag).match(/^cfg-(.+)-out$/);
 	if (m) {
-		const label = uci.get('homeproxy', m[1], 'label');
+		const label = uci.get('ravnex', m[1], 'label');
 		if (label) return label;
 	}
 	const specials = { 'main-out': 'main_node', 'main-udp-out': 'main_udp_node' };
 	if (specials[tag]) {
-		const v = uci.get('homeproxy', 'config', specials[tag]);
+		const v = uci.get('ravnex', 'config', specials[tag]);
 		if (v === 'byedpi-out') return 'ByeDPI';
 		if (v === 'zapret-out') return 'Zapret';
 		if (v && ![ 'urltest', 'same', 'nil', '' ].includes(v)) {
-			const label = uci.get('homeproxy', v, 'label');
+			const label = uci.get('ravnex', v, 'label');
 			if (label) return label;
 		}
 	}
 	/* Bare node section id (rules written by the advanced editor store the
 	 * plain section name) — resolve its label, never show a raw cfg-id
 	 * (hotswap.messages_node_names_not_cfg_ids). */
-	const label = tag ? uci.get('homeproxy', String(tag), 'label') : null;
+	const label = tag ? uci.get('ravnex', String(tag), 'label') : null;
 	if (label) return label;
 	return tag;
 }
@@ -302,7 +302,7 @@ function resolveTag(tag) {
 return view.extend({
 	load: function() {
 		return Promise.all([
-			uci.load('homeproxy')
+			uci.load('ravnex')
 		]);
 	},
 
@@ -1146,7 +1146,7 @@ return view.extend({
 
 		const bStratInput = E('input', { type: 'text', 'class': 'cbi-input-text wiz-strat',
 			placeholder: 'ciadpi args, e.g. --disorder 1' });
-		bStratInput.value = uci.get('homeproxy', 'config', 'byedpi_cmd_opts') || '--disorder 1';
+		bStratInput.value = uci.get('ravnex', 'config', 'byedpi_cmd_opts') || '--disorder 1';
 		const bPresetSel = E('select', { 'class': 'cbi-input-select wiz-select' });
 		bPresetSel.appendChild(E('option', { value: '' }, [ _('— select a preset —') ]));
 		for (let g of BYEDPI_GROUPS) {
@@ -1174,11 +1174,11 @@ return view.extend({
 		byeBox.appendChild(E('div', { style: 'margin-top:10px' }, [ bRow ]));
 
 		const bUot = E('input', { type: 'checkbox' });
-		bUot.checked = (uci.get('homeproxy', 'config', 'byedpi_udp_over_tcp') !== '0');
+		bUot.checked = (uci.get('ravnex', 'config', 'byedpi_udp_over_tcp') !== '0');
 		const bQuic = E('input', { type: 'checkbox' });
-		bQuic.checked = (uci.get('homeproxy', 'config', 'byedpi_block_quic') === '1');
+		bQuic.checked = (uci.get('ravnex', 'config', 'byedpi_block_quic') === '1');
 		const bVoice = E('input', { type: 'checkbox' });
-		bVoice.checked = (uci.get('homeproxy', 'config', 'zapret_voice') === '1');
+		bVoice.checked = (uci.get('ravnex', 'config', 'zapret_voice') === '1');
 		const bFlag = (input, text) => E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
 			[ input, ' ' + text ]);
 		byeBox.appendChild(E('div', { 'class': 'wiz-row' },
@@ -2596,12 +2596,12 @@ return view.extend({
 				ui.addNotification(null, E('p', {}, _('Nothing to export — the corpus is empty.')), 'error');
 				return;
 			}
-			const doc = { format: 're-homeproxy-strategies', version: 1,
+			const doc = { format: 're-ravnex-strategies', version: 1,
 				exported: new Date().toISOString(),
 				note: _('Strategies are ISP-specific: the RANKING does not transfer between providers — import and re-run the fuzz.'),
 				candidates: cands };
 			const blob = new Blob([ JSON.stringify(doc, null, 2) ], { type: 'application/json' });
-			const a = E('a', { href: URL.createObjectURL(blob), download: 'homeproxy-zapret-strategies.json' });
+			const a = E('a', { href: URL.createObjectURL(blob), download: 'ravnex-zapret-strategies.json' });
 			document.body.appendChild(a);
 			a.click();
 			a.remove();
@@ -2797,9 +2797,9 @@ return view.extend({
 				if (dc && (Date.now() - dc.since > 8000)) {
 					const proceed = function() {
 						state.dpiPendingCheck = null;
-						callServiceList('homeproxy').then(function(res) {
+						callServiceList('ravnex').then(function(res) {
 							let running = false;
-							try { running = !!res['homeproxy']['instances']['hiddify-c']['running']; } catch (e) {}
+							try { running = !!res['ravnex']['instances']['hiddify-c']['running']; } catch (e) {}
 							if (running)
 								runChainCheck(dc);
 							else

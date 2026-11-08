@@ -15,9 +15,9 @@
 
 import { readfile } from 'fs';
 import { cursor } from 'uci';
-import { validate_node_config } from '/etc/homeproxy/scripts/homeproxy.uc';
+import { validate_node_config } from '/etc/ravnex/scripts/homeproxy.uc';
 
-const uciconfig = 'homeproxy';
+const uciconfig = 'ravnex';
 
 function emit(o) { printf('%s\n', o); }
 
