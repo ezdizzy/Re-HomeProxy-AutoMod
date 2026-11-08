@@ -106,7 +106,7 @@ add_group_and_user
 	# so the theme uci-defaults used to wait for the next reboot - upgraders
 	# stayed on bootstrap until then (the "theme flicker" report). Activate
 	# the theme right away; the script itself switches away ONLY from the
-	# stock bootstrap, a user's own theme choice is never overridden.
+	# stock bootstrap, an own theme choice is never overridden.
 	[ -f /etc/uci-defaults/luci-homeproxy-theme ] && ( . /etc/uci-defaults/luci-homeproxy-theme ) && rm -f /etc/uci-defaults/luci-homeproxy-theme
 	uci commit
 fi
