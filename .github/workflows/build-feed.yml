@@ -132,9 +132,12 @@ jobs:
           [ "$ipks" -ge 1 ] || { echo "::error::no ipk packages built"; fail=1; }
           [ "$mans" -ge 1 ] || { echo "::error::no manifest.json built"; fail=1; }
           [ -s feed/versions.txt ] || { echo "::error::no versions.txt"; fail=1; }
-          # every manifest entry must point at files that exist with matching sha256
+          # every manifest must be valid JSON (run 6 published "pkgs":{{..},{..}}
+          # - a double wrap the pipe-masked jq check never caught) and every
+          # manifest entry must point at files that exist with matching sha256
           for m in $(find feed -name manifest.json); do
             d=$(dirname "$m")
+            jq -e . "$m" >/dev/null || { echo "::error::$m: invalid JSON"; fail=1; continue; }
             jq -r '.pkgs | to_entries[] | "\(.key)|\(.value.apk)|\(.value.apk_sha256)|\(.value.ipk)|\(.value.ipk_sha256)"' "$m" \
             | while IFS='|' read -r name apkf sha_a ipkf sha_i; do
                 [ -f "$d/$apkf" ] || { echo "::error::$m: missing $apkf"; exit 1; }

@@ -249,7 +249,7 @@ repack_ipk() { # <src.ipk> <arch> <descr>
 	local sha_a sha_i
 	sha_a=$(sha256sum "$D/$name-$ver.apk" | cut -d' ' -f1)
 	sha_i=$(sha256sum "$D/$name-$ver.ipk" | cut -d' ' -f1)
-	manifest_add "$arch" "{\"$name\":{\"version\":\"$ver\",\"upstream\":\"$orig\",\"apk\":\"$name-$ver.apk\",\"apk_sha256\":\"$sha_a\",\"ipk\":\"$name-$ver.ipk\",\"ipk_sha256\":\"$sha_i\"}}"
+	manifest_add "$arch" "\"$name\":{\"version\":\"$ver\",\"upstream\":\"$orig\",\"apk\":\"$name-$ver.apk\",\"apk_sha256\":\"$sha_a\",\"ipk\":\"$name-$ver.ipk\",\"ipk_sha256\":\"$sha_i\"}"
 	versions_add "$name" "$ver" "$arch"
 	echo "REPACKED $name $ver ($arch) ← $(basename "$src")"
 }
@@ -266,7 +266,7 @@ own_pkg() { # <stageroot> <name> <ver> <arch> <descr>
 	local sha_a sha_i
 	sha_a=$(sha256sum "$D/$name-$ver.apk" | cut -d' ' -f1)
 	sha_i=$(sha256sum "$D/$name-$ver.ipk" | cut -d' ' -f1)
-	manifest_add "$arch" "{\"$name\":{\"version\":\"$ver\",\"apk\":\"$name-$ver.apk\",\"apk_sha256\":\"$sha_a\",\"ipk\":\"$name-$ver.ipk\",\"ipk_sha256\":\"$sha_i\"}}"
+	manifest_add "$arch" "\"$name\":{\"version\":\"$ver\",\"apk\":\"$name-$ver.apk\",\"apk_sha256\":\"$sha_a\",\"ipk\":\"$name-$ver.ipk\",\"ipk_sha256\":\"$sha_i\"}"
 	versions_add "$name" "$ver" "$arch"
 }
 
