@@ -162,8 +162,6 @@ jobs:
         if: ${{ inputs.publish == true || github.event_name == 'schedule' }}
         run: |
           SERIES="${{ inputs.series || '25.12' }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git clone --depth 1 --branch feed "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" feedrepo 2>/dev/null || {
             git init feedrepo
             cd feedrepo
@@ -171,6 +169,12 @@ jobs:
             git checkout -b feed
             cd ..
           }
+          # identity must live in the feedrepo repo itself - the previous
+          # top-level git config never applied to it (run 5: commit died with
+          # 'Author identity unknown', the || true masked it and the push
+          # failed with 'src refspec feed does not match any').
+          git -C feedrepo config user.name "github-actions[bot]"
+          git -C feedrepo config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # change-guard: push only when versions.txt actually changed (a
           # rebuild of the same upstream versions must not churn the branch).
           OLD=$(git -C feedrepo show feed:versions.txt 2>/dev/null || true)
@@ -183,7 +187,7 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
           cp -a "${GITHUB_WORKSPACE}/feed/." .
           git add -A
-          git commit -m "feed: rebuild $(date -u +%Y-%m-%dT%H:%MZ) (series $SERIES)" || true
+          git commit -m "feed: rebuild $(date -u +%Y-%m-%dT%H:%MZ) (series $SERIES)"
           git push --force origin feed
           echo "Feed published to the feed branch. Client manifest URL:"
           echo "https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/feed/releases/$SERIES/\$(cat /etc/openwrt_release | awk -F\\' '/DISTRIB_ARCH/{print \$2}')/manifest.json"
