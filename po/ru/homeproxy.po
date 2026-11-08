@@ -7695,3 +7695,39 @@ msgstr "Источник обновлений"
 
 msgid "Own signed package source: every component (hiddify-core full and compact, sing-box-extended and lite, mosdns, helpers, byedpi, zapret2) installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. When the source is unavailable, installs automatically fall back to the original paths."
 msgstr "Свой подписанный источник пакетов: каждый компонент (hiddify-core полный и компактный, sing-box-extended и lite, mosdns, помощники, byedpi, zapret2) ставится явным файлом из манифеста фида — на apk-системах проверяется подпись apk, на opkg — sha256. В repositories.d ничего не пишется, поэтому чужой репозиторий никогда не перебьёт наши компоненты. Когда источник недоступен, установки автоматически возвращаются к обычным путям."
+
+msgid "for %d days"
+msgstr "%d дн."
+
+msgid "for %d hours"
+msgstr "%d ч"
+
+msgid "for %d min"
+msgstr "%d мин"
+
+msgid "The hold was not active — nothing to release."
+msgstr "Удержание не активно — снимать нечего."
+
+msgid "Hold released — the scheduled re-rank resumes on its schedule (the daemon picks it up within a minute)."
+msgstr "Удержание снято — плановая переразметка возобновится по расписанию (демон подхватит в течение минуты)."
+
+msgid "Hold release failed: %s"
+msgstr "Не удалось снять удержание: %s"
+
+msgid "Release hold"
+msgstr "Снять удержание"
+
+msgid "applied composite (outside the auto-pilot — your choice)"
+msgstr "применённая составная (вне управления автопилота — ваш выбор)"
+
+msgid "Updating in the background (download, install, restart)…"
+msgstr "Обновление в фоне (загрузка, установка, перезапуск)…"
+
+msgid "Update status lost — check the operations journal (Maintenance)."
+msgstr "Статус обновления потерян — смотрите журнал операций (Обслуживание)."
+
+msgid "Updated to version %s — reloading…"
+msgstr "Обновлено до версии %s — перезагружаем страницу…"
+
+msgid "Update finished without verification: "
+msgstr "Обновление завершилось без верификации: "

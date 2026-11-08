@@ -2879,6 +2879,45 @@ function feed_install_pkg(pkg) {
 		note: `installed from the update source: ${pkg} ${entry.version}` };
 }
 
+/* Сеанс 158/Б6: общая расчётная часть prepare (app_prepare_install и
+ * app_update_start) — релиз, URL-ы пакетов app+i18n под текущий PM. */
+function app_prepare_calc() {
+	let pkg_manager = null;
+	if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
+	else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
+	if (!pkg_manager)
+		return { error: 'No supported package manager (apk/opkg)' };
+
+	const rel = app_github_release();
+	if (!rel) return { error: 'cannot reach GitHub (or rate-limited)' };
+	let latest = replace(rel.tag_name || '', /^v/, '');
+	if (!length(latest)) return { error: 'cannot read latest version' };
+
+	const ext = (pkg_manager === 'apk') ? 'apk' : 'ipk';
+	/* ucode's match() only accepts a compiled regex object, not a string
+	 * pattern, so build the dynamic patterns with regexp(). */
+	const re_app = regexp(`^luci-app-re-homeproxy_.*_all\.${ext}$`);
+	const re_ru  = regexp(`^luci-i18n-homeproxy-ru_.*_all\.${ext}$`);
+	let app_url = null, i18n_url = null;
+	for (let a in (rel.assets || [])) {
+		const n = a?.name || '';
+		const u = a?.browser_download_url || '';
+		if (!length(u)) continue;
+		if (match(n, re_app)) app_url = u;
+		else if (match(n, re_ru)) i18n_url = u;
+	}
+	if (!app_url)
+		return { error: `no app package found in latest release for ${ext}` };
+
+	const res = {
+		pkg_manager, version: latest,
+		app:  { dl_url: app_url,  tmp_path: '/tmp/luci-app-re-homeproxy.' + ext }
+	};
+	if (i18n_url)
+		res.i18n = { dl_url: i18n_url, tmp_path: '/tmp/luci-i18n-homeproxy-ru.' + ext };
+	return res;
+}
+
 const methods = {
 	acllist_read: {
 		args: { type: 'type' },
@@ -4985,40 +5024,9 @@ const methods = {
 
 	app_prepare_install: {
 		call: function(req) {
-			let pkg_manager = null;
-			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
-			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
-			if (!pkg_manager)
-				return { error: 'No supported package manager (apk/opkg)' };
-
-			const rel = app_github_release();
-			if (!rel) return { error: 'cannot reach GitHub (or rate-limited)' };
-			let latest = replace(rel.tag_name || '', /^v/, '');
-			if (!length(latest)) return { error: 'cannot read latest version' };
-
-			const ext = (pkg_manager === 'apk') ? 'apk' : 'ipk';
-			/* ucode's match() only accepts a compiled regex object, not a string
-			 * pattern, so build the dynamic patterns with regexp(). */
-			const re_app = regexp(`^luci-app-re-homeproxy_.*_all\.${ext}$`);
-			const re_ru  = regexp(`^luci-i18n-homeproxy-ru_.*_all\.${ext}$`);
-			let app_url = null, i18n_url = null;
-			for (let a in (rel.assets || [])) {
-				const n = a?.name || '';
-				const u = a?.browser_download_url || '';
-				if (!length(u)) continue;
-				if (match(n, re_app)) app_url = u;
-				else if (match(n, re_ru)) i18n_url = u;
-			}
-			if (!app_url)
-				return { error: `no app package found in latest release for ${ext}` };
-
-			const res = {
-				pkg_manager, version: latest,
-				app:  { dl_url: app_url,  tmp_path: '/tmp/luci-app-re-homeproxy.' + ext }
-			};
-			if (i18n_url)
-				res.i18n = { dl_url: i18n_url, tmp_path: '/tmp/luci-i18n-homeproxy-ru.' + ext };
-			return res;
+			/* Сеанс 158/Б6: расчёт вынесен в app_prepare_calc (общий с
+			 * app_update_start — самообновление уехало в op-машину). */
+			return app_prepare_calc();
 		}
 	},
 
@@ -5069,6 +5077,50 @@ const methods = {
 			const ap = op_spawn('restart', 'app self-update');
 			return { result: true, i18n_updated: !!ok_i18n, op_id: ap.op_id || '',
 				deferred: ap.result !== true };
+		}
+	},
+
+	/* Сеанс 158/Б6: самообновление ЦЕЛИКОМ в op-машине. app_install_pkg
+	 * синхронно выполнял apk add ×2 внутри RPC дольше XHR-таймаута LuCI 20 с
+	 * (rpc.js:5) → браузер рвал запрос, UI врал «Ошибка установки» при
+	 * серверном успехе (баг-А ч.242, многоразовый). Здесь RPC только
+	 * рассчитывает релиз, пишет спеку и заспавнит apply_runner ('app_update'):
+	 * download → install → service restart (verify core) → rpcd restart
+	 * (финальная стадия — честный Б7-фикс для UI-пути) → verify → finish.
+	 * UI поллит app_op_status; reload по verified. */
+	app_update_start: {
+		call: function(req) {
+			const prep = app_prepare_calc();
+			if (prep.error)
+				return { result: false, error: prep.error };
+			const r = op_begin('app_update', 'app self-update', 'rpcd',
+				'app self-update ' + prep.version, 0);
+			if (!r.ok) {
+				if (r.busy) {
+					const held = (r.holder && r.holder.op_id) ? op_get(r.holder.op_id) : null;
+					if (held && held.action === 'app self-update' &&
+					    (time() - int(held.started)) <= 5)
+						return { result: true, op_id: held.op_id, coalesced: true, version: prep.version };
+					return { result: false, busy: true, error: 'another apply is running',
+						op_id: (r.holder && r.holder.op_id) || '' };
+				}
+				return { result: false, error: r.error || 'op begin failed' };
+			}
+			const op = r.op;
+			/* Спека для руннера: URL-ы/пути/PM/версия. Пишется ПОСЛЕ begin
+			 * (op_id нужен в имени), ДО спавна руннера. Атомарно. */
+			const spec = {
+				op_id: op.op_id, version: prep.version, pkg_manager: prep.pkg_manager,
+				app: prep.app, i18n: prep.i18n || null
+			};
+			const specf = '/tmp/hp_app_update_' + op.op_id + '.json';
+			const tmpf = specf + '.tmp';
+			writefile(tmpf, sprintf('%.J\n', spec));
+			system(`mv -f ${shellquote(tmpf)} ${shellquote(specf)}`);
+			system('/usr/bin/ucode ' + shellquote(HP_DIR + '/scripts/apply_runner.uc') +
+				' ' + shellquote(op.op_id) + ' app_update >/dev/null 2>&1 &');
+			return { result: true, op_id: op.op_id, version: prep.version,
+				config_revision: op.config_revision };
 		}
 	},
 
@@ -6222,11 +6274,41 @@ const methods = {
 				try { status = json(readfile(stf) || ''); } catch (e) { status = null; }
 			}
 			const fresh = (o, win) => (o && int(o.ts || 0) > time() - (win || 600));
+			/* Сеанс 158/Б8: применённая составная (UCI zapret_cmd_opts) — паритет
+			 * с ч.231-фиксом оптимизатора: вью честно показывает текущую
+			 * композицию, когда автопилот не управляет «Общим» (winner null). */
+			let cur_zapret = '';
+			const cz = cursor().get('homeproxy', 'config', 'zapret_cmd_opts');
+			if (cz != null && length('' + cz))
+				cur_zapret = '' + cz;
 			return {
 				config: hp_autopilot_cfg(),
 				status: status,
+				current_zapret: cur_zapret,
 				daemon_ok: !!(fresh(status, 600) || (status && fresh({ ts: status.stage_ts }, 900)))
 			};
+		}
+	},
+
+	/* Сеанс 158/Б8: явное снятие «удержания ручной композиции (Hot Swap)».
+	 * Демон подхватывает команду-файл в ближайшем тике (тот же контракт, что
+	 * у zapret_autopilot_manual.json): атомарная запись, стирание демоном. */
+	wizard_autopilot_hold_release: {
+		call: function(req) {
+			const cmdf = RUN_DIR + '/zapret_autopilot_holdclear.json';
+			const stf = RUN_DIR + '/zapret_autopilot.json';
+			let status = null;
+			if (access(stf)) {
+				try { status = json(readfile(stf) || ''); } catch (e) { status = null; }
+			}
+			if (status == null || type(status) !== 'object' || status.manual_hold == null)
+				return { result: true, unchanged: true,
+					note: 'удержание не активно — снимать нечего' };
+			const tmp = cmdf + '.tmp';
+			writefile(tmp, sprintf('{"ts":%d}\n', time()));
+			system(`mv -f ${shellquote(tmp)} ${shellquote(cmdf)}`);
+			return { result: true, unchanged: false,
+				note: 'команда снятия удержания передана демону — вступит в силу в ближайшем тике (≤60 с)' };
 		}
 	},
 
@@ -9484,12 +9566,26 @@ const methods = {
 			};
 
 			const res = { arch: arch, go_asset: goasset };
+			/* Сеанс 158/Б3: feed-first (паритет ч.237) — probe_pool/sni_sniffer
+			 * это НАШИ пакеты в фиде (подписанный явный файл); release-zips
+			 * остался фолбэком. utls_probe в фиде нет — только релиз-зип. */
+			const install_tool = (tool) => {
+				let fcand = null;
+				try { fcand = feed_candidate(tool); } catch (e) { fcand = null; }
+				if (fcand != null) {
+					const fr = feed_install_pkg(tool);
+					if (fr != null && fr.result === true)
+						return { installed: true, source: 'feed', version: fr.version };
+					/* фид недоступен/не сработал — честный фолбэк на релиз-зип */
+				}
+				return install_one(tool);
+			};
 			/* ч.232: utls_probe — браузерная ClientHello-проба лаборатории
 			 * стратегий (TSPU видит отпечаток клиента; curl не воспроизводит).
 			 * Опциональна: без бинарника Passed честно меряет только curl. */
 			const tools = [ 'probe_pool', 'sni_sniffer', 'utls_probe' ];
 			for (let tool in tools)
-				res[tool] = install_one(tool);
+				res[tool] = (tool === 'utls_probe') ? install_one(tool) : install_tool(tool);
 			/* The daemon picks the helpers up on its next pass; restarting the
 			 * automation instance makes it immediate (and spawns sni_sniffer).
 			 * probe_pool (>= 1.2.0) runs as a RESIDENT daemon spawned by the

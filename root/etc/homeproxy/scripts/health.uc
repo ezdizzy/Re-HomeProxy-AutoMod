@@ -423,6 +423,95 @@ export function core_missing_verdict(mode_direct) {
  * (registry_status_map пересчитал alive форклесс), API-факт — переносом.
  * Мёртвая identity ядра = down, а не «окно респавна»: degraded никем не
  * ремонтируется (Recovery читает только down) — T2b простоял 2 мин. */
+/* 🔴 СЕАНС 158/Б1-класс: хелперы Б2/Б4 (mosdns_broken_read/entry,
+ * core_stale_compare/feed_note, core_stale_reason) объявлены ЗДЕСЬ — ВЫШЕ
+ * всех вызывающих (mosdns_entry/light_entries/core_entry): на этой сборке
+ * ucode вызов top-level имени, объявленного НИЖЕ вызывающей функции, крашится
+ * в момент исполнения (урок 294 в полной форме, доказано t1–t7 + живой репро). */
+/* Сеанс 158/Б2: mosdns — НЕ apk-пакет, а бинарник из фида/install.sh. Отсутствие
+ * бинарника или незапускаемость — НЕ «down» (авто-рестарт не поможет), а честное
+ * деградировавшее состояние с путём установки. multidns.uc после 3 неудачных
+ * стартов подряд пишет флаг и приостанавливает шторм рестартов (10 мин). */
+const MOSDNS_BIN = '/usr/bin/mosdns';
+const MOSDNS_BROKEN_FILE = '/var/run/homeproxy/multidns/mosdns.broken';
+const MOSDNS_BROKEN_TTL = 1800;
+/* Сеанс 158/Б4: кэш манифеста фида (пишет RPC feed_status; здесь ТОЛЬКО чтение,
+ * сеть не трогается) — источник подсказки «в фиде доступно ядро X». */
+const FEED_MANIFEST_CACHE = '/var/run/homeproxy/feed_manifest.json';
+
+/* Чтение свежего флага «mosdns не запускается» (сеанс 158/Б2). null = флага
+ * нет/протух. */
+export function mosdns_broken_read(now) {
+	try {
+		if (!access(MOSDNS_BROKEN_FILE))
+			return null;
+		const j = parse_json(readfile(MOSDNS_BROKEN_FILE) || '');
+		if (j != null && type(j) === 'object' && int(j.ts || 0) > 0 &&
+		    (now - int(j.ts)) <= MOSDNS_BROKEN_TTL)
+			return j;
+	} catch (e) { /* нет/битый файл — норма */ }
+	return null;
+};
+
+/* Чистая часть вердикта «не запускается» (selftest). */
+export function mosdns_broken_entry(flag, now) {
+	if (flag == null || type(flag) !== 'object')
+		return null;
+	const n = int(flag.attempts || 0);
+	return {
+		name: 'mosdns', label: 'mosdns (пулы MultiDNS)', group: 'dns',
+		status: 'degraded', confidence: 'certain',
+		reason: 'mosdns не запускается (' + n + ' неудачных стартов подряд, автоподъём приостановлен) — переустановите: Обслуживание → Управление ядром, карточка mosdns (установка из фида)',
+		expected: true,
+		checked: now,
+		detail: { attempts: n, broken_ts: int(flag.ts || 0), broken: true }
+	};
+};
+
+/* Чистое сравнение версий ядра с кандидатом фида (сеанс 158/Б4): версия пакета
+ * фида несёт суффикс -rN (5.5.5-r1), бинарник отвечает upstream-версией (5.5.5) —
+ * сравниваем базу. null = совпадает/несравнимо (подсказки нет). */
+export function core_stale_compare(installed_v, candidate_v) {
+	const iv = trim('' + (installed_v || ''));
+	const cv = trim('' + (candidate_v || ''));
+	if (!length(iv) || !length(cv))
+		return null;
+	const cm = match(cv, /^([0-9]+(\.[0-9]+)*)/);
+	const base = (cm != null) ? cm[1] : cv;
+	if (iv === base)
+		return null;
+	return { installed: iv, candidate: cv };
+};
+
+/* Установленная версия ядра против кэша манифеста фида. fork (bin version) —
+ * только в deep-проходе; без кэша/версии — null (подсказки нет). */
+export function core_stale_feed_note() {
+	let cand = null;
+	try {
+		const cache = parse_json(readfile(FEED_MANIFEST_CACHE) || '');
+		if (cache != null && type(cache) === 'object' && cache.manifest != null &&
+		    type(cache.manifest.pkgs) === 'object' &&
+		    cache.manifest.pkgs['hiddify-core'] != null)
+			cand = '' + (cache.manifest.pkgs['hiddify-core'].version || '');
+	} catch (e) { /* нет кэша — подсказки нет */ }
+	if (cand == null || !length(cand))
+		return null;
+	const out = trim(capture('/usr/bin/hiddify-core version 2>/dev/null'));
+	const vm = match(out, /version v?([0-9][0-9a-zA-Z._-]*)/);
+	if (vm == null)
+		return null;
+	return core_stale_compare(vm[1], cand);
+};
+function core_stale_reason(base_reason) {
+	try {
+		const stale = core_stale_feed_note();
+		if (stale != null)
+			return base_reason + '; в фиде доступно ядро ' + stale.candidate +
+				' (установлено ' + stale.installed + ') — обновите: Обслуживание → Управление ядром';
+	} catch (e) { /* подсказка — best-effort */ }
+	return base_reason;
+}
+
 export function light_core_entry(svc_core, core_reg_all, prev_core, mode_direct, now) {
 	if (svc_core == null)
 		return core_missing_verdict(mode_direct);
@@ -478,10 +567,14 @@ function core_entry(core_hit, svc, now) {
 				pid: core_hit.pid, api_ok: false, api_checked: now
 			});
 	return mk_entry('core', label, 'core', 'ok', 'certain',
-		'ядро живо, Clash API отвечает', {
+		core_stale_reason('ядро живо, Clash API отвечает'), {
 			pid: core_hit.pid, api_ok: true, api_checked: now
 		});
 };
+
+/* Сеанс 158/Б4: в ok-записи ядра — честная подсказка «в фиде доступно X»,
+ * когда установленная версия отличается от кандидата фида (кэш манифеста,
+ * только чтение). fork (bin version) — deep-проход и так делает форки. */
 
 function engine_entry(name, label, inst_name, hit, svc) {
 	if (svc['' + inst_name] == null)
@@ -507,6 +600,7 @@ function engine_entry(name, label, inst_name, hit, svc) {
  * не вернётся за окно маркера. Рестарты прорежены дебаунсом в multidns.uc. */
 const MOSDNS_RESTART_MARK = '/var/run/homeproxy/multidns/mosdns.restarting';
 const MOSDNS_RESTART_FRESH = 60;
+
 function mosdns_restarting(now) {
 	let ts = -1;
 	try {
@@ -529,6 +623,20 @@ function mosdns_entry(svc, regst, now) {
 	if (svc['multidns'] == null)
 		return mk_entry('mosdns', label, 'dns', 'off', 'certain',
 			'MultiDNS выключен — mosdns не ожидается', {});
+	/* Сеанс 158/Б2: бинарника нет — честное «не установлен» с путём установки
+	 * (авто-рестарт бессмыслен; down-цикл и неверный совет «Перезапуск службы»
+	 * сняты). Слушатели у работающего mosdns проверяются ниже. */
+	if (!access(MOSDNS_BIN))
+		return mk_entry('mosdns', label, 'dns', 'degraded', 'certain',
+			'mosdns не установлен (MultiDNS включён) — установите: Обслуживание → Управление ядром, карточка mosdns (установка из фида)', {
+				listeners: 0, listeners_checked: now, not_installed: true
+			});
+	/* Сеанс 158/Б2: multidns приостановил автоподъём после неудачных стартов —
+	 * честное «не запускается» вместо цикла down↔«плановый рестарт». */
+	const brk = mosdns_broken_entry(mosdns_broken_read(now), now);
+	if (brk != null)
+		return mk_entry(brk.name, brk.label, brk.group, brk.status, brk.confidence,
+			brk.reason, brk.detail);
 	/* Живая проверка: слушатели 5453/5454 (урок 215 — не pid). */
 	const ports = mdns_ports();
 	const listeners = listener_count(capture('netstat -lun 2>/dev/null'), ports.plain, ports.secure);
@@ -584,6 +692,14 @@ function probe_pool_entry(svc, regst, scan, now) {
 	if (svc['automation'] == null)
 		return mk_entry('probe_pool', 'probe_pool (резидентный prober)', 'automation',
 			'off', 'certain', 'автоматизация выключена — prober не ожидается', {});
+	/* Сеанс 158/Б3: бинарника нет — ленивый spawn его никогда не поднимет;
+	 * честная деградация с путём установки вместо обещания «поднимется». */
+	if (!access('/usr/bin/probe_pool'))
+		return mk_entry('probe_pool', 'probe_pool (резидентный prober)', 'automation',
+			'degraded', 'certain',
+			'probe_pool не установлен — установите: Автообход → «Установить хелперы» (фид/релиз)', {
+				not_installed: true
+			});
 	const hit = (scan != null && scan['probe_pool'] != null) ? scan['probe_pool'] : null;
 	let hb_age = -1;
 	const st = stat(PP_HB_PATH);
@@ -616,8 +732,13 @@ function sni_entry(svc, regst, scan) {
 	}
 	/* Автоматизация включена, сниффера нет: DISCOVERY-источник деградирует
 	 * (внутри приложения честный tcpdump-фолбэк), но автоматизация жива —
-	 * это degraded, не down. */
+	 * это degraded, не down. Сеанс 158/Б3: если бинарника НЕТ — путь
+	 * установки из фида в совете (spawn его не поднимет никогда). */
+	const sni_missing = !access('/usr/bin/sni_sniffer');
 	return mk_entry('sni_sniffer', label, 'automation', 'degraded', 'certain',
+		(sni_missing
+			? 'sni_sniffer не установлен — установите: Автообход → «Установить хелперы» (фид/релиз); '
+			: '') +
 		'сниффер не запущен — автоматизация уйдёт в tcpdump-фолбэк ' +
 		'(spawn-окно/cooldown респавна до 10 мин)', {});
 };
@@ -900,7 +1021,19 @@ export function light_entries(svc, regst, prev, now) {
 	if (svc['multidns'] == null) {
 		entries.mosdns = mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'off', 'certain',
 			'MultiDNS выключен — mosdns не ожидается', {});
-	} else if (md_e != null) {
+	} else if (!access(MOSDNS_BIN)) {
+		/* Сеанс 158/Б2: бинарника нет — честное «не установлен» (см. mosdns_entry). */
+		entries.mosdns = mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'degraded', 'certain',
+			'mosdns не установлен (MultiDNS включён) — установите: Обслуживание → Управление ядром, карточка mosdns (установка из фида)', {
+				not_installed: true
+			});
+	} else {
+		const brk = mosdns_broken_entry(mosdns_broken_read(now), now);
+		if (brk != null) {
+			/* Сеанс 158/Б2: автоподъём приостановлен — «не запускается». */
+			entries.mosdns = mk_entry(brk.name, brk.label, brk.group, brk.status, brk.confidence,
+				brk.reason, brk.detail);
+		} else if (md_e != null) {
 		const d = { pid: md_e.pid };
 		let carried_ok = true;
 		if (prev_md != null && prev_md.detail != null &&
@@ -924,6 +1057,7 @@ export function light_entries(svc, regst, prev, now) {
 	} else {
 		entries.mosdns = mk_entry('mosdns', 'mosdns (пулы MultiDNS)', 'dns', 'down', 'certain',
 			'процесс mosdns отсутствует', {});
+	}
 	}
 
 	/* Автоматизация и дети. */
@@ -1121,6 +1255,20 @@ export function selftest() {
 	check('listener_count_partial', listener_count('udp 0 0 127.0.0.1:5453 0.0.0.0:*\n', 5453, 5454) === 1, null);
 	check('listener_count_none', listener_count('udp 0 0 0.0.0.0:53 0.0.0.0:*\n', 5453, 5454) === 0, null);
 	check('listener_no_prefix_false', listener_count('udp 0 0 127.0.0.1:15453 0.0.0.0:*\n', 5453, 5454) === 0, null);
+
+	/* Сеанс 158/Б2: честный вердикт «mosdns не запускается» (флаг multidns).
+	 * Чистая функция не судит свежесть — протухание снимает mosdns_broken_read. */
+	const mb_fresh = mosdns_broken_entry({ ts: now - 60, attempts: 4 }, now);
+	check('mosdns_broken_entry_degraded', mb_fresh != null && mb_fresh.status === 'degraded' &&
+		mb_fresh.detail.attempts === 4 && mb_fresh.detail.broken === true, null);
+	check('mosdns_broken_entry_none', mosdns_broken_entry(null, now) == null, null);
+
+	/* Сеанс 158/Б4: сравнение версий ядра с кандидатом фида (база без -rN). */
+	check('core_stale_differs', core_stale_compare('4.1.0', '5.5.5-r1') != null &&
+		core_stale_compare('4.1.0', '5.5.5-r1').candidate === '5.5.5-r1', null);
+	check('core_stale_same_base', core_stale_compare('5.5.5', '5.5.5-r1') == null, null);
+	check('core_stale_empty', core_stale_compare('', '5.5.5-r1') == null &&
+		core_stale_compare('4.1.0', '') == null, null);
 
 	/* tun_entry_from: fresh ok / stale ok / degraded / missing / down. */
 	const tun_fresh = tun_entry_from({ status: 'ok', device: 'tunhp', detail: 'policy route present', ts: now - 10 }, now);

@@ -885,10 +885,19 @@ export function compute_and_store(opts) {
 	if (full || prev_res_active) {
 		const snap = res_snapshot(registry_map());
 		const rf = res_findings(snap, prev_f);
-		for (let k in rf)
-			findings[k] = rf[k];
 		const memraw = readfile('/proc/meminfo') || '';
 		const mtot = match(memraw, /MemTotal:\s+([0-9]+)/);
+		const mem_total_kb = (mtot != null) ? int(mtot[1]) : -1;
+		for (let k in rf) {
+			/* Сеанс 158/Б4: на роутерах с малым ОЗУ перерасход ядра — прямая
+			 * дорога к OOM-киллу (кейс WR3000H: 2×OOM на 4.1.0 при 757 МБ) —
+			 * к находке добавляется честный путь: профиль «Лёгкий». */
+			if (k === 'res:core' && mem_total_kb > 0 && mem_total_kb <= 1048576) {
+				const f = rf[k];
+				f.reason += ' — для этого роутера включите профиль «Лёгкий» (Обслуживание → профиль ресурсов) и обновите ядро из фида';
+			}
+			findings[k] = rf[k];
+		}
 		let res_overall = 'ok';
 		for (let r in snap)
 			if (r.level !== 'ok')
@@ -896,7 +905,7 @@ export function compute_and_store(opts) {
 		ss_write_state(RES_PATH, {
 			ts: time(), deep: full, overall_res: res_overall,
 			mem_available_kb: parse_meminfo_kb(memraw),
-			mem_total_kb: (mtot != null) ? int(mtot[1]) : -1,
+			mem_total_kb: mem_total_kb,
 			res: snap
 		});
 	}

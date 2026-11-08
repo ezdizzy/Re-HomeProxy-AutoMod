@@ -85,6 +85,13 @@ const callAutoPilotSet = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Сеанс 158/Б8: явное снятие удержания Hot Swap (плановая переразметка). */
+const callAutoPilotHoldRelease = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'wizard_autopilot_hold_release',
+	expect: { '': {} }
+});
+
 /* Ф7.3: the automation-family Event Bus feed (Журналы level) — the same
  * journal the Health center renders, filtered to the automation family. */
 const callEvents = rpc.declare({
@@ -924,21 +931,64 @@ return view.extend({
 				head.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0; opacity:.8' },
 					[ ' · ' + st.stage_note ]));
 			apStatus.appendChild(head);
-			if (st && st.manual_hold)
-				apStatus.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' },
-					[ '✋ ' + _('Manual composition hold is active (Hot Swap): the scheduled re-rank is suspended — live checks and dead-resource repairs continue.') ]));
+			if (st && st.manual_hold) {
+				/* Сеанс 158/Б8: возраст удержания + явное снятие из интерфейса
+				 * (Ф6.7: ремонт мёртвого ресурса и успешная переразметка снимают
+				 * автоматически; теперь и кнопка — решение пользователя). */
+				const holdAge = (st.manual_hold.ts > 0)
+					? Math.max(0, Math.round((st.stage_ts > 0 ? st.stage_ts : Date.now() / 1000) - st.manual_hold.ts)) : -1;
+				const holdAgeText = (holdAge >= 2880)
+					? _('for %d days').format(Math.round(holdAge / 1440))
+					: (holdAge >= 120) ? _('for %d hours').format(Math.round(holdAge / 60))
+					: (holdAge >= 0) ? _('for %d min').format(holdAge) : '';
+				const holdLine = E('div', { 'class': 'wiz-note', style: 'opacity:.9' },
+					[ '✋ ' + _('Manual composition hold is active (Hot Swap): the scheduled re-rank is suspended — live checks and dead-resource repairs continue.') +
+					  (holdAgeText !== '' ? ' (' + holdAgeText + ')' : '') ]);
+				apStatus.appendChild(holdLine);
+				apStatus.appendChild(E('div', { style: 'margin:2px 0 0 12px' }, [
+					E('button', {
+						'class': 'cbi-button cbi-button-negative',
+						click: function() {
+							this.disabled = true;
+							L.resolveDefault(callAutoPilotHoldRelease(), {}).then(function(r) {
+								if (r && r.result === true) {
+									resultNote(apSaveMsg, true, r.unchanged
+										? _('The hold was not active — nothing to release.')
+										: _('Hold released — the scheduled re-rank resumes on its schedule (the daemon picks it up within a minute).'));
+								} else {
+									resultNote(apSaveMsg, false, _('Hold release failed: %s').format((r && r.error) || _('rpc error')));
+								}
+								refresh();
+							});
+						}
+					}, [ _('Release hold') ])
+				]));
+			}
 			if (st && st.resources) {
 				const grid = E('div', { style: 'margin:4px 0 0 12px' });
+				/* Сеанс 158/Б8: применённая составная (паритет с ч.231-фиксом
+				 * оптимизатора) — «Общий» без победителя автопилота честно
+				 * показывает текущую композицию из UCI вместо «—». */
+				const curZ = (data && data.current_zapret) || '';
 				for (let rk in apRes) {
 					const r = st.resources[rk];
 					if (!r)
 						continue;
 					const line = E('div', { 'class': 'wiz-note' });
 					const w = r.winner || {};
-					line.appendChild(document.createTextNode(
-						apNames[rk] + ': ' + ((st.enabled && r.mgmt === false && rk !== 'general')
-							? _('not managed (the rule does not lead to Zapret)')
-							: (w.name || '—'))));
+					let nameText;
+					if (st.enabled && r.mgmt === false && rk !== 'general')
+						nameText = _('not managed (the rule does not lead to Zapret)');
+					else if (w.name)
+						nameText = w.name;
+					else if (rk === 'general' && curZ.length)
+						nameText = _('applied composite (outside the auto-pilot — your choice)');
+					else
+						nameText = '—';
+					line.appendChild(document.createTextNode(apNames[rk] + ': ' + nameText));
+					if (rk === 'general' && !w.name && curZ.length)
+						line.appendChild(E('span', { 'class': 'wiz-note', style: 'opacity:.75', title: curZ },
+							[ ' · ' + curZ.slice(0, 60) + (curZ.length > 60 ? '…' : '') ]));
 					if (w.name)
 						line.appendChild(document.createTextNode(
 							(w.tls_ms > 0 ? ' · ' + _('~%d ms TLS').format(w.tls_ms) : '') +

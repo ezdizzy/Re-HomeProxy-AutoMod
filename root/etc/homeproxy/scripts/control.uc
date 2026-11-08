@@ -61,6 +61,14 @@ export function systime_stamp() {
 		d.year, d.mon, d.mday, d.hour, d.min, d.sec);
 };
 
+/* 🔴 СЕАНС 158/Б1-класс: объявлена ВЫШЕ log() — на этой сборке ucode вызов
+ * top-level имени, объявленного НИЖЕ вызывающей функции, крашится в момент
+ * исполнения (урок 294 в полной форме, доказано t1–t7). log() зовёт
+ * shellquote в ветке ротации лог-капа (log.uc:64-70). */
+export function shellquote(s) {
+	return `'${replace(s, "'", "'\\''")}'`;
+};
+
 export function log(msg) {
 	/* Bounded tmpfs: cap at 64 KB keeping the newest tail (same recipe as
 	 * telegram.uc / hotswap.uc). */
@@ -91,10 +99,6 @@ export function mkdir_p(p) {
  * Канонический механизм — State Store (statestore.uc, Ф1.7). */
 export function atomic_write(path, content) {
 	ss_atomic_write(path, content);
-};
-
-export function shellquote(s) {
-	return `'${replace(s, "'", "'\\''")}'`;
 };
 
 /* Read all sections of a given UCI type as objects with .id. */

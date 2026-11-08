@@ -7679,3 +7679,39 @@ msgstr ""
 
 msgid "Own signed package source: every component (hiddify-core full and compact, sing-box-extended and lite, mosdns, helpers, byedpi, zapret2) installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. When the source is unavailable, installs automatically fall back to the original paths."
 msgstr ""
+
+msgid "for %d days"
+msgstr ""
+
+msgid "for %d hours"
+msgstr ""
+
+msgid "for %d min"
+msgstr ""
+
+msgid "The hold was not active — nothing to release."
+msgstr ""
+
+msgid "Hold released — the scheduled re-rank resumes on its schedule (the daemon picks it up within a minute)."
+msgstr ""
+
+msgid "Hold release failed: %s"
+msgstr ""
+
+msgid "Release hold"
+msgstr ""
+
+msgid "applied composite (outside the auto-pilot — your choice)"
+msgstr ""
+
+msgid "Updating in the background (download, install, restart)…"
+msgstr ""
+
+msgid "Update status lost — check the operations journal (Maintenance)."
+msgstr ""
+
+msgid "Updated to version %s — reloading…"
+msgstr ""
+
+msgid "Update finished without verification: "
+msgstr ""

@@ -912,6 +912,81 @@ function compose_rollback() {
 	return !!(pr && pr.result);
 }
 
+/* Ресурсная матрица (аудит 64): страница + deep-хосты (+ видео-поток для
+ * youtube) — ОДНА И ТА ЖЕ матрица используется health(), preapply_probe()
+ * (до применения) и resume() (после): откат срабатывает при потере ЛЮБОГО
+ * критичного компонента (видео/медиа-хосты), а не только главной страницы,
+ * и «regression» сравнивает равные величины.
+ * 🔴 СЕАНС 158/Б1: объявлена ВЫШЕ preapply_probe/resume — на этой сборке
+ * ucode вызов top-level имени, объявленного НИЖЕ вызывающей функции, крашится
+ * «left-hand side is not a function» в момент исполнения вызова (урок 294 в
+ * полной форме, доказано t1–t7 + живой репро на UCI/стейте чужого роутера:
+ * cycle() → hold_active() ниже на ~500 строк = краш каждого цикла). */
+function resource_matrix(res, meta) {
+	const pr = probe_live(meta.url);
+	let ok_all = pr.ok;
+	let dead_hit = pr.dead;
+	let slow_hit = pr.slow;
+	let fail_note = pr.note || '';
+	if (meta.deep != null && length(meta.deep)) {
+		for (let du in meta.deep) {
+			const dpr = probe_live(du);
+			/* ч.236: the redirector 404-tolerance special case is gone with
+			 * the edge-probe itself — every deep probe is judged by dpr.ok;
+			 * a dead edge can no longer fail the matrix while devices work. */
+			if (ok_all && !dpr.ok) {
+				ok_all = false;
+				if (dpr.dead)
+					dead_hit = true;
+				else
+					slow_hit = true;
+				fail_note = 'медиа-хост не отвечает (' + dpr.code +
+					(dpr.note ? (' — ' + dpr.note) : '') + '): ' + du;
+			}
+		}
+	}
+	if (res === 'youtube') {
+		const fp = probe_flow();
+		if (fp == null)
+			log_once('ytflow', 'проба sustained-потока не выполнялась (нет файла с id)');
+		else {
+			once_clear('ytflow');
+			pr.speed = fp.speed;
+			pr.start_ms = fp.start_ms;
+			const fdead = (int(fp.code || 0) === 0 || int(fp.bytes || 0) === 0 ||
+				int(fp.fetched || 0) === 0);
+			if (ok_all && fdead) {
+				ok_all = false;
+				dead_hit = true;
+				fail_note = 'видео-поток мёртв (код ' + (fp.code || '0') + ', ' +
+					int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') + ' с)';
+			} else if (ok_all && !fp.ok) {
+				ok_all = false;
+				slow_hit = true;
+				fail_note = 'видео-поток медленный (' + int((fp.speed || 0) / 1024) + ' КБ/с, ' +
+					int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') +
+					' с) — деградация, не смерть';
+			}
+		}
+	}
+	pr.ok = ok_all;
+	pr.dead = dead_hit;
+	pr.slow = (!dead_hit && slow_hit);
+	if (length(fail_note))
+		pr.note = fail_note;
+	return pr;
+}
+
+/* Ф6.7: активна ли удержа плановой переразметки (Hot Swap 9). Без TTL —
+ * снятие только явное: ремонт умершего ресурса, успешный автоподбор или
+ * кнопка «Снять удержание» в автопилот-вью (сеанс 158/Б8).
+ * 🔴 СЕАНС 158/Б1: объявлена ВЫШЕ cycle()/repair() (см. комментарий над
+ * resource_matrix — порядок деклараций строгий, краш при вызове имени,
+ * объявленного ниже вызывающей функции). */
+function hold_active() {
+	return !!(S.manual_hold && type(S.manual_hold) === 'object');
+}
+
 /* Probes BEFORE an apply — the honest was_ok baseline for the regression
  * check (a resource that already fails cannot "regress"). Only MANAGED
  * resources are probed: the others are served by their own paths, the
@@ -1404,65 +1479,8 @@ function repair(cfg, res) {
 
 /* ── per-tick probe + repair gate ───────────────────────────────────── */
 
-/* Ресурсная матрица (аудит 64): страница + deep-хосты (+ видео-поток для
- * youtube) — ОДНА И ТА ЖЕ матрица используется health(), preapply_probe()
- * (до применения) и resume() (после): откат срабатывает при потере ЛЮБОГО
- * критичного компонента (видео/медиа-хосты), а не только главной страницы,
- * и «regression» сравнивает равные величины. */
-function resource_matrix(res, meta) {
-	const pr = probe_live(meta.url);
-	let ok_all = pr.ok;
-	let dead_hit = pr.dead;
-	let slow_hit = pr.slow;
-	let fail_note = pr.note || '';
-	if (meta.deep != null && length(meta.deep)) {
-		for (let du in meta.deep) {
-			const dpr = probe_live(du);
-			/* ч.236: the redirector 404-tolerance special case is gone with
-			 * the edge-probe itself — every deep probe is judged by dpr.ok;
-			 * a dead edge can no longer fail the matrix while devices work. */
-			if (ok_all && !dpr.ok) {
-				ok_all = false;
-				if (dpr.dead)
-					dead_hit = true;
-				else
-					slow_hit = true;
-				fail_note = 'медиа-хост не отвечает (' + dpr.code +
-					(dpr.note ? (' — ' + dpr.note) : '') + '): ' + du;
-			}
-		}
-	}
-	if (res === 'youtube') {
-		const fp = probe_flow();
-		if (fp == null)
-			log_once('ytflow', 'проба sustained-потока не выполнялась (нет файла с id)');
-		else {
-			once_clear('ytflow');
-			pr.speed = fp.speed;
-			pr.start_ms = fp.start_ms;
-			const fdead = (int(fp.code || 0) === 0 || int(fp.bytes || 0) === 0 ||
-				int(fp.fetched || 0) === 0);
-			if (ok_all && fdead) {
-				ok_all = false;
-				dead_hit = true;
-				fail_note = 'видео-поток мёртв (код ' + (fp.code || '0') + ', ' +
-					int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') + ' с)';
-			} else if (ok_all && !fp.ok) {
-				ok_all = false;
-				slow_hit = true;
-				fail_note = 'видео-поток медленный (' + int((fp.speed || 0) / 1024) + ' КБ/с, ' +
-					int((fp.bytes || 0) / 1024) + ' КБ за ' + ((fp.secs != null) ? fp.secs : '?') +
-					' с) — деградация, не смерть';
-			}
-		}
-	}
-	pr.ok = ok_all;
-	pr.dead = dead_hit;
-	pr.slow = (!dead_hit && slow_hit);
-	if (length(fail_note))
-		pr.note = fail_note;
-	return pr;
-}
+/* Ресурсная матрица объявлена ВЫШЕ (preapply_probe/resume/health — callers);
+ * комментарий-история: аудит 64 — одна и та же матрица до/после применения. */
 
 /* Ф6.7: свежая батарея профилей (Ф6.3) как ДОПОЛНИТЕЛЬНОЕ измерение health —
  * ноль новых проб: результат уже измерен батареей (пользователем или RPC).
@@ -1604,6 +1622,35 @@ function health(cfg) {
  * the daemon adopts them as the resource winners on its next tick —
  * otherwise the next re-rank could overwrite the user's explicit choice
  * before it ever mattered. The file is consumed (deleted) after adoption. */
+/* Сеанс 158/Б8: явное снятие удержания (Hot Swap 9) — команда-файл от RPC
+ * wizard_autopilot_hold_release (атомарная запись, стирание здесь). Тот же
+ * контракт, что у MANUAL_FILE. Снятие честное: плановая переразметка снова
+ * работает, живые проверки не прерывались. */
+function adopt_hold_release() {
+	const f = RUN_DIR + '/zapret_autopilot_holdclear.json';
+	const c = read_json(f);
+	if (c == null || type(c) !== 'object')
+		return;
+	system(`rm -f ${sq(f)} 2>/dev/null`);
+	if (!hold_active())
+		return;
+	S.manual_hold = null;
+	S.n_hold_active = null;   /* log_once-ключ цикла — после снятия не нужен */
+	/* Внешний детект (tick) снова поставил бы удержу на ТОЙ ЖЕ композиции
+	 * (curz != last_apply.zapret) — пользователь сказал «снять», значит
+	 * текущая композиция принимается как осознанный выбор: выравниваем
+	 * маркер «не перевзводить по той же смене». */
+	{
+		const cz = '' + (cursor().get('homeproxy', 'config', 'zapret_cmd_opts') || '');
+		if (S.last_apply && type(S.last_apply) === 'object' && length(cz))
+			S.last_apply.zapret = cz;
+	}
+	log('удержание ручной композиции (Hot Swap 9) снято вручную из интерфейса — плановая переразметка снова работает');
+	ap_emit('hold_released', 'удержание Hot Swap снято вручную',
+		'плановая переразметка возобновится по расписанию; живые проверки и ремонт продолжались и продолжаются');
+	wstat();
+}
+
 function adopt_manual() {
 	const m = read_json(MANUAL_FILE);
 	if (m == null || type(m) !== 'object' || type(m.resources) !== 'object')
@@ -1634,11 +1681,7 @@ function adopt_manual() {
 	system(`rm -f ${sq(MANUAL_FILE)} 2>/dev/null`);
 }
 
-/* Ф6.7: активна ли удержа плановой переразметки (Hot Swap 9). Без TTL —
- * снятие только явное: ремонт умершего ресурса или успешный автоподбор. */
-function hold_active() {
-	return !!(S.manual_hold && type(S.manual_hold) === 'object');
-}
+/* Ф6.7: hold_active() объявлена ВЫШЕ (cycle/repair — callers; сеанс 158/Б1). */
 
 /* ── main loop ──────────────────────────────────────────────────────── */
 
@@ -1704,6 +1747,7 @@ function tick() {
 	}
 
 	adopt_manual();
+	adopt_hold_release();
 
 	/* Ф6.7 (Hot Swap 9): детект ВНЕШНЕЙ смены композиции — пользователь
 	 * применил стратегию/композицию из UI (или руками). Плановая переразметка

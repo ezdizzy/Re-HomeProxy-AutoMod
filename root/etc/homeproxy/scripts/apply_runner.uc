@@ -2,7 +2,7 @@
 //
 // Ravnex — detached-исполнитель операций применения (Ф1.1; аудит 1.6/1.7/48).
 // Usage: ucode apply_runner.uc <op_id> <action>
-//   actions: restart | reload | engine_restart | fw_refresh
+//   actions: restart | reload | engine_restart | fw_refresh | app_update
 //
 // Лок уже удержан opman.begin() (rpcd создал операцию и заспавнил руннер).
 // Руннер ведёт стадии Applying→Verifying→Completed/Failed (аудит 48),
@@ -38,8 +38,9 @@ import { find_daemons as pm_find } from '/etc/homeproxy/scripts/pmgr.uc';
 import { access, readfile, popen } from 'fs';
 import { cursor } from 'uci';
 
-const ACTIONS = { restart: 90, reload: 90, engine_restart: 60, fw_refresh: 30 };   /* action → system() timeout, s */
-const VERIFY_SEC = { restart: 25, reload: 25, engine_restart: 20, fw_refresh: 15 };
+const ACTIONS = { restart: 90, reload: 90, engine_restart: 60, fw_refresh: 30, app_update: 900 };   /* action → system() timeout, s */
+const VERIFY_SEC = { restart: 25, reload: 25, engine_restart: 20, fw_refresh: 15, app_update: 60 };
+
 
 function capture(cmd) {
 	const fd = popen(cmd);
@@ -146,6 +147,119 @@ function verify_engines(op_id) {
 	return { ok: false, note: 'engine process missing after restart' };
 }
 
+/* 🔴 СЕАНС 158/Б1-класс: хелперы ВЫШЕ вызывающих (shellq — выше run_app_update). */
+function shellq(s) {
+	return `'${replace('' + s, "'", "'\\''")}'`;
+}
+
+/* Сеанс 158/Б6: фоновое действие с rc-файлом (урок 167: 2-arg system() на этой
+ * сборке убивает ребёнка мгновенно). Возвращает rc-строку или '' при таймауте. */
+function run_bg_rc(op_id, tag, cmd, cap_s) {
+	const rcfile = '/tmp/hp_apply_' + op_id + '_' + tag + '.rc';
+	system(`( ${cmd} >/dev/null 2>&1; echo $? > ${rcfile} ) &`);
+	const deadline = time() + cap_s;
+	while (true) {
+		if (access(rcfile)) {
+			const rc = trim(readfile(rcfile) || '');
+			system(`rm -f ${rcfile}`);
+			return rc;
+		}
+		if (time() >= deadline) {
+			system(`rm -f ${rcfile}`);
+			return '';
+		}
+		heartbeat(op_id);
+		sleep(1000);
+	}
+}
+
+/* Сеанс 158/Б6: одна фаза самообновления. Ревизии/загрузки идут через
+ * core_mgmt.uc (проверенная лестница download_pkg, тот же путь, что у UI),
+ * установка — apk/opkg c --allow-untrusted/--force-reinstall (тот же контракт,
+ * что у app_install_pkg). Каждая фаза — фоновый cmd + rc-файл + опрос. */
+function run_app_update(op_id, spec) {
+	const pm = ('' + (spec.pkg_manager || 'apk'));
+	const parts = [];
+	let ok = true;
+
+	/* 1. Загрузка пакетов. */
+	stage(op_id, 'downloading');
+	heartbeat(op_id);
+	const dls = [ { url: spec.app.dl_url, tmp: spec.app.tmp_path, tag: 'dlapp' } ];
+	if (spec.i18n != null && length('' + (spec.i18n.dl_url || '')))
+		push(dls, { url: spec.i18n.dl_url, tmp: spec.i18n.tmp_path, tag: 'dli18n' });
+	for (let d in dls) {
+		const CM = '/etc/homeproxy/scripts/core_mgmt.uc';
+		const rc = run_bg_rc(op_id, d.tag,
+			'/usr/bin/ucode ' + CM + ' download_pkg ' + shellq(d.url) + ' ' + shellq(d.tmp), 300);
+		if (!access(d.tmp)) {
+			finish(op_id, false, false, 'download failed: ' + d.tmp +
+				((length(rc)) ? ' (rc=' + rc + ')' : ' (timeout)'));
+			return false;
+		}
+	}
+
+	/* 2. Установка (app, затем i18n). */
+	stage(op_id, 'installing');
+	heartbeat(op_id);
+	for (let d in dls) {
+		const cmd = (pm === 'apk')
+			? `apk add --allow-untrusted ${shellq(d.tmp)}; RC=$?; rm -f ${shellq(d.tmp)}; exit $RC`
+			: `opkg install --force-reinstall ${shellq(d.tmp)}; RC=$?; rm -f ${shellq(d.tmp)}; exit $RC`;
+		const rc = run_bg_rc(op_id, 'inst_' + d.tag, cmd, 300);
+		if (length(rc) && rc != '0')
+			push(parts, 'install rc=' + rc + ' (' + d.tmp + ')');
+	}
+
+	/* 3. Пост-чек версии (apk-запись честнее rc — урок ч.223). */
+	const vout = (pm === 'apk')
+		? capture('apk info luci-app-re-homeproxy 2>/dev/null | head -1')
+		: capture('opkg status luci-app-re-homeproxy 2>/dev/null');
+	const vm = match(vout, /luci-app-re-homeproxy-([0-9][0-9.]*)/) ||
+		match(vout, /Version: ([0-9][0-9.]*)/);
+	const inst_v = (vm != null) ? vm[1] : '';
+	if (inst_v != ('' + spec.version)) {
+		finish(op_id, false, false, 'version check failed: installed ' +
+			(inst_v == '' ? '?' : inst_v) + ' != expected ' + spec.version +
+			((length(parts)) ? '; ' + join('; ', parts) : ''));
+		return false;
+	}
+
+	/* 4. Сервис-рестарт (пакет сервис не стартует — как и в прежнем пути) +
+	 * верификация ядра (та же verify_core, что у restart). */
+	stage(op_id, 'restarting');
+	heartbeat(op_id);
+	run_bg_rc(op_id, 'svc', '/etc/init.d/homeproxy restart', ACTIONS.app_update);
+	const vc = verify_core(op_id);
+	if (!vc.ok) {
+		finish(op_id, false, false, 'service verify failed after update: ' + vc.note);
+		return false;
+	}
+	push(parts, vc.note);
+
+	/* 5. ФИНАЛЬНАЯ СТАДИЯ — rpcd restart (сеанс 158/Б7: UI-путь больше не
+	 * зависит от postinst; rpcd перечитает новые методы). Раннер detached и
+	 * переживает смерть rpcd; журнал опов — на диске. */
+	stage(op_id, 'rpcd');
+	heartbeat(op_id);
+	run_bg_rc(op_id, 'rpcd', '/etc/init.d/rpcd restart', 90);
+	/* Живая проверка: rpcd снова отвечает (дешёвый метод, без GitHub). */
+	const vdeadline = time() + VERIFY_SEC.app_update;
+	let rpcd_ok = false;
+	while (time() < vdeadline) {
+		const out = capture('ubus call luci.homeproxy res_profile 2>/dev/null');
+		if (length(trim(out))) { rpcd_ok = true; break; }
+		heartbeat(op_id);
+		sleep(2000);
+	}
+	if (!rpcd_ok) {
+		finish(op_id, false, false, 'rpcd did not answer after restart (res_profile)');
+		return false;
+	}
+	push(parts, 'rpcd restarted and serving');
+	finish(op_id, true, true, join('; ', parts));
+	return true;
+}
 function run_initd(op_id, action) {
 	/* Урок 167: system(cmd, timeout) на этой сборке убивает ребёнка
 	 * МГНОВЕННО (второй аргумент — мс) — рестарт не успевает начаться.
@@ -178,7 +292,7 @@ function main() {
 	const op = get_op(op_id);
 	if (!op || op.action !== action ||
 	    (action !== 'restart' && action !== 'reload' && action !== 'engine_restart' &&
-	     action !== 'fw_refresh'))
+	     action !== 'fw_refresh' && action !== 'app_update'))
 		exit(1);   /* нет записи операции — протоколировать некуда */
 
 	/* 🔴 Урок 169: stderr руннера уходит в /dev/null (spawn из rpcd) — ЛЮБОЕ
@@ -187,6 +301,26 @@ function main() {
 	try {
 		stage(op_id, 'applying');
 		heartbeat(op_id);
+
+		if (action === 'app_update') {
+			/* Сеанс 158/Б6: самообновление целиком в op-машине (спека от RPC). */
+			const specf = '/tmp/hp_app_update_' + op_id + '.json';
+			if (!access(specf)) {
+				finish(op_id, false, false, 'app_update spec missing: ' + specf);
+				exit(1);
+			}
+			let spec = null;
+			try { spec = json(readfile(specf) || ''); } catch (e) { spec = null; }
+			if (spec == null || type(spec) !== 'object' || spec.app == null) {
+				finish(op_id, false, false, 'app_update spec unreadable');
+				exit(1);
+			}
+			stage(op_id, 'downloading');
+			heartbeat(op_id);
+			run_app_update(op_id, spec);
+			system(`rm -f ${shellq(specf)} 2>/dev/null`);
+			exit(0);
+		}
 
 		const rc = run_initd(op_id, action);
 		/* Код rc.common ненадёжен как признак успеха (procd асинхронен) —

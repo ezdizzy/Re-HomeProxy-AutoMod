@@ -218,27 +218,11 @@ function flap_load() {
 			flap_state = j;
 	} catch (e) { /* нет файла — чистый старт */ }
 }
-function flap_save() {
-	/* atomic (temp + rename) — тот же паттерн done_save (урок 256). */
-	try {
-		/* Ф10.2 tmpfs-гигиена: закрытые эпизоды (open:false) — надгробия;
-		 * старше 7 суток вычищаются при сохранении (ucode БЕЗ delete —
-		 * пересборка for-in, урок 341). Открытые эпизоды не трогаются. */
-		const now = time();
-		const clean = {};
-		for (let k in flap_state) {
-			const e = flap_state[k];
-			if (type(e) !== 'object')
-				continue;
-			if (e.open === true || (now - int(e.ts || 0)) <= 604800)
-				clean[k] = e;
-		}
-		flap_state = clean;
-		const tmp = FLAP_FILE + '.tmp';
-		writefile(tmp, sprintf('%J', flap_state));
-		rename(tmp, FLAP_FILE);
-	} catch (e) { log('flap save: ' + e); }
-}
+/* 🔴 СЕАНС 158/Б1-класс: flap_save перенесена НИЖЕ log() — на этой сборке
+ * ucode вызов top-level имени, объявленного НИЖЕ вызывающей функции, крашится
+ * в момент исполнения вызова (урок 294 в полной форме; доказано t1–t7 и
+ * живым репро Б1). catch-ветка flap_save звала log() снизу → при ошибке
+ * сохранения краш вместо честного лога. */
 
 /* Ф8.6 egress failover (D22): бот обязан пережить смерть ВСЕЙ прокси-цепочки.
  * Лестница: 0 = обычная цепочка (curl идёт системной маршрутизацией),
@@ -300,6 +284,30 @@ function log(msg) {
 			if (w) { w.write(tail); w.close(); }
 		}
 	} catch (e) { /* best effort — logging must never kill the daemon */ }
+}
+
+/* 🔴 СЕАНС 158/Б1-класс: flap_save — НИЖЕ log() (вызов log() в catch-ветке;
+ * порядок деклараций строгий, краш при вызове имени, объявленного ниже).
+ * atomic (temp + rename) — тот же паттерн done_save (урок 256). */
+function flap_save() {
+	try {
+		/* Ф10.2 tmpfs-гигиена: закрытые эпизоды (open:false) — надгробия;
+		 * старше 7 суток вычищаются при сохранении (ucode БЕЗ delete —
+		 * пересборка for-in, урок 341). Открытые эпизоды не трогаются. */
+		const now = time();
+		const clean = {};
+		for (let k in flap_state) {
+			const e = flap_state[k];
+			if (type(e) !== 'object')
+				continue;
+			if (e.open === true || (now - int(e.ts || 0)) <= 604800)
+				clean[k] = e;
+		}
+		flap_state = clean;
+		const tmp = FLAP_FILE + '.tmp';
+		writefile(tmp, sprintf('%J', flap_state));
+		rename(tmp, FLAP_FILE);
+	} catch (e) { log('flap save: ' + e); }
 }
 
 function capture(cmd) {
@@ -2095,29 +2103,6 @@ function rep_unb_title(prefix, key) {
 		: ('Разблокировать кампанию «' + key + '»?');
 }
 
-function confirm_resolve(key, chat_id, role, cbid, uid) {
-	const c = confirms[key];
-	if (c == null) {
-		tg_answer_cb(cbid, 'Срок подтверждения истёк');
-		return;
-	}
-	delete confirms[key];
-	if (c.chat !== chat_id) {
-		tg_answer_cb(cbid, 'Чужое подтверждение');
-		return;
-	}
-	if (!role_ok(role, c.role)) {
-		log('RBAC: confirm denied for role ' + role + ' (needs ' + c.role + ')');
-		audit(uid, role, 'deny', 'подтверждение «' + c.kind + '» — отклонено (роль «' + role + '», нужно «' + c.role + '»)');
-		tg_answer_cb(cbid, 'Недостаточно прав');
-		tg_send_html(chat_id, '⛔ Подтверждение отклонено: ваша роль «' + role + '», действие требует «' + c.role + '».', null);
-		return;
-	}
-	/* Ф8.5: исполнение тяжёлого действия — в журнале действий отдельной
-	 * записью (kind + payload, ~половина строки) помимо тапа 'cb'. */
-	audit(uid, role, 'confirm', c.kind + ' ' + substr('' + (c.payload || ''), 0, 150));
-	confirm_exec(c, chat_id, cbid);
-}
 
 /* Executes a confirmed action — each kind has exactly ONE place where the
  * mutation happens. */
@@ -2256,6 +2241,29 @@ function confirm_exec(c, chat_id, cbid) {
  * feature never fired once since plan 14 (each failure was caught and
  * logged, the bot itself kept working). All referenced primitives are
  * declared above this block; push_scan follows it. */
+function confirm_resolve(key, chat_id, role, cbid, uid) {
+	const c = confirms[key];
+	if (c == null) {
+		tg_answer_cb(cbid, 'Срок подтверждения истёк');
+		return;
+	}
+	delete confirms[key];
+	if (c.chat !== chat_id) {
+		tg_answer_cb(cbid, 'Чужое подтверждение');
+		return;
+	}
+	if (!role_ok(role, c.role)) {
+		log('RBAC: confirm denied for role ' + role + ' (needs ' + c.role + ')');
+		audit(uid, role, 'deny', 'подтверждение «' + c.kind + '» — отклонено (роль «' + role + '», нужно «' + c.role + '»)');
+		tg_answer_cb(cbid, 'Недостаточно прав');
+		tg_send_html(chat_id, '⛔ Подтверждение отклонено: ваша роль «' + role + '», действие требует «' + c.role + '».', null);
+		return;
+	}
+	/* Ф8.5: исполнение тяжёлого действия — в журнале действий отдельной
+	 * записью (kind + payload, ~половина строки) помимо тапа 'cb'. */
+	audit(uid, role, 'confirm', c.kind + ' ' + substr('' + (c.payload || ''), 0, 150));
+	confirm_exec(c, chat_id, cbid);
+}
 const ctrl_api = {
 	send_html: tg_send_html,
 	kb_rows: kb_rows,

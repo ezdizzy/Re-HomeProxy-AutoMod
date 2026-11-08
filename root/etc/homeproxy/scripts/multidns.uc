@@ -75,6 +75,17 @@ const REBUILD_DEBOUNCE_SEC = 900;
 let last_mosdns_start = 0;      /* ts последнего ВЫПОЛНЕННОГО нами рестарта */
 let last_uci_conf_sig = '';     /* UCI-снимок на момент того рестарта */
 let debounce_note_ts = 0;       /* чтобы «отложено» не забивало журнал */
+/* Сеанс 158/Б2: crash-loop guard. Битый/незапускаемый mosdns (бинарник есть,
+ * процесс мгновенно умирает) раньше рестартился КАЖДЫЙ 5-с тик: RESTART_MARK
+ * писался/снимался каждые 5 с → health давал флап down↔«плановый рестарт»,
+ * журнал и Telegram — спам. Теперь: после 3 неудачных стартов подряд
+ * автоподъём приостанавливается на MOSDNS_RETRY_BACKOFF и пишется флаг
+ * BROKEN (health даёт честное «не запускается» с путём переустановки). */
+const MOSDNS_BROKEN_FILE = MD_DIR + '/mosdns.broken';
+const MOSDNS_FAIL_MAX = 3;
+const MOSDNS_RETRY_BACKOFF = 600;
+let start_fails = 0;            /* неудачных стартов подряд */
+let next_start_ok = 0;          /* ts, раньше которого автоподъём не пытается */
 const STATE_FILE = MD_DIR + '/multidns_state.json';
 const LOG_FILE = MD_DIR + '/multidns.log';
 const MOSDNS = '/usr/bin/mosdns';
@@ -1314,6 +1325,10 @@ function start_mosdns() {
 	if (alive) {
 		/* The candidate proved itself — promote it atomically. */
 		atomic_write(CONF, conf);
+		/* Сеанс 158/Б2: успех сбрасывает crash-loop guard (флаг/счётчик). */
+		start_fails = 0;
+		next_start_ok = 0;
+		system('rm -f ' + shellquote(MOSDNS_BROKEN_FILE) + ' 2>/dev/null');
 	} else if (access(CONF)) {
 		/* LKG rollback: the candidate never came up; CONF is untouched —
 		 * relaunch the previous config so acceleration stays alive. */
@@ -1328,6 +1343,15 @@ function start_mosdns() {
 		let err = access(LOG_FILE + '.md') ? trim(readfile(LOG_FILE + '.md')) : '';
 		log('mosdns failed to start - resolution will not be accelerated.'
 			+ (err ? ' err: ' + err : ''));
+		/* Сеанс 158/Б2: crash-loop guard — счётчик, бэкофф, флаг для health. */
+		start_fails++;
+		if (start_fails >= MOSDNS_FAIL_MAX) {
+			next_start_ok = time() + MOSDNS_RETRY_BACKOFF;
+			atomic_write(MOSDNS_BROKEN_FILE,
+				sprintf('{"ts":%d,"attempts":%d}', time(), start_fails));
+			log('mosdns не запускается ' + start_fails + ' раз подряд — автоподъём приостановлен на ' +
+				int(MOSDNS_RETRY_BACKOFF / 60) + ' мин. Переустановите mosdns: Обслуживание → Управление ядром (установка из фида).');
+		}
 	}
 	system('rm -f ' + shellquote(RESTART_MARK) + ' ' + shellquote(cand));
 	return alive;
@@ -1337,11 +1361,16 @@ function stop_mosdns() {
 	/* Ф1.4: registry identity first (covers a process started with an older
 	 * conf path), then the conf/candidate match. The bare text-pidfile kill
 	 * is GONE — a reused PID must never be signalled (audit 34 class); the
-	 * pidfile pid is killed only when /proc still shows a mosdns binary. */
+	 * pidfile pid is killed only when /proc still shows a mosdns binary.
+	 * Сеанс 158/Б2: MultiDNS выключен — crash-loop guard сбрасывается
+	 * (флаг BROKEN не должен переживать включение). */
 	const e = pm_reg_get('mosdns');
 	if (e != null && pm_entry_alive(e))
 		pm_kill_entry(e, 5000);
 	pm_reg_del('mosdns');
+	start_fails = 0;
+	next_start_ok = 0;
+	system('rm -f ' + shellquote(MOSDNS_BROKEN_FILE) + ' 2>/dev/null');
 	if (access(PID)) {
 		const c = int(trim(readfile(PID)) || 0);
 		const info = (c > 1) ? pm_proc_info(c) : null;
@@ -2034,8 +2063,10 @@ function main() {
 			PROXY = mdns_proxy_endpoint();
 
 			/* Fast self-heal: if mosdns died for any reason, bring it back up
-			 * within one loop tick (~5s) so DNS never stays down. */
-			if (!mosdns_running()) {
+			 * within one loop tick (~5s) so DNS never stays down.
+			 * Сеанс 158/Б2: гейт crash-loop guard — после 3 неудач подряд
+			 * автоподъём не чаще MOSDNS_RETRY_BACKOFF (флаг BROKEN для health). */
+			if (!mosdns_running() && time() >= next_start_ok) {
 				log('mosdns not running - restarting.');
 				start_mosdns();
 				last_uci_conf_sig = uci_conf_sig();

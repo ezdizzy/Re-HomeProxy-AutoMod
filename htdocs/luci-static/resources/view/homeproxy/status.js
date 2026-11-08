@@ -656,6 +656,13 @@ const callAppInstallPkg = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Сеанс 158/Б6: самообновление в op-машине (download+install+rpcd restart). */
+const callAppUpdateStart = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'app_update_start',
+	expect: { '': {} }
+});
+
 const callCoreSkipped = rpc.declare({
 	object: 'luci.homeproxy',
 	method: 'core_skipped',
@@ -1068,50 +1075,76 @@ function buildAppCard(appStatus) {
 	const updateBtn = mkBtn(_('Update'), 'primary', {
 		disabled: true,
 		click: async function() {
+			/* Сеанс 158/Б6: самообновление целиком в op-машине. Синхронный
+			 * app_install_pkg ехал дольше XHR-таймаута LuCI 20 с (rpc.js:5) —
+			 * браузер рвал запрос и UI врал «Ошибка установки» при серверном
+			 * успехе. Теперь: app_update_start → поллинг app_op_status до
+			 * completed/failed (rpcd-рестарт — финальная стадия опа, разрывы
+			 * поллинга честно пережидаются) → reload по verified. */
 			updateBtn.disabled = true;
 			checkBtn.disabled = true;
 			statusEl.textContent = _('Preparing...');
 			statusEl.style.color = 'var(--hp-grey)';
 			setMsg('', null);
 
-			const prep = await L.resolveDefault(callAppPrepareInstall(), {});
-			if (prep.error) {
+			const st = await L.resolveDefault(callAppUpdateStart(), {});
+			if (!st || st.result !== true) {
 				statusEl.textContent = version ? 'Ravnex v' + version : _('Installed');
 				statusEl.style.color = 'var(--hp-accent-strong)';
 				updateBtn.disabled = false;
 				checkBtn.disabled = false;
-				setMsg(prep.error, 'red');
+				setMsg((st && st.error) || _('rpc error'), st && st.busy ? 'amber' : 'red');
 				return;
 			}
 
-			setMsg(_('Downloading...'), 'grey');
-			const dlApp = await L.resolveDefault(callCoreDownload(prep.app.dl_url, prep.app.tmp_path), {});
-			if (!dlApp.result) {
-				setMsg(dlApp.error || _('Download failed'), 'red');
-				updateBtn.disabled = false;
-				checkBtn.disabled = false;
-				return;
+			const updText = _('Updating in the background (download, install, restart)…');
+			setMsg(updText, 'grey');
+			let gaps = 0;
+			let lastNote = '';
+			while (true) {
+				await new Promise(r => setTimeout(r, 3000));
+				let o = null;
+				try {
+					const op = await L.resolveDefault(callOpStatus(st.op_id), {});
+					o = (op && op.result && op.op) ? op.op : null;
+				} catch (e) { o = null; }
+				if (o == null) {
+					/* rpcd перезапускается финальной стадией опа — пережидаем. */
+					gaps++;
+					if (gaps > 40) {
+						setMsg(_('Update status lost — check the operations journal (Maintenance).'), 'red');
+						updateBtn.disabled = false;
+						checkBtn.disabled = false;
+						return;
+					}
+					continue;
+				}
+				gaps = 0;
+				if (o.status === 'completed') {
+					if (o.verified === true) {
+						statusEl.textContent = 'Ravnex v' + (st.version || '');
+						statusEl.style.color = 'var(--hp-accent-strong)';
+						setMsg(_('Updated to version %s — reloading…').format(st.version || ''), 'green');
+						setTimeout(() => window.location.reload(), 4000);
+					} else {
+						setMsg(_('Update finished without verification: ') + (o.detail || ''), 'red');
+						updateBtn.disabled = false;
+						checkBtn.disabled = false;
+					}
+					return;
+				}
+				if (o.status === 'failed') {
+					setMsg(_('Update failed: ') + (o.detail || ''), 'red');
+					updateBtn.disabled = false;
+					checkBtn.disabled = false;
+					return;
+				}
+				const note = updText + ' [' + (o.stage || o.status) + ']';
+				if (note !== lastNote) {
+					lastNote = note;
+					setMsg(note, 'grey');
+				}
 			}
-			let i18nPath = '';
-			if (prep.i18n) {
-				const dlI18n = await L.resolveDefault(callCoreDownload(prep.i18n.dl_url, prep.i18n.tmp_path), {});
-				if (dlI18n.result) i18nPath = prep.i18n.tmp_path;
-			}
-
-			setMsg(_('Installing...'), 'grey');
-			const inst = await L.resolveDefault(
-				callAppInstallPkg(prep.app.tmp_path, i18nPath, prep.pkg_manager), {});
-			if (!inst.result) {
-				setMsg(inst.error || _('Installation failed'), 'red');
-				updateBtn.disabled = false;
-				checkBtn.disabled = false;
-				return;
-			}
-
-			setMsg(_('Installed — reloading...'), 'green');
-			/* The package postinst restarts rpcd after a short delay; wait long enough
-			 * for the new rpcd (with the updated methods) to be serving before reload. */
-			setTimeout(() => window.location.reload(), 5000);
 		}
 	});
 
