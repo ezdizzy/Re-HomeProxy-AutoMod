@@ -153,10 +153,15 @@ function shellq(s) {
 }
 
 /* Сеанс 158/Б6: фоновое действие с rc-файлом (урок 167: 2-arg system() на этой
- * сборке убивает ребёнка мгновенно). Возвращает rc-строку или '' при таймауте. */
+ * сборке убивает ребёнка мгновенно). Возвращает rc-строку или '' при таймауте.
+ * 🔴 Сеанс 160: cmd НЕ ДОЛЖЕН содержать голый `exit` — он убивает subshell ДО
+ * `echo $? > rcfile`, rcfile никогда не появляется, run_bg_rc молча ждёт весь
+ * cap (Б6: две установки по ~310 с при мгновенно прошедших apk add; rc-файл
+ * писался только у cmd без exit — download). Redirect на ГРУППУ { }, не на
+ * последний элемент. Возврат rc через `echo $?` — после (exit $RC), не exit. */
 function run_bg_rc(op_id, tag, cmd, cap_s) {
 	const rcfile = '/tmp/hp_apply_' + op_id + '_' + tag + '.rc';
-	system(`( ${cmd} >/dev/null 2>&1; echo $? > ${rcfile} ) &`);
+	system(`( { ${cmd}; echo $? > ${rcfile}; } >/dev/null 2>&1 ) &`);
 	const deadline = time() + cap_s;
 	while (true) {
 		if (access(rcfile)) {
@@ -205,13 +210,16 @@ function run_app_update(op_id, spec) {
 	/* 2. Установка (app, затем i18n). */
 	stage(op_id, 'installing');
 	heartbeat(op_id);
+	/* 2. Установка (app, затем i18n). 🔴 Сеанс 160: (exit $RC), НЕ exit $RC —
+	 * голый exit убивал subshell до записи rc-файла (см. run_bg_rc). */
 	for (let d in dls) {
 		const cmd = (pm === 'apk')
-			? `apk add --allow-untrusted ${shellq(d.tmp)}; RC=$?; rm -f ${shellq(d.tmp)}; exit $RC`
-			: `opkg install --force-reinstall ${shellq(d.tmp)}; RC=$?; rm -f ${shellq(d.tmp)}; exit $RC`;
+			? `apk add --allow-untrusted ${shellq(d.tmp)}; RC=$?; rm -f ${shellq(d.tmp)}; (exit $RC)`
+			: `opkg install --force-reinstall ${shellq(d.tmp)}; RC=$?; rm -f ${shellq(d.tmp)}; (exit $RC)`;
 		const rc = run_bg_rc(op_id, 'inst_' + d.tag, cmd, 300);
-		if (length(rc) && rc != '0')
-			push(parts, 'install rc=' + rc + ' (' + d.tmp + ')');
+		/* '' (таймаут) больше не маскируется под успех — честная деталь в parts. */
+		if (!length(rc) || rc != '0')
+			push(parts, 'install ' + (length(rc) ? 'rc=' + rc : 'timeout') + ' (' + d.tmp + ')');
 	}
 
 	/* 3. Пост-чек версии (apk-запись честнее rc — урок ч.223). */
