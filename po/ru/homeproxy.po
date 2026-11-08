@@ -7731,3 +7731,15 @@ msgstr "Обновлено до версии %s — перезагружаем �
 
 msgid "Update finished without verification: "
 msgstr "Обновление завершилось без верификации: "
+
+msgid "manual pick (Hot Swap)"
+msgstr "ручной выбор (Hot Swap)"
+
+msgid "older than 6 h — the next re-rank takes a fresh one"
+msgstr "старше 6 ч — следующая переразметка возьмёт свежий замер"
+
+msgid "Lab measurement from %s: %s"
+msgstr "Замер Лаборатории от %s: %s"
+
+msgid "last auto-apply: %s"
+msgstr "последнее автоприменение: %s"

@@ -2382,9 +2382,14 @@ return view.extend({
 			if (!st || st.stage === 'started')
 				return;
 			/* Seed rule: a finished run from BEFORE this page load is not
-			 * re-shown (same contract as the compose test). */
+			 * re-shown (same contract as the compose test). ч.249: the seed ALSO
+			 * records the sig — the old code seeded without it, so the SECOND
+			 * poll tick rendered the stale done-box anyway (the session-163
+			 * report: yesterday's pre-ч.236 run with the dead redirector row
+			 * popped up under every page load). */
 			if (!state.autopickSeeded) {
 				state.autopickSeeded = true;
+				state.autopickSig = 'done:' + ((st && st.ts) || 0) + ':' + ((st && st.stage) || '');
 				return;
 			}
 			const sig = 'done:' + (st.ts || 0) + ':' + (st.stage || '');

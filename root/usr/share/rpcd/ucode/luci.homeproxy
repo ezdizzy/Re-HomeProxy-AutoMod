@@ -4845,13 +4845,14 @@ const methods = {
 			const has_curl = !!access('/usr/bin/curl');
 
 			/* Test panel. Pass = the TLS handshake completes (judged below by time_appconnect),
-			 * which is the precise DPI-bypass signal — not the HTTP status. YouTube probes the
-			 * real video CDN (redirector.googlevideo.com), not the www page: the video path is
-			 * what users care about and what the DPI actually blocks. It returns 404 with no
-			 * path requested — irrelevant, we judge the handshake. Discord/Telegram/Speedtest
+			 * which is the precise DPI-bypass signal — not the HTTP status. ч.249: the YouTube
+			 * host is www.youtube.com (probe-identity, the ч.236 rule): the redirector video
+			 * edge is swallowed by TSPU regardless of the strategy (rc=28 at exactly the
+			 * connect timeout on every run — live verdicts 2026-11-07/08), so it judged
+			 * nothing and painted the row red forever. Discord/Telegram/Speedtest
 			 * cover the Cloudflare/other edges for a destination spread. */
 			const hosts = [
-				{ tag: 'yt', label: 'YouTube (video)', url: 'https://redirector.googlevideo.com' },
+				{ tag: 'yt', label: 'YouTube',         url: 'https://www.youtube.com' },
 				{ tag: 'tg', label: 'Telegram',        url: 'https://telegram.org' },
 				{ tag: 'dc', label: 'Discord',         url: 'https://discord.com' },
 				{ tag: 'st', label: 'Speedtest.net',   url: 'https://www.speedtest.net' }
@@ -6338,10 +6339,36 @@ const methods = {
 			const cz = cursor().get('homeproxy', 'config', 'zapret_cmd_opts');
 			if (cz != null && length('' + cz))
 				cur_zapret = '' + cz;
+			/* ч.249 UI honesty: the freshest LAB measurement travels to the panel.
+			 * The autopilot winner is its OWN last verdict (often a manual pick
+			 * adopted via Hot Swap 9) — without the lab line it masquerades as
+			 * "the best" while a fresh sweep measured a different winner (the
+			 * session-163 report: the panel showed the old Syndata+multidisorder
+			 * pick when the fresh fuzz won Hostfakesplit). */
+			let lab_fuzz = null;
+			const lff = RUN_DIR + '/zapret_fuzz_result.json';
+			if (access(lff)) {
+				try {
+					const fj = json(readfile(lff) || '');
+					if (fj != null && type(fj) === 'object' && int(fj.ts || 0) > 0 &&
+						fj.verdicts != null && type(fj.verdicts) === 'object') {
+						const vd = {};
+						for (let rn in keys(fj.verdicts)) {
+							const v = fj.verdicts[rn];
+							if (type(v) !== 'object')
+								continue;
+							vd[rn] = { verdict: '' + (v.verdict || ''),
+								name: (v.chosen != null && type(v.chosen) === 'object') ? ('' + (v.chosen.name || '')) : '' };
+						}
+						lab_fuzz = { ts: int(fj.ts), age: time() - int(fj.ts), verdicts: vd };
+					}
+				} catch (e) { lab_fuzz = null; }
+			}
 			return {
 				config: hp_autopilot_cfg(),
 				status: status,
 				current_zapret: cur_zapret,
+				lab_fuzz: lab_fuzz,
 				daemon_ok: !!(fresh(status, 600) || (status && fresh({ ts: status.stage_ts }, 900)))
 			};
 		}

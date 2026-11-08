@@ -994,6 +994,13 @@ return view.extend({
 							(w.tls_ms > 0 ? ' · ' + _('~%d ms TLS').format(w.tls_ms) : '') +
 							(w.stream > 0 ? ' · ' + Math.round(w.stream / 1024) + ' KB/s' : '') +
 							(w.start_ms > 0 ? ' · ' + _('start ~%d ms').format(w.start_ms) : '')));
+					/* ч.249 honesty (report а/б): a manual pick adopted via Hot Swap 9
+					 * stays on the resource until the user changes it — the line must
+					 * say so, otherwise the old pick masquerades as the autopilot's
+					 * current best (the user compared it with a fresh fuzz run). */
+					if (w.name && w.manual)
+						line.appendChild(E('span', { 'class': 'wiz-note', style: 'opacity:.75' },
+							[ ' · ' + _('manual pick (Hot Swap)') ]));
 					const p = r.probe || {};
 					if (p && p.ts) {
 						/* ч.127 three-state: green = alive, amber = degraded
@@ -1019,6 +1026,34 @@ return view.extend({
 				}
 				apStatus.appendChild(grid);
 			}
+			/* ч.249 honesty (reports а/б): the freshest LAB measurement + the age
+			 * of the autopilot's own verdict — the panel shows both, so the old
+			 * pick (often a manual one) is never presented as "the best". One
+			 * result place: this line sits under the resource grid, before times. */
+			if (data && data.lab_fuzz && data.lab_fuzz.ts) {
+				const lv = data.lab_fuzz.verdicts || {};
+				const parts = [];
+				for (let rk2 in apRes) {
+					const v2 = lv[rk2];
+					if (v2 == null)
+						continue;
+					const vt = (v2.verdict === 'best_verified') ? _('verified')
+						: (v2.verdict === 'best_available') ? _('available') : v2.verdict;
+					parts.push(apNames[rk2] + ' → ' + (v2.name || '—') + ' (' + vt + ')');
+				}
+				if (parts.length) {
+					const ageTxt = (data.lab_fuzz.age >= 6 * 3600)
+						? ' · ' + _('older than 6 h — the next re-rank takes a fresh one') : '';
+					apStatus.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' }, [
+						_('Lab measurement from %s: %s').format(
+							new Date(data.lab_fuzz.ts * 1000).toLocaleString(),
+							parts.join(' · ')) + ageTxt
+					]));
+				}
+			}
+			if (st && st.last_apply && st.last_apply.ts > 0)
+				apStatus.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.8' },
+					[ _('last auto-apply: %s').format(new Date(st.last_apply.ts * 1000).toLocaleString()) ]));
 			const times = [];
 			if (st && st.next_cycle_ts > 0)
 				times.push(_('next re-rank: %s').format(new Date(st.next_cycle_ts * 1000).toLocaleString()));
