@@ -613,10 +613,10 @@ return view.extend({
 			resTableWrap
 		]);
 
-		poll.add(refreshNodes, hp.pollSec(5));
-		poll.add(refreshConnections, hp.pollSec(5));
-		poll.add(refreshHotswap, hp.pollSec(10));
-		poll.add(refreshResources, hp.pollSec(10));
+		poll.add(hp.vpoll(refreshNodes), hp.pollSec(5));
+		poll.add(hp.vpoll(refreshConnections), hp.pollSec(5));
+		poll.add(hp.vpoll(refreshHotswap), hp.pollSec(10));
+		poll.add(hp.vpoll(refreshResources), hp.pollSec(10));
 		refreshNodes();
 		refreshConnections();
 		refreshHotswap();

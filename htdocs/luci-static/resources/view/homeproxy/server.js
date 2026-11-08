@@ -350,13 +350,13 @@ return view.extend({
 		s = m.section(form.NamedSection, 'server', 'ravnex');
 
 		s.render = function() {
-			poll.add(() => {
+			poll.add(hp.vpoll(() => {
 				return L.resolveDefault(getServiceStatus()).then((res) => {
 					let view = document.getElementById('service_status');
 					if (view)
 						view.replaceChildren(renderStatus(res, features));
 				});
-			}, hp.pollSec(5));
+			}), hp.pollSec(5));
 
 			return form.NamedSection.prototype.render.apply(this, arguments).then((node) =>
 				E('div', { 'class': 'hpui-panel' }, [

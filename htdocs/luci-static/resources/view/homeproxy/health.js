@@ -565,7 +565,7 @@ function buildProviderSection() {
 			renderScan(scan.status, scan.result, (data[1] && data[1].rules) || {});
 		});
 	}
-	poll.add(pollScan, hp.pollSec(4));
+	poll.add(hp.vpoll(pollScan), hp.pollSec(4));
 	pollScan();
 
 	return {
@@ -726,7 +726,7 @@ function buildProfilesSection() {
 			renderProfiles(d.status, d.result);
 		});
 	}
-	poll.add(pollProfiles, hp.pollSec(4));
+	poll.add(hp.vpoll(pollProfiles), hp.pollSec(4));
 	pollProfiles();
 
 	return {
@@ -1040,8 +1040,8 @@ function buildOptimizerSection() {
 		});
 	}
 
-	poll.add(pollPlan, hp.pollSec(8));
-	poll.add(pollPick, hp.pollSec(4));
+	poll.add(hp.vpoll(pollPlan), hp.pollSec(8));
+	poll.add(hp.vpoll(pollPick), hp.pollSec(4));
 	pollPlan();
 	pollPick();
 
@@ -1199,7 +1199,7 @@ function buildConnectivitySection(view, coreType) {
 	   group chain (incl. nested prefer-mode pools); 'main-udp-out' → the dedicated UDP node. */
 	function activeNodeRow(labelText, tag) {
 		const resultEl = E('span', { 'class': 'diag-gray' }, '—');
-		poll.add(L.bind(function() {
+		poll.add(hp.vpoll(L.bind(function() {
 			return L.resolveDefault(callActiveNode(tag || 'main-out'), {}).then(function(ret) {
 				if (ret && !ret.error && ret.node) {
 					const type  = ret.type ? ' (' + ret.type + ')' : '';
@@ -1217,7 +1217,7 @@ function buildConnectivitySection(view, coreType) {
 					dom.content(resultEl, E('span', { 'class': 'diag-gray' }, _('No active node')));
 				}
 			});
-		}, this), hp.pollSec(5));
+		}, this)), hp.pollSec(5));
 		return E('div', { 'class': 'diag-row' }, [ E('span', { 'class': 'diag-label' }, labelText), resultEl ]);
 	}
 
@@ -2378,7 +2378,7 @@ return view.extend({
 			});
 		}
 
-		poll.add(refreshAll, hp.pollSec(10));
+		poll.add(hp.vpoll(refreshAll), hp.pollSec(10));
 		refreshAll();
 
 

@@ -903,6 +903,23 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		return Math.round(sec * this.resProfileFactor());
 	},
 
+	/* T3 visibility gate: LuCI poll.add never looks at document.hidden, so
+	 * a background tab kept firing 7 RPC/4 s (Overview) + shellStatus 10 s
+	 * on every page and burned ~9% of one core inside rpcd 24/7 (plan 23).
+	 * vpoll(fn) wraps a steady-state poll handler: while the tab is hidden
+	 * each tick resolves without touching ubus, and the very next tick
+	 * after the tab becomes visible runs normally — nothing to "restore",
+	 * the check is re-evaluated live on every tick. Op-progress polls
+	 * (bundle/text generation, wizards) are deliberately left ungated:
+	 * they are transient and watching them IS the UX. */
+	vpoll(fn) {
+		return function() {
+			if (document.hidden)
+				return Promise.resolve();
+			return fn.apply(this, arguments);
+		};
+	},
+
 	profilePrefetch() {
 		const callResProfile = rpc.declare({
 			object: 'luci.ravnex',
@@ -933,7 +950,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 			method: 'overview_sys',
 			expect: { '': {} }
 		});
-		poll.add(L.bind(function() {
+		poll.add(this.vpoll(L.bind(function() {
 			return L.resolveDefault(callShellSys(), {}).then((sys) => {
 				const ok = !!(sys && sys.clash_ok);
 				const seen = !!(sys && sys.app_version);
@@ -946,7 +963,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 					: (ok ? _('System is running') : _('Core is not responding'));
 				subEl.textContent = (sys && sys.app_version) ? 'Ravnex v' + sys.app_version : '';
 			});
-		}, this), this.pollSec(10));
+		}, this)), this.pollSec(10));
 	},
 
 	SHELL_CSS: `

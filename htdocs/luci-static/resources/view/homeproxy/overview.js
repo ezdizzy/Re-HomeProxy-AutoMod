@@ -1134,11 +1134,11 @@ return view.extend({
 			});
 		}
 
-		poll.add(refresh, hp.pollSec(4));
+		poll.add(hp.vpoll(refresh), hp.pollSec(4));
 		refresh();
-		poll.add(profileRefresh, hp.pollSec(60));
+		poll.add(hp.vpoll(profileRefresh), hp.pollSec(60));
 		profileRefresh();
-		poll.add(subsRefresh, hp.pollSec(60));
+		poll.add(hp.vpoll(subsRefresh), hp.pollSec(60));
 		subsRefresh();
 
 		/* Р3 v3 hub layout: hero (brand + status) → quick setup (until set

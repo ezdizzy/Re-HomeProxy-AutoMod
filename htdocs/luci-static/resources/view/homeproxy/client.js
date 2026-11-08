@@ -190,13 +190,13 @@ return view.extend({
 
 		s = m.section(form.TypedSection);
 		s.render = function () {
-			poll.add(function () {
+			poll.add(hp.vpoll(function () {
 				return L.resolveDefault(getServiceStatus()).then((res) => {
 					let view = document.getElementById('service_status');
 					view.innerHTML = renderStatus(res, features);
 				});
-			}, hp.pollSec(5));
 
+			}), hp.pollSec(5));
 			return E('div', { class: 'cbi-section', id: 'status_bar' }, [
 					E('p', { id: 'service_status' }, _('Collecting data...'))
 			]);
@@ -283,7 +283,7 @@ return view.extend({
 		o.depends('main_node', 'urltest');
 		o.cfgvalue = function() {
 			const el = E('span', { 'style': 'color:#9a9a9a' }, '—');
-			poll.add(L.bind(function() {
+			poll.add(hp.vpoll(L.bind(function() {
 				/* Hidden (depends) / detached after a re-render: skip the RPC
 				 * instead of polling for a node nobody can see. */
 				if (!el.isConnected)
@@ -312,7 +312,7 @@ return view.extend({
 						el.style.color = 'gray';
 					}
 				});
-			}, this), hp.pollSec(5));
+			}, this)), hp.pollSec(5));
 			return el;
 		};
 
@@ -487,7 +487,7 @@ return view.extend({
 			 * view (order, live pick, core delay) and the daemon's probe
 			 * state. Replaces the ч.59 single status line. */
 			const box = E('div', {}, [ E('span', { 'style': 'color:#9a9a9a' }, '—') ]);
-			poll.add(L.bind(function() {
+			poll.add(hp.vpoll(L.bind(function() {
 				/* Hidden (depends) / detached after a re-render: skip the RPC. */
 				if (!box.isConnected)
 					return;
@@ -585,7 +585,7 @@ return view.extend({
 						box.appendChild(E('div', { 'style': 'color:#d99a1b; margin-top:2px' },
 							[ _('Traffic currently rides the failover pick') ]));
 				});
-			}, this), hp.pollSec(5));
+			}, this)), hp.pollSec(5));
 			return box;
 		};
 
@@ -1092,7 +1092,7 @@ return view.extend({
 			function refreshRuStatus() {
 				return L.resolveDefault(callGeoStatus(), {}).then(renderRuStatus);
 			}
-			poll.add(refreshRuStatus, hp.pollSec(10));
+			poll.add(hp.vpoll(refreshRuStatus), hp.pollSec(10));
 			refreshRuStatus();
 			ruCard = E('div', { 'class': 'hpui-panel', style: 'margin:0 0 14px 0' }, [
 				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('shield'), _('RU-protection') ]),

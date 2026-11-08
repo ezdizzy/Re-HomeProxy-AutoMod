@@ -184,7 +184,7 @@ function buildResProfileCard() {
 	function refresh() {
 		return L.resolveDefault(callResProfile(), {}).then(render);
 	}
-	poll.add(refresh, hp.pollSec(60));
+	poll.add(hp.vpoll(refresh), hp.pollSec(60));
 	refresh();
 
 	const modeRow = E('div', { style: 'margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center' }, []);
@@ -299,7 +299,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 			return new Promise((resolve) => setTimeout(resolve, 1500))
 				.then(() => fs.read_direct(String.format('%s/%s.log', hp_dir, filename), 'text'));
 		});
-	poll.add(L.bind(() => {
+	poll.add(hp.vpoll(L.bind(() => {
 		return read_log()
 		.then((res) => {
 			/* The content node is rebuilt on every poll; keep the reader's
@@ -317,7 +317,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 
 			dom.content(log_textarea, [ log ]);
 		});
-	}));
+	})));
 
 	return E([
 		E('div', {'class': 'cbi-map'}, [
@@ -1850,7 +1850,7 @@ return view.extend({
 		renderCoreState(null);
 		const refreshCoreState = () => getServiceStatus().then(renderCoreState);
 		refreshCoreState();
-		poll.add(refreshCoreState, hp.pollSec(5));
+		poll.add(hp.vpoll(refreshCoreState), hp.pollSec(5));
 
 		if (!features.core_type) {
 			const callDetectCustomCore = rpc.declare({

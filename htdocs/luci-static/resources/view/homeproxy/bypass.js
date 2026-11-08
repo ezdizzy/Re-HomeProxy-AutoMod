@@ -2821,7 +2821,7 @@ return view.extend({
 			});
 		}
 
-		poll.add(refresh, hp.pollSec(4));
+		poll.add(hp.vpoll(refresh), hp.pollSec(4));
 		refresh();
 
 		return bypRoot;

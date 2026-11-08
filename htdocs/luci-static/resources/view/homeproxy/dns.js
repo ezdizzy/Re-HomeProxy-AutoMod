@@ -388,7 +388,7 @@ return view.extend({
 			mdTableEl.appendChild(wrap);
 		}
 
-		poll.add(mdRefresh, hp.pollSec(10));
+		poll.add(hp.vpoll(mdRefresh), hp.pollSec(10));
 		mdRefresh();
 
 		return m.render().then(function(node) {

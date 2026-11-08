@@ -2063,9 +2063,9 @@ return view.extend({
 
 		/* ── Live statuses: one immediate refresh, then every 5 s (same RPC
 		 * as the Monitoring page — one status source for the whole app). ── */
-		poll.add(function() {
+		poll.add(hp.vpoll(function() {
 			return refreshNodeStatuses().then(updateSummary);
-		}, hp.pollSec(5));
+		}), hp.pollSec(5));
 		refreshNodeStatuses().then(updateSummary);
 
 		rebuildSubCards();

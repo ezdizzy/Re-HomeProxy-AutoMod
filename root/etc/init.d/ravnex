@@ -765,11 +765,11 @@ start_service() {
 
 	# F10.2 OOM victim ordering: the core is the biggest RSS and the FIRST
 	# legitimate OOM victim (respawnable, LKG-protected) вЂ” the wrapper also
-	# sets GOMEMLIMIT=64M on lite-class boxes (MemTotal <= 256 MB) so the Go
-	# heap cannot grow into a global OOM on small RAM (lesson 197: the core
-	# was OOM-killed at 727 MB anon). exec keeps the pid вЂ” procd still
+	# sets GOMEMLIMIT (Go soft heap cap, MB; capped at half the physical
+	# RAM) on EVERY box so the heap cannot grow into a global OOM (lesson 197:
+	# the core was OOM-killed at 727 MB anon). exec keeps the pid вЂ” procd still
 	# watches the real binary.
-	procd_set_param command /bin/sh "$HP_DIR/scripts/oom_adj.sh" 300 64
+	procd_set_param command /bin/sh "$HP_DIR/scripts/oom_adj.sh" 300 384
 	procd_append_param command "$PROG" $RUN_CMD --config "$RUN_DIR/hiddify-c.json"
 
 	# QUIC-GO GSO is broken on kernel 6.6 currently

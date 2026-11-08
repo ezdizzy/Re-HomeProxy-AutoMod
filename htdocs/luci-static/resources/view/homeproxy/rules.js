@@ -1701,7 +1701,7 @@ return view.extend({
 			});
 		}
 
-		poll.add(refresh, hp.pollSec(4));
+		poll.add(hp.vpoll(refresh), hp.pollSec(4));
 		refresh();
 
 		/* ── Мой списки (Ф4.2): the former two static textareas are now the
