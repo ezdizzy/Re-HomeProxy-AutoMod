@@ -360,6 +360,7 @@ validate_proxy() {
 }
 
 apply_and_check() {
+	kill_legacy_services
 	info "  применяю настройки (перезапуск службы)..."
 	/etc/init.d/ravnex enable >/dev/null 2>&1
 	/etc/init.d/ravnex restart >/dev/null 2>&1
@@ -590,6 +591,23 @@ ensure_key() {
 # снимаются, вместо них пишутся простые записи новых имён (новая установка
 # сама перепишет пин на свежий хеш). Захардкожено на 24.10 это не тянет — opkg
 # world-пинов не пишет вовсе.
+# ch258 (полевой фикс с боксов 3.0.4 -> 3.1.0): purge старого пакета удаляет
+# его init.d-файл, поэтому procd-сервис СТАРОГО имени ("homeproxy") переживает
+# обновление без хозяина — два стека дерутся за порты, наши инстансы уходят в
+# crash-loop, а ядро остаётся работать по старым путям без GOMEMLIMIT. Снимаем
+# осиротевшие регистрации старых сервисов ПЕРЕД нашим (пере)запуском; no-op,
+# когда их нет.
+kill_legacy_services() {
+	local SVC
+	for SVC in homeproxy homeproxy-hiddify; do
+		if ubus call service list 2>/dev/null | grep -q "\"$SVC\""; then
+			info "  убираю осиротевший сервис '$SVC' (старое имя пакета)..."
+			ubus call service delete "{\"name\":\"$SVC\"}" >/dev/null 2>&1
+			sleep 2
+		fi
+	done
+}
+
 fix_world_pins() {
 	[ "$PM" = apk ] || return 0
 	[ -f /etc/apk/world ] || return 0
@@ -1547,6 +1565,7 @@ ask_telegram_control
 ensure_baseline
 
 echo; ok "[финал] Применяю настройки"
+kill_legacy_services
 /etc/init.d/ravnex enable >/dev/null 2>&1
 /etc/init.d/ravnex restart >/dev/null 2>&1
 wait_core
