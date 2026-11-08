@@ -2880,10 +2880,21 @@ function feed_install_pkg(pkg) {
 	const sib = FEED_SIBLING[pkg];
 	if (sib)
 		system(`${(pm === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib)} >/dev/null 2>&1; true`);
+	/* 🔴 ч.248: honest version gates. (1) The feed must never silently DOWNGRADE
+	 * an installed package (a repair/reinstall of the same version stays allowed).
+	 * (2) `apk upgrade ./file` is NOT a file-target form on apk 3.x — the path is
+	 * parsed as a world constraint and the whole call fails with
+	 * «ERROR: Package './x.apk' not found», while the rc was deliberately ignored
+	 * (apk rc unreliability) and the post-check only proved the OLD binary was
+	 * still there → fake «успешно установлено» + old version in the UI (client
+	 * report 2026-11-08: «обновляешь — а версия старая»). `apk add ./file`
+	 * installs AND upgrades from a file — proven live 1.0.5.2 → 1.0.7. */
+	const prev_ver = feed_installed_version(pkg);
+	if (prev_ver != null && feed_vercmp_base(feed_strip_rev('' + entry.version), feed_strip_rev('' + prev_ver)) < 0)
+		return { result: false, error: `в фиде ${pkg} ${entry.version} не новее установленного ${prev_ver} — установка отменена` };
 	let rc;
 	if (pm === 'apk') {
-		const registered = (system(`apk info -e ${shellquote(pkg)} >/dev/null 2>&1`) === 0);
-		rc = system(`apk ${registered ? 'upgrade' : 'add'} ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
+		rc = system(`apk add ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
 	} else {
 		rc = system(`opkg install --force-reinstall ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
 	}
@@ -2896,6 +2907,19 @@ function feed_install_pkg(pkg) {
 	 * rc is reported honestly only when the post-check fails. */
 	if (!(bin && access(bin)))
 		return { result: false, error: `установка ${pkg} из фида не удалась (${pm} rc=${rc}, пост-чек не прошёл)` };
+	/* (3) Version honesty: a silent no-op must not pass as an upgrade — the
+	 * installed version has to match the manifest entry. */
+	const got_ver = feed_installed_version(pkg);
+	if (got_ver != null && feed_vercmp_base(feed_strip_rev('' + got_ver), feed_strip_rev('' + entry.version)) !== 0)
+		return { result: false, error: `${pkg}: после установки версия ${got_ver} не совпала с фидом ${entry.version} — установка не прижилась` };
+	/* (4) The engine keeps running the OLD binary until its wrapper respawns —
+	 * bounce the DPI engines so the new file actually serves traffic (core and
+	 * mosdns have their own restart flows; procd respawn picks the new file). */
+	const RESPAWN_EXE = { zapret2: 'nfqws2', byedpi: 'ciadpi' };
+	const respawn_exe = RESPAWN_EXE[pkg];
+	if (respawn_exe && (prev_ver == null || got_ver == null ||
+	    feed_vercmp_base(feed_strip_rev('' + got_ver), feed_strip_rev('' + prev_ver)) !== 0))
+		pm_kill_matched({ exe: respawn_exe }, 3000);
 	try { hc_add_event('update', 'feed', `${pkg} ${entry.version} установлен из источника обновлений`); } catch (e) { /* best-effort */ }
 	return { result: true, version: '' + entry.version, pkg_manager: pm,
 		note: `installed from the update source: ${pkg} ${entry.version}` };
@@ -4482,10 +4506,14 @@ const methods = {
 			 * (foreign name/version verbatim). A manifest candidate short-
 			 * circuits the GitHub API + asset download entirely; anything
 			 * missing falls through to the original asset path below — the
-			 * fallback IS the old code. */
+			 * fallback IS the old code. 🔴 ч.248: strictly-newer gate, same
+			 * as zapret_prepare_install — ties/lagging feed go to the asset
+			 * path, never a no-op reinstall. */
 			if (feed_configured()) {
 				const fcand = feed_candidate('byedpi');
-				if (fcand)
+				const curv = feed_installed_version('byedpi');
+				if (fcand && (curv == null ||
+				    feed_vercmp_base(feed_strip_rev(fcand.version), feed_strip_rev(curv)) > 0))
 					return { source: 'feed', feed_pkg: 'byedpi', pkg_manager,
 						version: fcand.version,
 						note: `источник обновлений: byedpi ${fcand.version}` };
@@ -4658,10 +4686,17 @@ const methods = {
 				return { error: 'No supported package manager (apk/opkg)' };
 
 			/* V2 feed-first (mirror under our signature, verbatim name/version)
-			 * — the asset path below stays as the honest fallback. */
+			 * — the asset path below stays as the honest fallback.
+			 * 🔴 ч.248: the feed hit only when the feed is STRICTLY newer than
+			 * the installed package (mosdns gate tightened): a tie or a lagging
+			 * feed falls through to the upstream asset path, so «Обновить»
+			 * delivers what «Проверить обновление» promised instead of a
+			 * no-op reinstall with the old version left on screen. */
 			if (feed_configured()) {
 				const fcand = feed_candidate('zapret2');
-				if (fcand)
+				const curv = feed_installed_version('zapret2');
+				if (fcand && (curv == null ||
+				    feed_vercmp_base(feed_strip_rev(fcand.version), feed_strip_rev(curv)) > 0))
 					return { source: 'feed', feed_pkg: 'zapret2', pkg_manager,
 						version: fcand.version,
 						note: `источник обновлений: zapret2 ${fcand.version}` };

@@ -663,6 +663,32 @@ export function reg_hb(name) {
 	return res2;
 };
 
+/* Heartbeat touch for FOREIGN entries (owner-spawned binaries: mosdns,
+ * probe_pool, sni_sniffer): bump ONLY e.hb while the identity still matches
+ * the (pid, start) the owner registered — never re-point the entry (the
+ * reg_hb reclaim contract is for OWN entries and would forge a live
+ * identity here). 🔴 ч.248: these entries used to carry a spawn-frozen hb,
+ * so Sentinel's hung-daemon scan read every healthy Go daemon as a wedged
+ * loop ~15 min after each spawn (client + own reports 2026-11-08: heartbeat
+ * spam) — the owners now ping them from their own 5 s ticks via
+ * reg_alive + reg_get + reg_hb_pid. */
+export function reg_hb_pid(name, pid, start) {
+	name = '' + name;
+	pid = int(pid);
+	start = int(start);
+	if (!length(name) || !(pid > 1) || !(start > 0))
+		return false;
+	return reg_mutate(function(doc) {
+		const e = doc.daemons[name];
+		if (e == null)
+			return false;
+		if (int(e.pid) !== pid || int(e.start) !== start)
+			return false;   /* identity changed — the owner re-registers */
+		e.hb = time();
+		return true;
+	});
+};
+
 /* Drop entries whose identity is dead (dead pid, reused pid, stale boot). */
 export function reg_gc() {
 	let dropped = 0;
@@ -955,7 +981,22 @@ export function selftest() {
 	const back = reg_get(rname);
 	check('reg_get_roundtrip', back != null && int(back.pid) === 39999 && int(back.start) === 1, null);
 	check('reg_alive_dead', reg_alive(rname) === false, null);
+	/* ч.248: reg_hb_pid — foreign-entry hb touch (identity-gated, no re-point). */
+	const fake2 = { pid: 39998, start: 2, kind: 'test', exe: '/nonexistent', hb: time() - 9999 };
+	const rname2 = rname + 'b';
+	check('reg_hbpid_set', reg_set(rname2, fake2) === true, null);
+	const stale_ts = int(reg_get(rname2).hb);
+	check('reg_hbpid_wrong_pid', reg_hb_pid(rname2, 39997, 2) === false &&
+		int(reg_get(rname2).hb) === stale_ts, null);
+	check('reg_hbpid_wrong_start', reg_hb_pid(rname2, 39998, 3) === false &&
+		int(reg_get(rname2).hb) === stale_ts, null);
+	check('reg_hbpid_bad_args', reg_hb_pid(rname2, 0, 2) === false &&
+		reg_hb_pid('', 39998, 2) === false, null);
+	check('reg_hbpid_match', reg_hb_pid(rname2, 39998, 2) === true &&
+		int(reg_get(rname2).hb) >= stale_ts, null);
+	check('reg_hbpid_missing', reg_hb_pid(rname2 + 'x', 39998, 2) === false, null);
 	check('reg_del', reg_del(rname) === true && reg_get(rname) == null, null);
+	check('reg_del2', reg_del(rname2) === true && reg_get(rname2) == null, null);
 	/* identity kill of a spawned child */
 	system('sleep 8 & echo $! > /tmp/pmgr_st_child.pid');
 	const cpid = int(trim(readfile('/tmp/pmgr_st_child.pid')) || 0);

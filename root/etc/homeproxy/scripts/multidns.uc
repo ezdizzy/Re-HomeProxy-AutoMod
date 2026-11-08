@@ -47,6 +47,7 @@ import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
 	reg_set as pm_reg_set, reg_del as pm_reg_del, reg_get as pm_reg_get,
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
+	reg_alive as pm_reg_alive, reg_hb_pid as pm_reg_hb_pid,
 	proc_info as pm_proc_info,
 	MEM_GATE_KB as PM_MEM_GATE_KB, mem_avail_kb as pm_mem_avail_kb
 } from '/etc/homeproxy/scripts/pmgr.uc';
@@ -2046,6 +2047,14 @@ function main() {
 			 * 2-core MT7981B — issue #8, root cause). */
 			sleep(5000);
 			pm_reg_hb('multidns');
+			/* ч.248: mosdns is a FOREIGN entry (Go binary, registered by us at
+			 * spawn) — its registry hb used to freeze at spawn time and Sentinel
+			 * read the healthy daemon as a wedged loop. Ping it with our own
+			 * tick while the registered identity is alive. */
+			if (pm_reg_alive('mosdns')) {
+				const md = pm_reg_get('mosdns');
+				pm_reg_hb_pid('mosdns', md.pid, md.start);
+			}
 			let now = time();
 			uci.load('homeproxy');
 			let en2 = uci.get('homeproxy', 'multidns', 'enabled') || '0';

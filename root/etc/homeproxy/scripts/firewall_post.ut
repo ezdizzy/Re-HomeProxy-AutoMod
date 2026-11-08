@@ -373,8 +373,12 @@ chain homeproxy_redirect_lanac {
 	{% if (control_info.listen_interfaces): %}
 	meta iifname != {{ array_to_nftarr(control_info.listen_interfaces) }} counter return
 	{% elif (length(wan_devices)): %}
-	{# empty list = everywhere EXCEPT the WAN zone (lesson 188) #}
-	meta iifname != {{ array_to_nftarr(wan_devices) }} counter return
+	{# empty list = everywhere EXCEPT the WAN zone (lesson 188). 🔴 ч.248: the guard
+	   must be a SET-MEMBERSHIP return (in-set → skip WAN ingress); the former
+	   `iifname != wan return` inverted the whole chain — only WAN ingress was
+	   intercepted, LAN traffic fell through un-intercepted (client report
+	   2026-11-08: interception dead after update; live nft dump counters). #}
+	meta iifname {{ array_to_nftarr(wan_devices) }} counter return
 	{% endif /* listen_interfaces */ %}
 	meta mark {{ self_mark }} counter return
 
@@ -517,8 +521,12 @@ chain homeproxy_mangle_lanac {
 	{% if (control_info.listen_interfaces): %}
 	meta iifname != {{ array_to_nftarr(uniq([...control_info.listen_interfaces, ...['lo']])) }} counter return
 	{% elif (length(wan_devices)): %}
-	{# empty list = everywhere EXCEPT the WAN zone (lesson 188) #}
-	meta iifname != {{ array_to_nftarr(wan_devices) }} counter return
+	{# empty list = everywhere EXCEPT the WAN zone (lesson 188). 🔴 ч.248: the guard
+	   must be a SET-MEMBERSHIP return (in-set → skip WAN ingress); the former
+	   `iifname != wan return` inverted the whole chain — only WAN ingress was
+	   intercepted, LAN traffic fell through un-intercepted (client report
+	   2026-11-08: interception dead after update; live nft dump counters). #}
+	meta iifname {{ array_to_nftarr(wan_devices) }} counter return
 	{% endif /* listen_interfaces */ %}
 	meta iifname != lo udp dport 53 counter return
 	meta mark {{ self_mark }} counter return
@@ -647,8 +655,12 @@ chain homeproxy_mangle_lanac {
 	{% if (control_info.listen_interfaces): %}
 	meta iifname != {{ array_to_nftarr(control_info.listen_interfaces) }} counter return
 	{% elif (length(wan_devices)): %}
-	{# empty list = everywhere EXCEPT the WAN zone (lesson 188) #}
-	meta iifname != {{ array_to_nftarr(wan_devices) }} counter return
+	{# empty list = everywhere EXCEPT the WAN zone (lesson 188). 🔴 ч.248: the guard
+	   must be a SET-MEMBERSHIP return (in-set → skip WAN ingress); the former
+	   `iifname != wan return` inverted the whole chain — only WAN ingress was
+	   intercepted, LAN traffic fell through un-intercepted (client report
+	   2026-11-08: interception dead after update; live nft dump counters). #}
+	meta iifname {{ array_to_nftarr(wan_devices) }} counter return
 	{% endif /* listen_interfaces */ %}
 
 	{% if (control_info.lan_proxy_mode === 'listed_only'): %}

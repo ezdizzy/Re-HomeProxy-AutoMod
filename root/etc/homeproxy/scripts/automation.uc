@@ -50,7 +50,7 @@ import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty, classify_entry 
 import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
 	reg_set as pm_reg_set, reg_get as pm_reg_get, reg_del as pm_reg_del, reg_alive as pm_reg_alive,
-	reg_self as pm_reg_self, reg_hb as pm_reg_hb,
+	reg_self as pm_reg_self, reg_hb as pm_reg_hb, reg_hb_pid as pm_reg_hb_pid,
 	proc_info as pm_proc_info,
 	res_profile as pm_res_profile, MEM_GATE_KB as PM_MEM_GATE_KB,
 	mem_avail_kb as pm_mem_avail_kb
@@ -4436,6 +4436,18 @@ echo done > "$PRE.done"
 	let last_geo_check = 0;
 	while (true) {
 		pm_reg_hb('automation');
+		/* ч.248: probe_pool / sni_sniffer are FOREIGN entries (Go binaries we
+		 * spawn and register) — their registry hb used to freeze at spawn time
+		 * and Sentinel read the healthy daemons as wedged loops. Ping both
+		 * with our own tick while the registered identity is alive. */
+		if (pm_reg_alive('probe_pool')) {
+			const ppe = pm_reg_get('probe_pool');
+			pm_reg_hb_pid('probe_pool', ppe.pid, ppe.start);
+		}
+		if (pm_reg_alive('sni_sniffer')) {
+			const sse = pm_reg_get('sni_sniffer');
+			pm_reg_hb_pid('sni_sniffer', sse.pid, sse.start);
+		}
 		enabled = uci.get('homeproxy', 'automation', 'enabled');
 		if (enabled !== '1') {
 			log('automation disabled, exiting.');
