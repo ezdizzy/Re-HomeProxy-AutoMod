@@ -213,26 +213,43 @@ versions_add() { # <pkg> <ver> <arch>
 }
 
 # repack a foreign ipk into OUR apk+ipk (name/version/depends preserved)
+san_ver() { # <ver> <pkgname> -> apk-valid version (apk-tools grammar: digit{.digit}...{letter}{_suf#}...{~hex}{-r#})
+	local v=$1 pkg=$2
+	if printf '%s' "$v" | grep -qE '^[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|cvs|svn|git|hg|p)[0-9]*)*(~[0-9a-fA-F]+)?(-r[0-9]+)?$'; then
+		printf '%s' "$v"; return
+	fi
+	local core tail digits
+	core=$(printf '%s' "$v" | grep -oE '^[0-9]+(\.[0-9]+)*' | head -1)
+	tail=${v#"$core"}
+	digits=$(printf '%s' "$tail" | tr -dc '0-9')
+	[ -n "$digits" ] || digits=1
+	echo "NOTE $pkg $v: version is not valid for the apk v3 grammar (mkpkg rejects it) - mapped to ${core}-r${digits}, the upstream verbatim goes to the description" >&2
+	printf '%s' "${core}-r${digits}"
+}
+
 repack_ipk() { # <src.ipk> <arch> <descr>
 	local src=$1 arch=$2 descr=$3
 	local c="$WORK/rc" d="$WORK/rd"
 	unpack_ipk "$src" "$c" "$d" || { echo "SKIP repack $(basename "$src") $arch (not an ipk?)"; return 1; }
 	[ -s "$c/control" ] || { echo "SKIP repack $(basename "$src") $arch (no control)"; return 1; }
-	local name ver
+	local name ver orig
 	name=$(sed -n 's/^Package:[[:space:]]*//p' "$c/control" | head -1 | tr -d ' \r')
-	ver=$(sed -n 's/^Version:[[:space:]]*//p'  "$c/control" | head -1 | tr -d ' \r')
-	[ -n "$name" ] && [ -n "$ver" ] || { echo "SKIP repack $(basename "$src") $arch (no Package/Version)"; return 1; }
+	orig=$(sed -n 's/^Version:[[:space:]]*//p'  "$c/control" | head -1 | tr -d ' \r')
+	[ -n "$name" ] && [ -n "$orig" ] || { echo "SKIP repack $(basename "$src") $arch (no Package/Version)"; return 1; }
+	ver=$(san_ver "$orig" "$name")
+	sed -i "s/^Version:.*/Version: $ver/" "$c/control"
+	[ "$ver" = "$orig" ] || descr="$descr (upstream version $orig)"
 	local scripts=""
 	grep -qE '^(pre|post)inst' <(find "$c" -maxdepth 1 -type f -printf '%f\n') && \
 		scripts=" (foreign maintainer scripts NOT carried — review: $(find "$c" -maxdepth 1 -type f -not -name control -printf '%f ' ))"
-	[ -n "$scripts" ] && echo "NOTE $name $ver: foreign control scripts present:$scripts"
+	[ -n "$scripts" ] && echo "NOTE $name $orig: foreign control scripts present:$scripts"
 	local D="$OUT/releases/$SERIES/$arch"; mkdir -p "$D"
-	pkg  "$d" "$name" "$ver" "$arch" "$descr" "$D/$name-$ver.apk"
-	ipk_build "$c/control" "$d" "$D/$name-$ver.ipk"
+	pkg  "$d" "$name" "$ver" "$arch" "$descr" "$D/$name-$ver.apk" || { echo "SKIP repack $name $arch (mkpkg failed)"; return 1; }
+	ipk_build "$c/control" "$d" "$D/$name-$ver.ipk" || { echo "SKIP repack $name $arch (ipk_build failed)"; return 1; }
 	local sha_a sha_i
 	sha_a=$(sha256sum "$D/$name-$ver.apk" | cut -d' ' -f1)
 	sha_i=$(sha256sum "$D/$name-$ver.ipk" | cut -d' ' -f1)
-	manifest_add "$arch" "{\"$name\":{\"version\":\"$ver\",\"apk\":\"$name-$ver.apk\",\"apk_sha256\":\"$sha_a\",\"ipk\":\"$name-$ver.ipk\",\"ipk_sha256\":\"$sha_i\"}}"
+	manifest_add "$arch" "{\"$name\":{\"version\":\"$ver\",\"upstream\":\"$orig\",\"apk\":\"$name-$ver.apk\",\"apk_sha256\":\"$sha_a\",\"ipk\":\"$name-$ver.ipk\",\"ipk_sha256\":\"$sha_i\"}}"
 	versions_add "$name" "$ver" "$arch"
 	echo "REPACKED $name $ver ($arch) ← $(basename "$src")"
 }
@@ -240,8 +257,9 @@ repack_ipk() { # <src.ipk> <arch> <descr>
 # package OUR OWN binary payload into apk+ipk (+manifest)
 own_pkg() { # <stageroot> <name> <ver> <arch> <descr>
 	local root=$1 name=$2 ver=$3 arch=$4 descr=$5
+	ver=$(san_ver "$ver" "$name")
 	local D="$OUT/releases/$SERIES/$arch"; mkdir -p "$D"
-	pkg "$root" "$name" "$ver" "$arch" "$descr" "$D/$name-$ver.apk"
+	pkg "$root" "$name" "$ver" "$arch" "$descr" "$D/$name-$ver.apk" || { echo "SKIP $name $arch (mkpkg failed)"; return 1; }
 	local M="$WORK/ownctl"; rm -rf "$M"; mkdir -p "$M"
 	printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: Ravnex feed <https://github.com/ezdizzy/re-homeproxy>\nDepends: libc\nDescription: %s\n' "$name" "$ver" "$arch" "$descr" > "$M/control"
 	ipk_build "$M/control" "$root" "$D/$name-$ver.ipk"
@@ -323,7 +341,7 @@ for A in "${ARCH_LIST[@]}"; do
 			BIN=$(find "$WORK/x" -maxdepth 2 -type f -name 'sing-box' | head -1)
 			if [ -n "${BIN:-}" ]; then
 				cp "$BIN" "$WORK/root/usr/bin/sing-box"; chmod 755 "$WORK/root/usr/bin/sing-box"
-				own_pkg "$WORK/root" sing-box-extended-lite "$LITE_VER" "$A" "sing-box-extended-lite (mirror of MANCrimSon normal build, Ravnex-signed)"
+				own_pkg "$WORK/root" sing-box-extended-lite "$LITE_VER" "$A" "sing-box-extended-lite (mirror of MANCrimSon normal build $LITE_VER, Ravnex-signed)"
 			else
 				echo "SKIP sing-box-extended-lite $A (no sing-box binary in tarball)"
 			fi
