@@ -127,8 +127,36 @@ upx_ok() { case "$1" in mips*|riscv64*) return 1;; *) return 0;; esac; }
 
 IFS=',' read -r -a ARCH_LIST <<< "$ARCHS"
 
-fetch() { curl -fsSL --retry 3 -o "$2" "$1"; }
-tag_of() { curl -fsSL --retry 3 "$GHAPI/repos/$1/releases/latest" | jq -r '.tag_name'; }
+# Session 161: upstream edge flakes (503/504 Unicorn) killed whole runs with
+# exit 9 (unzip "cannot find") after one asset exhausted curl's built-in
+# --retry (4 quick attempts, ch.244). Shell-level retry ladder with a real
+# backoff on top of curl's own retries.
+fetch() {
+	local url=$1 out=$2 attempt
+	for attempt in 1 2 3; do
+		if curl -fsSL --retry 3 --retry-delay 3 -o "$out" "$url"; then
+			return 0
+		fi
+		echo "fetch: attempt $attempt/3 failed for $url" >&2
+		sleep $((attempt * 8))
+	done
+	return 1
+}
+
+tag_of() {
+	local repo=$1 body tag attempt
+	for attempt in 1 2 3; do
+		# capture first: a piped `curl | jq` hides curl's exit status and an
+		# empty body would silently yield an empty tag -> broken pkg versions
+		if body=$(curl -fsSL --retry 3 --retry-delay 3 "$GHAPI/repos/$repo/releases/latest" 2>/dev/null); then
+			tag=$(printf '%s' "$body" | jq -r '.tag_name')
+			[ -n "$tag" ] && [ "$tag" != "null" ] && { printf '%s' "$tag"; return 0; }
+		fi
+		echo "tag_of: attempt $attempt/3 failed for $repo" >&2
+		sleep $((attempt * 8))
+	done
+	return 1
+}
 
 echo "── versions ──────────────────────────────────────────────"
 HID_TAG=$(tag_of hiddify/hiddify-core);                 HID_VER=${HID_TAG#v}
@@ -140,6 +168,10 @@ BYD_TAG=$(tag_of 1andrevich/ByeDPI-OpenWrt);            BYD_VER=${BYD_TAG#v}
 Z2_TAG=$(tag_of 1andrevich/zapret2-openwrt);            Z2_VER=${Z2_TAG#v}
 echo "hiddify-core=$HID_VER mosdns=$MOS_VER helpers=$HELP_VER rev=$REV series=$SERIES"
 echo "sing-box-extended=$SBX_VER lite=$LITE_VER byedpi=$BYD_VER zapret2=$Z2_VER"
+# Session 161: an exhausted ladder must abort, not package empty versions.
+for v in "$HID_VER" "$MOS_VER" "$HELP_VER" "$SBX_VER" "$LITE_VER" "$BYD_VER" "$Z2_VER"; do
+	[ -n "$v" ] || { echo "ERROR: an upstream tag resolve failed (see above) - aborting"; exit 1; }
+done
 
 # ── download unique source payloads once (cache per asset) ───────────────────
 mkdir -p "$WORK/src"

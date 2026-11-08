@@ -286,8 +286,21 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 		[ _('Collecting data...') ]);
 
 	let log;
+	/* Session 161: one-shot retry on a transient 403 "Download permission
+	 * denied": a busy rpcd (e.g. a sync GitHub probe) delays the cgi-io
+	 * session probe -> cgi-download 403 on the first tick, the next tick
+	 * succeeds (session 159 quirk). Retry inside the same tick instead of
+	 * flashing a false error in both log cards. */
+	const read_log = () => fs.read_direct(String.format('%s/%s.log', hp_dir, filename), 'text')
+		.catch((err) => {
+			const s = String(err);
+			if (s.indexOf('permission') === -1 && s.indexOf('403') === -1)
+				throw err;
+			return new Promise((resolve) => setTimeout(resolve, 1500))
+				.then(() => fs.read_direct(String.format('%s/%s.log', hp_dir, filename), 'text'));
+		});
 	poll.add(L.bind(() => {
-		return fs.read_direct(String.format('%s/%s.log', hp_dir, filename), 'text')
+		return read_log()
 		.then((res) => {
 			/* The content node is rebuilt on every poll; keep the reader's
 			 * scroll position so the box does not jump back to the top. */
@@ -1724,10 +1737,11 @@ function buildFeedCard(feed) {
 			...compCell('byedpi', pk.byedpi),
 			...compCell('zapret2', pk.zapret2)
 		]);
-		setupBtn.disabled = false;
+		/* Session 161: «Set up» is only actionable when the source is NOT
+		 * configured yet (apk systems only) — before this, both buttons were
+		 * always enabled at once (user report, ch.244). */
+		setupBtn.disabled = (!isApk || configured);
 		removeBtn.disabled = !(configured && isApk);
-		if (!isApk)
-			setupBtn.disabled = true;
 	}
 
 	const setupBtn = mkBtn(_('Set up the update source'), 'primary', {

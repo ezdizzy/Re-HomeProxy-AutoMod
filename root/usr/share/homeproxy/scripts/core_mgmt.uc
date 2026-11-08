@@ -30,14 +30,36 @@ function gh_mirror_of(url, base) {
 	return m ? `${base}${m[1]}` : null;
 }
 
-/* GitHub-first, mirror-FALLBACK download. Returns wget exit code (0 = success). */
+/* Session 161: curl first when present — its TLS ClientHello passes the
+ * TSPU selective hole that kills wget's fingerprint (session 159/161: wget
+ * to api.github.com times out while curl succeeds from the same box).
+ * wget stays as the fallback (stock boxes may lack curl), then the mirror.
+ * 2-arg system() is fine here (lesson 167 refuted for this context, ch.246:
+ * the B6 rc=1 roots were the dead /etc path and the rcfile-vs-exit bug). */
+function gh_has_curl() {
+	return access('/usr/bin/curl') || access('/bin/curl');
+}
+
+function curl_fetch(curl, dest, url, timeout_ms) {
+	return system(`${curl} -fsL --retry 2 --retry-delay 2 -o ${shellquote(dest)} --connect-timeout 10 ${shellquote(url)} 2>/dev/null`, timeout_ms);
+}
+
+/* GitHub-first, mirror-FALLBACK download. Returns exit code (0 = success). */
 function gh_fetch(url, dest, timeout_ms) {
-	let rc = system(`wget -qO ${shellquote(dest)} --timeout=15 ${shellquote(url)} 2>/dev/null`, timeout_ms);
+	const curl = gh_has_curl();
+	let rc = curl ? curl_fetch(curl, dest, url, timeout_ms)
+		: system(`wget -qO ${shellquote(dest)} --timeout=15 ${shellquote(url)} 2>/dev/null`, timeout_ms);
+	if (rc !== 0)
+		rc = system(`wget -qO ${shellquote(dest)} --timeout=15 ${shellquote(url)} 2>/dev/null`, timeout_ms);
 	if (rc !== 0) {
 		const base = gh_mirror_base();
 		const mu = base ? gh_mirror_of(url, base) : null;
-		if (mu)
-			rc = system(`wget -qO ${shellquote(dest)} --timeout=15 ${shellquote(mu)} 2>/dev/null`, timeout_ms);
+		if (mu) {
+			if (curl)
+				rc = curl_fetch(curl, dest, mu, timeout_ms);
+			if (rc !== 0)
+				rc = system(`wget -qO ${shellquote(dest)} --timeout=15 ${shellquote(mu)} 2>/dev/null`, timeout_ms);
+		}
 	}
 	return rc;
 }

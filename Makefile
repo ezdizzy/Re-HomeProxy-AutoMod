@@ -57,6 +57,17 @@ define Package/luci-app-re-homeproxy/postinst
 # teardown AND rpcd's own stop. Fall back to the plain form only where setsid is
 # absent (rare; util-linux setsid ships on stock OpenWrt).
 [ -n "$$IPKG_INSTROOT" ] && exit 0
+# Session 161 heal: release 3.0.1 shipped scripts/*.sh with git file modes
+# (oom_adj.sh = 100644) while multidns.uc/automation.uc call it via DIRECT
+# exec -> "setsid: can't execute ... Permission denied" -> crash-guard stops
+# the auto-spawn and writes mosdns.broken. Content-identical files get the
+# (now-fixed 100755) package mode back on clean replacement, but files kept
+# as .apk-new (content differs) keep the OLD mode (apk lesson 389) - the
+# blanket chmod heals every already-broken 3.0.1 box on upgrade to 3.0.2.
+# Removing the crash-guard flag lets multidns respawn mosdns within its
+# next tick (~60 s) without any manual SSH step.
+chmod 755 /etc/homeproxy/scripts/*.sh 2>/dev/null
+rm -f /var/run/homeproxy/multidns/mosdns.broken 2>/dev/null
 if command -v setsid >/dev/null 2>&1; then
 	setsid sh -c 'sleep 3; /etc/init.d/rpcd restart' >/dev/null 2>&1 &
 else

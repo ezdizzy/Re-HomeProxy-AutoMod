@@ -118,6 +118,10 @@ export const HISTORY_MAX = 20;
 export const ACT_SVC_START = 'svc_start';
 export const ACT_OP_FINISH = 'op_finish';
 export const ACT_HUNG_KILL = 'hung_kill';
+/* Б5 (сеанс 161): RSS-crit ядра — рестарт по identity ДО OOM-грани
+ * (кейс WR3000H: ядро убивалось при ~727 МБ, dmesg-факты 2×OOM на этом
+ * классе боксов; коллатеральные жертвы oom-killer — hostapd и др.). */
+export const ACT_CORE_RESTART = 'core_restart';
 
 /* Health-записи, маппящиеся на procd-инстанс (лечение svc_start / hung_kill —
  * respawn гарантирован procd'ом). Остальные имена — proposal-классы или
@@ -190,6 +194,14 @@ export function classify_key(key) {
 		return (killable)
 			? { action: ACT_HUNG_KILL, target: nm, class: 'hung' }
 			: { action: null, target: nm, class: 'hung_other' };
+	}
+	/* Б5: только res:core (RSS-крит ядра) — авто-рестарт; прочие res:* —
+	 * proposal-класс (бюджеты не лечатся рестартом их процессов). */
+	if (index(k, 'res:') === 0) {
+		const nm = substr(k, index(k, ':') + 1);
+		return (nm === 'core')
+			? { action: ACT_CORE_RESTART, target: 'core', class: 'res' }
+			: { action: null, target: nm, class: 'res_other' };
 	}
 	if (k === 'health_monitor')
 		return { action: null, target: k, class: 'monitor' };
@@ -497,6 +509,22 @@ function do_hung_kill(name) {
 		int(e.pid) + ') — procd вернёт его автоматически' };
 };
 
+/* Б5 (сеанс 161): плановый рестарт ядра при RSS-крите — та же механика
+ * identity-kill, но семантика «сброс утечки ДО OOM»: процесс ядра жив,
+ * завершается по identity, procd respawn поднимает с чистой памятью.
+ * Короткая пауза трафика дешевле oom-kill'а с коллатеральными жертвами. */
+function do_core_restart(name) {
+	const e = pm_reg_get('' + name);
+	if (e == null || type(e) !== 'object' || pm_entry_alive(e) !== true)
+		return { ok: true, stale: true, detail: 'ядро уже не работает (identity мертва) — рестарт не нужен, за живость отвечает svc-контур' };
+	const k1 = pm_kill_entry(e, 5000, false);
+	if (!k1)
+		return { ok: false, detail: 'не удалось завершить ядро по identity (pid ' +
+			int(e.pid) + ') — попытка останется в кампании' };
+	return { ok: true, detail: 'ядро перезапущено по identity (pid ' + int(e.pid) +
+		') — RSS-крит сброшен, procd вернёт процесс с чистой памятью' };
+};
+
 export function execute_action(action, target, op_id) {
 	if (action === ACT_SVC_START)
 		return run_svc_start(op_id);
@@ -504,6 +532,8 @@ export function execute_action(action, target, op_id) {
 		return do_op_finish(target);
 	if (action === ACT_HUNG_KILL)
 		return do_hung_kill(target);
+	if (action === ACT_CORE_RESTART)
+		return do_core_restart(target);
 	return { ok: false, detail: 'неизвестное действие «' + action + '»' };
 };
 
@@ -865,6 +895,14 @@ export function selftest() {
 		classify_key('hung:automation').target === 'automation', null);
 	check('cls_hung_lazy', classify_key('hung:probe_pool') != null &&
 		classify_key('hung:probe_pool').action == null, 'lazy prober is not killable');
+	/* Б5 (сеанс 161): res:core → core_restart, прочие res:* → proposal. */
+	check('cls_res_core', classify_key('res:core') != null &&
+		classify_key('res:core').action === ACT_CORE_RESTART &&
+		classify_key('res:core').target === 'core' &&
+		classify_key('res:core').class === 'res', null);
+	check('cls_res_other', classify_key('res:mosdns') != null &&
+		classify_key('res:mosdns').action == null &&
+		classify_key('res:mosdns').class === 'res_other', null);
 	check('cls_monitor', classify_key('health_monitor').action == null &&
 		classify_key('health_monitor').class === 'monitor', null);
 	check('cls_config', classify_key('config:core_cfg').action == null &&

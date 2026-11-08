@@ -27,8 +27,9 @@
 //   fork-free снапшот ресурсов (VmRSS + счёт fd), вердикты — против щедрых
 //   бюджетов; перерасход = находка res:<имя> (всегда degraded — «процесс
 //   мёртв» резервируется down) + снапшот-документ resources.json для RPC/UI.
-//   РЕСУРСНАЯ находка БЕЗ авто-ремонта: рестарт ядра по высокому RSS
-//   недопустим, OOM-убийство = само-лечение утечки (решение ч.218).
+//   ИСКЛЮЧЕНИЕ Б5 (сеанс 161): res:core RSS-крит → core_restart по identity
+//   (procd respawn ДО OOM-грани; коллатеральные жертвы oom-killer, hostapd
+//   и др., недопустимы) — прочие res:* по-прежнему без авто-ремонта.
 //
 // Политика алармов (без дублирования шума): когда health-документ СВЕЖИЙ,
 // Sentinel молчит о классах svc:*/op:* — Health Monitor сам поднимет тревогу
@@ -73,7 +74,8 @@ import {
 	read_revision as ss_read_revision
 } from '/etc/homeproxy/scripts/statestore.uc';
 import {
-	REG_PATH as PM_REG_PATH, entry_alive as pm_entry_alive
+	REG_PATH as PM_REG_PATH, entry_alive as pm_entry_alive,
+	kill_entry as pm_kill_entry
 } from '/etc/homeproxy/scripts/pmgr.uc';
 import {
 	list_ops as op_list, begin as op_begin, heartbeat as op_heartbeat,
@@ -623,6 +625,23 @@ function do_op_finish(stuck_op_id) {
 	return { ok: true, detail: 'операция «' + (op.action || stuck_op_id) + '» честно закрыта (лок освобождён)' };
 };
 
+/* Б5 (сеанс 161): рестарт ядра по identity при RSS-крите — FALLBACK-путь,
+ * живёт ТОЛЬКО когда Recovery-координатор мёртв (живой координатор исполняет
+ * core_restart сам — classify_key res:core; Sentinel остаётся детектором).
+ * Семантика «сброс утечки ДО OOM-грани»: завершение по identity, procd
+ * respawn вернёт процесс с чистой памятью. */
+function do_core_restart() {
+	const e = registry_map()['core'];
+	if (e == null || type(e) !== 'object' || pm_entry_alive(e) !== true)
+		return { ok: false, detail: 'ядро не работает — за живость отвечает svc_start (следующий проход)' };
+	const pid = int(e.pid);
+	const k1 = pm_kill_entry(e, 5000, false);
+	return (k1)
+		? { ok: true, detail: 'ядро перезапущено по identity (pid ' + pid +
+			') — RSS-крит сброшен, procd вернёт процесс с чистой памятью' }
+		: { ok: false, detail: 'не удалось завершить ядро по identity (pid ' + pid + ')' };
+};
+
 /* ── Ф10.3: ресурсы демонов (снапшот + бюджеты) ──────────────────────────── */
 
 /* Вердикт одного демона против бюджета (чистая функция — selftest).
@@ -703,6 +722,24 @@ function res_finding(r, level, what) {
 		status: 'degraded', label: res_label(r.name), reason: reason,
 		confidence: 'certain', what: what
 	};
+};
+
+/* Б5 (сеанс 161): рестарт ядра по RSS-криту wanted? Чистая функция.
+ * ТОЛЬКО core + rss-крит: fd-крит ядра лечится падением соединений сам,
+ * прочие демоны в своих бюджетах. До сеанса 161 действовало решение ч.218
+ * «OOM = само-лечение»: dmesg этого класса боксов показал цену — жертвой
+ * oom-killer становится не только ядро (hostapd-коллатерали), а restart по
+ * identity (procd respawn) сбрасывает утечку ДО OOM-грани. */
+export function res_core_restart_wanted(snap) {
+	if (snap == null || type(snap) !== 'array')
+		return null;
+	for (let r in snap) {
+		if (r == null || type(r) !== 'object')
+			continue;
+		if (('' + r.name) === 'core' && r.level === 'crit' && r.what === 'rss')
+			return r;
+	}
+	return null;
 };
 
 /* Находки перерасхода из снапшота. status ВСЕГДА 'degraded': перерасход не
@@ -875,7 +912,10 @@ export function compute_and_store(opts) {
 	 * спокойный фон — раз в ~5 мин). Fork-free (readfile + lsdir) — light
 	 * остаётся без fork'ов. Снапшот-документ — отдельный файл (statestore,
 	 * атомарно); его читает RPC resource_status / карточка «Ресурсы демонов».
-	 * Находка res:* НЕ порождает ремонтов (OOM = само-лечение, ч.218). */
+	 * Находки res:* ремонтов НЕ порождают, КРОМЕ Б5 (сеанс 161): RSS-крит
+	 * ядра → core_restart по identity (procd respawn) — рестарт ДО OOM-грани
+	 * дешевле oom-kill'а с коллатеральными жертвами (решение пользователя
+	 * поверх ч.218; гварды: full-проход, нет живого apply, loop-guard). */
 	const prev_res_active = (function() {
 		for (let k in prev_f)
 			if (index('' + k, 'res:') === 0)
@@ -885,6 +925,19 @@ export function compute_and_store(opts) {
 	if (full || prev_res_active) {
 		const snap = res_snapshot(registry_map());
 		const rf = res_findings(snap, prev_f);
+		/* Б5: RSS-крит ядра → действие core_restart (ключ res:core —
+		 * loop-guard и координатор работают по нему как по обычному поводу). */
+		if (full && !apply_running) {
+			const rcr = res_core_restart_wanted(snap);
+			if (rcr != null)
+				push(actions, {
+					key: 'res:core', action: 'core_restart',
+					who: res_label('core'),
+					detail: 'авто-рестарт ядра по identity (RSS ' + sprintf('%.1f', int(rcr.rss_kb) / 1024) +
+						' МБ ≥ крит-бюджета ' + sprintf('%.0f', int(rcr.rss_crit_kb) / 1024) +
+						' МБ) — procd вернёт процесс с чистой памятью, OOM-килл не случится'
+				});
+		}
 		const memraw = readfile('/proc/meminfo') || '';
 		const mtot = match(memraw, /MemTotal:\s+([0-9]+)/);
 		const mem_total_kb = (mtot != null) ? int(mtot[1]) : -1;
@@ -1026,6 +1079,8 @@ export function compute_and_store(opts) {
 			res = do_op_finish(a.op_id);
 		else if (a.action === 'rpcd_heal')
 			res = run_rpcd_heal(op.op_id);
+		else if (a.action === 'core_restart')
+			res = do_core_restart();
 		/* 🔴 verified=false ВСЕГДА: ремонт не есть применение конфигурации —
 		 * verified=true бампнул бы config_revision (опман) и подавил бы
 		 * следующий drift-детект (поймано приёмкой ч.165). Честность
@@ -1280,6 +1335,25 @@ export function selftest() {
 
 	check('res_snapshot_dead_pid', length(res_snapshot({ core: { pid: 999999, start: 1 } })) === 0, null);
 	check('res_snapshot_empty', length(res_snapshot(null)) === 0, null);
+
+	/* Б5 (сеанс 161): рестарт ядра wanted ТОЛЬКО при core/rss-крите. */
+	check('rcr_crit', res_core_restart_wanted([
+		{ name: 'core', label: 'x', pid: 1, rss_kb: 530000, fds: 10,
+			level: 'crit', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 }
+	]) != null, null);
+	check('rcr_warn_no', res_core_restart_wanted([
+		{ name: 'core', label: 'x', pid: 1, rss_kb: 400000, fds: 10,
+			level: 'warn', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 }
+	]) == null, null);
+	check('rcr_fd_no', res_core_restart_wanted([
+		{ name: 'core', label: 'x', pid: 1, rss_kb: 100, fds: 4096,
+			level: 'crit', what: 'fd', rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 }
+	]) == null, null);
+	check('rcr_other_no', res_core_restart_wanted([
+		{ name: 'automation', label: 'x', pid: 1, rss_kb: 170000, fds: 10,
+			level: 'crit', what: 'rss', rss_warn_kb: 98304, rss_crit_kb: 163840, fd_warn: 512, fd_crit: 1024 }
+	]) == null, null);
+	check('rcr_empty', res_core_restart_wanted(null) == null, null);
 
 	/* label. */
 	check('label_known', inst_label('hiddify-c') === 'Ядро', null);
