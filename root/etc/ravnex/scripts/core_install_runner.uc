@@ -371,23 +371,51 @@ function main() {
 	const kmods = run_action('install_kmods', [prep.pkg_manager], null, op_id);
 	/* kmod failure is not fatal: usually already present from a previous core */
 
+	/* ч.260 symmetry (FIX D, session 173): the feed branch ends with a
+	 * postcheck_restart probe; the fork-apk / upstream-tarball / asset
+	 * branches used to end here with the FILE replaced and the OLD core
+	 * still serving — the UI showed «успешно» plus the new on-disk version
+	 * (the same honesty class as the feed bug ch.260 fixed). Same tail
+	 * here: probe the new binary, restart, wait for identity liveness.
+	 * The lite installer manages its own restart/rollback — skipped. */
+	let pc = null;
+	if (core !== 'singbox-lite') {
+		wstatus({ running: true, core: core, variant: variant, stage: 'postcheck', started: started, ts: time(), op_id: op_id });
+		if (op_id) {
+			try { op_stage(op_id, 'postcheck'); } catch (e) { /* journal hiccup */ }
+		}
+		/* empty expect: the tarball/asset/fork version is not reliably known
+		 * up front — the probe itself is the honest check. */
+		pc = run_action('postcheck_restart', [core, ''], null, op_id);
+	}
+	const ok_install = (core === 'singbox-lite') ? true : (pc && pc.result === true && pc.alive === true);
+
 	const detail = join('; ', filter([inst.note || null, inst.warning || null], (x) => (x != null)));
 	wstatus({
 		running: false,
-		ok: true,
+		ok: ok_install,
 		core: core,
 		stage: 'done',
 		started: started,
 		finished: time(),
-		note: inst.note || null,
+		note: ok_install ? join('; ', filter([detail || null, (pc && pc.version) ? `ядро перезапущено (${pc.version})` : null], (x) => (x != null))) : null,
+		error: ok_install ? null : ((pc && pc.error) || 'postcheck failed — старое ядро продолжает работать'),
 		warning: inst.warning || null,
 		kmods_ok: (kmods && kmods.result === true) ? true : false,
 		op_id: op_id
 	});
-	uev(true, core, variant, (length(detail) ? detail : 'установлено') +
-		((kmods && kmods.result === true) ? '' : '; kmod-установка не удалась (не фатально)'));
+	uev(ok_install, core, variant, ok_install
+		? ((length(detail) ? detail : 'установлено') +
+			((kmods && kmods.result === true) ? '' : '; kmod-установка не удалась (не фатально)'))
+		: ((pc && pc.error) || 'postcheck failed'));
 	if (op_id) {
-		try { op_finish(op_id, true, false, detail); } catch (e) { /* journal hiccup */ }
+		try {
+			op_finish(op_id, ok_install,
+				/* lite: historical contract (true, false) — the external
+				 * installer owns its restart/verification. */
+				(core === 'singbox-lite') ? false : ok_install,
+				ok_install ? detail : ((pc && pc.error) || 'postcheck failed'));
+		} catch (e) { /* journal hiccup */ }
 	}
 	try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 	rmdir(LOCK_DIR);

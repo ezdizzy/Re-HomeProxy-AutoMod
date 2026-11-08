@@ -992,6 +992,13 @@ let result;
 		 * mv на /usr/bin/hiddify-core, уборка staging+тарбола. mv внутри одного
 		 * оверлея = rename(2) без копирования. */
 		const stage = '/usr/libexec/.hiddify-up';
+		/* Sibling hygiene (session 173 — mirror of the feed path): the tarball
+		 * swap replaces the shared /usr/bin/hiddify-core slot; a compact
+		 * sibling record would keep describing the SAME binary we just
+		 * replaced (zoo class). Best-effort, matching FEED_SIBLING. */
+		const sib_up = FEED_SIBLING['hiddify-core'];
+		if (sib_up)
+			system(`${(pkg_manager === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib_up)} >/dev/null 2>&1; true`);
 		const cmd =
 			`{ rm -rf ${shellquote(stage)}; mkdir -p ${shellquote(stage)}; }` +
 			` && tar -xzf ${shellquote(tmp_path)} -C ${shellquote(stage)}` +
@@ -1005,6 +1012,16 @@ let result;
 			? { result: true, note: 'upstream tar.gz build installed' }
 			: { result: false, error: 'upstream tarball extraction/validation failed' };
 	} else {
+		/* Sibling hygiene (session 173 — mirror of the feed path): the fork
+		 * apk / GitHub asset occupies the same binary slot as its sibling;
+		 * installing it must not leave the sibling record behind (the next
+		 * feed update would silently flip the family back). Best-effort;
+		 * the lite core is owned by the external installer — skipped above. */
+		const sib_fam = (core === 'hiddify')
+			? FEED_SIBLING['hiddify-core']
+			: FEED_SIBLING['sing-box-extended'];
+		if (sib_fam)
+			system(`${(pkg_manager === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib_fam)} >/dev/null 2>&1; true`);
 		let exit_code;
 		if (core === 'hiddify' && pkg_manager === 'apk') {
 			/* Signing key: skip the fetch if already present (a provisioning tool may pre-place
