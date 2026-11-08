@@ -124,6 +124,26 @@ ucode /etc/ravnex/scripts/update_subscriptions.uc
 
 ---
 
+## The «Update app» button reports a package conflict (3.0.x → 3.1.0+)
+
+**Symptom:** On a 3.0.x box the update check sees the new release, but clicking «Update» ends
+with an honest error about a package conflict / broken world dependency.
+
+**Cause:** Release 3.1.0 renamed the package (`luci-app-re-homeproxy` → `luci-app-ravnex`),
+and apk keeps a pin for the **old** name in `/etc/apk/world` — the rename cannot be solved at
+the solver level, so the transaction is rejected as a whole (the router is not harmed).
+
+**Fix:** Update with the installer — it clears the old pins and migrates the app to the new
+name with all of its configuration:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/install.sh | sh
+```
+
+Details: [Resources & performance → Updating from 3.0.x](Performance-and-Resources-en).
+
+---
+
 ## What else to look at
 
 - The **[Health center](Monitoring-and-Connections-en#health-center)** — live verdicts for every

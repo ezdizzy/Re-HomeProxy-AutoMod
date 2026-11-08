@@ -26,6 +26,7 @@
 | [Routing & Access Control](Routing-and-Access-Control-en) | Routing modes, the exit engine (URLTest / Hot Swap), UDP exit, OAuth resilience |
 | [Hot Swap & Reliability](Hot-Swap-and-Reliability-en) | Hot standby, anti-flap, the RU-internet invariant, last-known-good, watchdogs |
 | [Monitoring & Connections](Monitoring-and-Connections-en) | The node dashboard, live connections, daemon resources and the Health center |
+| [Resources & Performance](Performance-and-Resources-en) | Resource profiles, OOM victim hierarchy, memory budgets, GOMEMLIMIT, the sleeping tab |
 | [Access Control](Access-Control-en) | Per-device proxy modes, site rules, schedules, Wi-Fi — and the same from Telegram |
 | [Phone Control (Telegram)](Telegram-en) | The bot: commands, subscriptions, arbitrary commands, push notifications |
 | [Auto-bypass](Automation-Status-en) | The self-learning engine: sources, block-type verdicts, RU protection; the DPI autopilot |
@@ -54,6 +55,7 @@
 | [Маршрутизация и контроль доступа](Routing-and-Access-Control-ru) | Режимы маршрутизации, выход-движок (URLTest / Hot Swap), UDP-выход, OAuth-устойчивость |
 | [Hot Swap и надёжность](Hot-Swap-and-Reliability-ru) | Горячий резерв, анти-флап, инвариант RU-интернета, last-known-good, сторожа |
 | [Мониторинг и соединения](Monitoring-and-Connections-ru) | Дашборд узлов, живые соединения, ресурсы демонов и Центр здоровья |
+| [Ресурсы и производительность](Performance-and-Resources-ru) | Профили ресурсов, иерархия жертв OOM, бюджеты памяти, GOMEMLIMIT, спящая вкладка |
 | [Контроль доступа](Access-Control-ru) | Режимы прокси на карточке устройства, правила сайтов, расписания, Wi-Fi — и то же из Telegram |
 | [Управление с телефона](Telegram-ru) | Бот: команды, подписки, произвольные команды, пуш-уведомления |
 | [Автообход блокировок](Automation-Status-ru) | Движок самообучения: источники, вердикты типов блокировки, RU-защита; автопилот DPI |

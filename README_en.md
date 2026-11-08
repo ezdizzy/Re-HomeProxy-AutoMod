@@ -87,6 +87,29 @@ transit through user space:
   the upstreams' official releases, signed with our key; feed files are verified against the
   sha256 in the manifest before installation.
 
+## Resources & performance
+
+The app is built for modest hardware and needs no manual tuning; below is what it does to stay
+within a router's budget:
+
+- **Resource profiles** — Auto / Eco / Balanced / Performance («Maintenance»): they change poll
+  rates, history depths and probe sample sizes; «Eco» additionally narrows the self-learning
+  engine's state cap (about 10–15 MB of RAM saved).
+- **OOM victim hierarchy** — the proxy core, DPI engines and resident helpers are marked with
+  `oom_score_adj`: under peak memory pressure the kernel recycles respawnable processes, not the
+  Wi-Fi/DNS/UI plane (dnsmasq, hostapd, uhttpd and rpcd stay at adj 0).
+- **Budgets and the Sentinel** — every daemon has its own RSS/fd norms; on a critical overrun the
+  proxy core is restarted automatically before the OOM-killer fires (a couple of minutes of
+  reconnects instead of losing the whole system).
+- **Soft Go heap limit on any RAM size** — GOMEMLIMIT is applied on every box: the core's heap is
+  capped (384 MB by default, and never more than half of the physical memory), so a run-away
+  peak «up to OOM» is impossible by design.
+- **A sleeping tab does not warm the router** — a background/minimized web-UI tab stops polling
+  entirely and resumes the moment you switch back to it.
+- **zram/swap — deliberately not used.** There is little to gain on flash-constrained boxes, and
+  boxes with 1 GB of RAM or more do not need it: the peak scenarios are covered by GOMEMLIMIT +
+  the victim hierarchy.
+
 ## Features
 
 ### Routing & reliability
@@ -197,6 +220,11 @@ the latest GitHub release; the update applies in place and rpcd restarts automat
 from previous versions (Re:HomeProxy AutoMod 2.x) need no manual steps — the app is called Ravnex
 once the new version is installed.
 
+⚠️ **Updating from 3.0.x to 3.1.0 and newer — use [install.sh](#quick-install-one-command), not
+the button.** Release 3.1.0 renames the package (`luci-app-ravnex`): the «Update» button on a
+3.0.x box will honestly report the pinned old-package-name conflict in the apk world (the router
+is not harmed), while the installer migrates the app to the new name properly.
+
 ## Documentation
 
 Full guides live in the **[wiki](../../wiki/Home)**:
@@ -211,6 +239,7 @@ Full guides live in the **[wiki](../../wiki/Home)**:
 - [Routing & access control](../../wiki/Routing-and-Access-Control-en) — modes, the exit engine
 - [Hot Swap & reliability](../../wiki/Hot-Swap-and-Reliability-en) — node standby, the RU-internet invariant
 - [Monitoring & connections](../../wiki/Monitoring-and-Connections-en) — dashboard, Health center
+- [Resources & performance](../../wiki/Performance-and-Resources-en) — profiles, memory budgets, GOMEMLIMIT
 - [Access control](../../wiki/Access-Control-en) · [Phone control](../../wiki/Telegram-en)
 - [Auto-bypass](../../wiki/Automation-Status-en) — the self-learning engine and the autopilot
 - [DNS settings](../../wiki/DNS-Settings-en) — pools, reserve DNS and MultiDNS
