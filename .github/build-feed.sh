@@ -47,6 +47,7 @@
 set -euo pipefail
 
 OUT=${1:?usage: build-feed.sh <out-dir>}
+mkdir -p "$OUT"
 SERIES=${FEED_SERIES:-25.12}
 REV=${FEED_REV:-r1}
 ARCHS=${FEED_ARCHS:-aarch64_generic,aarch64_cortex-a53,aarch64_cortex-a72,aarch64_cortex-a76,x86_64,arm_cortex-a7_neon-vfpv4,arm_cortex-a9_neon,mipsel_24kc,mips_24kc}
