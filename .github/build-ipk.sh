@@ -91,6 +91,11 @@ fi
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
+	# Menu hardening (ch.252): the ucode menu tree lives inside the uhttpd
+	# process and never un-bakes a poisoned satisfied=false (menu dies for
+	# all sessions, incl. fresh logins, until uhttpd restarts). Restart it
+	# so every installer/updater ends with a clean tree.
+	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	exit 0
 }' > "$TEMP_DIR/post-install"
 
@@ -113,6 +118,7 @@ fi
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
+	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	exit 0
 }' > "$TEMP_DIR/post-upgrade"
 
@@ -125,6 +131,7 @@ add_group_and_user
 [ -n "${IPKG_INSTROOT}" ] || { rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
+	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	exit 0
 }' > "$TEMP_DIR/pre-deinstall"
 
@@ -201,14 +208,16 @@ fi
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
+	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	exit 0
 }' > "$TEMP_PKG_DIR/CONTROL/postinst"
 	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst"
 
 	echo -e "[ -n \"\${IPKG_INSTROOT}\" ] || {
 	(. /etc/uci-defaults/$PKG_NAME) && rm -f /etc/uci-defaults/$PKG_NAME
-	rm -f /tmp/luci-indexcache
+	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
+	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	exit 0
 }" > "$TEMP_PKG_DIR/CONTROL/postinst-pkg"
 	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst-pkg"

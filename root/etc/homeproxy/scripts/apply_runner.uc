@@ -268,6 +268,25 @@ function run_app_update(op_id, spec) {
 		return false;
 	}
 	push(parts, 'rpcd restarted and serving');
+
+	/* Menu hardening (ch.252): the ucode dispatcher caches the menu tree
+	 * inside the uhttpd process and a poisoned satisfied=false never
+	 * un-bakes (the section vanishes for every session, even fresh logins,
+	 * until uhttpd restarts). Restart uhttpd at the very end of the update
+	 * so the box ends with a clean menu built from the flushed index cache. */
+	stage(op_id, 'uhttpd');
+	heartbeat(op_id);
+	capture('/etc/init.d/uhttpd restart >/dev/null 2>&1');
+	let uhttpd_ok = false;
+	const udeadline = time() + 20;
+	while (time() < udeadline) {
+		if (length(trim(capture('pidof uhttpd 2>/dev/null') || ''))) { uhttpd_ok = true; break; }
+		heartbeat(op_id);
+		sleep(1000);
+	}
+	push(parts, uhttpd_ok ? 'uhttpd restarted and serving'
+	                      : 'uhttpd restart inconclusive (check web UI reachability)');
+
 	finish(op_id, true, true, join('; ', parts));
 	return true;
 }

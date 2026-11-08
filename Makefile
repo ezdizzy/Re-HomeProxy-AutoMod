@@ -70,8 +70,10 @@ chmod 755 /etc/homeproxy/scripts/*.sh 2>/dev/null
 rm -f /var/run/homeproxy/multidns/mosdns.broken 2>/dev/null
 if command -v setsid >/dev/null 2>&1; then
 	setsid sh -c 'sleep 3; /etc/init.d/rpcd restart' >/dev/null 2>&1 &
+	setsid sh -c 'sleep 4; /etc/init.d/uhttpd restart' >/dev/null 2>&1 &
 else
 	( sleep 3; /etc/init.d/rpcd restart ) >/dev/null 2>&1 &
+	( sleep 4; /etc/init.d/uhttpd restart ) >/dev/null 2>&1 &
 fi
 exit 0
 endef

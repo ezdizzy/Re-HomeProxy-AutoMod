@@ -623,6 +623,7 @@ app_reinstall() {
 	if app_install_pkgs; then
 		ok "  приложение переустановлено."
 		/etc/init.d/rpcd restart >/dev/null 2>&1; sleep 2
+		/etc/init.d/uhttpd restart >/dev/null 2>&1
 		# Помощники НЕ входят в пакет (он arch-independent) — после переустановки
 		# гарантируем их наличие (ставятся только отсутствующие).
 		install_native_helpers
@@ -674,6 +675,7 @@ install_app() {
 
 	# rpcd нужно перезапустить, чтобы появились ubus-методы приложения
 	/etc/init.d/rpcd restart >/dev/null 2>&1; sleep 2
+	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	[ -f "$CM" ] || die "core_mgmt.uc не найден после установки — прерываю."
 }
 
@@ -1457,6 +1459,7 @@ if [ "$APP_INSTALLED" = 1 ]; then
 	# пакет заново поверх (файлы могли остаться записанными от чужого пакета).
 	[ "$FOREIGN_REMOVED" = 1 ] && app_reinstall
 	/etc/init.d/rpcd restart >/dev/null 2>&1; sleep 1
+	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	feed_init || true   # источник обновлений: ключ + манифест (best-effort, фолбэк — обычные пути)
 	ensure_baseline
 	apply_and_check
