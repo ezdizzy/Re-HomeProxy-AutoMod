@@ -2,7 +2,7 @@
 
 **Own the Route.**
 
-Многоядерная прокси-платформа для OpenWrt: VPN-подписки, обход DPI без VPN, автоматизация,
+Платформа управления трафиком для OpenWrt: VPN-подписки, транспортный слой без VPN, автоматизация,
 мониторинг и диагностика — всё из веб-интерфейса LuCI, всё локально на роутере.
 
 | | |
@@ -32,8 +32,8 @@
 | [Auto-bypass](Automation-Status-en) | The self-learning engine: sources, block-type verdicts, RU protection; the DPI autopilot |
 | [DNS Settings](DNS-Settings-en) | Server pools, reserve DNS and MultiDNS with a live quality monitor |
 | [DNS & Diagnostics](DNS-and-Diagnostics-en) | Clean vs secure DNS, IPv6 leaks, the live checks and the support report |
-| [ByeDPI](ByeDPI-en) | SOCKS-level DPI-bypass — un-throttle sites without a VPN, 47 presets and the tester |
-| [Zapret](Zapret-en) | Packet-level (nfqws2) DPI-bypass — strategies, the Lab, multi-strategies, TSPU |
+| [ByeDPI](ByeDPI-en) | SOCKS-level desync — un-throttles slowed sites without a VPN, 47 presets and the tester |
+| [Zapret](Zapret-en) | Packet-level (nfqws2) desync — strategies, the Lab, multi-strategies, TSPU |
 | [Advanced Rules (Expert)](Custom-Routing-en) | Routing nodes and raw sing-box rules with the highest priority |
 | [Custom JSON Config](Custom-JSON-Config-en) | Removed in v3 — what to use instead |
 | [Server Mode](Server-Settings-en) | Run the router as a proxy server — inbounds, types, TLS/ACME |
@@ -61,8 +61,8 @@
 | [Автообход блокировок](Automation-Status-ru) | Движок самообучения: источники, вердикты типов блокировки, RU-защита; автопилот DPI |
 | [Настройки DNS](DNS-Settings-ru) | Пулы серверов, резервный DNS и MultiDNS с живым монитором качества |
 | [DNS и диагностика](DNS-and-Diagnostics-ru) | Чистый и защищённый DNS, утечки IPv6, живые проверки и отчёт для поддержки |
-| [ByeDPI](ByeDPI-ru) | Обход DPI на уровне SOCKS — разблокировка без VPN, 47 пресетов и тестер |
-| [Zapret](Zapret-ru) | Обход DPI на уровне пакетов (nfqws2) — стратегии, Лаборатория, мультистратегии, ТСПУ |
+| [ByeDPI](ByeDPI-ru) | Рассинхронизация на уровне SOCKS — снимает троттлинг без VPN, 47 пресетов и тестер |
+| [Zapret](Zapret-ru) | Рассинхронизация на уровне пакетов (nfqws2) — стратегии, Лаборатория, мультистратегии, ТСПУ |
 | [Расширенные правила (эксперт)](Custom-Routing-ru) | Узлы маршрутизации и сырые sing-box-правила с наивысшим приоритетом |
 | [Пользовательский JSON конфиг](Custom-JSON-Config-ru) | Удалён в v3 — что использовать вместо него |
 | [Режим сервера](Server-Settings-ru) | Роутер как прокси-сервер — inbound-ы, типы, TLS/ACME |

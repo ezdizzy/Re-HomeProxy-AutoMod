@@ -55,4 +55,4 @@ hardware (on weaker routers «Lite» cuts polling ×3). Details: **Maintenance �
 
 - [Hot Swap and reliability](Hot-Swap-and-Reliability-en) — what keeps the link alive
 - [Monitoring and connections](Monitoring-and-Connections-en) — node dashboard and live connections
-- [Routing Master](Routing-Master-en) — DPI bypass and rules
+- [Routing Master](Routing-Master-en) — the transport layer (DPI) and rules

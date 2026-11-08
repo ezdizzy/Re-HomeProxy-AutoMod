@@ -21,10 +21,10 @@ should:
 | Field | Purpose | Default |
 |---|---|---|
 | **Russia DNS server 🔓** | Resolves **Russian** domains **directly**, without the proxy. Plain UDP DNS. | Yandex `77.88.8.8` (also SkyDNS, Comss.one, Cloudflare, Google) |
-| **Secure DNS server 🔒** | Resolves **blocked** domains **through the proxy** over encrypted DNS (DoH/DoT), so the provider cannot see which blocked sites you look up. | Cloudflare DoH (also Quad9, AdGuard, Google; DoT variants) |
+| **Secure DNS server 🔒** | Resolves **restricted** domains **through the proxy** over encrypted DNS (DoH/DoT), so these queries stay invisible to the provider. | Cloudflare DoH (also Quad9, AdGuard, Google; DoT variants) |
 
-This split matters: resolving a blocked domain over the provider's plain DNS either fails or
-leaks the query, so blocked domains ride encrypted DNS through the proxy while plain Russian
+This split matters: resolving a direct-unreachable domain over the provider's plain DNS either fails or
+leaks the query, so such domains ride encrypted DNS through the proxy while plain Russian
 domains resolve fast and direct.
 
 > **About ByeDPI:** when the node is ByeDPI, the secure DNS is automatically detoured **direct**

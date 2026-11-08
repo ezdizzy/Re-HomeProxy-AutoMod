@@ -56,4 +56,4 @@
 
 - [Hot Swap и надёжность](Hot-Swap-and-Reliability-ru) — что держит связь при сбоях
 - [Мониторинг и соединения](Monitoring-and-Connections-ru) — дашборд узлов и живые соединения
-- [Мастер маршрутизации](Routing-Master-ru) — обход DPI и правила
+- [Мастер маршрутизации](Routing-Master-ru) — транспортный слой (DPI) и правила

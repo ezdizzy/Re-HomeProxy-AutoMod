@@ -2,8 +2,8 @@
 
 # Routing Master
 
-The center of blocking bypass: two pages that together decide «how traffic gets past blocks» —
-**Blocking bypass** (DPI engines and strategies) and **Service rules** (which service rides
+The routing control center: two pages that together decide «which resource rides which exit» —
+**Blocking bypass** (transport-layer engines and strategies) and **Service rules** (which service rides
 which exit).
 
 > Both work in the **«Blocking bypass»** mode. In «Everything via node» all traffic is tunneled
@@ -12,12 +12,12 @@ which exit).
 
 ---
 
-## DPI bypass engines
+## Transport-layer engines (DPI)
 
 Ravnex ships two VPN-free engines — use one or both:
 
-- **Zapret 2 (`nfqws2`)** — packet-level bypass via NFQUEUE: YouTube, Discord and other resources
-  open with no VPN and no subscription, fast, with the Russian region preserved.
+- **Zapret 2 (`nfqws2`)** — packet-level connection processing via NFQUEUE: YouTube, Discord and other resources
+  ride ordinary traffic with no VPN and no subscription, fast, with the Russian region preserved.
 - **ByeDPI (`ciadpi`)** — SOCKS level: 47 ready presets and a strategy tester.
 
 Engines are enabled on the **Connection** page (the package installs automatically on first
@@ -30,8 +30,8 @@ or ByeDPI instead of the proxy — that saves subscription traffic.
 
 ### Provider diagnostics
 
-Shows what is blocked and how: directly or through your rules. The starting point before
-picking strategies.
+Shows which resources are unreachable and how: directly or through your rules. The starting point
+before picking strategies.
 
 ### Strategies and catalog
 
@@ -85,10 +85,10 @@ the verdict is `refused`/`unknown` where appropriate, and nodes additionally get
 
 | Option | Behavior |
 |---|---|
-| **Same as main node** | Your main proxy (in the «Direct» mode such rules are honestly disabled — blocked sites must not fall back to direct) |
+| **Same as main node** | Your main proxy (in the «Direct» mode such rules are honestly disabled — resources assigned to the node must not fall back to direct) |
 | **URLTest pool** | Auto-pick among a chosen node set, with its own test interval and tolerance |
 | **A specific node** | The named server |
-| **ByeDPI / Zapret** | Hand the list to a DPI bypass engine instead of the VPN — saves subscription traffic |
+| **ByeDPI / Zapret** | Hand the list to a transport-layer engine instead of the VPN — saves subscription traffic |
 | **No rule** | The domain is NOT added to the proxy lists and follows the general rules — this is **not** «straight into the Russian internet» |
 
 ### Preset lists

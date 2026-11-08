@@ -29,7 +29,7 @@ UCI/shell edits).
 | `/switch N` | Switch the exit **without a core restart** |
 | `/service` | Service control |
 | `/snapshot` | Config snapshot |
-| `/status_engine` | Bypass engine state |
+| `/status_engine` | Transport-layer engine state |
 | `/connections` | Live connections |
 | `/close` | Close connections |
 
@@ -59,7 +59,7 @@ timeout and hang-protection, and a full audit trail in the journal.
 
 - node switches (Hot Swap) — with a **human-readable node name**;
 - service failures and recoveries;
-- self-learning engine events (a new blocked site learned, etc.).
+- self-learning engine events (a new direct-unreachable site learned, etc.).
 
 Pushes are **deduplicated**: a repeated alarm from one subsystem does not spam (cooldown), and
 «recovered» arrives only in response to an actually delivered alarm; critical notifications are

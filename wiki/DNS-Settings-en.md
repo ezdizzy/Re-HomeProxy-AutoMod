@@ -11,7 +11,7 @@ The two pools behind the working-mode split routing:
 | List | Purpose |
 |---|---|
 | **Russia DNS server 🔓** | Resolves **Russian/plain** domains **directly**, without the proxy |
-| **Secure DNS server 🔒** | Resolves **blocked** domains **through the proxy** over an encrypted channel (DoH/DoT) |
+| **Secure DNS server 🔒** | Resolves **restricted** domains **through the proxy** over an encrypted channel (DoH/DoT) |
 
 Each list accepts multiple entries. Without MultiDNS the first entry is used; with MultiDNS all entries are raced.
 

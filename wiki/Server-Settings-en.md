@@ -45,7 +45,7 @@ TLS-capable inbounds expose the usual controls (min/max version, cipher suites) 
 ## Tips
 
 - Quickest personal endpoint: **Mixed** + a strong password — point a client's SOCKS/HTTP proxy at the router's IP and port.
-- Public, blocking-resistant endpoint: a TLS type (VLESS / Trojan / Hysteria2) with ACME **DNS-01**, so you don't have to expose port 80.
+- Public endpoint without extra exposure: a TLS type (VLESS / Trojan / Hysteria2) with ACME **DNS-01**, so you don't have to expose port 80.
 - Leave **Firewall** off for an inbound you only use from inside the LAN.
 
 See also: [Supported Protocols](Supported-Protocols-en) · [Core Management](Core-Management-en) · [Getting Started](Getting-Started-en) · [Troubleshooting](Troubleshooting-en)

@@ -2,7 +2,7 @@
 
 # Zapret
 
-**Zapret 2** is a second, packet-level DPI-bypass built into Ravnex. It un-throttles and unblocks sites **without any VPN subscription** by desyncing the handshake of selected flows directly on the wire. Ravnex bundles the [bol-van/zapret2](https://github.com/bol-van/zapret2) engine (`nfqws2`) and manages it for you.
+**Zapret 2** is a second, packet-level transport engine built into Ravnex. It un-throttles and restores access to slowed-down sites **without any VPN subscription** by desyncing the handshake of selected flows directly on the wire. Ravnex bundles the [bol-van/zapret2](https://github.com/bol-van/zapret2) engine (`nfqws2`) and manages it for you.
 
 It complements [ByeDPI](ByeDPI-en): same goal, different layer. See [ByeDPI vs Zapret](#byedpi-vs-zapret) below.
 
@@ -14,7 +14,7 @@ Zapret runs the **`nfqws2`** packet processor. The selected traffic is tagged in
 
 | | |
 |---|---|
-| ✅ **Un-throttles DPI-filtered sites** | The common case for YouTube, Discord and similar services slowed or blocked by DPI. |
+| ✅ **Un-throttles DPI-filtered sites** | The common case for YouTube, Discord and similar services under DPI throttling. |
 | ✅ **No subscription, no server** | A local packet trick — no VPN node, account or remote server. |
 | ✅ **Works on both cores** | Implemented as a marked direct outbound; works identically on hiddify-core and sing-box-extended. |
 | ✅ **Handles TCP *and* UDP/QUIC** | Unlike ByeDPI, the NFQUEUE path also desyncs UDP flows (used for Discord voice). |
@@ -103,7 +103,7 @@ Once enabled, **Zapret** becomes a selectable routing target. The typical setup 
 
 ## ByeDPI vs Zapret
 
-Both bypass DPI without a VPN; they operate at different layers, so the right one depends on your ISP.
+Both handle DPI throttling without a VPN; they operate at different layers, so the right one depends on your ISP.
 
 | | **ByeDPI** | **Zapret 2** |
 |---|---|---|

@@ -53,15 +53,15 @@ On the **Connection** page choose the **Routing mode**. The default for RU insta
 
 - **Blocking bypass (rule lists)** — the everyday working mode: everything goes direct, while
   traffic matched by the Routing rules (YouTube, Russia Inside, Re:Filter…) rides the Main
-  node — blocked sites open without tunneling the whole connection. This is where the bypass
-  engines (Zapret / ByeDPI) and the automation engine live.
+  node — the listed resources open without tunneling the whole connection. This is where the
+  transport-layer engines (Zapret / ByeDPI) and the automation engine live.
 - **Everything via node** — all traffic through the Main node; per-service rules are not used.
 - **Direct** — the repair/diagnostics mode: interception, engines, the DNS scheme and the core
   itself are off; the router hands out exactly what the provider gives.
 
 For «Blocking bypass» enable the lists you need (Russia Inside, Re:Filter, YouTube, Discord…)
 — rules and presets are described in **[Routing & access control](Routing-and-Access-Control-en)**,
-and DPI bypass in the **[Routing Master](Routing-Master-en)**.
+and the transport layer (DPI) in the **[Routing Master](Routing-Master-en)**.
 
 ---
 
@@ -92,16 +92,16 @@ Service states and the event journal live in the same
 
 ---
 
-## Optional — bypass throttling without a VPN
+## Optional — removing throttling without a VPN
 
-If a site (YouTube, Discord) is *throttled* rather than IP-blocked, hand it to the built-in DPI
-bypass instead of spending subscription traffic:
+If a site (YouTube, Discord) is *throttled* rather than IP-blocked, hand it to the built-in
+transport layer (DPI) instead of spending subscription traffic:
 
 - **[Zapret](Zapret-en)** — packet-level desynchronization (nfqws2);
 - **[ByeDPI](ByeDPI-en)** — SOCKS-level desynchronization.
 
-Both can be selected per rule (for example, YouTube via Zapret, the rest via VPN). Blocked sites
-can also be learned automatically — see **[Auto-bypass](Automation-Status-en)**.
+Both can be selected per rule (for example, YouTube via Zapret, the rest via VPN). Sites unreachable
+directly can also be learned automatically — see **[Auto-bypass](Automation-Status-en)**.
 
 See also: [Overview](Overview-en) · [Core management](Core-Management-en) ·
 [Troubleshooting](Troubleshooting-en)

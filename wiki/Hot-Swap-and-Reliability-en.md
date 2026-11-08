@@ -48,8 +48,8 @@ breaks. The failure cascade is verified live:
 - the firewall chains are wiped → everything goes direct;
 - mosdns dies → DNS lives on the dnsmasq ladder, the MultiDNS daemon rebuilds the config itself.
 
-The «Direct» mode is part of reliability too: all bypass machinery switches off and the router
-hands out exactly what the provider gives. The mode for repairs and diagnostics.
+The «Direct» mode is part of reliability too: interception and connection processing switch off, and the
+router hands out exactly what the provider gives. The mode for repairs and diagnostics.
 
 ---
 

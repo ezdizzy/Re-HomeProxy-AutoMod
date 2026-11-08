@@ -19,7 +19,7 @@ app occupies ~213 MB of RAM (742 MB available) and ~5% of the total CPU capacity
 | rpcd (web RPC) | depends on the tab | an open tab polls the state; a **background one stays silent** (see «Sleeping tab») |
 
 Bottom line: at idle the system is nearly free; under active traffic the CPU goes to
-interception and encryption — inherent to any userspace bypass.
+interception and encryption — inherent to any userspace transport.
 
 ## Memory: three safeguards
 

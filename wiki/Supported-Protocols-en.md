@@ -62,7 +62,7 @@ A TLS-based multiplexing protocol developed by the hiddify team. Designed to be 
 Plain HTTP proxy (RFC 7231 CONNECT method). Supports username/password authentication. Not encrypted — use only on trusted networks or wrapped in TLS via another layer.
 
 ### Shadowsocks
-One of the most widely used anti-censorship protocols. Encrypts traffic with a pre-shared key and cipher (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, etc.). Simple to set up. Does not use TLS — traffic is obfuscated but does not look like HTTPS.
+One of the most widely used traffic-obfuscation proxy protocols. Encrypts traffic with a pre-shared key and cipher (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, etc.). Simple to set up. Does not use TLS — traffic is obfuscated but does not look like HTTPS.
 
 **Shadowsocks 2022** (`2022-blake3-aes-128-gcm`, `2022-blake3-aes-256-gcm`, `2022-blake3-chacha20-poly1305`) is also supported. It improves on the original with stronger authenticated encryption, replay protection, and better performance. If your server supports it, prefer the 2022 variants. ShadowTLS (see below) is designed to work with Shadowsocks 2022.
 
@@ -178,7 +178,7 @@ AdGuard's obfuscated VPN protocol: the tunnel is indistinguishable from ordinary
 ## Mieru — requires `with_quic`
 
 ### MieruTCP / MieruUDP
-Anti-censorship protocol developed independently of sing-box, added by the extended cores (hiddify-core **and** sing-box-extended). Uses fully randomized traffic patterns with no identifiable headers or handshakes, making it very difficult to detect or classify by DPI.
+Traffic-obfuscation protocol developed independently of sing-box, added by the extended cores (hiddify-core **and** sing-box-extended). Uses fully randomized traffic patterns with no identifiable headers or handshakes, making it very difficult to detect or classify by DPI.
 
 - **MieruTCP** — TCP transport variant
 - **MieruUDP** — UDP transport variant; higher throughput, requires UDP access

@@ -10,7 +10,7 @@ its boundaries are.
 
 ## The self-learning engine
 
-Automatically discovers blocked sites: traffic that **fails directly but works through the
+Automatically discovers sites unreachable directly: traffic that **fails directly but works through the
 proxy** is added to the routing rule lists.
 
 - **Candidate sources**: DNS queries (captured before the connection is established), Clash

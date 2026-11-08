@@ -2,7 +2,7 @@
 
 # ByeDPI
 
-**ByeDPI** is a built-in DPI-bypass that can un-throttle and unblock sites **without any VPN subscription**. Ravnex bundles the [ByeDPI](https://github.com/hufrea/byedpi) engine (`ciadpi`) and manages it for you.
+**ByeDPI** is a built-in transport engine that un-throttles and restores access to slowed-down sites **without any VPN subscription**. Ravnex bundles the [ByeDPI](https://github.com/hufrea/byedpi) engine (`ciadpi`) and manages it for you.
 
 ---
 

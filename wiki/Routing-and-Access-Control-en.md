@@ -14,7 +14,7 @@ Three modes — simple and non-overlapping:
 
 | Mode | What it does |
 |---|---|
-| **Blocking bypass (rule lists)** | The everyday **working** mode: everything goes direct, while traffic matched by the [Service rules](Routing-Master-en) rides its assigned exit. This is where the bypass engines (Zapret / ByeDPI) and the automation engine live. |
+| **Blocking bypass (rule lists)** | The everyday **working** mode: everything goes direct, while traffic matched by the [Service rules](Routing-Master-en) rides its assigned exit. This is where the transport-layer engines (Zapret / ByeDPI) and the automation engine live. |
 | **Everything via node** | All traffic through the Main node; per-service rules are not used. |
 | **Direct (all mechanisms off)** | The repair/diagnostics mode: interception, engines, the DNS scheme and the core itself are off — the router hands out exactly what the provider gives. |
 

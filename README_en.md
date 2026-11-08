@@ -6,7 +6,7 @@
 
 **Own the Route.**
 
-A multi-core proxy platform for OpenWrt: VPN subscriptions, VPN-free DPI bypass, automation,
+A traffic-management platform for OpenWrt: VPN subscriptions, a VPN-free transport layer, automation,
 monitoring and diagnostics — all from the LuCI web interface, all local on the router.
 
 [![Release](https://img.shields.io/github/v/release/ezdizzy/ravnex?style=for-the-badge&color=22C55E)](../../releases/latest)
@@ -21,9 +21,9 @@ monitoring and diagnostics — all from the LuCI web interface, all local on the
 - **two selectable proxy cores** — [hiddify-core](https://github.com/hiddify/hiddify-core) (a sing-box fork, default)
   and [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) / compact
   [sing-box-extended-lite](https://github.com/MANCrimSon/sing-box-extended-lite) for low-flash devices;
-- **two VPN-free DPI bypass engines** — [Zapret 2](https://github.com/bol-van/zapret2) (nfqws2) and
+- **two VPN-free transport-layer engines** — [Zapret 2](https://github.com/bol-van/zapret2) (nfqws2) and
   [ByeDPI](https://github.com/hufrea/byedpi) (ciadpi) with a strategy catalog, a picking lab and an autopilot;
-- a **self-learning automation engine** that discovers blocked resources and routes them on its own;
+- a **self-learning automation engine** that discovers resources unreachable directly and routes them on its own;
 - **hot-standby node failover** (Hot Swap), **DNS server racing** (MultiDNS),
   **parental control**, a **Telegram control bot** and **in-app self-update**.
 
@@ -33,9 +33,10 @@ checks happen only on your request.
 
 ## Why Ravnex
 
-- **Blocked-site access with no subscription.** Zapret 2 and ByeDPI run on the router itself:
-  YouTube, Discord and thousands of sites open over ordinary traffic with DPI desynchronization.
-  A proxy node is needed only for private routes and resources that cannot be unblocked otherwise.
+- **Connection resilience with no subscription.** Zapret 2 and ByeDPI run on the router itself:
+  YouTube, Discord and thousands of sites open over ordinary traffic with DPI desynchronization
+  (the transport layer). A proxy node is needed only for private routes and resources unreachable
+  without one.
 - **Never leaves you offline.** A failed core, engines or firewall chains mean traffic flows
   straight through, not a dead network; with a working WAN you always keep at least the Russian
   internet — an invariant verified live by a cascade of failures. The emergency «Restore internet»
@@ -57,9 +58,9 @@ transit through user space:
 | Lane | Mechanism | What rides it |
 |---|---|---|
 | **Direct** | routing around the intercept, zero overhead | trusted resources: RU services, banks, government, local networks |
-| **Zapret 2** | [`nfqws2`](https://github.com/bol-van/zapret2) — packet-level desynchronization in NFQUEUE | YouTube, Discord and more open **with no VPN and no subscription**, fast, with the Russian region preserved |
+| **Zapret 2** | [`nfqws2`](https://github.com/bol-van/zapret2) — packet-level desynchronization in NFQUEUE | YouTube, Discord and more ride ordinary traffic **with no VPN and no subscription** — fast, with the Russian region preserved |
 | **ByeDPI** | [`ciadpi`](https://github.com/hufrea/byedpi) — local SOCKS desynchronizer | 47 ready presets and a strategy tester |
-| **Proxy core** | hiddify-core / sing-box-extended | blocked and private routes via your node/subscription: VLESS (Reality/XHTTP), Hysteria2, VMess, Trojan, Shadowsocks, WireGuard/**AmneziaWG**, SSH, NaiveProxy, Mieru and more |
+| **Proxy core** | hiddify-core / sing-box-extended | non-direct and private routes via your node/subscription: VLESS (Reality/XHTTP), Hysteria2, VMess, Trojan, Shadowsocks, WireGuard/**AmneziaWG**, SSH, NaiveProxy, Mieru and more |
 | **Smart DNS** | [mosdns](https://github.com/IrineSistiana/mosdns) — every query races the whole pool | separate plain/secure pools, quality control, automatic pruning of dead servers |
 
 ## How it works
@@ -113,9 +114,9 @@ within a router's budget:
 ## Features
 
 ### Routing & reliability
-- **Routing Wizard** — an interactive hub: provider diagnostics (what is blocked and how — directly
-  or via your rules), «Services → exits» (a per-service exit with live verification), DPI bypass,
-  strategy catalog imports.
+- **Routing Wizard** — an interactive hub: provider diagnostics (which resources are unreachable and how —
+  directly or via your rules), «Services → exits» (a per-service exit with live verification), the
+  transport layer (DPI), strategy catalog imports.
 - **Hot Swap** — hot standby for the main node: several continuously probed connections and a
   switch to a live backup within seconds **without restarting the core**; anti-flap guard.
 - **URLTest with three modes** — Auto / Preferred node + auto / Manual list; dead-node watchdog.
@@ -124,7 +125,7 @@ within a router's budget:
 - **Direct-connection resilience** — a node failure no longer breaks SSH/DNS/sessions; OAuth
   logins (Google/Microsoft/Apple) ride a pinned secure exit.
 
-### DPI bypass
+### Transport layer (DPI)
 - **Strategy Lab** — fuzzing of the whole strategy corpus on an isolated NFQUEUE with a baseline
   run, per-round ranking, and «preview start» + «stream speed» metrics.
 - **One-click pick & autopilot** — pick the best strategy for YouTube/Discord with one button; the
@@ -135,8 +136,8 @@ within a router's budget:
   strategy generator and an editable TSPU list (dpi-detect).
 
 ### Automation & control
-- **Self-learning engine** — discovers blocked sites (DNS/Clash/SNI sources), classifies the block
-  type (DPI / DNS poisoning / stub / refusal page), self-heals and applies what it learned with a
+- **Self-learning engine** — discovers sites unreachable directly (DNS/Clash/SNI sources), classifies the
+  restriction type (DPI / DNS poisoning / stub / refusal page), self-heals and applies what it learned with a
   hot reload that never drops connections; native (Go) helpers for batch probing and SNI capture.
 - **Control** — parental control: devices from the live network, site rules, schedules, Wi-Fi,
   journal — and the same through the Telegram bot.
@@ -184,7 +185,7 @@ wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | s
 
 The interactive installer walks you through: app + Russian locale → core → subscription/node →
 Hot Swap → MultiDNS → Automation → Zapret 2 with an auto-test → autopilot → ByeDPI.
-Re-running the script opens the settings menu. If GitHub is blocked, point at a mirror
+Re-running the script opens the settings menu. If GitHub is unreachable, point at a mirror
 (the variable goes before `sh`):
 
 ```sh
@@ -235,7 +236,7 @@ Full guides live in the **[wiki](../../wiki/Home)**:
 - [Core management](../../wiki/Core-Management-en) — hiddify-core or sing-box-extended, builds, memory
 - [Supported protocols](../../wiki/Supported-Protocols-en) — every protocol and its build tags
 - [Subscriptions & node import](../../wiki/Subscriptions-en) — share links, .conf, Amnezia `vpn://`, base64
-- [Routing Master](../../wiki/Routing-Master-en) — DPI bypass, the Lab, service rules
+- [Routing Master](../../wiki/Routing-Master-en) — the transport layer (DPI), the Lab, service rules
 - [Routing & access control](../../wiki/Routing-and-Access-Control-en) — modes, the exit engine
 - [Hot Swap & reliability](../../wiki/Hot-Swap-and-Reliability-en) — node standby, the RU-internet invariant
 - [Monitoring & connections](../../wiki/Monitoring-and-Connections-en) — dashboard, Health center
@@ -261,7 +262,7 @@ The project builds on the work of the open-source community:
 
 - [ImmortalWrt HomeProxy](https://github.com/immortalwrt/homeproxy) — the original LuCI app
 - [hiddify-core](https://github.com/hiddify/hiddify-core) · [sing-box-extended](https://github.com/shtorm-7/sing-box-extended) · [sing-box](https://sing-box.sagernet.org) — proxy cores
-- [zapret2 (bol-van)](https://github.com/bol-van/zapret2) and [ByeDPI (hufrea)](https://github.com/hufrea/byedpi) — DPI bypass
+- [zapret2 (bol-van)](https://github.com/bol-van/zapret2) and [ByeDPI (hufrea)](https://github.com/hufrea/byedpi) — connection processing (the transport layer)
 - [Re:Filter](https://github.com/1andrevich/re-filter), [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) — routing lists
 - [StressOzz/Zapret-Manager](https://github.com/StressOzz/Zapret-Manager) — strategy catalog
 - [1andrevich/homeproxy-hiddify](https://github.com/1andrevich/homeproxy-hiddify) — the direct base of the Re:HomeProxy line
@@ -272,3 +273,17 @@ All trademarks belong to their owners and are mentioned nominatively.
 
 [GPL-2.0-only](LICENSE) — same as the original LuCI app. Cores and DPI engines ship under their
 own licenses and are downloaded at install time from their own releases.
+
+## Legal
+
+- Ravnex is a tool for managing **your own** network and **your own** traffic on your own hardware:
+  routing, tunneling, connection-processing profiles, monitoring and diagnostics.
+- How you use the app — and compliance with the laws applicable to you — is your responsibility;
+  configure your routing rules within the policies of your network and your provider.
+- The project provides no proxy servers, nodes, subscriptions or access keys — all of these are
+  brought by the user.
+- The project is not affiliated with the upstream projects mentioned on this page or in the
+  documentation; names and trademarks belong to their owners and are used nominatively.
+- The app is provided as is, without warranty; the terms are GPL-2.0-only (see [License](#license)).
+- The feature descriptions on this page are technical documentation; the list of capabilities is
+  not a recommendation to use them against the rules of your network or provider.

@@ -20,7 +20,7 @@ creates a «YouTube → Zapret» rule.
 
 Re-running the script opens the settings menu.
 
-### If GitHub is blocked
+### If GitHub is unreachable
 
 Point at a mirror (the variable goes before `sh`):
 
