@@ -189,7 +189,10 @@ function run_app_update(op_id, spec) {
 	if (spec.i18n != null && length('' + (spec.i18n.dl_url || '')))
 		push(dls, { url: spec.i18n.dl_url, tmp: spec.i18n.tmp_path, tag: 'dli18n' });
 	for (let d in dls) {
-		const CM = '/etc/homeproxy/scripts/core_mgmt.uc';
+		/* Сеанс 160: core_mgmt.uc живёт в /usr/share/homeproxy/scripts (переезд
+		 * ч.237) — /etc-путь не существует, ucode даёт "Failed to open" = rc=1
+		 * мгновенно (Б6: download failed rc=1 5/5 при рабочих CLI-тестах). */
+		const CM = '/usr/share/homeproxy/scripts/core_mgmt.uc';
 		const rc = run_bg_rc(op_id, d.tag,
 			'/usr/bin/ucode ' + CM + ' download_pkg ' + shellq(d.url) + ' ' + shellq(d.tmp), 300);
 		if (!access(d.tmp)) {
