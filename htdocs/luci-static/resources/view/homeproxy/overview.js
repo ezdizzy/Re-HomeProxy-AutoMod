@@ -38,13 +38,13 @@
 'require homeproxy as hp';
 
 const callMetrics = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'overview_metrics',
 	expect: { '': {} }
 });
 
 const callSys = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'overview_sys',
 	expect: { '': {} }
 });
@@ -53,20 +53,20 @@ const callSys = rpc.declare({
  * the same call diagnostics.js makes. In Custom routing main-out does not
  * exist — the RPC answers an error and the card shows "—". */
 const callActiveNode = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'clash_active_node',
 	params: ['tag'],
 	expect: { '': {} }
 });
 
 const callDpiStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_dpi_status',
 	expect: { '': {} }
 });
 
 const callMultidnsStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'multidns_status',
 	expect: { '': {} }
 });
@@ -75,7 +75,7 @@ const callMultidnsStatus = rpc.declare({
  * engine summary (enabled/paused/device counts) — the same RPC the
  * control.js page polls every 4 s; here it rides the shared poll. */
 const callControlStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_status',
 	expect: { '': {} }
 });
@@ -84,14 +84,14 @@ const callControlStatus = rpc.declare({
  * subscription nodes (the same RPC the Servers page uses — a cheap file
  * read; polled once a minute, subscriptions change rarely). */
 const callSubsStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_subscription_status',
 	expect: { '': {} }
 });
 
 /* Quick actions — existing RPCs (unchanged). */
 const callServiceRestart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_service_restart',
 	expect: { '': {} }
 });
@@ -100,7 +100,7 @@ const callServiceRestart = rpc.declare({
  * journal the Health center renders in full (Event Bus → UI) — critical
  * events are visible where the user looks every day. */
 const callEvents = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_events',
 	params: [ 'limit' ],
 	expect: { '': {} }
@@ -110,7 +110,7 @@ const callEvents = rpc.declare({
  * (RAM/CPU/flash) + the auto-detected profile class. Static per boot:
  * polled once + every 60 s, not with the 4 s refresh. */
 const callResProfile = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'res_profile',
 	expect: { '': {} }
 });
@@ -118,20 +118,20 @@ const callResProfile = rpc.declare({
 /* Ф1.1 Operation/Apply Manager: applies run as tracked operations
  * (stages + server-side verified flag) — poll until completed/failed. */
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }
 });
 
 const callSnapshotCreate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_snapshot_create',
 	expect: { '': {} }
 });
 
 const callRestoreInternet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_restore_internet',
 	expect: { '': {} }
 });
@@ -139,7 +139,7 @@ const callRestoreInternet = rpc.declare({
 /* Update check stays ON DEMAND (D6): the version is always visible, the
  * GitHub query only fires when the user asks for it. */
 const callAppCheckUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_check_update',
 	expect: { '': {} }
 });
@@ -350,7 +350,7 @@ return view.extend({
 
 		heroBtn.addEventListener('click', function() {
 			/* D32: Check & repair lives on the Health center (repair tab). */
-			window.location = L.url('admin/services/homeproxy/health') + '#repair';
+			window.location = L.url('admin/services/ravnex/health') + '#repair';
 		});
 
 		/* D32 deep links: L.url() TRUNCATES at '#' (path() joins parts and the
@@ -369,40 +369,40 @@ return view.extend({
 		const HUB_DEFS = [
 			[ 'exit',   'shuffle', _('Where your traffic goes'),
 				_('The server your devices use to reach the internet right now.'),
-				_('Change server'), 'admin/services/homeproxy/client' ],
+				_('Change server'), 'admin/services/ravnex/client' ],
 			[ 'bypass', 'shield',   _('Blocking bypass'),
 				_('Zapret and ByeDPI open blocked sites without a VPN subscription.'),
-				_('Configure'), 'admin/services/homeproxy/bypass' ],
+				_('Configure'), 'admin/services/ravnex/bypass' ],
 			[ 'learn',  'refresh',  _('Auto-bypass'),
 				_('The engine finds blocked sites itself and sends them around the block.'),
-				_('Open'), 'admin/services/homeproxy/automation' ],
+				_('Open'), 'admin/services/ravnex/automation' ],
 			[ 'dns',    'globe',    _('DNS & MultiDNS'),
 				_('Two DNS pools — plain for Russian sites, encrypted for blocked ones — and the racing engine that keeps them fast.'),
-				_('Configure'), 'admin/services/homeproxy/dns' ],
+				_('Configure'), 'admin/services/ravnex/dns' ],
 			[ 'subs',   'server',   _('Subscriptions'),
 				_('The server lists your nodes come from — updated on a schedule or by hand.'),
-				_('Open'), 'admin/services/homeproxy/node' ],
+				_('Open'), 'admin/services/ravnex/node' ],
 			[ 'home',   'monitor',  _('Devices at home'),
 				_('Who is connected to the router and what they can open.'),
-				_('Open'), 'admin/services/homeproxy/devices' ],
+				_('Open'), 'admin/services/ravnex/devices' ],
 			[ 'family', 'shield',   _('Access Control'),
 				_('Site rules, schedules and Wi-Fi limits per device.'),
-				_('Configure'), 'admin/services/homeproxy/control' ],
+				_('Configure'), 'admin/services/ravnex/control' ],
 			[ 'phone',  'send',     _('Phone control'),
 				_('Status, server switching and control — right from Telegram.'),
-				_('Connect'), 'admin/services/homeproxy/telegram' ],
+				_('Connect'), 'admin/services/ravnex/telegram' ],
 			[ 'diag',   'sensors',  _('Check & repair'),
 				_('One click runs the health checks and repairs the routing.'),
-				_('Check now'), 'admin/services/homeproxy/health#repair' ],
+				_('Check now'), 'admin/services/ravnex/health#repair' ],
 			[ 'health', 'heart',    _('Health center'),
 				_('Live status of every subsystem, the automatic repair log and the event feed.'),
-				_('Open'), 'admin/services/homeproxy/health' ],
+				_('Open'), 'admin/services/ravnex/health' ],
 			[ 'load',   'trend',    _('Resources & load'),
 				_('RAM, CPU load and flash usage — how heavy the box is right now.'),
-				_('Open'), 'admin/services/homeproxy/monitor' ],
+				_('Open'), 'admin/services/ravnex/monitor' ],
 			[ 'maint',  'cpu',      _('Maintenance'),
 				_('Core version, snapshots, update checks and service management.'),
-				_('Open'), 'admin/services/homeproxy/status' ]
+				_('Open'), 'admin/services/ravnex/status' ]
 		];
 		const hub = {};
 		const hubEl = E('div', { 'class': 'hpui-hub' });
@@ -428,10 +428,10 @@ return view.extend({
 			return E('a', { 'class': 'btn cbi-button', 'href': hpHref(url) }, [ label ]);
 		}
 		const qsSteps = [
-			[ 'nodes', '1', _('Add servers'), 'admin/services/homeproxy/node', _('Import a subscription or paste a share link.') ],
-			[ 'main',  '2', _('Choose the main node'), 'admin/services/homeproxy/client', null ],
-			[ 'byp',   '3', _('Turn on the bypass'), 'admin/services/homeproxy/bypass', null ],
-			[ 'net',   '4', _('Check the internet'), 'admin/services/homeproxy/health#repair', null ]
+			[ 'nodes', '1', _('Add servers'), 'admin/services/ravnex/node', _('Import a subscription or paste a share link.') ],
+			[ 'main',  '2', _('Choose the main node'), 'admin/services/ravnex/client', null ],
+			[ 'byp',   '3', _('Turn on the bypass'), 'admin/services/ravnex/bypass', null ],
+			[ 'net',   '4', _('Check the internet'), 'admin/services/ravnex/health#repair', null ]
 		];
 		const qsEls = {};
 		const qsEl = E('div', { 'class': 'hpui-qs' }, [
@@ -570,7 +570,7 @@ return view.extend({
 		const trafficEl = E('div', { 'class': 'hpui-panel' }, [
 			E('h4', { 'class': 'hpui-h4' }, [
 				hp.icon('repeat'), _('Traffic by exit'),
-				E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/homeproxy/monitor') },
+				E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/ravnex/monitor') },
 					[ _('Monitoring') ])
 			]),
 			trPairs,
@@ -655,7 +655,7 @@ return view.extend({
 		const eventsEl = E('div', { 'class': 'hpui-panel' }, [
 			E('h4', { 'class': 'hpui-h4' }, [
 				hp.icon('activity'), _('Events'),
-				E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/homeproxy/health#journal') },
+				E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/ravnex/health#journal') },
 					[ _('All events') ])
 			]),
 			E('p', { 'class': 'hpui-hint' }, [ _('What the system has just done or noticed — the tail of the journal the event center in the Health center keeps.') ]),
@@ -778,7 +778,7 @@ return view.extend({
 				if (r.update_available)
 					setResult(E('p', { 'class': 'hpui-hint' }, [
 						_('Update available: %s → %s.').format(r.installed_version, r.latest_version) + ' ',
-						E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/homeproxy/status') },
+						E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/ravnex/status') },
 							[ _('Install it on the Maintenance page') ])
 					]), true);
 				else
@@ -1153,7 +1153,7 @@ return view.extend({
 			E('div', { 'class': 'hpui-panel' }, [
 				E('h4', { 'class': 'hpui-h4' }, [
 					hp.icon('activity'), _('Performance'),
-					E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/homeproxy/monitor') },
+					E('a', { 'class': 'hpui-cap-link', 'href': hpHref('admin/services/ravnex/monitor') },
 						[ _('Monitoring') ])
 				]),
 				chartsEl,

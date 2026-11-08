@@ -8,10 +8,10 @@
 
 **Симптом:** При сохранении любой формы (настройки клиента, списки контроля доступа и др.) появляется:
 ```
-RPC call to luci.homeproxy/[method] failed with error -32000: Object not found
+RPC call to luci.ravnex/[method] failed with error -32000: Object not found
 ```
 
-**Причина:** rpcd не загрузил модуль `luci.homeproxy`. Чаще всего это происходит сразу после установки или обновления пакета, если скрипт post-install отправил сигнал перезагрузки, когда rpcd ещё не был запущен.
+**Причина:** rpcd не загрузил модуль `luci.ravnex`. Чаще всего это происходит сразу после установки или обновления пакета, если скрипт post-install отправил сигнал перезагрузки, когда rpcd ещё не был запущен.
 
 **Решение:**
 ```sh
@@ -25,7 +25,7 @@ RPC call to luci.homeproxy/[method] failed with error -32000: Object not found
 
 **Симптом:** Селектор режима прокси на странице «Клиент» показывает только «Redirect TCP». Опции TProxy и Tun отсутствуют, хотя необходимые модули ядра установлены.
 
-**Причина:** Та же, что выше — `luci.homeproxy` не загружен. Вызов определения возможностей (`singbox_get_features`) возвращает пустой объект, все флаги оказываются ложными и опции скрываются.
+**Причина:** Та же, что выше — `luci.ravnex` не загружен. Вызов определения возможностей (`singbox_get_features`) возвращает пустой объект, все флаги оказываются ложными и опции скрываются.
 
 **Решение:** То же — перезапустить rpcd и войти заново.
 
@@ -33,7 +33,7 @@ RPC call to luci.homeproxy/[method] failed with error -32000: Object not found
 
 ## TypeError на странице «Клиент»
 
-**Симптом:** При открытии `/cgi-bin/luci/admin/services/homeproxy/client` появляется:
+**Симптом:** При открытии `/cgi-bin/luci/admin/services/ravnex/client` появляется:
 ```
 TypeError: Cannot read properties of undefined (reading 'content')
 ```

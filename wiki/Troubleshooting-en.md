@@ -8,10 +8,10 @@
 
 **Symptom:** Saving any form (client settings, access control lists, etc.) shows:
 ```
-RPC call to luci.homeproxy/[method] failed with error -32000: Object not found
+RPC call to luci.ravnex/[method] failed with error -32000: Object not found
 ```
 
-**Cause:** rpcd has not loaded the `luci.homeproxy` module. This commonly happens right after installing or upgrading the package if the post-install script sent a reload signal while rpcd was not yet running.
+**Cause:** rpcd has not loaded the `luci.ravnex` module. This commonly happens right after installing or upgrading the package if the post-install script sent a reload signal while rpcd was not yet running.
 
 **Fix:**
 ```sh
@@ -25,7 +25,7 @@ Then **log out and log back in** to the web UI. An existing session does not pic
 
 **Symptom:** The Proxy Mode selector on the Client page only shows "Redirect TCP". TProxy and Tun options are absent even though the required kernel modules are installed.
 
-**Cause:** Same as above — `luci.homeproxy` not loaded. The feature detection call (`singbox_get_features`) returns empty, so all capability flags are false and the options are hidden.
+**Cause:** Same as above — `luci.ravnex` not loaded. The feature detection call (`singbox_get_features`) returns empty, so all capability flags are false and the options are hidden.
 
 **Fix:** Same as above — restart rpcd and re-login.
 
@@ -33,7 +33,7 @@ Then **log out and log back in** to the web UI. An existing session does not pic
 
 ## TypeError on the Client Page
 
-**Symptom:** Opening `/cgi-bin/luci/admin/services/homeproxy/client` shows:
+**Symptom:** Opening `/cgi-bin/luci/admin/services/ravnex/client` shows:
 ```
 TypeError: Cannot read properties of undefined (reading 'content')
 ```

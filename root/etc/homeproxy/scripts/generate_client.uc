@@ -60,7 +60,7 @@ function hp_service_inline_domains(src) {
 	return length(out) ? out : null;
 }
 
-/* const features = ubus.call('luci.homeproxy', 'singbox_get_features') || {}; */
+/* const features = ubus.call('luci.ravnex', 'singbox_get_features') || {}; */
 
 /* UCI config start */
 const uci = cursor();

@@ -11,7 +11,7 @@
 			},
 			"ubus": {
 				"service": [ "list" ],
-				"luci.homeproxy": [
+				"luci.ravnex": [
 					"acllist_read", "connection_check", "singbox_generator", "singbox_get_features",
 					"core_install_status", "core_skipped", "clash_ip_info", "clash_proxies", "clash_active_node",
 					"hotswap_status", "monitor_nodes", "monitor_connections",
@@ -43,7 +43,7 @@
 				"/tmp/homeproxy_certificate.tmp": [ "write" ]
 			},
 			"ubus": {
-				"luci.homeproxy": [
+				"luci.ravnex": [
 					"acllist_write", "certificate_write", "server_cert_generate", "log_clean", "core_install_start", "detect_custom_core",
 					"app_subscription_update_start", "app_subscription_add", "app_subscription_remove",
 					"monitor_connections_close", "diag_config_heal", "diag_service_restart",

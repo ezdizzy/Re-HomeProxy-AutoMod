@@ -1216,7 +1216,7 @@ function tcp_reachable(host, via_proxy, timeout) {
 		 * The parseable host set is the plain-text companion
 		 * (resources/engine_<source>.txt); remote .srs lists cannot be parsed.
 		 * B6.6: such sources are counted HONESTLY as "coverage unknown" — the
-		 * log (and route_explain's coverage verdict via luci.homeproxy) no
+		 * log (and route_explain's coverage verdict via luci.ravnex) no
 		 * longer implies the whole service is proven protected when only the
 		 * rule's existence is known. */
 		uci.foreach('homeproxy', 'proxy_ru_rule', (cfg) => {

@@ -47,7 +47,7 @@ return view.extend({
 
 		const m = new form.Map('homeproxy');
 
-		const mdDisable = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_disable', expect: { '': {} } });
+		const mdDisable = rpc.declare({ object: 'luci.ravnex', method: 'multidns_disable', expect: { '': {} } });
 
 		const s = m.section(form.NamedSection, 'config', 'homeproxy', null);
 		s.addremove = false;
@@ -251,9 +251,9 @@ return view.extend({
 				}
 			}, [ label ]);
 		}
-		const mdStatus = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_status', expect: { '': {} } });
-		const mdReload = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_reload', expect: { '': {} } });
-		const mdReset = rpc.declare({ object: 'luci.homeproxy', method: 'multidns_reset', expect: { '': {} } });
+		const mdStatus = rpc.declare({ object: 'luci.ravnex', method: 'multidns_status', expect: { '': {} } });
+		const mdReload = rpc.declare({ object: 'luci.ravnex', method: 'multidns_reload', expect: { '': {} } });
+		const mdReset = rpc.declare({ object: 'luci.ravnex', method: 'multidns_reset', expect: { '': {} } });
 
 		const mdStatusEl = E('div', { 'class': 'hpui-hint' });
 		const mdTableEl = E('div', {});

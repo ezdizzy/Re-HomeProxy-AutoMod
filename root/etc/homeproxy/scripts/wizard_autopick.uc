@@ -807,7 +807,7 @@ function main() {
 		 * (GitHub issue #11 — native [] crashed registration on updated
 		 * 25.12 stacks). */
 		const payload = sprintf('{"source":%.J,"node":"zapret-out","urltest_nodes":"[]"}', resource);
-		const fd = popen(`ubus call luci.homeproxy wizard_preset_apply ${sq(payload)} 2>/dev/null`);
+		const fd = popen(`ubus call luci.ravnex wizard_preset_apply ${sq(payload)} 2>/dev/null`);
 		let out = '';
 		if (fd) { out = trim(fd.read('all') || ''); fd.close(); }
 		let pr = null;
@@ -909,7 +909,7 @@ function main() {
 		 * JSON text embeds it as a quoted JSON string. */
 		const pj = sprintf('%.J', profiles);
 		const payload = sprintf('{"profiles":%.J}', pj);
-		const fd = popen(`ubus call luci.homeproxy wizard_compose_build ${sq(payload)} 2>/dev/null`);
+		const fd = popen(`ubus call luci.ravnex wizard_compose_build ${sq(payload)} 2>/dev/null`);
 		let cout = '';
 		if (fd) { cout = trim(fd.read('all') || ''); fd.close(); }
 		let pr = null;
@@ -1136,7 +1136,7 @@ function main() {
 		res.stage = 'rollback';
 		wstat(res);
 		note(res, rd.note);
-		const fd = popen('ubus call luci.homeproxy wizard_compose_rollback 2>/dev/null');
+		const fd = popen('ubus call luci.ravnex wizard_compose_rollback 2>/dev/null');
 		let rout = '';
 		if (fd) { rout = trim(fd.read('all') || ''); fd.close(); }
 		let rr = null;

@@ -4,7 +4,7 @@
 #
 # Вручную ставится только LuCI-приложение + ключ подписи, а ядро, ByeDPI и Zapret
 # устанавливаются через собственный бэкенд приложения (core_mgmt.uc + rpcd-объект
-# luci.homeproxy) — поэтому определение архитектуры, компактные сборки под малую
+# luci.ravnex) — поэтому определение архитектуры, компактные сборки под малую
 # флеш-память, проверка подписи и резерв через зеркало GitHub работают той же
 # проверенной логикой, что и графический интерфейс.
 #
@@ -347,7 +347,7 @@ validate_proxy() {
 			*) warn "  прокси пока не отвечает (HTTP ${CODE:-—}) — проверьте узел в LuCI → Диагностика."; return 1;;
 		esac
 	fi
-	RES=$(ubus call luci.homeproxy connection_check '{"site":"youtube"}' 2>/dev/null)
+	RES=$(ubus call luci.ravnex connection_check '{"site":"youtube"}' 2>/dev/null)
 	if printf '%s' "$RES" | grep -q '"result"[[:space:]]*:[[:space:]]*true'; then
 		ok "  прокси работает (YouTube отвечает)."; return 0
 	fi
@@ -1027,7 +1027,7 @@ if is_no "$REPLY"; then info "  Включить позже: Automation."; retur
 # Тест стратегии Zapret на YouTube через встроенный тестер (RPC zapret_strategy_test).
 # Возвращает 1, если YouTube-рука прошла (tag=yt ok=1), иначе пусто/0.
 zapret_test() {
-	RES=$(ubus call luci.homeproxy zapret_strategy_test "{\"cmd_opts\":\"$1\"}" 2>/dev/null)
+	RES=$(ubus call luci.ravnex zapret_strategy_test "{\"cmd_opts\":\"$1\"}" 2>/dev/null)
 	# The RPC embeds the tester JSON as an escaped string: \"tag\":\"yt\" ...
 	printf '%s' "$RES" | sed -n 's/.*\\"tag\\":\\"yt\\"[^{}]*\\"ok\\":\([01]\).*/\1/p'
 }
@@ -1098,16 +1098,16 @@ install_zapret() {
 	if is_no "$REPLY"; then info "  пропускаю (можно поставить позже повторным запуском)."; return 0; fi
 	info "  ставлю модуль ядра NFQUEUE..."
 	if [ "$PM" = apk ]; then apk add kmod-nft-queue >/dev/null 2>&1; else opkg install kmod-nft-queue >/dev/null 2>&1; fi
-	ZP=$(ubus call luci.homeproxy zapret_prepare_install 2>/dev/null)
+	ZP=$(ubus call luci.ravnex zapret_prepare_install 2>/dev/null)
 	if [ -z "$ZP" ] || jerr "$ZP"; then warn "  не удалось подготовить Zapret — пропускаю. ($(jget "$ZP" error))"
 	else
 		# Ф11 V2 feed-first: prepare вернул источник обновлений — явный файл.
 		if [ "$(jget "$ZP" source)" = "feed" ] && [ -n "$(jget "$ZP" feed_pkg)" ]; then
 			ZFPKG=$(jget "$ZP" feed_pkg)
 			info "  Zapret: ставлю из источника обновлений ($ZFPKG $(jget "$ZP" version))..."
-			if jtrue "$(ubus call luci.homeproxy install_feed_pkg "{\"pkg\":\"$ZFPKG\"}" 2>/dev/null)"; then
+			if jtrue "$(ubus call luci.ravnex install_feed_pkg "{\"pkg\":\"$ZFPKG\"}" 2>/dev/null)"; then
 				ok "  Zapret установлен (источник обновлений)."
-				ZST=$(ubus call luci.homeproxy zapret_status 2>/dev/null)
+				ZST=$(ubus call luci.ravnex zapret_status 2>/dev/null)
 				if jfalse "$ZST" kmod_ok; then
 					warn "  модуль NFQUEUE не загружен — Zapret не включаю (иначе сломается firewall)."
 					warn "  Включите вручную после kmod-nft-queue (Client Settings → Routing → Enable Zapret)."
@@ -1125,15 +1125,15 @@ install_zapret() {
 				return 0
 			fi
 			warn "  установка из источника обновлений не удалась — возврат к обычным путям."
-			ZP=$(ubus call luci.homeproxy zapret_prepare_install 2>/dev/null)
+			ZP=$(ubus call luci.ravnex zapret_prepare_install 2>/dev/null)
 			[ -n "$ZP" ] && ! jerr "$ZP" || return 0
 		fi
 		ZURL=$(jget "$ZP" dl_url); ZTMP=$(jget "$ZP" tmp_path); ZPMG=$(jget "$ZP" pkg_manager)
 		if [ -n "$ZURL" ] && dl "$ZURL" "$ZTMP"; then
-			RES=$(ubus call luci.homeproxy zapret_install_pkg "{\"tmp_path\":\"$ZTMP\",\"pkg_manager\":\"$ZPMG\"}" 2>/dev/null)
+			RES=$(ubus call luci.ravnex zapret_install_pkg "{\"tmp_path\":\"$ZTMP\",\"pkg_manager\":\"$ZPMG\"}" 2>/dev/null)
 			if jtrue "$RES"; then
 				ok "  Zapret установлен."
-				ZST=$(ubus call luci.homeproxy zapret_status 2>/dev/null)
+				ZST=$(ubus call luci.ravnex zapret_status 2>/dev/null)
 				if jfalse "$ZST" kmod_ok; then
 					warn "  модуль NFQUEUE не загружен — Zapret не включаю (иначе сломается firewall)."
 					warn "  Включите вручную после kmod-nft-queue (Client Settings → Routing → Enable Zapret)."
@@ -1195,25 +1195,25 @@ install_byedpi() {
 	if ! is_yes "$REPLY"; then info "  пропускаю."; return 0; fi
 	info "  ставлю curl (его использует тестер стратегий ByeDPI)..."
 	if [ "$PM" = apk ]; then apk add curl >/dev/null 2>&1; else opkg install curl >/dev/null 2>&1; fi
-	BP=$(ubus call luci.homeproxy byedpi_prepare_install 2>/dev/null)
+	BP=$(ubus call luci.ravnex byedpi_prepare_install 2>/dev/null)
 	if [ -z "$BP" ] || jerr "$BP"; then warn "  не удалось подготовить ByeDPI — пропускаю. ($(jget "$BP" error))"
 	else
 		# Ф11 V2 feed-first: prepare вернул источник обновлений — явный файл.
 		if [ "$(jget "$BP" source)" = "feed" ] && [ -n "$(jget "$BP" feed_pkg)" ]; then
 			BFPKG=$(jget "$BP" feed_pkg)
 			info "  ByeDPI: ставлю из источника обновлений ($BFPKG $(jget "$BP" version))..."
-			if jtrue "$(ubus call luci.homeproxy install_feed_pkg "{\"pkg\":\"$BFPKG\"}" 2>/dev/null)"; then
+			if jtrue "$(ubus call luci.ravnex install_feed_pkg "{\"pkg\":\"$BFPKG\"}" 2>/dev/null)"; then
 				ok "  ByeDPI установлен (источник обновлений)."
 				uci set homeproxy.config.byedpi_enabled=1; uci commit homeproxy; ok "  ByeDPI включён."
 				return 0
 			fi
 			warn "  установка из источника обновлений не удалась — возврат к обычным путям."
-			BP=$(ubus call luci.homeproxy byedpi_prepare_install 2>/dev/null)
+			BP=$(ubus call luci.ravnex byedpi_prepare_install 2>/dev/null)
 			[ -n "$BP" ] && ! jerr "$BP" || return 0
 		fi
 		BURL=$(jget "$BP" dl_url); BTMP=$(jget "$BP" tmp_path); BPMG=$(jget "$BP" pkg_manager)
 		if [ -n "$BURL" ] && dl "$BURL" "$BTMP"; then
-			RES=$(ubus call luci.homeproxy byedpi_install_pkg "{\"tmp_path\":\"$BTMP\",\"pkg_manager\":\"$BPMG\"}" 2>/dev/null)
+			RES=$(ubus call luci.ravnex byedpi_install_pkg "{\"tmp_path\":\"$BTMP\",\"pkg_manager\":\"$BPMG\"}" 2>/dev/null)
 			if jtrue "$RES"; then
 				ok "  ByeDPI установлен."
 				uci set homeproxy.config.byedpi_enabled=1; uci commit homeproxy; ok "  ByeDPI включён."
@@ -1443,7 +1443,7 @@ summary() {
 	ok "===== Готово ====="
 	status_line
 	info "Откройте Ravnex в браузере:"
-	URL="http://$LANIP/cgi-bin/luci/admin/services/homeproxy"
+	URL="http://$LANIP/cgi-bin/luci/admin/services/ravnex"
 	printf '\033[0;36m  \033]8;;%s\033\\%s\033]8;;\033\\\033[0m\n' "$URL" "$URL"
 	info "Проверка прокси и выбор стратегий: Диагностика / Мастер → Обход DPI (Strategy Lab)."
 }

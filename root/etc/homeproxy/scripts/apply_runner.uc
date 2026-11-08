@@ -258,7 +258,7 @@ function run_app_update(op_id, spec) {
 	const vdeadline = time() + VERIFY_SEC.app_update;
 	let rpcd_ok = false;
 	while (time() < vdeadline) {
-		const out = capture('ubus call luci.homeproxy res_profile 2>/dev/null');
+		const out = capture('ubus call luci.ravnex res_profile 2>/dev/null');
 		if (length(trim(out))) { rpcd_ok = true; break; }
 		heartbeat(op_id);
 		sleep(2000);

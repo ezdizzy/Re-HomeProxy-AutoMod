@@ -841,7 +841,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 						used[sec.pages[p]] = true;
 						secEl.appendChild(E('a', {
 							'class': 'hp-sb-item' + (sec.pages[p] === cur ? ' active' : ''),
-							'href': L.url('admin/services/homeproxy', sec.pages[p])
+							'href': L.url('admin/services/ravnex', sec.pages[p])
 						}, [
 							this.icon(this.NAV_ICONS[sec.pages[p]] || 'compass'),
 							E('span', { 'class': 'hp-sb-item-t' }, [ _(kid.title) ])
@@ -861,7 +861,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 						continue;
 					extra.appendChild(E('a', {
 						'class': 'hp-sb-item' + (kids[i].name === cur ? ' active' : ''),
-						'href': L.url('admin/services/homeproxy', kids[i].name)
+						'href': L.url('admin/services/ravnex', kids[i].name)
 					}, [
 						this.icon(this.NAV_ICONS[kids[i].name] || 'compass'),
 						E('span', { 'class': 'hp-sb-item-t' }, [ _(kids[i].title) ])
@@ -901,7 +901,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 
 	profilePrefetch() {
 		const callResProfile = rpc.declare({
-			object: 'luci.homeproxy',
+			object: 'luci.ravnex',
 			method: 'res_profile',
 			expect: { '': {} }
 		});
@@ -925,7 +925,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 	 * trivial) — profile-scaled (Ф10.1). */
 	shellStatus(dotEl, textEl, subEl) {
 		const callShellSys = rpc.declare({
-			object: 'luci.homeproxy',
+			object: 'luci.ravnex',
 			method: 'overview_sys',
 			expect: { '': {} }
 		});
@@ -1293,7 +1293,7 @@ body.hp-shell .cbi-tooltip {
 
 	getBuiltinFeatures() {
 		const callGetSingBoxFeatures = rpc.declare({
-			object: 'luci.homeproxy',
+			object: 'luci.ravnex',
 			method: 'singbox_get_features',
 			expect: { '': {} }
 		});
@@ -1377,7 +1377,7 @@ body.hp-shell .cbi-tooltip {
 
 	uploadCertificate(_option, type, filename, ev) {
 		const callWriteCertificate = rpc.declare({
-			object: 'luci.homeproxy',
+			object: 'luci.ravnex',
 			method: 'certificate_write',
 			params: ['filename'],
 			expect: { '': {} }

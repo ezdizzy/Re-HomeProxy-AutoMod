@@ -54,12 +54,12 @@ const css = '\
 /* ── RPC declarations ─────────────────────────────────────────────────── */
 
 const callCoreCheck = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_core_check',
 	expect: { '': {} }
 });
 const callConfigCheck = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 
 	method: 'diag_config_check',
 
@@ -67,32 +67,32 @@ const callConfigCheck = rpc.declare({
 });
 
 const callConfigHeal = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_config_heal',
 	params: [ 'repair' ],
 	expect: { '': {} }
 });
 const callDnsRu = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_dns_ru',
 	expect: { '': {} }
 });
 
 const callDnsMultidns = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_dns_multidns',
 	expect: { '': {} }
 });
 
 const callNftables = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_nftables',
 	expect: { '': {} }
 });
 
 
 const callServiceRestart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_service_restart',
 	expect: { '': {} }
 });
@@ -101,7 +101,7 @@ const callServiceRestart = rpc.declare({
  * (стадии Applying→Verifying→Completed/Failed, verified только по живой
  * проверке) — статус опрашивается до завершения. */
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }
@@ -109,19 +109,19 @@ const callOpStatus = rpc.declare({
 
 /* Support Bundle (Р4): сбор приватно-безопасного отчёта. */
 const callBundleStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_support_bundle_start',
 	expect: { '': {} }
 });
 
 const callBundleStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_support_bundle_status',
 	expect: { '': {} }
 });
 
 const callBundleChunk = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_support_bundle_chunk',
 	params: [ 'offset', 'kind' ],
 	expect: { '': {} }
@@ -130,39 +130,39 @@ const callBundleChunk = rpc.declare({
 /* Text report rides the SAME async pattern as the archive (lesson 294: the
  * sync popen inside the rpcd loop tore the shared ubus stream). */
 const callBundleTextStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_support_bundle_text_start',
 	expect: { '': {} }
 });
 
 const callBundleTextStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_support_bundle_text_status',
 	expect: { '': {} }
 });
 
 const callConnCheck = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'connection_check',
 	params: ['site'],
 	expect: { '': {} }
 });
 
 const callIpInfo = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'clash_ip_info',
 	expect: { '': {} }
 });
 
 const callActiveNode = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'clash_active_node',
 	params: ['tag'],
 	expect: { '': {} }
 });
 
 const callRouteExplain = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'route_explain',
 	params: ['host'],
 	expect: { '': {} }
@@ -172,14 +172,14 @@ const callRouteExplain = rpc.declare({
  * diagnostics» pane — same RPC, same ONE result area). ────────────────── */
 
 const callScanStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_provider_scan',
 	params: [ 'hosts' ],
 	expect: { '': {} }
 });
 
 const callScanStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_scan_status',
 	expect: { '': {} }
 });
@@ -187,13 +187,13 @@ const callScanStatus = rpc.declare({
 /* Ф8-F1: dpi-detect seeds (splify2-lists) — update runs as a background
  * runner; the poll shows its progress in the provider pane row. */
 const callDpiUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_dpidetect_update',
 	expect: { '': {} }
 });
 
 const callPresetList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_preset_list',
 	expect: { '': {} }
 });
@@ -591,21 +591,21 @@ function buildProviderSection() {
  * Ф6.1. Один результат в одном месте. ─────────────────────────────────── */
 
 const callProfileRun = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_service_profile_run',
 	params: [ 'profile' ],
 	expect: { '': {} }
 });
 
 const callProfileStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_service_profile_status',
 	expect: { '': {} }
 });
 
 /* Ф6.2 Discovery Engine: пассивный снимок обнаружения (без проб). */
 const callDiscovery = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'discovery_snapshot',
 	expect: { '': {} }
 });
@@ -850,20 +850,20 @@ function buildDiscoverySection() {
  * результат в одном месте. ───────────────────────────────────────────── */
 
 const callOptimizerPlan = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'service_optimizer_plan',
 	expect: { '': {} }
 });
 
 const callPickStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_auto_pick_start',
 	params: [ 'resource', 'mode', 'set_rule' ],
 	expect: { '': {} }
 });
 
 const callPickStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_auto_pick_status',
 	expect: { '': {} }
 });
@@ -1883,13 +1883,13 @@ function buildSupportSection(view) {
 
 
 const callExplain = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'health_explain',
 	expect: { '': {} }
 });
 
 const callEvents = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_events',
 	params: [ 'limit' ],
 	expect: { '': {} }
@@ -1898,13 +1898,13 @@ const callEvents = rpc.declare({
 /* Ф9.14 (D34d): the ONE clear button for the ONE journal — the Parental
  * control duplicate (tab + clear) is gone. */
 const callEventsClear = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_events_clear',
 	expect: { '': {} }
 });
 
 const callRepair = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'recovery_action',
 	params: [ 'action', 'target', 'note' ],
 	expect: { '': {} }

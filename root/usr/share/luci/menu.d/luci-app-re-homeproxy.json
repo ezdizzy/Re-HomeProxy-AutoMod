@@ -1,5 +1,5 @@
 {
-	"admin/services/homeproxy": {
+	"admin/services/ravnex": {
 		"title": "Ravnex",
 		"order": 10,
 		"action": {
@@ -10,7 +10,7 @@
 			"uci": { "homeproxy": true }
 		}
 	},
-	"admin/services/homeproxy/overview": {
+	"admin/services/ravnex/overview": {
 		"title": "Home page",
 		"order": 5,
 		"action": {
@@ -18,7 +18,7 @@
 			"path": "homeproxy/overview"
 		}
 	},
-	"admin/services/homeproxy/client": {
+	"admin/services/ravnex/client": {
 		"title": "Connection",
 		"order": 10,
 		"action": {
@@ -26,7 +26,7 @@
 			"path": "homeproxy/client"
 		}
 	},
-	"admin/services/homeproxy/dns": {
+	"admin/services/ravnex/dns": {
 		"title": "DNS settings",
 		"order": 12,
 		"action": {
@@ -34,7 +34,7 @@
 			"path": "homeproxy/dns"
 		}
 	},
-	"admin/services/homeproxy/node": {
+	"admin/services/ravnex/node": {
 		"title": "Servers",
 		"order": 16,
 		"action": {
@@ -42,7 +42,7 @@
 			"path": "homeproxy/node"
 		}
 	},
-	"admin/services/homeproxy/bypass": {
+	"admin/services/ravnex/bypass": {
 		"title": "Blocking bypass",
 		"order": 17,
 		"action": {
@@ -50,7 +50,7 @@
 			"path": "homeproxy/bypass"
 		}
 	},
-	"admin/services/homeproxy/rules": {
+	"admin/services/ravnex/rules": {
 		"title": "Service rules",
 		"order": 18,
 		"action": {
@@ -58,7 +58,7 @@
 			"path": "homeproxy/rules"
 		}
 	},
-	"admin/services/homeproxy/automation": {
+	"admin/services/ravnex/automation": {
 		"title": "Auto-bypass",
 		"order": 20,
 		"action": {
@@ -66,7 +66,7 @@
 			"path": "homeproxy/automation"
 		}
 	},
-	"admin/services/homeproxy/devices": {
+	"admin/services/ravnex/devices": {
 		"title": "Devices",
 		"order": 28,
 		"action": {
@@ -74,7 +74,7 @@
 			"path": "homeproxy/devices"
 		}
 	},
-	"admin/services/homeproxy/control": {
+	"admin/services/ravnex/control": {
 		"title": "Access Control",
 		"order": 30,
 		"action": {
@@ -82,7 +82,7 @@
 			"path": "homeproxy/control"
 		}
 	},
-	"admin/services/homeproxy/telegram": {
+	"admin/services/ravnex/telegram": {
 		"title": "Phone control",
 		"order": 32,
 		"action": {
@@ -90,7 +90,7 @@
 			"path": "homeproxy/telegram"
 		}
 	},
-	"admin/services/homeproxy/status": {
+	"admin/services/ravnex/status": {
 		"title": "Maintenance",
 		"order": 40,
 		"action": {
@@ -98,7 +98,7 @@
 			"path": "homeproxy/status"
 		}
 	},
-	"admin/services/homeproxy/monitor": {
+	"admin/services/ravnex/monitor": {
 		"title": "Monitoring",
 		"order": 42,
 		"action": {
@@ -106,7 +106,7 @@
 			"path": "homeproxy/monitor"
 		}
 	},
-	"admin/services/homeproxy/health": {
+	"admin/services/ravnex/health": {
 		"title": "Health center",
 		"order": 43,
 		"action": {
@@ -114,12 +114,102 @@
 			"path": "homeproxy/health"
 		}
 	},
-	"admin/services/homeproxy/server": {
+	"admin/services/ravnex/server": {
 		"title": "Server mode",
 		"order": 46,
 		"action": {
 			"type": "view",
 			"path": "homeproxy/server"
+		}
+	},
+	"admin/services/homeproxy": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex"
+		}
+	},
+	"admin/services/homeproxy/overview": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/overview"
+		}
+	},
+	"admin/services/homeproxy/client": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/client"
+		}
+	},
+	"admin/services/homeproxy/dns": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/dns"
+		}
+	},
+	"admin/services/homeproxy/node": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/node"
+		}
+	},
+	"admin/services/homeproxy/bypass": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/bypass"
+		}
+	},
+	"admin/services/homeproxy/rules": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/rules"
+		}
+	},
+	"admin/services/homeproxy/automation": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/automation"
+		}
+	},
+	"admin/services/homeproxy/devices": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/devices"
+		}
+	},
+	"admin/services/homeproxy/control": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/control"
+		}
+	},
+	"admin/services/homeproxy/telegram": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/telegram"
+		}
+	},
+	"admin/services/homeproxy/status": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/status"
+		}
+	},
+	"admin/services/homeproxy/monitor": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/monitor"
+		}
+	},
+	"admin/services/homeproxy/health": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/health"
+		}
+	},
+	"admin/services/homeproxy/server": {
+		"action": {
+			"type": "alias",
+			"path": "admin/services/ravnex/server"
 		}
 	}
 }

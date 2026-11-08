@@ -11578,4 +11578,4 @@ const methods = {
 
 };
 
-return { 'luci.homeproxy': methods };
+return { 'luci.ravnex': methods };

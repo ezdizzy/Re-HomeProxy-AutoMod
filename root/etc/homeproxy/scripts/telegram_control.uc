@@ -23,7 +23,7 @@
 // Wi-Fi/системные события из events.json + новые устройства в сети.
 //
 // Ф8.2 (ч.185, аудит 1.5/TG-06): ВСЕ мутации ходят через Control API —
-// RPC-методы luci.homeproxy (control_client_*, control_rule_*,
+// RPC-методы luci.ravnex (control_client_*, control_rule_*,
 // control_set_paused, control_wifi_set) вызываются по ubus; модуль больше
 // НЕ пишет UCI и не дёргает shell для действий. Тяжёлые действия (постоянный
 // блок/Wi-Fi-блок устройства, удаление/добавление правил, выключение Wi-Fi)
@@ -250,13 +250,13 @@ function api_json(o) {
 	return out + '}';
 }
 
-/* Ф8.2 Control API bridge: mutations ride the SAME luci.homeproxy RPC door
+/* Ф8.2 Control API bridge: mutations ride the SAME luci.ravnex RPC door
  * the UI uses (audit 1.5/TG-06) — no bare UCI writes, no shell actions from
  * the chat path. The commit happens in rpcd; the module only invalidates
  * its cached uci cursor and quiets the echo push (api.quiet.until). */
 function ubus_call(method, args, timeout_s) {
 	const t = (timeout_s != null && timeout_s > 0 && timeout_s <= 60) ? int(timeout_s) : 10;
-	const cmd = `ubus -t ${t} call luci.homeproxy ${method} '${api_json(args)}'`;
+	const cmd = `ubus -t ${t} call luci.ravnex ${method} '${api_json(args)}'`;
 	const raw = capture(cmd);
 	let j = null;
 	try { j = json(raw || ''); } catch (e) { j = null; }

@@ -158,7 +158,7 @@ function validateWireGuardNode(node) {
  * (19-UX_REDESIGN §7). The poll re-renders the cells in place via the
  * tr[data-sid] attribute every grid row carries. */
 const callMonitorNodes = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'monitor_nodes',
 	expect: { '': {} }
 });
@@ -166,7 +166,7 @@ const callMonitorNodes = rpc.declare({
 /* Ф5.1: итог последнего цикла обновления подписок — статус-файл пишет
  * update_subscriptions.uc, RPC читает его + живую книжку узлов. */
 const callSubscriptionStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_subscription_status',
 	expect: { '': {} }
 });
@@ -1356,41 +1356,41 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
  * smart import is a read-only server-side parse through the SAME parser set
  * the subscription importer uses. */
 const callSubUpdateStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_subscription_update_start',
 	params: [ 'url' ],
 	expect: { '': {} }
 });
 
 const callSubAdd = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_subscription_add',
 	params: [ 'url' ],
 	expect: { '': {} }
 });
 
 const callSubRemove = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_subscription_remove',
 	params: [ 'url' ],
 	expect: { '': {} }
 });
 
 const callImportNodes = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_import_nodes',
 	params: [ 'text' ],
 	expect: { '': {} }
 });
 
 const callServiceRestart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_service_restart',
 	expect: { '': {} }
 });
 
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }

@@ -16,32 +16,32 @@
 'require view';
 
 const callMonitorNodes = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'monitor_nodes',
 	expect: { '': {} }
 });
 
 const callMonitorConnections = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'monitor_connections',
 	expect: { '': {} }
 });
 
 const callMonitorConnectionsClose = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'monitor_connections_close',
 	expect: { '': {} }
 });
 
 const callHotswapStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'hotswap_status',
 	expect: { '': {} }
 });
 
 /* Ф10.3: daemon resource snapshot (RSS/fd budgets) — written by Sentinel. */
 const callResourceStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'resource_status',
 	expect: { '': {} }
 });

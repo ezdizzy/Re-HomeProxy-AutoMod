@@ -44,96 +44,96 @@
 'require homeproxy as hp';
 
 const callStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_status',
 	expect: { '': {} }
 });
 
 const callDevices = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_devices',
 	expect: { '': {} }
 });
 
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }
 });
 
 const callProxyGlobal = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_proxy_global',
 	params: [ 'mode' ],
 	expect: { '': {} }
 });
 
 const callProxyMode = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_proxy_mode',
 	params: [ 'id', 'mode' ],
 	expect: { '': {} }
 });
 
 const callProxyLists = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_proxy_lists',
 	params: [ 'lists' ],
 	expect: { '': {} }
 });
 
 const callClientAdd = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_add',
 	params: [ 'name', 'mac', 'ip' ],
 	expect: { '': {} }
 });
 
 const callClientDelete = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_delete',
 	params: [ 'id' ],
 	expect: { '': {} }
 });
 
 const callClientRename = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_rename',
 	params: [ 'id', 'name' ],
 	expect: { '': {} }
 });
 
 const callClientBlock = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_block',
 	params: [ 'id', 'blocked' ],
 	expect: { '': {} }
 });
 
 const callClientTempBlock = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_temp_block',
 	params: [ 'id', 'minutes' ],
 	expect: { '': {} }
 });
 
 const callClientTempUnblock = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_temp_unblock',
 	params: [ 'id' ],
 	expect: { '': {} }
 });
 
 const callClientTempAllow = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_temp_allow',
 	params: [ 'id', 'minutes' ],
 	expect: { '': {} }
 });
 
 const callClientWifiBlock = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_wifi_block',
 	params: [ 'id', 'blocked' ],
 	expect: { '': {} }

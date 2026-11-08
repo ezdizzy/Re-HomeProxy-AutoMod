@@ -3,7 +3,7 @@
  *
  * Shared node parsers (Ф9.11): ONE implementation set for the subscription
  * importer, the standalone link importer (import_link.uc) and the UI import
- * RPC (luci.homeproxy app_import_nodes) — no second copy to drift.
+ * RPC (luci.ravnex app_import_nodes) — no second copy to drift.
  *
  *   parse_uri(uri, log)            — a single share-link (or a pre-parsed
  *                                    sing-box/SIP008 object passthrough)
@@ -29,7 +29,7 @@ import { parseURL, decodeBase64Str, validation, isEmpty } from 'homeproxy';
 import { connect } from 'ubus';
 
 /* Core capabilities are fetched LAZILY (first use): the module is imported
- * by rpcd's luci.homeproxy too, where a module-level ubus self-call would
+ * by rpcd's luci.ravnex too, where a module-level ubus self-call would
  * run before the object is registered and could kill the whole object
  * load. A failed call degrades to {} — every capability reads as off.
  * Embedding hosts (rpcd) should push their LOCAL feature map through
@@ -41,7 +41,7 @@ function sing_features() {
 	if (sing_features_cache == null) {
 		sing_features_cache = {};
 		try {
-			sing_features_cache = connect().call('luci.homeproxy', 'singbox_get_features', {}) || {};
+			sing_features_cache = connect().call('luci.ravnex', 'singbox_get_features', {}) || {};
 		} catch (e) {
 			sing_features_cache = {};
 		}

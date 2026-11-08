@@ -47,27 +47,27 @@
 'require homeproxy as hp';
 
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }
 });
 
 const callPresetList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_preset_list',
 	expect: { '': {} }
 });
 
 const callPresetApply = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_preset_apply',
 	params: [ 'source', 'node', 'urltest_nodes' ],
 	expect: { '': {} }
 });
 
 const callRouteExplain = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'route_explain',
 	params: [ 'host' ],
 	expect: { '': {} }
@@ -83,37 +83,37 @@ const callServiceList = rpc.declare({
 /* ── DPI section (Ф3): engines, Strategy Lab, corpus tools ─────────────── */
 
 const callDpiStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_dpi_status',
 	expect: { '': {} }
 });
 
 const callStrategyList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_strategy_list',
 	expect: { '': {} }
 });
 
 const callStrategyUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_strategy_update',
 	expect: { '': {} }
 });
 
 const callStrategyStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_strategy_status',
 	expect: { '': {} }
 });
 
 const callStrategyApply = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_strategy_apply',
 	expect: { '': {} }
 });
 
 const callFuzzGenerate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_fuzz_generate',
 	expect: { '': {} }
 });
@@ -121,7 +121,7 @@ const callFuzzGenerate = rpc.declare({
 /* ч.123: local strategies import (share the corpus between routers). The
  * payload crosses as a JSON-encoded STRING (issue #11 string-policy). */
 const callCorpusImport = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_corpus_import',
 	params: [ 'candidates' ],
 	expect: { '': {} }
@@ -130,33 +130,33 @@ const callCorpusImport = rpc.declare({
 /* The Strategy Lab backend RPCs are UNCHANGED (ч.69/70) — the panel moved
  * here from node.js, the server side did not. */
 const callZapretTest = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_strategy_test',
 	params: [ 'cmd_opts', 'ips' ],
 	expect: { '': {} }
 });
 
 const callZapretResolve = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_resolve_hosts',
 	expect: { '': {} }
 });
 
 const callFuzzStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_fuzz_start',
 	params: [ 'mode', 'rounds' ],
 	expect: { '': {} }
 });
 
 const callFuzzStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_fuzz_status',
 	expect: { '': {} }
 });
 
 const callFuzzApply = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_fuzz_apply',
 	params: [ 'strategy' ],
 	expect: { '': {} }
@@ -167,14 +167,14 @@ const callFuzzApply = rpc.declare({
  * the option flags that used to live on those tabs); Test / Test-all
  * reuse the existing byedpi_strategy_test tester. */
 const callByedpiSet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_byedpi_set',
 	params: [ 'cmd_opts', 'udp_over_tcp', 'block_quic', 'zapret_voice' ],
 	expect: { '': {} }
 });
 
 const callByedpiTest = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_strategy_test',
 	params: [ 'cmd_opts', 'port' ],
 	expect: { '': {} }
@@ -185,7 +185,7 @@ const callByedpiTest = rpc.declare({
  * explicit `strategy` skips the fuzz+pick stages (the «apply from the
  * ranking table» flow reuses the same rule/apply/verify machinery). */
 const callAutoPickStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_auto_pick_start',
 	params: [ 'resource', 'mode', 'set_rule', 'strategy' ],
 	expect: { '': {} }
@@ -194,7 +194,7 @@ const callAutoPickStart = rpc.declare({
 /* ч.109: composition DRAFT persistence — the server keeps the per-resource
  * profile list, so the builder survives page reloads. */
 const callComposeSave = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_compose_save',
 	params: [ 'profiles' ],
 	expect: { '': {} }
@@ -204,14 +204,14 @@ const callComposeSave = rpc.declare({
  * configured path — the Serving map «Check» button (YouTube is probed
  * on the page, the thumbnail CDN and the video-stream edge). */
 const callDpiProbe = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_dpi_probe',
 	params: [ 'resource' ],
 	expect: { '': {} }
 });
 
 const callAutoPickStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_auto_pick_status',
 	expect: { '': {} }
 });
@@ -221,13 +221,13 @@ const callAutoPickStatus = rpc.declare({
  * 'works' поднимает стратегию во всех выборщиках, 'broken' исключает её из
  * автоподбора и опускает в таблице. */
 const callDeviceVerdicts = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_device_verdicts',
 	expect: { '': {} }
 });
 
 const callDeviceVerdictSet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_device_verdict_set',
 	params: [ 'resource', 'strategy', 'verdict' ],
 	expect: { '': {} }
@@ -237,7 +237,7 @@ const callDeviceVerdictSet = rpc.declare({
  * page now (level «DPI auto-pilot»); the STATUS still rides this page for
  * the Serving map and the Quality panels. Only the status RPC stays. */
 const callAutoPilotStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_autopilot_status',
 	expect: { '': {} }
 });
@@ -246,27 +246,27 @@ const callAutoPilotStatus = rpc.declare({
  * snapshots the previous strategies on the SERVER, so the rollback button
  * reads the snapshot back on every page load (no JS-memory rollback). */
 const callComposeRun = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_compose_run',
 	params: [ 'profiles' ],
 	expect: { '': {} }
 });
 
 const callComposeStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_compose_status',
 	expect: { '': {} }
 });
 
 const callComposeApply = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_compose_apply',
 	params: [ 'zapret', 'byedpi' ],
 	expect: { '': {} }
 });
 
 const callComposeRollback = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_compose_rollback',
 	expect: { '': {} }
 });

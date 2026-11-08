@@ -26,14 +26,14 @@ const callServiceList = rpc.declare({
 });
 
 const callActiveNode = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'clash_active_node',
 	params: ['tag'],
 	expect: { '': {} }
 });
 
 const callHotswapStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'hotswap_status',
 	expect: { '': {} }
 });
@@ -43,26 +43,26 @@ const callHotswapStatus = rpc.declare({
  * Connection page, NOT in the automation settings. UCI keys stay
  * homeproxy.automation.*; the save goes through the tracked-op RPC. */
 const callGeoStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_geo_status',
 	expect: { '': {} }
 });
 
 const callGeoUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_geo_update',
 	expect: { '': {} }
 });
 
 const callGeoProtectSet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_geo_protect_set',
 	params: [ 'protect', 'auto_update', 'hours' ],
 	expect: { '': {} }
 });
 
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }
@@ -71,38 +71,38 @@ const callOpStatus = rpc.declare({
 const CORE_MGMT = '/usr/share/homeproxy/scripts/core_mgmt.uc';
 
 const callByeDPIStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_status',
 	expect: { '': {} }
 });
 
 const callByeDPIPrepareInstall = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_prepare_install',
 	expect: { '': {} }
 });
 
 const callByeDPIInstallPkg = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_install_pkg',
 	params: ['tmp_path', 'pkg_manager'],
 	expect: { '': {} }
 });
 
 const callZapretStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_status',
 	expect: { '': {} }
 });
 
 const callZapretPrepareInstall = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_prepare_install',
 	expect: { '': {} }
 });
 
 const callZapretInstallPkg = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_install_pkg',
 	params: ['tmp_path', 'pkg_manager'],
 	expect: { '': {} }

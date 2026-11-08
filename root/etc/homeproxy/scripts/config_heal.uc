@@ -259,7 +259,7 @@ const REQUIRED_FILES = [
 	'/etc/homeproxy/scripts/generate_client.uc',
 	'/etc/homeproxy/scripts/multidns.uc',
 	'/etc/homeproxy/scripts/automation.uc',
-	'/usr/share/rpcd/ucode/luci.homeproxy'
+	'/usr/share/rpcd/ucode/luci.ravnex'
 ];
 
 function check_files() {

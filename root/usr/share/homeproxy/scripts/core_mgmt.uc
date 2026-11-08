@@ -283,7 +283,7 @@ function core_features_cached(bin) {
 /* ── §1.7 Own package feed — V2, EXPLICIT FILES ONLY (session 150) ──────
  * Client contract = manifest.json (pkg → version → apk/ipk file + sha256);
  * NO repositories.d line is ever written (a foreign feed could then
- * out-version our components via `apk upgrade`). Mirrors the luci.homeproxy
+ * out-version our components via `apk upgrade`). Mirrors the luci.ravnex
  * feed block verbatim (ч.223 «mirrors verbatim» principle): same ladder
  * (raw → jsDelivr → UCI gh-proxy mirror), same cache/TTL, same explicit-
  * file install with the sha256 gate, same bounded sibling families.

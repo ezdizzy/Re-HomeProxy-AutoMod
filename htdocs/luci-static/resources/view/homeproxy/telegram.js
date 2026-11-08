@@ -26,13 +26,13 @@
 'require homeproxy as hp';
 
 const callTelegramStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'telegram_status',
 	expect: { '': {} }
 });
 
 const callTelegramSet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'telegram_set',
 	params: [
 		'enabled', 'token', 'chat_id', 'mute',
@@ -45,14 +45,14 @@ const callTelegramSet = rpc.declare({
 });
 
 const callTelegramTest = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'telegram_test',
 	expect: { '': {} }
 });
 
 /* Ф8.7: «прислать пример» категории — rpcd sends an honest sample push. */
 const callTelegramPreview = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'telegram_preview',
 	params: [ 'category' ],
 	expect: { '': {} }
@@ -60,14 +60,14 @@ const callTelegramPreview = rpc.declare({
 
 /* Ф8.1 security core: one-time 60 s pairing code + RBAC user management. */
 const callTelegramPairGen = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'telegram_pair_generate',
 	params: [ 'role' ],
 	expect: { '': {} }
 });
 
 const callTelegramUserRemove = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'telegram_user_remove',
 	params: [ 'user' ],
 	expect: { '': {} }

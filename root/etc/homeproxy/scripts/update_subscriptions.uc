@@ -128,7 +128,7 @@ const node_cache = {},
       node_result = [];
 
 const ubus = connect();
-const sing_features = ubus.call('luci.homeproxy', 'singbox_get_features', {}) || {};
+const sing_features = ubus.call('luci.ravnex', 'singbox_get_features', {}) || {};
 /* Common var end */
 
 /* Log */

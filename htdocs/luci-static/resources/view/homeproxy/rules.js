@@ -39,7 +39,7 @@ let stubValidator = {
 };
 
 const callPresetList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_preset_list',
 	expect: { '': {} }
 });
@@ -57,14 +57,14 @@ function routingModeLabelOf(mode) {
 }
 
 const callPresetApply = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_preset_apply',
 	params: [ 'source', 'node', 'urltest_nodes' ],
 	expect: { '': {} }
 });
 
 const callRouteExplain = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'route_explain',
 	params: [ 'host' ],
 	expect: { '': {} }
@@ -78,20 +78,20 @@ const callServiceList = rpc.declare({
 });
 
 const callServiceCheck = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_service_check',
 	params: [ 'service' ],
 	expect: { '': {} }
 });
 
 const callAiNodesCheck = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_ai_nodes_check',
 	expect: { '': {} }
 });
 
 const callPresetDelete = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_preset_delete',
 	params: [ 'section_id' ],
 	expect: { '': {} }
@@ -100,7 +100,7 @@ const callPresetDelete = rpc.declare({
 /* Ф4.2 (U7): the "add a rule" master — ALWAYS creates a NEW rule section
  * (an extra exit for the same service is a legitimate shape). */
 const callPresetAdd = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_preset_add',
 	params: [ 'source', 'node', 'urltest_nodes' ],
 	expect: { '': {} }
@@ -108,64 +108,64 @@ const callPresetAdd = rpc.declare({
 
 /* ── User lists (менеджер списков, U7) ─────────────────────────────────── */
 const callListsList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'lists_list',
 	expect: { '': {} }
 });
 const callListCreate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_create',
 	params: [ 'name', 'kind', 'ctype', 'node', 'urltest_nodes', 'content' ],
 	expect: { '': {} }
 });
 const callListRead = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_read',
 	params: [ 'id' ],
 	expect: { '': {} }
 });
 const callListWrite = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_write',
 	params: [ 'id', 'content', 'mode' ],
 	expect: { '': {} }
 });
 const callListImport = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_import',
 	params: [ 'id', 'url', 'mode' ],
 	expect: { '': {} }
 });
 const callListUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_update',
 	params: [ 'id', 'name', 'node', 'enabled', 'urltest_nodes' ],
 	expect: { '': {} }
 });
 const callListDelete = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_delete',
 	params: [ 'id' ],
 	expect: { '': {} }
 });
 const callListExport = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_export',
 	params: [ 'id' ],
 	expect: { '': {} }
 });
 const callListBackupList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_backup_list',
 	expect: { '': {} }
 });
 const callListBackupCreate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_backup_create',
 	expect: { '': {} }
 });
 const callListBackupRestore = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'list_backup_restore',
 	params: [ 'dir' ],
 	expect: { '': {} }
@@ -174,7 +174,7 @@ const callListBackupRestore = rpc.declare({
 /* Ф1.1b: applies run as tracked operations — poll app_op_status until the
  * server-side verified verdict. */
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }

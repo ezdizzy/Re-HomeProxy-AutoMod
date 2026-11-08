@@ -19,7 +19,7 @@
  * flag) — snapshot restore (and any op-carrying reply) is polled to the
  * honest verdict instead of a wishful success. */
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }
@@ -74,13 +74,13 @@ function pollOp(opId, onDone) {
  * sentinel daemons; reactive passes (incidents, operation progress) are
  * never scaled (D34h). Per-boot facts: fetched once + every 60 s. */
 const callResProfile = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'res_profile',
 	expect: { '': {} }
 });
 
 const callResProfileSet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'res_profile_set',
 	params: [ 'mode' ],
 	expect: { '': {} }
@@ -276,7 +276,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 	}
 
 	const callLogClean = rpc.declare({
-		object: 'luci.homeproxy',
+		object: 'luci.ravnex',
 		method: 'log_clean',
 		params: ['type'],
 		expect: { '': {} }
@@ -352,143 +352,143 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 const CORE_MGMT = '/usr/share/homeproxy/scripts/core_mgmt.uc';
 
 const callCurlStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'curl_status',
 	expect: { '': {} }
 });
 
 const callCurlInstall = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'curl_install',
 	expect: { '': {} }
 });
 
 const callCurlRemove = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'curl_remove',
 	expect: { '': {} }
 });
 
 const callByeDPIStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_status',
 	expect: { '': {} }
 });
 
 const callByeDPIPrepareInstall = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_prepare_install',
 	expect: { '': {} }
 });
 
 const callByeDPIInstallPkg = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_install_pkg',
 	params: ['tmp_path', 'pkg_manager'],
 	expect: { '': {} }
 });
 
 const callByeDPIRemove = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_remove',
 	expect: { '': {} }
 });
 
 const callZapretStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_status',
 	expect: { '': {} }
 });
 
 const callZapretPrepareInstall = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_prepare_install',
 	expect: { '': {} }
 });
 
 const callZapretInstallPkg = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_install_pkg',
 	params: ['tmp_path', 'pkg_manager'],
 	expect: { '': {} }
 });
 
 const callZapretRemove = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_remove',
 	expect: { '': {} }
 });
 
 const callAppStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_status',
 	expect: { '': {} }
 });
 
 const callMultidnsStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'multidns_status',
 	expect: { '': {} }
 });
 
 const callMosdnsStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'mosdns_status',
 	expect: { '': {} }
 });
 
 const callMosdnsPrepareInstall = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'mosdns_prepare_install',
 	expect: { '': {} }
 });
 
 const callMosdnsInstallPkg = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'mosdns_install_pkg',
 	params: ['tmp_path'],
 	expect: { '': {} }
 });
 
 const callMosdnsRemove = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'mosdns_remove',
 	expect: { '': {} }
 });
 
 const callByeDPICheckUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'byedpi_check_update',
 	expect: { '': {} }
 });
 
 const callZapretCheckUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'zapret_check_update',
 	expect: { '': {} }
 });
 
 const callMosdnsCheckUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'mosdns_check_update',
 	expect: { '': {} }
 });
 
 /* §1.7 Own apk feed (client side). */
 const callFeedStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'feed_status',
 	expect: { '': {} }
 });
 
 const callFeedSetup = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'feed_setup',
 	expect: { '': {} }
 });
 
 const callFeedRemove = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'feed_remove',
 	expect: { '': {} }
 });
@@ -496,7 +496,7 @@ const callFeedRemove = rpc.declare({
 /* V2 explicit-file install from the update source (byedpi/zapret2/mosdns
  * cards call it when prepare_install returned a feed hit). */
 const callFeedInstallPkg = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'install_feed_pkg',
 	params: [ 'pkg' ],
 	expect: { '': {} }
@@ -651,19 +651,19 @@ function buildMosdnsCard(mdns, mos) {
 }
 
 const callAppCheckUpdate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_check_update',
 	expect: { '': {} }
 });
 
 const callAppPrepareInstall = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_prepare_install',
 	expect: { '': {} }
 });
 
 const callAppInstallPkg = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_install_pkg',
 	params: ['app_path', 'i18n_path', 'pkg_manager'],
 	expect: { '': {} }
@@ -671,13 +671,13 @@ const callAppInstallPkg = rpc.declare({
 
 /* Сеанс 158/Б6: самообновление в op-машине (download+install+rpcd restart). */
 const callAppUpdateStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_update_start',
 	expect: { '': {} }
 });
 
 const callCoreSkipped = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'core_skipped',
 	expect: { '': {} }
 });
@@ -687,14 +687,14 @@ const callCoreSkipped = rpc.declare({
  * status into /var/run/homeproxy/core_install.json; the card polls it.
  * A ~46-95 MB download used to freeze the tab for minutes. */
 const callCoreInstallStart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'core_install_start',
 	params: [ 'core', 'variant' ],
 	expect: { '': {} }
 });
 
 const callCoreInstallStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'core_install_status',
 	expect: { '': {} }
 });
@@ -703,13 +703,13 @@ const callCoreInstallStatus = rpc.declare({
  * the LIVE config with their local cold-start copies; seed pre-downloads
  * the missing ones (detached runner, progress in the status reply). */
 const callRulesetsLocalStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_rulesets_local_status',
 	expect: { '': {} }
 });
 
 const callRulesetsLocalSeed = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_rulesets_local_seed',
 	params: [ 'force' ],
 	expect: { '': {} }
@@ -951,7 +951,7 @@ function buildZapretCard(zapret, isMainNode) {
 	const labBtn = mkBtn(_('Strategy Lab'), 'ghost', {
 		style: 'margin-left:4px'
 	});
-	labBtn.onclick = () => { location.href = L.url('admin/services/homeproxy/bypass'); };
+	labBtn.onclick = () => { location.href = L.url('admin/services/ravnex/bypass'); };
 
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
@@ -1204,23 +1204,23 @@ function callCoreRemove(core) {
 
 /* ч.69: snapshot + recovery RPCs. */
 const callSnapshotCreate = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_snapshot_create',
 	expect: { '': {} }
 });
 const callSnapshotList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_snapshot_list',
 	expect: { '': {} }
 });
 const callSnapshotRestore = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_snapshot_restore',
 	params: [ 'name' ],
 	expect: { '': {} }
 });
 const callRestoreInternet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_restore_internet',
 	expect: { '': {} }
 });
@@ -1854,7 +1854,7 @@ return view.extend({
 
 		if (!features.core_type) {
 			const callDetectCustomCore = rpc.declare({
-				object: 'luci.homeproxy',
+				object: 'luci.ravnex',
 				method: 'detect_custom_core',
 				params: ['path'],
 				expect: { '': {} }

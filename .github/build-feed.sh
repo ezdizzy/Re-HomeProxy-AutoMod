@@ -34,7 +34,7 @@
 #     zapret2                          1andrevich ipk → repack
 #
 # arch→asset tables mirror the app exactly (core_mgmt.uc HIDDIFY_UPSTREAM_ASSET,
-# luci.homeproxy byedpi/zapret2 maps) so a feed package exists wherever the
+# luci.ravnex byedpi/zapret2 maps) so a feed package exists wherever the
 # app knows how to run the component. Labels with no upstream asset simply
 # omit that component from the arch's manifest (the client falls back to the
 # asset path / installer).

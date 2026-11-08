@@ -87,7 +87,7 @@ function main() {
 		wstat(res);
 		/* One ubus call into the existing tester; -t 45 caps the wait. */
 		const payload = sprintf('{"cmd_opts":%.J}', byedpi);
-		const fd = popen(`ubus -t 45 call luci.homeproxy byedpi_strategy_test ${sq(payload)} 2>/dev/null`);
+		const fd = popen(`ubus -t 45 call luci.ravnex byedpi_strategy_test ${sq(payload)} 2>/dev/null`);
 		let out = '';
 		if (fd) { out = trim(fd.read('all') || ''); fd.close(); }
 		try { res.byedpi.test = json(out || ''); } catch (e) { res.byedpi.test = null; }

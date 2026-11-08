@@ -66,7 +66,7 @@
  *     /switch N — audit 42); /users lists the RBAC state (Admin+).
  *
  * Ф8.2 Subsystem split (ч.185):
- *   - ALL mutations from the chat ride the Control API (luci.homeproxy RPC,
+ *   - ALL mutations from the chat ride the Control API (luci.ravnex RPC,
  *     audit 1.5/TG-06) — mute/pin/pairing/service via ubus, «Контроль»
  *     device/rule/wifi/pause actions via the control_* RPC door; the Clash
  *     API PUT/DELETE (switch, /close) stays the core's own control plane
@@ -340,12 +340,12 @@ function uci_list(opt) {
 }
 
 /* Control API bridge (Ф8.2, аудит 1.5/TG-06): ВСЕ мутации из чата идут
- * через ту же RPC-дверь luci.homeproxy, что и UI. Возвращает разбор ответа
+ * через ту же RPC-дверь luci.ravnex, что и UI. Возвращает разбор ответа
  * или null (честный отказ — вызывающий сообщает об ошибке). Аргументы —
  * только строки (rpcd string-policy, урок 132). */
 function ubus_call(method, args, timeout_s) {
 	const t = (timeout_s != null && timeout_s > 0 && timeout_s <= 60) ? int(timeout_s) : 10;
-	const cmd = `ubus -t ${t} call luci.homeproxy ${method} ${shellquote(sprintf('%J', args))}`;
+	const cmd = `ubus -t ${t} call luci.ravnex ${method} ${shellquote(sprintf('%J', args))}`;
 	const raw = capture(cmd);
 	let j = null;
 	try { j = json(raw || ''); } catch (e) { j = null; }
@@ -979,7 +979,7 @@ function do_service(action, chat_id) {
 }
 
 function cmd_snapshot() {
-	const raw = capture(`ubus -t 30 call luci.homeproxy app_snapshot_create 2>/dev/null`);
+	const raw = capture(`ubus -t 30 call luci.ravnex app_snapshot_create 2>/dev/null`);
 	let j = null;
 	try { j = json(raw || ''); } catch (e) { j = null; }
 	if (j && j.result === true && j.snapshot)
@@ -988,7 +988,7 @@ function cmd_snapshot() {
 }
 
 function cmd_status_engine() {
-	const raw = capture(`ubus -t 8 call luci.homeproxy wizard_dpi_status 2>/dev/null`);
+	const raw = capture(`ubus -t 8 call luci.ravnex wizard_dpi_status 2>/dev/null`);
 	let j = null;
 	try { j = json(raw || ''); } catch (e) { j = null; }
 	if (!j || !j.zapret)

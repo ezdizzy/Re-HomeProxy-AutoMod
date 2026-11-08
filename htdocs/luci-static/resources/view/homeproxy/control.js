@@ -27,131 +27,131 @@
 'require homeproxy as hp';
 
 const callStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_status',
 	expect: { '': {} }
 });
 
 const callSet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_set',
 	params: [ 'enabled' ],
 	expect: { '': {} }
 });
 
 const callSetPaused = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_set_paused',
 	params: [ 'paused' ],
 	expect: { '': {} }
 });
 
 const callClientBlock = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_block',
 	params: [ 'id', 'blocked' ],
 	expect: { '': {} }
 });
 
 const callClientTempBlock = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_temp_block',
 	params: [ 'id', 'minutes' ],
 	expect: { '': {} }
 });
 
 const callClientTempAllow = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_temp_allow',
 	params: [ 'id', 'minutes' ],
 	expect: { '': {} }
 });
 
 const callClientWifiBlock = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_client_wifi_block',
 	params: [ 'id', 'blocked' ],
 	expect: { '': {} }
 });
 
 const callRuleAdd = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_rule_add',
 	params: [ 'name', 'type', 'targets', 'client_ids', 'time_start', 'time_stop', 'days', 'date_start', 'date_stop' ],
 	expect: { '': {} }
 });
 
 const callRuleDelete = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_rule_delete',
 	params: [ 'id' ],
 	expect: { '': {} }
 });
 
 const callRuleToggle = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_rule_toggle',
 	params: [ 'id', 'enabled' ],
 	expect: { '': {} }
 });
 
 const callRulePause = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_rule_pause',
 	params: [ 'id', 'minutes' ],
 	expect: { '': {} }
 });
 
 const callRuleResume = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_rule_resume',
 	params: [ 'id' ],
 	expect: { '': {} }
 });
 
 const callScheduleAdd = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_schedule_add',
 	params: [ 'name', 'type', 'action', 'time_start', 'time_stop', 'days', 'date_start', 'date_stop', 'client_ids', 'wifi_ids' ],
 	expect: { '': {} }
 });
 
 const callScheduleDelete = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_schedule_delete',
 	params: [ 'id' ],
 	expect: { '': {} }
 });
 
 const callScheduleToggle = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_schedule_toggle',
 	params: [ 'id', 'enabled' ],
 	expect: { '': {} }
 });
 
 const callWifiStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_wifi_status',
 	expect: { '': {} }
 });
 
 const callWifiSet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_wifi_set',
 	params: [ 'iface', 'disabled' ],
 	expect: { '': {} }
 });
 
 const callWifiTemp = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_wifi_temp',
 	params: [ 'iface', 'minutes' ],
 	expect: { '': {} }
 });
 
 const callWifiTempClear = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_wifi_temp_clear',
 	params: [ 'iface' ],
 	expect: { '': {} }

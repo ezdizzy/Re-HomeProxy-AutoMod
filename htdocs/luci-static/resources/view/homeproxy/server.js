@@ -72,7 +72,7 @@ function handleGenKey(option) {
 	}, this);
 
 	const callSingBoxGenerator = rpc.declare({
-		object: 'luci.homeproxy',
+		object: 'luci.ravnex',
 		method: 'singbox_generator',
 		params: ['type', 'params'],
 		expect: { '': {} }
@@ -152,7 +152,7 @@ function suggestPort() {
 
 function openWizard(preset, grid) {
 	const callGen = rpc.declare({
-		object: 'luci.homeproxy',
+		object: 'luci.ravnex',
 		method: 'singbox_generator',
 		params: ['type', 'params'],
 		expect: { '': {} }
@@ -1118,7 +1118,7 @@ return view.extend({
 		o.depends({'tls': '1', 'tls_cert_path': '/etc/homeproxy/certs/server_publickey.pem'});
 		o.onclick = L.bind(function(ev) {
 			const callServerCertGenerate = rpc.declare({
-				object: 'luci.homeproxy',
+				object: 'luci.ravnex',
 				method: 'server_cert_generate',
 				expect: { '': {} }
 			});

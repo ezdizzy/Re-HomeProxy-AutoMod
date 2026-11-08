@@ -841,7 +841,7 @@ function preset_apply(src, node) {
 	 * typehint is the only rpcd args policy that works on old AND strict new
 	 * rpcd stacks). */
 	const payload = sprintf('{"source":%.J,"node":%.J,"urltest_nodes":"[]"}', src, node);
-	const out = popen_read(`ubus call luci.homeproxy wizard_preset_apply ${sq(payload)}`);
+	const out = popen_read(`ubus call luci.ravnex wizard_preset_apply ${sq(payload)}`);
 	let pr = null;
 	try { pr = json(out || ''); } catch (e) { pr = null; }
 	return !!(pr && pr.result);
@@ -889,7 +889,7 @@ function compose_build(profiles) {
 	 * text embeds it as a quoted JSON string. */
 	const pj = sprintf('%.J', profiles);
 	const payload = sprintf('{"profiles":%.J}', pj);
-	const out = popen_read(`ubus call luci.homeproxy wizard_compose_build ${sq(payload)}`);
+	const out = popen_read(`ubus call luci.ravnex wizard_compose_build ${sq(payload)}`);
 	let pr = null;
 	try { pr = json(out || ''); } catch (e) { pr = null; }
 	if (!(pr && pr.result))
@@ -899,14 +899,14 @@ function compose_build(profiles) {
 
 function compose_apply(zapret) {
 	const payload = sprintf('{"zapret":%.J,"byedpi":""}', zapret);
-	const out = popen_read(`ubus call luci.homeproxy wizard_compose_apply ${sq(payload)}`);
+	const out = popen_read(`ubus call luci.ravnex wizard_compose_apply ${sq(payload)}`);
 	let pr = null;
 	try { pr = json(out || ''); } catch (e) { pr = null; }
 	return !!(pr && pr.result);
 }
 
 function compose_rollback() {
-	const out = popen_read('ubus call luci.homeproxy wizard_compose_rollback');
+	const out = popen_read('ubus call luci.ravnex wizard_compose_rollback');
 	let pr = null;
 	try { pr = json(out || ''); } catch (e) { pr = null; }
 	return !!(pr && pr.result);

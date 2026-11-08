@@ -35,7 +35,7 @@
 'require homeproxy as hp';
 
 const callStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_status',
 	expect: { '': {} }
 });
@@ -44,27 +44,27 @@ const callStatus = rpc.declare({
  * the daemon writes a small stats file each cycle; this never parses the
  * heavy automation_state.json. */
 const callStats = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_stats',
 	expect: { '': {} }
 });
 
 const callEntryAdd = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_entry_add',
 	params: [ 'entry', 'action' ],
 	expect: { '': {} }
 });
 
 const callEntryDelete = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_entry_delete',
 	params: [ 'entry' ],
 	expect: { '': {} }
 });
 
 const callEntryAction = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_entry_action',
 	params: [ 'entry', 'action' ],
 	expect: { '': {} }
@@ -73,13 +73,13 @@ const callEntryAction = rpc.declare({
 /* Ф7.1: the scheduled DPI auto-pilot moved here from the Blocking bypass
  * page (its logical home is automation). Same RPCs, same contract. */
 const callAutoPilotStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_autopilot_status',
 	expect: { '': {} }
 });
 
 const callAutoPilotSet = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_autopilot_set',
 	params: [ 'enabled', 'resources', 'set_rules', 'interval_h', 'check_min', 'window', 'fuzz_mode', 'fail_strikes', 'night_pick' ],
 	expect: { '': {} }
@@ -87,7 +87,7 @@ const callAutoPilotSet = rpc.declare({
 
 /* Сеанс 158/Б8: явное снятие удержания Hot Swap (плановая переразметка). */
 const callAutoPilotHoldRelease = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'wizard_autopilot_hold_release',
 	expect: { '': {} }
 });
@@ -95,26 +95,26 @@ const callAutoPilotHoldRelease = rpc.declare({
 /* Ф7.3: the automation-family Event Bus feed (Журналы level) — the same
  * journal the Health center renders, filtered to the automation family. */
 const callEvents = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'control_events',
 	params: [ 'limit' ],
 	expect: { '': {} }
 });
 
 const callClear = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_clear',
 	expect: { '': {} }
 });
 
 const callClearLog = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_clear_log',
 	expect: { '': {} }
 });
 
 const callTestNow = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_test_now',
 	expect: { '': {} }
 });
@@ -122,32 +122,32 @@ const callTestNow = rpc.declare({
 /* Outage guard (2026-11-03): manual accelerated re-check of the whole
  * learned list — entries answering directly are unlearned within minutes. */
 const callRecheck = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_recheck',
 	expect: { '': {} }
 });
 
 const callHelpersInstall = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_helpers_install',
 	expect: { '': {} }
 });
 
 const callBackup = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_backup',
 	expect: { '': {} }
 });
 
 const callRestore = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'automation_restore',
 	params: ['content'],
 	expect: { '': {} }
 });
 
 const callRestart = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'diag_service_restart',
 	expect: { '': {} }
 });
@@ -155,7 +155,7 @@ const callRestart = rpc.declare({
 /* Ф1.1b: applies run as tracked operations (stages + server-side verified
  * flag) — poll app_op_status until completed/failed. */
 const callOpStatus = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.ravnex',
 	method: 'app_op_status',
 	params: [ 'op_id' ],
 	expect: { '': {} }
@@ -840,7 +840,7 @@ return view.extend({
 		panes.dpi.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('The DPI auto-pilot keeps the bypass strategies working without attention: on schedule it re-ranks the tested strategies and applies the best one per resource; when a resource stops answering, the next alternative applies immediately. Every apply takes a server snapshot (Restore stays available) and verifies the resource live. One-click picks and fresh measurements live on the Blocking bypass page — the Strategy Lab.') ]));
 		panes.dpi.appendChild(E('div', { 'class': 'automation-actions' }, [
-			E('a', { 'class': 'hpui-btn hpui-btn-ghost', 'href': L.url('admin/services/homeproxy/bypass') },
+			E('a', { 'class': 'hpui-btn hpui-btn-ghost', 'href': L.url('admin/services/ravnex/bypass') },
 				[ _('Strategy Lab and one-click auto-pick') ])
 		]));
 		panes.dpi.appendChild(E('div', { style: 'margin-top:10px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
@@ -1547,7 +1547,7 @@ return view.extend({
 				if (g.updating)
 					geoLine.appendChild(document.createTextNode(' · ' + _('updating…')));
 				geoLine.appendChild(document.createTextNode(' — '));
-				geoLine.appendChild(E('a', { 'href': L.url('admin/services/homeproxy/client') },
+				geoLine.appendChild(E('a', { 'href': L.url('admin/services/ravnex/client') },
 					[ _('the RU-protection card on the Connection page') ]));
 				/* Native helpers + engine profile (like the mosdns card on Core
 				 * & Tools, but inline where the engine is configured). probe_pool
