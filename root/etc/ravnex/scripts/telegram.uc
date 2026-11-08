@@ -1317,6 +1317,7 @@ const HELP = '<b>Команды</b>\n' +
 	'/diagnostics — прицельная диагностика: демоны, RPC, хвосты журналов\n' +
 	'/audit [N] [слово] — журнал действий из чата и контроля (админ+)\n' +
 	'/mute · /unmute — пуш-уведомления вкл/выкл\n' +
+	'/alerts — тумблеры категорий уведомлений (оператор+)\n' +
 	'/users — пользователи и роли (админ+)\n' +
 	'/restart — перезапуск службы\n' +
 	'/help — этот список\n\n' +
@@ -1418,7 +1419,7 @@ function main_menu_kb() {
 		[ [ '🩺 Доктор', 'act:doctor' ], [ '🛠 Ремонт', 'act:repair' ] ],
 		[ [ '🆘 Safe Mode', 'act:safe' ], [ '🎚 Режим', 'act:mode' ] ],
 		[ [ '⚙️ Движки', 'act:engine' ], [ '⬆ Обновления', 'act:update' ] ],
-		[ [ '📋 Подписки', 'act:subs' ] ],
+		[ [ '📋 Подписки', 'act:subs' ], [ '🔔 Уведомления', 'act:alerts' ] ],
 		[ [ '❓ Помощь', 'act:help' ] ]
 	]);
 }
@@ -2658,6 +2659,57 @@ function sub_add_cmd(chat_id, rest) {
 
 /* ── dispatch ─────────────────────────────────────────────────────────── */
 
+/* ── /alerts (дизайн ч.260, реализация ч.261): тумблеры категорий пушей ──
+ * Категории = РОВНО allowlist RPC-двери telegram_flag_set (11 push-категорий
+ * + окно тишины). Окно HH:MM (quiet_from/to) правится ТОЛЬКО в LuCI — тут
+ * только сам тумблер quiet_enabled. Инвариант Ф8.5 показывается в тексте:
+ * критические тревоги и честные «восстановлено» гейтами не глушатся. */
+const ALERT_KEYS = [
+	[ 'push_hotswap', 'Hot Swap' ],
+	[ 'push_watchdog', 'Watchdog' ],
+	[ 'push_learn', 'Самообучение' ],
+	[ 'push_service', 'Служба' ],
+	[ 'push_control', 'Контроль' ],
+	[ 'push_exec', 'Эхо команд' ],
+	[ 'push_health', 'Здоровье' ],
+	[ 'push_autopilot', 'Автопилот' ],
+	[ 'push_safe', 'Safe Mode' ],
+	[ 'push_update', 'Обновления' ],
+	[ 'push_security', 'Безопасность' ],
+	[ 'quiet_enabled', 'Тихие часы' ]
+];
+
+function alerts_text() {
+	let out = '<b>🔔 Уведомления — категории</b>\n';
+	out += 'Кнопки ниже — тумблеры категорий (✅ вкл / ⛔ выкл). /mute глушит всё разом, /unmute возвращает.\n';
+	out += 'Инвариант: <b>критические</b> тревоги (ядро лежит, подписка умерла) и честные «восстановлено» проходят ВСЕГДА — порог частоты, тихие часы и тумблеры их не глушат.\n';
+	if (cfg.quiet_enabled === '1')
+		out += '🌙 Тихие часы: <b>вкл</b> — окно ' + esc_html(cfg.quiet_from || '23:00') + '–' +
+			esc_html(cfg.quiet_to || '08:00') + ' (локальное время роутера).\n';
+	else
+		out += '🌙 Тихие часы: выкл. Окно (' + esc_html(cfg.quiet_from || '23:00') + '–' +
+			esc_html(cfg.quiet_to || '08:00') + ') правится только в LuCI (Доступ и Telegram).\n';
+	return out;
+}
+
+function alerts_kb() {
+	const rows = [];
+	let row = [];
+	for (let i = 0; i < length(ALERT_KEYS); i++) {
+		const k = ALERT_KEYS[i][0];
+		const on = (cfg[k] === '1');
+		push(row, [ ALERT_KEYS[i][1] + ': ' + (on ? '✅' : '⛔'), 'alt:' + k ]);
+		if (length(row) === 2) {
+			push(rows, row);
+			row = [];
+		}
+	}
+	if (length(row))
+		push(rows, row);
+	push(rows, [ [ '🏠 Главная', 'act:menu' ] ]);
+	return kb_rows(rows);
+}
+
 /* Minimum role per command (Ф8.1, audit 1.1): the gate runs BEFORE any
  * dispatch — including the «Контроль» module commands. */
 const CMD_MIN = {
@@ -2668,6 +2720,7 @@ const CMD_MIN = {
 	subs: 'viewer', subadd: 'admin',
 	safe: 'operator', safeoff: 'operator',
 	switch: 'operator', close: 'operator', mute: 'operator', unmute: 'operator',
+	alerts: 'operator',
 	pause: 'operator', resume: 'operator',
 	service: 'admin', restart: 'admin', snapshot: 'admin', logs: 'admin',
 	diagnostics: 'admin', audit: 'admin',
@@ -2767,6 +2820,8 @@ function handle_command(chat_id, text, role, uid) {
 			tg_send_html(chat_id, '🔔 Пуш-уведомления включены.', null);
 		} else
 			tg_send_html(chat_id, '⚠ Не удалось: ' + esc_html('' + ((r && r.error) || 'rpcd недоступен')), null);
+	} else if (cmd === 'alerts') {
+		tg_send_html(chat_id, alerts_text(), alerts_kb());
 	} else if (cmd === 'mode') {
 		tg_send_html(chat_id, cmd_mode_text(), mode_kb());
 	} else if (cmd === 'safe') {
@@ -2818,6 +2873,7 @@ const CB_MIN_PREFIX = [
 	[ 'ctl:t120:', 'operator' ], [ 'ctl:t1440:', 'operator' ],
 	[ 'ctl:tunb:', 'operator' ], [ 'ctl:tal60:', 'operator' ], [ 'ctl:tal1440:', 'operator' ],
 	[ 'act:subupd:', 'admin' ], [ 'act:subdel:', 'admin' ],
+	[ 'alt:', 'operator' ],
 	[ 'ctl:pm:', 'admin' ], [ 'ctl:gm:', 'admin' ],
 	[ 'act:doctor', 'viewer' ],
 	[ 'ctl:devi:', 'viewer' ], [ 'ctl:dev:', 'viewer' ],
@@ -2980,6 +3036,16 @@ function handle_update(u) {
 		} else if (data === 'act:safe') {
 			tg_answer_cb(cbid, 'Safe Mode');
 			cmd_safe(chat_id);
+		} else if (data === 'act:alerts') {
+			/* панель /alerts из главного меню: роль operator+ (/cmd-гейт
+			 * сюда не применяется — кнопка видна всем, контент гейтим тут) */
+			if (!role_ok(role, 'operator')) {
+				audit(uid, role, 'deny', 'кнопка act:alerts — отклонено (нужно «operator»)');
+				tg_answer_cb(cbid, 'Недостаточно прав (нужен оператор+)');
+				return;
+			}
+			tg_answer_cb(cbid, 'Уведомления');
+			tg_send_html(chat_id, alerts_text(), alerts_kb());
 		} else if (data === 'act:update') {
 			tg_answer_cb(cbid, 'Обновления');
 			const uv = update_text();
@@ -2995,6 +3061,29 @@ function handle_update(u) {
 			cmd_safeoff(chat_id);
 		} else if (substr(data, 0, 4) === 'mdo:') {
 			cmd_mode_ask(chat_id, role, substr(data, 4));
+		} else if (substr(data, 0, 4) === 'alt:') {
+			/* тумблер категории уведомлений: data = 'alt:<key>' из allowlist */
+			const akey = substr(data, 4);
+			let arow = null;
+			for (let ai = 0; ai < length(ALERT_KEYS); ai++)
+				if (ALERT_KEYS[ai][0] === akey)
+					arow = ALERT_KEYS[ai];
+			if (arow == null) {
+				tg_answer_cb(cbid, 'Неизвестная категория');
+				return;
+			}
+			const acur = (cfg[akey] === '1') ? '1' : '0';
+			const anew = (acur === '1') ? '0' : '1';
+			const ar = ubus_call('telegram_flag_set', { key: akey, value: anew }, 10);
+			if (ar && ar.result === true) {
+				cfg[akey] = anew;
+				tg_answer_cb(cbid, (arow[1]) + ': ' + ((anew === '1') ? '🔔 включено' : '🔇 выключено'));
+				tg_send_html(chat_id, alerts_text(), alerts_kb());
+			} else {
+				tg_answer_cb(cbid, 'Не удалось');
+				tg_send_html(chat_id, '⚠ Не удалось переключить «' + esc_html(arow[1]) + '»: ' +
+					esc_html('' + ((ar && ar.error) || 'rpcd недоступен')), null);
+			}
 		} else if (substr(data, 0, 4) === 'rep:' || substr(data, 0, 4) === 'unb:') {
 			const key = substr(data, 4);
 			confirm_ask(chat_id, role, (substr(data, 0, 4) === 'rep:') ? 'repair' : 'unblock', key,
