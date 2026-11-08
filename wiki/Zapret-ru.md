@@ -60,7 +60,7 @@ Zapret подключён как **цель** маршрутизации, а н�
 | **Рекомендуемые** | Небольшой подобранный набор с понятными названиями (например, *Default (fake + multidisorder)*, *Multisplit*, *Fake only*). Начните отсюда. |
 | **Импортированные (каталог)** / **Сгенерированные** / **Полный пул тестирования** | Более крупные пулы с техническими названиями, используемые Strategy Lab и полным тестером. |
 
-Стратегии поставляются только для чтения в `/etc/homeproxy/zapret_candidates.json` и основаны на [bol-van/zapret2](https://github.com/bol-van/zapret2) (nfqws2/blockcheck2), часть адаптирована из [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT). Можно оставить селектор пустым и ввести свою строку опций в поле стратегии.
+Стратегии поставляются только для чтения в `/etc/ravnex/zapret_candidates.json` и основаны на [bol-van/zapret2](https://github.com/bol-van/zapret2) (nfqws2/blockcheck2), часть адаптирована из [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT). Можно оставить селектор пустым и ввести свою строку опций в поле стратегии.
 
 ### Мультистратегии и ТСПУ
 

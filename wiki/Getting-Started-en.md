@@ -70,7 +70,7 @@ and DPI bypass in the **[Routing Master](Routing-Master-en)**.
 Press **Save & apply**. Then start the service (it also starts at boot):
 
 ```sh
-/etc/init.d/homeproxy start
+/etc/init.d/ravnex start
 ```
 
 Logs live on the **Maintenance** page.

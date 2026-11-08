@@ -119,7 +119,7 @@ The `0x64` mark rule should appear as line 1.
 
 If you are on the latest release and still see this, run manually over SSH to check for errors:
 ```sh
-ucode /etc/homeproxy/scripts/update_subscriptions.uc
+ucode /etc/ravnex/scripts/update_subscriptions.uc
 ```
 
 ---

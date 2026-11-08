@@ -121,7 +121,7 @@ iptables -t mangle -L OUTPUT -n --line-numbers | head -5
 
 Если вы уже используете последний релиз и проблема сохраняется — запустите вручную через SSH, чтобы увидеть возможные ошибки:
 ```sh
-ucode /etc/homeproxy/scripts/update_subscriptions.uc
+ucode /etc/ravnex/scripts/update_subscriptions.uc
 ```
 
 ---

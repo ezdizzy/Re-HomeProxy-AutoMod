@@ -61,7 +61,7 @@ The **strategy picker** on the Blocking bypass page fills the strategy field for
 | **Recommended** | A small curated set, purpose-named (e.g. *Default (fake + multidisorder)*, *Multisplit*, *Fake only*). Start here. |
 | **Imported (catalog)** / **Generated** / **Full-test pool** | The larger technique-named pools used by the Strategy Lab and the full tester. |
 
-Strategies are shipped read-only in `/etc/homeproxy/zapret_candidates.json` and are based on [bol-van/zapret2](https://github.com/bol-van/zapret2) (nfqws2/blockcheck2) with some adapted from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT). You can also leave the picker empty and type your own option string in the strategy field.
+Strategies are shipped read-only in `/etc/ravnex/zapret_candidates.json` and are based on [bol-van/zapret2](https://github.com/bol-van/zapret2) (nfqws2/blockcheck2) with some adapted from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT). You can also leave the picker empty and type your own option string in the strategy field.
 
 ### Multi-strategies and TSPU
 
