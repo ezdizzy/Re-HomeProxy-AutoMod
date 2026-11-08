@@ -453,6 +453,44 @@ function feed_installed_version(pkg) {
 	return null;
 }
 
+/* Zoo coverage for the version gates: the PM record and the on-disk binary
+ * can DIVERGE (field case: apk record hiddify-core-4.1.0 = an old fork
+ * package while the binary is the 5.1.0 upstream tarball), and a file
+ * install overwrites the BINARY — live-proven on apk 3.0.5 (session 173):
+ * `apk add ./older.apk` downgrades silently ("Downgrading a -> b"), rewrites
+ * the world pin and exits 0. The downgrade gate therefore compares the feed
+ * candidate against the BINARY version too, whenever a probe exists. */
+function feed_bin_version(pkg) {
+	const bin = FEED_BIN_PATH[pkg];
+	if (!bin || !access(bin))
+		return null;
+	if (pkg === 'hiddify-core' || pkg === 'hiddify-core-compact' ||
+	    pkg === 'sing-box-extended' || pkg === 'sing-box-extended-lite') {
+		const bi = core_features_cached(bin);
+		return (bi && bi.version) ? '' + bi.version : null;
+	}
+	if (pkg === 'mosdns') {
+		const fd = popen(shellquote(bin) + ' version 2>/dev/null');
+		if (fd) {
+			const out = trim(fd.read('all'));
+			fd.close();
+			const m = match(out, /v?([0-9]+(\.[0-9]+)*)/);
+			return m ? m[1] : null;
+		}
+	}
+	if (pkg === 'probe_pool' || pkg === 'sni_sniffer') {
+		const fd = popen(shellquote(bin) + ' -version 2>/dev/null');
+		if (fd) {
+			const out = trim(fd.read('all'));
+			fd.close();
+			const m = match(out, /([0-9]+\.[0-9]+\.[0-9]+)/);
+			return m ? m[1] : null;
+		}
+	}
+	/* zapret2/byedpi: no stable -version probe — the PM record governs. */
+	return null;
+}
+
 /* V2 explicit-file install of one feed package (mirror of rpcd's
  * feed_install_pkg): manifest → exact file → ladder → sha256 gate →
  * `apk add ./x.apk` (signature checked by apk) | `opkg install ./x.ipk`
@@ -475,6 +513,21 @@ function feed_install_pkg(pkg) {
 		return { result: false, error: `the manifest has no ${pkg_manager} file for ${pkg}` };
 	if (!match(file, /^[a-z0-9][a-zA-Z0-9._-]*$/) || !match(sha, /^[0-9a-f]{64}$/))
 		return { result: false, error: 'invalid manifest record (file name/sha256)' };
+	/* 🔴 Downgrade honesty (mirror of the rpcd copy + zoo coverage, ch.248/260
+	 * + session 173): never silently downgrade. The gate holds against BOTH
+	 * the PM record and the probed binary — the zoo (record older than the
+	 * running binary) must not let a file-install regress the binary. A
+	 * repair/reinstall of the SAME version stays allowed (live-proven:
+	 * `apk add ./same.apk` reinstalls cleanly, rc=0). Checked BEFORE the
+	 * download — a refusal must not cost a 100 MB fetch. */
+	const prev_ver = feed_installed_version(pkg);
+	const bin_ver = feed_bin_version(pkg);
+	const known = [];
+	if (prev_ver != null) push(known, 'запись ' + prev_ver);
+	if (bin_ver != null) push(known, 'бинарник ' + bin_ver);
+	if ((prev_ver != null && feed_vercmp_base(feed_strip_rev('' + entry.version), feed_strip_rev('' + prev_ver)) < 0) ||
+	    (bin_ver != null && feed_vercmp_base(feed_strip_rev('' + entry.version), feed_strip_rev('' + bin_ver)) < 0))
+		return { result: false, error: `в фиде ${pkg} ${entry.version} не новее установленного (${join(', ', known)}) — установка отменена` };
 	const tmp = `/tmp/feed_${pkg}.${pkg_manager}`;
 	const got = feed_fetch(feed_rel(file), tmp, 300000);
 	if (!got.ok)

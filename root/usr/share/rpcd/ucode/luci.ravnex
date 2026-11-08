@@ -2824,6 +2824,43 @@ function feed_installed_version(pkg) {
 	return null;
 }
 
+/* Zoo coverage for the version gates (session 173, mirror of the core_mgmt
+ * copy): the PM record and the on-disk binary can DIVERGE (field case: apk
+ * record hiddify-core-4.1.0 = an old fork package while the binary is the
+ * 5.1.0 upstream tarball), and a file install overwrites the BINARY —
+ * live-proven on apk 3.0.5: `apk add ./older.apk` downgrades silently
+ * ("Downgrading a -> b"), rewrites the world pin and exits 0. The downgrade
+ * gate compares the feed candidate against the BINARY version too. */
+function feed_bin_version(pkg) {
+	const bin = FEED_BIN_PATH[pkg];
+	if (!bin || !access(bin))
+		return null;
+	if (bin == '/usr/bin/hiddify-core' || bin == '/usr/bin/sing-box') {
+		const info = hp_core_features_cached(bin);
+		return (info && info.version) ? '' + info.version : null;
+	}
+	if (pkg == 'mosdns') {
+		const fd = popen(shellquote(bin) + ' version 2>/dev/null');
+		if (fd) {
+			const out = trim(fd.read('all'));
+			fd.close();
+			const m = match(out, /v?([0-9]+(\.[0-9]+)*)/);
+			return m ? m[1] : null;
+		}
+	}
+	if (pkg == 'probe_pool' || pkg == 'sni_sniffer') {
+		const fd = popen(shellquote(bin) + ' -version 2>/dev/null');
+		if (fd) {
+			const out = trim(fd.read('all'));
+			fd.close();
+			const m = match(out, /([0-9]+\.[0-9]+\.[0-9]+)/);
+			return m ? m[1] : null;
+		}
+	}
+	/* zapret2/byedpi: no stable -version probe — the PM record governs. */
+	return null;
+}
+
 function feed_strip_rev(v) {
 	const m = match(v || '', /^[0-9]+(\.[0-9]+)*/);
 	return m ? m[0] : '';
@@ -2866,6 +2903,27 @@ function feed_install_pkg(pkg) {
 		return { result: false, error: `в манифесте нет ${pm}-файла для ${pkg}` };
 	if (!match(file, /^[a-z0-9][a-zA-Z0-9._-]*$/) || !match(sha, /^[0-9a-f]{64}$/))
 		return { result: false, error: 'некорректная запись манифеста (имя файла/sha256)' };
+	/* 🔴 ч.248: honest version gates. (1) The feed must never silently DOWNGRADE
+	 * an installed package (a repair/reinstall of the same version stays allowed).
+	 * (2) `apk upgrade ./file` is NOT a file-target form on apk 3.x — the path is
+	 * parsed as a world constraint and the whole call fails with
+	 * «ERROR: Package './x.apk' not found», while the rc was deliberately ignored
+	 * (apk rc unreliability) and the post-check only proved the OLD binary was
+	 * still there → fake «успешно установлено» + old version in the UI (client
+	 * report 2026-11-08: «обновляешь — а версия старая»). `apk add ./file`
+	 * installs AND upgrades from a file — proven live 1.0.5.2 → 1.0.7.
+	 * (3) Session 173 zoo coverage (mirror of the core_mgmt copy): the gate
+	 * also holds against the PROBED BINARY — a diverged record (older than
+	 * the running binary) must not let a file-install regress the binary.
+	 * The gate sits BEFORE the download — a refusal must not cost a fetch. */
+	const prev_ver = feed_installed_version(pkg);
+	const bin_ver = feed_bin_version(pkg);
+	const known = [];
+	if (prev_ver != null) push(known, 'запись ' + prev_ver);
+	if (bin_ver != null) push(known, 'бинарник ' + bin_ver);
+	if ((prev_ver != null && feed_vercmp_base(feed_strip_rev('' + entry.version), feed_strip_rev('' + prev_ver)) < 0) ||
+	    (bin_ver != null && feed_vercmp_base(feed_strip_rev('' + entry.version), feed_strip_rev('' + bin_ver)) < 0))
+		return { result: false, error: `в фиде ${pkg} ${entry.version} не новее установленного (${join(', ', known)}) — установка отменена` };
 	const tmp = `/tmp/feed_${pkg}.${pm}`;
 	const got = feed_fetch(feed_rel(file), tmp, 300000);
 	if (!got.ok)
@@ -2883,18 +2941,6 @@ function feed_install_pkg(pkg) {
 	const sib = FEED_SIBLING[pkg];
 	if (sib)
 		system(`${(pm === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib)} >/dev/null 2>&1; true`);
-	/* 🔴 ч.248: honest version gates. (1) The feed must never silently DOWNGRADE
-	 * an installed package (a repair/reinstall of the same version stays allowed).
-	 * (2) `apk upgrade ./file` is NOT a file-target form on apk 3.x — the path is
-	 * parsed as a world constraint and the whole call fails with
-	 * «ERROR: Package './x.apk' not found», while the rc was deliberately ignored
-	 * (apk rc unreliability) and the post-check only proved the OLD binary was
-	 * still there → fake «успешно установлено» + old version in the UI (client
-	 * report 2026-11-08: «обновляешь — а версия старая»). `apk add ./file`
-	 * installs AND upgrades from a file — proven live 1.0.5.2 → 1.0.7. */
-	const prev_ver = feed_installed_version(pkg);
-	if (prev_ver != null && feed_vercmp_base(feed_strip_rev('' + entry.version), feed_strip_rev('' + prev_ver)) < 0)
-		return { result: false, error: `в фиде ${pkg} ${entry.version} не новее установленного ${prev_ver} — установка отменена` };
 	let rc;
 	if (pm === 'apk') {
 		rc = system(`apk add ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
