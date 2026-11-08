@@ -83,7 +83,7 @@ add_group_and_user
 # kill apk mid-transaction (observed: update failed, i18n updated, app stayed
 # old). The app update flow restarts the service in the background instead.
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
-	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration; do
+	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
 		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
 	done
 	uci commit
@@ -101,7 +101,16 @@ fi
 export root="${IPKG_INSTROOT}"
 export pkgname="'"$PKG_NAME"'"
 add_group_and_user
-[ -n "${IPKG_INSTROOT}" ] || { rm -f /tmp/luci-indexcache.*
+[ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
+	# Upgrade path (ch.250): apk upgrades run post-upgrade, not post-install,
+	# so the theme uci-defaults used to wait for the next reboot - upgraders
+	# stayed on bootstrap until then (the "theme flicker" report). Activate
+	# the theme right away; the script itself switches away ONLY from the
+	# stock bootstrap, a user's own theme choice is never overridden.
+	[ -f /etc/uci-defaults/luci-homeproxy-theme ] && ( . /etc/uci-defaults/luci-homeproxy-theme ) && rm -f /etc/uci-defaults/luci-homeproxy-theme
+	uci commit
+fi
+	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
 	exit 0
@@ -184,7 +193,7 @@ add_group_and_user
 # synchronously (slow: bootstrap + rule-set downloads + fw4) and can blow the
 # update timeout. The app update flow restarts the service in the background.
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
-	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration; do
+	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
 		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
 	done
 	uci commit
