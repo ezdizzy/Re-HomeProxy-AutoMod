@@ -290,7 +290,13 @@ function main() {
 	const op_id = '' + (ARGV[0] || '');
 	const action = '' + (ARGV[1] || '');
 	const op = get_op(op_id);
-	if (!op || op.action !== action ||
+	/* 🔴 Сеанс 159/Б6 живой тест: RPC спавнит руннер с kind ('app_update'),
+	 * а op.action = человекочитаемое действие ('app self-update') — сверка
+	 * только с op.action давала молчаливый exit(1) (урок 169: stderr в
+	 * /dev/null) и оставляла op=queued без руннера. Совпадение с op.action
+	 * ИЛИ op.kind. */
+	if (!op ||
+	    (op.action !== action && ('' + (op.kind || '')) !== action) ||
 	    (action !== 'restart' && action !== 'reload' && action !== 'engine_restart' &&
 	     action !== 'fw_refresh' && action !== 'app_update'))
 		exit(1);   /* нет записи операции — протоколировать некуда */
