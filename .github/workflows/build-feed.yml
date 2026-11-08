@@ -97,8 +97,14 @@ jobs:
       - name: Setup APK signing key
         run: |
           if [ -n "${{ secrets.APK_SIGNING_KEY }}" ]; then
-            echo "${{ secrets.APK_SIGNING_KEY }}" > /tmp/apk-signing.key
+            printf '%s\n' "${{ secrets.APK_SIGNING_KEY }}" | tr -d '\r' > /tmp/apk-signing.key
             chmod 600 /tmp/apk-signing.key
+            if ! openssl rsa -in /tmp/apk-signing.key -pubout -out /tmp/apk-signing.pub 2>/tmp/apk-signing.err; then
+              echo "::error::APK_SIGNING_KEY secret is not a readable RSA PEM key. openssl says: $(tr '\n' ' ' < /tmp/apk-signing.err | head -c 300)"
+              echo "::error::key metrics (compare with the reference): sha256=$(sha256sum /tmp/apk-signing.key | cut -d' ' -f1), lines=$(wc -l < /tmp/apk-signing.key), bytes=$(wc -c < /tmp/apk-signing.key), first_line=$(head -1 /tmp/apk-signing.key)"
+              exit 1
+            fi
+            echo "signing key OK: sha256=$(sha256sum /tmp/apk-signing.key | cut -d' ' -f1), lines=$(wc -l < /tmp/apk-signing.key), bytes=$(wc -c < /tmp/apk-signing.key)"
             echo "APK_SIGN_KEY=/tmp/apk-signing.key" >> $GITHUB_ENV
           else
             echo "No APK_SIGNING_KEY secret set — building UNSIGNED feed (clients need --allow-untrusted)"

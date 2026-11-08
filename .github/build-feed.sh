@@ -152,7 +152,9 @@ fetch_bin() { # <url> <cachefile>
 PUB_DIR="$WORK/pub"; mkdir -p "$PUB_DIR"
 if [ -n "${APK_SIGN_KEY:-}" ] && [ -s "$APK_SIGN_KEY" ]; then
 	openssl rsa -in "$APK_SIGN_KEY" -pubout -out "$OUT/ravnex-feed.pub" 2>/dev/null || \
-	openssl ec  -in "$APK_SIGN_KEY" -pubout -out "$OUT/ravnex-feed.pub" 2>/dev/null
+	openssl ec  -in "$APK_SIGN_KEY" -pubout -out "$OUT/ravnex-feed.pub" 2>/dev/null || {
+		echo "ERROR: APK_SIGN_KEY is set but openssl cannot read it (tried rsa and ec) - refusing to build a silently unsigned feed"; exit 1;
+	}
 	SIGN_ARGS=(--sign-key "$APK_SIGN_KEY")
 else
 	echo "WARNING: APK_SIGN_KEY empty — building an UNSIGNED feed"
