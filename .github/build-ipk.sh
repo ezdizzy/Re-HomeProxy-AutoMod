@@ -10,8 +10,8 @@ PKG_MGR="${1:-apk}"
 RELEASE_TYPE="${2:-snapshot}"
 # Optional 4th arg: explicit package version (the workflow_dispatch `version` input,
 # or the pushed `v*` tag). When set on a release build it overrides the Makefile's
-# PKG_VERSION so the package files (e.g. luci-app-re-homeproxy_1.0.4_all.apk) match
-# the GitHub release tag (v1.0.4). Without it we fall back to the Makefile value.
+# PKG_VERSION so the package files (e.g. luci-app-ravnex_4.0.0_all.apk) match
+# the GitHub release tag (v4.0.0). Without it we fall back to the Makefile value.
 PKG_VERSION_OVERRIDE="${4:-}"
 
 export PKG_SOURCE_DATE_EPOCH="$(date "+%s")"
@@ -86,7 +86,7 @@ add_group_and_user
 # kill apk mid-transaction (observed: update failed, i18n updated, app stayed
 # old). The app update flow restarts the service in the background instead.
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
-	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
+	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
 		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
 	done
 	uci commit
@@ -105,6 +105,15 @@ fi
 	# all sessions, incl. fresh logins, until uhttpd restarts). Restart it
 	# so every installer/updater ends with a clean tree.
 	/etc/init.d/uhttpd restart >/dev/null 2>&1
+	# ch.255 Р9 (package rename bridge): sweep the LAST pre-rename leftovers.
+	# /usr/share/homeproxy is superseded by /usr/share/ravnex in this package
+	# (never copy the old dir over the new one - lesson 389, package wins);
+	# the legacy RU catalog is retired only when the renamed one is present
+	# (an app-only update must not lose translations).
+	rm -rf /usr/share/homeproxy 2>/dev/null
+	if [ -f /usr/lib/lua/luci/i18n/ravnex.ru.lmo ]; then
+		rm -f /usr/lib/lua/luci/i18n/homeproxy.ru.lmo /usr/lib/lua/luci/i18n/homeproxy.ru.lmo.* 2>/dev/null
+	fi
 	exit 0
 }' > "$TEMP_DIR/post-install"
 
@@ -118,10 +127,12 @@ add_group_and_user
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
 	# Upgrade path (ch.253 Р9): apk upgrades run post-upgrade, not
 	# post-install - this hook now runs the FULL uci-defaults loop, because
-	# the UCI/directory migrator lives in luci-homeproxy-migration (it runs
-	# BEFORE migrate_config.uc; see the stub). Idempotent and gated: on a
-	# fresh box (no /etc/config/homeproxy) the migrator exits immediately.
-	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
+	# the UCI/directory migrator lives in luci-ravnex-migration (it runs
+	# BEFORE migrate_config.uc; see the stub). Legacy luci-homeproxy* names
+	# are consumed too (boxes that carry them unconsumed). Idempotent and
+	# gated: on a fresh box (no /etc/config/homeproxy) the migrator exits
+	# immediately.
+	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
 		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
 	done
 	uci commit
@@ -135,6 +146,12 @@ fi
 	fi
 	# ch.252 menu hardening: clean menu tree for every updater.
 	/etc/init.d/uhttpd restart >/dev/null 2>&1
+	# ch.255 Р9 rename bridge: retire the pre-rename /usr/share/homeproxy and
+	# legacy RU catalog (same conditions as post-install, see above).
+	rm -rf /usr/share/homeproxy 2>/dev/null
+	if [ -f /usr/lib/lua/luci/i18n/ravnex.ru.lmo ]; then
+		rm -f /usr/lib/lua/luci/i18n/homeproxy.ru.lmo /usr/lib/lua/luci/i18n/homeproxy.ru.lmo.* 2>/dev/null
+	fi
 	exit 0
 }' > "$TEMP_DIR/post-upgrade"
 
@@ -187,6 +204,8 @@ add_group_and_user
 		--info "provides:luci-app-homeproxy-hiddify" \
 		--info "replaces:luci-app-homeproxy" \
 		--info "replaces:luci-app-homeproxy-hiddify" \
+		--info "provides:luci-app-re-homeproxy=$PKG_VERSION" \
+		--info "replaces:luci-app-re-homeproxy" \
 		${APK_SIGN_KEY:+--sign-key "$APK_SIGN_KEY"} \
 		--files "$TEMP_PKG_DIR" \
 		--output "$TEMP_DIR/${PKG_NAME}_${PKG_VERSION}.apk"
@@ -206,12 +225,15 @@ else
 	# Conflicts+Replaces makes opkg cleanly replace the old pkg. (Nothing depends on
 	# the old names: the i18n packages depend on $PKG_NAME.) The apk path uses the
 	# Alpine rename idiom instead: provides + replaces (see the apk mkpkg call above).
+	# R9 ШАГ 4 (ch.255): the OWN legacy name luci-app-re-homeproxy joins
+	# Conflicts+Replaces — opkg (24.10) must retire it when installing
+	# luci-app-ravnex (proven live in an offline opkg sandbox before release).
 	cat > "$TEMP_PKG_DIR/CONTROL/control" <<-EOF
 		Package: $PKG_NAME
 		Version: $PKG_VERSION
 		Depends: $IPK_DEPS
-		Conflicts: luci-app-homeproxy luci-app-homeproxy-hiddify
-		Replaces: luci-app-homeproxy luci-app-homeproxy-hiddify
+		Conflicts: luci-app-homeproxy luci-app-homeproxy-hiddify luci-app-re-homeproxy
+		Replaces: luci-app-homeproxy luci-app-homeproxy-hiddify luci-app-re-homeproxy
 		Source: https://github.com/ezdizzy/re-homeproxy
 		SourceName: $PKG_NAME
 		Section: luci
@@ -223,7 +245,26 @@ else
 	EOF
 	chmod 0644 "$TEMP_PKG_DIR/CONTROL/control"
 
-	echo -e "/etc/config/ravnex`n/etc/config/ravcontrol" > "$TEMP_PKG_DIR/CONTROL/conffiles"
+	# ch.255 Р9 fix: this line previously used a POWERSHELL newline escape
+	# (`n) inside a bash double-quoted string - the backtick opened a command
+	# substitution that swallowed ~50 following lines at parse time (and the
+	# generated CONTROL/conffiles was garbage on ipk builds). Proper bash:
+	echo -e '/etc/config/ravnex\n/etc/config/ravcontrol' > "$TEMP_PKG_DIR/CONTROL/conffiles"
+
+	# R9 ШАГ 4 (ch.255): opkg (24.10) honours Conflicts+Replaces only as a
+	# file-takeover hint - it does NOT retire the replaced package from its
+	# db (proven live in an offline opkg root). Retire the OWN legacy package
+	# explicitly BEFORE the new files land (a postinst removal would race the
+	# new package's shared /www files; preinst gives a clean swap). Modified
+	# conffiles survive `opkg remove` (proven live) - the migrator overlays
+	# their content into /etc/config/ravnex afterwards.
+	echo -e '#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+if opkg status luci-app-re-homeproxy 2>/dev/null | grep -q "^Status: install"; then
+	opkg remove luci-app-re-homeproxy 2>/dev/null
+fi
+exit 0' > "$TEMP_PKG_DIR/CONTROL/preinst"
+	chmod 0755 "$TEMP_PKG_DIR/CONTROL/preinst"
 
 	echo -e '#!/bin/sh
 [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
@@ -236,7 +277,7 @@ add_group_and_user
 # synchronously (slow: bootstrap + rule-set downloads + fw4) and can blow the
 # update timeout. The app update flow restarts the service in the background.
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
-	for i in /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
+	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
 		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
 	done
 	uci commit
@@ -245,6 +286,10 @@ fi
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
 	/etc/init.d/uhttpd restart >/dev/null 2>&1
+	rm -rf /usr/share/homeproxy 2>/dev/null
+	if [ -f /usr/lib/lua/luci/i18n/ravnex.ru.lmo ]; then
+		rm -f /usr/lib/lua/luci/i18n/homeproxy.ru.lmo /usr/lib/lua/luci/i18n/homeproxy.ru.lmo.* 2>/dev/null
+	fi
 	exit 0
 }' > "$TEMP_PKG_DIR/CONTROL/postinst"
 	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst"
@@ -279,8 +324,15 @@ rm -rf "$TEMP_DIR"
 # Go sources live in .github/go/ precisely so `cp -fpR root/*` can never leak
 # them into the package tree.
 
-# Build i18n package for Russian
-I18N_PKG_NAME="luci-i18n-homeproxy-ru"
+# Build i18n package for Russian. R9 ШАГ 4 (ch.255): renamed to
+# luci-i18n-ravnex-ru together with the app package; the po source is
+# po/ru/ravnex.po, the installed catalog stays /usr/lib/lua/luci/i18n/
+# ravnex.ru.lmo (the catalog file name IS the translation domain; ucode
+# dispatcher merges every catalog in /usr/lib/lua/luci/i18n). The package
+# declares replaces for its own legacy name (luci-i18n-homeproxy-ru) and
+# ships a post-install hook that retires the legacy catalog file - a box
+# that upgrades app+i18n together must not keep a stale merged catalog.
+I18N_PKG_NAME="luci-i18n-ravnex-ru"
 I18N_TEMP_DIR="$(mktemp -d -p $BASE_DIR)"
 I18N_TEMP_PKG_DIR="$I18N_TEMP_DIR/$I18N_PKG_NAME"
 mkdir -p "$I18N_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/"
@@ -290,30 +342,53 @@ else
 	mkdir -p "$I18N_TEMP_PKG_DIR/CONTROL/"
 fi
 
-po2lmo "$PKG_DIR/po/ru/homeproxy.po" "$I18N_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/ravnex.ru.lmo"
+po2lmo "$PKG_DIR/po/ru/ravnex.po" "$I18N_TEMP_PKG_DIR/usr/lib/lua/luci/i18n/ravnex.ru.lmo"
 
 if [ "$PKG_MGR" == "apk" ]; then
 	find "$I18N_TEMP_PKG_DIR" -type f,l -printf '/%P\n' | sort > "$I18N_TEMP_PKG_DIR/lib/apk/packages/$I18N_PKG_NAME.list"
 
+	echo -e '#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+rm -f /usr/lib/lua/luci/i18n/homeproxy.ru.lmo /usr/lib/lua/luci/i18n/homeproxy.ru.lmo.* 2>/dev/null
+rm -f /tmp/luci-indexcache.* 2>/dev/null
+rm -rf /tmp/luci-modulecache/ 2>/dev/null
+exit 0' > "$I18N_TEMP_DIR/post-install"
+	chmod 0755 "$I18N_TEMP_DIR/post-install"
+	# apk runs post-UPGRADE (not post-install) when the package replaces an
+	# installed one - the legacy-catalog sweep must fire on BOTH paths.
+	cp -p "$I18N_TEMP_DIR/post-install" "$I18N_TEMP_DIR/post-upgrade"
+
 	apk mkpkg \
 		--info "name:$I18N_PKG_NAME" \
 		--info "version:$PKG_VERSION" \
-		--info "description:Russian translation for luci-app-re-homeproxy" \
+		--info "description:Russian translation for luci-app-ravnex" \
 		--info "arch:noarch" \
 		--info "origin:$I18N_PKG_NAME" \
 		--info "url:https://github.com/ezdizzy/re-homeproxy" \
 		--info "maintainer:1andrevich <1andrevich.recede274@passmail.net>" \
 		--info "depends:$PKG_NAME" \
+		--info "replaces:luci-i18n-homeproxy-ru" \
+		--script "post-install:$I18N_TEMP_DIR/post-install" \
+		--script "post-upgrade:$I18N_TEMP_DIR/post-upgrade" \
 		${APK_SIGN_KEY:+--sign-key "$APK_SIGN_KEY"} \
 		--files "$I18N_TEMP_PKG_DIR" \
 		--output "$I18N_TEMP_DIR/${I18N_PKG_NAME}_${PKG_VERSION}.apk"
 
 	mv "$I18N_TEMP_DIR/${I18N_PKG_NAME}_${PKG_VERSION}.apk" "$BASE_DIR/${I18N_PKG_NAME}_${PKG_VERSION}_all.apk"
 else
+	echo -e '#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+rm -f /usr/lib/lua/luci/i18n/homeproxy.ru.lmo /usr/lib/lua/luci/i18n/homeproxy.ru.lmo.* 2>/dev/null
+rm -f /tmp/luci-indexcache.* 2>/dev/null
+rm -rf /tmp/luci-modulecache/ 2>/dev/null
+exit 0' > "$I18N_TEMP_PKG_DIR/CONTROL/postinst"
+	chmod 0755 "$I18N_TEMP_PKG_DIR/CONTROL/postinst"
+
 	cat > "$I18N_TEMP_PKG_DIR/CONTROL/control" <<-EOF
 		Package: $I18N_PKG_NAME
 		Version: $PKG_VERSION
 		Depends: $PKG_NAME
+		Replaces: luci-i18n-homeproxy-ru
 		Source: https://github.com/ezdizzy/re-homeproxy
 		SourceName: $I18N_PKG_NAME
 		Section: luci
@@ -321,7 +396,7 @@ else
 		Maintainer: 1andrevich <1andrevich.recede274@passmail.net>
 		Architecture: all
 		Installed-Size: TO-BE-FILLED-BY-IPKG-BUILD
-		Description:  Russian translation for luci-app-re-homeproxy
+		Description:  Russian translation for luci-app-ravnex
 	EOF
 	chmod 0644 "$I18N_TEMP_PKG_DIR/CONTROL/control"
 

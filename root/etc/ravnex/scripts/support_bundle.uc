@@ -123,13 +123,17 @@ function read_json_safe(path) {
 }
 
 function app_version() {
-	let av = null;
+	/* ch.255 Р9: the package was renamed - discovery goes through BOTH names
+	 * (luci-app-ravnex first, legacy luci-app-re-homeproxy as fallback). */
+	const pkgs = [ 'luci-app-ravnex', 'luci-app-re-homeproxy' ];
 	if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) {
-		const m = match(trim(capture('apk info luci-app-re-homeproxy 2>/dev/null | head -1')),
-			/luci-app-re-homeproxy-([0-9][0-9.]*)/);
-		if (m) av = m[1];
+		for (let p in pkgs) {
+			const m = match(trim(capture('apk info ' + p + ' 2>/dev/null | head -1')),
+				regexp(p + '-([0-9][0-9.]*)'));
+			if (m) return m[1];
+		}
 	}
-	return av;
+	return null;
 }
 
 /* ── редакция секретов ─────────────────────────────────────────────────── */

@@ -195,10 +195,9 @@ function run_app_update(op_id, spec) {
 	if (spec.i18n != null && length('' + (spec.i18n.dl_url || '')))
 		push(dls, { url: spec.i18n.dl_url, tmp: spec.i18n.tmp_path, tag: 'dli18n' });
 	for (let d in dls) {
-		/* Сеанс 160: core_mgmt.uc живёт в /usr/share/homeproxy/scripts (переезд
-		 * ч.237) — /etc-путь не существует, ucode даёт "Failed to open" = rc=1
-		 * мгновенно (Б6: download failed rc=1 5/5 при рабочих CLI-тестах). */
-		const CM = '/usr/share/homeproxy/scripts/core_mgmt.uc';
+		/* Сеанс 160: core_mgmt.uc живёт в /usr/share/ravnex/scripts (переезд
+		 * ч.237 + Р9 ШАГ 4: каталог переименован). */
+		const CM = '/usr/share/ravnex/scripts/core_mgmt.uc';
 		const rc = run_bg_rc(op_id, d.tag,
 			'/usr/bin/ucode ' + CM + ' download_pkg ' + shellq(d.url) + ' ' + shellq(d.tmp), 300);
 		if (!access(d.tmp)) {
@@ -223,12 +222,17 @@ function run_app_update(op_id, spec) {
 			push(parts, 'install ' + (length(rc) ? 'rc=' + rc : 'timeout') + ' (' + d.tmp + ')');
 	}
 
-	/* 3. Пост-чек версии (apk-запись честнее rc — урок ч.223). */
+	/* 3. Пост-чек версии (apk-запись честнее rc — урок ч.223). ch.255 Р9:
+	 * установка теперь переименовывает пакет (luci-app-re-homeproxy →
+	 * luci-app-ravnex) — чек идёт ЧЕРЕЗ ОБА ИМЕНА, новое первым. */
 	const vout = (pm === 'apk')
-		? capture('apk info luci-app-re-homeproxy 2>/dev/null | head -1')
-		: capture('opkg status luci-app-re-homeproxy 2>/dev/null');
-	const vm = match(vout, /luci-app-re-homeproxy-([0-9][0-9.]*)/) ||
-		match(vout, /Version: ([0-9][0-9.]*)/);
+		? capture('apk info luci-app-ravnex 2>/dev/null | head -1') + '\n' +
+		  capture('apk info luci-app-re-homeproxy 2>/dev/null | head -1')
+		: capture('opkg status luci-app-ravnex 2>/dev/null') + '\n' +
+		  capture('opkg status luci-app-re-homeproxy 2>/dev/null');
+	const vm = match(vout, /luci-app-ravnex-([0-9][0-9.]*)/) ||
+		match(vout, /Version: ([0-9][0-9.]*)/) ||
+		match(vout, /luci-app-re-homeproxy-([0-9][0-9.]*)/);
 	const inst_v = (vm != null) ? vm[1] : '';
 	if (inst_v != ('' + spec.version)) {
 		finish(op_id, false, false, 'version check failed: installed ' +

@@ -349,7 +349,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 	]);
 }
 
-const CORE_MGMT = '/usr/share/homeproxy/scripts/core_mgmt.uc';
+const CORE_MGMT = '/usr/share/ravnex/scripts/core_mgmt.uc';
 
 const callCurlStatus = rpc.declare({
 	object: 'luci.ravnex',

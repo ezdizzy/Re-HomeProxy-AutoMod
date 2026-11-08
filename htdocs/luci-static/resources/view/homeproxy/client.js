@@ -68,7 +68,7 @@ const callOpStatus = rpc.declare({
 	expect: { '': {} }
 });
 
-const CORE_MGMT = '/usr/share/homeproxy/scripts/core_mgmt.uc';
+const CORE_MGMT = '/usr/share/ravnex/scripts/core_mgmt.uc';
 
 const callByeDPIStatus = rpc.declare({
 	object: 'luci.ravnex',

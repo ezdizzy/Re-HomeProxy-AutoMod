@@ -1986,14 +1986,14 @@ function upd_app_chain(chat_id) {
 	}
 	tg_send_html(chat_id, '⬇ Обновляю приложение до ' + esc_html('' + (prep.version || '?')) +
 		'… LuCI и бот перезапустятся; /status после перезапуска покажет версию.', null);
-	capture(`ucode /usr/share/homeproxy/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.app.dl_url)} ${shellquote('' + prep.app.tmp_path)} 2>&1`);
+	capture(`ucode /usr/share/ravnex/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.app.dl_url)} ${shellquote('' + prep.app.tmp_path)} 2>&1`);
 	if (!access('' + prep.app.tmp_path)) {
 		tg_send_html(chat_id, '⚠ Приложение: скачивание не удалось — обновление НЕ выполнено.', null);
 		return;
 	}
 	let i18n = '';
 	if (prep.i18n) {
-		capture(`ucode /usr/share/homeproxy/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.i18n.dl_url)} ${shellquote('' + prep.i18n.tmp_path)} 2>&1`);
+		capture(`ucode /usr/share/ravnex/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.i18n.dl_url)} ${shellquote('' + prep.i18n.tmp_path)} 2>&1`);
 		if (access('' + prep.i18n.tmp_path))
 			i18n = '' + prep.i18n.tmp_path;
 	}
@@ -2043,7 +2043,7 @@ function upd_pkg_chain(chat_id, name) {
 		return;
 	}
 	tg_send_html(chat_id, '⬇ Скачиваю ' + esc_html(name) + '… (бот занят ~1–2 мин, отчёт следующим сообщением)', null);
-	capture(`ucode /usr/share/homeproxy/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.dl_url)} ${shellquote('' + prep.tmp_path)} 2>&1`);
+	capture(`ucode /usr/share/ravnex/scripts/core_mgmt.uc download_pkg ${shellquote('' + prep.dl_url)} ${shellquote('' + prep.tmp_path)} 2>&1`);
 	if (!access('' + prep.tmp_path)) {
 		tg_send_html(chat_id, '⚠ ' + esc_html(name) + ': скачивание не удалось — обновление НЕ выполнено.', null);
 		return;

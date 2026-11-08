@@ -80,7 +80,7 @@ dl() {
 	return 1
 }
 # local_of <url> — файл в каталоге --local: точное имя, затем префикс до первого
-# разделителя (hiddify-core_..., luci-app-re-homeproxy-..., probe_pool-linux-...).
+# разделителя (hiddify-core_..., luci-app-ravnex-..., probe_pool-linux-...).
 local_of() {
 	local base
 	base=$(basename "$1")
@@ -94,7 +94,11 @@ local_of() {
 }
 api() { [ -n "$LOCAL_DIR" ] && return 0; wget -qO- --timeout=20 "$1" 2>/dev/null; }   # GitHub API (без зеркала); --local — обновления не проверяются
 
-CM=/usr/share/homeproxy/scripts/core_mgmt.uc
+# Р9 ШАГ 4 (ч.255): пакет переименован — ядро скриптов теперь в /usr/share/ravnex.
+# Фолбэк на старый путь: инсталлер может работать в режиме настройки на боксе,
+# где ещё стоит пакет со старым именем (обновление недоступно/офлайн).
+CM=/usr/share/ravnex/scripts/core_mgmt.uc
+[ -f "$CM" ] || CM=/usr/share/homeproxy/scripts/core_mgmt.uc
 HAS_UCB=0
 have_ubus() { command -v ubus >/dev/null 2>&1; }
 
@@ -436,14 +440,22 @@ apply_gh_mirror() {
 }
 
 # Установленная версия пакета приложения (пусто, если не определена).
+# Р9 ШАГ 4 (ч.255): поиск ЧЕРЕЗ ОБА ИМЕНА — новое первым, старое (до-ренейм
+# боксы) вторым (план 22 «сравнение версий через имена»).
 app_installed_version() {
+	local v
 	if [ "$PM" = apk ]; then
-		apk info luci-app-re-homeproxy 2>/dev/null | head -1 \
-			| sed -n 's/.*luci-app-re-homeproxy-\([0-9][0-9.]*\).*/\1/p'
+		v=$(apk info luci-app-ravnex 2>/dev/null | head -1 \
+			| sed -n 's/.*luci-app-ravnex-\([0-9][0-9.]*\).*/\1/p')
+		[ -z "$v" ] && v=$(apk info luci-app-re-homeproxy 2>/dev/null | head -1 \
+			| sed -n 's/.*luci-app-re-homeproxy-\([0-9][0-9.]*\).*/\1/p')
 	else
-		opkg status luci-app-re-homeproxy 2>/dev/null \
-			| sed -n 's/^Version: \([0-9][0-9.]*\).*/\1/p'
+		v=$(opkg status luci-app-ravnex 2>/dev/null \
+			| sed -n 's/^Version: \([0-9][0-9.]*\).*/\1/p')
+		[ -z "$v" ] && v=$(opkg status luci-app-re-homeproxy 2>/dev/null \
+			| sed -n 's/^Version: \([0-9][0-9.]*\).*/\1/p')
 	fi
+	printf '%s' "$v"
 }
 
 # Наш пакет/файлы установлены? (пакет — надёжный источник; файл — на случай
@@ -452,6 +464,7 @@ app_installed_version() {
 # hoisting — вызов до определения давал «sh: own_pkg_installed: not found»).
 own_pkg_installed() {
 	[ -n "$(app_installed_version)" ] && return 0
+	[ -f /usr/share/luci/menu.d/luci-app-ravnex.json ] && return 0
 	[ -f /usr/share/luci/menu.d/luci-app-re-homeproxy.json ] && return 0
 	return 1
 }
@@ -459,6 +472,10 @@ own_pkg_installed() {
 # Чужая (оригинальная) homeproxy-версия: другой пакет с теми же файлами.
 # Его наличие нельзя молча игнорировать — файлы (/etc/config/ravnex,
 # rpcd-объект) конфликтуют, и «установка поверх» не происходит на самом деле.
+# Р9 ШАГ 4 (ч.255): СОБСТВЕННОЕ старое имя (luci-app-re-homeproxy) сюда НЕ
+# входит — оно покрыто app_installed_version/own_pkg_installed выше и ведёт
+# по пути «обновление на luci-app-ravnex с мигратором», а не «чужой пакет,
+# удаление» (план 22).
 foreign_homeproxy_pkg() {
 	for _p in luci-app-homeproxy luci-app-homeproxy-hiddify; do
 		if [ "$PM" = apk ]; then
@@ -566,12 +583,43 @@ ensure_key() {
 		|| warn "  не удалось скачать ключ подписи — поставлю без проверки подписи"
 }
 
+# Р9 ШАГ 4 (ч.255): file-installed пакеты пинятся в /etc/apk/world контент-хешем
+# (формат «имя><hash», урок песочницы). ПЕРЕИМЕНОВАНИЕ пакета ломает такой пин
+# ЕЩЁ НА ФАЗЕ СОЛВЕРА («breaks: world[luci-app-re-homeproxy><hash]») — раньше
+# любых хуков, лечится ТОЛЬКО переписыванием world ДО apk add: пины старых имён
+# снимаются, вместо них пишутся простые записи новых имён (новая установка
+# сама перепишет пин на свежий хеш). Захардкожено на 24.10 это не тянет — opkg
+# world-пинов не пишет вовсе.
+fix_world_pins() {
+	[ "$PM" = apk ] || return 0
+	[ -f /etc/apk/world ] || return 0
+	if grep -q '^luci-app-re-homeproxy' /etc/apk/world 2>/dev/null || \
+	   grep -q '^luci-i18n-homeproxy-ru' /etc/apk/world 2>/dev/null; then
+		sed -i -e '/^luci-app-re-homeproxy>/d' -e '/^luci-app-re-homeproxy$/d' \
+		       -e '/^luci-i18n-homeproxy-ru>/d' -e '/^luci-i18n-homeproxy-ru$/d' /etc/apk/world
+		# Only the APP name is written back as a plain entry. The i18n plain
+		# entry must NOT be pre-added: the app apk installs FIRST (the update
+		# flow) and a pre-added i18n requirement would make THAT install
+		# break the world (luci-i18n-ravnex-ru not installed yet — proven
+		# live). The i18n file-install re-pins itself naturally.
+		grep -qx 'luci-app-ravnex' /etc/apk/world || echo 'luci-app-ravnex' >> /etc/apk/world
+		ok "  пины world старого имени переписаны на новые (иначе apk отклоняет переименование на фазе солвера)"
+	fi
+	return 0
+}
+
 # Скачать и установить приложение + русскую локаль из последнего релиза (без вопросов).
 # Возвращает 0 при успешной установке приложения.
+# Р9 ШАГ 4 (ч.255): ассеты ищутся по НОВОМУ имени; фолбэк — легаси-копии,
+# которые релиз 4.0.0+ несёт под старыми именами для до-ренейм клиентов.
 app_install_pkgs() {
-	APPURL=$(api "https://api.github.com/repos/${HP_REPO}/releases" \
+	fix_world_pins
+	REL=$(api "https://api.github.com/repos/${HP_REPO}/releases")
+	APPURL=$(printf '%s' "$REL" \
+		| grep -o "https://github\.com/[^\"]*luci-app-ravnex[^\"]*${SUFFIX}\.${EXT}" | head -1)
+	[ -z "$APPURL" ] && APPURL=$(printf '%s' "$REL" \
 		| grep -o "https://github\.com/[^\"]*luci-app-re-homeproxy[^\"]*${SUFFIX}\.${EXT}" | head -1)
-	if [ -z "$APPURL" ]; then warn "  не нашёл пакет luci-app-re-homeproxy${SUFFIX}.${EXT} (GitHub заблокирован?)."; return 1; fi
+	if [ -z "$APPURL" ]; then warn "  не нашёл пакет luci-app-ravnex${SUFFIX}.${EXT} (GitHub заблокирован?)."; return 1; fi
 	dl "$APPURL" /tmp/app.$EXT || { warn "  не удалось скачать приложение."; return 1; }
 	if [ "$PM" = apk ]; then
 		apk add /tmp/app.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  apk add завершился ошибкой."; return 1; }
@@ -580,7 +628,9 @@ app_install_pkgs() {
 	fi
 	rm -f /tmp/app.$EXT
 
-	LURL=$(api "https://api.github.com/repos/${HP_REPO}/releases" \
+	LURL=$(printf '%s' "$REL" \
+		| grep -o "https://github\.com/[^\"]*luci-i18n-ravnex-ru[^\"]*\.${EXT}" | head -1)
+	[ -z "$LURL" ] && LURL=$(printf '%s' "$REL" \
 		| grep -o "https://github\.com/[^\"]*luci-i18n-homeproxy-ru[^\"]*\.${EXT}" | head -1)
 	if [ -n "$LURL" ] && dl "$LURL" /tmp/i18n.$EXT; then
 		if [ "$PM" = apk ]; then apk add /tmp/i18n.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/i18n.$EXT; \

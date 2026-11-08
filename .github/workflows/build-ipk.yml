@@ -143,7 +143,7 @@ jobs:
           bash .github/rescan-translation.sh
           # Guard: surface any untranslated (empty msgstr) entries in the shipped
           # locales as a non-fatal warning so translations never silently regress.
-          for po in po/ru/homeproxy.po; do
+          for po in po/ru/ravnex.po; do
             n=$(awk 'BEGIN{c=0} /^msgstr ""$/{c++} END{print c}' "$po")
             if [ "$n" -gt 0 ]; then
               echo "::warning file=$po:: $n untranslated (empty msgstr) string(s)"
@@ -160,10 +160,10 @@ jobs:
           pushd .github
           fakeroot bash build-ipk.sh apk "${{ steps.tag.outputs.release_type }}" "" "${{ steps.tag.outputs.release_version }}"
           fakeroot bash build-ipk.sh ipk "${{ steps.tag.outputs.release_type }}" "" "${{ steps.tag.outputs.release_version }}"
-          echo "APK_ASSET_NAME=$(ls luci-app-re-homeproxy_*_all.apk)" >> $GITHUB_ENV
-          echo "IPK_ASSET_NAME=$(ls luci-app-re-homeproxy_*_all.ipk)" >> $GITHUB_ENV
-          echo "I18N_APK_ASSET_NAME=$(ls luci-i18n-homeproxy-ru_*_all.apk)" >> $GITHUB_ENV
-          echo "I18N_IPK_ASSET_NAME=$(ls luci-i18n-homeproxy-ru_*_all.ipk)" >> $GITHUB_ENV
+          echo "APK_ASSET_NAME=$(ls luci-app-ravnex_*_all.apk)" >> $GITHUB_ENV
+          echo "IPK_ASSET_NAME=$(ls luci-app-ravnex_*_all.ipk)" >> $GITHUB_ENV
+          echo "I18N_APK_ASSET_NAME=$(ls luci-i18n-ravnex-ru_*_all.apk)" >> $GITHUB_ENV
+          echo "I18N_IPK_ASSET_NAME=$(ls luci-i18n-ravnex-ru_*_all.ipk)" >> $GITHUB_ENV
           popd
 
       - name: Publishing APK files to GitHub Artifacts
@@ -203,6 +203,21 @@ jobs:
           name: homeproxy-hiddify.pub
           path: .github/homeproxy-hiddify.pub
 
+      - name: Legacy-named release copies (rename bridge)
+        if: steps.tag.outputs.publish_release == 'true'
+        run: |
+          # R9 ШАГ 4 rename bridge: clients on luci-app-re-homeproxy (<= 3.0.4)
+          # pick release assets by THEIR OWN legacy names (their self-update code
+          # is immutable). Upload the same packages again under the legacy names
+          # so the whole installed fleet can reach the renamed 4.0.0+. Content
+          # is identical; the APK/IPK metadata inside decides the real name and
+          # the provides/replaces/conflicts semantics retire the legacy package.
+          cd .github
+          cp "${APK_ASSET_NAME}" "luci-app-re-homeproxy_${APK_ASSET_NAME#luci-app-ravnex_}"
+          cp "${IPK_ASSET_NAME}" "luci-app-re-homeproxy_${IPK_ASSET_NAME#luci-app-ravnex_}"
+          cp "${I18N_APK_ASSET_NAME}" "luci-i18n-homeproxy-ru_${I18N_APK_ASSET_NAME#luci-i18n-ravnex-ru_}"
+          cp "${I18N_IPK_ASSET_NAME}" "luci-i18n-homeproxy-ru_${I18N_IPK_ASSET_NAME#luci-i18n-ravnex-ru_}"
+
       - name: Publish APK/IPK packages to GitHub Release
         if: steps.tag.outputs.publish_release == 'true'
         uses: svenstaro/upload-release-action@v2
@@ -217,7 +232,7 @@ jobs:
           body: |
             Ravnex ${{ steps.tag.outputs.release_tag }}
 
-            Self-updating build of the Re-HomeProxy fork. See README for install / update instructions.
+            Self-updating build of the Ravnex platform (successor of Re:HomeProxy AutoMod). See README for install / update instructions.
 
       - name: Publish Go helper zips to GitHub Release
         if: steps.tag.outputs.publish_release == 'true'

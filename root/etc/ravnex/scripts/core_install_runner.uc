@@ -41,7 +41,7 @@ import { begin as op_begin, heartbeat as op_heartbeat, stage as op_stage, finish
 import { kill_tree as pm_kill_tree, kill_entry as pm_kill_entry, find_daemons as pm_find, proc_info as pm_proc_info } from '/etc/ravnex/scripts/pmgr.uc';
 import { emit as ev_emit } from '/etc/ravnex/scripts/eventbus.uc';
 
-const CORE_MGMT = '/usr/share/homeproxy/scripts/core_mgmt.uc';
+const CORE_MGMT = '/usr/share/ravnex/scripts/core_mgmt.uc';
 const RUN_FILE = '/var/run/ravnex/core_install.json';
 const LOCK_DIR = '/var/run/ravnex/core_install.lock';
 const STAGE_FILE = '/var/run/ravnex/core_install_stage.json';

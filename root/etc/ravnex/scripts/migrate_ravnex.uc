@@ -193,6 +193,23 @@ if (!access('/etc/rc.d/S99ravnex'))
 	sh('/etc/init.d/ravnex enable');
 log('init: ravnex enabled, homeproxy init removed');
 
+/* ── 8. ch.255 Р9 (мост переименования пакета): две страховки для бокса,
+ * который апгрейдится с до-ренейм сборки, пока СТАРЫЙ руннер обновления ещё
+ * жив (его код неизменяем — он целится в легаси-пути):
+ *  - симлинк /var/run/homeproxy → ravnex: старый opman пишет журнал оп
+ *    СКВОЗЬ него в /var/run/ravnex/ops — новый UI видит оп и его честный
+ *    вердикт (tmpfs: симлинк умирает сам после ребута);
+ *  - отложенный старт ravnex: старый руннер рестартит /etc/init.d/homeproxy,
+ *    которого больше нет — без этого бокс простоял бы с выключенным прокси
+ *    до ручного старта/ребута. setsid+sleep: не блокирует apk-транзакцию
+ *    (урок ч.250), гвардован статусом (не пересоздаёт живой инстанс).
+ * До сюда доходят ТОЛЬКО боксы, прошедшие миграцию (гейт выше) — поведение
+ * свежих установок не меняется. */
+sh('rm -rf /var/run/homeproxy');
+sh('ln -sf /var/run/ravnex /var/run/homeproxy');
+sh('command -v setsid >/dev/null 2>&1 && setsid sh -c "sleep 2; /etc/init.d/ravnex status >/dev/null 2>&1 || /etc/init.d/ravnex start" >/dev/null 2>&1 &');
+log('bridge: /var/run/homeproxy → /var/run/ravnex symlinked; ravnex start scheduled');
+
 /* Мусор прошлых сессий (ч.251 урок: не держать бэкапы рядом с живыми). */
 sh('[ -f /usr/share/rpcd/acl.d/luci-app-re-homeproxy.json.pre237 ] && mv /usr/share/rpcd/acl.d/luci-app-re-homeproxy.json.pre237 /root/ 2>/dev/null; true');
 

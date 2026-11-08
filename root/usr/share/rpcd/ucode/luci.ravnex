@@ -2930,10 +2930,48 @@ function feed_install_pkg(pkg) {
 
 /* Сеанс 158/Б6: общая расчётная часть prepare (app_prepare_install и
  * app_update_start) — релиз, URL-ы пакетов app+i18n под текущий PM. */
+
+/* ch.255 Р9 (package rename): during the rename window the app may be
+ * installed under either package name — discovery goes through BOTH
+ * names ("сравнение версий ЧЕРЕЗ имена", план 22). luci-app-ravnex
+ * first: after the rename bridge it is the canonical name. */
+const APP_PKGS = [ 'luci-app-ravnex', 'luci-app-re-homeproxy' ];
+
+function app_pkg_manager() {
+	if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) return 'apk';
+	if (access('/bin/opkg') || access('/usr/bin/opkg')) return 'opkg';
+	return null;
+}
+
+function app_installed_version(pm) {
+	pm = pm || app_pkg_manager();
+	if (!pm) return null;
+	if (pm === 'apk') {
+		for (let p in APP_PKGS) {
+			const fd = popen('apk info ' + p + ' 2>/dev/null | head -1');
+			if (fd) {
+				const out = trim(fd.read('all'));
+				fd.close();
+				const m = match(out, regexp(p + '-([0-9][0-9.]*)'));
+				if (m) return m[1];
+			}
+		}
+	} else {
+		for (let p in APP_PKGS) {
+			const fd = popen('opkg status ' + p + ' 2>/dev/null');
+			if (fd) {
+				const out = fd.read('all');
+				fd.close();
+				const m = match(out, /Version: ([0-9][0-9.]*)/);
+				if (m) return m[1];
+			}
+		}
+	}
+	return null;
+}
+
 function app_prepare_calc() {
-	let pkg_manager = null;
-	if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
-	else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
+	const pkg_manager = app_pkg_manager();
 	if (!pkg_manager)
 		return { error: 'No supported package manager (apk/opkg)' };
 
@@ -2945,25 +2983,32 @@ function app_prepare_calc() {
 	const ext = (pkg_manager === 'apk') ? 'apk' : 'ipk';
 	/* ucode's match() only accepts a compiled regex object, not a string
 	 * pattern, so build the dynamic patterns with regexp(). */
-	const re_app = regexp(`^luci-app-re-homeproxy_.*_all\.${ext}$`);
-	const re_ru  = regexp(`^luci-i18n-homeproxy-ru_.*_all\.${ext}$`);
+	/* ch.255 Р9: assets may arrive under the RENAMED package names (4.0.0+)
+	 * or the LEGACY ones (bridge copies uploaded into the same release for
+	 * pre-rename clients) - match BOTH, prefer the new name. */
+	const re_app_new = regexp(`^luci-app-ravnex_.*_all\.${ext}$`);
+	const re_app_old = regexp(`^luci-app-re-homeproxy_.*_all\.${ext}$`);
+	const re_ru_new  = regexp(`^luci-i18n-ravnex-ru_.*_all\.${ext}$`);
+	const re_ru_old  = regexp(`^luci-i18n-homeproxy-ru_.*_all\.${ext}$`);
 	let app_url = null, i18n_url = null;
 	for (let a in (rel.assets || [])) {
 		const n = a?.name || '';
 		const u = a?.browser_download_url || '';
 		if (!length(u)) continue;
-		if (match(n, re_app)) app_url = u;
-		else if (match(n, re_ru)) i18n_url = u;
+		if (match(n, re_app_new)) app_url = u;
+		else if (match(n, re_ru_new)) i18n_url = u;
+		else if (match(n, re_app_old) && !app_url) app_url = u;
+		else if (match(n, re_ru_old) && !i18n_url) i18n_url = u;
 	}
 	if (!app_url)
 		return { error: `no app package found in latest release for ${ext}` };
 
 	const res = {
 		pkg_manager, version: latest,
-		app:  { dl_url: app_url,  tmp_path: '/tmp/luci-app-re-homeproxy.' + ext }
+		app:  { dl_url: app_url,  tmp_path: '/tmp/luci-app-ravnex.' + ext }
 	};
 	if (i18n_url)
-		res.i18n = { dl_url: i18n_url, tmp_path: '/tmp/luci-i18n-homeproxy-ru.' + ext };
+		res.i18n = { dl_url: i18n_url, tmp_path: '/tmp/luci-i18n-ravnex-ru.' + ext };
 	return res;
 }
 
@@ -5022,56 +5067,14 @@ const methods = {
 
 	app_status: {
 		call: function(req) {
-			let pkg_manager = null;
-			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
-			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
-
-			let version = null;
-			if (pkg_manager === 'apk') {
-				const fd = popen('apk info luci-app-re-homeproxy 2>/dev/null | head -1');
-				if (fd) {
-					const out = trim(fd.read('all'));
-					fd.close();
-					const m = match(out, /luci-app-re-homeproxy-([0-9][0-9.]*)/);
-					if (m) version = m[1];
-				}
-			} else if (pkg_manager === 'opkg') {
-				const fd = popen('opkg status luci-app-re-homeproxy 2>/dev/null');
-				if (fd) {
-					const out = fd.read('all');
-					fd.close();
-					const m = match(out, /Version: ([0-9][0-9.]*)/);
-					if (m) version = m[1];
-				}
-			}
-			return { installed: true, version, pkg_manager };
+			const pkg_manager = app_pkg_manager();
+			return { installed: true, version: app_installed_version(pkg_manager), pkg_manager };
 		}
 	},
 
 	app_check_update: {
 		call: function(req) {
-			let pkg_manager = null;
-			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
-			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
-
-			let version = null;
-			if (pkg_manager === 'apk') {
-				const fd = popen('apk info luci-app-re-homeproxy 2>/dev/null | head -1');
-				if (fd) {
-					const out = trim(fd.read('all'));
-					fd.close();
-					const m = match(out, /luci-app-re-homeproxy-([0-9][0-9.]*)/);
-					if (m) version = m[1];
-				}
-			} else if (pkg_manager === 'opkg') {
-				const fd = popen('opkg status luci-app-re-homeproxy 2>/dev/null');
-				if (fd) {
-					const out = fd.read('all');
-					fd.close();
-					const m = match(out, /Version: ([0-9][0-9.]*)/);
-					if (m) version = m[1];
-				}
-			}
+			const version = app_installed_version(app_pkg_manager());
 
 			const rel = app_github_release();
 			if (!rel) return { error: 'cannot reach GitHub (or rate-limited)' };
@@ -8650,24 +8653,14 @@ const methods = {
 				}
 			}
 
-			/* App version — the same lookup app_status uses. Cached 10 min:
+			/* App version — the same lookup app_status uses (ch.255 Р9:
+			 * discovery goes through BOTH package names). Cached 10 min:
 			 * it changes only on a package upgrade, and `apk info` is a fork
 			 * per poll tick otherwise. */
 			const nowv = time();
 			if ((nowv - app_ver_cache.ts) > 600) {
-				let av = null;
-				if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) {
-					const avfd = popen('apk info luci-app-re-homeproxy 2>/dev/null | head -1');
-					if (avfd) {
-						const out = trim(avfd.read('all'));
-						avfd.close();
-						const m = match(out, /luci-app-re-homeproxy-([0-9][0-9.]*)/);
-						if (m)
-							av = m[1];
-					}
-				}
 				app_ver_cache.ts = nowv;
-				app_ver_cache.ver = av;
+				app_ver_cache.ver = app_installed_version(app_pkg_manager());
 			}
 			reply.app_version = app_ver_cache.ver;
 

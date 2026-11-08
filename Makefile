@@ -16,7 +16,12 @@ LUCI_DEPENDS:= \
 	+firewall4 \
 	+ucode-mod-digest
 
-PKG_NAME:=luci-app-re-homeproxy
+PKG_NAME:=luci-app-ravnex
+# Р9 ШАГ 4 (план 22): the package itself is renamed luci-app-re-homeproxy ->
+# luci-app-ravnex. The rename path is carried by build-ipk.sh (apk mkpkg
+# provides/replaces, ipk Conflicts/Replaces for the OWN old name) and the
+# migrator (migrate_ravnex.uc) - NOT by the buildroot path below, which is
+# only used for feed builds of a fresh tree.
 # Semantic version (X.Y.Z). This value IS the public version of Ravnex:
 # the GitHub release tag is "v${PKG_VERSION}" and the in-app self-update compares the
 # locally installed version against the latest release tag. Bump it ONLY when cutting a
@@ -27,7 +32,7 @@ PKG_MAINTAINER:=1andrevich <1andrevich.recede274@passmail.net>
 PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
 
-define Package/luci-app-re-homeproxy/conffiles
+define Package/luci-app-ravnex/conffiles
 /etc/config/ravnex
 /etc/config/ravcontrol
 /etc/ravnex/certs/
@@ -38,7 +43,7 @@ define Package/luci-app-re-homeproxy/conffiles
 	/etc/ravnex/resources/auto_proxy_ip.txt
 endef
 
-define Package/luci-app-re-homeproxy/postinst
+define Package/luci-app-ravnex/postinst
 #!/bin/sh
 # Full restart, NOT kill -HUP: SIGHUP only reloads ACLs/session, so rpcd keeps the
 # OLD ucode method set from /usr/share/rpcd/ucode/ until restarted. On every update

@@ -346,9 +346,9 @@ start_service() {
 	# Restore defaults from the packaged backup. Only when there are no homeproxy sections,
 	# so a populated (even if odd) user config is never overwritten.
 	if ! grep -q "config ravnex" "/etc/config/$CONF" 2>/dev/null; then
-		if [ -f "/usr/share/homeproxy/homeproxy.default" ]; then
-			cp "/usr/share/homeproxy/homeproxy.default" "/etc/config/$CONF"
-			log "config /etc/config/$CONF was missing/empty вЂ” restored defaults."
+		if [ -f "/usr/share/ravnex/ravnex.default" ]; then
+			cp "/usr/share/ravnex/ravnex.default" "/etc/config/$CONF"
+			log "config /etc/config/$CONF was missing/empty — restored defaults."
 		fi
 	fi
 

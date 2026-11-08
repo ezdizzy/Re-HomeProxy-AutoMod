@@ -1,5 +1,5 @@
 {
-	"luci-app-re-homeproxy": {
+	"luci-app-ravnex": {
 		"description": "Grant access to ravnex configuration",
 		"read": {
 			"file": {
