@@ -1,6 +1,7 @@
 # Local documentation — must NEVER be published to GitHub.
 # Ravnex change log / working notes live in LOCAL_DOCS/.
 LOCAL_DOCS/
+LOCAL_DOCS_tmp/
 LOCAL_CHANGELOG.md
 LOCAL_*.md
 

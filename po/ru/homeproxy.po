@@ -1,3 +1,5 @@
+
+
 msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -5614,6 +5616,7 @@ msgstr "Архив истёк (роутер перезагружался) — с
 
 msgid "Failed to start: "
 msgstr "Не удалось запустить: "
+
 msgid "Download .txt"
 msgstr "Скачать .txt"
 
@@ -7432,7 +7435,6 @@ msgstr "Ещё не проверено вживую на установленн�
 msgid "After you save, set up the client with the SAME parameters (port, keys, passwords) — everything is visible in the server settings."
 msgstr "После сохранения настройте клиент теми же параметрами (порт, ключи, пароли) — все они видны в настройках сервера."
 
-
 msgid "Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the \"send a service through the engine\" chain. Automatic selection lives on the Strategy picking tab."
 msgstr "Всё, что применяется вручную: глобальная стратегия Zapret, карточка ByeDPI с пресетами и флагами, композиция обоих движков по ресурсам и цепочка «отправить сервис через движок». Автоматический подбор — на вкладке «Подбор стратегии»."
 
@@ -7565,52 +7567,6 @@ msgstr "Страница Gemini — SPA-шелл%s: отказ рисуется 
 msgid "The node probe covers the API gate only — the Gemini WEB gate is stricter and may reject hosting-provider IPs. If a node \"passes\" here but the device still refuses, the web gate is the reason; verify on the device."
 msgstr "Проба узлов покрывает только API-гейт — ВЕБ-гейт Gemini строже и может отвергать IP хостинг-провайдеров. Если узел здесь «проходит», а на устройстве всё ещё отказ — причина в веб-гейте; проверяйте на устройстве."
 
-msgid "Feed configured"
-msgstr "Feed подключён"
-
-msgid "Feed is not configured"
-msgstr "Feed не настроен"
-
-msgid "Feed index reachable"
-msgstr "Индекс feed доступен"
-
-msgid "Feed index unreachable (code %s)"
-msgstr "Индекс feed недоступен (код %s)"
-
-msgid "The feed index is not published yet"
-msgstr "Индекс feed ещё не опубликован"
-
-msgid "Feed packages"
-msgstr "Пакеты feed"
-
-msgid "Set up the feed"
-msgstr "Подключить feed"
-
-
-msgid "Feed configured — packages update from your own repository."
-msgstr "Feed подключён — пакеты обновляются из вашего репозитория."
-
-msgid "Feed setup failed: "
-msgstr "Не удалось подключить feed: "
-
-msgid "Remove the feed"
-msgstr "Отключить feed"
-
-msgid "Feed removed — installs return to the original sources."
-msgstr "Feed отключён — установки возвращаются к исходным источникам."
-
-msgid "Feed removal failed: "
-msgstr "Не удалось отключить feed: "
-
-msgid "Own apk feed"
-msgstr "Свой apk-репозиторий"
-
-msgid "Serves the components that otherwise install from archives: hiddify-core (full and UPX compact), mosdns and the automation helpers — as signed apk packages from your own repository. When the feed is unavailable, installs automatically fall back to the original sources."
-msgstr "Обслуживает компоненты, которые сейчас ставятся архивами: hiddify-core (полная и UPX-компактная сборки), mosdns и хелперы автоматизации — как подписанные apk-пакеты из вашего собственного репозитория. Когда feed недоступен, установки автоматически возвращаются к исходным источникам."
-
-msgid "Setting up the feed…"
-msgstr "Настраиваю feed…"
-
 msgid "Fallback probe mode"
 msgstr "Резервный режим проб"
 
@@ -7679,3 +7635,63 @@ msgstr "Батарея deep не измеряла этот ресурс для �
 
 msgid "Router load during the sweep (1-min avg): max %s, at finish %s."
 msgstr "Нагрузка роутера во время свипа (1-мин среднее): максимум %s, на финише %s."
+
+msgid "Installing from the update source..."
+msgstr "Ставлю из источника обновлений…"
+
+msgid "Installed from the update source"
+msgstr "Установлено из источника обновлений"
+
+msgid "Update source configured (signing key installed)"
+msgstr "Источник обновлений подключён (ключ подписи установлен)"
+
+msgid "Update source is not configured"
+msgstr "Источник обновлений не подключён"
+
+msgid "Components install as ipk files with sha256 verification (no apk on this system)"
+msgstr "Компоненты ставятся ipk-файлами с проверкой sha256 (apk на этой системе нет)"
+
+msgid "Manifest reachable"
+msgstr "Манифест доступен"
+
+msgid "Manifest unreachable (code %s)"
+msgstr "Манифест недоступен (код %s)"
+
+msgid "The feed manifest is not published yet"
+msgstr "Манифест фида ещё не опубликован"
+
+msgid "fresh"
+msgstr "свежий"
+
+msgid "cached %s min ago"
+msgstr "кэш от %s мин назад"
+
+msgid "Components (installed → offered)"
+msgstr "Компоненты (установлено → в фиде)"
+
+msgid "Set up the update source"
+msgstr "Подключить источник обновлений"
+
+msgid "Setting up the update source…"
+msgstr "Подключаю источник обновлений…"
+
+msgid "Update source configured — components install as explicit files from the manifest."
+msgstr "Источник обновлений подключён — компоненты ставятся явными файлами по манифесту."
+
+msgid "Update source setup failed: "
+msgstr "Не удалось подключить источник обновлений: "
+
+msgid "Remove the update source"
+msgstr "Отключить источник обновлений"
+
+msgid "Update source removed — installs return to the original sources."
+msgstr "Источник обновлений отключён — установки возвращаются к исходным источникам."
+
+msgid "Update source removal failed: "
+msgstr "Не удалось отключить источник обновлений: "
+
+msgid "Update source"
+msgstr "Источник обновлений"
+
+msgid "Own signed package source: every component (hiddify-core full and compact, sing-box-extended and lite, mosdns, helpers, byedpi, zapret2) installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. When the source is unavailable, installs automatically fall back to the original paths."
+msgstr "Свой подписанный источник пакетов: каждый компонент (hiddify-core полный и компактный, sing-box-extended и lite, mosdns, помощники, byedpi, zapret2) ставится явным файлом из манифеста фида — на apk-системах проверяется подпись apk, на opkg — sha256. В repositories.d ничего не пишется, поэтому чужой репозиторий никогда не перебьёт наши компоненты. Когда источник недоступен, установки автоматически возвращаются к обычным путям."

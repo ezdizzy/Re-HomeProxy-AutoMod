@@ -2,7 +2,7 @@
 
 # ByeDPI
 
-**ByeDPI** is a built-in DPI-bypass that can un-throttle and unblock sites **without any VPN subscription**. Re:HomeProxy AutoMod bundles the [ByeDPI](https://github.com/hufrea/byedpi) engine (`ciadpi`) and manages it for you.
+**ByeDPI** is a built-in DPI-bypass that can un-throttle and unblock sites **without any VPN subscription**. Ravnex bundles the [ByeDPI](https://github.com/hufrea/byedpi) engine (`ciadpi`) and manages it for you.
 
 ---
 
@@ -24,19 +24,19 @@ Think of ByeDPI as a complement to a VPN node (offload throttled sites like YouT
 
 ## Enabling ByeDPI
 
-1. Go to **Services → Re:HomeProxy AutoMod → Client Settings → Routing** and tick **Enable ByeDPI** (if `ciadpi` is not
-   installed yet, the app offers to install the right `byedpi` package for your architecture right there; you can also
-   install it from the **Core & Tools** page).
-2. Open **Services → Re:HomeProxy AutoMod → Routing Wizard → DPI bypass** — the **ByeDPI strategy** card: pick a preset
-   (see below) or type your own options, then press **Save ByeDPI** (the service restarts).
+1. Enable ByeDPI on the **Connection** page (if `ciadpi` is not installed yet, the app offers to
+   install the right `byedpi` package for your architecture right there; you can also install it
+   from **Maintenance → Core management**).
+2. Open the **Blocking bypass** page — the **ByeDPI strategy** card: pick a preset (see below) or
+   type your own options, then save (the service restarts).
 
-That's all that's needed for the engine. Re:HomeProxy AutoMod starts `ciadpi` for you and prevents it from looping back through the proxy automatically — you do not need to touch the firewall or process settings. The same card carries the engine option flags (UDP over TCP, Block QUIC) and the preset sweep button.
+That's all that's needed for the engine. Ravnex starts `ciadpi` for you and prevents it from looping back through the proxy automatically — you do not need to touch the firewall or process settings. The same card carries the engine option flags (UDP over TCP, Block QUIC) and the preset sweep button.
 
 ---
 
 ## Strategies and presets
 
-A "strategy" is the set of command-line options ByeDPI uses to mangle the handshake. There is no universal best strategy — **what works depends on your ISP's DPI**. Re:HomeProxy AutoMod ships **47 ready-made presets** grouped by technique (named by group letter, e.g. `C3`, `I1`):
+A "strategy" is the set of command-line options ByeDPI uses to mangle the handshake. There is no universal best strategy — **what works depends on your ISP's DPI**. Ravnex ships **47 ready-made presets** grouped by technique (named by group letter, e.g. `C3`, `I1`):
 
 | Group | Examples | Idea |
 |-------|----------|------|
@@ -63,7 +63,7 @@ Why adaptive matters: a **fixed** fake-TTL strategy (the Fake-TTL group, presets
 
 ## The strategy tester
 
-Because the right strategy is ISP-specific, the **ByeDPI strategy** card in the Wizard (DPI bypass) includes a **tester**:
+Because the right strategy is ISP-specific, the **ByeDPI strategy** card on the Blocking bypass page includes a **tester**:
 
 - **Test** — tests the strategy currently in the input against four reference sites and shows a result per site:
   - **YouTube** and **Telegram** — *far* servers
@@ -81,14 +81,14 @@ Pick a strategy that scores **all-green** for your network. If several do, prefe
 
 ByeDPI appears as a selectable node (**ByeDPI**) once enabled. Two common setups:
 
-- **Alongside a VPN node (recommended):** in `proxy_banned_ru` mode, set a *specific service's* exit to **ByeDPI** in the Wizard (**Services → exits**) — e.g. route YouTube through ByeDPI (saving VPN bandwidth) while everything else uses your VPN.
-- **Standalone (no VPN):** set ByeDPI as the **main node** on Client Settings → Routing. All proxied traffic then goes through the local desync.
+- **Alongside a VPN node (recommended):** set a *specific service's* exit to **ByeDPI** on the **Service rules** page — e.g. route YouTube through ByeDPI (saving VPN bandwidth) while everything else uses your VPN.
+- **Standalone (no VPN):** set ByeDPI as the **main node** on the Connection page. All proxied traffic then goes through the local desync.
 
 ---
 
 ## DNS
 
-ByeDPI is a desync, not a tunnel, so DNS does **not** go through it. When ByeDPI carries traffic, Re:HomeProxy AutoMod resolves names **directly** (your configured Secure DNS detours direct-out for ByeDPI). Trying to push DoH/DoT or UDP DNS *through* ByeDPI fails — the handshake mangling corrupts the encrypted DNS session. This is handled automatically; there is nothing to configure.
+ByeDPI is a desync, not a tunnel, so DNS does **not** go through it. When ByeDPI carries traffic, Ravnex resolves names **directly** (your configured Secure DNS detours direct-out for ByeDPI). Trying to push DoH/DoT or UDP DNS *through* ByeDPI fails — the handshake mangling corrupts the encrypted DNS session. This is handled automatically; there is nothing to configure.
 
 ---
 

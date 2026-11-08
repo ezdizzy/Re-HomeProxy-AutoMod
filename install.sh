@@ -19,6 +19,12 @@
 # При заблокированном/замедленном GitHub можно указать зеркало:
 #   GH_MIRROR=https://my.mirror sh install.sh
 # (зеркало также пишется в uci, чтобы делегированные загрузки тоже его использовали).
+# Оффлайн-установка из каталога с файлами пакетов (Ф11.4 — у 80% роутеров нет
+# памяти под большой архив, поэтому ОДИНОЧНЫЕ файлы, не архив):
+#   sh install.sh --local /path/to/files
+#   (в каталоге: пакеты приложения и русской локали, ядро/движки, mosdns,
+#   помощники — имена как в релизах/фиде; сценарии «Android-телефон с
+#   терминалом» и «ПК + scp» — в Wiki).
 # Внимание: `sh <(wget -O- ...)` на OpenWrt НЕ работает — в busybox ash нет
 # process substitution; используйте форму с пайпом выше.
 #
@@ -33,6 +39,14 @@
 # в прямой доступ и просто ничего не блокирует).
 HP_REPO="${HP_REPO:-ezdizzy/re-homeproxy}"
 SUFFIX="_all"   # суффикс имени пакета приложения в релизах
+
+# --local /path — оффлайн-режим: все загрузки заменяются файлами из каталога.
+LOCAL_DIR=""
+if [ "$1" = "--local" ]; then
+	LOCAL_DIR="$2"
+	[ -n "$LOCAL_DIR" ] && [ -d "$LOCAL_DIR" ] || { echo "install.sh --local: укажите каталог с файлами пакетов"; exit 1; }
+	shift 2
+fi
 
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[0;33m'; C='\033[0;36m'; N='\033[0m'
 ok()   { echo -e "${G}$1${N}"; }
@@ -51,7 +65,13 @@ jfalse(){ printf '%s'   "$1" | grep -qE "\"$2\"[[:space:]]*:[[:space:]]*false"; 
 
 # --- Загрузка «сначала GitHub, при сбое — зеркало» для первого хопа (app + ключ),
 #     пока ещё нет собственного gh_fetch приложения. dl <url> <файл>
+# В режиме --local загрузка = файл из каталога (по точному имени или по префиксу).
 dl() {
+	if [ -n "$LOCAL_DIR" ]; then
+		local lf=$(local_of "$1")
+		[ -n "$lf" ] && cp "$lf" "$2" && return 0
+		return 1
+	fi
 	wget -qO "$2" --timeout=20 "$1" 2>/dev/null && [ -s "$2" ] && return 0
 	if [ -n "$GH_MIRROR" ]; then
 		m=$(echo "$1" | sed "s#https://github.com#${GH_MIRROR}#")
@@ -59,11 +79,111 @@ dl() {
 	fi
 	return 1
 }
-api() { wget -qO- --timeout=20 "$1" 2>/dev/null; }   # GitHub API (без зеркала)
+# local_of <url> — файл в каталоге --local: точное имя, затем префикс до первого
+# разделителя (hiddify-core_..., luci-app-re-homeproxy-..., probe_pool-linux-...).
+local_of() {
+	local base
+	base=$(basename "$1")
+	[ -f "$LOCAL_DIR/$base" ] && { printf '%s' "$LOCAL_DIR/$base"; return 0; }
+	local pref
+	pref=$(printf '%s' "$base" | sed -E 's/[-_].*//')
+	local f
+	f=$(ls "$LOCAL_DIR/${pref}"* 2>/dev/null | head -n1)
+	[ -n "$f" ] && { printf '%s' "$f"; return 0; }
+	return 1
+}
+api() { [ -n "$LOCAL_DIR" ] && return 0; wget -qO- --timeout=20 "$1" 2>/dev/null; }   # GitHub API (без зеркала); --local — обновления не проверяются
 
 CM=/usr/share/homeproxy/scripts/core_mgmt.uc
 HAS_UCB=0
 have_ubus() { command -v ubus >/dev/null 2>&1; }
+
+# -------------------------------------------------- источник обновлений (Ф11 V2)
+# Клиент НЕ пишет repositories.d вовсе: ключ подписи в /etc/apk/keys/ + manifest.json
+# (контракт клиента: pkg → version → apk/ipk файл + sha256). Установка = скачать
+# ЯВНЫЙ файл по манифесту → sha256-гейт → apk add ./x.apk (подпись проверит apk по
+# нашему ключу) | opkg install ./x.ipk (opkg подписи не проверяет — sha256 и есть
+# проверка). Лестница источников (Ф11.4): raw.githubusercontent → jsDelivr → GH_MIRROR.
+FEED_MAN=""
+feed_manifest() {
+	[ -n "$FEED_MAN" ] && return 0
+	[ -n "$LOCAL_DIR" ] && return 1
+	local series rel u
+	series=$(printf '%s' "$VER" | cut -d. -f1,2)
+	rel="releases/$series/$ARCH/manifest.json"
+	for u in \
+		"https://raw.githubusercontent.com/${HP_REPO}/refs/heads/feed/$rel" \
+		"https://cdn.jsdelivr.net/gh/${HP_REPO}@feed/$rel"; do
+		if wget -qO /tmp/feed_manifest.json --timeout=15 "$u" 2>/dev/null && [ -s /tmp/feed_manifest.json ]; then
+			FEED_MAN=/tmp/feed_manifest.json; return 0
+		fi
+	done
+	if [ -n "$GH_MIRROR" ]; then
+		u="${GH_MIRROR}/${HP_REPO}/raw/refs/heads/feed/$rel"
+		if wget -qO /tmp/feed_manifest.json --timeout=15 "$u" 2>/dev/null && [ -s /tmp/feed_manifest.json ]; then
+			FEED_MAN=/tmp/feed_manifest.json; return 0
+		fi
+	fi
+	return 1
+}
+feed_init() {
+	[ -n "$LOCAL_DIR" ] && return 1
+	if [ "$PM" = apk ] && [ ! -f /etc/apk/keys/ravnex-feed.pub ]; then
+		if dl "https://github.com/${HP_REPO}/raw/refs/heads/feed/ravnex-feed.pub" /tmp/ravnex-feed.pub; then
+			head -c 27 /tmp/ravnex-feed.pub | grep -q 'BEGIN PUBLIC KEY' && {
+				mkdir -p /etc/apk/keys /lib/upgrade/keep.d
+				cp /tmp/ravnex-feed.pub /etc/apk/keys/ravnex-feed.pub
+				chmod 644 /etc/apk/keys/ravnex-feed.pub
+				printf '%s\n' /etc/apk/keys/ravnex-feed.pub > /lib/upgrade/keep.d/ravnex-feed
+				ok "  ключ источника обновлений установлен (подпись пакетов проверяется apk)"
+			}
+		fi
+		rm -f /tmp/ravnex-feed.pub
+	fi
+	feed_manifest && return 0
+	return 1
+}
+feed_field() { # <pkg> <поле> — значение из манифеста (пусто = нет)
+	[ -n "$FEED_MAN" ] || return 0
+	ucode -e "import { readfile } from 'fs'; let m = json(readfile('$FEED_MAN') || ''); let e = (m && m.pkgs) ? m.pkgs['$1'] : null; print((e && e['$2']) ? e['$2'] : '');" 2>/dev/null
+}
+feed_install() { # <pkg> — явный файл из манифеста + sha256-гейт + установка; 0 = успех
+	[ "$PM" = apk ] && [ ! -f /etc/apk/keys/ravnex-feed.pub ] && return 1
+	local f sha got tmp
+	f=$(feed_field "$1" "$PM"); sha=$(feed_field "$1" "${PM}_sha256")
+	[ -n "$f" ] && [ -n "$sha" ] || return 1
+	tmp="/tmp/feed_$1.$PM"
+	local rel="releases/$(printf '%s' "$VER" | cut -d. -f1,2)/$ARCH/$f"
+	local done_=""
+	for u in \
+		"https://raw.githubusercontent.com/${HP_REPO}/refs/heads/feed/$rel" \
+		"https://cdn.jsdelivr.net/gh/${HP_REPO}@feed/$rel"; do
+		wget -qO "$tmp" --timeout=15 "$u" 2>/dev/null && [ -s "$tmp" ] && { done_=1; break; }
+	done
+	if [ -z "$done_" ] && [ -n "$GH_MIRROR" ]; then
+		u="${GH_MIRROR}/${HP_REPO}/raw/refs/heads/feed/$rel"
+		wget -qO "$tmp" --timeout=15 "$u" 2>/dev/null && [ -s "$tmp" ] && done_=1
+	fi
+	[ -n "$done_" ] || return 1
+	got=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
+	if [ "$got" != "$sha" ]; then
+		rm -f "$tmp"
+		warn "  sha256 файла $f не совпал с манифестом — установка отменена (источник повреждён?)"
+		return 1
+	fi
+	if [ "$PM" = apk ]; then
+		if apk info -e "$1" >/dev/null 2>&1; then
+			apk upgrade "$tmp" >/dev/null 2>&1 || apk add "$tmp" >/dev/null 2>&1
+		else
+			apk add "$tmp" >/dev/null 2>&1
+		fi
+	else
+		opkg install --force-reinstall "$tmp" >/dev/null 2>&1
+	fi
+	local rc=$?
+	rm -f "$tmp"
+	return $rc
+}
 
 # ------------------------------------------------------------------ helpers
 
@@ -588,13 +708,32 @@ install_core() {
 
 	PREP=$(ucode "$CM" prepare_install "$CORE" "$VARIANT" 2>/dev/null)
 	jerr "$PREP" && die "  подготовка ядра не удалась: $(jget "$PREP" error)"
+	# Ф11 V2 feed-first: prepare вернул источник обновлений — явный файл из
+	# манифеста (sha256 + подпись), никакого tar-бола/asset-пути.
+	if [ "$(jget "$PREP" source)" = "feed" ] && [ -n "$(jget "$PREP" feed_pkg)" ]; then
+		FEEDPKG=$(jget "$PREP" feed_pkg)
+		info "  $CORE: ставлю из источника обновлений ($FEEDPKG $(jget "$PREP" version))..."
+		if jtrue "$(ucode "$CM" install_feed_pkg "$FEEDPKG" 2>/dev/null)"; then
+			jtrue "$(ucode "$CM" install_kmods "$(jget "$PREP" pkg_manager)" 2>/dev/null)" || warn "  не удалось поставить kmod — без kmod-nft-tproxy/kmod-tun прокси не будет маршрутизировать."
+			ok "  $CORE установлен (источник обновлений)."
+			return 0
+		fi
+		warn "  установка из источника обновлений не удалась — возврат к обычным путям."
+		PREP=$(ucode "$CM" prepare_install "$CORE" "$VARIANT" 2>/dev/null)
+		jerr "$PREP" && die "  подготовка ядра не удалась: $(jget "$PREP" error)"
+	fi
 	DLURL=$(jget "$PREP" dl_url)
 	# lite-ядро ставится собственным install.sh проекта (dl_url нет — есть installer_url)
 	[ -z "$DLURL" ] && DLURL=$(jget "$PREP" installer_url)
 	TMP=$(jget "$PREP" tmp_path); PMG=$(jget "$PREP" pkg_manager)
 	[ -n "$DLURL" ] && [ -n "$TMP" ] && [ -n "$PMG" ] || die "  подготовка ядра не вернула данные для загрузки."
 	info "  скачиваю $CORE..."
-	jtrue "$(ucode "$CM" download_pkg "$DLURL" "$TMP" 2>/dev/null)" || die "  не удалось скачать ядро (попробуйте GH_MIRROR=...)."
+	if [ -n "$LOCAL_DIR" ]; then
+		lf=$(local_of "$DLURL")
+		[ -n "$lf" ] && cp "$lf" "$TMP" || die "  в каталоге --local нет файла для $DLURL."
+	else
+		jtrue "$(ucode "$CM" download_pkg "$DLURL" "$TMP" 2>/dev/null)" || die "  не удалось скачать ядро (попробуйте GH_MIRROR=...)."
+	fi
 	jtrue "$(ucode "$CM" install_pkg "$CORE" "$TMP" "$PMG" 2>/dev/null)" || die "  установка ядра не удалась."
 	jtrue "$(ucode "$CM" install_kmods "$PMG" 2>/dev/null)" || warn "  не удалось поставить kmod — без kmod-nft-tproxy/kmod-tun прокси не будет маршрутизировать."
 	ok "  $CORE установлен."
@@ -604,6 +743,12 @@ install_core() {
 install_mosdns() {
 	if [ -x /usr/bin/mosdns ]; then ok "  mosdns уже установлен."; return 0; fi
 	info "  ставлю mosdns (движок гонки DNS для MultiDNS)..."
+	# Ф11 V2 feed-first: явный пакет из манифеста (sha256-гейт), фолбэк — zip.
+	if ! [ -n "$LOCAL_DIR" ] && feed_install mosdns && [ -x /usr/bin/mosdns ]; then
+		ok "  mosdns установлен (источник обновлений)."
+		return 0
+	fi
+	# --local: готовый zip из каталога ставится обычным zip-путём ниже.
 	case "$ARCH" in
 		aarch64_*) MARCH=arm64 ;;
 		arm_cortex-a7*|arm_cortex-a9*|arm_cortex-a15*|arm_cortex-a8*|arm_mpcore*) MARCH=arm-7 ;;
@@ -659,6 +804,26 @@ install_go_tool() {
 	# $2 = "force": download again even if the binary is already present (update).
 	if [ -x "/usr/bin/$TOOL" ] && [ "$2" != "force" ]; then ok "  $TOOL уже установлен."; return 0; fi
 	info "  ставлю $TOOL (нативный помощник автоматизации)..."
+	# Ф11 V2 feed-first: probe_pool/sni_sniffer живут в фиде явными пакетами.
+	# utls_probe в фиде НЕ собирается — всегда релизный zip (честно).
+	if [ "$TOOL" = "probe_pool" ] || [ "$TOOL" = "sni_sniffer" ]; then
+		if [ -n "$LOCAL_DIR" ]; then
+			lf=$(local_of "https://github.com/${HP_REPO}/releases/latest/download/${TOOL}-linux-x.zip")
+			if [ -n "$lf" ]; then
+				if ! command -v unzip >/dev/null 2>&1; then
+					[ "$PM" = apk ] && apk add unzip >/dev/null 2>&1 || opkg install unzip >/dev/null 2>&1
+				fi
+				if command -v unzip >/dev/null 2>&1 && unzip -o "$lf" -d "/tmp/${TOOL}" >/dev/null 2>&1; then
+					TBIN=$(find "/tmp/${TOOL}" -type f \( -name "$TOOL" -o -name "${TOOL}-*" \) 2>/dev/null | head -1)
+					[ -n "$TBIN" ] && cp "$TBIN" "/usr/bin/$TOOL" && chmod 0755 "/usr/bin/$TOOL" && ok "  $TOOL установлен (--local)." && return 0
+					rm -rf "/tmp/${TOOL}"
+				fi
+			fi
+		elif feed_install "$TOOL" && [ -x "/usr/bin/$TOOL" ]; then
+			ok "  $TOOL установлен (источник обновлений)."
+			return 0
+		fi
+	fi
 	go_arch_mapping
 	if [ -z "$GOASSET" ]; then
 		warn "  $TOOL: нет готового бинарника для архитектуры $ARCH — пропускаю (автоматизация обойдётся без него)."
@@ -936,6 +1101,33 @@ install_zapret() {
 	ZP=$(ubus call luci.homeproxy zapret_prepare_install 2>/dev/null)
 	if [ -z "$ZP" ] || jerr "$ZP"; then warn "  не удалось подготовить Zapret — пропускаю. ($(jget "$ZP" error))"
 	else
+		# Ф11 V2 feed-first: prepare вернул источник обновлений — явный файл.
+		if [ "$(jget "$ZP" source)" = "feed" ] && [ -n "$(jget "$ZP" feed_pkg)" ]; then
+			ZFPKG=$(jget "$ZP" feed_pkg)
+			info "  Zapret: ставлю из источника обновлений ($ZFPKG $(jget "$ZP" version))..."
+			if jtrue "$(ubus call luci.homeproxy install_feed_pkg "{\"pkg\":\"$ZFPKG\"}" 2>/dev/null)"; then
+				ok "  Zapret установлен (источник обновлений)."
+				ZST=$(ubus call luci.homeproxy zapret_status 2>/dev/null)
+				if jfalse "$ZST" kmod_ok; then
+					warn "  модуль NFQUEUE не загружен — Zapret не включаю (иначе сломается firewall)."
+					warn "  Включите вручную после kmod-nft-queue (Client Settings → Routing → Enable Zapret)."
+				else
+					uci -q set homeproxy.config.zapret_enabled=1
+					uci -q commit homeproxy
+					ok "  Zapret включён."
+					if zapret_pick_strategy; then
+						add_rule youtube zapret-out
+					else
+						warn "  правило YouTube → Zapret НЕ добавлено (нет рабочей стратегии — иначе YouTube бы не открывался)."
+						warn "  После подбора стратегии добавьте правило вручную: Proxy Rules → YouTube → Zapret."
+					fi
+				fi
+				return 0
+			fi
+			warn "  установка из источника обновлений не удалась — возврат к обычным путям."
+			ZP=$(ubus call luci.homeproxy zapret_prepare_install 2>/dev/null)
+			[ -n "$ZP" ] && ! jerr "$ZP" || return 0
+		fi
 		ZURL=$(jget "$ZP" dl_url); ZTMP=$(jget "$ZP" tmp_path); ZPMG=$(jget "$ZP" pkg_manager)
 		if [ -n "$ZURL" ] && dl "$ZURL" "$ZTMP"; then
 			RES=$(ubus call luci.homeproxy zapret_install_pkg "{\"tmp_path\":\"$ZTMP\",\"pkg_manager\":\"$ZPMG\"}" 2>/dev/null)
@@ -1006,6 +1198,19 @@ install_byedpi() {
 	BP=$(ubus call luci.homeproxy byedpi_prepare_install 2>/dev/null)
 	if [ -z "$BP" ] || jerr "$BP"; then warn "  не удалось подготовить ByeDPI — пропускаю. ($(jget "$BP" error))"
 	else
+		# Ф11 V2 feed-first: prepare вернул источник обновлений — явный файл.
+		if [ "$(jget "$BP" source)" = "feed" ] && [ -n "$(jget "$BP" feed_pkg)" ]; then
+			BFPKG=$(jget "$BP" feed_pkg)
+			info "  ByeDPI: ставлю из источника обновлений ($BFPKG $(jget "$BP" version))..."
+			if jtrue "$(ubus call luci.homeproxy install_feed_pkg "{\"pkg\":\"$BFPKG\"}" 2>/dev/null)"; then
+				ok "  ByeDPI установлен (источник обновлений)."
+				uci set homeproxy.config.byedpi_enabled=1; uci commit homeproxy; ok "  ByeDPI включён."
+				return 0
+			fi
+			warn "  установка из источника обновлений не удалась — возврат к обычным путям."
+			BP=$(ubus call luci.homeproxy byedpi_prepare_install 2>/dev/null)
+			[ -n "$BP" ] && ! jerr "$BP" || return 0
+		fi
 		BURL=$(jget "$BP" dl_url); BTMP=$(jget "$BP" tmp_path); BPMG=$(jget "$BP" pkg_manager)
 		if [ -n "$BURL" ] && dl "$BURL" "$BTMP"; then
 			RES=$(ubus call luci.homeproxy byedpi_install_pkg "{\"tmp_path\":\"$BTMP\",\"pkg_manager\":\"$BPMG\"}" 2>/dev/null)
@@ -1252,6 +1457,7 @@ if [ "$APP_INSTALLED" = 1 ]; then
 	# пакет заново поверх (файлы могли остаться записанными от чужого пакета).
 	[ "$FOREIGN_REMOVED" = 1 ] && app_reinstall
 	/etc/init.d/rpcd restart >/dev/null 2>&1; sleep 1
+	feed_init || true   # источник обновлений: ключ + манифест (best-effort, фолбэк — обычные пути)
 	ensure_baseline
 	apply_and_check
 	menu
@@ -1261,6 +1467,8 @@ fi
 install_app
 
 set_dns_defaults
+
+feed_init || true   # источник обновлений: ключ + манифест (best-effort, фолбэк — обычные пути)
 
 install_core
 

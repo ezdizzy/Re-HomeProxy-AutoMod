@@ -2531,25 +2531,66 @@ function hp_sub_strhash(s) {
 	return sprintf('%08x', h);
 }
 
-/* ── §1.7 Own apk feed (client side) ──────────────────────────────────
- * The feed (built by .github/build-feed.sh, published on the feed
- * branch) serves the components that otherwise install by
- * archive/manually — hiddify-core (full + UPX compact), mosdns and the
- * automation helpers — as SIGNED apk v3 packages with a per-arch
- * packages.adb index. Client wiring is three files: the public key in
- * /etc/apk/keys/, one URL line in repositories.d/ and the keep.d entry
- * so both survive a sysupgrade. raw.githubusercontent serves 200
- * directly — apk does NOT follow HTTP redirects (openwrt#17180), so
- * github.com/.../raw URLs are useless here. Repo-name resolution
- * mirrors app_github_release: ravnex first, the pre-rename repository
- * as fallback. Fallback semantics are apk-native: an unreachable index
- * only warns at `apk update` and the official feeds keep resolving.
+/* ── §1.7 Own package feed — V2, EXPLICIT FILES ONLY (session 150) ────
+ * The client NEVER resolves through repositories: it does NOT write a
+ * repositories.d line (a foreign feed could then out-version our
+ * components via `apk upgrade` — the version-race hazard). feed_setup
+ * installs ONLY the signing key (/etc/apk/keys/ravnex-feed.pub + keep.d
+ * for sysupgrade survival). Every install = download the exact file
+ * named by manifest.json (the client contract: pkg → version → apk/ipk
+ * file + sha256) → verify sha256 → `apk add ./x.apk` (apk checks the
+ * signature against our key) | `opkg install ./x.ipk` (opkg checks
+ * nothing → the client's sha256 gate IS the verification).
+ *
+ * Feed tree (built by .github/build-feed.sh, published on the feed
+ * branch): releases/<series>/<arch>/{manifest.json,packages.adb,*.apk,
+ * *.ipk} + root ravnex-feed.pub + versions.txt. mirrors carry foreign
+ * payloads REBUILT under OUR key with the foreign name/version kept
+ * verbatim, so vercmp against the installed binary stays honest.
+ *
+ * Download ladder (Ф11.4, applies to EVERY feed URL — key, manifest,
+ * packages): raw.githubusercontent → jsDelivr (works for branch files)
+ * → UCI homeproxy.config.github_mirror (any gh-proxy, prefix form of
+ * the github.com/raw URL). Repo resolution mirrors app_github_release:
+ * ezdizzy/ravnex first, the pre-rename repository as fallback.
+ *
+ * PM honesty: apk systems verify signatures; opkg systems (24.10, no
+ * apk) rely on the sha256 gate — the card reports it honestly.
  * Declared ABOVE the methods object (rpcd ucode rejects function
  * declarations inside the object literal — monitor_nodes lesson). */
-const FEED_LIST_FILE = '/etc/apk/repositories.d/ravnex-feed.list';
 const FEED_KEY_FILE = '/etc/apk/keys/ravnex-feed.pub';
 const FEED_KEEP_FILE = '/lib/upgrade/keep.d/ravnex-feed';
-const FEED_PKGS = ['hiddify-core', 'hiddify-core-compact', 'mosdns', 'probe_pool', 'sni_sniffer'];
+/* V1 leftover (repositories.d line) — never written again; removed on
+ * setup/remove so a legacy config cannot keep resolving through repos. */
+const FEED_LIST_LEGACY = '/etc/apk/repositories.d/ravnex-feed.list';
+const FEED_MANIFEST_FILE = '/var/run/homeproxy/feed_manifest.json';
+const FEED_MANIFEST_TTL = 1800;      /* CI rebuilds daily; 30 min cache */
+const FEED_PROBE_TTL = 300;          /* reachability probe cache */
+const FEED_BRANCH = 'refs/heads/feed';
+const FEED_REPOS = ['ezdizzy/ravnex', 'ezdizzy/re-homeproxy'];
+const FEED_PKGS = ['hiddify-core', 'hiddify-core-compact', 'mosdns', 'probe_pool',
+	'sni_sniffer', 'sing-box-extended', 'sing-box-extended-lite', 'byedpi', 'zapret2'];
+/* Post-install check path per feed package (access() after install). */
+const FEED_BIN_PATH = {
+	'hiddify-core': '/usr/bin/hiddify-core',
+	'hiddify-core-compact': '/usr/bin/hiddify-core',
+	'mosdns': '/usr/bin/mosdns',
+	'probe_pool': '/usr/bin/probe_pool',
+	'sni_sniffer': '/usr/bin/sni_sniffer',
+	'sing-box-extended': '/usr/bin/sing-box',
+	'sing-box-extended-lite': '/usr/bin/sing-box',
+	'byedpi': '/usr/bin/ciadpi',
+	'zapret2': '/opt/zapret2/nfq2/nfqws2'
+};
+/* Sibling groups share a binary path and conflict with each other — when
+ * one installs, the sibling is removed best-effort. ONLY these two own
+ * families; foreign packages never trigger a sibling del (lesson ch.223). */
+const FEED_SIBLING = {
+	'hiddify-core': 'hiddify-core-compact',
+	'hiddify-core-compact': 'hiddify-core',
+	'sing-box-extended': 'sing-box-extended-lite',
+	'sing-box-extended-lite': 'sing-box-extended'
+};
 
 function feed_detect_arch() {
 	const fd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
@@ -2570,23 +2611,192 @@ function feed_series() {
 	return m ? m[1] : '25.12';
 }
 
-function feed_index_url(repo) {
-	return 'https://raw.githubusercontent.com/' + repo + '/refs/heads/feed/releases/' +
-		feed_series() + '/' + feed_detect_arch() + '/packages.adb';
+function feed_pkg_manager() {
+	if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) return 'apk';
+	if (access('/bin/opkg') || access('/usr/bin/opkg')) return 'opkg';
+	return null;
 }
 
-function feed_key_url(index_url) {
-	/* the key sits at the feed ROOT, the index under releases/<series>/<arch>/ */
-	const parts = split(index_url, '/releases/');
-	return (length(parts) > 1) ? (parts[0] + '/ravnex-feed.pub') : (index_url.replace(/packages\.adb$/, 'ravnex-feed.pub'));
+function feed_rel(path) {
+	return 'releases/' + feed_series() + '/' + feed_detect_arch() + '/' + path;
+}
+
+/* The FULL download ladder for one feed-relative path: two repos ×
+ * (raw → jsDelivr → UCI gh-proxy mirror). The github.com/raw form is
+ * used for the mirror rung so the prefix convention of gh_mirror_of
+ * (used for release assets) applies unchanged. */
+function feed_urls(rel) {
+	const urls = [];
+	const base = gh_mirror_base();
+	for (let r in FEED_REPOS) {
+		push(urls, { url: `https://raw.githubusercontent.com/${r}/${FEED_BRANCH}/${rel}`, rung: 'raw', repo: r });
+		push(urls, { url: `https://cdn.jsdelivr.net/gh/${r}@feed/${rel}`, rung: 'jsdelivr', repo: r });
+		if (base)
+			push(urls, { url: `${base}/${r}/raw/${FEED_BRANCH}/${rel}`, rung: 'mirror', repo: r });
+	}
+	return urls;
+}
+
+/* Bounded reachability probe of the manifest path (curl code only).
+ * Cached for FEED_PROBE_TTL — feed_status runs on every page load and
+ * must never hang it for seconds when GitHub is down. */
+let feed_probe_cache = { ts: 0, code: '000', url: null };
+function feed_probe() {
+	const now = time();
+	if ((now - feed_probe_cache.ts) < FEED_PROBE_TTL)
+		return feed_probe_cache;
+	const urls = feed_urls(feed_rel('manifest.json'));
+	let code = '000', url = (length(urls) ? urls[0].url : null);
+	for (let u in urls) {
+		const fd = popen(`curl -s -o /dev/null -w '%{http_code}' --max-time 6 ${shellquote(u.url)} 2>/dev/null`);
+		if (fd) { code = trim(fd.read('all')); fd.close(); }
+		if (code == '200') { url = u.url; break; }
+	}
+	feed_probe_cache = { ts: now, code: code, url: url };
+	return feed_probe_cache;
+}
+
+/* Ladder download of a feed-relative path. Tries the FULL ladder of the
+ * first repo before falling back to the pre-rename repository. Returns
+ * { ok, url, rung, repo } — ok means the file exists at dest and is not
+ * empty. wget per rung (bounded), caller owns the timeout budget. */
+function feed_fetch(rel, dest, timeout_ms) {
+	const urls = feed_urls(rel);
+	let last_repo = null;
+	for (let r in FEED_REPOS) {
+		for (let u in urls) {
+			if (u.repo != r) continue;
+			system(`rm -f ${shellquote(dest)}`);
+			const rc = system(`wget -qO ${shellquote(dest)} --timeout=15 ${shellquote(u.url)} 2>/dev/null; RC=$?; exit $RC`, timeout_ms || 60000);
+			if (rc === 0 && access(dest)) {
+				const st = stat(dest);
+				if (st && st.size > 0)
+					return { ok: true, url: u.url, rung: u.rung, repo: r };
+			}
+			system(`rm -f ${shellquote(dest)}`);
+		}
+	}
+	return { ok: false, url: (length(urls) ? urls[0].url : null), rung: null, repo: null };
+}
+
+/* manifest.json — the client contract — cached in /var/run with a TTL.
+ * arch-validated: a manifest of a foreign arch (stale cache / wrong
+ * series dir) is an honest miss, never a candidate source. */
+function feed_manifest(force) {
+	let cache = null;
+	if (access(FEED_MANIFEST_FILE)) {
+		try { cache = json(readfile(FEED_MANIFEST_FILE) || ''); } catch (e) { cache = null; }
+	}
+	const now = time();
+	if (!force && cache && type(cache) == 'object' && cache.ts &&
+	    (now - cache.ts) < FEED_MANIFEST_TTL && cache.manifest)
+		return cache.manifest;
+	const arch = feed_detect_arch();
+	const got = feed_fetch(feed_rel('manifest.json'), FEED_MANIFEST_FILE + '.dl', 30000);
+	if (!got.ok)
+		return (cache && cache.manifest) ? cache.manifest : null;
+	let man = null;
+	try { man = json(readfile(FEED_MANIFEST_FILE + '.dl') || ''); } catch (e) { man = null; }
+	system(`rm -f ${shellquote(FEED_MANIFEST_FILE + '.dl')}`);
+	if (!man || type(man) != 'object' || !man.pkgs || man.arch != arch)
+		return (cache && cache.manifest) ? cache.manifest : null;
+	const entry = { ts: now, manifest: man };
+	mkdir('/var/run/homeproxy');
+	writefile(FEED_MANIFEST_FILE + '.tmp', sprintf('%.J', entry) + '\n');
+	rename(FEED_MANIFEST_FILE + '.tmp', FEED_MANIFEST_FILE);
+	return man;
+}
+
+/* Candidate for one package from the manifest (cache-first): version +
+ * exact file names + sha256 sums. The CALLER applies its own version
+ * gate (feed_vercmp_base of feed_strip_rev vs the installed version). */
+function feed_candidate(pkg) {
+	const man = feed_manifest(false);
+	if (!man || !man.pkgs) return null;
+	const e = man.pkgs[pkg];
+	if (!e || !e.version) return null;
+	return { version: '' + e.version,
+		apk: e.apk || null, apk_sha256: e.apk_sha256 || null,
+		ipk: e.ipk || null, ipk_sha256: e.ipk_sha256 || null };
+}
+
+/* Cache-only candidate read — feed_status must not trigger network. */
+function feed_candidate_cached(pkg) {
+	if (!access(FEED_MANIFEST_FILE)) return null;
+	let cache = null;
+	try { cache = json(readfile(FEED_MANIFEST_FILE) || ''); } catch (e) { cache = null; }
+	if (!cache || type(cache) != 'object' || !cache.manifest) return null;
+	const e = cache.manifest.pkgs ? cache.manifest.pkgs[pkg] : null;
+	if (!e || !e.version) return null;
+	return { version: '' + e.version,
+		apk: e.apk || null, apk_sha256: e.apk_sha256 || null,
+		ipk: e.ipk || null, ipk_sha256: e.ipk_sha256 || null };
 }
 
 function feed_configured() {
-	return access(FEED_LIST_FILE) && access(FEED_KEY_FILE);
+	/* apk: the signing key marks the feed enabled. opkg: nothing to
+	 * enable — the manifest is fetched on demand and the sha256 gate is
+	 * the verification, so the feed is always usable on opkg systems. */
+	const pm = feed_pkg_manager();
+	if (pm == null) return false;
+	if (pm === 'opkg') return true;
+	return !!access(FEED_KEY_FILE);
 }
 
-function feed_list_url() {
-	return trim(readfile(FEED_LIST_FILE) || '');
+/* Installed version of a feed package — best effort, honest: the PM
+ * record when the package was installed through apk/opkg, else a binary
+ * probe (mosdns/raw-zip installs, the lite installer, foreign packages). */
+function feed_installed_version(pkg) {
+	const bin = FEED_BIN_PATH[pkg];
+	const pm = feed_pkg_manager();
+	if (pm === 'apk' && access(bin)) {
+		const fd = popen(`apk info ${shellquote(pkg)} 2>/dev/null`);
+		if (fd) {
+			const out = fd.read('all');
+			fd.close();
+			/* scan every line for "<pkg>-<version>" (apk v3 info output) */
+			const prefix = pkg + '-';
+			for (let line in split(out, '\n')) {
+				if (substr(line, 0, length(prefix)) != prefix) continue;
+				const rest = trim(substr(line, length(prefix)));
+				const ver = (length(rest) > 0) ? split(rest, ' ')[0] : '';
+				if (length(ver))
+					return split(ver, ':')[0];
+			}
+		}
+	} else if (pm === 'opkg') {
+		const fd = popen(`opkg status ${shellquote(pkg)} 2>/dev/null`);
+		if (fd) {
+			const out = fd.read('all');
+			fd.close();
+			const m = match(out, /Version: ([0-9][^ \n]*)/);
+			if (m) return m[1];
+		}
+	}
+	/* Binary probes (package not registered — raw/zip/installer installs). */
+	if (bin == '/usr/bin/mosdns' && access(bin)) {
+		const fd = popen('/usr/bin/mosdns version 2>/dev/null');
+		if (fd) {
+			const out = trim(fd.read('all'));
+			fd.close();
+			const m = match(out, /v?([0-9]+\.[0-9]+\.[0-9]+)/);
+			if (m) return m[1];
+		}
+	}
+	if ((bin == '/usr/bin/probe_pool' || bin == '/usr/bin/sni_sniffer') && access(bin)) {
+		const fd = popen(shellquote(bin) + ' -version 2>/dev/null');
+		if (fd) {
+			const out = trim(fd.read('all'));
+			fd.close();
+			const m = match(out, /([0-9]+\.[0-9]+\.[0-9]+)/);
+			if (m) return m[1];
+		}
+	}
+	if ((bin == '/usr/bin/hiddify-core' || bin == '/usr/bin/sing-box') && access(bin)) {
+		const info = hp_core_features_cached(bin);
+		if (info && info.version) return info.version;
+	}
+	return null;
 }
 
 function feed_strip_rev(v) {
@@ -2595,9 +2805,8 @@ function feed_strip_rev(v) {
 }
 
 function feed_vercmp_base(a, b) {
-	/* numeric dot-compare of the base versions ("5.2.3" vs "5.2.3"); the
-	 * apk "-rN" revision is stripped before the call — a rebuild of the
-	 * same upstream version still counts as a match. */
+	/* numeric dot-compare of the base versions; apk "-rN" revisions and
+	 * foreign suffixes are stripped before the call. */
 	const pa = split(a, '.'), pb = split(b, '.');
 	const n = (length(pa) > length(pb)) ? length(pa) : length(pb);
 	for (let i = 0; i < n; i++) {
@@ -2608,30 +2817,66 @@ function feed_vercmp_base(a, b) {
 	return 0;
 }
 
-function feed_candidate(pkg) {
-	/* apk policy <pkg> lists version entries sorted with the INSTALLED one
-	 * first when it satisfies (then the rest descending) — so the first
-	 * line is NOT always the best available candidate. Scan ALL entries
-	 * and return the one served by OUR index (if any); the caller decides
-	 * with its own version gate whether the feed beats what is installed
-	 * (an installed-only record, repo = lib/apk/db/installed, never wins). */
-	if (!feed_configured()) return null;
-	const url = feed_list_url();
-	if (!length(url)) return null;
-	const fd = popen(`apk policy ${shellquote(pkg)} 2>/dev/null`);
-	if (!fd) return null;
-	const out = fd.read('all');
-	fd.close();
-	const lines = split(out, '\n');
-	for (let i = 0; i < length(lines); i++) {
-		const m = match(lines[i], /^  ([0-9][^ :]*):/);
-		if (m) {
-			const repo = (lines[i + 1] != null) ? trim(lines[i + 1]) : '';
-			if (repo == url)
-				return { version: m[1], repo: repo };
-		}
+/* V2 explicit-file install of one feed package: manifest → exact file →
+ * ladder download → sha256 gate → apk add ./file (signature checked by
+ * apk against our key) | opkg install ./file (sha256 WAS the gate) →
+ * post-check access(). Sibling removal is bounded to the two own
+ * families (FEED_SIBLING). The service is NOT restarted here — same
+ * contract as before (the caller restarts after a successful install). */
+function feed_install_pkg(pkg) {
+	const pm = feed_pkg_manager();
+	if (!pm)
+		return { result: false, error: 'no supported package manager (apk/opkg)' };
+	if (pm === 'apk' && !access(FEED_KEY_FILE))
+		return { result: false, error: 'ключ фида не установлен — сначала «Подключить источник обновлений»' };
+	const man = feed_manifest(true);
+	if (!man)
+		return { result: false, error: 'манифест фида недоступен (raw/jsDelivr/зеркало не ответили)' };
+	const entry = (man.pkgs || {})[pkg];
+	if (!entry || !entry.version)
+		return { result: false, error: `в манифесте фида (${man.arch}) нет пакета ${pkg}` };
+	const file = (pm === 'apk') ? entry.apk : entry.ipk;
+	const sha = (pm === 'apk') ? entry.apk_sha256 : entry.ipk_sha256;
+	if (!file || !sha)
+		return { result: false, error: `в манифесте нет ${pm}-файла для ${pkg}` };
+	if (!match(file, /^[a-z0-9][a-zA-Z0-9._-]*$/) || !match(sha, /^[0-9a-f]{64}$/))
+		return { result: false, error: 'некорректная запись манифеста (имя файла/sha256)' };
+	const tmp = `/tmp/feed_${pkg}.${pm}`;
+	const got = feed_fetch(feed_rel(file), tmp, 300000);
+	if (!got.ok)
+		return { result: false, error: `не удалось скачать ${file} ни с одного источника` };
+	/* sha256 gate — for apk it is belt-and-braces on top of the signature,
+	 * for opkg it IS the verification (opkg checks nothing on file install). */
+	let sum = '';
+	const hfd = popen(`sha256sum ${shellquote(tmp)} 2>/dev/null`);
+	if (hfd) { sum = trim(hfd.read('all')); hfd.close(); }
+	const hm = match(sum, /^([0-9a-f]{64})/);
+	if (!hm || hm[1] != sha) {
+		system(`rm -f ${shellquote(tmp)}`);
+		return { result: false, error: `sha256 файла ${file} не совпал с манифестом — установка отменена` };
 	}
-	return null;
+	const sib = FEED_SIBLING[pkg];
+	if (sib)
+		system(`${(pm === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib)} >/dev/null 2>&1; true`);
+	let rc;
+	if (pm === 'apk') {
+		const registered = (system(`apk info -e ${shellquote(pkg)} >/dev/null 2>&1`) === 0);
+		rc = system(`apk ${registered ? 'upgrade' : 'add'} ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
+	} else {
+		rc = system(`opkg install --force-reinstall ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
+	}
+	const bin = FEED_BIN_PATH[pkg];
+	/* 🔴 apk 3.0.5 exit codes are UNRELIABLE on success: a file-target
+	 * install/upgrade that landed fine still exits 1 (NOTE "packages no
+	 * longer available from a repository") or 2 (foreign-file overwrite
+	 * notes), proven live by the loopback acceptance — the same contract
+	 * as byedpi_install_pkg: TRUST THE INSTALLED BINARY, not the rc. The
+	 * rc is reported honestly only when the post-check fails. */
+	if (!(bin && access(bin)))
+		return { result: false, error: `установка ${pkg} из фида не удалась (${pm} rc=${rc}, пост-чек не прошёл)` };
+	try { hc_add_event('update', 'feed', `${pkg} ${entry.version} установлен из источника обновлений`); } catch (e) { /* best-effort */ }
+	return { result: true, version: '' + entry.version, pkg_manager: pm,
+		note: `installed from the update source: ${pkg} ${entry.version}` };
 }
 
 const methods = {
@@ -4172,6 +4417,19 @@ const methods = {
 			if (!pkg_manager)
 				return { error: 'No supported package manager (apk/opkg)' };
 
+			/* V2 feed-first: the own feed mirrors byedpi under our signature
+			 * (foreign name/version verbatim). A manifest candidate short-
+			 * circuits the GitHub API + asset download entirely; anything
+			 * missing falls through to the original asset path below — the
+			 * fallback IS the old code. */
+			if (feed_configured()) {
+				const fcand = feed_candidate('byedpi');
+				if (fcand)
+					return { source: 'feed', feed_pkg: 'byedpi', pkg_manager,
+						version: fcand.version,
+						note: `источник обновлений: byedpi ${fcand.version}` };
+			}
+
 			let arch = null;
 			const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
 			if (afd) { arch = trim(afd.read('all')); afd.close(); }
@@ -4337,6 +4595,16 @@ const methods = {
 			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
 			if (!pkg_manager)
 				return { error: 'No supported package manager (apk/opkg)' };
+
+			/* V2 feed-first (mirror under our signature, verbatim name/version)
+			 * — the asset path below stays as the honest fallback. */
+			if (feed_configured()) {
+				const fcand = feed_candidate('zapret2');
+				if (fcand)
+					return { source: 'feed', feed_pkg: 'zapret2', pkg_manager,
+						version: fcand.version,
+						note: `источник обновлений: zapret2 ${fcand.version}` };
+			}
 
 			let arch = null;
 			const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
@@ -9309,26 +9577,47 @@ const methods = {
 
 	feed_status: {
 		call: function(req) {
+			/* V2 «Источник обновлений»: honest state per PM. The manifest
+			 * reachability probe is TTL-cached (the page polls this method);
+			 * candidates come from the CACHED manifest only — a stale cache
+			 * shows honest "—" instead of a hidden network fetch. */
+			const pm = feed_pkg_manager();
 			const configured = feed_configured();
-			const primary = feed_index_url('ezdizzy/ravnex');
-			const probe_url = configured ? feed_list_url() : primary;
-			let code = '000';
-			const pfd = popen(`curl -s -o /dev/null -w '%{http_code}' --max-time 8 ${shellquote(probe_url)} 2>/dev/null`);
-			if (pfd) { code = trim(pfd.read('all')); pfd.close(); }
+			const probe = feed_probe();
+			let man_ts = null, man_fresh = false, man_series = null, man_arch = null;
+			if (access(FEED_MANIFEST_FILE)) {
+				let cache = null;
+				try { cache = json(readfile(FEED_MANIFEST_FILE) || ''); } catch (e) { cache = null; }
+				if (cache && type(cache) == 'object' && cache.ts && cache.manifest) {
+					man_ts = cache.ts;
+					man_fresh = ((time() - cache.ts) < FEED_MANIFEST_TTL);
+					man_series = cache.manifest.series || null;
+					man_arch = cache.manifest.arch || null;
+				}
+			}
 			const policy = {};
 			for (let p in FEED_PKGS) {
-				const c = feed_candidate(p);
-				policy[p] = c ? c.version : null;
+				const c = (man_fresh || man_ts != null) ? feed_candidate_cached(p) : null;
+				policy[p] = {
+					installed: feed_installed_version(p),
+					candidate: c ? c.version : null,
+					sha: !!(c && (c.apk_sha256 || c.ipk_sha256))
+				};
 			}
 			return {
 				result: true,
+				pkg_manager: pm,
 				configured: configured,
 				arch: feed_detect_arch(),
 				series: feed_series(),
-				url: probe_url,
-				key_present: access(FEED_KEY_FILE),
-				index_code: code,
-				published: (code == '200'),
+				url: probe.url,
+				key_present: !!access(FEED_KEY_FILE),
+				manifest_code: probe.code,
+				published: (probe.code == '200'),
+				manifest_ts: man_ts,
+				manifest_fresh: man_fresh,
+				manifest_series: man_series,
+				manifest_arch: man_arch,
 				policy: policy
 			};
 		}
@@ -9336,63 +9625,86 @@ const methods = {
 
 	feed_setup: {
 		call: function(req) {
-			/* Probe primary, then the pre-rename fallback; refuse honestly
-			 * when nothing is published yet (the feed branch does not exist
-			 * until the user builds and publishes it via the CI workflow). */
-			let url = null;
-			for (let repo in ['ezdizzy/ravnex', 'ezdizzy/re-homeproxy']) {
-				const u = feed_index_url(repo);
-				let code = '000';
-				const pfd = popen(`curl -s -o /dev/null -w '%{http_code}' --max-time 8 ${shellquote(u)} 2>/dev/null`);
-				if (pfd) { code = trim(pfd.read('all')); pfd.close(); }
-				if (code == '200') { url = u; break; }
-			}
-			if (!url)
-				return { result: false, error: 'индекс feed ещё недоступен — соберите и опубликуйте его (workflow «Build Ravnex apk feed», publish=true), затем повторите' };
-			const key_url = feed_key_url(url);
+			/* V2: the ONLY persistent artifact is the signing key (apk
+			 * systems). opkg systems need no setup — the manifest is fetched
+			 * on demand and the sha256 gate is the verification; say so
+			 * honestly. The ladder (raw → jsDelivr → gh-proxy mirror) covers
+			 * blocked-GitHub routers (Ф11.4). */
+			const pm = feed_pkg_manager();
+			if (!pm)
+				return { result: false, error: 'no supported package manager (apk/opkg)' };
+			if (pm === 'opkg')
+				return { result: true, pkg_manager: 'opkg', key: false,
+					note: 'apk отсутствует — компоненты ставятся ipk-файлами из манифеста с sha256-проверкой; приложение обновляется с Releases' };
 			const tmp_key = '/tmp/ravnex-feed.pub';
-			const krc = system(`curl -s --max-time 20 -o ${shellquote(tmp_key)} ${shellquote(key_url)} 2>/dev/null; RC=$?; exit $RC`, 30000);
-			if (krc !== 0 || !access(tmp_key)) {
+			const got = feed_fetch('ravnex-feed.pub', tmp_key, 30000);
+			if (!got.ok) {
 				system(`rm -f ${shellquote(tmp_key)}`);
-				return { result: false, error: 'не удалось получить публичный ключ feed: ' + key_url };
+				return { result: false, error: 'не удалось получить ключ источника обновлений ни с одного источника (raw/jsDelivr/зеркало)' };
 			}
-			/* sanity: a PEM public key starts with the header line */
-			const key_head = substr(trim(readfile(tmp_key) || ''), 0, 27);
+			/* sanity: a PEM public key starts with the header line — the
+			 * header is EXACTLY 26 chars ("-----BEGIN PUBLIC KEY-----");
+			 * the old 27-char slice compared 27 chars and could never match
+			 * (a latent V1 bug, caught live by the loopback acceptance). */
+			const key_head = substr(trim(readfile(tmp_key) || ''), 0, 26);
 			if (key_head != '-----BEGIN PUBLIC KEY-----') {
 				system(`rm -f ${shellquote(tmp_key)}`);
-				return { result: false, error: 'полученный файл не является PEM-ключом: ' + key_url };
+				return { result: false, error: 'полученный файл не является PEM-ключом: ' + got.url };
 			}
 			mkdir('/etc/apk/keys');
-			mkdir('/etc/apk/repositories.d');
 			mkdir('/lib/upgrade/keep.d');
-			rename(tmp_key, FEED_KEY_FILE);
+			/* 🔴 ч.237 (live acceptance): ucode rename(2) CANNOT move a file
+			 * across filesystems — /tmp (tmpfs) → /etc (overlay) fails with
+			 * EXDEV and the key silently never landed (the V1 code did this
+			 * and returned key:true unchecked). Atomic placement ON the
+			 * target fs: writefile to the sibling temp name, rename within
+			 * /etc/apk/keys (same fs → rename works). */
+			system(`rm -f ${shellquote(FEED_KEY_FILE + '.tmp')}`);
+			writefile(FEED_KEY_FILE + '.tmp', readfile(tmp_key) || '');
+			rename(FEED_KEY_FILE + '.tmp', FEED_KEY_FILE);
+			system(`rm -f ${shellquote(tmp_key)}`);
+			if (!access(FEED_KEY_FILE))
+				return { result: false, error: 'ключ скачан, но не удалось разместить его в /etc/apk/keys' };
 			chmod(FEED_KEY_FILE, 432);
-			/* atomic writes (temp + mv): the apk client must never read a
-			 * half-written feed line (lesson 254 class) */
-			const tmp_list = FEED_LIST_FILE + '.tmp';
-			writefile(tmp_list, url + '\n');
-			rename(tmp_list, FEED_LIST_FILE);
+			/* V1 cleanup: the repositories.d line must never survive — the
+			 * client does not resolve through repositories at all. */
+			if (access(FEED_LIST_LEGACY))
+				system(`rm -f ${shellquote(FEED_LIST_LEGACY)}`);
+			/* keep.d: the key only (survives sysupgrade) */
 			const tmp_keep = FEED_KEEP_FILE + '.tmp';
-			writefile(tmp_keep, FEED_KEY_FILE + '\n' + FEED_LIST_FILE + '\n');
+			writefile(tmp_keep, FEED_KEY_FILE + '\n');
 			rename(tmp_keep, FEED_KEEP_FILE);
-			/* refresh the apk index cache DETACHED (runner pattern): apk update
-			 * is network-bound (15 s … 300+ s measured live on a throttled
-			 * uplink) and must never block the RPC — the candidates appear in
-			 * the status when the background refresh lands. */
-			system('( apk update >/dev/null 2>&1 ) </dev/null 1000>&- &');
-			try { hc_add_event('update', 'feed', 'свой apk-репозиторий подключён: ' + url); } catch (e) { /* best-effort */ }
+			/* prime the manifest cache (small file, bounded ladder) so the
+			 * card shows candidates immediately */
+			feed_manifest(true);
+			feed_probe_cache = { ts: 0, code: '000', url: null };
+			try { hc_add_event('update', 'feed', 'источник обновлений подключён: ключ подписи установлен'); } catch (e) { /* best-effort */ }
 			return {
-				result: true, url: url, key: true,
-				note: 'обновление индекса идёт в фоне — кандидаты появятся в статусе через ~минуту'
+				result: true, url: got.url, key: true,
+				note: 'ключ подписи установлен; пакеты ставятся явными файлами по manifest.json (repositories.d не пишется)'
 			};
 		}
 	},
 
 	feed_remove: {
 		call: function(req) {
-			system(`rm -f ${shellquote(FEED_LIST_FILE)} ${shellquote(FEED_KEY_FILE)} ${shellquote(FEED_KEEP_FILE)}`);
-			try { hc_add_event('update', 'feed', 'свой apk-репозиторий отключён — установки возвращаются к исходным источникам'); } catch (e) { /* best-effort */ }
-			return { result: !feed_configured() };
+			system(`rm -f ${shellquote(FEED_KEY_FILE)} ${shellquote(FEED_KEEP_FILE)} ${shellquote(FEED_LIST_LEGACY)} ${shellquote(FEED_MANIFEST_FILE)}`);
+			feed_probe_cache = { ts: 0, code: '000', url: null };
+			try { hc_add_event('update', 'feed', 'источник обновлений отключён — установки возвращаются к исходным источникам'); } catch (e) { /* best-effort */ }
+			return { result: true };
+		}
+	},
+
+	/* V2 explicit-file install from the feed (see feed_install_pkg). The
+	 * byedpi/zapret2/mosdns cards call this when prepare_install returned
+	 * a feed hit (source:'feed'); the core runner uses the core_mgmt twin. */
+	install_feed_pkg: {
+		args: { pkg: 'pkg' },
+		call: function(req) {
+			const pkg = trim('' + (req.args?.pkg || ''));
+			if (!match(pkg, /^[a-z0-9-]+$/) || length(pkg) > 64)
+				return { result: false, error: 'invalid feed package name' };
+			return feed_install_pkg(pkg);
 		}
 	},
 
@@ -9403,6 +9715,18 @@ const methods = {
 			if (afd) { arch = trim(afd.read('all')); afd.close(); }
 			if (!length(arch))
 				return { error: 'Cannot detect architecture' };
+
+			/* V2 feed-first: the feed mirrors mosdns as a signed package — a
+			 * manifest candidate short-circuits the zip download (the UI then
+			 * calls install_feed_pkg); anything missing falls through to the
+			 * original zip path below — the fallback IS the old code. */
+			if (feed_configured()) {
+				const fcand = feed_candidate('mosdns');
+				if (fcand)
+					return { source: 'feed', feed_pkg: 'mosdns', march,
+						version: fcand.version,
+						note: `источник обновлений: mosdns ${fcand.version}` };
+			}
 
 			/* Map DISTRIB_ARCH to the mosdns release asset suffix (same table as
 			 * install.sh step 2.5). mips big-endian and i386 have no binary. */
@@ -9428,17 +9752,14 @@ const methods = {
 		args: { tmp_path: 'tmp_path' },
 		call: function(req) {
 			const tmp_path = req.args?.tmp_path;
-			if (!tmp_path)
-				return { result: false, error: 'Missing arguments' };
-			if (!access(tmp_path))
-				return { result: false, error: 'Archive not found — download failed?' };
 
-			/* §1.7: the own apk feed serves mosdns as a signed package — when
-			 * configured and its candidate is not older than the running
-			 * binary, install straight from the feed (no zip download at
-			 * all). Any miss (feed down, older candidate, apk failure) falls
-			 * through to the original archive path below — the fallback IS
-			 * the old code. */
+			/* §1.7 V2: the feed serves mosdns as an explicit signed file —
+			 * when configured and its candidate is not older than the
+			 * running binary, install from the feed (no zip unpacking at
+			 * all). Any miss (feed down, older candidate, install failure)
+			 * falls through to the original archive path below — the
+			 * fallback IS the old code. Runs BEFORE the tmp_path check so
+			 * the feed-first UI click (no download, empty tmp_path) works. */
 			if (feed_configured()) {
 				let cur0 = '';
 				const vfd0 = popen('/usr/bin/mosdns version 2>/dev/null');
@@ -9451,17 +9772,8 @@ const methods = {
 				const cand0 = feed_candidate('mosdns');
 				const fits0 = cand0 && (!length(cur0) || feed_vercmp_base(feed_strip_rev(cand0.version), cur0) >= 0);
 				if (fits0) {
-					/* NO `apk update` here: it is network-bound (15 s … 300+ s on
-					 * a throttled uplink — measured live) and an RPC must stay
-					 * fast (lesson 294 class). The index cache was refreshed by
-					 * feed_setup; a stale cache simply falls through to the
-					 * archive path below — the honest fallback. */
-					/* apk semantics: `add` never upgrades an installed package
-					 * (installed is preferred) — upgrade when the package is
-					 * registered, add when it is not. */
-					const reg0 = (system('apk info -e mosdns >/dev/null 2>&1') === 0);
-					const arc0 = system(`apk ${reg0 ? 'upgrade' : 'add'} mosdns >/dev/null 2>&1; RC=$?; exit $RC`, 300000);
-					if (arc0 === 0 && access('/usr/bin/mosdns')) {
+					const finst0 = feed_install_pkg('mosdns');
+					if (finst0.result === true) {
 						let pmf0 = pm_reg_get('mosdns');
 						if (pmf0 != null && pm_entry_alive(pmf0))
 							pm_kill_entry(pmf0, 5000);
@@ -9478,12 +9790,16 @@ const methods = {
 							const m1 = match(o1, /v?([0-9]+\.[0-9]+\.[0-9]+)/);
 							if (m1) version0 = 'v' + m1[1];
 						}
-						try { hc_add_event('update', 'mosdns', 'установлен из своего apk-репозитория: ' + (version0 || cand0.version)); } catch (e) { /* best-effort */ }
-						return { result: true, version: version0, note: 'installed from the own apk feed' };
+						return { result: true, version: version0, note: 'installed from the update source' };
 					}
 					/* feed path failed — the honest fallback is the archive path */
 				}
 			}
+
+			if (!tmp_path)
+				return { result: false, error: 'Missing arguments' };
+			if (!access(tmp_path))
+				return { result: false, error: 'Archive not found — download failed?' };
 
 			/* unzip is required to unpack the release archive; install it
 			 * best-effort through the package manager if missing. */

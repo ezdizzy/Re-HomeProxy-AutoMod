@@ -79,6 +79,16 @@ function deep_item(id) {
 			item.bytes >= YTV_MIN_BYTES) ? 1 : 0;
 		return item;
 	}
+	if (id === 'dcv') {
+		/* ч.237: STUN-проба голоса Discord (probe_pool -stun-check, UDP/3478,
+		 * RFC 5389 Binding Request). Тела нет — классификация контента не
+		 * применима; гейт вердикта = ОТВЕТ получен (Binding Response):
+		 * code 200 = reply (+rtt в sec), 000/28 = silence/icmp. */
+		item.sec = num(parts[1]);
+		item.ok = (item.code === '200') ? 1 : 0;
+		item.kind = 'stun';
+		return item;
+	}
 	item.sec = num(parts[1]);
 	item.bytes = int(num(parts[2]));
 	item.speed = int(num(parts[3]));
@@ -206,6 +216,10 @@ if (man.deep === true) {
 /* Честный режим проб (skuid|fallback) — фаззер поднимает его в UI. */
 if (man.probe != null)
 	top.probe = '' + man.probe;
+/* ч.237: теги, чьи deep-пункты перемерялись на СВЕЖЕМ крае (один повтор,
+ * результат заменён) — «край врал», не вердикт стратегий. */
+if (type(man.edge_retry) === 'array' && length(man.edge_retry) > 0)
+	top.edge_retry = man.edge_retry;
 /* ч.232: факт наличия браузерной ClientHello-пробы в этом прогоне (merge
  * применяет политику «Passed = curl И браузерный Hello» только когда она
  * реально мерялась; иначе — прежнее curl-only поведение). */

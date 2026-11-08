@@ -1,110 +1,89 @@
 🇬🇧 [English](Routing-and-Access-Control-en) | 🇷🇺 [Русский](Routing-and-Access-Control-ru)
 
-# Routing & Access Control
+# Routing & access control
 
-Re:HomeProxy AutoMod decides **what** traffic is proxied (routing mode + rules) and **which devices** are affected (access control). This page covers both.
+The **Connection** page decides **where** traffic goes: the main node, the routing mode, and
+what keeps the link alive when a server dies (the exit engine, URLTest, Hot Swap). New servers
+are added on the [Servers](Subscriptions-en) page.
 
 ---
 
 ## Routing modes
 
-Set on **Client → Routing → Routing mode**:
+Three modes — simple and non-overlapping:
 
 | Mode | What it does |
-|------|--------------|
-| **Russia (Proxy Banned)** (`proxy_banned_ru`) | Default for RU. Everything is **direct** except destinations added to **RU Proxy Rules**, which go through the proxy. |
-| **Global** | All traffic through the proxy. |
-| **GFWList** | Proxies a built-in list of commonly blocked (GFW) domains. |
-| **Bypass mainland China** | Everything proxied except mainland-China destinations (direct). |
-| **Only proxy mainland China** | Only mainland-China destinations proxied. |
-| **Custom routing** | Manual routing nodes + rules (advanced). |
-| **Custom JSON** | Hand-written hiddify-core config — see [Custom JSON Config](Custom-JSON-Config-en). |
+|---|---|
+| **Blocking bypass (rule lists)** | The everyday **working** mode: everything goes direct, while traffic matched by the [Service rules](Routing-Master-en) rides its assigned exit. This is where the bypass engines (Zapret / ByeDPI) and the automation engine live. |
+| **Everything via node** | All traffic through the Main node; per-service rules are not used. |
+| **Direct (all mechanisms off)** | The repair/diagnostics mode: interception, engines, the DNS scheme and the core itself are off — the router hands out exactly what the provider gives. |
 
-**Routing ports** — restrict which destination ports are proxied (e.g. *Common ports only* to keep P2P traffic direct).
+When you switch the mode the page re-arranges itself and only the mode-relevant settings
+remain. Legacy values from old versions migrate into the working mode automatically at service
+start (with an honest warning).
 
-**Proxy mode** — how traffic is intercepted: `Redirect TCP`, `Redirect TCP + TProxy UDP` (default), `Redirect TCP + Tun UDP`, or full `Tun TCP/UDP` (TUN modes need `kmod-tun`).
+**Routing ports** — limit which destination ports get proxied (for example, *common ports
+only* keeps P2P direct).
 
-### Main node and a separate UDP node
-
-On the **Routing Settings** tab, **Main node** sets where traffic exits (a specific node, or **URLTest** to auto-pick the fastest with its own pool, test interval and tolerance).
-
-By default UDP follows the main node. Set **Main UDP node** to send **UDP/QUIC out a different node** than TCP — useful when your main node handles UDP poorly (or not at all), or when you want QUIC/voice on a node that's better at it. It has its own URLTest pool too. Leave it on *Same as main node* if you don't need the split.
+**Proxy mode** — how traffic is intercepted: `Redirect TCP`, `Redirect TCP + TProxy UDP`
+(default), TUN modes (require `kmod-tun`).
 
 ---
 
-## Russia (Proxy Banned) — the full UI
+## The exit engine (Main node)
 
-`proxy_banned_ru` is the default RU mode: **everything is direct except what you explicitly proxy.** When it is selected, the **Routing** tab gains the fields below and an extra **RU Proxy Rules** tab appears.
+One engine owns the exit for **every** mode. Three operating modes:
 
-### Routing tab (in this mode)
+| Mode | Behavior |
+|---|---|
+| **Auto** — best node | Holds the best node and moves only when another stays faster by more than the tolerance for several probe rounds in a row |
+| **Preferred node** | Holds your chosen node while it responds; leaves only when it really dies; returns after recovery |
+| **Manual** | Holds the node you picked |
 
-| Field | What it does |
-|-------|--------------|
-| **Russia DNS server** 🔓 | Resolves Russian/normal domains **directly** (not through the proxy). Default *Yandex (77.88.8.8)*; also SkyDNS, Comss.one, and plain-UDP Cloudflare/Google. |
-| **Secure DNS server** 🔒 | Resolves **blocked** domains **through the proxy** over encrypted DNS (DoH/DoT), so your ISP can't see those lookups. Default *Cloudflare DoH*; also Quad9 / AdGuard / Google (DoH and DoT). See [DNS & Diagnostics](DNS-and-Diagnostics-en). |
-| **Proxy calls** 📞 | Route VoIP call ports (WhatsApp, Telegram, FaceTime…) through the proxy. Off by default. |
-| **Do not proxify torrents** 🧲 | Force BitTorrent traffic (protocol + common ports) direct. Off by default. |
-| **Advanced custom rules** 👨‍💻 | Reveal the **Routing Nodes** and **Routing Rules** tabs (see below). Off by default. |
-| **Routing ports** | Limit which destination ports are proxied (e.g. *Common ports only* keeps P2P direct). |
-| **Proxy mode** | How traffic is intercepted — see [Routing modes](#routing-modes) above. |
+Key settings:
 
-### RU Proxy Rules tab
+- **Reserve nodes** — the failover priority order; reserves are probed live (their tunnels stay
+  warm). This is **Hot Swap** — see [Hot Swap and reliability](Hot-Swap-and-Reliability-en);
+- **Test / probe interval** — how often nodes and the active pick are verified;
+- **Switch tolerance** — the minimum latency gap required to move (anti-flap);
+- **Return after recovery** (failback) and **Upgrade on a better node**;
+- advanced thresholds: dead threshold, recovery probes/window, auto hysteresis.
 
-This is where you choose *what* to proxy. **The default route is Direct** — only the rules you add here are proxied. Each rule = a **Source list** ⤵️ + a **Node** 🔗 to send it through, applied with automatic priority:
+The engine state is visible on the page: the active node, the mode, the switch count,
+«failback on / anti-flap on».
 
-1. **Smaller service lists** first — YouTube, Twitter/X, TikTok, Telegram, Discord, Roblox, Meta (Facebook/Instagram), Google AI, Google Play, anime, HDRezka, international news, adult, GeoBlock, HODCA, and cloud/CDN ranges (Cloudflare, CloudFront, OVH, Hetzner, DigitalOcean).
-2. **Russia Inside** (1000+ domains, by itdoginfo) — the in-Russia must-have set.
-3. **Re:Filter** (60000+ domains + 25000+ IPs) — the Roskomnadzor blocklist.
+### A separate UDP exit
 
-The lists are community-maintained and **self-refresh** on the router; you only pick which to enable. (Adding the same source twice is flagged — only the first rule takes effect.)
-
-**Per-rule Node** 🔗 can be:
-
-- **Same as main node** — use your main proxy.
-- **Separate URLTest** — auto-select among a chosen set of nodes, with its own **URLTest nodes**, **Test interval** (default 180 s) and **Test tolerance** (default 150 ms).
-- **A specific node**.
-- **ByeDPI** or **Zapret** — send that list through a DPI-bypass instead of a VPN node (e.g. YouTube via [ByeDPI](ByeDPI-en) / [Zapret](Zapret-en) to save VPN bandwidth).
-
-### Advanced custom rules (optional)
-
-Enabling **Advanced custom rules** 👨‍💻 layers two extra tabs on top of the RU presets:
-
-- **Routing Nodes** — define named outbounds (a node, a URLTest group, or a chained **Outbound**), each with its own **Domain resolver** (including the Russia 🔓 / Secure 🔒 servers) and **Domain strategy**.
-- **Routing Rules** — match traffic by domain / IP / port / protocol and send it to one of those routing nodes.
-
-Full reference for both tabs (and the standalone **Custom routing** mode): **[Custom Routing](Custom-Routing-en)**.
+By default UDP follows TCP. The **Main UDP node** field sends UDP/QUIC (games, calls) through a
+different exit — down to ByeDPI/Zapret. «Same as main node» restores a single route.
 
 ---
 
-## Access Control — which devices are affected
+## Access control — which devices it touches
 
-**Client → Access Control** controls *which LAN devices* the proxy applies to. There are several **independent** controls — they combine, they are not one dropdown:
+The per-device policy moved to a dedicated **[Access control](Access-Control-en)** page: the
+proxy mode on the device card (Auto/Direct/Via proxy/Gaming/Global), honest badges, site rules,
+Wi-Fi and schedules.
 
-### LAN IP Policy
+**WAN IP Policy** (force-proxy or force-direct specific destination IPs) and **Interface
+Control** — a collapsed section at the bottom of the Connection page.
 
-- **Proxy mode for devices** — the global gate:
-  - **Disable** — no per-device restriction (all LAN devices follow the routing rules).
-  - **Proxy listed only** — only the listed IPs/MACs are proxied.
-  - **Proxy all except listed** — everyone is proxied except the listed IPs/MACs (which go direct).
-- **Gaming mode** *(independent list)* — for the selected devices, **only TCP** is proxied (UDP/game traffic stays direct for lower latency).
-- **Global proxy** *(independent list)* — for the selected devices, **all** traffic goes through the proxy regardless of the routing rules.
+---
 
-Each of these is its own IP/MAC list, so you can mix them per device.
+## OAuth resilience
 
-### WAN IP Policy
-
-Force specific **destination** IPs/CIDRs to be proxied or direct, regardless of mode.
-
-### Proxy / Direct Domain Lists
-
-Free-form domain lists that are always proxied or always direct — useful for one-off destinations not covered by the RU lists.
+Google/Microsoft/Apple logins ride a **pinned secure exit** — logins do not «fall off» on IP or
+node changes. More: [Hot Swap and reliability](Hot-Swap-and-Reliability-en).
 
 ---
 
 ## Tips
 
-- In Russia mode, start with **Russia Inside + Re:Filter** enabled; add per-service lists only if a specific site still misbehaves.
-- If a site is *throttled* (slow) rather than *blocked* (unreachable), route it through [ByeDPI](ByeDPI-en) or [Zapret](Zapret-en) instead of the VPN.
-- Use the [Diagnostics](DNS-and-Diagnostics-en) page to confirm traffic is actually being proxied — **Direct IP vs Proxy IP** on hiddify-core, or the **Active Node** row on sing-box-extended.
+- In the working mode start with **Russia Inside + Re:Filter** on the Service rules page; add
+  service lists only if a specific site still misbehaves.
+- If a site is *throttled* rather than *blocked*, hand it to [ByeDPI](ByeDPI-en) or
+  [Zapret](Zapret-en) instead of the VPN.
+- The real route of any site is verified by the «Check route» button on the Service rules page.
 
-See also: [Getting Started](Getting-Started-en) · [Subscriptions & Node Import](Subscriptions-en) · [DNS & Diagnostics](DNS-and-Diagnostics-en) · [Troubleshooting](Troubleshooting-en)
+See also: [Getting started](Getting-Started-en) · [Routing Master](Routing-Master-en) ·
+[Access control](Access-Control-en) · [DNS settings](DNS-Settings-en)

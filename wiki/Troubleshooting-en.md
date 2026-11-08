@@ -70,17 +70,17 @@ Failed to allocate uclient context
 opkg update && opkg install libustream-openssl ca-certificates
 ```
 
-If `opkg` itself cannot reach the internet, download the `.ipk` or `.apk` file on a PC from the [Releases page](https://github.com/1andrevich/homeproxy-hiddify/releases) and transfer it to the router with `scp`.
+If `opkg` itself cannot reach the internet, download the `.ipk` (OpenWrt 24.10) or `.apk` (OpenWrt 25.12+) file on a PC from the [Releases page](https://github.com/ezdizzy/re-homeproxy/releases/latest) and transfer it to the router with `scp`.
 
 ---
 
-## No Internet Access When Re:HomeProxy AutoMod Is Enabled (mwan3 Conflict)
+## No Internet Access When Ravnex Is Enabled (mwan3 Conflict)
 
-**Symptom:** Ping and DNS work, but HTTP/HTTPS traffic fails when Re:HomeProxy AutoMod is enabled. Stopping mwan3 restores connectivity.
+**Symptom:** Ping and DNS work, but HTTP/HTTPS traffic fails when Ravnex is enabled. Stopping mwan3 restores connectivity.
 
 **Cause:** mwan3 uses fwmarks and policy routing to steer traffic between WAN interfaces. When the proxy core makes outbound connections, mwan3 can intercept and misroute them.
 
-**Fix:** Tell the OS to skip mwan3's routing logic for traffic already handled by Re:HomeProxy AutoMod (marked `0x64`).
+**Fix:** Tell the OS to skip mwan3's routing logic for traffic already handled by Ravnex (marked `0x64`).
 
 Add the following rule as a persistent firewall include:
 
@@ -107,7 +107,7 @@ iptables -t mangle -L OUTPUT -n --line-numbers | head -5
 ```
 The `0x64` mark rule should appear as line 1.
 
-> This fix deliberately uses `iptables` because **mwan3** operates at the iptables layer. On a fw4 / nftables system it still applies through the iptables-nft compatibility shim — it does not conflict with Re:HomeProxy AutoMod's nft chains.
+> This fix deliberately uses `iptables` because **mwan3** operates at the iptables layer. On a fw4 / nftables system it still applies through the iptables-nft compatibility shim — it does not conflict with Ravnex's nft chains.
 
 ---
 
@@ -121,3 +121,15 @@ If you are on the latest release and still see this, run manually over SSH to ch
 ```sh
 ucode /etc/homeproxy/scripts/update_subscriptions.uc
 ```
+
+---
+
+## What else to look at
+
+- The **[Health center](Monitoring-and-Connections-en#health-center)** — live verdicts for every
+  service with reasons, the event journal and repair buttons. Before digging in by hand, look
+  there: the system explains what happened and what it already did.
+- The **Support report** — on the Health center: a text report with all the checks (attach it to
+  your issue).
+- **[Installation & updates](Installation-and-Updates-en)** — if the trouble appeared right
+  after installation (mirrors, `--local`, manual packages).

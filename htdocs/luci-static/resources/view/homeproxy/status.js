@@ -480,6 +480,15 @@ const callFeedRemove = rpc.declare({
 	expect: { '': {} }
 });
 
+/* V2 explicit-file install from the update source (byedpi/zapret2/mosdns
+ * cards call it when prepare_install returned a feed hit). */
+const callFeedInstallPkg = rpc.declare({
+	object: 'luci.homeproxy',
+	method: 'install_feed_pkg',
+	params: [ 'pkg' ],
+	expect: { '': {} }
+});
+
 /* "Check update" button for GitHub-packaged tools (ByeDPI / Zapret / mosdns):
  * asks the backend for the latest release tag and reports it against the
  * installed version (same interaction as the core cards). The verdict lands
@@ -548,13 +557,23 @@ function buildMosdnsCard(mdns, mos) {
 			const prep = await L.resolveDefault(callMosdnsPrepareInstall(), {});
 			if (prep.error) return fail(prep.error);
 
-			setMsg(_('Downloading...'), 'grey');
-			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
-			if (!dl.result) return fail(dl.error || _('Download failed'));
+			/* V2 feed-first: prepare returned a feed hit — no zip download,
+			 * the explicit-file install (with the MultiDNS restart inside
+			 * the backend's mosdns_install_pkg path) runs directly. */
+			if (prep.source === 'feed' && prep.feed_pkg) {
+				setMsg(_('Installing from the update source...'), 'grey');
+				const finst = await L.resolveDefault(callMosdnsInstallPkg(''), {});
+				if (!finst.result) return fail(finst.error || _('Installation failed'));
+				setMsg(finst.note || _('Installed from the update source'), 'green');
+			} else {
+				setMsg(_('Downloading...'), 'grey');
+				const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
+				if (!dl.result) return fail(dl.error || _('Download failed'));
 
-			setMsg(_('Installing package...'), 'grey');
-			const inst = await L.resolveDefault(callMosdnsInstallPkg(prep.tmp_path), {});
-			if (!inst.result) return fail(inst.error || _('Installation failed'));
+				setMsg(_('Installing package...'), 'grey');
+				const inst = await L.resolveDefault(callMosdnsInstallPkg(prep.tmp_path), {});
+				if (!inst.result) return fail(inst.error || _('Installation failed'));
+			}
 
 			const fresh = await L.resolveDefault(callMosdnsStatus(), {});
 			installed = fresh.installed || false;
@@ -720,13 +739,22 @@ function buildByeDPICard(byedpi, isMainNode) {
 			const prep = await L.resolveDefault(callByeDPIPrepareInstall(), {});
 			if (prep.error) return fail(prep.error);
 
-			setMsg(_('Downloading...'), 'grey');
-			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
-			if (!dl.result) return fail(dl.error || _('Download failed'));
+			/* V2 feed-first: prepare returned a feed hit — the explicit-file
+			 * install replaces download+install entirely. */
+			if (prep.source === 'feed' && prep.feed_pkg) {
+				setMsg(_('Installing from the update source...'), 'grey');
+				const finst = await L.resolveDefault(callFeedInstallPkg(prep.feed_pkg), {});
+				if (!finst.result) return fail(finst.error || _('Installation failed'));
+				setMsg(finst.note || _('Installed from the update source'), 'green');
+			} else {
+				setMsg(_('Downloading...'), 'grey');
+				const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
+				if (!dl.result) return fail(dl.error || _('Download failed'));
 
-			setMsg(_('Installing package...'), 'grey');
-			const inst = await L.resolveDefault(callByeDPIInstallPkg(prep.tmp_path, prep.pkg_manager), {});
-			if (!inst.result) return fail(inst.error || _('Installation failed'));
+				setMsg(_('Installing package...'), 'grey');
+				const inst = await L.resolveDefault(callByeDPIInstallPkg(prep.tmp_path, prep.pkg_manager), {});
+				if (!inst.result) return fail(inst.error || _('Installation failed'));
+			}
 
 			const fresh = await L.resolveDefault(callByeDPIStatus(), {});
 			installed = fresh.installed || false;
@@ -832,13 +860,21 @@ function buildZapretCard(zapret, isMainNode) {
 			const prep = await L.resolveDefault(callZapretPrepareInstall(), {});
 			if (prep.error) return fail(prep.error);
 
-			setMsg(_('Downloading...'), 'grey');
-			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
-			if (!dl.result) return fail(dl.error || _('Download failed'));
+			/* V2 feed-first: prepare returned a feed hit — the explicit-file
+			 * install replaces download+install entirely. */
+			if (prep.source === 'feed' && prep.feed_pkg) {
+				setMsg(_('Installing from the update source...'), 'grey');
+				const finst = await L.resolveDefault(callFeedInstallPkg(prep.feed_pkg), {});
+				if (!finst.result) return fail(finst.error || _('Installation failed'));
+			} else {
+				setMsg(_('Downloading...'), 'grey');
+				const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
+				if (!dl.result) return fail(dl.error || _('Download failed'));
 
-			setMsg(_('Installing package...'), 'grey');
-			const inst = await L.resolveDefault(callZapretInstallPkg(prep.tmp_path, prep.pkg_manager), {});
-			if (!inst.result) return fail(inst.error || _('Installation failed'));
+				setMsg(_('Installing package...'), 'grey');
+				const inst = await L.resolveDefault(callZapretInstallPkg(prep.tmp_path, prep.pkg_manager), {});
+				if (!inst.result) return fail(inst.error || _('Installation failed'));
+			}
 
 			const fresh = await L.resolveDefault(callZapretStatus(), {});
 			installed = fresh.installed || false;
@@ -1593,23 +1629,30 @@ function buildCoreCard(core, coreInfo) {
 	]);
 }
 
-/* §1.7: the own apk feed card — status + setup/remove. Honest verdicts:
- * the package candidates come from the LAST apk index refresh (feed_setup
- * runs apk update; the line shows "—" until then), the index reachability
- * is probed live by the backend on every status call. After setup/remove
- * the card re-fetches the status and repaints itself in place. */
+/* §1.7 V2: the "Update source" card — key + manifest.json + per-component
+ * installed → candidate. Honest verdicts: the candidates come from the
+ * CACHED manifest (freshness shown), the reachability probe is TTL-cached
+ * by the backend; opkg systems get the honest "ipk + sha256" wording —
+ * no apk key exists there. After setup/remove the card re-fetches the
+ * status and repaints itself in place; every verdict lands in ONE result
+ * area (project rule). */
 function buildFeedCard(feed) {
 	let st = feed || {};
 
 	const statusEl = E('strong', {});
-	const idxEl = E('span', {});
+	const manEl = E('span', {});
 	const pkgLine = E('div', { style: 'font-size:0.9em; opacity:.85; padding:2px 0' });
 	const resultEl = mkResult();
 	const setMsg = (txt, kind) => resultEl.setResult(txt, kind);
 
-	function pkgCell(label, val) {
+	function compCell(label, row) {
+		row = row || {};
+		const inst = row.installed || '—';
+		const cand = row.candidate || '—';
+		const upd = (row.installed && row.candidate &&
+			row.installed != row.candidate) ? ' → ' + cand : '';
 		return [
-			E('strong', {}, label + ' ' + (val || '—')),
+			E('strong', {}, label + ': ' + inst + upd),
 			E('span', { style: 'opacity:.6' }, ' · ')
 		];
 	}
@@ -1617,43 +1660,62 @@ function buildFeedCard(feed) {
 	function applyState() {
 		const configured = !!st.configured;
 		const published = !!st.published;
-		statusEl.textContent = configured ? _('Feed configured') : _('Feed is not configured');
-		statusEl.style.color = configured ? 'var(--hp-accent-strong)' : 'var(--hp-grey)';
-		idxEl.className = 'hpui-badge ' + (published ? 'hpui-b-green' : (configured ? 'hpui-b-amber' : 'hpui-b-grey'));
-		idxEl.textContent = published ? _('Feed index reachable')
-			: (configured ? _('Feed index unreachable (code %s)').format(st.index_code || '—')
-				: _('The feed index is not published yet'));
+		const isApk = (st.pkg_manager === 'apk');
+		statusEl.textContent = isApk
+			? (configured ? _('Update source configured (signing key installed)') : _('Update source is not configured'))
+			: _('Components install as ipk files with sha256 verification (no apk on this system)');
+		statusEl.style.color = (configured || !isApk) ? 'var(--hp-accent-strong)' : 'var(--hp-grey)';
+		let manTxt, manCls;
+		if (published)
+			manTxt = _('Manifest reachable');
+		else if (st.manifest_code && st.manifest_code != '000')
+			manTxt = _('Manifest unreachable (code %s)').format(st.manifest_code);
+		else
+			manTxt = _('The feed manifest is not published yet');
+		manCls = published ? 'hpui-b-green' : (configured ? 'hpui-b-amber' : 'hpui-b-grey');
+		if (published && st.manifest_ts) {
+			const age = Math.max(0, Math.floor(Date.now() / 1000 - st.manifest_ts));
+			manTxt += (st.manifest_fresh ? ' · ' + _('fresh') : ' · ' + _('cached %s min ago')).format(age >= 60 ? Math.floor(age / 60) : age);
+		}
+		manEl.className = 'hpui-badge ' + manCls;
+		manEl.textContent = manTxt;
 		const pk = st.policy || {};
 		dom.content(pkgLine, [
-			_('Feed packages') + ': ',
-			...pkgCell('hiddify-core', pk['hiddify-core']),
-			...pkgCell('compact', pk['hiddify-core-compact']),
-			...pkgCell('mosdns', pk.mosdns),
-			...pkgCell('helpers', pk.probe_pool || pk.sni_sniffer)
+			_('Components (installed → offered)') + ': ',
+			...compCell('hiddify-core', pk['hiddify-core']),
+			...compCell('compact', pk['hiddify-core-compact']),
+			...compCell('sing-box-extended', pk['sing-box-extended']),
+			...compCell('lite', pk['sing-box-extended-lite']),
+			...compCell('mosdns', pk.mosdns),
+			...compCell('helpers', pk.probe_pool),
+			...compCell('byedpi', pk.byedpi),
+			...compCell('zapret2', pk.zapret2)
 		]);
 		setupBtn.disabled = false;
-		removeBtn.disabled = !configured;
+		removeBtn.disabled = !(configured && isApk);
+		if (!isApk)
+			setupBtn.disabled = true;
 	}
 
-	const setupBtn = mkBtn(_('Set up the feed'), 'primary', {
+	const setupBtn = mkBtn(_('Set up the update source'), 'primary', {
 		style: 'margin-left:4px',
 		click: async function() {
 			setupBtn.disabled = true;
 			removeBtn.disabled = true;
-			setMsg(_('Setting up the feed…'), 'grey');
+			setMsg(_('Setting up the update source…'), 'grey');
 			const ret = await L.resolveDefault(callFeedSetup(), {});
 			if (ret.result) {
 				st = await L.resolveDefault(callFeedStatus(), {});
 				applyState();
-				setMsg(_('Feed configured — packages update from your own repository.') + (ret.note ? (' ' + ret.note) : ''), 'green');
+				setMsg(_('Update source configured — components install as explicit files from the manifest.') + (ret.note ? (' ' + ret.note) : ''), 'green');
 			} else {
 				applyState();
-				setMsg(_('Feed setup failed: ') + (ret.error || _('RPC error')), 'red');
+				setMsg(_('Update source setup failed: ') + (ret.error || _('RPC error')), 'red');
 			}
 		}
 	});
 
-	const removeBtn = mkBtn(_('Remove the feed'), 'danger', {
+	const removeBtn = mkBtn(_('Remove the update source'), 'danger', {
 		style: 'margin-left:4px',
 		click: async function() {
 			setupBtn.disabled = true;
@@ -1662,10 +1724,10 @@ function buildFeedCard(feed) {
 			if (ret.result) {
 				st = await L.resolveDefault(callFeedStatus(), {});
 				applyState();
-				setMsg(_('Feed removed — installs return to the original sources.'), 'green');
+				setMsg(_('Update source removed — installs return to the original sources.'), 'green');
 			} else {
 				applyState();
-				setMsg(_('Feed removal failed: ') + (ret.error || _('RPC error')), 'red');
+				setMsg(_('Update source removal failed: ') + (ret.error || _('RPC error')), 'red');
 			}
 		}
 	});
@@ -1675,7 +1737,7 @@ function buildFeedCard(feed) {
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
 			statusEl,
-			idxEl,
+			manEl,
 			setupBtn,
 			removeBtn
 		]),
@@ -1910,9 +1972,9 @@ return view.extend({
 		 * Installs that ride the feed fall back to the original sources
 		 * automatically when the feed is unavailable (apk-native behavior:
 		 * an unreachable index only warns). */
-		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Own apk feed'));
+		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Update source'));
 		s.anonymous = true;
-		s.description = _('Serves the components that otherwise install from archives: hiddify-core (full and UPX compact), mosdns and the automation helpers — as signed apk packages from your own repository. When the feed is unavailable, installs automatically fall back to the original sources.');
+		s.description = _('Own signed package source: every component (hiddify-core full and compact, sing-box-extended and lite, mosdns, helpers, byedpi, zapret2) installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. When the source is unavailable, installs automatically fall back to the original paths.');
 
 		o = s.option(form.DummyValue, '_feed_card');
 		o.default = buildFeedCard(feedStatus);

@@ -254,19 +254,128 @@ function core_features_cached(bin) {
 	return info;
 }
 
-/* ── §1.7 Own apk feed (client side, shared with rpcd's feed RPCs) ──────
+/* ── §1.7 Own package feed — V2, EXPLICIT FILES ONLY (session 150) ──────
+ * Client contract = manifest.json (pkg → version → apk/ipk file + sha256);
+ * NO repositories.d line is ever written (a foreign feed could then
+ * out-version our components via `apk upgrade`). Mirrors the luci.homeproxy
+ * feed block verbatim (ч.223 «mirrors verbatim» principle): same ladder
+ * (raw → jsDelivr → UCI gh-proxy mirror), same cache/TTL, same explicit-
+ * file install with the sha256 gate, same bounded sibling families.
  * Declared BEFORE the action dispatch (ucode has no hoisting — a helper
  * below the dispatch block is invisible to the branches that run at module
- * level, lesson 93/126). Mirrors the luci.homeproxy feed block verbatim. */
-const FEED_LIST_FILE = '/etc/apk/repositories.d/ravnex-feed.list';
+ * level, lesson 93/126). */
 const FEED_KEY_FILE = '/etc/apk/keys/ravnex-feed.pub';
+const FEED_LIST_LEGACY = '/etc/apk/repositories.d/ravnex-feed.list';
+const FEED_MANIFEST_FILE = '/var/run/homeproxy/feed_manifest.json';
+const FEED_MANIFEST_TTL = 1800;
+const FEED_BRANCH = 'refs/heads/feed';
+const FEED_REPOS = ['ezdizzy/ravnex', 'ezdizzy/re-homeproxy'];
+const FEED_BIN_PATH = {
+	'hiddify-core': '/usr/bin/hiddify-core',
+	'hiddify-core-compact': '/usr/bin/hiddify-core',
+	'mosdns': '/usr/bin/mosdns',
+	'probe_pool': '/usr/bin/probe_pool',
+	'sni_sniffer': '/usr/bin/sni_sniffer',
+	'sing-box-extended': '/usr/bin/sing-box',
+	'sing-box-extended-lite': '/usr/bin/sing-box',
+	'byedpi': '/usr/bin/ciadpi',
+	'zapret2': '/opt/zapret2/nfq2/nfqws2'
+};
+/* Sibling families share a binary path — removed best-effort when the
+ * counterpart installs. ONLY these two own families (lesson ch.223). */
+const FEED_SIBLING = {
+	'hiddify-core': 'hiddify-core-compact',
+	'hiddify-core-compact': 'hiddify-core',
+	'sing-box-extended': 'sing-box-extended-lite',
+	'sing-box-extended-lite': 'sing-box-extended'
+};
 
-function feed_configured() {
-	return access(FEED_LIST_FILE) && access(FEED_KEY_FILE);
+function feed_series() {
+	const fd = popen("awk -F\\' '/DISTRIB_RELEASE/ {print $2}' /etc/openwrt_release 2>/dev/null");
+	if (!fd) return '25.12';
+	const r = trim(fd.read('all'));
+	fd.close();
+	const m = match(r, /^([0-9]+\.[0-9]+)/);
+	return m ? m[1] : '25.12';
 }
 
-function feed_list_url() {
-	return trim(readfile(FEED_LIST_FILE) || '');
+function feed_rel(path) {
+	return 'releases/' + feed_series() + '/' + detect_arch() + '/' + path;
+}
+
+function feed_urls(rel) {
+	const urls = [];
+	const base = gh_mirror_base();
+	for (let r in FEED_REPOS) {
+		push(urls, { url: `https://raw.githubusercontent.com/${r}/${FEED_BRANCH}/${rel}`, rung: 'raw', repo: r });
+		push(urls, { url: `https://cdn.jsdelivr.net/gh/${r}@feed/${rel}`, rung: 'jsdelivr', repo: r });
+		if (base)
+			push(urls, { url: `${base}/${r}/raw/${FEED_BRANCH}/${rel}`, rung: 'mirror', repo: r });
+	}
+	return urls;
+}
+
+function feed_fetch(rel, dest, timeout_ms) {
+	const urls = feed_urls(rel);
+	for (let r in FEED_REPOS) {
+		for (let u in urls) {
+			if (u.repo != r) continue;
+			system(`rm -f ${shellquote(dest)}`);
+			const rc = system(`wget -qO ${shellquote(dest)} --timeout=15 ${shellquote(u.url)} 2>/dev/null; RC=$?; exit $RC`, timeout_ms || 60000);
+			if (rc === 0 && access(dest)) {
+				const st = stat(dest);
+				if (st && st.size > 0)
+					return { ok: true, url: u.url, rung: u.rung, repo: r };
+			}
+			system(`rm -f ${shellquote(dest)}`);
+		}
+	}
+	return { ok: false, url: (length(urls) ? urls[0].url : null), rung: null, repo: null };
+}
+
+function feed_manifest(force) {
+	let cache = null;
+	if (access(FEED_MANIFEST_FILE)) {
+		try { cache = json(readfile(FEED_MANIFEST_FILE) || ''); } catch (e) { cache = null; }
+	}
+	const now = time();
+	if (!force && cache && type(cache) == 'object' && cache.ts &&
+	    (now - cache.ts) < FEED_MANIFEST_TTL && cache.manifest)
+		return cache.manifest;
+	const arch = detect_arch();
+	const got = feed_fetch(feed_rel('manifest.json'), FEED_MANIFEST_FILE + '.dl', 30000);
+	if (!got.ok)
+		return (cache && cache.manifest) ? cache.manifest : null;
+	let man = null;
+	try { man = json(readfile(FEED_MANIFEST_FILE + '.dl') || ''); } catch (e) { man = null; }
+	system(`rm -f ${shellquote(FEED_MANIFEST_FILE + '.dl')}`);
+	if (!man || type(man) != 'object' || !man.pkgs || man.arch != arch)
+		return (cache && cache.manifest) ? cache.manifest : null;
+	const entry = { ts: now, manifest: man };
+	mkdir('/var/run/homeproxy');
+	writefile(FEED_MANIFEST_FILE + '.tmp', sprintf('%.J', entry) + '\n');
+	rename(FEED_MANIFEST_FILE + '.tmp', FEED_MANIFEST_FILE);
+	return man;
+}
+
+function feed_candidate(pkg) {
+	/* cache-first manifest read; the caller applies its own version gate */
+	const man = feed_manifest(false);
+	if (!man || !man.pkgs) return null;
+	const e = man.pkgs[pkg];
+	if (!e || !e.version) return null;
+	return { version: '' + e.version,
+		apk: e.apk || null, apk_sha256: e.apk_sha256 || null,
+		ipk: e.ipk || null, ipk_sha256: e.ipk_sha256 || null };
+}
+
+function feed_configured() {
+	/* apk: the key marks the feed enabled. opkg: the manifest is fetched on
+	 * demand and sha256 is the verification — always usable. */
+	const pm = detect_pkg_manager();
+	if (pm == null) return false;
+	if (pm === 'opkg') return true;
+	return !!access(FEED_KEY_FILE);
 }
 
 function feed_strip_rev(v) {
@@ -285,27 +394,59 @@ function feed_vercmp_base(a, b) {
 	return 0;
 }
 
-function feed_candidate(pkg) {
-	/* apk policy <pkg> lists the INSTALLED record first when it satisfies —
-	 * scan ALL entries and return the one served by OUR index (if any);
-	 * the caller's version gate decides feed-vs-installed. */
-	if (!feed_configured()) return null;
-	const url = feed_list_url();
-	if (!length(url)) return null;
-	const fd = popen(`apk policy ${shellquote(pkg)} 2>/dev/null`);
-	if (!fd) return null;
-	const out = fd.read('all');
-	fd.close();
-	const lines = split(out, '\n');
-	for (let i = 0; i < length(lines); i++) {
-		const m = match(lines[i], /^  ([0-9][^ :]*):/);
-		if (m) {
-			const repo = (lines[i + 1] != null) ? trim(lines[i + 1]) : '';
-			if (repo == url)
-				return { version: m[1], repo: repo };
-		}
+/* V2 explicit-file install of one feed package (mirror of rpcd's
+ * feed_install_pkg): manifest → exact file → ladder → sha256 gate →
+ * `apk add ./x.apk` (signature checked by apk) | `opkg install ./x.ipk`
+ * (sha256 WAS the gate) → post-check access(). */
+function feed_install_pkg(pkg) {
+	const pkg_manager = detect_pkg_manager();
+	if (!pkg_manager)
+		return { result: false, error: 'no supported package manager (apk/opkg)' };
+	if (pkg_manager === 'apk' && !access(FEED_KEY_FILE))
+		return { result: false, error: 'feed key is not installed — run the feed setup first' };
+	const man = feed_manifest(true);
+	if (!man)
+		return { result: false, error: 'feed manifest unavailable (raw/jsDelivr/mirror did not answer)' };
+	const entry = (man.pkgs || {})[pkg];
+	if (!entry || !entry.version)
+		return { result: false, error: `the feed manifest (${man.arch}) has no package ${pkg}` };
+	const file = (pkg_manager === 'apk') ? entry.apk : entry.ipk;
+	const sha = (pkg_manager === 'apk') ? entry.apk_sha256 : entry.ipk_sha256;
+	if (!file || !sha)
+		return { result: false, error: `the manifest has no ${pkg_manager} file for ${pkg}` };
+	if (!match(file, /^[a-z0-9][a-zA-Z0-9._-]*$/) || !match(sha, /^[0-9a-f]{64}$/))
+		return { result: false, error: 'invalid manifest record (file name/sha256)' };
+	const tmp = `/tmp/feed_${pkg}.${pkg_manager}`;
+	const got = feed_fetch(feed_rel(file), tmp, 300000);
+	if (!got.ok)
+		return { result: false, error: `download failed: ${file}` };
+	let sum = '';
+	const hfd = popen(`sha256sum ${shellquote(tmp)} 2>/dev/null`);
+	if (hfd) { sum = trim(hfd.read('all')); hfd.close(); }
+	const hm = match(sum, /^([0-9a-f]{64})/);
+	if (!hm || hm[1] != sha) {
+		system(`rm -f ${shellquote(tmp)}`);
+		return { result: false, error: `sha256 mismatch for ${file} — install refused` };
 	}
-	return null;
+	const sib = FEED_SIBLING[pkg];
+	if (sib)
+		system(`${(pkg_manager === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib)} >/dev/null 2>&1; true`);
+	let rc;
+	if (pkg_manager === 'apk') {
+		const registered = (system(`apk info -e ${shellquote(pkg)} >/dev/null 2>&1`) === 0);
+		rc = system(`apk ${registered ? 'upgrade' : 'add'} ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
+	} else {
+		rc = system(`opkg install --force-reinstall ${shellquote(tmp)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp)}; exit $RC`, 300000);
+	}
+	const bin = FEED_BIN_PATH[pkg];
+	/* apk 3.0.5 exit codes are unreliable on success (file-target installs
+	 * that landed fine still exit 1/2 on NOTE-level messages, proven live
+	 * by the loopback acceptance) — the same contract as install_pkg:
+	 * trust the installed binary, report the rc only when it is absent. */
+	if (!(bin && access(bin)))
+		return { result: false, error: `feed install of ${pkg} failed (${pkg_manager} rc=${rc}, post-check failed)` };
+	return { result: true, version: '' + entry.version, pkg_manager,
+		note: `installed from the update source: ${pkg} ${entry.version}` };
 }
 
 
@@ -447,13 +588,28 @@ let result;
 					let chosen = variant;
 					if (chosen !== 'normal' && chosen !== 'compressed')
 						chosen = (effective_kb >= LITE_NORMAL_MIN_KB) ? 'normal' : 'compressed';
-					if (chosen === 'normal' && effective_kb < LITE_NORMAL_MIN_KB) {
+					/* §1.7 V2 feed-first — NORMAL build only: the feed mirrors
+					 * the MANCrimSon normal tarball as a signed package; the
+					 * COMPRESSED (UPX wrapper) build stays on the proven
+					 * installer path (its layout is not replicated in the
+					 * feed, decision session 150). */
+					if (chosen === 'normal' && effective_kb >= LITE_NORMAL_MIN_KB && feed_configured()) {
+						const lite_cur = core_features_cached('/usr/bin/sing-box');
+						const cur = (lite_cur && lite_cur.version) ? lite_cur.version : '';
+						const cand = feed_candidate('sing-box-extended-lite');
+						if (cand &&
+						    (!length(cur) || feed_vercmp_base(feed_strip_rev(cand.version), cur) >= 0))
+							result = { pkg_manager, arch, variant: 'normal',
+								source: 'feed', feed_pkg: 'sing-box-extended-lite',
+								note: `own feed: sing-box-extended-lite ${cand.version}` };
+					}
+					if (result == null && chosen === 'normal' && effective_kb < LITE_NORMAL_MIN_KB) {
 						result = { error: `Not enough effective flash for the lite --normal build: ${effective_kb} KB free (need ~50 MB). Try the compressed (UPX) build — it needs ~96 MB free RAM.` };
-					} else if (chosen === 'compressed' && overlay_free_kb < LITE_COMPRESSED_MIN_KB) {
+					} else if (result == null && chosen === 'compressed' && overlay_free_kb < LITE_COMPRESSED_MIN_KB) {
 						result = { error: `Not enough overlay for the lite compressed build: ${overlay_free_kb} KB free (need ~16 MB).` };
-					} else if (chosen === 'compressed' && ram_free_kb < LITE_COMPRESSED_RAM_KB) {
+					} else if (result == null && chosen === 'compressed' && ram_free_kb < LITE_COMPRESSED_RAM_KB) {
 						result = { error: `Not enough RAM for the lite compressed build: ${ram_free_kb} KB free (need ~96 MB — the UPX binary decompresses into RAM at launch).` };
-					} else {
+					} else if (result == null) {
 						result = {
 							pkg_manager, arch, variant: chosen,
 							installer_url: LITE_INSTALLER_URL,
@@ -478,6 +634,23 @@ let result;
 					/* full-binary footprint depends on whether the overlay compresses */
 					const full_need = overlay_compresses() ? FULL_OVERLAY_COMP_KB : FULL_OVERLAY_RAW_KB;
 
+					/* §1.7 V2 feed-first for sing-box-extended: a manifest
+					 * candidate not older than the installed binary short-
+					 * circuits the GitHub API + asset download (the runner
+					 * installs via install_feed_pkg). Space gate = the same
+					 * full_need the asset path enforces below. */
+					let sb_feed_hit = null;
+					if (core !== 'hiddify' && feed_configured()) {
+						const sb_cur = core_features_cached('/usr/bin/sing-box');
+						const cur = (sb_cur && sb_cur.version) ? sb_cur.version : '';
+						const cand = feed_candidate('sing-box-extended');
+						if (cand && overlay_free_kb >= full_need &&
+						    (!length(cur) || feed_vercmp_base(feed_strip_rev(cand.version), cur) >= 0))
+							sb_feed_hit = { pkg_manager, arch, source: 'feed',
+								feed_pkg: 'sing-box-extended',
+								note: `own feed: sing-box-extended ${cand.version}` };
+					}
+
 				if (core === 'hiddify') {
 					/* ч.129 (ан-146): ПЕРВИЧНЫЙ источник — оригинальный репозиторий
 					 * hiddify/hiddify-core (raw tar.gz per Go target). Форк 1andrevich
@@ -491,15 +664,18 @@ let result;
 					const up_asset = HIDDIFY_UPSTREAM_ASSET[arch] || null;
 					const up_need = overlay_compresses() ? UP_FULL_OVERLAY_COMP_KB : UP_FULL_OVERLAY_RAW_KB;
 					const up_fits = up_asset && overlay_free_kb >= up_need && tmp_free_kb >= UP_FULL_TMP_KB;
-					/* §1.7: the own apk feed — when configured and its candidate
-					 * is not older than the installed binary, take the package
-					 * from the feed (no tarball download at all). Everything
-					 * that misses (not configured, older candidate, no space,
-					 * policy blind) falls through to the original
-					 * upstream/fork paths below — the fallback IS the old
-					 * code. The compact build rides the same feed as
-					 * hiddify-core-compact (replaces the frozen v4.1.0 fork
-					 * apk; space-checked with the same COMPACT_OVERLAY_KB). */
+					/* §1.7 V2: the own feed — when its manifest candidate is not
+					 * older than the installed binary, take the package from
+					 * the feed (explicit file + sha256 + signature, no tarball
+					 * download at all). Everything that misses (not
+					 * configured, older candidate, no space, manifest blind)
+					 * falls through to the original upstream/fork paths below
+					 * — the fallback IS the old code. The compact build rides
+					 * the same feed as hiddify-core-compact (replaces the
+					 * frozen v4.1.0 fork apk; space-checked with the same
+					 * COMPACT_OVERLAY_KB). The install itself is the
+					 * generalized install_feed_pkg action below (runner calls
+					 * it with prep.feed_pkg). */
 					let feed_hit = null;
 					if (feed_configured()) {
 						const fpkg = (variant === 'upx') ? 'hiddify-core-compact' : 'hiddify-core';
@@ -571,6 +747,8 @@ let result;
 						}
 					}
 					}
+				} else if (sb_feed_hit) {
+					result = sb_feed_hit;
 				} else if (overlay_free_kb < full_need) {
 						result = { error: `Not enough overlay space: ${overlay_free_kb} KB free, sing-box-extended needs ~${full_need} KB.` };
 					} else {
@@ -735,34 +913,21 @@ let result;
 	}
 
 } else if (action === 'install_feed_pkg') {
-	/* §1.7: install a core from the own apk feed (prepare_install picked
-	 * the package; the feed is already configured — key + repositories.d
-	 * line). `apk update` first so the candidate is fresh; the SIBLING
-	 * variant is removed best-effort (hiddify-core and hiddify-core-compact
-	 * both own /usr/bin/hiddify-core and conflict with each other). The
-	 * service is NOT restarted here — same contract as the fork apk path
-	 * (the app restarts the service after a successful install). */
+	/* §1.7 V2: install a feed package by EXPLICIT FILE (the runner passes
+	 * prep.feed_pkg from a feed-hit prepare_install). The generalized
+	 * feed_install_pkg handles every feed package: manifest → exact file →
+	 * ladder download → sha256 gate → apk add ./file (signature checked by
+	 * apk against our key) | opkg install ./file → sibling removal bounded
+	 * to the two own families → post-check access(). The service is NOT
+	 * restarted here — same contract as before (the caller restarts the
+	 * service after a successful install). */
 	const feed_pkg = ARGV[1];
-	if (!match(feed_pkg, /^[a-z0-9-]+$/)) {
+	if (!match(feed_pkg, /^[a-z0-9-]+$/) || length(feed_pkg) > 64) {
 		result = { result: false, error: 'invalid feed package name' };
 	} else if (!feed_configured()) {
 		result = { result: false, error: 'own feed is not configured' };
 	} else {
-		/* NO `apk update` here (network-bound: 15 s … 300+ s measured live —
-		 * an RPC/stage must stay fast; the index cache was refreshed by the
-		 * feed setup). The candidate check in prepare_install used the cached
-		 * index; apk semantics: `add` never upgrades an installed package
-		 * (installed is preferred) — upgrade when registered, add when not. */
-		const sib = (feed_pkg === 'hiddify-core-compact') ? 'hiddify-core' : 'hiddify-core-compact';
-		system(`apk del ${shellquote(sib)} >/dev/null 2>&1; true`);
-		const registered = (system(`apk info -e ${shellquote(feed_pkg)} >/dev/null 2>&1`) === 0);
-		const exit_code = system(`apk ${registered ? 'upgrade' : 'add'} ${shellquote(feed_pkg)} >/dev/null 2>&1; RC=$?; exit $RC`, 300000);
-		if (exit_code !== 0 || !access('/usr/bin/hiddify-core')) {
-			result = { result: false, error: `feed install of ${feed_pkg} failed (apk rc=${exit_code})` };
-		} else {
-			const info = core_features_cached('/usr/bin/hiddify-core');
-			result = { result: true, note: `installed from the own apk feed: ${feed_pkg} ${info.version || ''}` };
-		}
+		result = feed_install_pkg(feed_pkg);
 	}
 
 } else if (action === 'install_kmods') {

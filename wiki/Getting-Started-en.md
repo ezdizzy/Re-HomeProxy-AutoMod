@@ -1,96 +1,107 @@
 🇬🇧 [English](Getting-Started-en) | 🇷🇺 [Русский](Getting-Started-ru)
 
-# Getting Started
+# Getting started
 
-This page walks you from a fresh install to a working connection. It assumes Re:HomeProxy AutoMod is already installed (see the [README](../../blob/master/README.md) for package installation).
+This page walks you from a fresh install to a working connection. It assumes Ravnex is already
+installed (see [Installation & updates](Installation-and-Updates-en) for packages).
 
-> Everything below is done in the LuCI web UI: **Services → Re:HomeProxy AutoMod**.
+> Everything below happens in the LuCI web interface: **Services → Ravnex**.
 
 ---
 
 ## Step 1 — Install a core
 
-The LuCI app is only the interface; a separate **core** binary does the proxying. Open **Core & Tools → Core management** and install one:
+The LuCI app is only the interface; the actual proxying is done by a separate **core** binary.
+Open **Maintenance → Core management** and install one of:
 
-- **hiddify-core** (default) — lighter, has a compact build for small routers; the only core with **NaïveProxy**.
-- **sing-box-extended** — newer sing-box 1.14 base (WARP / MASQUE / TrustTunnel in the core); no NaïveProxy — such nodes are skipped automatically.
+- **hiddify-core** (default) — lighter, with a compact build for small routers; the only core
+  with **NaïveProxy**.
+- **sing-box-extended** — a newer sing-box base (WARP / MASQUE / TrustTunnel in the core);
+  no NaïveProxy — such nodes are skipped automatically.
 
-The installer auto-picks a build that fits your storage. Full details: **[Core Management](Core-Management-en)**.
+The installer picks the build for your storage. Details: **[Core management](Core-Management-en)**.
 
 ---
 
 ## Step 2 — Add at least one node
 
-Open **Node Settings → Nodes**. A "node" is a proxy server you connect through. Add one by:
+Open the **Servers** page. A «node» is the proxy server you connect through. You can add:
 
-- **Import share links** — paste `vless://`, `vmess://`, `ss://`, `trojan://`, `vpn://` (Amnezia), Hysteria, etc.
-- **Import .conf** — a WireGuard / AmneziaWG config file.
-- **Subscription URL** — let the router pull and refresh a list of nodes automatically.
-- **Manual** — fill the fields by hand.
+- **Share-link import** — paste `vless://`, `vmess://`, `ss://`, `trojan://`, `vpn://` (Amnezia),
+  Hysteria, etc.;
+- **.conf import** — a WireGuard / AmneziaWG config file;
+- **A subscription link** — the router downloads and keeps updating the node list;
+- **Manually** — fill the fields yourself.
 
-All import methods and formats: **[Subscriptions & Node Import](Subscriptions-en)**.
-
----
-
-## Step 3 — Select the main node
-
-Back on the **Client** page, set **Main node** to the node you added — or choose **URLTest** to let Re:HomeProxy AutoMod automatically pick and fail over to the fastest reachable node.
+All methods and formats: **[Subscriptions & node import](Subscriptions-en)**.
 
 ---
 
-## Step 4 — Choose a routing mode
+## Step 3 — Pick the main node
 
-On the **Client → Routing** tab, pick **Routing mode**. The default depends on your LuCI language:
-
-- **Russia (Proxy Banned)** — `proxy_banned_ru`, the default for Russian installs: everything goes **direct** except the destinations you add to **RU Proxy Rules** (blocked/throttled sites), which go through the proxy.
-- **Global** — everything through the proxy.
-- **GFWList / Bypass mainland China / Only proxy mainland China** — China-oriented presets.
-- **Custom routing / Custom JSON** — full manual control.
-
-For Russia, leave it on **Russia (Proxy Banned)** and open the **RU Proxy Rules** tab to enable the lists you need (Russia Inside, Re:Filter, YouTube, Discord…). Full reference: **[Routing & Access Control](Routing-and-Access-Control-en)**.
+On the **Connection** page set **Main node** = your added node — or choose **URLTest**, so
+Ravnex picks the fastest reachable node and switches on failures. URLTest has three modes
+(Auto / Preferred node + auto / Manual list) — see
+**[Hot Swap and reliability](Hot-Swap-and-Reliability-en)**.
 
 ---
 
-## Step 5 — Check the basic transport settings
+## Step 4 — Pick the routing mode
 
-Still on the **Routing** tab, the defaults are sensible:
+On the **Connection** page choose the **Routing mode**. The default for RU installs is
+**Blocking bypass (rule lists)**:
 
-- **Proxy mode** — `Redirect TCP + TProxy UDP` by default (TUN options appear if `kmod-tun` is installed).
-- **IPv6 support** — **off** by default in Russia mode on purpose: the RU lists have no IPv6 CIDRs, so v6 traffic would bypass both the proxy and the rules. Leave it off unless you know you need it. See **[DNS & Diagnostics](DNS-and-Diagnostics-en)**.
+- **Blocking bypass (rule lists)** — the everyday working mode: everything goes direct, while
+  traffic matched by the Routing rules (YouTube, Russia Inside, Re:Filter…) rides the Main
+  node — blocked sites open without tunneling the whole connection. This is where the bypass
+  engines (Zapret / ByeDPI) and the automation engine live.
+- **Everything via node** — all traffic through the Main node; per-service rules are not used.
+- **Direct** — the repair/diagnostics mode: interception, engines, the DNS scheme and the core
+  itself are off; the router hands out exactly what the provider gives.
+
+For «Blocking bypass» enable the lists you need (Russia Inside, Re:Filter, YouTube, Discord…)
+— rules and presets are described in **[Routing & access control](Routing-and-Access-Control-en)**,
+and DPI bypass in the **[Routing Master](Routing-Master-en)**.
 
 ---
 
-## Step 6 — Save, apply, start
+## Step 5 — Save, apply, start
 
-Press **Save & Apply**. Then start the service (it also auto-starts on boot):
+Press **Save & apply**. Then start the service (it also starts at boot):
 
 ```sh
 /etc/init.d/homeproxy start
 ```
 
-Watch the log at **Core & Tools**.
+Logs live on the **Maintenance** page.
 
 ---
 
-## Step 7 — Verify it works
+## Step 6 — Verify it works
 
-Open the **Diagnostics** page and run the checks:
+Open the **Health center** and run the checks:
 
-- **Connectivity** — confirms reachability of test sites. On **hiddify-core** it shows your **Direct IP** vs **Proxy IP** (they should differ when traffic is proxied); on **sing-box-extended** it shows the live **Active Node** instead (sing-box can't report the exit IP).
-- **Core & System** — confirms the core is installed and running.
-- **Configuration** — confirms the generated config is valid.
+- **Connection check** — test-site reachability; on hiddify-core it shows your **provider IP**
+  vs the **proxy IP** (while proxying they must differ);
+- **Core & system** — the core is installed and running;
+- **Configuration** — the generated config is valid.
 
-If something is off, see **[Troubleshooting](Troubleshooting-en)** and **[DNS & Diagnostics](DNS-and-Diagnostics-en)**.
+Service states and the event journal live in the same
+**[Health center](Monitoring-and-Connections-en#health-center)**. If something is off — see
+**[Troubleshooting](Troubleshooting-en)**.
 
 ---
 
-## Optional — un-throttle sites without a VPN node
+## Optional — bypass throttling without a VPN
 
-If a site (e.g. YouTube, Discord) is merely *throttled* rather than IP-blocked, you can offload it to a built-in DPI-bypass instead of spending VPN bandwidth:
+If a site (YouTube, Discord) is *throttled* rather than IP-blocked, hand it to the built-in DPI
+bypass instead of spending subscription traffic:
 
-- **[ByeDPI](ByeDPI-en)** — a SOCKS-level desync.
-- **[Zapret](Zapret-en)** — a packet-level (nfqws2) desync.
+- **[Zapret](Zapret-en)** — packet-level desynchronization (nfqws2);
+- **[ByeDPI](ByeDPI-en)** — SOCKS-level desynchronization.
 
-Both can be selected per RU Proxy Rule (e.g. route only YouTube through ByeDPI/Zapret while the rest uses your VPN).
+Both can be selected per rule (for example, YouTube via Zapret, the rest via VPN). Blocked sites
+can also be learned automatically — see **[Auto-bypass](Automation-Status-en)**.
 
-See also: [Core Management](Core-Management-en) · [Routing & Access Control](Routing-and-Access-Control-en) · [Subscriptions & Node Import](Subscriptions-en) · [Troubleshooting](Troubleshooting-en)
+See also: [Overview](Overview-en) · [Core management](Core-Management-en) ·
+[Troubleshooting](Troubleshooting-en)

@@ -72,6 +72,19 @@
 // YouTube behavior (a TCP-only strategy never touches the browser's QUIC
 // attempts).
 //
+// v1.7.0 (ч.237): the one-shot `-stun-check <ip>` mode — a Discord VOICE
+// liveness probe: an RFC 5389 Binding Request (~20 bytes, MAGIC_COOKIE
+// 0x2112A442) over UDP/3478 to the voice-media edge (default host
+// discord.media — the apex resolves to the Cloudflare-hosted voice edges;
+// the riotgames hostname from the early design does not exist in public
+// DNS). A valid Binding Response (type 0x0101, the
+// same transaction ID) = the voice path carries UDP end-to-end and the
+// liveness + RTT are measured in one shot. Verdicts: "reply", "icmp",
+// "silence" — the same honest shape as -quic-check. The deep battery's dcv
+// item rides it (owner dc): Discord strategies with a UDP profile finally
+// get a measured voice component (QUIC silence never said anything about
+// the voice path).
+//
 // Build (see build.sh): CGO_ENABLED=0 GOOS=linux GOARCH=... go build -trimpath -ldflags="-s -w"
 package main
 
@@ -100,7 +113,7 @@ import (
 	"time"
 )
 
-const version = "1.6.0"
+const version = "1.7.0"
 
 const (
 	bodyReadLimit  = 64 * 1024 // same cap as the shell worker's curl body capture
@@ -175,6 +188,8 @@ func main() {
 	dir := flag.String("dir", "", "working directory for the resident mode (pp.in.json / pp.out.json)")
 	quicCheck := flag.String("quic-check", "", "QUIC UDP/443 reachability check against <ip> (one-shot, one JSON line on stdout)")
 	quicHost := flag.String("quic-host", "", "hostname to echo in the -quic-check report")
+	stunCheck := flag.String("stun-check", "", "STUN UDP/3478 voice liveness check against <ip> (one-shot, one JSON line on stdout)")
+	stunHost := flag.String("stun-host", "discord.media", "hostname to echo in the -stun-check report")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -184,6 +199,10 @@ func main() {
 	}
 	if *quicCheck != "" {
 		runQUICCheck(*quicCheck, *quicHost)
+		return
+	}
+	if *stunCheck != "" {
+		runSTUNCheck(*stunCheck, *stunHost)
 		return
 	}
 	if *daemon {
@@ -313,6 +332,116 @@ func runQUICCheck(ip, host string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	ans("silence", "no answer in 3 s — likely a silent UDP/443 drop (or a server ignoring the probe)")
+}
+
+// runSTUNCheck probes the Discord VOICE path (UDP/3478) with an RFC 5389
+// STUN Binding Request. One ~20-byte datagram: message type 0x0001, message
+// length 0, MAGIC_COOKIE 0x2112A442 + a random 12-byte transaction ID. A
+// valid Binding Response (type 0x0101, the SAME transaction ID) proves the
+// UDP path carries 3478 end-to-end AND yields the round-trip time in the
+// same shot — no STUN library, stdlib net/UDP only. Verdicts:
+//   reply   — a valid Binding Response came back: voice path alive (ok=true);
+//   icmp    — the connected socket surfaced an ICMP unreachable
+//             (ECONNREFUSED): port closed or an rejecting block;
+//   silence — no answer in the window: typically a silent on-path drop —
+//             honestly reported as "likely cut", NOT a proof (the server may
+//             also ignore an unauthenticated probe).
+// The probe measures VOICE-PATH PASSABILITY, not call quality: jitter/
+// relay-fallback (srflx vs prflx) and TURN allocation are out of scope —
+// the UI copy says so.
+func runSTUNCheck(ip, host string) {
+	type scResp struct {
+		OK      bool   `json:"ok"`
+		Verdict string `json:"verdict"`
+		Host    string `json:"host,omitempty"`
+		IP      string `json:"ip"`
+		Port    int    `json:"port"`
+		RTTms   int    `json:"rtt_ms"`
+		Note    string `json:"note,omitempty"`
+	}
+	ans := func(verdict, note string, rtt int) {
+		enc, _ := json.Marshal(scResp{OK: verdict == "reply", Verdict: verdict,
+			Host: host, IP: ip, Port: 3478, RTTms: rtt, Note: note})
+		fmt.Println(string(enc))
+	}
+	if net.ParseIP(ip) == nil {
+		ans("", "not an IP address: "+ip, 0)
+		os.Exit(2)
+	}
+	conn, err := net.DialTimeout("udp4", net.JoinHostPort(ip, "3478"), 3*time.Second)
+	if err != nil {
+		ans("silence", "dial failed: "+err.Error(), 0)
+		return
+	}
+	defer conn.Close()
+
+	// RFC 5389 §6: 20-byte Binding Request — type 0x0001, length 0x0000,
+	// magic cookie 0x2112A442, 12 random transaction-ID bytes.
+	pkt := make([]byte, 20)
+	pkt[0], pkt[1] = 0x00, 0x01 // Binding Request
+	pkt[2], pkt[3] = 0x00, 0x00 // message length (no attributes)
+	pkt[4], pkt[5], pkt[6], pkt[7] = 0x21, 0x12, 0xA4, 0x42 // MAGIC_COOKIE
+	if _, err := rand.Read(pkt[8:20]); err != nil {
+		ans("silence", "entropy: "+err.Error(), 0)
+		return
+	}
+	txid := append([]byte(nil), pkt[8:20]...)
+
+	start := time.Now()
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := conn.Write(pkt); err != nil {
+			if errors.Is(err, syscall.ECONNREFUSED) {
+				ans("icmp", "ICMP unreachable surfaced on write", int(time.Since(start).Milliseconds()))
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		v, _, note := readStunVerdict(conn, txid, 1500*time.Millisecond)
+		if v != "" {
+			ans(v, note, int(time.Since(start).Milliseconds()))
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	ans("silence", "no answer in 3 s — likely a silent UDP/3478 drop (or the server ignoring an unauthenticated probe)", int(time.Since(start).Milliseconds()))
+}
+
+// readStunVerdict drains the socket until the deadline looking for a valid
+// Binding Response: message type 0x0101 and the SAME 12-byte transaction ID
+// (a stray datagram from another flow must never pass). The RTT is measured
+// by the caller (write → valid read).
+func readStunVerdict(conn net.Conn, txid []byte, deadline time.Duration) (string, int, string) {
+	buf := make([]byte, 1500)
+	conn.SetReadDeadline(time.Now().Add(deadline))
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			if errors.Is(err, syscall.ECONNREFUSED) {
+				return "icmp", 0, "ICMP unreachable surfaced on the connected socket"
+			}
+			return "", 0, err.Error() // timeout or another transient error
+		}
+		if n >= 20 &&
+			buf[0] == 0x01 && buf[1] == 0x01 && // Binding Response
+			buf[4] == 0x21 && buf[5] == 0x12 && buf[6] == 0xA4 && buf[7] == 0x42 &&
+			equalBytes(buf[8:20], txid) {
+			return "reply", 0, ""
+		}
+		// Anything else is garbage — keep reading until the deadline.
+	}
+}
+
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // runBatch executes a whole request (resolve + concurrent probes). Shared by

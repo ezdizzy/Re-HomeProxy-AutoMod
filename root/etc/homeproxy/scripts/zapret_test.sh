@@ -149,7 +149,11 @@ TMP=/tmp/zapret_test.$$
 DEEP_PROBES=""
 YTV_URLS=""
 if [ "$DEEP" = "1" ]; then
-	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytv|BATCH tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/ ytpf|https://www.youtube.com/ tgpf|https://web.telegram.org/ dcpf|https://discord.com/ stpf|https://www.speedtest.net/"
+	# ч.237: dcv = the STUN voice probe of Discord (probe_pool -stun-check,
+	# UDP/3478 RFC 5389 Binding Request) — the UDP/voice component the dc
+	# battery never measured (QUIC silence ≠ voice path). Handled specially
+	# below (no HTTP body; the verdict gate IS the reply received).
+	DEEP_PROBES="ytp|https://www.youtube.com/ yti|https://i.ytimg.com/generate_204 ytv|BATCH tgp|https://web.telegram.org/ dcp|https://discord.com/ stp|https://www.speedtest.net/ dcv|STUN ytpf|https://www.youtube.com/ tgpf|https://web.telegram.org/ dcpf|https://discord.com/ stpf|https://www.speedtest.net/"
 	if [ -f /etc/homeproxy/resources/yt_probe_ids.txt ]; then
 		# Ф6.4: cap the batch at 12 URLs (6 videos × 2 thumbs) — the ≥8-pass
 		# bar stays reachable while the WORST-CASE window (every fetch timing
@@ -249,7 +253,7 @@ if [ "$VALIDATE" = "1" ]; then
 	exit 0
 fi
 
-# Watchdog: guarantee teardown within 100s even if curl/nslookup wedges, so the
+# Watchdog: guarantee teardown even if curl/nslookup wedges, so the
 # live firewall is never left modified (busybox has no `timeout` applet).
 # 100 s (ч.129): the deep battery's ytv probe now runs THREE windows + the
 # fresh-connection START phase (~38 s worst case) on top of the 25 s handshake
@@ -257,7 +261,12 @@ fi
 # results (the live ч.129 fact: deep_count 4 of 7 selected). Redirect its fds
 # to /dev/null: otherwise the backgrounded `sleep` keeps the caller's stdout
 # pipe open and rpcd/popen blocks on read().
-( sleep 100; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
+# ч.237: deep adds the fresh-edge retry of the non-yt tags (dc/st/tg, up to
+# 2 probes × 9 s per retried tag) + the STUN voice probe — 170 s deep cap,
+# the plain handshake pass keeps 100 s.
+DWATCH=100
+[ "$DEEP" = "1" ] && DWATCH=170
+( sleep "$DWATCH"; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
 WATCH_PID=$!
 
 # 1. Test-host IPs — BEFORE touching the firewall, so a slow resolver never runs
@@ -304,6 +313,20 @@ if [ "$DEEP" = "1" ]; then
 		# the sustained-flow batch rides the SAME host+IP as the yti probe
 		cp "$TMP/dip_yti" "$TMP/dip_$did" 2>/dev/null
 		echo "i.ytimg.com" > "$TMP/dhost_$did"
+	elif [ "$did" = "dcv" ]; then
+		# ч.237: the STUN voice probe — its own host (Discord voice media),
+		# resolved fresh HERE so the IP joins the bypass/queue rules before
+		# they render. The probe itself is UDP/3478 (special case below).
+		# ч.237 ч.2: the voice-media apex is discord.media (resolves to the
+		# Cloudflare-hosted voice edges); the riotgames hostname from the
+		# early design is NXDOMAIN in public DNS — a live acceptance caught
+		# the probe silently measuring whatever stray IP the NXDOMAIN
+		# response's additional section carried.
+		SHOST="discord.media"
+		sip=$(nslookup "$SHOST" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' | head -1)
+		echo "$sip" > "$TMP/dip_$did"
+		echo "$SHOST" > "$TMP/dhost_$did"
+		echo "STUN" > "$TMP/durl_$did"
 	elif [ "$did" = "yts2" ]; then
 		# Ф6.4/ч.236: the SECOND real-stream edge — a DIFFERENT public A of the
 		# SAME videoplayback host the yts probe rides (the user's live report:
@@ -338,6 +361,9 @@ if [ "$DEEP" = "1" ]; then
 		echo "$dip" > "$TMP/dip_$did"
 		echo "$dhost" > "$TMP/dhost_$did"
 	fi
+		# ч.237: the URL rides along (the fresh-edge retry re-runs the exact
+		# probe after a fresh resolve)
+		echo "$durl" > "$TMP/durl_$did"
 		dep=$(cat "$TMP/dip_$did" 2>/dev/null)
 		[ -n "$dep" ] && case ",$IPSET," in *",$dep,"*) ;; *) IPSET="$IPSET,$dep";; esac
 	done
@@ -456,6 +482,20 @@ if [ -n "$PROBE_UID" ]; then
 		nft add rule  inet "$TABLE" out "meta skuid 0 meta mark and $DMARK == 0 ip daddr { $IPSET } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
 		nft add rule  inet "$TABLE" out "meta mark and $DMARK != 0 notrack" 2>/dev/null
 	fi
+
+# 3b. ч.237: the STUN voice contour (dcv) — UDP/3478 to the Discord voice
+#     edge, same pattern as the --quic UDP/443 contour: return from the LIVE
+#     output_redir for that IP+port, queue OUR probe's first packets to the
+#     temp queue (the strategy's UDP profile applies to the Binding Request).
+SIP=$(cat "$TMP/dip_dcv" 2>/dev/null)
+if [ "$DEEP" = "1" ] && [ -n "$SIP" ] && [ -n "$PROBE_UID" -o "$PROBE_MODE" = "fallback" ]; then
+	if nft list chain inet fw4 homeproxy_output_redir >/dev/null 2>&1; then
+		nft insert rule inet fw4 homeproxy_output_redir ip daddr "{ $SIP }" udp dport 3478 counter return comment "\"$CMT\"" 2>/dev/null
+	fi
+	SUID="$PROBE_UID"
+	[ -n "$SUID" ] || SUID=0
+	nft add rule inet "$TABLE" out "meta skuid $SUID meta mark and $DMARK == 0 ip daddr { $SIP } udp dport 3478 ct original packets 1-3 counter queue num $QNUM bypass" 2>/dev/null
+fi
 
 # 4. Start the candidate nfqws2 on the temp queue (skipped in --baseline mode:
 #    no queue listener = packets pass unchanged = pure baseline).
@@ -578,6 +618,41 @@ if [ "$DEEP" = "1" ]; then
 		[ -z "$dhost" ] && dhost=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
 		dip=$(cat "$TMP/dip_$did" 2>/dev/null)
 		if [ -z "$dip" ]; then echo "000 0 0 0 0 6" > "$TMP/d_$did"; continue; fi
+		# ч.237: the STUN voice probe (dcv) — probe_pool -stun-check under the
+		# SAME identity as every probe (daemon in skuid mode, root fallback);
+		# the queue rule 3b applies the strategy's UDP profile to the Binding
+		# Request. Verdict gate = a Binding Response received (record: code
+		# 200 + rtt; 000/28 otherwise — the builder turns code 200 into ok).
+		if [ "$did" = "dcv" ]; then
+			if [ ! -x /usr/bin/probe_pool ]; then
+				echo "000 0 0 0 0 0" > "$TMP/d_$did"
+				continue
+			fi
+			cat > "$TMP/stun_run.sh" <<'STUNRUN'
+#!/bin/sh
+# probe_pool -stun-check → "code secs bytes speed ttfb rc"
+out=$(/usr/bin/probe_pool -stun-check "$1" -stun-host "$2" 2>/dev/null)
+v=$(printf '%s' "$out" | grep -oE '"verdict":"[a-z]+"' | head -n1 | cut -d'"' -f4)
+rtt=$(printf '%s' "$out" | grep -oE '"rtt_ms":[0-9]+' | head -n1 | cut -d: -f2)
+case "$rtt" in ''|*[!0-9]*) rtt=0 ;; esac
+if [ "$v" = "reply" ]; then
+	sec=$(awk -v m="$rtt" 'BEGIN { printf "%.3f", m / 1000.0 }')
+	[ "$sec" = "0.000" ] && sec="0.001"
+	echo "200 $sec 20 0 0 0"
+elif [ "$v" = "icmp" ]; then
+	echo "000 0 0 0 0 7"
+else
+	echo "000 0 0 0 0 28"
+fi
+STUNRUN
+			chmod 755 "$TMP/stun_run.sh"
+			if [ -n "$PROBE_UID" ]; then
+				su -s /bin/sh daemon -c "sh '${TMP}/stun_run.sh' '${dip}' '${dhost}' > '${TMP}/d_${did}'" >/dev/null 2>&1 &
+			else
+				sh "$TMP/stun_run.sh" "${dip}" "${dhost}" > "$TMP/d_$did" 2>/dev/null &
+			fi
+			continue
+		fi
 		# ч.116: the stream probe downloads a ranged 4 MB of the REAL video —
 		# the speed_download field is the honest verdict metric.
 		# Ф6.4: flow-THROUGHPUT probes measure the path THROUGH a strategy —
@@ -699,6 +774,87 @@ YTVFLOW
 	sleep 1
 	dn=$((dn + 1))
 done
+
+# 5b-ч.237: FRESH-EDGE RETRY of the non-yt deep tags (dc/st/tg) — the ч.235/236
+# yt lesson generalized: a pinned edge can be swallowed by TSPU WHOLE, so a
+# timeout/000 measures the EDGE, not the strategy. Any failed item (code 000
+# or rc 28) of the tag → ONE fresh resolve of the tag's page host + ONE
+# repeat of the failed probes (IDENTICAL for every strategy — no selective
+# advantage); the repeat result REPLACES the original and the manifest notes
+# edge_retry per tag (the builder surfaces it in the result JSON). yt items
+# keep their own edge machinery (yts2 second edge, ч.236) and are not retried
+# here. The new IP gets its own bypass (output_redir return) + temp-queue
+# rule, both carrying the CMT comment so the EXIT trap removes them.
+deep_retry_item() {
+	# <did> — re-run one probe under the CURRENT dip/dhost (fp variant uses
+	# the shared fp_flow.sh, the base id the plain curl; bodies re-saved)
+	local did=$1 dh dp durlv DBODY
+	dh=$(cat "$TMP/dhost_$did" 2>/dev/null)
+	dp=$(cat "$TMP/dip_$did" 2>/dev/null)
+	durlv=$(cat "$TMP/durl_$did" 2>/dev/null)
+	[ -n "$dh" ] && [ -n "$dp" ] && [ -n "$durlv" ] || return 0
+	DBODY="$TMP/b_$did"
+	if [ "${did%f}" != "$did" ]; then
+		if [ -n "$PROBE_UID" ]; then
+			su -s /bin/sh daemon -c "sh '${TMP}/fp_flow.sh' '${dh}:443:${dp}' '${durlv}' '${TMP}/b_${did}' > '${TMP}/d_${did}'" >/dev/null 2>&1
+		else
+			sh "$TMP/fp_flow.sh" "${dh}:443:${dp}" "${durlv}" "$TMP/b_$did" > "$TMP/d_$did" 2>/dev/null
+		fi
+	else
+		if [ -n "$PROBE_UID" ]; then
+			su -s /bin/sh daemon -c "out=\$(curl -sL --max-redirs 3 --resolve '${dh}:443:${dp}' -o '${DBODY}' -w '%{http_code} %{time_total} %{size_download} %{speed_download} %{time_starttransfer}' --connect-timeout 4 --max-time 9 -k '${durlv}' 2>/dev/null); echo \"\$out \$?\" > '${TMP}/d_${did}'" >/dev/null 2>&1
+		else
+			( out=$(curl -sL --max-redirs 3 --resolve "${dh}:443:${dp}" -o "$DBODY" -w '%{http_code} %{time_total} %{size_download} %{speed_download} %{time_starttransfer}' --connect-timeout 4 --max-time 9 -k "${durlv}" 2>/dev/null); echo "$out $?" > "$TMP/d_$did" ) >/dev/null 2>&1
+		fi
+	fi
+}
+EDGE_RETRY=""
+for BT in dc st tg; do
+	[ -s "$TMP/ip_$BT" ] || continue
+	er=0
+	for did in "${BT}p" "${BT}pf"; do
+		[ -f "$TMP/d_$did" ] || continue
+		raw=$(cat "$TMP/d_$did" 2>/dev/null)
+		[ -n "$raw" ] || continue
+		case "$raw" in
+			000*) er=1 ;;
+			*" 28")
+				case "$did" in *f) : ;; *) er=1 ;; esac
+				;;
+		esac
+	done
+	[ "$er" = "1" ] || continue
+	# fresh resolve of the PAGE host (dhost_<BT>p)
+	PH=$(cat "$TMP/dhost_${BT}p" 2>/dev/null)
+	[ -n "$PH" ] || continue
+	NIP=$(nslookup "$PH" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' | head -1)
+	[ -n "$NIP" ] || continue
+	OIP=$(cat "$TMP/dip_${BT}p" 2>/dev/null)
+	# a fresh edge ONLY when the resolver actually moved us somewhere else
+	if [ -n "$OIP" ] && [ "$NIP" = "$OIP" ]; then
+		continue
+	fi
+	# surgical bypass + temp-queue rule for the fresh edge (same comment tag)
+	if nft list chain inet fw4 homeproxy_output_redir >/dev/null 2>&1; then
+		nft insert rule inet fw4 homeproxy_output_redir ip daddr "{ $NIP }" tcp dport 443 counter return comment "\"$CMT\"" 2>/dev/null
+	fi
+	RUID="$PROBE_UID"
+	[ -n "$RUID" ] || RUID=0
+	nft add rule inet "$TABLE" out "meta skuid $RUID meta mark and $DMARK == 0 ip daddr { $NIP } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
+	echo "$NIP" > "$TMP/dip_${BT}p"
+	echo "$NIP" > "$TMP/dip_${BT}pf"
+	# ONE repeat of the failed probes (sequential, each bounded by its own
+	# --max-time; a pass that came back replaces the original result)
+	for did in "${BT}p" "${BT}pf"; do
+		[ -f "$TMP/d_$did" ] || continue
+		raw=$(cat "$TMP/d_$did" 2>/dev/null)
+		case "$raw" in
+			000*) deep_retry_item "$did" ;;
+			*" 28") case "$did" in *f) : ;; *) deep_retry_item "$did" ;; esac ;;
+		esac
+	done
+	EDGE_RETRY="$EDGE_RETRY $BT"
+done
 fi
 
 # 5c. Ф6.4: classification + unified result build (audit 82) — ONE ucode pass:
@@ -709,6 +865,17 @@ fi
 	{
 		printf '{"tmp":"%s","probe":"%s","deep":true' "$TMP" "$PROBE_MODE"
 		[ -n "$UTLS" ] && printf ',"utls":true'
+		# ч.237: the tags whose deep items were re-measured on a FRESH edge
+		# (one retry, result replaced) — the honest "the edge lied" marker
+		if [ -n "$EDGE_RETRY" ]; then
+			printf ',"edge_retry":['
+			sep=''
+			for t in $EDGE_RETRY; do
+				printf '%s"%s"' "$sep" "$t"
+				sep=','
+			done
+			printf ']'
+		fi
 		printf ',"hosts":['
 		firsth=1
 		for h in $HOSTS; do
@@ -717,7 +884,7 @@ fi
 			firsth=0
 			printf '["%s","%s","%s"]' "$tag" "$label" "$host"
 		done
-		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf"],"st":["stp","stpf"]}}\n'
+		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf","dcv"],"st":["stp","stpf"]}}\n'
 	} > "$TMP/manifest.json"
 	ucode /etc/homeproxy/scripts/zapret_deep_build.uc < "$TMP/manifest.json"
 else

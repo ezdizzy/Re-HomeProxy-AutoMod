@@ -1,4 +1,14 @@
-# Re:HomeProxy AutoMod Wiki
+# Ravnex Wiki
+
+**Own the Route.**
+
+Многоядерная прокси-платформа для OpenWrt: VPN-подписки, обход DPI без VPN, автоматизация,
+мониторинг и диагностика — всё из веб-интерфейса LuCI, всё локально на роутере.
+
+| | |
+|---|---|
+| ![Overview](https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/docs/img/overview.png) | ![Routing Master](https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/docs/img/wizard_dpi.png) |
+| ![Automation engine](https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/docs/img/automation_engine.png) | ![Advanced rules](https://raw.githubusercontent.com/ezdizzy/re-homeproxy/master/docs/img/wizard_advanced.png) |
 
 ---
 
@@ -7,18 +17,25 @@
 | Page | Description |
 |------|-------------|
 | [Getting Started](Getting-Started-en) | From a fresh install to a working connection, step by step |
-| [Core Management](Core-Management-en) | Choosing hiddify-core vs sing-box-extended, the smart installer, storage and the compact build |
+| [Installation & Updates](Installation-and-Updates-en) | The one-command installer, mirrors, manual packages, self-update and the signed feed |
+| [Overview](Overview-en) | The home screen: subsystem cards, local SVG charts, quick actions |
+| [Core Management](Core-Management-en) | Choosing hiddify-core vs sing-box-extended, the smart installer, rule-sets safety net |
 | [Supported Protocols](Supported-Protocols-en) | All supported proxy protocols, build requirements, transport options |
 | [Subscriptions & Node Import](Subscriptions-en) | Share links, .conf, Amnezia vpn:// (AmneziaWG/Xray), subscriptions, base64 |
-| [Routing & Access Control](Routing-and-Access-Control-en) | Routing modes, RU Proxy Rules, per-device access control |
-| [Server Settings](Server-Settings-en) | Run the router as a proxy server — inbounds, types, TLS/ACME |
-| [DNS & Diagnostics](DNS-and-Diagnostics-en) | Clean vs secure DNS, IPv6 leaks, and the Diagnostics page |
-| [DNS Settings](DNS-Settings-en) | The dedicated DNS page: server pools, reserve DNS and MultiDNS with a live quality monitor |
-| [ByeDPI](ByeDPI-en) | SOCKS-level DPI-bypass — un-throttle sites without a VPN, strategy presets and the tester |
-| [Zapret](Zapret-en) | Packet-level (nfqws2) DPI-bypass — per-rule desync, presets, Discord voice and the tester |
-| [Custom Routing](Custom-Routing-en) | UI routing nodes + rules — match by domain/IP/port/protocol/process |
-| [Custom JSON Config](Custom-JSON-Config-en) | Using the Custom JSON routing mode with raw hiddify-core config |
-| [Automation](Automation-Status-en) | The AutoMod Automation tab: engine internals, A–D states, risks and TODO |
+| [Routing Master](Routing-Master-en) | The Blocking bypass hub: provider diagnostics, Strategy Lab, auto-pick, composition; Service rules — per-service exits with live checks |
+| [Routing & Access Control](Routing-and-Access-Control-en) | Routing modes, the exit engine (URLTest / Hot Swap), UDP exit, OAuth resilience |
+| [Hot Swap & Reliability](Hot-Swap-and-Reliability-en) | Hot standby, anti-flap, the RU-internet invariant, last-known-good, watchdogs |
+| [Monitoring & Connections](Monitoring-and-Connections-en) | The node dashboard, live connections, daemon resources and the Health center |
+| [Access Control](Access-Control-en) | Per-device proxy modes, site rules, schedules, Wi-Fi — and the same from Telegram |
+| [Phone Control (Telegram)](Telegram-en) | The bot: commands, subscriptions, arbitrary commands, push notifications |
+| [Auto-bypass](Automation-Status-en) | The self-learning engine: sources, block-type verdicts, RU protection; the DPI autopilot |
+| [DNS Settings](DNS-Settings-en) | Server pools, reserve DNS and MultiDNS with a live quality monitor |
+| [DNS & Diagnostics](DNS-and-Diagnostics-en) | Clean vs secure DNS, IPv6 leaks, the live checks and the support report |
+| [ByeDPI](ByeDPI-en) | SOCKS-level DPI-bypass — un-throttle sites without a VPN, 47 presets and the tester |
+| [Zapret](Zapret-en) | Packet-level (nfqws2) DPI-bypass — strategies, the Lab, multi-strategies, TSPU |
+| [Advanced Rules (Expert)](Custom-Routing-en) | Routing nodes and raw sing-box rules with the highest priority |
+| [Custom JSON Config](Custom-JSON-Config-en) | Removed in v3 — what to use instead |
+| [Server Mode](Server-Settings-en) | Run the router as a proxy server — inbounds, types, TLS/ACME |
 | [Troubleshooting](Troubleshooting-en) | Common errors and how to fix them |
 
 ---
@@ -28,16 +45,23 @@
 | Страница | Описание |
 |----------|----------|
 | [Первая настройка](Getting-Started-ru) | От свежей установки до рабочего соединения, по шагам |
-| [Управление ядром](Core-Management-ru) | Выбор hiddify-core или sing-box-extended, умный установщик, память и компактная сборка |
+| [Установка и обновление](Installation-and-Updates-ru) | Установщик одной командой, зеркала, ручные пакеты, самообновление и подписанный фид |
+| [Обзор](Overview-ru) | Главный экран: карточки подсистем, локальные SVG-графики, быстрые действия |
+| [Управление ядром](Core-Management-ru) | Выбор hiddify-core или sing-box-extended, умный установщик, страховка rule-set'ов |
 | [Поддерживаемые протоколы](Supported-Protocols-ru) | Все поддерживаемые протоколы, требования к сборке, варианты транспорта |
 | [Подписки и импорт узлов](Subscriptions-ru) | Share-ссылки, .conf, Amnezia vpn:// (AmneziaWG/Xray), подписки, base64 |
-| [Маршрутизация и контроль доступа](Routing-and-Access-Control-ru) | Режимы маршрутизации, RU Proxy Rules, пер-девайс контроль доступа |
-| [Настройки сервера](Server-Settings-ru) | Роутер как прокси-сервер — inbound-ы, типы, TLS/ACME |
-| [DNS и диагностика](DNS-and-Diagnostics-ru) | Чистый и защищённый DNS, утечки IPv6 и страница диагностики |
-| [Настройки DNS](DNS-Settings-ru) | Отдельная страница DNS: пулы серверов, резервный DNS и MultiDNS с живым монитором качества |
-| [ByeDPI](ByeDPI-ru) | Обход DPI на уровне SOCKS — разблокировка сайтов без VPN, пресеты стратегий и тестер |
-| [Zapret](Zapret-ru) | Обход DPI на уровне пакетов (nfqws2) — рассинхронизация по правилам, пресеты, голос Discord и тестер |
-| [Пользовательская маршрутизация](Custom-Routing-ru) | Узлы и правила маршрутизации в UI — матч по домену/IP/порту/протоколу/процессу |
-| [Пользовательский JSON конфиг](Custom-JSON-Config-ru) | Использование режима «Пользовательский JSON» с конфигом hiddify-core |
-| [Автоматизация](Automation-Status-ru) | Вкладка AutoMod «Автоматизация»: внутренности движка, состояния A–D, риски и TODO |
+| [Мастер маршрутизации](Routing-Master-ru) | «Обход блокировок»: диагностика провайдера, Стратегия-лаборатория, автоподбор, композиция; «Правила для сервисов» — выходы с живой проверкой |
+| [Маршрутизация и контроль доступа](Routing-and-Access-Control-ru) | Режимы маршрутизации, выход-движок (URLTest / Hot Swap), UDP-выход, OAuth-устойчивость |
+| [Hot Swap и надёжность](Hot-Swap-and-Reliability-ru) | Горячий резерв, анти-флап, инвариант RU-интернета, last-known-good, сторожа |
+| [Мониторинг и соединения](Monitoring-and-Connections-ru) | Дашборд узлов, живые соединения, ресурсы демонов и Центр здоровья |
+| [Контроль доступа](Access-Control-ru) | Режимы прокси на карточке устройства, правила сайтов, расписания, Wi-Fi — и то же из Telegram |
+| [Управление с телефона](Telegram-ru) | Бот: команды, подписки, произвольные команды, пуш-уведомления |
+| [Автообход блокировок](Automation-Status-ru) | Движок самообучения: источники, вердикты типов блокировки, RU-защита; автопилот DPI |
+| [Настройки DNS](DNS-Settings-ru) | Пулы серверов, резервный DNS и MultiDNS с живым монитором качества |
+| [DNS и диагностика](DNS-and-Diagnostics-ru) | Чистый и защищённый DNS, утечки IPv6, живые проверки и отчёт для поддержки |
+| [ByeDPI](ByeDPI-ru) | Обход DPI на уровне SOCKS — разблокировка без VPN, 47 пресетов и тестер |
+| [Zapret](Zapret-ru) | Обход DPI на уровне пакетов (nfqws2) — стратегии, Лаборатория, мультистратегии, ТСПУ |
+| [Расширенные правила (эксперт)](Custom-Routing-ru) | Узлы маршрутизации и сырые sing-box-правила с наивысшим приоритетом |
+| [Пользовательский JSON конфиг](Custom-JSON-Config-ru) | Удалён в v3 — что использовать вместо него |
+| [Режим сервера](Server-Settings-ru) | Роутер как прокси-сервер — inbound-ы, типы, TLS/ACME |
 | [Устранение неполадок](Troubleshooting-ru) | Типичные ошибки и способы их устранения |

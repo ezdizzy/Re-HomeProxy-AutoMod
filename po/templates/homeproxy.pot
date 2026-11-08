@@ -1,3 +1,5 @@
+
+
 msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8"
 
@@ -3426,6 +3428,7 @@ msgstr ""
 
 msgid "Failed to start: "
 msgstr ""
+
 msgid "Download .txt"
 msgstr ""
 
@@ -7416,7 +7419,6 @@ msgstr ""
 msgid "After you save, set up the client with the SAME parameters (port, keys, passwords) — everything is visible in the server settings."
 msgstr ""
 
-
 msgid "Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the \"send a service through the engine\" chain. Automatic selection lives on the Strategy picking tab."
 msgstr ""
 
@@ -7549,52 +7551,6 @@ msgstr ""
 msgid "The node probe covers the API gate only — the Gemini WEB gate is stricter and may reject hosting-provider IPs. If a node \"passes\" here but the device still refuses, the web gate is the reason; verify on the device."
 msgstr ""
 
-msgid "Feed configured"
-msgstr ""
-
-msgid "Feed is not configured"
-msgstr ""
-
-msgid "Feed index reachable"
-msgstr ""
-
-msgid "Feed index unreachable (code %s)"
-msgstr ""
-
-msgid "The feed index is not published yet"
-msgstr ""
-
-msgid "Feed packages"
-msgstr ""
-
-msgid "Set up the feed"
-msgstr ""
-
-
-msgid "Feed configured — packages update from your own repository."
-msgstr ""
-
-msgid "Feed setup failed: "
-msgstr ""
-
-msgid "Remove the feed"
-msgstr ""
-
-msgid "Feed removed — installs return to the original sources."
-msgstr ""
-
-msgid "Feed removal failed: "
-msgstr ""
-
-msgid "Own apk feed"
-msgstr ""
-
-msgid "Serves the components that otherwise install from archives: hiddify-core (full and UPX compact), mosdns and the automation helpers — as signed apk packages from your own repository. When the feed is unavailable, installs automatically fall back to the original sources."
-msgstr ""
-
-msgid "Setting up the feed…"
-msgstr ""
-
 msgid "Fallback probe mode"
 msgstr ""
 
@@ -7662,4 +7618,64 @@ msgid "The deep battery did not measure this resource for the current strategy �
 msgstr ""
 
 msgid "Router load during the sweep (1-min avg): max %s, at finish %s."
+msgstr ""
+
+msgid "Installing from the update source..."
+msgstr ""
+
+msgid "Installed from the update source"
+msgstr ""
+
+msgid "Update source configured (signing key installed)"
+msgstr ""
+
+msgid "Update source is not configured"
+msgstr ""
+
+msgid "Components install as ipk files with sha256 verification (no apk on this system)"
+msgstr ""
+
+msgid "Manifest reachable"
+msgstr ""
+
+msgid "Manifest unreachable (code %s)"
+msgstr ""
+
+msgid "The feed manifest is not published yet"
+msgstr ""
+
+msgid "fresh"
+msgstr ""
+
+msgid "cached %s min ago"
+msgstr ""
+
+msgid "Components (installed → offered)"
+msgstr ""
+
+msgid "Set up the update source"
+msgstr ""
+
+msgid "Setting up the update source…"
+msgstr ""
+
+msgid "Update source configured — components install as explicit files from the manifest."
+msgstr ""
+
+msgid "Update source setup failed: "
+msgstr ""
+
+msgid "Remove the update source"
+msgstr ""
+
+msgid "Update source removed — installs return to the original sources."
+msgstr ""
+
+msgid "Update source removal failed: "
+msgstr ""
+
+msgid "Update source"
+msgstr ""
+
+msgid "Own signed package source: every component (hiddify-core full and compact, sing-box-extended and lite, mosdns, helpers, byedpi, zapret2) installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. When the source is unavailable, installs automatically fall back to the original paths."
 msgstr ""

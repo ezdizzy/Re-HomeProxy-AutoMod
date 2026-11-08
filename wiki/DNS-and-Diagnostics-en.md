@@ -2,60 +2,68 @@
 
 # DNS & Diagnostics
 
-Two related topics: how Re:HomeProxy AutoMod resolves names (and why that matters for leaks), and how to verify everything works.
+Two related topics: how Ravnex resolves names (and why that matters for leaks), and how to verify
+everything works.
 
 ---
 
 ## DNS
 
-DNS pools, reserve DNS and MultiDNS are configured on the dedicated **[DNS Settings](DNS-Settings-en)** page (Services → Re:HomeProxy AutoMod → DNS Settings). **Client → Routing** keeps only the single DNS server of the Global routing mode (with its preset and alternate servers). Which fields appear depends on the routing mode.
+The DNS pools, Reserve DNS and MultiDNS are configured on the dedicated
+**[DNS Settings](DNS-Settings-en)** page. The Connection page keeps only the single DNS server
+of the «Everything via node» mode. Which fields are visible depends on the routing mode.
 
-### Russia mode (`proxy_banned_ru`) — two resolvers
+### The working mode — two resolvers
 
-Russia mode splits DNS into a **clean** resolver and a **secure** resolver so that lookups go to the right place:
+«Blocking bypass» splits DNS into a **plain** and a **secure** resolver so queries go where they
+should:
 
 | Field | Purpose | Default |
-|-------|---------|---------|
+|---|---|---|
 | **Russia DNS server 🔓** | Resolves **Russian** domains **directly**, without the proxy. Plain UDP DNS. | Yandex `77.88.8.8` (also SkyDNS, Comss.one, Cloudflare, Google) |
-| **Secure DNS server 🔒** | Resolves **blocked** domains **through the proxy** using encrypted DNS (DoH/DoT), so your ISP can't see which blocked sites you look up. | Cloudflare DoH `https://cloudflare-dns.com/dns-query` (also Quad9, AdGuard, Google; DoT variants) |
+| **Secure DNS server 🔒** | Resolves **blocked** domains **through the proxy** over encrypted DNS (DoH/DoT), so the provider cannot see which blocked sites you look up. | Cloudflare DoH (also Quad9, AdGuard, Google; DoT variants) |
 
-This split matters: resolving a blocked domain over plain ISP DNS would either fail or leak the lookup, so blocked domains use encrypted DNS via the proxy, while ordinary Russian domains resolve fast and direct.
+This split matters: resolving a blocked domain over the provider's plain DNS either fails or
+leaks the query, so blocked domains ride encrypted DNS through the proxy while plain Russian
+domains resolve fast and direct.
 
-> **ByeDPI note:** when a node is ByeDPI, secure DNS is automatically detoured **direct** (not through ByeDPI), because the desync corrupts DoH/DoT. This is handled for you — see [ByeDPI](ByeDPI-en).
-
-### Other modes
-
-- **DNS server** — the general resolver (supports UDP/TCP/DoH/DoQ/DoT). Default `8.8.8.8`. Or `WAN DNS` to read it from the interface.
-- **China DNS server** — used in *Bypass mainland China* mode for Chinese domains (default Aliyun `223.5.5.5`).
-
-### Advanced: DNS Servers & DNS Rules
-
-The **DNS servers**, **Reserve DNS**, and **MultiDNS** tabs (on the dedicated **DNS Settings** page) let you define custom resolvers and per-domain DNS routing, including the **domain strategy** (IPv4-only, prefer IPv6, etc.). Most users never need these.
+> **About ByeDPI:** when the node is ByeDPI, the secure DNS is automatically detoured **direct**
+> (not through ByeDPI), because desync corrupts DoH/DoT. This is handled for you — see
+> [ByeDPI](ByeDPI-en).
 
 ### IPv6 and leaks
 
-In Russia mode, **IPv6 support is off by default on purpose**: the RU routing lists contain **no IPv6 CIDRs**, so any IPv6 traffic would bypass *both* the proxy and the rules — a silent leak. If your WAN has IPv6 and you want everything controlled, the safe choice is to **leave IPv6 disabled** rather than enabling `ipv6_support`.
+In the working mode **IPv6 support is disabled by default on purpose**: the RU routing lists
+**contain no IPv6 subnets**, so any IPv6 traffic would bypass *both* the proxy and the rules —
+a silent leak. If your WAN has IPv6 and you want everything controlled, it is safer to **leave
+IPv6 off**.
 
 ---
 
 ## Diagnostics
 
-The **Diagnostics** page (Services → Re:HomeProxy AutoMod → Diagnostics) runs live checks. Each card has its own **Check** button.
+The live checks live on the **[Health center](Monitoring-and-Connections-en#health-center)** page.
+Every card has its own **Check** button.
 
 | Card | What it shows |
-|------|---------------|
-| **Connectivity** | Reachability of test sites. On **hiddify-core** it also shows your **Direct IP** vs **Proxy IP** (the two should differ when traffic is actually proxied); on **sing-box-extended** it shows the live **Active Node** instead, because sing-box can't report the exit IP. |
-| **Core & System** | Whether the core (hiddify-core / sing-box-extended) and ByeDPI are installed, the active binary, version, whether they're running (with PID), and listening ports. Includes a **Restart Service** button. |
-| **Configuration** | Whether the generated core config is **valid**, its size, and counts of inbounds / outbounds / rules. |
-| **DNS Tests** | Checks that DNS resolution works through the configured resolvers. |
-| **Network Intercept** | The nft/firewall interception state — UCI firewall settings and, when Zapret is on, the **Zapret NFQUEUE counters** (mark 110 → queue) so you can confirm packets are reaching nfqws2. |
-| **Diagnostics Report** | **Generate** a shareable plain-text report bundling the above — paste it when asking for help. |
+|---|---|
+| **Connection check** | Test-site reachability. On **hiddify-core** it also shows your **provider IP** vs the **proxy IP** (while really proxying they must differ); on **sing-box-extended** it shows the **Active node** instead. |
+| **Core & system** | Whether the core and the engines are installed, the active binary, version, running state (with PIDs) and listening ports. Has a **Restart service** button. |
+| **Configuration** | Whether the generated core config is valid, its size and the inbound / outbound / rule counters. |
+| **DNS test** | Verifies resolution through the configured resolvers; in the working mode the **RU pool** is honestly checked too (not silently skipped). |
+| **MultiDNS monitor** | Live scores of the racing servers — on the **[DNS Settings](DNS-Settings-en)** page: open-ratio, latency, pruning. |
+| **Traffic interception** | The nft/firewall interception state and, with Zapret enabled, the **NFQUEUE counters**, so you can see packets actually reaching nfqws2. |
+| **Support report** | **Generate** a text report combining the checks above. Building runs **in the background** (the status shows on the button), the result is **Download .txt**; attach it when asking for help. |
 
-### Reading the results
+### How to read the results
 
-- **Direct IP == Proxy IP** (hiddify-core) → traffic isn't being proxied (check main node / routing mode / access control). On sing-box-extended, confirm the **Active Node** row shows your chosen node instead.
-- **Core not running** → use **Restart Service**; if status shows all `?`, the rpcd backend is stale (`/etc/init.d/rpcd restart`, wait ~2 s).
-- **Config invalid** → a node or rule is malformed; the report names the error.
-- **Zapret counters not incrementing** → the strategy/queue isn't catching traffic — see [Zapret](Zapret-en).
+- **Provider IP == proxy IP** (hiddify-core) → traffic is not proxied (check the main node /
+  routing mode). On sing-box-extended make sure the **Active node** row shows your node.
+- **Core is not running** → press **Restart service**; detailed verdicts live in the
+  [Health center](Monitoring-and-Connections-en#health-center).
+- **Invalid config** → a node or a rule is malformed; the report names the error.
+- **Zapret counters do not grow** → the strategy/queue is not catching traffic — see
+  [Zapret](Zapret-en).
 
-See also: [Getting Started](Getting-Started-en) · [Routing & Access Control](Routing-and-Access-Control-en) · [ByeDPI](ByeDPI-en) · [Zapret](Zapret-en) · [Troubleshooting](Troubleshooting-en)
+See also: [Getting started](Getting-Started-en) · [DNS settings](DNS-Settings-en) ·
+[Monitoring and connections](Monitoring-and-Connections-en) · [Troubleshooting](Troubleshooting-en)

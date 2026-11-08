@@ -2,7 +2,9 @@
 
 # Core Management
 
-Re:HomeProxy AutoMod is **multi-core**: the LuCI app is the interface, and a separate **core** binary does the actual proxying. You install, update, and switch cores from **Services → Re:HomeProxy AutoMod → Core & Tools → Core management** — no SSH required.
+Ravnex is **multi-core**: the LuCI app is the interface, and a separate **core** binary does the
+actual proxying. You install, update, and switch cores from **Maintenance → Core management** —
+no SSH required.
 
 ---
 
@@ -10,72 +12,87 @@ Re:HomeProxy AutoMod is **multi-core**: the LuCI app is the interface, and a sep
 
 | | **hiddify-core** (default) | **sing-box-extended** |
 |---|---|---|
-| Engine | Fork of sing-box 1.13 by the Hiddify team | Extended sing-box 1.14 base (shtorm-7) |
-| Footprint | Lighter; a **compact build** exists for small devices | Larger (~26 MB installed) |
-| App protocols | All protocols the app can configure | All protocols the app can configure |
-| **NaïveProxy** | ✅ **Supported** | ❌ **Not supported** (dropped in this build — such nodes are **skipped automatically**) |
+| Engine | hiddify-core v5.x (a sing-box 1.15 base) | Extended sing-box base (shtorm-7) |
+| Size | Lighter; a **compact build** exists for weak devices | Larger (~26 MB installed) |
+| App protocols | Every protocol the app can configure | Every protocol the app can configure |
+| **NaïveProxy** | ✅ **Supported** | ❌ **No** (such nodes are **skipped automatically**) |
 | **AmneziaWG** | ✅ Supported | ✅ Supported |
-| **WARP / MASQUE / TrustTunnel** | ❌ Not exposed by the app | ✅ In the core (server/endpoint extras; not yet exposed by the app UI) |
+| **WARP / MASQUE / TrustTunnel** | ❌ Not used by the app | ✅ Present in the core |
 
-**Rule of thumb:** both cores run everything the app can configure — the practical differences are **NaïveProxy** (hiddify-core only) and the extended core's newer sing-box base. If your subscription has NaïveProxy nodes, stay on **hiddify-core**. If you switch to **sing-box-extended**, unsupported nodes are skipped from all pools automatically (the app tells you which ones). hiddify-core is also the lighter default and the only one with a compact build for tight-storage routers.
+**The rule:** both cores run every protocol the app can configure — the practical difference is
+**NaïveProxy** (hiddify-core only). If your subscription has NaïveProxy nodes, stay on
+hiddify-core. When you switch to sing-box-extended, unsupported nodes are automatically excluded
+from all pools (the app tells you which). There is also a **lite core**
+(sing-box-extended-lite) for devices with very little flash.
 
-Which protocols appear in the node editor depends on the core you install — see [Supported Protocols](Supported-Protocols-en).
-
----
-
-## Installing — one smart button
-
-Core Management has a single **Install** button per core. It does **not** ask you to choose between "standard" and "compressed" builds — instead it inspects your device and picks a build that actually fits:
-
-1. It reads the free space on `/overlay` (persistent flash) and your free RAM.
-2. For hiddify-core: if the full build fits → it installs the **standard** build. If storage is tight but there's enough RAM → it installs the **compact** build and tells you so.
-3. If neither can fit → it stops with a clear message instead of installing something broken.
-
-### Why the guardrail matters
-
-A core binary that is **larger than the free overlay** gets **truncated** as it's written, and then crashes with a **"bus error" (SIGBUS)** the moment it's launched — a confusing failure that looks like a corrupt download. The installer's size check exists specifically to prevent this: it never offers a build the device can't hold.
-
-### The compact build
-
-The compact (UPX-compressed) build of hiddify-core is much smaller on flash, but it **decompresses into RAM each time it launches** — trading flash space for memory. The installer only picks it when there's enough free RAM, and shows a note like *"Limited storage — installing the compact build (decompresses into RAM at launch)."* On most routers this is invisible in day-to-day use.
+Which protocols appear in the node editor depends on the installed core; see
+[Supported protocols](Supported-Protocols-en).
 
 ---
 
-## Storage at a glance
+## Installation — the smart installer
 
-| Free on `/overlay` | What installs |
-|--------------------|---------------|
+Build selector: **Auto / Full / UPX**. In «Auto» the installer checks the device and picks a
+build that actually fits:
+
+1. It reads the free space on `/overlay` (persistent flash) and free RAM.
+2. If the full build fits → the **standard** build is installed. If space is tight but RAM
+   suffices → the **compact (UPX)** build is installed, with a note.
+3. If nothing fits → it stops with a clear message instead of installing something that cannot
+   work.
+
+**Why this guard exists:** a core binary larger than the free overlay gets **truncated** when
+written and then dies with a **«bus error» (SIGBUS)** at start — the installer never offers a
+build that cannot fit.
+
+**The compact build (UPX)** takes much less flash but **unpacks into RAM on every start**. On
+most routers this is unnoticeable in daily use.
+
+Installs are **asynchronous with live status** — the page stays responsive (a large download no
+longer freezes the tab).
+
+---
+
+## Memory — briefly
+
+| Free on `/overlay` | What gets installed |
+|---|---|
 | ~40 MB+ | hiddify-core or sing-box-extended (full build) |
-| ~25–40 MB | hiddify-core (compact build, if RAM allows) |
-| < ~25 MB | Not enough — free space, or bake the core into a custom firmware image |
+| ~25–40 MB | hiddify-core (compact build, if RAM suffices) |
+| < ~25 MB | Not enough — free up space or bake the core into your own firmware image |
 
-> On a **compressing** overlay (jffs2/ubifs) the full build needs less free space than the raw figure, because the filesystem compresses it. The installer accounts for this automatically — trust its check over the table above.
-
-Tight on flash but building your own image? Large cores fit comfortably when **baked into the SquashFS** root at image-build time (the SquashFS root is compressed and read-only), rather than installed into the writable overlay.
+> On a compressing overlay (jffs2/ubifs) the full build needs less free space than the raw
+> number. The installer accounts for this automatically — trust its check, not the table.
 
 ---
 
 ## Switching cores and updating
 
-- **Update:** press **Install** again — it fetches the latest release and reinstalls.
-- **Switch cores:** install the other core; if both are present, Re:HomeProxy AutoMod uses your **Preferred core** setting (on **Client → Routing Settings**). The config generator and the service honour the same preference, so the generated config always matches the core that will run it.
-- **Custom / external core:** instead of the managed install you can point Re:HomeProxy AutoMod at a **self-provided core binary** (a build you compiled, or a version not in Releases) — it detects and uses it. Advanced setups only.
-- **Version / status:** the **Core management** section shows the installed core and version. If it shows all `?`, the backend (rpcd) is stale — restart it (`/etc/init.d/rpcd restart`) and reload the page.
+- **Updating:** press **Install** again — the latest release is downloaded and reinstalled.
+- **Switching cores:** install the other core; when both are present, the **Preferred core**
+  setting (the Connection page) decides. The config generator and the service honor the same
+  setting.
+- **Version / status:** the section shows the installed core and version.
+
+The core, ByeDPI, Zapret 2 and mosdns come from **our signed feed** — details and the «Update
+source» card: [Installation & updates](Installation-and-Updates-en).
 
 ---
 
-## Resources & updates
+## Rule-sets — the cold-start safety net
 
-The **Core & Tools** tab also has a **Resources management** section for the data files routing depends on — the GeoIP / Geosite databases and the RU rule-sets:
-
-- **Check update** fetches the latest rule-set and geo data on demand.
-- The RU routing lists also **self-refresh** on a schedule, so in normal use you don't need to touch this.
-- **Subscriptions** update separately — on demand from the Subscriptions tab, or automatically on a cron; see [Subscriptions & Node Import](Subscriptions-en).
+The **Rule-sets** card downloads local `.srs` copies for every rule-set (file name = tag). While
+the local folder exists, every remote rule-set also gets a local first-load copy: a cold start
+without working internet (fresh firmware, DPI-blocked GitHub) no longer kills the core with
+«FATAL initialize rule-set». The lists still refresh from the network daily in the background.
 
 ---
 
-## Kernel modules
+## Resources and kernel modules
 
-The proxy needs `kmod-nft-tproxy` and `kmod-tun` for transparent routing. The installer pulls these in; if routing doesn't work after a fresh install, confirm they're present.
+- The RU routing lists and geo databases **update themselves** on a schedule; subscriptions
+  update separately — see [Subscriptions & node import](Subscriptions-en).
+- Transparent routing needs `kmod-nft-tproxy` and `kmod-tun` — the installer pulls them in.
 
-See also: [ByeDPI](ByeDPI-en) · [Zapret](Zapret-en) · [Supported Protocols](Supported-Protocols-en) · [Troubleshooting](Troubleshooting-en)
+See also: [ByeDPI](ByeDPI-en) · [Zapret](Zapret-en) · [Supported protocols](Supported-Protocols-en) ·
+[Troubleshooting](Troubleshooting-en)

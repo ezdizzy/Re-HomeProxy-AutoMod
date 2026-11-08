@@ -80,7 +80,7 @@
 					"control_wifi_set", "control_wifi_temp", "control_wifi_temp_clear", "control_events_clear",
 					"control_proxy_global", "control_proxy_mode", "control_proxy_lists",
 					"res_profile_set",
-					"feed_setup", "feed_remove",
+					"feed_setup", "feed_remove", "install_feed_pkg",
 					"app_support_bundle_start", "app_support_bundle_text_start"
 				]
 			},
