@@ -90,6 +90,14 @@ export const RETRY_CAP_SEC = 1800;
  * проблемы либо TTL 2 ч (одна попытка раз в 2 часа). */
 export const AUTO_WINDOW_SEC = 1800;
 export const AUTO_MAX = 3;
+
+/* ч.263 (пакет A): рестарт ядра — самая болезненная операция (пауза трафика
+ * ВСЕМ клиентам) — собственные, более строгие лимиты: cooldown после
+ * УСПЕШНОГО core_restart = 600 с (общий backoff(1) = 30 с позволял второй
+ * kill через минуту — живой инцидент 09:58:50 → 09:59:51) и максимум ОДНА
+ * авто-попытка ключа res:core за окно AUTO_WINDOW (вместо трёх). */
+export const CORE_RESTART_COOLDOWN_SEC = 600;
+export const RES_CORE_AUTO_MAX = 1;
 export const BLOCKED_TTL_SEC = 7200;
 
 /* Флап-память: повод исчез — ключ держится 30 мин (кампания не дребезжит);
@@ -273,12 +281,13 @@ export function collect_findings(sent_data, health_data) {
 			 * rss-крит: fd-крит сознательно без авто-ремонта (соединения
 			 * падают — fd освобождаются сами, fallback-гейт
 			 * res_core_restart_wanted того же мнения), warn — наблюдение,
-			 * находки без level (окно апгрейда) — fail-safe без рестарта.
-			 * По-настоящему мёртвое ядро — зона svc-контура (health down →
-			 * svc:hiddify-c). */
+			 * находки без level/без armed (окно апгрейда, неподтверждённый
+			 * пик) — fail-safe без рестарта. По-настоящему мёртвое ядро —
+			 * зона svc-контура (health down → svc:hiddify-c). */
 			if (c.class === 'res' &&
 			    !(f != null && type(f) === 'object' &&
-			      f.what === 'rss' && f.level === 'crit'))
+			      f.what === 'rss' && f.level === 'crit' &&
+			      f.armed === true))
 				continue;
 			add(k, f.label || k, f.reason || '', c.action, c.target, c.class);
 		}
@@ -395,6 +404,12 @@ function findings_gone(e, now) {
 /* Кандидат к авто-исполнению: ЖИВОЙ повод (alive), действие, окно стабилизации
  * (новый) / next_ok (повторный), не blocked (или TTL-проба), в пределах
  * лимита. Возвращает { key, entry } | null. */
+
+/* Лимит попыток ключа: у res:core своя, более строгая ставка (ч.263). */
+function auto_max_for(key) {
+	return ((('' + key) === 'res:core')) ? RES_CORE_AUTO_MAX : AUTO_MAX;
+};
+
 export function pick_auto(keys, blocked, now) {
 	let best = null;
 	for (let k in keys) {
@@ -410,7 +425,7 @@ export function pick_auto(keys, blocked, now) {
 			if ((now - bl) <= BLOCKED_TTL_SEC)
 				continue;   /* блокировка жива — только TTL-проба ниже */
 			/* TTL-истёк: одна проба поверх лимита — берём такой ключ. */
-		} else if (length(ft) >= AUTO_MAX) {
+		} else if (length(ft) >= auto_max_for('' + k)) {
 			continue;   /* лимит — блокировка ставится исполнителем */
 		}
 		if (length(ft) === 0 && (now - int(e.first_seen || 0)) < STABILIZE_SEC)
@@ -438,18 +453,22 @@ export function apply_result(keys, blocked, key, ok, now) {
 				detail: 'ручной ремонт удался — авто-кампания сброшена' });
 		}
 	} else if (ok) {
-		e.next_ok = now + backoff_sec(length(fresh_times(e.times, now)) + 1);
+		/* ч.263: ядру — СОБСТВЕННЫЙ cooldown после успеха (600 с, не backoff
+		 * 30-60 с): kill здорового ядра дважды за минуту больше невозможен. */
+		e.next_ok = now + ((('' + key) === 'res:core')
+			? CORE_RESTART_COOLDOWN_SEC
+			: backoff_sec(length(fresh_times(e.times, now)) + 1));
 	} else {
 		e.next_ok = now + backoff_sec(length(fresh_times(e.times, now)) + 1);
 		const ft = fresh_times(e.times, now);
-		if (length(ft) >= AUTO_MAX && (blocked == null || blocked['' + key] == null)) {
+		if (length(ft) >= auto_max_for('' + key) && (blocked == null || blocked['' + key] == null)) {
 			blocked['' + key] = now;
 			const c = classify_key('' + key);
 			const hint = PROPOSAL_HINTS[(c != null) ? c.class : ''] ||
 				PROPOSAL_HINTS.config;
 			push(evs, {
 				type: 'blocked', who: e.label, key: '' + key,
-				detail: 'авто-ремонт «' + key + '» приостановлен (' + AUTO_MAX +
+				detail: 'авто-ремонт «' + key + '» приостановлен (' + auto_max_for('' + key) +
 					' попытки за ' + int(AUTO_WINDOW_SEC / 60) + ' мин без результата). ' +
 					'Предложение: ' + hint
 			});
@@ -991,10 +1010,13 @@ export function selftest() {
 	const cf_rc = function(fd) {
 		return collect_findings({ findings: { 'res:core': fd } }, {});
 	};
-	const cf_rssc = cf_rc({ label: 'Ядро (hiddify-core)', reason: 'RSS 600.0 МБ при бюджете 512 МБ — зона OOM-грани', what: 'rss', level: 'crit' });
+	const cf_rssc = cf_rc({ label: 'Ядро (hiddify-core)', reason: 'RSS 600.0 МБ при бюджете 512 МБ — зона OOM-грани', what: 'rss', level: 'crit', armed: true });
 	check('cf_res_rsscrit_restart', cf_rssc['res:core'] != null &&
 		cf_rssc['res:core'].action === ACT_CORE_RESTART &&
 		cf_rssc['res:core'].class === 'res', null);
+	check('cf_res_rsscrit_unarmed_norestart', cf_rc({ label: 'Ядро (hiddify-core)',
+		reason: 'RSS 600.0 МБ — подтверждение рестарта 1/2', what: 'rss', level: 'crit', armed: false })['res:core'] == null,
+		'unconfirmed rss-crit (instant peak) must not restart the core');
 	check('cf_res_fdwarn_norestart', cf_rc({ label: 'Ядро (hiddify-core)',
 		reason: 'открытых fd: 2166 при бюджете 2048', what: 'fd', level: 'warn' })['res:core'] == null,
 		'fd-warn must not identity-kill the core');
@@ -1006,6 +1028,21 @@ export function selftest() {
 	check('cf_res_legacy_norestart', cf_rc({ label: 'Ядро (hiddify-core)',
 		reason: 'legacy, поле level отсутствует', what: 'rss' })['res:core'] == null,
 		'finding without level (upgrade window) must not kill the core');
+
+	/* ч.263 (пакет A): cooldown ядра после успеха + 1 попытка/окно (дыра №9). */
+	const ck_keys = { 'res:core': { label: 'Ядро (hiddify-core)', reason: 'r',
+		action: ACT_CORE_RESTART, target: 'core', class: 'res',
+		first_seen: now - 300, last_seen: now - 10, times: [ now - 120 ],
+		next_ok: 0, proposed: false, alive: true, manual: false } };
+	apply_result(ck_keys, {}, 'res:core', true, now);
+	check('core_cooldown_600', ck_keys['res:core'].next_ok === now + CORE_RESTART_COOLDOWN_SEC,
+		'after a SUCCESSFUL core restart the next try waits 600 s, not backoff(30 s)');
+	const pk_keys = { 'res:core': { label: 'Ядро (hiddify-core)', reason: 'r',
+		action: ACT_CORE_RESTART, target: 'core', class: 'res',
+		first_seen: now - 1200, last_seen: now - 10, times: [ now - 600 ],
+		next_ok: 0, proposed: false, alive: true, manual: false } };
+	check('res_core_auto_max_1', pick_auto(pk_keys, {}, now) == null,
+		'res:core allows ONE auto attempt per window (was 3 — hole no.9)');
 
 	/* backoff. */
 	check('backoff_1', backoff_sec(1) === 30, null);

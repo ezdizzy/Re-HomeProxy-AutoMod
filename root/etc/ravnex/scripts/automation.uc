@@ -1595,7 +1595,9 @@ function ensure_sni_sniffer(iface) {
 			system(`mv -f ${shellquote(SNI_EVENTS)} ${shellquote(SNI_EVENTS + '.old')} 2>/dev/null; rm -f ${shellquote(SNI_EVENTS + '.old')} 2>/dev/null`);
 	}
 	sni_events_offset = 0;
-	system(`${shellquote('/etc/ravnex/scripts/oom_adj.sh')} 400 0 ${shellquote(SNI_SNIFFER_BIN)} -iface ${shellquote(iface)} -file ${shellquote(SNI_EVENTS)} >/dev/null 2>&1 &`);
+	/* GOMEMLIMIT 16 MiB (ч.263 пакет A: Go-процесс без лимита — снифер лёгкий,
+	 * 16 MiB = 5× реального RSS; oom_adj.sh сам возьмёт min(16, пол-ОЗУ)). */
+	system(`${shellquote('/etc/ravnex/scripts/oom_adj.sh')} 400 16 ${shellquote(SNI_SNIFFER_BIN)} -iface ${shellquote(iface)} -file ${shellquote(SNI_EVENTS)} >/dev/null 2>&1 &`);
 	/* Register the identity as soon as the process is visible (5 × 200 ms
 	 * grace); without a registry entry the next pass would just re-detect it
 	 * via the scan — best-effort either way. */
@@ -2225,7 +2227,9 @@ echo done > "$PRE.done"
 		if (length(pm_find({ exe: 'probe_pool' }))) return pp_daemon_alive();
 		if ((time() - pp_last_respawn) < 300) return false;
 		pp_last_respawn = time();
-		system(`${shellquote('/etc/ravnex/scripts/oom_adj.sh')} 400 0 ${shellquote(PROBE_POOL_BIN)} -daemon -dir ${shellquote(RUN_DIR)} >/dev/null 2>&1 &`);
+		/* GOMEMLIMIT 32 MiB (ч.263 пакет A: Go-процесс без лимита; реальный
+		 * RSS ~14.5 МБ, 32 = 2× запас; min(32, пол-ОЗУ) защищает lite). */
+		system(`${shellquote('/etc/ravnex/scripts/oom_adj.sh')} 400 32 ${shellquote(PROBE_POOL_BIN)} -daemon -dir ${shellquote(RUN_DIR)} >/dev/null 2>&1 &`);
 		for (let i = 0; i < 12 && !access(PP_HB); i++) sleep(250);
 		/* Ф1.4 (audit 17): register identity as soon as the process is
 		 * visible — PID + starttime, so later liveness checks are reuse-proof. */

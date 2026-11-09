@@ -68,14 +68,14 @@
 
 'use strict';
 
-import { access, readfile, popen, unlink, lsdir } from 'fs';
+import { access, readfile, popen, unlink, lsdir, readlink } from 'fs';
 import {
 	read_state as ss_read_state, write_state as ss_write_state, rjson as ss_rjson,
 	read_revision as ss_read_revision
 } from '/etc/ravnex/scripts/statestore.uc';
 import {
 	REG_PATH as PM_REG_PATH, entry_alive as pm_entry_alive,
-	kill_entry as pm_kill_entry
+	kill_entry as pm_kill_entry, res_profile as pm_res_profile
 } from '/etc/ravnex/scripts/pmgr.uc';
 import {
 	list_ops as op_list, begin as op_begin, heartbeat as op_heartbeat,
@@ -125,6 +125,38 @@ export const SVC_START_TIMEOUT = 150;
 /* OOM-грань (урок 197 — единый порог с Health Monitor). */
 export const MEM_SKIP_KB = 49152;
 
+/* ── ч.263: динамические бюджеты ядра от железа (пакет A аудита) ───────────
+ * fd-бюджет: от nf_conntrack_max (OpenWrt сам масштабирует его от RAM:
+ * buckets = RAM/2048/8). warn = clamp(C/8, 2048, 16384), crit = 2×warn.
+ * Доли от RLIMIT_nofile неприменимы (лимит 1e6 завышен в сотни раз);
+ * единственный честный якорь = потребление. На 1 ГБ это 8192/16384 —
+ * боевой шторм ч.230 (2054↔2047) и инцидент ч.263 (2166) теперь молчат
+ * ЧЕСТНО (это нагрузка, не утечка), на lite 128-256 МБ — 2048.
+ * RSS: warn = min(384 MiB, 40% RAM); crit = max(min(512 MiB, 55% RAM),
+ * 135% GOMEMLIMIT_eff). Инварианты: crit строго выше худшего устойчивого
+ * RSS при мягком GOMEMLIMIT (GC-гвард ещё справляется) и достижимо ниже
+ * OOM-грани на слабом железе (на lite сегодня защиты нет вовсе). */
+export const RES_FD_WARN_MIN = 2048;
+export const RES_FD_WARN_MAX = 16384;
+export const RES_CORE_GML_REQ_MIB = 384;
+export const RES_RSS_WARN_MT_PCT = 40;
+export const RES_RSS_CRIT_MT_PCT = 55;
+export const RES_CRIT_GML_PCT = 135;
+export const RES_CRIT_FAST_PCT = 150;
+
+/* Подтверждённость рестарта ядра (armed, ч.263 — инцидент «двух kill'ов»):
+ * rss-crit должен продержаться RES_CRIT_CONFIRM_PASSES полных прохода
+ * ПОДРЯД, либо одномоментно ≥ RES_CRIT_FAST_PCT% от crit (явное бегство).
+ * До подтверждения находка честно crit (сигнал есть), но рестарта НЕТ —
+ * мгновенный пик памяти больше не убивает живое ядро. */
+export const RES_CRIT_CONFIRM_PASSES = 2;
+
+/* Живость health-документа: базовая грань 120 с, но НЕ меньше трёх тиков
+ * самого монитора (light 20 с × профильный фактор: lite 3 → 180 с —
+ * ровно 2 тика на lite клали запас на грань ложного «монитор молчит»). */
+export const HEALTH_LIGHT_SEC = 20;
+export const HEALTH_STALE_TICKS = 3;
+
 /* ── Ф10.3: ресурсные бюджеты демонов ─────────────────────────────────────
  * База — реестр daemons.json (имена+pid живых демонов); замер fork-free
  * (readfile /proc/<pid>/status + lsdir /proc/<pid>/fd — readdir на этой
@@ -132,11 +164,12 @@ export const MEM_SKIP_KB = 49152;
  * относительно базы ч.218 (core ~132 МБ/fd 482, automation ~40 МБ, mosdns
  * ~26 МБ, probe_pool ~13 МБ, прочие ≤2 МБ) — находка означает рост тренда,
  * а не «сейчас упадёт». Крит-порог RSS ядра — зона перед OOM-гранью WR3000H
- * (727 МБ, ч.218). Имена ключей = имена реестра (core/ciadpi/nfqws2/...). */
+ * (727 МБ, ч.218). Имена ключей = имена реестра (core/ciadpi/nfqws2/...).
+ * 🔴 ч.263: бюджет ЯДРА — динамический (res_budget_core от RAM/
+ * nf_conntrack_max/GOMEMLIMIT, пакет A аудита), здесь больше нет. */
 export const RES_PATH = '/var/run/ravnex/resources.json';
 
 const RES_BUDGETS = {
-	core:        { rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 },
 	automation:  { rss_warn_kb:  98304, rss_crit_kb: 163840, fd_warn:  512, fd_crit: 1024 },
 	mosdns:      { rss_warn_kb:  98304, rss_crit_kb: 163840, fd_warn:  512, fd_crit: 1024 },
 	probe_pool:  { rss_warn_kb:  49152, rss_crit_kb:  98304, fd_warn:  512, fd_crit: 1024 },
@@ -645,37 +678,111 @@ function do_core_restart() {
 
 /* ── Ф10.3: ресурсы демонов (снапшот + бюджеты) ──────────────────────────── */
 
+/* Бюджет ЯДРА от железа (чистая функция — selftest; пакет A аудита ч.263).
+ * gml_eff = min(запрошенный GOMEMLIMIT, пол-ОЗУ в MiB) — зеркало CAP
+ * oom_adj.sh (MT/2048 kB → MiB). ct_max = nf_conntrack_max. Неизвестные
+ * входы (mem ≤ 0, ct ≤ 0) дают статические фолбэки — safe при /proc-дырах. */
+export function res_budget_core(mem_kb, ct_max, gml_req_mib) {
+	let gml = (gml_req_mib != null && int(gml_req_mib) > 0) ? int(gml_req_mib) : 0;
+	if (int(mem_kb) > 0) {
+		const cap = int(mem_kb / 2048);
+		if (cap > 0 && (gml <= 0 || gml > cap))
+			gml = cap;
+	}
+	let fdw;
+	if (int(ct_max) > 0)
+		fdw = int(ct_max / 8);
+	else
+		fdw = RES_FD_WARN_MIN;
+	if (fdw < RES_FD_WARN_MIN)
+		fdw = RES_FD_WARN_MIN;
+	if (fdw > RES_FD_WARN_MAX)
+		fdw = RES_FD_WARN_MAX;
+	/* rss warn: min(384 MiB, RES_RSS_WARN_MT_PCT% RAM). */
+	let rw = 393216;
+	if (int(mem_kb) > 0) {
+		const w = int(mem_kb * RES_RSS_WARN_MT_PCT / 100);
+		if (w > 0 && w < rw)
+			rw = w;
+	}
+	/* rss crit: max(min(512 MiB, 55% RAM), 135% GML_eff). */
+	let rc = 524288;
+	if (int(mem_kb) > 0) {
+		const c = int(mem_kb * RES_RSS_CRIT_MT_PCT / 100);
+		if (c > 0 && c < rc)
+			rc = c;
+	}
+	if (gml > 0) {
+		const g = int(gml * 1024 * RES_CRIT_GML_PCT / 100);
+		if (g > rc)
+			rc = g;
+	}
+	return { rss_warn_kb: rw, rss_crit_kb: rc, fd_warn: fdw, fd_crit: fdw * 2, gml_eff_mib: gml };
+};
+
 /* Вердикт одного демона против бюджета (чистая функция — selftest).
  * level 'ok'/'warn'/'crit', what 'rss'/'fd'/''; crit сильнее warn; rss-крит
- * сильнее fd-warn. rss_kb ≤ 0 = замер не удался — не вердикт. */
-export function res_verdict(name, rss_kb, fds) {
-	const b = (RES_BUDGETS['' + name] != null) ? RES_BUDGETS['' + name] : RES_BUDGET_GENERIC;
+ * сильнее fd-warn. rss_kb ≤ 0 = замер не удался — не вердикт. b — явный
+ * бюджет (для ядра — динамический из res_budget_core); без него — таблица
+ * по имени или общий. */
+export function res_verdict(name, rss_kb, fds, b) {
+	const nb = (b != null) ? b
+		: ((RES_BUDGETS['' + name] != null) ? RES_BUDGETS['' + name] : RES_BUDGET_GENERIC);
 	let level = 'ok', what = '';
 	if (rss_kb != null && int(rss_kb) > 0) {
-		if (int(b.rss_crit_kb) > 0 && int(rss_kb) >= int(b.rss_crit_kb)) {
+		if (int(nb.rss_crit_kb) > 0 && int(rss_kb) >= int(nb.rss_crit_kb)) {
 			level = 'crit'; what = 'rss';
-		} else if (int(rss_kb) >= int(b.rss_warn_kb)) {
+		} else if (int(rss_kb) >= int(nb.rss_warn_kb)) {
 			level = 'warn'; what = 'rss';
 		}
 	}
 	if (fds != null && int(fds) >= 0) {
-		if (int(b.fd_crit) > 0 && int(fds) >= int(b.fd_crit)) {
+		if (int(nb.fd_crit) > 0 && int(fds) >= int(nb.fd_crit)) {
 			level = 'crit'; what = 'fd';
-		} else if (level === 'ok' && int(fds) >= int(b.fd_warn)) {
+		} else if (level === 'ok' && int(fds) >= int(nb.fd_warn)) {
 			level = 'warn'; what = 'fd';
 		}
 	}
-	return { budget: b, level: level, what: what };
+	return { budget: nb, level: level, what: what };
+};
+
+/* Состав fd ядра при перерасходе (ч.263, пакет A): выборка до 512
+ * дескрипторов по типам (readlink — fork-free): «утечка pipe-пар splice»
+ * видна в находке сразу, без strace/форков. */
+function res_fd_mix(fdpath, d) {
+	let socket = 0, pipe = 0, other = 0;
+	const cap = (length(d) > 512) ? 512 : length(d);
+	for (let i = 0; i < cap; i++) {
+		const t = readlink(fdpath + '/' + d[i]);
+		if (t == null) {
+			other = other + 1;
+			continue;
+		}
+		const s = '' + t;
+		if (index(s, 'socket:') === 0)
+			socket = socket + 1;
+		else if (index(s, 'pipe:') === 0)
+			pipe = pipe + 1;
+		else
+			other = other + 1;
+	}
+	return 'socket ' + socket + ', pipe ' + pipe + ', прочее ' + other +
+		' (выборка ' + cap + ' из ' + length(d) + ')';
 };
 
 /* Снапшот ресурсов живых демонов реестра (fork-free: readfile + lsdir).
  * Мёртвые pid пропускаются — их живость зона svc-проверок. Строка:
  * { name, label, pid, rss_kb, fds, level, what, rss_warn_kb, rss_crit_kb,
- *   fd_warn, fd_crit } — бюджеты едут в строке, чтобы RPC/UI не знали таблицу. */
-export function res_snapshot(regst) {
+ *   fd_warn, fd_crit [, fd_mix] } — бюджеты едут в строке, чтобы RPC/UI не
+ * знали таблицу. ctx = { mem_kb, ct_max, gml_mib } — железо для
+ * динамического бюджета ЯДРА (res_budget_core); null/неполный ctx = стат.
+ * фолбэки (crit = 1.35×GOMELIMIT от запрошенного, warn 384). fd_mix
+ * считается ТОЛЬКО для ядра в зоне fd-перерасхода. */
+export function res_snapshot(regst, ctx) {
 	const out = [];
 	if (regst == null || type(regst) !== 'object')
 		return out;
+	const cx = (ctx != null && type(ctx) === 'object') ? ctx : {};
 	for (let name in regst) {
 		const e = regst[name];
 		if (e == null || type(e) !== 'object' || e.pid == null)
@@ -687,28 +794,37 @@ export function res_snapshot(regst) {
 		const m = match(st, /VmRSS:[ \t]+([0-9]+)/);
 		const fdpath = '/proc/' + pid + '/fd';
 		let fds = -1;
+		let flist = null;
 		if (access(fdpath)) {
-			const d = lsdir(fdpath);
-			fds = (d != null) ? length(d) : -1;
+			flist = lsdir(fdpath);
+			fds = (flist != null) ? length(flist) : -1;
 		}
 		const rss = (m != null) ? int(m[1]) : 0;
 		if (rss <= 0 && fds < 0)
 			continue;   /* /proc недоступен — нет замера, нет строки */
-		const v = res_verdict(name, rss, fds);
-		push(out, {
+		const iscore = ('' + name) === 'core';
+		const v = (iscore)
+			? res_verdict(name, rss, fds,
+				res_budget_core(int(cx.mem_kb || 0), int(cx.ct_max || 0), int(cx.gml_mib || RES_CORE_GML_REQ_MIB)))
+			: res_verdict(name, rss, fds);
+		const row = {
 			name: '' + name, label: res_label(name), pid: pid,
 			rss_kb: rss, fds: fds, level: v.level, what: v.what,
 			rss_warn_kb: int(v.budget.rss_warn_kb), rss_crit_kb: int(v.budget.rss_crit_kb),
 			fd_warn: int(v.budget.fd_warn), fd_crit: int(v.budget.fd_crit)
-		});
+		};
+		if (iscore && v.level !== 'ok' && v.what === 'fd' && flist != null)
+			row.fd_mix = res_fd_mix(fdpath, flist);
+		push(out, row);
 	}
 	return out;
 };
 
 /* Причина находки перерасхода (вынесено ч.230 — один текст для свежего
  * вердикта и для гистерезис-удержания). level едет В находке (ч.263):
- * Recovery гейтит рестарт ядра на what==='rss' && level==='crit'. */
-function res_finding(r, level, what) {
+ * Recovery гейтит рестарт ядра на what==='rss' && level==='crit' &&
+ * armed===true. extra = { crit_run, armed } для ядра (armed-гвард). */
+function res_finding(r, level, what, extra) {
 	let reason;
 	if (what === 'fd')
 		reason = 'открытых fd: ' + sprintf('%d', int(r.fds)) +
@@ -720,10 +836,24 @@ function res_finding(r, level, what) {
 			((level === 'crit')
 				? ' при бюджете ' + sprintf('%.0f', int(r.rss_crit_kb) / 1024) + ' МБ — зона OOM-грани (кейс WR3000H: ядро убивалось при ~727 МБ)'
 				: ' при бюджете ' + sprintf('%.0f', int(r.rss_warn_kb) / 1024) + ' МБ — потребление выше штатного, наблюдение участится');
-	return {
+	const out = {
 		status: 'degraded', label: res_label(r.name), reason: reason,
 		confidence: 'certain', what: what, level: level
 	};
+	if (extra != null && type(extra) === 'object') {
+		if (extra.crit_run != null)
+			out.crit_run = int(extra.crit_run);
+		if (extra.armed != null)
+			out.armed = (extra.armed === true);
+		if (out.what === 'rss' && out.level === 'crit')
+			out.reason += (out.armed === true)
+				? ' — рестарт ядра вооружён'
+				: ' — подтверждение рестарта ' + int(extra.crit_run || 0) + '/' +
+					sprintf('%d', RES_CRIT_CONFIRM_PASSES);
+	}
+	if (what === 'fd' && r.fd_mix != null)
+		out.reason += ' (состав: ' + ('' + r.fd_mix) + ')';
+	return out;
 };
 
 /* Б5 (сеанс 161): рестарт ядра по RSS-криту wanted? Чистая функция.
@@ -777,6 +907,25 @@ export function res_findings(snap, prev_f) {
 			}
 			continue;
 		}
+		if (('' + r.name) === 'core' && r.level === 'crit' && r.what === 'rss') {
+			/* ч.263: крит-находка ядра по RSS несёт armed — подтверждённость
+			 * рестарта. crit_run = число ПОДРЯД проходов с rss ≥ crit (едет в
+			 * находке через prev_f); armed = хватает подтверждений ИЛИ
+			 * одномоментно ≥ RES_CRIT_FAST_PCT% crit (явное бегство памяти).
+			 * Быстрые проходы тоже считают — свежий замер есть свежий замер;
+			 * любой не-crit вердикт ядра сбрасывает серию (streak не пишется). */
+			let run = 0;
+			if (prev_f != null && type(prev_f) === 'object') {
+				const pf = prev_f['res:core'];
+				if (pf != null && type(pf) === 'object' && pf.crit_run != null)
+					run = int(pf.crit_run);
+			}
+			run = run + 1;
+			const fast = int(r.rss_kb) * 100 >= int(r.rss_crit_kb) * RES_CRIT_FAST_PCT;
+			out['res:core'] = res_finding(r, r.level, r.what,
+				{ crit_run: run, armed: (run >= RES_CRIT_CONFIRM_PASSES) || fast });
+			continue;
+		}
 		out['res:' + r.name] = res_finding(r, r.level, r.what);
 	}
 	return out;
@@ -803,7 +952,16 @@ export function compute_and_store(opts) {
 	/* 1. Живость самого Health Monitor. */
 	const hrd = ss_read_state(HEALTH_PATH);
 	const hage = health_age(hrd, now);
-	const health_fresh = (hage >= 0 && hage <= HEALTH_STALE_SEC);
+	/* ч.263 (пакет A): грань живости — не меньше трёх тиков самого монитора:
+	 * lite (фактор 3) тикает light каждые 60 с; базовые 120 с = ровно 2 тика —
+	 * один пропуск уже ложил запас на грань ложного «монитор молчит». */
+	const rp_prof = pm_res_profile();
+	const prof_factor = (rp_prof != null && rp_prof.factor != null && int(rp_prof.factor) > 0)
+		? int(rp_prof.factor) : 1;
+	let stale_eff = HEALTH_LIGHT_SEC * HEALTH_STALE_TICKS * prof_factor;
+	if (stale_eff < HEALTH_STALE_SEC)
+		stale_eff = HEALTH_STALE_SEC;
+	const health_fresh = (hage >= 0 && hage <= stale_eff);
 	if (!health_fresh && now >= grace_until) {
 		findings.health_monitor = {
 			status: 'down', label: 'Health Monitor',
@@ -925,13 +1083,23 @@ export function compute_and_store(opts) {
 		return false;
 	})();
 	if (full || prev_res_active) {
-		const snap = res_snapshot(registry_map());
+		/* ч.263: железо для динамического бюджета ядра — снять ДО снапшота. */
+		const memraw = readfile('/proc/meminfo') || '';
+		const mtot = match(memraw, /MemTotal:\s+([0-9]+)/);
+		const mem_total_kb = (mtot != null) ? int(mtot[1]) : -1;
+		const ctraw = readfile('/proc/sys/net/netfilter/nf_conntrack_max');
+		const ct_max = (ctraw != null) ? int(trim('' + ctraw)) : 0;
+		const ctx = { mem_kb: mem_total_kb, ct_max: ct_max, gml_mib: RES_CORE_GML_REQ_MIB };
+		const snap = res_snapshot(registry_map(), ctx);
 		const rf = res_findings(snap, prev_f);
 		/* Б5: RSS-крит ядра → действие core_restart (ключ res:core —
-		 * loop-guard и координатор работают по нему как по обычному поводу). */
+		 * loop-guard и координатор работают по нему как по обычному поводу).
+		 * 🔴 ч.263: только ARMED-находка (2 прохода подряд или ≥1.5×crit —
+		 * гвард подтверждённости в res_findings); инстант-пик не рестартует. */
 		if (full && !apply_running) {
 			const rcr = res_core_restart_wanted(snap);
-			if (rcr != null)
+			const fcore = (rcr != null) ? rf['res:core'] : null;
+			if (rcr != null && fcore != null && fcore.armed === true)
 				push(actions, {
 					key: 'res:core', action: 'core_restart',
 					who: res_label('core'),
@@ -940,9 +1108,6 @@ export function compute_and_store(opts) {
 						' МБ) — procd вернёт процесс с чистой памятью, OOM-килл не случится'
 				});
 		}
-		const memraw = readfile('/proc/meminfo') || '';
-		const mtot = match(memraw, /MemTotal:\s+([0-9]+)/);
-		const mem_total_kb = (mtot != null) ? int(mtot[1]) : -1;
 		for (let k in rf) {
 			/* Сеанс 158/Б4: на роутерах с малым ОЗУ перерасход ядра — прямая
 			 * дорога к OOM-киллу (кейс WR3000H: 2×OOM на 4.1.0 при 757 МБ) —
@@ -1291,22 +1456,33 @@ export function selftest() {
 
 	/* Ф10.3: ресурсные вердикты (базы ч.218: core ~132 МБ/fd 482,
 	 * automation ~40 МБ, mosdns ~26 МБ — все в бюджете). */
-	check('res_ok_core', res_verdict('core', 135160, 482).level === 'ok', null);
+	/* ч.263: динамический бюджет ядра от железа (пакет A) + armed-гвард. */
+	const cb1g = res_budget_core(1048576, 65536, 384);
+	check('rbc_1gb', cb1g.fd_warn === 8192 && cb1g.fd_crit === 16384 &&
+		cb1g.rss_warn_kb === 393216 && cb1g.rss_crit_kb === 530841 &&
+		cb1g.gml_eff_mib === 384, '1 GB: fd from conntrack, crit = 1.35x GML');
+	const cb_lite = res_budget_core(262144, 16384, 384);
+	check('rbc_lite256', cb_lite.fd_warn === 2048 && cb_lite.fd_crit === 4096 &&
+		cb_lite.rss_warn_kb === 104857 && cb_lite.rss_crit_kb === 176947 &&
+		cb_lite.gml_eff_mib === 128, 'lite 256 MB: GML eff 128, crit 172.8 MB');
+	check('rbc_unknown_fb', res_budget_core(0, 0, 0).fd_warn === 2048 &&
+		res_budget_core(0, 0, 0).fd_crit === 4096, 'no /proc data = static fallback');
+	check('res_ok_core', res_verdict('core', 135160, 482, cb1g).level === 'ok', null);
 	check('res_ok_generic', res_verdict('multidns', 2008, 12).level === 'ok' &&
 		res_verdict('multidns', 2008, 12).budget.rss_warn_kb === 65536, null);
 	check('res_warn_rss_edge', res_verdict('automation', 98304, 13).level === 'warn' &&
 		res_verdict('automation', 98304, 13).what === 'rss', null);
-	check('res_crit_rss_core', res_verdict('core', 524288, 5).level === 'crit' &&
-		res_verdict('core', 524288, 5).what === 'rss', null);
+	check('res_crit_rss_core', res_verdict('core', 600000, 5, cb1g).level === 'crit' &&
+		res_verdict('core', 600000, 5, cb1g).what === 'rss', null);
 	check('res_warn_fd', res_verdict('multidns', 2008, 512).level === 'warn' &&
 		res_verdict('multidns', 2008, 512).what === 'fd', null);
 	check('res_crit_fd', res_verdict('multidns', 2008, 1024).level === 'crit' &&
 		res_verdict('multidns', 2008, 1024).what === 'fd', null);
 	check('res_fd_crit_wins', res_verdict('automation', 98304, 1024).level === 'crit' &&
 		res_verdict('automation', 98304, 1024).what === 'fd', null);
-	check('res_rss_crit_beats_fd_warn', res_verdict('core', 600000, 600).level === 'crit' &&
-		res_verdict('core', 600000, 600).what === 'rss', null);
-	check('res_nodata', res_verdict('core', 0, -1).level === 'ok', null);
+	check('res_rss_crit_beats_fd_warn', res_verdict('core', 600000, 9000, cb1g).level === 'crit' &&
+		res_verdict('core', 600000, 9000, cb1g).what === 'rss', null);
+	check('res_nodata', res_verdict('core', 0, -1, cb1g).level === 'ok', null);
 	const rf1 = res_findings([
 		{ name: 'core', label: res_label('core'), pid: 1, rss_kb: 98304, fds: 5,
 			level: 'warn', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 },
@@ -1320,6 +1496,30 @@ export function selftest() {
 		rf1['res:core'].what === 'rss',
 		'level rides the finding — Recovery gate (ч.263) needs it');
 	check('res_findings_empty', length(res_findings(null)) === 0 && length(res_findings([])) === 0, null);
+
+	/* ч.263: armed-гвард рестарта ядра (2 прохода подряд или ≥1.5×crit). */
+	const afrow = { name: 'core', label: res_label('core'), pid: 1, rss_kb: 560000, fds: 5,
+		level: 'crit', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 530841, fd_warn: 8192, fd_crit: 16384 };
+	const arm1 = res_findings([ afrow ], {});
+	check('armed_first_pass', arm1['res:core'] != null && arm1['res:core'].armed === false &&
+		arm1['res:core'].crit_run === 1, 'instant peak below 1.5x is NOT armed');
+	const arm2 = res_findings([ afrow ], arm1);
+	check('armed_second_pass', arm2['res:core'] != null && arm2['res:core'].armed === true &&
+		arm2['res:core'].crit_run === 2, 'two consecutive passes arm the restart');
+	const ffrow = { name: 'core', label: res_label('core'), pid: 1, rss_kb: 800000, fds: 5,
+		level: 'crit', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 530841, fd_warn: 8192, fd_crit: 16384 };
+	const armf = res_findings([ ffrow ], {});
+	check('armed_fast', armf['res:core'] != null && armf['res:core'].armed === true &&
+		armf['res:core'].crit_run === 1, '1.5x crit arms instantly (runaway memory)');
+	const arm_reset = res_findings([ afrow ], { 'res:core': { status: 'degraded', label: 'x', reason: 'x', what: 'fd', level: 'warn' } });
+	check('armed_streak_reset', arm_reset['res:core'].crit_run === 1 && arm_reset['res:core'].armed === false,
+		'non-crit previous finding resets the streak');
+	const mixrow = { name: 'core', label: res_label('core'), pid: 1, rss_kb: 100000, fds: 9000,
+		level: 'warn', what: 'fd', rss_warn_kb: 393216, rss_crit_kb: 530841, fd_warn: 8192, fd_crit: 16384,
+		fd_mix: 'socket 400, pipe 480, прочее 20 (выборка 512 из 9000)' };
+	const mixf = res_findings([ mixrow ], {});
+	check('fd_mix_reason', mixf['res:core'] != null && index('' + mixf['res:core'].reason, 'состав:') > 0,
+		'fd breakdown rides the warn finding (package A diagnostics)');
 
 	/* ч.230: гистерезис res-находок — активная fd-находка держится в полосе
 	 * до 90% warn (1900 ≥ 1844), чистится ниже (1800 < 1844); без prev — нет. */
@@ -1343,16 +1543,16 @@ export function selftest() {
 
 	/* Б5 (сеанс 161): рестарт ядра wanted ТОЛЬКО при core/rss-крите. */
 	check('rcr_crit', res_core_restart_wanted([
-		{ name: 'core', label: 'x', pid: 1, rss_kb: 530000, fds: 10,
-			level: 'crit', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 }
+		{ name: 'core', label: 'x', pid: 1, rss_kb: 600000, fds: 10,
+			level: 'crit', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 530841, fd_warn: 8192, fd_crit: 16384 }
 	]) != null, null);
 	check('rcr_warn_no', res_core_restart_wanted([
 		{ name: 'core', label: 'x', pid: 1, rss_kb: 400000, fds: 10,
-			level: 'warn', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 }
+			level: 'warn', what: 'rss', rss_warn_kb: 393216, rss_crit_kb: 530841, fd_warn: 8192, fd_crit: 16384 }
 	]) == null, null);
 	check('rcr_fd_no', res_core_restart_wanted([
-		{ name: 'core', label: 'x', pid: 1, rss_kb: 100, fds: 4096,
-			level: 'crit', what: 'fd', rss_warn_kb: 393216, rss_crit_kb: 524288, fd_warn: 2048, fd_crit: 4096 }
+		{ name: 'core', label: 'x', pid: 1, rss_kb: 100, fds: 17000,
+			level: 'crit', what: 'fd', rss_warn_kb: 393216, rss_crit_kb: 530841, fd_warn: 8192, fd_crit: 16384 }
 	]) == null, null);
 	check('rcr_other_no', res_core_restart_wanted([
 		{ name: 'automation', label: 'x', pid: 1, rss_kb: 170000, fds: 10,
