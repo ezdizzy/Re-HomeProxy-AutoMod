@@ -488,8 +488,11 @@ export function core_stale_compare(installed_v, candidate_v) {
 	return { installed: iv, candidate: cv };
 };
 
-/* Установленная версия ядра против кэша манифеста фида. fork (bin version) —
- * только в deep-проходе; без кэша/версии — null (подсказки нет). */
+/* Установленная версия ядра против кэша манифеста (сеанс 158/Б4). ч.265:
+ * ядра больше не ставятся фидом — сигналом остаётся только ЗАПИСЬ в кэше
+ * манифеста (пока фид ещё носит ядровые записи до вычистки GitHub, стоп-
+ * точка 2); текст честный — «доступно обновление ядра», без «из фида».
+ * fork (bin version) — только в deep-проходе; без кэша/версии — null. */
 export function core_stale_feed_note() {
 	let cand = null;
 	try {
@@ -511,8 +514,8 @@ function core_stale_reason(base_reason) {
 	try {
 		const stale = core_stale_feed_note();
 		if (stale != null)
-			return base_reason + '; в фиде доступно ядро ' + stale.candidate +
-				' (установлено ' + stale.installed + ') — обновите: Обслуживание → Управление ядром';
+			return base_reason + '; доступно обновление ядра: ' + stale.candidate +
+				' (установлено ' + stale.installed + ') — обновите: Обслуживание → карточка ядра';
 	} catch (e) { /* подсказка — best-effort */ }
 	return base_reason;
 }

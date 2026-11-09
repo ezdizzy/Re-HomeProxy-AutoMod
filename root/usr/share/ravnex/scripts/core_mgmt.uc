@@ -68,6 +68,73 @@ function gh_fetch(url, dest, timeout_ms) {
 	return rc;
 }
 
+/* GitHub API request (seance 177). curl-first (TSPU lesson 161), wget fallback;
+ * the user's GitHub token (uci ravnex.config.github_token) rides along when
+ * set — anonymous API calls burn the shared egress rate limit, authenticated
+ * ones don't. A missing/throttled token only drops the header, never breaks
+ * the call. Returns parsed JSON or null. */
+function gh_token() {
+	const fd = popen('uci -q get ravnex.config.github_token 2>/dev/null');
+	if (!fd) return '';
+	const t = trim(fd.read('all'));
+	fd.close();
+	return t;
+}
+
+function gh_api(url, timeout_ms) {
+	const tok = gh_token();
+	const auth = length(tok) ? `--header "Authorization: token ${tok}" ` : '';
+	/* 8 s hard cap PER ATTEMPT: prepare/check_remote run synchronously under
+	 * the LuCI XHR timeout (20 s) — curl(8) + wget(8) is the worst case. */
+	const curl = gh_has_curl();
+	let raw = '';
+	if (curl) {
+		const fd = popen(`${curl} -fsL --connect-timeout 6 --max-time 8 ${auth}${shellquote(url)} 2>/dev/null`);
+		if (fd) { raw = trim(fd.read('all')); fd.close(); }
+	}
+	if (!length(raw)) {
+		const wfd = popen(`wget -qO- --timeout=8 ${auth}${shellquote(url)} 2>/dev/null`);
+		if (wfd) { raw = trim(wfd.read('all')); wfd.close(); }
+	}
+	if (!length(raw))
+		return null;
+	let data;
+	try { data = json(raw); } catch (e) { data = null; }
+	return data;
+}
+
+/* Per-asset SHA256 digest (GitHub API "digest": "sha256:<hex>") — the honesty
+ * gate for every original-source download (decision 3). Returns the hex part
+ * or '' when the asset carries no digest. */
+function asset_digest(asset) {
+	const d = (asset && asset.digest) ? '' + asset.digest : '';
+	const m = match(d, /^sha256:([0-9a-f]{64})$/);
+	return m ? m[1] : '';
+}
+
+/* Pick one release asset by exact name or by prefix+suffix bounds. All string
+ * ops (no dynamic regex in ucode). Returns { name, url, sha256 } or null. */
+function asset_find(assets, name_prefix, name_suffix) {
+	for (let a in (assets || [])) {
+		const n = '' + (a?.name || '');
+		if (!length(n)) continue;
+		if (length(name_prefix) && substr(n, 0, length(name_prefix)) != name_prefix) continue;
+		if (length(name_suffix)) {
+			const tail = substr(n, length(n) - length(name_suffix));
+			if (tail != name_suffix) continue;
+		}
+		return { name: n, url: a?.browser_download_url || null, sha256: asset_digest(a) };
+	}
+	return null;
+}
+
+/* Latest release tag of a repo, stripped of the leading "v" ('' on failure). */
+function gh_repo_latest_version(repo) {
+	const data = gh_api(`https://api.github.com/repos/${repo}/releases/latest`);
+	if (!data || !data.tag_name) return '';
+	return replace('' + data.tag_name, /^v/, '');
+}
+
 function detect_pkg_manager() {
 	for (let p in ['/usr/bin/apk', '/sbin/apk', '/usr/sbin/apk'])
 		if (access(p)) return 'apk';
@@ -104,13 +171,16 @@ function overlay_compresses() {
 	return (t in ['jffs2', 'ubifs']);
 }
 
-/* Footprint thresholds (KB). The UPX/compact build is already compressed (~20 MB on ANY fs)
- * but decompresses the whole binary into RAM at every launch (trades flash for RAM). The full
- * Go binary is ~76 MB raw → ~76 MB on ext4/f2fs, but only ~26 MB on a compressing overlay. */
+/* Footprint thresholds (KB) for the upstream hiddify-core FULL build.
+ * Пороги полной апстрим-сборки v5.x (arm64-musl: бинарник ≈101 МиБ, тарбол
+ * ≈35.4 МиБ, apk-ассет ≈35-40 МиБ) — крупнее старой форковой (Go 1.27 +
+ * cronet). Тарбол/apk кладётся в /tmp, бинарник распаковывается прямо в
+ * оверлей (staging) → swap либо ставится пакетом. */
 const FULL_OVERLAY_RAW_KB  = 81920;   /* ~80 MB free for the full binary on an uncompressed overlay */
 const FULL_OVERLAY_COMP_KB = 32768;   /* ~32 MB on a compressing overlay (binary stores ~3x smaller) */
-const COMPACT_OVERLAY_KB   = 25600;   /* ~25 MB for the compact (UPX) build — fs-independent */
-const COMPACT_RAM_KB       = 98304;   /* ~96 MB free RAM to decompress + run the compact build */
+const UP_FULL_OVERLAY_RAW_KB  = 112640;   /* ~110 MB на несжимающем оверлее */
+const UP_FULL_OVERLAY_COMP_KB = 40960;    /* ~40 MB на сжимающем (jffs2/ubifs) */
+const UP_FULL_TMP_KB          = 46080;    /* тарбол + запас в /tmp */
 
 /* sing-box-extended-lite (MANCrimSon, GitHub issue #4) footprint thresholds —
  * they mirror the project's own install.sh guards so prepare_install fails
@@ -122,26 +192,33 @@ const LITE_COMPRESSED_MIN_KB  = 16384;
 const LITE_COMPRESSED_RAM_KB  = 98304;
 const LITE_TMP_MIN_KB         = 20480;   /* installer work dir (+tar.gz) in /tmp */
 const LITE_WRAPPER_MAX_BYTES  = 10000;   /* the compressed build ships a sh wrapper here */
-const LITE_REPO               = 'https://api.github.com/repos/MANCrimSon/sing-box-extended-lite/releases/latest';
-const LITE_INSTALLER_URL      = 'https://raw.githubusercontent.com/MANCrimSon/sing-box-extended-lite/main/install.sh';
 
-/* hiddify-core upstream (hiddify/hiddify-core) — ОРИГИНАЛЬНЫЙ репозиторий
- * проекта (ч.129, ан-146). Releases публикуют сырые tar.gz-сборки per Go
- * target; musl CGO-сборки несут NaïveProxy, статические MIPS-сборки — нет
- * (cronet без MIPS — у форка то же самое). Пакеты apk/ipk оригинал НЕ
- * публикует (собирает их CI, но в релиз не выкладывает) — это и было
- * единственной функцией форка 1andrevich: публикация OpenWrt-пакетов при
- * НУЛЕВЫХ изменениях Go-кода (13 коммитов форка — только CI). С июня 2026
- * авто-чекер форка встал (драфт-релизы затеняют новые апстрим-теги), форк
- * заморожен на v4.1.0 при апстриме v5.x → форк стал РЕЗЕРВНЫМ источником
- * (компактная UPX-сборка есть только у него). Апстрим-тарбол: ядро
- * hiddify-core-linux-<target>[-musl]/hiddify-core (+ LICENSE.md). */
+/* ── Сеанс 177 (ч.265): «ВСЁ ИЗ ОРИГИНАЛЬНЫХ РЕПОЗИТОРИЕВ» — карта источников ──
+ * Все ядра тянутся ТОЛЬКО из оригинальных репозиториев (решения ×10, план 25).
+ * hiddify/hiddify-core с v5.4.0 ПУБЛИКУЕТ OpenWrt-пакеты apk+ipk для 31 арх
+ * (имена: hiddify-core-<ver>-r<N>_<openwrt-arch>.apk / hiddify-core_<ver>_
+ * <openwrt-arch>.ipk, musl; naive/cronet-флейвор НЕ брать — musl-CGO тарболы
+ * несут NaïveProxy, пакетные — тоже musl-сборка). Релизы пушит CI почти
+ * ежедневно — гейт «не новее latest» считается по релизу при установке.
+ * Форк 1andrevich СОВСЕМ УШЁЛ (заморожен на v4.1.0; его единственная функция —
+ * публикация пакетов — теперь у оригинала). Компактной UPX-сборки у hiddify-core
+ * НЕ СУЩЕСТВУЕТ — вариант честно не предлагается (решение 2).
+ * sing-box-extended = shtorm-7 (apk+ipk ×31 арх: sing-box-extended_<ver>_
+ * openwrt_<arch>.{apk,ipk}; UPX-вариант = -compressed тарболы).
+ * sing-box-extended-lite = MANCrimSon (ТОЛЬКО тарболы ×5 арх: amd64/arm64/
+ * armv7/mips-softfloat/mipsle-softfloat, есть -compressed UPX-варианты;
+ * их install.sh остаётся фолбэком, прямой тарбол-путь — первичен и гейтуется).
+ * Целостность: SHA256 = per-asset digest из GitHub API (решение 3), установка
+ * пакетов с --allow-untrusted. Роллбэк = ЯВНАЯ кнопка (выбор тега → download →
+ * SHA256 → подтверждение; БЕЗ кэшей на роутере, решение 8). */
+const HIDDIFY_REPO          = 'hiddify/hiddify-core';
 const HIDDIFY_UPSTREAM_DL   = 'https://github.com/hiddify/hiddify-core/releases/latest/download/';
 const HIDDIFY_UPSTREAM_API  = 'https://api.github.com/repos/hiddify/hiddify-core/releases/latest';
-const HIDDIFY_FORK_API      = 'https://api.github.com/repos/1andrevich/hiddify-core/releases/latest';
-/* OpenWrt OPENWRT_ARCH → апстрим-ассет (musl CGO, где cronet существует;
- * статические для MIPS/старых ARM — они и у форка без NaïveProxy).
- * Неизвестная архитектура = форк (как раньше). */
+/* OpenWrt OPENWRT_ARCH → апстрим-тарбол (musl CGO, где cronet существует;
+ * статические для MIPS/старых ARM — без NaïveProxy). Первичный путь —
+ * ОРИГИНАЛЬНЫЕ apk/ipk (см. карту выше); тарбол = фолбэк для архов/тегов,
+ * где пакета нет, и для «не влезает в пороги пакета» сценариев нет — пакет
+ * и тарбол несут одинаковый musl-бинарник. */
 const HIDDIFY_UPSTREAM_ASSET = {
 	'aarch64_cortex-a53':   'hiddify-core-linux-arm64-musl.tar.gz',
 	'aarch64_cortex-a72':   'hiddify-core-linux-arm64-musl.tar.gz',
@@ -170,12 +247,144 @@ const HIDDIFY_UPSTREAM_ASSET = {
 	'i386_pentium-mmx':     'hiddify-core-linux-386-softfloat.tar.gz',
 	'riscv64_generic':      'hiddify-core-linux-riscv64.tar.gz'
 };
-/* Пороги полной апстрим-сборки v5.x (arm64-musl: бинарник ≈101 МиБ, тарбол
- * ≈35.4 МиБ) — крупнее форковой (Go 1.27 + cronet). Тарбол кладётся в /tmp,
- * бинарник распаковывается прямо в оверлей (staging) → swap. */
-const UP_FULL_OVERLAY_RAW_KB  = 112640;   /* ~110 MB на несжимающем оверлее */
-const UP_FULL_OVERLAY_COMP_KB = 40960;    /* ~40 MB на сжимающем (jffs2/ubifs) */
-const UP_FULL_TMP_KB          = 46080;    /* тарбол + запас в /tmp */
+
+/* Смешанная карта OPENWRT_ARCH → Go-таргет для тарбол-семейства shtorm-7/
+ * MANCrimSon (производные sing-box). Только реально существующие ассеты;
+ * отсутствие значения = честный отказ prepare_install (в отличие от форк-эры
+ * никаких «откуда ни возьмись» сборок не подставляем). */
+const GOARCH_LITE = {
+	'aarch64_generic':      'arm64',
+	'aarch64_cortex-a53':   'arm64',
+	'aarch64_cortex-a72':   'arm64',
+	'aarch64_cortex-a76':   'arm64',
+	'x86_64':               'amd64',
+	'mipsel_24kc':          'mipsle-softfloat',
+	'mipsel_74kc':          'mipsle-softfloat',
+	'mips_24kc':            'mips-softfloat',
+	'arm_cortex-a7_neon-vfpv4': 'armv7',
+	'arm_cortex-a7_vfpv4':  'armv7',
+	'arm_cortex-a15_neon-vfpv4': 'armv7'
+};
+/* shtorm-7 -compressed (UPX) тарболы шире lite: + 386/riscv64/softfloat-BE
+ * отсутствуют у lite. Те же ключи, что GOARCH_LITE, плюс слабые архи. */
+const GOARCH_SBX = {
+	'aarch64_generic':      'arm64',
+	'aarch64_cortex-a53':   'arm64',
+	'aarch64_cortex-a72':   'arm64',
+	'aarch64_cortex-a76':   'arm64',
+	'x86_64':               'amd64',
+	'i386_pentium4':        '386',
+	'i386_pentium-mmx':     '386',
+	'mipsel_24kc':          'mipsle-softfloat',
+	'mipsel_74kc':          'mipsle-softfloat',
+	'mipsel_mips32':        'mipsle-softfloat',
+	'mipsel_24kc_24kf':     'mipsle',
+	'mips_24kc':            'mips-softfloat',
+	'mips_4kec':            'mips-softfloat',
+	'mips_mips32':          'mips-softfloat',
+	'arm_cortex-a5_vfpv4':  'armv7',
+	'arm_cortex-a7_neon-vfpv4': 'armv7',
+	'arm_cortex-a7_vfpv4':  'armv7',
+	'arm_cortex-a8_vfpv3':  'armv7',
+	'arm_cortex-a9_neon':   'armv7',
+	'arm_cortex-a9_vfpv3-d16': 'armv7',
+	'arm_cortex-a15_neon-vfpv4': 'armv7',
+	'riscv64_generic':      'riscv64'
+};
+
+/* Единые адреса оригиналов (де-форк, сеанс 177). */
+const SBX7_REPO            = 'shtorm-7/sing-box-extended';
+const SBX7_API             = 'https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest';
+const LITE_REPO            = 'MANCrimSon/sing-box-extended-lite';
+const LITE_REPO_API        = 'https://api.github.com/repos/MANCrimSon/sing-box-extended-lite/releases/latest';
+const LITE_INSTALLER_URL   = 'https://raw.githubusercontent.com/MANCrimSon/sing-box-extended-lite/main/install.sh';
+
+/* Repo API base per core family (de-fork map, seance 177).
+ * 🔴 ucode lex-resolution: helper functions must be declared AFTER every
+ * const they reference (a const declared later is undeclared inside an
+ * earlier-defined function body — live-caught on remote_tags, ч.265). */
+function core_repo(core) {
+	return (core === 'hiddify') ? HIDDIFY_REPO
+		: (core === 'singbox') ? SBX7_REPO : LITE_REPO;
+}
+
+/* Space gates shared by prepare_install/prepare_rollback (same thresholds the
+ * old branches enforced; UPX tarball needs flash for the packed binary but
+ * RAM for the decompressed image at launch). Returns null or an error string. */
+function core_space_gate(kind, overlay_free_kb, tmp_free_kb, ram_free_kb) {
+	const comp = overlay_compresses();
+	if (kind === 'lite_tarball') {
+		/* lite: gates already applied by the lite branch (effective-flash
+		 * accounting with the replaced-binary credit) — nothing here. */
+		return null;
+	}
+	const overlay_need = (kind === 'sbx_upx') ? 35840
+		: (comp ? UP_FULL_OVERLAY_COMP_KB : UP_FULL_OVERLAY_RAW_KB);
+	const tmp_need = (kind === 'sbx_upx') ? 46080 : UP_FULL_TMP_KB;
+	if (overlay_free_kb < overlay_need)
+		return `Not enough overlay space for the ${kind === 'sbx_upx' ? 'UPX-compressed' : 'full'} build: ${overlay_free_kb} KB free, need ~${overlay_need} KB.`;
+	if (tmp_free_kb < tmp_need)
+		return `not enough /tmp space: ${tmp_free_kb} KB free, need ~${int(tmp_need / 1024)} MB`;
+	if (kind === 'sbx_upx' && ram_free_kb < 98304)
+		return `Not enough RAM for the UPX build: ${ram_free_kb} KB free (need ~96 MB — the UPX binary decompresses into RAM at launch).`;
+	return null;
+}
+
+/* Resolve ONE core asset out of a release object (de-fork, seance 177).
+ * hiddify: original apk/ipk preferred (hiddify-core-<ver>-r<N>_<arch>.<ext> /
+ * hiddify-core_<ver>_<arch>.<ext>), upstream tarball fallback (arch map).
+ * singbox: shtorm-7 openwrt apk/ipk (sing-box-extended_<ver>_openwrt_<arch>.
+ * <ext>); variant 'upx' = -compressed tarball (GOARCH_SBX). lite: MANCrimSon
+ * tarball (GOARCH_LITE), variant normal|compressed. Returns
+ * { kind, pick:{name,url,sha256}, ver, goarch? } or { error }. */
+function resolve_original_asset(core, variant, rel, pkg_manager, arch) {
+	const ext = (pkg_manager === 'apk') ? '.apk' : '.ipk';
+	const ver = (rel && rel.tag_name) ? replace('' + rel.tag_name, /^v/, '') : null;
+	if (!length(ver))
+		return { error: 'release has no tag' };
+	const assets = rel.assets || [];
+	if (core === 'hiddify') {
+		let pick = asset_find(assets, `hiddify-core-${ver}-r`, `_${arch}${ext}`);
+		if (!pick)
+			pick = asset_find(assets, `hiddify-core_${ver}_`, `_${arch}${ext}`);
+		if (pick && length(pick.url))
+			return { kind: 'pkg', pick, ver };
+		const tb = HIDDIFY_UPSTREAM_ASSET[arch] || null;
+		if (!tb)
+			return { error: `оригинал hiddify-core не публикует пакет или тарбол для архитектуры ${arch}` };
+		const tpick = asset_find(assets, tb, '.tar.gz');
+		if (tpick && length(tpick.url))
+			return { kind: 'tarball', pick: tpick, ver };
+		/* asset list blind (drafts/throttle) — latest/download path without digest */
+		return { kind: 'tarball', pick: { name: tb, url: HIDDIFY_UPSTREAM_DL + tb, sha256: '' }, ver };
+	}
+	if (core === 'singbox') {
+		if (variant === 'upx') {
+			const ga = GOARCH_SBX[arch] || null;
+			if (!ga)
+				return { error: `UPX-сборка sing-box-extended не публикуется для архитектуры ${arch}` };
+			const name = `sing-box-${ver}-linux-${ga}-compressed.tar.gz`;
+			const pick = asset_find(assets, name, '.tar.gz');
+			if (!pick || !length(pick.url))
+				return { error: `в релизе shtorm-7 нет ${name}` };
+			return { kind: 'sbx_upx', pick, ver, goarch: ga };
+		}
+		const pick = asset_find(assets, `sing-box-extended_${ver}_openwrt_${arch}`, ext);
+		if (pick && length(pick.url))
+			return { kind: 'pkg', pick, ver };
+		return { error: `в релизе shtorm-7 нет пакета для ${arch}${ext}` };
+	}
+	/* singbox-lite */
+	const ga = GOARCH_LITE[arch] || null;
+	if (!ga)
+		return { error: `MANCrimSon не публикует сборку для архитектуры ${arch} (доступны: amd64/arm64/armv7/mips-softfloat/mipsle-softfloat)` };
+	const suffix = (variant === 'compressed') ? '-compressed' : '';
+	const name = `sing-box-extended-lite-${ver}-linux-${ga}${suffix}.tar.gz`;
+	const pick = asset_find(assets, name, '.tar.gz');
+	if (!pick || !length(pick.url))
+		return { error: `в релизе MANCrimSon нет ${name}` };
+	return { kind: 'lite_tarball', pick, ver, goarch: ga };
+}
 
 function bin_bytes(path) {
 	/* 2>/dev/null FIRST: a missing file's "can't open" must stay silent. */
@@ -491,24 +700,23 @@ function feed_bin_version(pkg) {
 	return null;
 }
 
-/* Fork/compact downgrade gate (piggybank ch.261(1г), session 174): the fork
- * branch of the core updater had NO version gate - on a box whose /usr/bin
- * binary is a newer upstream tarball, «Обновить» under a tight overlay would
- * silently install the FROZEN fork (1andrevich, stuck at v4.1.0). The PM
- * record cannot catch it (absent on tarball boxes, or a zoo agreeing with
- * the old fork); the comparison therefore runs against the RUNNING BINARY
- * probe. prepare_install carries the fork release tag as ARGV[4].
- * Equal (repair/reinstall) and newer stay allowed; a failed version lookup
- * (running binary not probeable or the tag unknown) never blocks the
- * install — the runner's postcheck_restart tail keeps the outcome honest. */
-function fork_downgrade_error(core, cand_ver) {
+/* Silent-downgrade gate (ch.261(1г) gate survives the de-fork, seance 177):
+ * a NON-rollback install whose candidate is OLDER than the running binary is
+ * refused — the PM record alone cannot catch it (absent on tarball boxes), so
+ * the comparison runs against the RUNNING BINARY probe. prepare carries the
+ * candidate version; the runner forwards it (ARGV[4]) with mode ARGV[5]:
+ * ONLY the explicit rollback action (a user-chosen older tag) bypasses this
+ * gate. Equal (repair/reinstall) and newer stay allowed; a failed version
+ * lookup never blocks the install — postcheck_restart keeps the outcome
+ * honest. */
+function core_downgrade_error(core, cand_ver) {
 	const bin = (core === 'hiddify') ? '/usr/bin/hiddify-core' : '/usr/bin/sing-box';
 	const cur_info = core_features_cached(bin);
 	const cur = (cur_info && cur_info.version) ? '' + cur_info.version : '';
 	if (!length(cur) || !length(cand_ver))
 		return null;
 	return (feed_vercmp_base(feed_strip_rev('' + cand_ver), feed_strip_rev(cur)) < 0)
-		? `fork build ${cand_ver} is OLDER than the running core ${cur} - refusing a silent downgrade (install a newer build or the upstream tarball instead)`
+		? `candidate ${cand_ver} is OLDER than the running core ${cur} - refusing a silent downgrade (use the explicit rollback action to install an older release)`
 		: null;
 }
 
@@ -647,62 +855,24 @@ let result;
 	const core = ARGV[1];
 	if (!(core in ['hiddify', 'singbox', 'singbox-lite'])) {
 		result = { error: 'illegal core' };
-	} else if (core === 'hiddify') {
-		/* ч.129 (ан-146): первичный источник — ОРИГИНАЛЬНЫЙ hiddify/hiddify-core
-		 * (форк заморожен на v4.1.0 с июня 2026), форк — резерв. Если на этой
-		 * архитектуре апстрим-тарбол пригоден (ассет смаплен) И оверлей его
-		 * вместит — сообщаем апстрим; иначе форк (то, что реально поставится). */
-		const gh_latest = (api_url) => {
-			const fd = popen('wget -qO- --timeout=10 ' + shellquote(api_url) + ' 2>/dev/null');
-			if (!fd) return null;
-			const raw = trim(fd.read('all')); fd.close();
-			let data;
-			try { data = json(raw); } catch(e) { data = null; }
-			return (data && data.tag_name) ? { tag: data.tag_name } : null;
-		};
-		const arch = detect_arch();
-		const up_asset = arch ? HIDDIFY_UPSTREAM_ASSET[arch] : null;
-		let overlay_free_kb = free_kb('/overlay');
-		if (!overlay_free_kb) overlay_free_kb = free_kb('/');
-		const up_need = overlay_compresses() ? UP_FULL_OVERLAY_COMP_KB : UP_FULL_OVERLAY_RAW_KB;
-		let data = up_asset && overlay_free_kb >= up_need ? gh_latest(HIDDIFY_UPSTREAM_API) : null;
-		if (data) {
-			result = { tag: data.tag, version: replace(data.tag, /^v/, ''), source: 'upstream' };
-		} else {
-			data = gh_latest(HIDDIFY_FORK_API);
-			if (data)
-				result = { tag: data.tag, version: replace(data.tag, /^v/, ''), source: up_asset ? 'fork' : 'fork' };
-			else
-				result = { error: 'no response from GitHub API' };
-		}
 	} else {
-		const api_url = core === 'singbox'
-			? 'https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest'
-			: LITE_REPO;
-
-		const fd = popen('wget -qO- --timeout=10 ' + shellquote(api_url) + ' 2>/dev/null');
-		if (!fd) {
-			result = { error: 'wget failed' };
-		} else {
-			const raw = trim(fd.read('all')); fd.close();
-			if (!length(raw)) {
-				result = { error: 'no response from GitHub API' };
-			} else {
-				let data;
-				try { data = json(raw); } catch(e) { data = null; }
-				if (!data)
-					result = { error: 'invalid JSON from GitHub API' };
-				else if (!data?.tag_name)
-					result = { error: 'could not read tag_name from response' };
-				else
-					result = { tag: data.tag_name, version: replace(data.tag_name, /^v/, '') };
-			}
-		}
+		/* ч.265 (де-форк): для КАЖДОГО семейства оригинал публикует релизы —
+		 * check_remote только читает latest (токен ездит с gh_api). Годность
+		 * архива/ассета и порогов места — работа prepare_install. */
+		const api_url = (core === 'hiddify') ? HIDDIFY_UPSTREAM_API
+			: (core === 'singbox') ? SBX7_API : LITE_REPO_API;
+		const data = gh_api(api_url, 12000);
+		if (data && data.tag_name)
+			result = { tag: data.tag_name, version: replace(data.tag_name, /^v/, ''), source: 'upstream' };
+		else if (data)
+			result = { error: 'could not read tag_name from response' };
+		else
+			result = { error: 'no response from GitHub API' };
 	}
 
 } else if (action === 'prepare_install') {
 	const core = ARGV[1];
-	const variant = ARGV[2] || '';   /* 'upx' = the compressed hiddify-core build (small flash, decompresses into RAM at launch); lite: 'normal' | 'compressed' */
+	const variant = ARGV[2] || '';   /* singbox: 'standard' | 'upx' (original -compressed tarball); lite: 'normal' | 'compressed'; hiddify: only 'standard' exists */
 	if (!(core in ['hiddify', 'singbox', 'singbox-lite'])) {
 		result = { error: 'illegal core' };
 	} else {
@@ -710,18 +880,20 @@ let result;
 		if (!pkg_manager) {
 			result = { error: 'no supported package manager found (apk or opkg)' };
 		} else if (core === 'singbox-lite') {
-			/* The lite project ships an install.sh (no apk/ipk): it downloads
-			 * the right tar.gz for the arch, validates the binary, swaps it
-			 * and restarts the services it stopped. Pre-validate the same
-			 * thresholds here so the UI gets a clean error before any
-			 * download (the installer hard-fails mid-way otherwise). */
+			/* ч.265: lite = ПРЯМОЙ тарбол MANCrimSon с SHA256-гейтом (первичный
+			 * путь; лейаут установки идентичен их установщику: normal →
+			 * /usr/bin/sing-box, compressed → UPX-бинарник в
+			 * /usr/libexec/sing-box-core + sh-обёртка + /etc/sing-box-version.
+			 * cache). Их install.sh остаётся фолбэком на случай слепого API
+			 * (без гейта — note говорит об этом честно). Пороги те же, что у
+			 * установщика проекта. */
 			const arch = detect_arch();
 			if (!arch || !match(arch, /^[a-zA-Z0-9_-]+$/)) {
 				result = { error: 'could not detect device architecture' };
 			} else {
 				const tmp_free_kb = free_kb('/tmp');
 				if (tmp_free_kb < LITE_TMP_MIN_KB) {
-					result = { error: `not enough /tmp space for the lite installer: ${tmp_free_kb} KB free, need ~20 MB` };
+					result = { error: `not enough /tmp space for the lite tarball: ${tmp_free_kb} KB free, need ~20 MB` };
 				} else {
 					let overlay_free_kb = free_kb('/overlay');
 					if (!overlay_free_kb) overlay_free_kb = free_kb('/');
@@ -733,33 +905,41 @@ let result;
 					let chosen = variant;
 					if (chosen !== 'normal' && chosen !== 'compressed')
 						chosen = (effective_kb >= LITE_NORMAL_MIN_KB) ? 'normal' : 'compressed';
-					/* §1.7 V2 feed-first — NORMAL build only: the feed mirrors
-					 * the MANCrimSon normal tarball as a signed package; the
-					 * COMPRESSED (UPX wrapper) build stays on the proven
-					 * installer path (its layout is not replicated in the
-					 * feed, decision session 150). */
-					if (chosen === 'normal' && effective_kb >= LITE_NORMAL_MIN_KB && feed_configured()) {
-						const lite_cur = core_features_cached('/usr/bin/sing-box');
-						const cur = (lite_cur && lite_cur.version) ? lite_cur.version : '';
-						const cand = feed_candidate('sing-box-extended-lite');
-						if (cand &&
-						    (!length(cur) || feed_vercmp_base(feed_strip_rev(cand.version), cur) >= 0))
-							result = { pkg_manager, arch, variant: 'normal',
-								source: 'feed', feed_pkg: 'sing-box-extended-lite',
-								note: `own feed: sing-box-extended-lite ${cand.version}` };
-					}
-					if (result == null && chosen === 'normal' && effective_kb < LITE_NORMAL_MIN_KB) {
-						result = { error: `Not enough effective flash for the lite --normal build: ${effective_kb} KB free (need ~50 MB). Try the compressed (UPX) build — it needs ~96 MB free RAM.` };
-					} else if (result == null && chosen === 'compressed' && overlay_free_kb < LITE_COMPRESSED_MIN_KB) {
+					if (chosen === 'normal' && effective_kb < LITE_NORMAL_MIN_KB) {
+						result = { error: `Not enough effective flash for the lite normal build: ${effective_kb} KB free (need ~50 MB). Try the compressed (UPX) build — it needs ~96 MB free RAM.` };
+					} else if (chosen === 'compressed' && overlay_free_kb < LITE_COMPRESSED_MIN_KB) {
 						result = { error: `Not enough overlay for the lite compressed build: ${overlay_free_kb} KB free (need ~16 MB).` };
-					} else if (result == null && chosen === 'compressed' && ram_free_kb < LITE_COMPRESSED_RAM_KB) {
+					} else if (chosen === 'compressed' && ram_free_kb < LITE_COMPRESSED_RAM_KB) {
 						result = { error: `Not enough RAM for the lite compressed build: ${ram_free_kb} KB free (need ~96 MB — the UPX binary decompresses into RAM at launch).` };
-					} else if (result == null) {
-						result = {
-							pkg_manager, arch, variant: chosen,
-							installer_url: LITE_INSTALLER_URL,
-							tmp_path: `/tmp/sing-box-extended-lite-installer-${chosen}.sh`
-						};
+					} else {
+						const rel = gh_api(LITE_REPO_API, 20000);
+						const pick = rel ? resolve_original_asset('lite', chosen, rel, pkg_manager, arch)
+							: { error: 'failed to contact GitHub API' };
+						if (pick.error && rel) {
+							/* arch/asset mismatch — HARD error: their installer
+							 * would fail identically; refuse honestly up front. */
+							result = { error: pick.error };
+						} else if (pick.error) {
+							/* API blind: fall back to the original project installer
+							 * (no SHA256 gate exists on that path — the note says
+							 * so honestly). */
+							result = {
+								pkg_manager, arch, variant: chosen, source: 'installer',
+								note: 'GitHub API недоступен — ставим оригинальным установщиком проекта (без SHA256-гейта)',
+								installer_url: LITE_INSTALLER_URL,
+								tmp_path: `/tmp/sing-box-extended-lite-installer-${chosen}.sh`
+							};
+						} else {
+							result = {
+								pkg_manager, arch, variant: chosen,
+								source: 'upstream', kind: 'lite_tarball',
+								dl_url: pick.pick.url,
+								tmp_path: `/tmp/sing-box-extended-lite-${chosen}.tar.gz`,
+								sha256: pick.pick.sha256,
+								expect_version: pick.ver,
+								note: `original tarball (MANCrimSon ${pick.ver}${chosen === 'compressed' ? ', UPX' : ''})`
+							};
+						}
 					}
 				}
 			}
@@ -776,174 +956,81 @@ let result;
 					if (!overlay_free_kb) overlay_free_kb = free_kb('/');
 					const ram_free_kb = free_ram_kb();
 					const ext = pkg_manager === 'apk' ? '.apk' : '.ipk';
-					/* full-binary footprint depends on whether the overlay compresses */
-					const full_need = overlay_compresses() ? FULL_OVERLAY_COMP_KB : FULL_OVERLAY_RAW_KB;
 
-					/* §1.7 V2 feed-first for sing-box-extended: a manifest
-					 * candidate not older than the installed binary short-
-					 * circuits the GitHub API + asset download (the runner
-					 * installs via install_feed_pkg). Space gate = the same
-					 * full_need the asset path enforces below. */
-					let sb_feed_hit = null;
-					if (core !== 'hiddify' && feed_configured()) {
-						const sb_cur = core_features_cached('/usr/bin/sing-box');
-						const cur = (sb_cur && sb_cur.version) ? sb_cur.version : '';
-						const cand = feed_candidate('sing-box-extended');
-						if (cand && overlay_free_kb >= full_need &&
-						    (!length(cur) || feed_vercmp_base(feed_strip_rev(cand.version), cur) >= 0))
-							sb_feed_hit = { pkg_manager, arch, source: 'feed',
-								feed_pkg: 'sing-box-extended',
-								note: `own feed: sing-box-extended ${cand.version}` };
-					}
+					/* ч.265 (де-форк): НИКАКОГО фида и форка для ядер — только
+					 * оригинальные релизы с SHA256-гейтом. hiddify: оригинальный
+					 * apk/ipk (первичный; имена hiddify-core-<ver>-r<N>_<arch>) или
+					 * апстрим-тарбол (фолбэк, musl-CGO = NaïveProxy на борту),
+					 * обмен через staging на оверлее. sing-box-extended: shtorm-7
+					 * apk/ipk (sing-box-extended_<ver>_openwrt_<arch>); variant
+					 * 'upx' = оригинальный -compressed (UPX) тарбол — только по
+					 * явному выбору (на MIPS UPX ненадёжен — note честно скажет). */
 
 				if (core === 'hiddify') {
-					/* ч.129 (ан-146): ПЕРВИЧНЫЙ источник — оригинальный репозиторий
-					 * hiddify/hiddify-core (raw tar.gz per Go target). Форк 1andrevich
-					 * — только резерв: он заморожен на v4.1.0 (июнь 2026) и существует
-					 * лишь ради OpenWrt-пакетов (apk/ipk) и компактной UPX-сборки.
-					 * Апстрим-ветка: musl CGO-тарбол (= NaïveProxy на борту), путь
-					 * download → tar -xzf в staging на оверлее → атомарный swap.
-					 * Форк-ветка (пакет apk/ipk, ниже) остаётся как была: явный
-					 * variant='upx', немапленные архитектуры и устройства, которым
-					 * не хватает места под крупный апстрим-бинарник (~101 МиБ). */
-					const up_asset = HIDDIFY_UPSTREAM_ASSET[arch] || null;
-					const up_need = overlay_compresses() ? UP_FULL_OVERLAY_COMP_KB : UP_FULL_OVERLAY_RAW_KB;
-					const up_fits = up_asset && overlay_free_kb >= up_need && tmp_free_kb >= UP_FULL_TMP_KB;
-					/* §1.7 V2: the own feed — when its manifest candidate is not
-					 * older than the installed binary, take the package from
-					 * the feed (explicit file + sha256 + signature, no tarball
-					 * download at all). Everything that misses (not
-					 * configured, older candidate, no space, manifest blind)
-					 * falls through to the original upstream/fork paths below
-					 * — the fallback IS the old code. The compact build rides
-					 * the same feed as hiddify-core-compact (replaces the
-					 * frozen v4.1.0 fork apk; space-checked with the same
-					 * COMPACT_OVERLAY_KB). The install itself is the
-					 * generalized install_feed_pkg action below (runner calls
-					 * it with prep.feed_pkg). */
-					let feed_hit = null;
-					if (feed_configured()) {
-						const fpkg = (variant === 'upx') ? 'hiddify-core-compact' : 'hiddify-core';
-						const cur_info = core_features_cached('/usr/bin/hiddify-core');
-						const cur = cur_info.version || '';
-						const cand = feed_candidate(fpkg);
-						const fits = overlay_free_kb >= ((variant === 'upx') ? COMPACT_OVERLAY_KB : full_need);
-						if (cand && fits &&
-						    (!length(cur) || feed_vercmp_base(feed_strip_rev(cand.version), cur) >= 0))
-							feed_hit = { pkg_manager, arch,
-								variant: (variant === 'upx') ? 'upx' : 'standard',
-								source: 'feed', feed_pkg: fpkg,
-								note: `own apk feed: ${fpkg} ${cand.version}` };
-					}
-					if (feed_hit) {
-						result = feed_hit;
-					} else if (variant !== 'upx' && up_fits) {
-						result = {
-							pkg_manager, arch, variant: 'standard', source: 'upstream',
-							note: 'upstream build (hiddify/hiddify-core tar.gz)',
-							dl_url: HIDDIFY_UPSTREAM_DL + up_asset,
-							tmp_path: '/tmp/hiddify-core.tar.gz'
-						};
+					if (variant === 'upx') {
+						result = { error: 'у оригинального hiddify-core нет компактной UPX-сборки (форк ушёл) — доступна только полная сборка' };
 					} else {
-					/* Auto-pick the build from free overlay (+ free RAM for the compact one).
-					 * ARGV[2] ('standard'|'upx') is an advanced override; size-checked either way.
-					 * This is the guardrail for the "full binary truncates on a small overlay →
-					 * SIGBUS" trap: never offer a build the device can't actually hold/run. */
-					let chosen = variant;
-					let note = variant === 'upx'
-						? 'compact (UPX) build - fork-only: the original repository publishes no compact builds'
-						: null;
-					/* UPX-compressed binaries are crash-prone (SIGILL on startup) on these
-					 * soft-float MIPS targets, so never AUTO-pick the compact build there —
-					 * fall back to standard, or error cleanly. An explicit variant='upx'
-					 * override is still honored (advanced users). Non-MIPS arches (incl.
-					 * aarch64 like MT7622) are unaffected. */
-					const mips_no_auto_upx = (arch === 'mipsel_24kc' || arch === 'mips_24kc');
-					if (chosen !== 'standard' && chosen !== 'upx') {
-						if (overlay_free_kb >= full_need)
-							chosen = 'standard';
-						else if (mips_no_auto_upx)
-							chosen = null;   /* don't squeeze a crash-prone compact build onto tight-flash MIPS */
-						else if (overlay_free_kb >= COMPACT_OVERLAY_KB && ram_free_kb >= COMPACT_RAM_KB) {
-							chosen = 'upx';
-							note = 'Limited storage — installing the compact build (decompresses into RAM at launch).';
-						} else
-							chosen = null;
-					}
-
-					if (!chosen) {
-						result = mips_no_auto_upx
-							? { error: `Not enough overlay for the full build: ${overlay_free_kb} KB free, need ~${full_need} KB. The compact build is not offered on MIPS (UPX is unreliable there). Free up space, or bake the core into a custom firmware image.` }
-							: (overlay_free_kb >= COMPACT_OVERLAY_KB)
-							? { error: `Device too constrained: ${overlay_free_kb} KB free overlay (full build needs ~${full_need}) and only ${ram_free_kb} KB free RAM (compact build needs ~${COMPACT_RAM_KB}). Use sing-box-extended instead.` }
-							: { error: `Not enough storage: ${overlay_free_kb} KB free overlay, need at least ~${COMPACT_OVERLAY_KB} KB (~25 MB).` };
-					} else {
-						const need = (chosen === 'upx') ? COMPACT_OVERLAY_KB : full_need;
-						if (overlay_free_kb < need) {
-							result = { error: `Not enough overlay space for the ${chosen === 'upx' ? 'compact' : 'full'} build: ${overlay_free_kb} KB free, need ~${need} KB.` };
-						} else {
-							const hp_path = (chosen === 'upx') ? 'download/upx' : 'latest/download';
-							/* Piggybank ch.261(1г): carry the fork release tag so
-							 * install_pkg can refuse a silent downgrade of a newer
-							 * upstream binary (the fork repo is frozen at v4.1.0).
-							 * Best-effort: a throttled/blind GitHub only drops the
-							 * gate, never the install (the postcheck tail keeps the
-							 * outcome honest). Same wget idiom as the singbox
-							 * prepare branch above. */
-							let fork_ver = '';
-							const ffd = popen('wget -qO- --timeout=10 https://api.github.com/repos/1andrevich/homeproxy-hiddify/releases/latest 2>/dev/null');
-							if (ffd) {
-								const fout = trim(ffd.read('all'));
-								ffd.close();
-								const fm = match(fout, /"tag_name"\s*:\s*"([^"]+)"/);
-								if (fm) fork_ver = replace(fm[1], /^v/, '');
-							}
-							result = {
-								pkg_manager, arch, variant: chosen, note,
-								source: 'fork',
-								dl_url: `https://github.com/1andrevich/hiddify-core/releases/${hp_path}/hiddify-core_${arch}${ext}`,
-								tmp_path: `/tmp/hiddify-core${ext}`
-							};
-							if (length(fork_ver))
-								result.fork_version = fork_ver;
+						const rel = gh_api(HIDDIFY_UPSTREAM_API, 20000);
+						const pick = rel ? resolve_original_asset('hiddify', variant, rel, pkg_manager, arch)
+							: { error: 'failed to contact GitHub API' };
+						if (pick.error)
+							result = { error: pick.error };
+						else {
+							const gate = core_space_gate(pick.kind, overlay_free_kb, tmp_free_kb, ram_free_kb);
+							if (gate)
+								result = { error: gate };
+							else
+								result = {
+									pkg_manager, arch, variant: 'standard',
+									source: 'upstream', kind: pick.kind,
+									dl_url: pick.pick.url,
+									tmp_path: (pick.kind === 'pkg') ? `/tmp/hiddify-core${ext}` : '/tmp/hiddify-core.tar.gz',
+									sha256: pick.pick.sha256,
+									expect_version: pick.ver,
+									note: (pick.kind === 'pkg')
+										? `original package (hiddify/hiddify-core ${pick.ver})`
+										: `original tarball (hiddify/hiddify-core ${pick.ver})`
+								};
 						}
 					}
-					}
-				} else if (sb_feed_hit) {
-					result = sb_feed_hit;
-				} else if (overlay_free_kb < full_need) {
-						result = { error: `Not enough overlay space: ${overlay_free_kb} KB free, sing-box-extended needs ~${full_need} KB.` };
-					} else {
-						const api_fd = popen('wget -qO- --timeout=10 https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest 2>/dev/null');
-						if (!api_fd) {
-							result = { error: 'failed to contact GitHub API' };
+				} else {
+					const rel = gh_api(SBX7_API, 20000);
+					const pick = rel ? resolve_original_asset('singbox', variant, rel, pkg_manager, arch)
+						: { error: 'failed to contact GitHub API' };
+					if (pick.error)
+						result = { error: pick.error };
+					else {
+						const gate = core_space_gate(pick.kind, overlay_free_kb, tmp_free_kb, ram_free_kb);
+						if (gate) {
+							result = { error: gate };
+						} else if (pick.kind === 'sbx_upx') {
+							const mips_note = (arch === 'mipsel_24kc' || arch === 'mips_24kc')
+								? ' (UPX на MIPS ненадёжен — установлен по явному выбору)' : '';
+							result = {
+								pkg_manager, arch, variant: 'upx',
+								source: 'upstream', kind: 'sbx_upx',
+								dl_url: pick.pick.url,
+								tmp_path: '/tmp/sing-box-extended-compressed.tar.gz',
+								sha256: pick.pick.sha256,
+								expect_version: pick.ver,
+								note: `original UPX tarball (shtorm-7 ${pick.ver})${mips_note}`
+							};
 						} else {
-							const api_raw = trim(api_fd.read('all')); api_fd.close();
-							let api_data;
-							try { api_data = json(api_raw); } catch(e) { api_data = null; }
-							if (!api_data?.tag_name) {
-								result = { error: 'could not determine latest version from GitHub' };
-							} else {
-								let dl_url = null;
-								for (let asset in (api_data?.assets || [])) {
-									const n = asset?.name || '';
-									if (!match(n, /openwrt/)) continue;
-									if (length(split(n, arch)) < 2) continue;
-									if (ext === '.apk' && !match(n, /\.apk$/)) continue;
-									if (ext === '.ipk' && !match(n, /\.ipk$/)) continue;
-									dl_url = asset?.browser_download_url;
-									break;
-								}
-								if (!dl_url)
-									result = { error: `no package found for arch ${arch} in latest release` };
-								else
-									result = { pkg_manager, arch, dl_url, tmp_path: `/tmp/sing-box-extended${ext}` };
-							}
+							result = {
+								pkg_manager, arch, variant: 'standard',
+								source: 'upstream', kind: 'pkg',
+								dl_url: pick.pick.url,
+								tmp_path: `/tmp/sing-box-extended${ext}`,
+								sha256: pick.pick.sha256,
+								expect_version: pick.ver,
+								note: `original package (shtorm-7 ${pick.ver})`
+							};
 						}
 					}
 				}
 			}
 		}
+	}
 	}
 
 } else if (action === 'download_pkg') {
@@ -963,19 +1050,223 @@ let result;
 		result = exit_code === 0 ? { result: true } : { result: false, error: 'download failed' };
 	}
 
+} else if (action === 'verify_sha') {
+	/* ч.265: honesty gate for EVERY original-source download — the runner and
+	 * install.sh call this between download_pkg and install_pkg with the
+	 * per-asset digest taken from the GitHub API (decision 3). A mismatch
+	 * removes the file and refuses loudly. */
+	const tmp_path = ARGV[1];
+	const want = trim(ARGV[2] || '');
+	if (!tmp_path || !match(want, /^[0-9a-f]{64}$/)) {
+		result = { result: false, error: 'verify_sha: missing or invalid arguments' };
+	} else if (!access(tmp_path)) {
+		result = { result: false, error: `downloaded file ${tmp_path} is missing` };
+	} else {
+		let sum = '';
+		const fd = popen(`sha256sum ${shellquote(tmp_path)} 2>/dev/null`);
+		if (fd) { sum = trim(fd.read('all')); fd.close(); }
+		const m = match(sum, /^([0-9a-f]{64})/);
+		if (!m) {
+			result = { result: false, error: 'sha256sum failed for the downloaded file' };
+		} else if (m[1] != want) {
+			system(`rm -f ${shellquote(tmp_path)}`);
+			result = { result: false, error: `SHA256 mismatch: expected ${want}, got ${m[1]} — файл удалён` };
+		} else {
+			result = { result: true, sha256: m[1] };
+		}
+	}
+
+} else if (action === 'remote_tags') {
+	/* ч.265: rollback helper — the last ~10 release tags of the ORIGINAL repo
+	 * for a core family. Nothing is cached on the router (decision 8): the UI
+	 * fetches this list live every time. */
+	const core = ARGV[1];
+	if (!(core in ['hiddify', 'singbox', 'singbox-lite'])) {
+		result = { error: 'illegal core' };
+	} else {
+		const data = gh_api(`https://api.github.com/repos/${core_repo(core)}/releases?per_page=12`, 15000);
+		if (!data || type(data) != 'array') {
+			result = { error: 'no response from GitHub API' };
+		} else {
+			const tags = [];
+			for (let r in data) {
+				if (!r || r.draft || !r.tag_name) continue;
+				push(tags, { tag: r.tag_name, version: replace('' + r.tag_name, /^v/, ''),
+					name: r.name || '', date: (r.published_at || '') });
+				if (length(tags) >= 10) break;
+			}
+			result = { tags };
+		}
+	}
+
+} else if (action === 'prepare_rollback') {
+	/* ч.265: ЯВНЫЙ откат (решения 8/9) — пользователь выбирает тег, prepare
+	 * резолвит ИМЕННО этот релиз (не latest): apk/ipk оригинала при наличии,
+	 * иначе тарбол; SHA256-гейт тот же; гейт «не новее» ОБХОДИТСЯ — но только
+	 * потому, что install_pkg получит mode='rollback'. Кэшей на роутере нет:
+	 * скачивание по запросу, tmp-файл удаляется сразу после установки. */
+	const core = ARGV[1];
+	const variant = ARGV[2] || '';
+	const tag = trim(ARGV[3] || '');
+	if (!(core in ['hiddify', 'singbox', 'singbox-lite'])) {
+		result = { error: 'illegal core' };
+	} else if (!length(tag) || !match(tag, /^[a-zA-Z0-9._-]+$/)) {
+		result = { error: 'illegal tag' };
+	} else {
+		const pkg_manager = detect_pkg_manager();
+		if (!pkg_manager) {
+			result = { error: 'no supported package manager found (apk or opkg)' };
+		} else if (core === 'hiddify' && variant === 'upx') {
+			result = { error: 'у оригинального hiddify-core нет компактной UPX-сборки — откат ставит полную сборку' };
+		} else {
+			const arch = detect_arch();
+			if (!arch || !match(arch, /^[a-zA-Z0-9_-]+$/)) {
+				result = { error: 'could not detect device architecture' };
+			} else {
+				const rel = gh_api(`https://api.github.com/repos/${core_repo(core)}/releases/tags/${tag}`, 20000);
+				if (!rel || !rel.tag_name) {
+					result = { error: `тег ${tag} не найден в оригинальном репозитории (GitHub недоступен или тега нет)` };
+				} else {
+					const pick = resolve_original_asset(core, (core === 'hiddify') ? 'standard' : variant, rel, pkg_manager, arch);
+					if (pick.error) {
+						result = { error: pick.error };
+					} else {
+						const tmp_free_kb = free_kb('/tmp');
+						if (tmp_free_kb < 30720) {
+							result = { error: `not enough /tmp space: ${tmp_free_kb} KB free, need 30 MB` };
+						} else if (core !== 'singbox-lite') {
+							let overlay_free_kb = free_kb('/overlay');
+							if (!overlay_free_kb) overlay_free_kb = free_kb('/');
+							const ram_free_kb = free_ram_kb();
+							const gate = core_space_gate(pick.kind, overlay_free_kb, tmp_free_kb, ram_free_kb);
+							if (gate) {
+								result = { error: gate };
+							} else {
+								const ext = (pkg_manager === 'apk') ? '.apk' : '.ipk';
+								result = {
+									pkg_manager, arch,
+									variant: (pick.kind === 'sbx_upx') ? 'upx' : (pick.kind === 'lite_tarball' ? variant : 'standard'),
+									source: 'upstream', kind: pick.kind, mode: 'rollback',
+									dl_url: pick.pick.url,
+									tmp_path: (pick.kind === 'pkg')
+										? ((core === 'hiddify') ? `/tmp/hiddify-core${ext}` : `/tmp/sing-box-extended${ext}`)
+										: (core === 'hiddify') ? '/tmp/hiddify-core.tar.gz'
+											: (pick.kind === 'sbx_upx') ? '/tmp/sing-box-extended-compressed.tar.gz'
+											: `/tmp/sing-box-extended-lite-${variant || 'normal'}.tar.gz`,
+									sha256: pick.pick.sha256,
+									expect_version: pick.ver,
+									note: `rollback to ${rel.tag_name} (${core_repo(core)})`
+								};
+							}
+						} else {
+							/* lite rollback: the same effective-flash accounting as prepare_install */
+							let overlay_free_kb = free_kb('/overlay');
+							if (!overlay_free_kb) overlay_free_kb = free_kb('/');
+							const cur_kb = int(bin_bytes('/usr/bin/sing-box') / 1024);
+							const effective_kb = overlay_free_kb + cur_kb;
+							const ram_free_kb = free_ram_kb();
+							if ((variant !== 'compressed') && effective_kb < LITE_NORMAL_MIN_KB) {
+								result = { error: `Not enough effective flash for the lite normal rollback: ${effective_kb} KB free (need ~50 MB).` };
+							} else if ((variant === 'compressed') && (overlay_free_kb < LITE_COMPRESSED_MIN_KB || ram_free_kb < LITE_COMPRESSED_RAM_KB)) {
+								result = { error: `Not enough overlay/RAM for the lite compressed rollback (${overlay_free_kb} KB / ${ram_free_kb} KB free).` };
+							} else {
+								result = {
+									pkg_manager, arch, variant: variant || 'normal',
+									source: 'upstream', kind: 'lite_tarball', mode: 'rollback',
+									dl_url: pick.pick.url,
+									tmp_path: `/tmp/sing-box-extended-lite-${variant || 'normal'}.tar.gz`,
+									sha256: pick.pick.sha256,
+									expect_version: pick.ver,
+									note: `rollback to ${rel.tag_name} (MANCrimSon${variant === 'compressed' ? ', UPX' : ''})`
+								};
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 } else if (action === 'install_pkg') {
 	const core        = ARGV[1];
 	const tmp_path    = ARGV[2];
 	const pkg_manager = ARGV[3];
+	const cand_ver    = trim(ARGV[4] || '');   /* candidate version from prepare — silent-downgrade gate input */
+	const mode        = trim(ARGV[5] || '');   /* '' | 'rollback' — ONLY the explicit rollback bypasses the gate */
 	if (!(core in ['hiddify', 'singbox', 'singbox-lite']) || !tmp_path || !pkg_manager) {
 		result = { result: false, error: 'invalid arguments' };
+	} else if (mode !== 'rollback' && length(cand_ver) && core_downgrade_error(core, cand_ver)) {
+		/* Silent downgrade refused (ch.261 gate survives the de-fork). An
+		 * explicit user rollback (chosen older tag) lands here with
+		 * mode='rollback' — decision 8/9. */
+		result = { result: false, error: core_downgrade_error(core, cand_ver) };
+	} else if (core === 'singbox-lite' && match(tmp_path, /\.tar\.gz$/)) {
+		/* ч.265: direct ORIGINAL tarball (MANCrimSon), SHA256-checked by the
+		 * verify stage before this. Layout replication of their installer:
+		 * normal → plain binary at /usr/bin/sing-box; compressed → UPX binary
+		 * at /usr/libexec/sing-box-core + tiny sh wrapper at /usr/bin/sing-box
+		 * (answers `version` from /etc/sing-box-version.cache). Staging ON the
+		 * overlay (tens of MB do not fit small tmpfs), mv = rename(2). */
+		const vm = match(tmp_path, /-(normal|compressed)\.tar\.gz$/);
+		const compressed = (vm && vm[1] === 'compressed');
+		const stage = '/usr/libexec/.lite-up';
+		const cmd =
+			`{ rm -rf ${shellquote(stage)}; mkdir -p ${shellquote(stage)}; }` +
+			` && tar -xzf ${shellquote(tmp_path)} -C ${shellquote(stage)}` +
+			` && BIN=$(find ${shellquote(stage)} -type f -name sing-box | head -n1)` +
+			` && [ -n "$BIN" ] && [ -s "$BIN" ]` +
+			` && chmod 755 "$BIN"` +
+			` && "$BIN" version >/dev/null 2>&1` +
+			(compressed
+				? ` && mv -f "$BIN" /usr/libexec/sing-box-core`
+				: ` && mv -f "$BIN" /usr/bin/sing-box && rm -f /usr/libexec/sing-box-core`) +
+			` && rm -rf ${shellquote(stage)} ${shellquote(tmp_path)}`;
+		const exit_code = system(cmd, 300000);
+		if (exit_code !== 0) {
+			system(`rm -rf ${shellquote(stage)}`);
+			result = { result: false, error: 'lite tarball extraction/validation failed' };
+		} else {
+			/* Version cache + wrapper — the installer's contract, byte-for-byte
+			 * (the wrapper answers `version` from the cache, everything else
+			 * execs the real binary). Writing the wrapper goes through a temp
+			 * file + rename: overwriting a RUNNING exe with open/truncate
+			 * fails with ETXTBSY, rename(2) does not. */
+			const real_bin = compressed ? '/usr/libexec/sing-box-core' : '/usr/bin/sing-box';
+			let banner = '';
+			const bfd = popen(`${shellquote(real_bin)} version 2>/dev/null`);
+			if (bfd) { banner = trim(bfd.read('all')); bfd.close(); }
+			if (length(banner)) {
+				system('mkdir -p /etc');
+				const tmp_cache = '/etc/sing-box-version.cache.tmp';
+				writefile(tmp_cache, banner + '\n');
+				rename(tmp_cache, '/etc/sing-box-version.cache');
+				system('chmod 644 /etc/sing-box-version.cache 2>/dev/null; true');
+			}
+			if (compressed) {
+				const tmp_wrap = '/usr/bin/.sing-box.wrap';
+				writefile(tmp_wrap,
+					'#!/bin/sh\n' +
+					'REAL_BIN="/usr/libexec/sing-box-core"\n' +
+					'VERSION_CACHE="/etc/sing-box-version.cache"\n\n' +
+					'if [ "$#" -eq 1 ] && [ "$1" = "version" ]; then\n' +
+					'    if [ -s "$VERSION_CACHE" ]; then\n' +
+					'        cat "$VERSION_CACHE"\n' +
+					'        exit 0\n' +
+					'    fi\n' +
+					'fi\n\n' +
+					'exec "$REAL_BIN" "$@"\n');
+				rename(tmp_wrap, '/usr/bin/sing-box');
+				system('chmod 755 /usr/bin/sing-box 2>/dev/null; true');
+			}
+			result = { result: true, note: `original tarball installed (${compressed ? 'UPX' : 'normal'})` };
+		}
 	} else if (core === 'singbox-lite') {
-		/* The lite project ships install.sh only (no apk/ipk): it downloads the
-		 * right tar.gz for the arch, validates the binary, swaps it and
-		 * restarts the services it stopped (with an automatic rollback to the
-		 * previous binary if the new core does not come up). Run it with the
-		 * variant flag prepare_install already chose; keep the log for
-		 * diagnostics and confirm the core is actually running afterwards. */
+		/* FALLBACK (ч.265): the lite project's own install.sh — used only when
+		 * the GitHub API was blind at prepare time (see prepare_install). It
+		 * downloads the right tar.gz for the arch, validates the binary, swaps
+		 * it and restarts the services it stopped (with an automatic rollback
+		 * to the previous binary if the new core does not come up). No SHA256
+		 * gate exists on this path — the prepare note says so honestly. */
 		if (!match(tmp_path, /^\/tmp\/[a-zA-Z0-9._-]+\.sh$/)) {
 			result = { result: false, error: 'unexpected installer path' };
 		} else {
@@ -1022,6 +1313,29 @@ let result;
 				: { result: true, warning: `installer finished but sing-box is not running — see ${logf}` };
 		}
 		}
+	} else if (core === 'singbox' && match(tmp_path, /\.tar\.gz$/)) {
+		/* ч.265: original -compressed (UPX) tarball of shtorm-7 — the explicit
+		 * «extended-UPX» variant. Same staging pattern as the hiddify tarball;
+		 * a UPX binary self-unpacks at exec (crash-prone on soft-float MIPS —
+		 * that is why AUTO-pick never chose it there; the explicit choice
+		 * lands here with eyes open). */
+		const stage = '/usr/libexec/.sbx-up';
+		const sib_up = FEED_SIBLING['sing-box-extended'];
+		if (sib_up)
+			system(`${(pkg_manager === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib_up)} >/dev/null 2>&1; true`);
+		const cmd =
+			`{ rm -rf ${shellquote(stage)}; mkdir -p ${shellquote(stage)}; }` +
+			` && tar -xzf ${shellquote(tmp_path)} -C ${shellquote(stage)}` +
+			` && BIN=$(find ${shellquote(stage)} -type f -name sing-box | head -n1)` +
+			` && [ -n "$BIN" ] && [ -s "$BIN" ]` +
+			` && "$BIN" version >/dev/null 2>&1` +
+			` && mv -f "$BIN" /usr/bin/sing-box` +
+			` && rm -rf ${shellquote(stage)} ${shellquote(tmp_path)}` +
+			` && rm -f /usr/libexec/sing-box-core /etc/sing-box-version.cache`;
+		const exit_code = system(cmd, 300000);
+		result = exit_code === 0
+			? { result: true, note: 'original UPX tarball installed' }
+			: { result: false, error: 'UPX tarball extraction/validation failed' };
 	} else if (core === 'hiddify' && match(tmp_path, /\.tar\.gz$/)) {
 		/* ч.129 (ан-146): апстрим-тарбол hiddify/hiddify-core. Структура:
 		 * hiddify-core-linux-<target>[-musl]/hiddify-core (+ LICENSE.md).
@@ -1047,18 +1361,14 @@ let result;
 			` && rm -rf ${shellquote(stage)} ${shellquote(tmp_path)}`;
 		const exit_code = system(cmd, 300000);
 		result = exit_code === 0
-			? { result: true, note: 'upstream tar.gz build installed' }
+			? { result: true, note: 'original tarball installed' }
 			: { result: false, error: 'upstream tarball extraction/validation failed' };
-	} else if (length(trim(ARGV[4] || '')) && fork_downgrade_error(core, trim(ARGV[4] || ''))) {
-		/* Fork/compact branch only (the runner passes prep.fork_version);
-		 * upstream-tarball/sing-box-asset stay latest-only by design. */
-		result = { result: false, error: fork_downgrade_error(core, trim(ARGV[4] || '')) };
 	} else {
-		/* Sibling hygiene (session 173 — mirror of the feed path): the fork
+		/* Sibling hygiene (session 173 — mirror of the feed path): the original
 		 * apk / GitHub asset occupies the same binary slot as its sibling;
 		 * installing it must not leave the sibling record behind (the next
 		 * feed update would silently flip the family back). Best-effort;
-		 * the lite core is owned by the external installer — skipped above. */
+		 * the lite core is owned by its installer/tarball paths — skipped above. */
 		const sib_fam = (core === 'hiddify')
 			? FEED_SIBLING['hiddify-core']
 			: FEED_SIBLING['sing-box-extended'];
@@ -1066,18 +1376,11 @@ let result;
 			system(`${(pkg_manager === 'apk') ? 'apk del' : 'opkg remove'} ${shellquote(sib_fam)} >/dev/null 2>&1; true`);
 		let exit_code;
 		if (core === 'hiddify' && pkg_manager === 'apk') {
-			/* Signing key: skip the fetch if already present (a provisioning tool may pre-place
-			 * it); else GitHub-first, mirror-FALLBACK via gh_fetch, best-effort (a
-			 * throttled/blocked GitHub must NOT fail the install — the package already
-			 * arrived over HTTPS). Install trusted if the key is there, else untrusted. */
-			if (!access('/etc/apk/keys/homeproxy-hiddify.pub')) {
-				if (gh_fetch('https://github.com/1andrevich/homeproxy-hiddify/releases/latest/download/homeproxy-hiddify.pub', '/tmp/homeproxy-hiddify.pub', 20000) === 0)
-					system('[ -s /tmp/homeproxy-hiddify.pub ] && cp /tmp/homeproxy-hiddify.pub /etc/apk/keys/ 2>/dev/null; rm -f /tmp/homeproxy-hiddify.pub');
-			}
-			if (access('/etc/apk/keys/homeproxy-hiddify.pub'))
-				exit_code = system(`apk add ${shellquote(tmp_path)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp_path)}; exit $RC`, 120000);
-			else
-				exit_code = system(`apk add --allow-untrusted ${shellquote(tmp_path)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp_path)}; exit $RC`, 120000);
+			/* ч.265 (де-форк): оригинальные пакеты hiddify НЕ подписаны нашим
+			 * ключом — --allow-untrusted всегда (ключ 1andrevich/homeproxy-
+			 * hiddify удалён вместе с форк-веткой). Целостность держит
+			 * SHA256-гейт verify-стадии (digest из GitHub API). */
+			exit_code = system(`apk add --allow-untrusted ${shellquote(tmp_path)} >/dev/null 2>&1; RC=$?; rm -f ${shellquote(tmp_path)}; exit $RC`, 120000);
 		} else if (pkg_manager === 'apk') {
 			/* sing-box-extended has no signing key — allow-untrusted is unavoidable */
 			exit_code = system(

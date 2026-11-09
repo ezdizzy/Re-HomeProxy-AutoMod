@@ -7727,3 +7727,57 @@ msgstr ""
 
 msgid "last auto-apply: %s"
 msgstr ""
+
+msgid "Hiddify fork of sing-box 1.13 (HiddifyCli), installed from the ORIGINAL hiddify/hiddify-core releases (apk/ipk package or tarball, SHA256-gated). Runs every protocol this app can configure, including NaïveProxy and Hiddify's Mieru dialect. Best compatibility with Hiddify App / Hiddify Manager exports."
+msgstr ""
+
+msgid "Lightweight sing-box 1.14 build by MANCrimSon, installed from the ORIGINAL release tarball (SHA256-gated; their own installer stays as a fallback): VLESS Reality, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard/AmneziaWG (kernel stack) and the Clash API — ~46 MB pure ELF / ~10 MB UPX. No NaïveProxy, MASQUE/WARP, Tailscale or gVisor: such nodes are skipped automatically when this core runs."
+msgstr ""
+
+msgid "Extended sing-box 1.14 base by shtorm-7, installed from the ORIGINAL releases (apk/ipk package; an original UPX-compressed tarball is offered for small flash). Runs every protocol this app can configure plus WARP / MASQUE / TrustTunnel / MTProxy extras — but no NaïveProxy: such nodes are skipped automatically when this core runs."
+msgstr ""
+
+msgid "Verifying SHA256..."
+msgstr ""
+
+msgid "Probing the new core and restarting..."
+msgstr ""
+
+msgid "Rollback"
+msgstr ""
+
+msgid "Roll the core back to an older ORIGINAL release"
+msgstr ""
+
+msgid "Fetching the release tags of the original repository..."
+msgstr ""
+
+msgid "Failed to fetch the tag list"
+msgstr ""
+
+msgid "Choose the release to roll back to:"
+msgstr ""
+
+msgid "currently running"
+msgstr ""
+
+msgid "The selected release is downloaded fresh, verified by SHA256 and installed as an explicit downgrade — only this confirmation bypasses the no-silent-downgrade gate. Nothing is cached on the router: the archive is deleted right after the install."
+msgstr ""
+
+msgid "Roll back to the selected release"
+msgstr ""
+
+msgid "Rollback cancelled"
+msgstr ""
+
+msgid "Starting the rollback to %s..."
+msgstr ""
+
+msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea/byedpi</a> (installed from the original releases, SHA256-gated). Enable on the Connection page; strategies are configured on the Blocking bypass page."
+msgstr ""
+
+msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2, installed from the original openwrt-embedded release, SHA256-gated). Configure on the Blocking bypass page."
+msgstr ""
+
+msgid "Own signed package source for OUR components (the app, mosdns, the automation helpers) and our own apk/ipk packaging of the DPI engines built from the original upstream binaries. Every component installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. The PROXY CORES are no longer delivered through this source: they install from the original upstream releases (SHA256-gated)."
+msgstr ""

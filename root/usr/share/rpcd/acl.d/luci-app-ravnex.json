@@ -44,7 +44,7 @@
 			},
 			"ubus": {
 				"luci.ravnex": [
-					"acllist_write", "certificate_write", "server_cert_generate", "log_clean", "core_install_start", "detect_custom_core",
+					"acllist_write", "certificate_write", "server_cert_generate", "log_clean", "core_install_start", "core_rollback_tags", "detect_custom_core",
 					"app_subscription_update_start", "app_subscription_add", "app_subscription_remove",
 					"monitor_connections_close", "diag_config_heal", "diag_service_restart",
 					"byedpi_prepare_install", "byedpi_install_pkg", "byedpi_remove",

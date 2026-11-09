@@ -1,10 +1,12 @@
 name: Build Ravnex package feed
 
-# §1.7 "own package repository" (Ф11 V2): builds our components (hiddify-core
-# full + UPX compact, mosdns, probe_pool, sni_sniffer) AND mirrors the foreign
-# components (sing-box-extended, sing-box-extended-lite, byedpi, zapret2 —
-# payloads rebuilt and signed with OUR key, name/version preserved) into
-# signed apk v3 packages + ipk packages + manifest.json per OpenWrt arch.
+# §1.7 "own package repository" (Ф11 V2; ч.265 «ВСЁ ИЗ ОРИГИНАЛОВ»): builds
+# OUR components (mosdns, probe_pool, sni_sniffer) and OUR OWN apk+ipk
+# packaging of the two DPI engines from their ORIGINAL upstream binaries
+# (byedpi ← hufrea static tarballs, zapret2 ← bol-van openwrt-embedded).
+# The proxy cores left the feed entirely — hiddify/shtorm-7/MANCrimSon
+# publish their own artifacts and the app installs them straight from the
+# originals (SHA256 API-digest gate in core_mgmt.uc).
 #
 # Contract (session 150): the client NEVER resolves through repositories (no
 # repositories.d line — a foreign feed could out-version our components via
@@ -74,7 +76,7 @@ jobs:
         run: |
           sudo -E rm -rf /var/lib/man-db/auto-update
           sudo -E apt-get update -qq
-          sudo -E apt-get install -y build-essential curl libssl-dev lua5.1 meson ninja-build zip upx-ucl jq zstd
+          sudo -E apt-get install -y build-essential curl libssl-dev lua5.1 meson ninja-build zip jq zstd
 
           pushd apk-tools
           meson setup build \

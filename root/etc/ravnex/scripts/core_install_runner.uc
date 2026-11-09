@@ -113,6 +113,7 @@ function run_action(action, args, timeout_ms, op_id) {
 	 * mid-flight on a slow link and left a partial tmp file (audit 2026-10-25);
 	 * 650 s covers the full budget. */
 	const caps = { download_pkg: 650000, install_pkg: 900000, install_feed_pkg: 650000,
+		verify_sha: 60000,
 		/* 420 s: the FIRST exec of a freshly written ~100 MB Go binary is a
 		 * cold-flash read — the version probe alone took ~45 s live (worse on
 		 * slow flash); the restart cycle itself is ~12 s. */
@@ -188,9 +189,13 @@ function uev(ok, core, variant, detail) {
 
 function main() {
 	/* ARGV[0] = the first script argument (ucode convention, same as
-	 * core_mgmt.uc's `const action = ARGV[0]`). */
+	 * core_mgmt.uc's `const action = ARGV[0]`). ARGV[2] = an explicit
+	 * release TAG — presence switches the flow into the ROLLBACK mode
+	 * (seance 177: user-chosen older release, the silent-downgrade gate is
+	 * bypassed with mode='rollback' on install_pkg). */
 	const core = ARGV[0];
 	const variant = ARGV[1] || '';
+	const tag = trim(ARGV[2] || '');
 
 	if (!(core in ['hiddify', 'singbox', 'singbox-lite'])) {
 		wstatus({ running: false, ok: false, error: 'illegal core', finished: time() });
@@ -217,7 +222,8 @@ function main() {
 	 * app_op_list with a live heartbeat; a runner death self-heals via the
 	 * 120 s lease. A busy journal never blocks the install — the mkdir lock
 	 * above is the real serializer, the op is the record. */
-	const opr = op_begin('core_install', 'install ' + core + (length(variant) ? ' ' + variant : ''),
+	const opr = op_begin('core_install', (length(tag) ? 'rollback ' : 'install ') + core +
+		(length(variant) ? ' ' + variant : '') + (length(tag) ? ' → ' + tag : ''),
 		'core_install_runner', 'background core install');
 	const op_id = (opr && opr.ok) ? opr.op.op_id : null;
 
@@ -229,7 +235,8 @@ function main() {
 		try { op_stage(op_id, 'prepare'); } catch (e) { /* journal hiccup */ }
 	}
 
-	const prep = run_action('prepare_install', [core, variant], null, op_id);
+	const prep = run_action(length(tag) ? 'prepare_rollback' : 'prepare_install',
+		length(tag) ? [core, variant, tag] : [core, variant], null, op_id);
 	if (prep.error || prep.result === false) {
 		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: prep.error || 'prepare failed', started: started, finished: time(), op_id: op_id });
 		uev(false, core, variant, 'стадия prepare: ' + (prep.error || 'prepare failed'));
@@ -242,65 +249,11 @@ function main() {
 	}
 
 	const dl_url = prep.dl_url || prep.installer_url;
-	if (prep.source !== 'feed' && (!dl_url || !prep.tmp_path)) {
+	if (!dl_url || !prep.tmp_path) {
 		wstatus({ running: false, ok: false, core: core, stage: 'prepare', error: 'prepare returned no download URL', started: started, finished: time(), op_id: op_id });
 		uev(false, core, variant, 'стадия prepare: нет ссылки на загрузку');
 		if (op_id) {
 			try { op_finish(op_id, false, false, 'prepare returned no download URL'); } catch (e) { /* journal hiccup */ }
-		}
-		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
-		rmdir(LOCK_DIR);
-		return;
-	}
-
-	if (prep.source === 'feed') {
-		/* §1.7: the own apk feed provides the package — NO download stage at
-		 * all; install straight from the feed. prepare_install only picks
-		 * this path when the feed is configured and its candidate is not
-		 * older than the installed binary, so the classic upstream/fork
-		 * paths below remain the fallback. */
-		wstatus({ running: true, core: core, variant: variant, stage: 'install', note: prep.note || '', started: started, ts: time(), op_id: op_id });
-		if (op_id) {
-			try { op_stage(op_id, 'install'); } catch (e) { /* journal hiccup */ }
-		}
-		const inst = run_action('install_feed_pkg', [prep.feed_pkg], null, op_id);
-		if (!inst.result) {
-			wstatus({ running: false, ok: false, core: core, stage: 'install', error: inst.error || 'feed installation failed', started: started, finished: time(), op_id: op_id });
-			uev(false, core, variant, 'стадия install (feed): ' + (inst.error || 'feed installation failed'));
-			if (op_id) {
-				try { op_finish(op_id, false, false, 'feed install: ' + (inst.error || 'failed')); } catch (e) { /* journal hiccup */ }
-			}
-			try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
-			rmdir(LOCK_DIR);
-			return;
-		}
-		const kmods = run_action('install_kmods', [prep.pkg_manager], null, op_id);
-		/* Field report 2026-11-08: the feed branch used to end HERE — the
-		 * binary on disk was replaced but the RUNNING core kept serving the
-		 * old version forever (the "caller restarts" contract had no
-		 * caller). Probe the new binary, restart the service and verify
-		 * identity liveness; only then is the op honestly verified. */
-		wstatus({ running: true, core: core, variant: variant, stage: 'postcheck', started: started, ts: time(), op_id: op_id });
-		if (op_id) {
-			try { op_stage(op_id, 'postcheck'); } catch (e) { /* journal hiccup */ }
-		}
-		const pc = run_action('postcheck_restart', [core, (inst.version || '')], null, op_id);
-		const ok_install = (pc && pc.result === true && pc.alive === true);
-		const tail_note = ok_install
-			? ((inst.note || 'feed install') + ((pc.version) ? `; ядро перезапущено (${pc.version})` : ''))
-			: ((pc && pc.error) || 'postcheck failed');
-		wstatus({
-			running: false, ok: ok_install, core: core, stage: 'done',
-			started: started, finished: time(),
-			note: ok_install ? tail_note : null,
-			error: ok_install ? null : tail_note,
-			warning: inst.warning || null,
-			kmods_ok: (kmods && kmods.result === true) ? true : false,
-			op_id: op_id
-		});
-		uev(ok_install, core, variant, tail_note);
-		if (op_id) {
-			try { op_finish(op_id, ok_install, ok_install, tail_note); } catch (e) { /* journal hiccup */ }
 		}
 		try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
 		rmdir(LOCK_DIR);
@@ -323,13 +276,36 @@ function main() {
 		return;
 	}
 
+	/* SHA256 honesty gate (decision 3, seance 177): EVERY original-source
+	 * download is verified against the per-asset GitHub-API digest BEFORE
+	 * anything touches the system. Prepares that cannot know a digest (the
+	 * lite installer fallback) carry no sha256 — that stage is skipped and
+	 * the prepare note says so honestly. */
+	if (length('' + (prep.sha256 || ''))) {
+		wstatus({ running: true, core: core, variant: variant, stage: 'verify', started: started, ts: time(), op_id: op_id });
+		if (op_id) {
+			try { op_stage(op_id, 'verify'); } catch (e) { /* journal hiccup */ }
+		}
+		const vf = run_action('verify_sha', [prep.tmp_path, '' + prep.sha256], null, op_id);
+		if (!vf.result) {
+			wstatus({ running: false, ok: false, core: core, stage: 'verify', error: vf.error || 'SHA256 verification failed', started: started, finished: time(), op_id: op_id });
+			uev(false, core, variant, 'стадия verify: ' + (vf.error || 'SHA256 verification failed'));
+			if (op_id) {
+				try { op_finish(op_id, false, false, 'verify: ' + (vf.error || 'SHA256 verification failed')); } catch (e) { /* journal hiccup */ }
+			}
+			try { unlink(STAGE_FILE); } catch (e) { /* already gone */ }
+			rmdir(LOCK_DIR);
+			return;
+		}
+	}
+
 	wstatus({ running: true, core: core, variant: variant, stage: 'install', note: prep.note || '', started: started, ts: time(), op_id: op_id });
 	if (op_id) {
 		try { op_stage(op_id, 'install'); } catch (e) { /* journal hiccup */ }
 	}
-	const inst = run_action('install_pkg', (length('' + (prep.fork_version || '')))
-		? [core, prep.tmp_path, prep.pkg_manager, '' + prep.fork_version]
-		: [core, prep.tmp_path, prep.pkg_manager], null, op_id);
+	const inst = run_action('install_pkg',
+		[core, prep.tmp_path, prep.pkg_manager, '' + (prep.expect_version || ''), '' + (prep.mode || '')],
+		null, op_id);
 	if (!inst.result) {
 		/* Recovery: the binary swap may have happened before the installer
 		 * died (health-check hang) — detect a valid lite/extended build on
@@ -373,27 +349,21 @@ function main() {
 	const kmods = run_action('install_kmods', [prep.pkg_manager], null, op_id);
 	/* kmod failure is not fatal: usually already present from a previous core */
 
-	/* ч.260 symmetry (FIX D, session 173): the feed branch ends with a
-	 * postcheck_restart probe; the fork-apk / upstream-tarball / asset
-	 * branches used to end here with the FILE replaced and the OLD core
-	 * still serving — the UI showed «успешно» plus the new on-disk version
-	 * (the same honesty class as the feed bug ch.260 fixed). Same tail
-	 * here: probe the new binary, restart, wait for identity liveness.
-	 * The lite installer manages its own restart/rollback — skipped. */
+	/* ч.260 symmetry (FIX D, session 173): every DIRECT path ends with a
+	 * postcheck_restart probe (package, upstream tarball, extended-UPX
+	 * tarball, lite tarball, rollback). Only the LEGACY lite installer
+	 * fallback manages its own restart/verification — skipped. The prepare
+	 * resolves a concrete release tag up front, so expect_version is known
+	 * for every path now. */
 	let pc = null;
-	if (core !== 'singbox-lite') {
+	if (prep.source !== 'installer') {
 		wstatus({ running: true, core: core, variant: variant, stage: 'postcheck', started: started, ts: time(), op_id: op_id });
 		if (op_id) {
 			try { op_stage(op_id, 'postcheck'); } catch (e) { /* journal hiccup */ }
 		}
-		/* empty expect for tarball/asset (version not reliably known up front —
-		 * the probe itself is the honest check); the FORK branch now knows its
-		 * release tag (prepare_install carries it for the downgrade gate), so
-		 * the post-check also verifies the serving binary equals that tag. */
-		const expect_v = (core === 'hiddify') ? ('' + (prep.fork_version || '')) : '';
-		pc = run_action('postcheck_restart', [core, expect_v], null, op_id);
+		pc = run_action('postcheck_restart', [core, '' + (prep.expect_version || '')], null, op_id);
 	}
-	const ok_install = (core === 'singbox-lite') ? true : (pc && pc.result === true && pc.alive === true);
+	const ok_install = (prep.source === 'installer') ? true : (pc && pc.result === true && pc.alive === true);
 
 	const detail = join('; ', filter([inst.note || null, inst.warning || null], (x) => (x != null)));
 	wstatus({

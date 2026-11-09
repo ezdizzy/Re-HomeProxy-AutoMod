@@ -384,7 +384,7 @@ const callByeDPIPrepareInstall = rpc.declare({
 const callByeDPIInstallPkg = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'byedpi_install_pkg',
-	params: ['tmp_path', 'pkg_manager'],
+	params: ['tmp_path', 'pkg_manager', 'sha256'],
 	expect: { '': {} }
 });
 
@@ -409,7 +409,7 @@ const callZapretPrepareInstall = rpc.declare({
 const callZapretInstallPkg = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'zapret_install_pkg',
-	params: ['tmp_path', 'pkg_manager'],
+	params: ['tmp_path', 'pkg_manager', 'sha256'],
 	expect: { '': {} }
 });
 
@@ -689,7 +689,17 @@ const callCoreSkipped = rpc.declare({
 const callCoreInstallStart = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'core_install_start',
-	params: [ 'core', 'variant' ],
+	params: [ 'core', 'variant', 'tag' ],
+	expect: { '': {} }
+});
+
+/* ч.265 (откат-кнопка): live list of the last release tags of the ORIGINAL
+ * repo for a core family — fetched fresh every time (nothing is cached on
+ * the router, decision 8). */
+const callCoreRollbackTags = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'core_rollback_tags',
+	params: [ 'core' ],
 	expect: { '': {} }
 });
 
@@ -759,22 +769,15 @@ function buildByeDPICard(byedpi, isMainNode) {
 			const prep = await L.resolveDefault(callByeDPIPrepareInstall(), {});
 			if (prep.error) return fail(prep.error);
 
-			/* V2 feed-first: prepare returned a feed hit — the explicit-file
-			 * install replaces download+install entirely. */
-			if (prep.source === 'feed' && prep.feed_pkg) {
-				setMsg(_('Installing from the update source...'), 'grey');
-				const finst = await L.resolveDefault(callFeedInstallPkg(prep.feed_pkg), {});
-				if (!finst.result) return fail(finst.error || _('Installation failed'));
-				setMsg(finst.note || _('Installed from the update source'), 'green');
-			} else {
-				setMsg(_('Downloading...'), 'grey');
-				const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
-				if (!dl.result) return fail(dl.error || _('Download failed'));
+			setMsg(_('Downloading...'), 'grey');
+			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
+			if (!dl.result) return fail(dl.error || _('Download failed'));
 
-				setMsg(_('Installing package...'), 'grey');
-				const inst = await L.resolveDefault(callByeDPIInstallPkg(prep.tmp_path, prep.pkg_manager), {});
-				if (!inst.result) return fail(inst.error || _('Installation failed'));
-			}
+			/* ч.265: ставится оригинальный статик-тарбол hufrea — SHA256-гейт
+			 * принимает сам установщик (digest из prepare). */
+			setMsg(_('Installing...'), 'grey');
+			const inst = await L.resolveDefault(callByeDPIInstallPkg(prep.tmp_path, prep.pkg_manager, prep.sha256 || ''), {});
+			if (!inst.result) return fail(inst.error || _('Installation failed'));
 
 			const fresh = await L.resolveDefault(callByeDPIStatus(), {});
 			installed = fresh.installed || false;
@@ -827,8 +830,7 @@ function buildByeDPICard(byedpi, isMainNode) {
 		(() => {
 			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' });
 			/* innerHTML: the description contains HTML links E() would escape */
-			el.innerHTML = _('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea</a>. ' +
-			'Packages by <a href="https://github.com/1andrevich/ByeDPI-OpenWrt" target="_blank">1andrevich/ByeDPI-OpenWrt</a>. ' +
+			el.innerHTML = _('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> (installed from the original releases, SHA256-gated). ' +
 			'Enable on the Connection page; strategies are configured on the Blocking bypass page.');
 			return el;
 		})()
@@ -880,21 +882,15 @@ function buildZapretCard(zapret, isMainNode) {
 			const prep = await L.resolveDefault(callZapretPrepareInstall(), {});
 			if (prep.error) return fail(prep.error);
 
-			/* V2 feed-first: prepare returned a feed hit — the explicit-file
-			 * install replaces download+install entirely. */
-			if (prep.source === 'feed' && prep.feed_pkg) {
-				setMsg(_('Installing from the update source...'), 'grey');
-				const finst = await L.resolveDefault(callFeedInstallPkg(prep.feed_pkg), {});
-				if (!finst.result) return fail(finst.error || _('Installation failed'));
-			} else {
-				setMsg(_('Downloading...'), 'grey');
-				const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
-				if (!dl.result) return fail(dl.error || _('Download failed'));
+			setMsg(_('Downloading...'), 'grey');
+			const dl = await L.resolveDefault(callCoreDownload(prep.dl_url, prep.tmp_path), {});
+			if (!dl.result) return fail(dl.error || _('Download failed'));
 
-				setMsg(_('Installing package...'), 'grey');
-				const inst = await L.resolveDefault(callZapretInstallPkg(prep.tmp_path, prep.pkg_manager), {});
-				if (!inst.result) return fail(inst.error || _('Installation failed'));
-			}
+			/* ч.265: оригинальный openwrt-embedded тарбол bol-van — SHA256-гейт
+			 * принимает сам установщик (digest из prepare). */
+			setMsg(_('Installing...'), 'grey');
+			const inst = await L.resolveDefault(callZapretInstallPkg(prep.tmp_path, prep.pkg_manager, prep.sha256 || ''), {});
+			if (!inst.result) return fail(inst.error || _('Installation failed'));
 
 			const fresh = await L.resolveDefault(callZapretStatus(), {});
 			installed = fresh.installed || false;
@@ -966,8 +962,7 @@ function buildZapretCard(zapret, isMainNode) {
 		(() => {
 			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' });
 			/* innerHTML: the description contains HTML links E() would escape */
-			el.innerHTML = _('Packet-level (NFQUEUE) DPI bypass by <a href="https://github.com/bol-van/zapret2" target="_blank">bol-van</a> (nfqws2). ' +
-			  'Packages by <a href="https://github.com/1andrevich/zapret2-openwrt" target="_blank">1andrevich/zapret2-openwrt</a>. ' +
+			el.innerHTML = _('Packet-level (NFQUEUE) DPI bypass by <a href="https://github.com/bol-van/zapret2" target="_blank">bol-van/zapret2</a> (nfqws2, installed from the original openwrt-embedded release, SHA256-gated). ' +
 			  'Configure on the Blocking bypass page.');
 			return el;
 		})(),
@@ -1481,10 +1476,10 @@ function buildCoreCard(core, coreInfo) {
 	const canInstall = !!pkgMgr;
 
 	const desc = isHiddify
-		? _('Fork of sing-box 1.13 by the Hiddify team (HiddifyCli). Runs every protocol this app can configure, including NaïveProxy and Hiddify\'s Mieru dialect. Best compatibility with Hiddify App / Hiddify Manager exports.')
+		? _('Hiddify fork of sing-box 1.13 (HiddifyCli), installed from the ORIGINAL hiddify/hiddify-core releases (apk/ipk package or tarball, SHA256-gated). Runs every protocol this app can configure, including NaïveProxy and Hiddify\'s Mieru dialect. Best compatibility with Hiddify App / Hiddify Manager exports.')
 		: isLite
-		? _('Lightweight sing-box 1.14 build by MANCrimSon: VLESS Reality, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard/AmneziaWG (kernel stack) and the Clash API — ~46 MB pure ELF / ~10 MB UPX. No NaïveProxy, MASQUE/WARP, Tailscale or gVisor: such nodes are skipped automatically when this core runs. The installer restarts the service.')
-		: _('Extended sing-box 1.14 base by shtorm-7. Runs every protocol this app can configure plus WARP / MASQUE / TrustTunnel / MTProxy extras — but no NaïveProxy: such nodes are skipped automatically when this core runs.');
+		? _('Lightweight sing-box 1.14 build by MANCrimSon, installed from the ORIGINAL release tarball (SHA256-gated; their own installer stays as a fallback): VLESS Reality, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard/AmneziaWG (kernel stack) and the Clash API — ~46 MB pure ELF / ~10 MB UPX. No NaïveProxy, MASQUE/WARP, Tailscale or gVisor: such nodes are skipped automatically when this core runs.')
+		: _('Extended sing-box 1.14 base by shtorm-7, installed from the ORIGINAL releases (apk/ipk package; an original UPX-compressed tarball is offered for small flash). Runs every protocol this app can configure plus WARP / MASQUE / TrustTunnel / MTProxy extras — but no NaïveProxy: such nodes are skipped automatically when this core runs.');
 
 	/* Verified capability line from the core's own build tags. */
 	const caps = [];
@@ -1518,16 +1513,17 @@ function buildCoreCard(core, coreInfo) {
 		}
 	});
 
-	/* Build choice (ch.125): the backend's auto-pick stays the DEFAULT, but
-	 * the user can now explicitly choose the build — flash vs RAM trade-off.
-	 * hiddify-core: standard/upx; sing-box-extended-lite: normal (pure ELF
-	 * ~46 MB flash) / compressed (UPX ~10 MB flash, decompresses into RAM at
-	 * every launch). The full sing-box-extended ships one build — no select. */
+	/* Build choice (ch.125, ревизия ч.265): the backend's auto-pick stays the
+	 * DEFAULT, but the user can explicitly choose the build. hiddify-core has
+	 * NO compact build anymore (the original publishes none — the fork is
+	 * gone), so its select is gone; sing-box-extended gained the original
+	 * UPX tarball (UPX is crash-prone on soft-float MIPS — Auto never picks
+	 * it there); lite keeps normal/compressed. */
 	const variants = isHiddify
-		? [ ['', _('Auto (recommended)')], ['standard', _('Full build')], ['upx', _('Compact build (UPX)')] ]
+		? null
 		: isLite
 		? [ ['', _('Auto (recommended)')], ['normal', _('Normal build (~46 MB)')], ['compressed', _('Compact build (UPX, ~10 MB)')] ]
-		: null;
+		: [ ['', _('Auto (recommended)')], ['standard', _('Full build')], ['upx', _('Compact build (UPX)')] ];
 	const variantSel = variants ? E('select', {
 		'class': 'cbi-input-select',
 		'style': 'margin-left:4px',
@@ -1559,8 +1555,10 @@ function buildCoreCard(core, coreInfo) {
 					const stageTxt = {
 						prepare: _('Checking requirements...'),
 						download: _('Downloading...'),
-						install: _('Installing package...'),
-						kmods: _('Installing kernel modules...')
+						verify: _('Verifying SHA256...'),
+						install: _('Installing...'),
+						kmods: _('Installing kernel modules...'),
+						postcheck: _('Probing the new core and restarting...')
 					}[st.stage] || st.stage;
 					setMsg(st.note ? stageTxt + ' — ' + st.note : stageTxt, st.note ? 'amber' : 'grey');
 				}
@@ -1580,6 +1578,7 @@ function buildCoreCard(core, coreInfo) {
 			installBtn.disabled = !canInstall || null;
 			if (variantSel) variantSel.disabled = false;
 			removeBtn.disabled  = !installed;
+			rollbackBtn.disabled = !installed || !canInstall || null;
 			if (st.ok) {
 				let msg = st.note ? _('Installed successfully') + ' — ' + st.note : _('Installed successfully');
 				if (st.warning)
@@ -1592,18 +1591,21 @@ function buildCoreCard(core, coreInfo) {
 		installWatch = window.setTimeout(tick, 300);
 	}
 
-	const doInstall = async () => {
+	const doInstall = async (rollbackTag) => {
 		installBtn.disabled = true;
 		removeBtn.disabled  = true;
 		if (variantSel) variantSel.disabled = true;
 		statusEl.textContent = _('Installing...');
 		statusEl.style.color = 'var(--hp-grey)';
-		setMsg(_('Starting the install...'), 'grey');
+		setMsg(rollbackTag
+			? _('Starting the rollback to %s...').format(rollbackTag)
+			: _('Starting the install...'), 'grey');
 
-		const start = await L.resolveDefault(callCoreInstallStart(core, variantSel ? variantSel.value : ''), {});
+		const start = await L.resolveDefault(callCoreInstallStart(core, variantSel ? variantSel.value : '', rollbackTag || ''), {});
 		if (!start || start.result === false) {
 			installBtn.disabled = !canInstall || null;
 			removeBtn.disabled  = !installed;
+			rollbackBtn.disabled = !installed || !canInstall || null;
 			if (variantSel) variantSel.disabled = false;
 			statusEl.textContent = installed ? 'v' + (version || '?') + (coreData.lite && coreData.variant === 'compressed' ? ' [lite·upx]' : (coreData.lite ? ' [lite]' : '')) : _('Not installed');
 			statusEl.style.color = installed ? 'var(--hp-accent-strong)' : 'var(--hp-grey)';
@@ -1621,6 +1623,7 @@ function buildCoreCard(core, coreInfo) {
 		if (st && st.running) {
 			installBtn.disabled = true;
 			removeBtn.disabled  = true;
+			rollbackBtn.disabled = true;
 			if (variantSel) variantSel.disabled = true;
 			statusEl.textContent = _('Installing...');
 			statusEl.style.color = 'var(--hp-grey)';
@@ -1632,7 +1635,7 @@ function buildCoreCard(core, coreInfo) {
 		style: 'margin-left:4px',
 		disabled: !canInstall || null,
 		title: canInstall ? '' : _('No supported package manager detected'),
-		click: function() { return doInstall(); }
+		click: function() { return doInstall(null); }
 	});
 
 	const removeBtn = mkBtn(_('Remove'), 'danger', {
@@ -1662,10 +1665,65 @@ function buildCoreCard(core, coreInfo) {
 		}
 	});
 
+	/* ч.265: откат-кнопка (решения 8/9) — ЯВНЫЙ даунгрейд по выбору тега.
+	 * Список тегов оригинала живьём (ничего не кэшируем на роутере),
+	 * скачивание по запросу, SHA256-гейт, установка с mode='rollback'
+	 * (только это подтверждение обходит гейт «не новее»). */
+	const rollbackBtn = mkBtn(_('Rollback'), 'ghost', {
+		style: 'margin-left:4px',
+		disabled: !installed || !canInstall || null,
+		title: (!installed || !canInstall) ? '' : _('Roll the core back to an older ORIGINAL release'),
+		click: async function() {
+			rollbackBtn.disabled = true;
+			installBtn.disabled = true;
+			removeBtn.disabled = true;
+			if (variantSel) variantSel.disabled = true;
+			setMsg(_('Fetching the release tags of the original repository...'), 'grey');
+			const tags = await L.resolveDefault(callCoreRollbackTags(core), {});
+			if (!tags || tags.result === false || !(tags.tags || []).length) {
+				rollbackBtn.disabled = !installed || !canInstall || null;
+				installBtn.disabled = !canInstall || null;
+				removeBtn.disabled = !installed;
+				if (variantSel) variantSel.disabled = false;
+				setMsg((tags && tags.error) ? tags.error : _('Failed to fetch the tag list'), 'red');
+				return;
+			}
+			const sel = E('select', { 'class': 'cbi-input-select', 'style': 'width:100%' },
+				tags.tags.map(function(t) {
+					const isCurrent = (version && t.version === version);
+					return E('option', { 'value': t.tag },
+						[ 'v' + t.version + (isCurrent ? ' — ' + _('currently running') : '') ]);
+				}));
+			const info = E('div', { style: 'font-size:0.9em; opacity:.85; margin:8px 0' },
+				_('The selected release is downloaded fresh, verified by SHA256 and installed as an explicit downgrade — only this confirmation bypasses the no-silent-downgrade gate. Nothing is cached on the router: the archive is deleted right after the install.'));
+			const goBtn = mkBtn(_('Roll back to the selected release'), 'danger', {
+				click: function() {
+					ui.hideModal();
+					return doInstall(sel.value);
+				}
+			});
+			const cancelBtn = mkBtn(_('Cancel'), 'ghost', { click: function() {
+				ui.hideModal();
+				rollbackBtn.disabled = !installed || !canInstall || null;
+				installBtn.disabled = !canInstall || null;
+				removeBtn.disabled = !installed;
+				if (variantSel) variantSel.disabled = false;
+				setMsg(_('Rollback cancelled'), 'grey');
+			} });
+			ui.showModal(E('div', {}, [
+				E('h4', {}, _('Rollback') + ' — ' + name),
+				E('p', {}, _('Choose the release to roll back to:')),
+				sel,
+				info
+			]), [ goBtn, cancelBtn ]);
+			rollbackBtn.disabled = !installed || !canInstall || null;
+		}
+	});
+
 	const row = [ E('strong', {}, name), statusEl, checkBtn ];
 	if (variantSel)
 		row.push(variantSel);
-	row.push(installBtn, removeBtn);
+	row.push(installBtn, rollbackBtn, removeBtn);
 
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, row),
@@ -1728,10 +1786,6 @@ function buildFeedCard(feed) {
 		const pk = st.policy || {};
 		dom.content(pkgLine, [
 			_('Components (installed → offered)') + ': ',
-			...compCell('hiddify-core', pk['hiddify-core']),
-			...compCell('compact', pk['hiddify-core-compact']),
-			...compCell('sing-box-extended', pk['sing-box-extended']),
-			...compCell('lite', pk['sing-box-extended-lite']),
 			...compCell('mosdns', pk.mosdns),
 			...compCell('helpers', pk.probe_pool),
 			...compCell('byedpi', pk.byedpi),
@@ -2014,14 +2068,12 @@ return view.extend({
 		o = s.option(form.DummyValue, '_multidns_card');
 		o.default = buildMosdnsCard(mdnsStatus, mosdnsStatus);
 
-		/* §1.7: the own apk feed — signed packages (hiddify-core full/compact,
-		 * mosdns, the automation helpers) from the user's own repository.
-		 * Installs that ride the feed fall back to the original sources
-		 * automatically when the feed is unavailable (apk-native behavior:
-		 * an unreachable index only warns). */
+		/* §1.7 own feed (ревизия ч.265): МОИ пакеты (приложение, mosdns,
+		 * хелперы) и мои сборки движков из оригинальных бинарников. Ядра фидом
+		 * больше НЕ возятся — оригиналы публикуют свои пакеты. */
 		s = m.section(form.NamedSection, 'config', 'ravnex', _('Update source'));
 		s.anonymous = true;
-		s.description = _('Own signed package source: every component (hiddify-core full and compact, sing-box-extended and lite, mosdns, helpers, byedpi, zapret2) installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. When the source is unavailable, installs automatically fall back to the original paths.');
+		s.description = _('Own signed package source for OUR components (the app, mosdns, the automation helpers) and our own apk/ipk packaging of the DPI engines built from the original upstream binaries. Every component installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. The PROXY CORES are no longer delivered through this source: they install from the original upstream releases (SHA256-gated).');
 
 		o = s.option(form.DummyValue, '_feed_card');
 		o.default = buildFeedCard(feedStatus);

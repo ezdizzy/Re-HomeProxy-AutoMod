@@ -7743,3 +7743,57 @@ msgstr "Замер Лаборатории от %s: %s"
 
 msgid "last auto-apply: %s"
 msgstr "последнее автоприменение: %s"
+
+msgid "Hiddify fork of sing-box 1.13 (HiddifyCli), installed from the ORIGINAL hiddify/hiddify-core releases (apk/ipk package or tarball, SHA256-gated). Runs every protocol this app can configure, including NaïveProxy and Hiddify's Mieru dialect. Best compatibility with Hiddify App / Hiddify Manager exports."
+msgstr "Форк sing-box 1.13 от команды Hiddify (HiddifyCli), ставится из ОРИГИНАЛЬНЫХ релизов hiddify/hiddify-core (пакет apk/ipk или тарбол, SHA256-гейт). Умеет всё, что настраивается в приложении, включая NaïveProxy и диалект Mieru от Hiddify. Лучшая совместимость с экспортами Hiddify App / Hiddify Manager."
+
+msgid "Lightweight sing-box 1.14 build by MANCrimSon, installed from the ORIGINAL release tarball (SHA256-gated; their own installer stays as a fallback): VLESS Reality, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard/AmneziaWG (kernel stack) and the Clash API — ~46 MB pure ELF / ~10 MB UPX. No NaïveProxy, MASQUE/WARP, Tailscale or gVisor: such nodes are skipped automatically when this core runs."
+msgstr "Лёгкая сборка sing-box 1.14 от MANCrimSon, ставится из ОРИГИНАЛЬНОГО тарбола релиза (SHA256-гейт; их собственный установщик остаётся резервом): VLESS Reality, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard/AmneziaWG (стек ядра) и Clash API — ~46 МБ чистый ELF / ~10 МБ UPX. Без NaïveProxy, MASQUE/WARP, Tailscale и gVisor — такие узлы автоматически пропускаются, когда работает это ядро."
+
+msgid "Extended sing-box 1.14 base by shtorm-7, installed from the ORIGINAL releases (apk/ipk package; an original UPX-compressed tarball is offered for small flash). Runs every protocol this app can configure plus WARP / MASQUE / TrustTunnel / MTProxy extras — but no NaïveProxy: such nodes are skipped automatically when this core runs."
+msgstr "Расширенная база sing-box 1.14 от shtorm-7, ставится из ОРИГИНАЛЬНЫХ релизов (пакет apk/ipk; для малой флеш предлагается оригинальный UPX-сжатый тарбол). Умеет всё, что настраивается в приложении, плюс WARP / MASQUE / TrustTunnel / MTProxy — но без NaïveProxy: такие узлы автоматически пропускаются, когда работает это ядро."
+
+msgid "Verifying SHA256..."
+msgstr "Проверяю SHA256..."
+
+msgid "Probing the new core and restarting..."
+msgstr "Проверяю новое ядро и перезапускаю службу..."
+
+msgid "Rollback"
+msgstr "Откатить"
+
+msgid "Roll the core back to an older ORIGINAL release"
+msgstr "Откатить ядро на более старый ОРИГИНАЛЬНЫЙ релиз"
+
+msgid "Fetching the release tags of the original repository..."
+msgstr "Получаю список релизов оригинального репозитория..."
+
+msgid "Failed to fetch the tag list"
+msgstr "Не удалось получить список релизов"
+
+msgid "Choose the release to roll back to:"
+msgstr "Выберите релиз для отката:"
+
+msgid "currently running"
+msgstr "текущая версия"
+
+msgid "The selected release is downloaded fresh, verified by SHA256 and installed as an explicit downgrade — only this confirmation bypasses the no-silent-downgrade gate. Nothing is cached on the router: the archive is deleted right after the install."
+msgstr "Выбранный релиз скачивается заново, проверяется по SHA256 и ставится как ЯВНЫЙ даунгрейд — только это подтверждение обходит запрет молчаливого даунгрейда. На роутере ничего не кэшируется: архив удаляется сразу после установки."
+
+msgid "Roll back to the selected release"
+msgstr "Откатить на выбранный релиз"
+
+msgid "Rollback cancelled"
+msgstr "Откат отменён"
+
+msgid "Starting the rollback to %s..."
+msgstr "Запускаю откат на %s..."
+
+msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea/byedpi</a> (installed from the original releases, SHA256-gated). Enable on the Connection page; strategies are configured on the Blocking bypass page."
+msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea/byedpi</a> (ставится из оригинальных релизов, SHA256-гейт). Включается на странице «Подключение»; стратегии настраиваются на странице «Обход блокировок»."
+
+msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2, installed from the original openwrt-embedded release, SHA256-gated). Configure on the Blocking bypass page."
+msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2, ставится из оригинального openwrt-embedded-релиза, SHA256-гейт). Настраивается на странице «Обход блокировок»."
+
+msgid "Own signed package source for OUR components (the app, mosdns, the automation helpers) and our own apk/ipk packaging of the DPI engines built from the original upstream binaries. Every component installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. The PROXY CORES are no longer delivered through this source: they install from the original upstream releases (SHA256-gated)."
+msgstr "Свой подписанный источник пакетов для НАШИХ компонентов (приложение, mosdns, хелперы автоматизации) и наша собственная упаковка движков в apk/ipk из оригинальных бинарников. Каждый компонент ставится явным файлом из манифеста источника — на apk-системах с проверкой подписи, на opkg — по sha256. Ничего не пишется в repositories.d, поэтому чужой репозиторий никогда не выкатит более новую версию наших компонентов. ПРОКСИ-ЯДРА больше не возятся этим источником: они ставятся из оригинальных релизов (с SHA256-гейтом)."

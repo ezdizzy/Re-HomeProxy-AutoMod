@@ -753,15 +753,24 @@ install_core() {
 	warn "  ⚠  Без действующей подписки/конфигурации прокси-часть работать не будет:"
 	warn "     Telegram, WhatsApp, Instagram и другие заблокированные сервисы останутся недоступны."
 	warn "     Интернет при этом останется полностью рабочим (напрямую)."
-	echo "    1) hiddify-core            (по умолчанию; оригинальные сборки hiddify/hiddify-core, форк — резерв; NaïveProxy на musl-сборках; на малой флеш-памяти выберет компактную сборку форка)"
-	echo "    2) sing-box-extended       (более новая база sing-box 1.14: WARP/MASQUE/TrustTunnel в ядре; без NaïveProxy — такие узлы будут пропускаться)"
-	echo "    3) sing-box-extended-lite  (лёгкая сборка sing-box 1.14 для роутеров с малой флеш-памятью: VLESS Reality, Trojan, Shadowsocks,"
+	echo "    1) hiddify-core            (по умолчанию; оригинальные apk/ipk-пакеты hiddify/hiddify-core или тарбол, SHA256-гейт по digest из GitHub API; NaïveProxy на musl-сборках)"
+	echo "    2) sing-box-extended       (более новая база sing-box 1.14 от shtorm-7: WARP/MASQUE/TrustTunnel в ядре; без NaïveProxy — такие узлы будут пропускаться; есть UPX-сборка для малой флеш)"
+	echo "    3) sing-box-extended-lite  (лёгкая сборка sing-box 1.14 от MANCrimSon для роутеров с малой флеш-памятью: VLESS Reality, Trojan, Shadowsocks,"
 	echo "                               Hysteria2, TUIC, WireGuard/AmneziaWG (стек ядра) и Clash API; БЕЗ NaïveProxy/WARP/MASQUE/Tailscale/gVisor —"
 	echo "                               такие узлы будут пропускаться; обычная сборка ~46 МБ на флеше, компактная UPX ~10 МБ + ~96 МБ свободной ОЗУ)"
 	ask "  Выбор [1/2/3] (по умолчанию 1):"
 	VARIANT=""
 	case "$REPLY" in
-		2) CORE=singbox ;;
+		2)
+			CORE=singbox
+			echo "  Сборка extended:"
+			echo "    1) полная      (стандартная)"
+			echo "    2) UPX-сжатая  (оригинальный -compressed тарбол: меньше флеш, распаковывается в ОЗУ при запуске — на MIPS UPX ненадёжен)"
+			ask "  Выбор [1/2] (пусто = полная):"
+			case "$REPLY" in
+				2) VARIANT=upx ;;
+				*) VARIANT=standard ;;
+			esac ;;
 		3)
 			CORE=singbox-lite
 			echo "  Сборка lite:"
@@ -773,29 +782,15 @@ install_core() {
 				2) VARIANT=compressed ;;
 				*) VARIANT=""; info "  сборку выберет установщик по ресурсам роутера." ;;
 			esac ;;
-		*) CORE=hiddify ;;
+		*) CORE=hiddify; VARIANT=standard ;;
 	esac
 
 	PREP=$(ucode "$CM" prepare_install "$CORE" "$VARIANT" 2>/dev/null)
 	jerr "$PREP" && die "  подготовка ядра не удалась: $(jget "$PREP" error)"
-	# Ф11 V2 feed-first: prepare вернул источник обновлений — явный файл из
-	# манифеста (sha256 + подпись), никакого tar-бола/asset-пути.
-	if [ "$(jget "$PREP" source)" = "feed" ] && [ -n "$(jget "$PREP" feed_pkg)" ]; then
-		FEEDPKG=$(jget "$PREP" feed_pkg)
-		info "  $CORE: ставлю из источника обновлений ($FEEDPKG $(jget "$PREP" version))..."
-		if jtrue "$(ucode "$CM" install_feed_pkg "$FEEDPKG" 2>/dev/null)"; then
-			jtrue "$(ucode "$CM" install_kmods "$(jget "$PREP" pkg_manager)" 2>/dev/null)" || warn "  не удалось поставить kmod — без kmod-nft-tproxy/kmod-tun прокси не будет маршрутизировать."
-			ok "  $CORE установлен (источник обновлений)."
-			return 0
-		fi
-		warn "  установка из источника обновлений не удалась — возврат к обычным путям."
-		PREP=$(ucode "$CM" prepare_install "$CORE" "$VARIANT" 2>/dev/null)
-		jerr "$PREP" && die "  подготовка ядра не удалась: $(jget "$PREP" error)"
-	fi
 	DLURL=$(jget "$PREP" dl_url)
-	# lite-ядро ставится собственным install.sh проекта (dl_url нет — есть installer_url)
+	# lite-ядро при слепом GitHub API ставится родным установщиком проекта (dl_url нет — есть installer_url)
 	[ -z "$DLURL" ] && DLURL=$(jget "$PREP" installer_url)
-	TMP=$(jget "$PREP" tmp_path); PMG=$(jget "$PREP" pkg_manager)
+	TMP=$(jget "$PREP" tmp_path); PMG=$(jget "$PREP" pkg_manager); SHA=$(jget "$PREP" sha256); VER=$(jget "$PREP" expect_version)
 	[ -n "$DLURL" ] && [ -n "$TMP" ] && [ -n "$PMG" ] || die "  подготовка ядра не вернула данные для загрузки."
 	info "  скачиваю $CORE..."
 	if [ -n "$LOCAL_DIR" ]; then
@@ -804,7 +799,15 @@ install_core() {
 	else
 		jtrue "$(ucode "$CM" download_pkg "$DLURL" "$TMP" 2>/dev/null)" || die "  не удалось скачать ядро (попробуйте GH_MIRROR=...)."
 	fi
-	jtrue "$(ucode "$CM" install_pkg "$CORE" "$TMP" "$PMG" 2>/dev/null)" || die "  установка ядра не удалась."
+	# ч.265: SHA256-гейт честности — сверяем скачанное с digest ассета из
+	# GitHub API ДО установки (расхождение = файл удалён, установка отменена).
+	if [ -n "$SHA" ]; then
+		info "  проверяю SHA256..."
+		jtrue "$(ucode "$CM" verify_sha "$TMP" "$SHA" 2>/dev/null)" || die "  SHA256-проверка не прошла — установка отменена."
+	else
+		warn "  SHA256-гейт недоступен для этого источника (fallback-путь) — целостность гарантирует только HTTPS."
+	fi
+	jtrue "$(ucode "$CM" install_pkg "$CORE" "$TMP" "$PMG" "$VER" "" 2>/dev/null)" || die "  установка ядра не удалась."
 	jtrue "$(ucode "$CM" install_kmods "$PMG" 2>/dev/null)" || warn "  не удалось поставить kmod — без kmod-nft-tproxy/kmod-tun прокси не будет маршрутизировать."
 	ok "  $CORE установлен."
 }
@@ -1171,36 +1174,12 @@ install_zapret() {
 	ZP=$(ubus call luci.ravnex zapret_prepare_install 2>/dev/null)
 	if [ -z "$ZP" ] || jerr "$ZP"; then warn "  не удалось подготовить Zapret — пропускаю. ($(jget "$ZP" error))"
 	else
-		# Ф11 V2 feed-first: prepare вернул источник обновлений — явный файл.
-		if [ "$(jget "$ZP" source)" = "feed" ] && [ -n "$(jget "$ZP" feed_pkg)" ]; then
-			ZFPKG=$(jget "$ZP" feed_pkg)
-			info "  Zapret: ставлю из источника обновлений ($ZFPKG $(jget "$ZP" version))..."
-			if jtrue "$(ubus call luci.ravnex install_feed_pkg "{\"pkg\":\"$ZFPKG\"}" 2>/dev/null)"; then
-				ok "  Zapret установлен (источник обновлений)."
-				ZST=$(ubus call luci.ravnex zapret_status 2>/dev/null)
-				if jfalse "$ZST" kmod_ok; then
-					warn "  модуль NFQUEUE не загружен — Zapret не включаю (иначе сломается firewall)."
-					warn "  Включите вручную после kmod-nft-queue (Client Settings → Routing → Enable Zapret)."
-				else
-					uci -q set ravnex.config.zapret_enabled=1
-					uci -q commit ravnex
-					ok "  Zapret включён."
-					if zapret_pick_strategy; then
-						add_rule youtube zapret-out
-					else
-						warn "  правило YouTube → Zapret НЕ добавлено (нет рабочей стратегии — иначе YouTube бы не открывался)."
-						warn "  После подбора стратегии добавьте правило вручную: Proxy Rules → YouTube → Zapret."
-					fi
-				fi
-				return 0
-			fi
-			warn "  установка из источника обновлений не удалась — возврат к обычным путям."
-			ZP=$(ubus call luci.ravnex zapret_prepare_install 2>/dev/null)
-			[ -n "$ZP" ] && ! jerr "$ZP" || return 0
-		fi
-		ZURL=$(jget "$ZP" dl_url); ZTMP=$(jget "$ZP" tmp_path); ZPMG=$(jget "$ZP" pkg_manager)
+		# ч.265: оригинальный openwrt-embedded тарбол bol-van (SHA256-гейт —
+		# digest из prepare, установщик сверяет). Фид для движков больше не
+		# является источником установки.
+		ZURL=$(jget "$ZP" dl_url); ZTMP=$(jget "$ZP" tmp_path); ZPMG=$(jget "$ZP" pkg_manager); ZSHA=$(jget "$ZP" sha256)
 		if [ -n "$ZURL" ] && dl "$ZURL" "$ZTMP"; then
-			RES=$(ubus call luci.ravnex zapret_install_pkg "{\"tmp_path\":\"$ZTMP\",\"pkg_manager\":\"$ZPMG\"}" 2>/dev/null)
+			RES=$(ubus call luci.ravnex zapret_install_pkg "{\"tmp_path\":\"$ZTMP\",\"pkg_manager\":\"$ZPMG\",\"sha256\":\"$ZSHA\"}" 2>/dev/null)
 			if jtrue "$RES"; then
 				ok "  Zapret установлен."
 				ZST=$(ubus call luci.ravnex zapret_status 2>/dev/null)
@@ -1268,22 +1247,11 @@ install_byedpi() {
 	BP=$(ubus call luci.ravnex byedpi_prepare_install 2>/dev/null)
 	if [ -z "$BP" ] || jerr "$BP"; then warn "  не удалось подготовить ByeDPI — пропускаю. ($(jget "$BP" error))"
 	else
-		# Ф11 V2 feed-first: prepare вернул источник обновлений — явный файл.
-		if [ "$(jget "$BP" source)" = "feed" ] && [ -n "$(jget "$BP" feed_pkg)" ]; then
-			BFPKG=$(jget "$BP" feed_pkg)
-			info "  ByeDPI: ставлю из источника обновлений ($BFPKG $(jget "$BP" version))..."
-			if jtrue "$(ubus call luci.ravnex install_feed_pkg "{\"pkg\":\"$BFPKG\"}" 2>/dev/null)"; then
-				ok "  ByeDPI установлен (источник обновлений)."
-				uci set ravnex.config.byedpi_enabled=1; uci commit ravnex; ok "  ByeDPI включён."
-				return 0
-			fi
-			warn "  установка из источника обновлений не удалась — возврат к обычным путям."
-			BP=$(ubus call luci.ravnex byedpi_prepare_install 2>/dev/null)
-			[ -n "$BP" ] && ! jerr "$BP" || return 0
-		fi
-		BURL=$(jget "$BP" dl_url); BTMP=$(jget "$BP" tmp_path); BPMG=$(jget "$BP" pkg_manager)
+		# ч.265: оригинальный статик-тарбол hufrea (SHA256-гейт — digest из
+		# prepare, установщик сверяет). Фид для движков больше не источник.
+		BURL=$(jget "$BP" dl_url); BTMP=$(jget "$BP" tmp_path); BPMG=$(jget "$BP" pkg_manager); BSHA=$(jget "$BP" sha256)
 		if [ -n "$BURL" ] && dl "$BURL" "$BTMP"; then
-			RES=$(ubus call luci.ravnex byedpi_install_pkg "{\"tmp_path\":\"$BTMP\",\"pkg_manager\":\"$BPMG\"}" 2>/dev/null)
+			RES=$(ubus call luci.ravnex byedpi_install_pkg "{\"tmp_path\":\"$BTMP\",\"pkg_manager\":\"$BPMG\",\"sha256\":\"$BSHA\"}" 2>/dev/null)
 			if jtrue "$RES"; then
 				ok "  ByeDPI установлен."
 				uci set ravnex.config.byedpi_enabled=1; uci commit ravnex; ok "  ByeDPI включён."

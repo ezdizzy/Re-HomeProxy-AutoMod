@@ -423,6 +423,43 @@ function gh_latest_tag(repo) {
 	} catch(e) { return null; }
 }
 
+/* Full release JSON (tag + assets with per-asset digest), token-aware —
+ * seance 177 engine prepares need the asset list AND the sha256 digest. */
+function gh_release_json(repo) {
+	const token_fd = popen('uci -q get ravnex.config.github_token 2>/dev/null');
+	let token = null;
+	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
+	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
+	const fd = popen(`wget -qO- --timeout=15 ${auth} "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null`);
+	if (!fd) return null;
+	const raw = fd.read('all');
+	fd.close();
+	try { return json(raw); } catch(e) { return null; }
+}
+
+/* Hex part of a GitHub-API per-asset digest ("sha256:<hex>") or ''. */
+function rpc_asset_digest(asset) {
+	const d = (asset && asset.digest) ? '' + asset.digest : '';
+	const m = match(d, /^sha256:([0-9a-f]{64})$/);
+	return m ? m[1] : '';
+}
+
+/* Shared device facts for the engine prepares (the awk/popen idiom used all
+ * over the module, factored once in seance 177). */
+function detect_arch_rpc() {
+	const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
+	if (!afd) return null;
+	const arch = trim(afd.read('all'));
+	afd.close();
+	return length(arch) ? arch : null;
+}
+
+function detect_pm_rpc() {
+	if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) return 'apk';
+	if (access('/bin/opkg') || access('/usr/bin/opkg')) return 'opkg';
+	return null;
+}
+
 /* Uniform reply for the tool check-update methods: strip the "v" prefix from
  * the tag and compare against the installed semver. */
 function check_update_reply(installed_version, tag) {
@@ -433,6 +470,22 @@ function check_update_reply(installed_version, tag) {
 		return { error: 'cannot read latest version' };
 	const update_available = installed_version && app_vercmp(installed_version, latest) < 0;
 	return { installed_version: installed_version, latest_version: latest, update_available: !!update_available };
+}
+
+/* Engine version marker (seance 177, де-форк): byedpi/zapret2 now install
+ * from the ORIGINAL upstream tarballs (hufrea/bol-van) — no apk/opkg record
+ * tracks the fresh version there. The install writes
+ * /etc/ravnex/engines/<name>.version and this read takes priority over the
+ * (possibly stale) PM record. Tiny text file, overlay — no tmpfs. */
+function engine_marker_version(name) {
+	if (!match(name, /^[a-z0-9-]+$/))
+		return null;
+	const fd = popen(`cat /etc/ravnex/engines/${name}.version 2>/dev/null`);
+	if (!fd)
+		return null;
+	const v = trim(fd.read('all'));
+	fd.close();
+	return length(v) ? v : null;
 }
 
 /* Installed version of an apk/opkg package, matched with `rx` (first capture).
@@ -2593,8 +2646,13 @@ const FEED_MANIFEST_TTL = 1800;      /* CI rebuilds daily; 30 min cache */
 const FEED_PROBE_TTL = 300;          /* reachability probe cache */
 const FEED_BRANCH = 'refs/heads/feed';
 const FEED_REPOS = ['ezdizzy/ravnex', 'ezdizzy/ravnex'];
-const FEED_PKGS = ['hiddify-core', 'hiddify-core-compact', 'mosdns', 'probe_pool',
-	'sni_sniffer', 'sing-box-extended', 'sing-box-extended-lite', 'byedpi', 'zapret2'];
+/* ч.265 (де-форк): ЯДРА больше не возятся фидом — оригиналы публикуют свои
+ * пакеты (решения 1/4/5). Фид остаётся каналом НАШИХ пакетов (приложение,
+ * mosdns, хелперы) и наших сборок движков из оригинальных бинарников, до
+ * стоп-точки 2 («вычистка GitHub»). FEED_BIN_PATH/FEED_SIBLING сохраняют
+ * ядровые ключи ради sibling-hygiene старых compact-записей. */
+const FEED_PKGS = ['mosdns', 'probe_pool',
+	'sni_sniffer', 'byedpi', 'zapret2'];
 /* Post-install check path per feed package (access() after install). */
 const FEED_BIN_PATH = {
 	'hiddify-core': '/usr/bin/hiddify-core',
@@ -3376,18 +3434,24 @@ const methods = {
 	},
 
 	core_install_start: {
-		args: { core: 'core', variant: 'variant' },
+		args: { core: 'core', variant: 'variant', tag: 'tag' },
 		call: function(req) {
 			/* Background core install (issue: the synchronous download+install
 			 * froze the UI for minutes and a mid-install reload lost progress).
 			 * Spawns the detached runner and returns at once; the UI polls
-			 * core_install_status (the status file survives page reloads). */
+			 * core_install_status (the status file survives page reloads).
+			 * ч.265: optional tag = the EXPLICIT rollback flow — the runner
+			 * resolves THAT release (prepare_rollback), the silent-downgrade
+			 * gate is bypassed with mode='rollback', SHA256 still gates. */
 			const core = (req && req.args && req.args.core) || '';
 			const variant = (req && req.args && req.args.variant) || '';
+			const tag = trim('' + ((req && req.args && req.args.tag) || ''));
 			if (!(core in ['hiddify', 'singbox', 'singbox-lite']))
 				return { result: false, error: 'illegal core' };
 			if (length(variant) && !(variant in ['upx', 'standard', 'normal', 'compressed']))
 				return { result: false, error: 'illegal variant' };
+			if (length(tag) && !match(tag, /^[a-zA-Z0-9._-]+$/))
+				return { result: false, error: 'illegal tag' };
 			const st = RUN_DIR + '/core_install.json';
 			let prev = null;
 			if (access(st)) {
@@ -3400,17 +3464,53 @@ const methods = {
 			/* Drop a finished status file so the poller never shows a stale run */
 			system(`rm -f ${shellquote(st)} 2>/dev/null`);
 			/* ch.125: EVERY validated variant reaches the runner — the cards
-			 * offer an explicit build choice (standard/upx for hiddify,
+			 * offer an explicit build choice (standard/upx for extended,
 			 * normal/compressed for the lite build) and prepare_install
 			 * honors it; empty = the backend auto-pick as before. */
-			const args = length(variant)
+			let args = length(variant)
 				? `${shellquote(core)} ${shellquote(variant)}`
 				: shellquote(core);
+			if (length(tag))
+				args += ` ${shellquote(tag)}`;
 			/* 1000>&- — the detached runner must never inherit a procd_lock fd
 			 * (an inherited locked fd 1000 survives its parent and wedges every
 			 * later stop/reload — the 2026-10-24 live wedge during lite install). */
 			system(`ucode ${shellquote(HP_DIR + '/scripts/core_install_runner.uc')} ${args} >/dev/null 2>&1 1000>&- &`);
-			return { result: true, started: true, core: core };
+			return { result: true, started: true, core: core, tag: (length(tag) ? tag : null) };
+		}
+	},
+
+	core_rollback_tags: {
+		args: { core: 'core' },
+		call: function(req) {
+			/* ч.265: список последних тегов ОРИГИНАЛЬНОГО репозитория семейства
+			 * ядра для откат-кнопки. Живой запрос каждый раз — ничего не кэшируем
+			 * на роутере (решение 8). Синхронный вызов core_mgmt remote_tags
+			 * (один API-запрос, укладывается в таймаут XHR). */
+			const core = (req && req.args && req.args.core) || '';
+			if (!(core in ['hiddify', 'singbox', 'singbox-lite']))
+				return { error: 'illegal core' };
+			const st = RUN_DIR + '/core_install.json';
+			let prev = null;
+			if (access(st)) {
+				try { prev = json(readfile(st) || ''); } catch (e) { prev = null; }
+			}
+			if (prev && prev.running && (time() - int(prev.ts || prev.started || 0) < 2400))
+				return { result: false, error: 'an install is already running' };
+			/* core_mgmt.uc lives under /usr/share/ravnex/scripts (NOT HP_DIR —
+			 * that points at /etc/ravnex, where the RUNNER scripts live; the
+			 * wrong path made the spawn fail silently — caught live in UI
+			 * acceptance). */
+			const fd = popen(`ucode ${shellquote('/usr/share/ravnex/scripts/core_mgmt.uc')} remote_tags ${shellquote(core)} 2>/dev/null`);
+			if (!fd)
+				return { error: 'remote_tags spawn failed' };
+			const raw = trim(fd.read('all'));
+			fd.close();
+			let data;
+			try { data = json(raw); } catch (e) { data = null; }
+			if (!data || data.error)
+				return { error: (data && data.error) || 'GitHub API недоступен' };
+			return { result: true, tags: data.tags || [] };
 		}
 	},
 
@@ -4552,21 +4652,26 @@ const methods = {
 			const installed = !!access('/usr/bin/ciadpi');
 			let version = null;
 			if (installed) {
-				if (access('/usr/bin/apk')) {
-					const fd = popen('apk info byedpi 2>/dev/null | head -1');
-					if (fd) {
-						const out = trim(fd.read('all'));
-						fd.close();
-						const m = match(out, /byedpi-([0-9][0-9.]*)/);
-						if (m) version = m[1];
-					}
-				} else if (access('/bin/opkg')) {
-					const fd = popen('opkg status byedpi 2>/dev/null');
-					if (fd) {
-						const out = fd.read('all');
-						fd.close();
-						const m = match(out, /Version: ([0-9][0-9.]*)/);
-						if (m) version = m[1];
+				/* ч.265: marker first (the original-tarball install writes it);
+				 * the PM record remains the fallback for legacy package installs. */
+				version = engine_marker_version('byedpi');
+				if (!version) {
+					if (access('/usr/bin/apk')) {
+						const fd = popen('apk info byedpi 2>/dev/null | head -1');
+						if (fd) {
+							const out = trim(fd.read('all'));
+							fd.close();
+							const m = match(out, /byedpi-([0-9][0-9.]*)/);
+							if (m) version = m[1];
+						}
+					} else if (access('/bin/opkg')) {
+						const fd = popen('opkg status byedpi 2>/dev/null');
+						if (fd) {
+							const out = fd.read('all');
+							fd.close();
+							const m = match(out, /Version: ([0-9][0-9.]*)/);
+							if (m) version = m[1];
+						}
 					}
 				}
 			}
@@ -4583,107 +4688,123 @@ const methods = {
 
 	byedpi_check_update: {
 		call: function(req) {
-			return check_update_reply(installed_pkg_version('byedpi', /byedpi-([0-9][0-9.]*)/),
-				gh_latest_tag('1andrevich/ByeDPI-OpenWrt'));
+			return check_update_reply(engine_marker_version('byedpi') ||
+				installed_pkg_version('byedpi', /byedpi-([0-9][0-9.]*)/),
+				gh_latest_tag('hufrea/byedpi'));
 		}
 	},
 
 	byedpi_prepare_install: {
 		call: function(req) {
-			let pkg_manager = null;
-			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
-			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
-			if (!pkg_manager)
-				return { error: 'No supported package manager (apk/opkg)' };
-
-			/* V2 feed-first: the own feed mirrors byedpi under our signature
-			 * (foreign name/version verbatim). A manifest candidate short-
-			 * circuits the GitHub API + asset download entirely; anything
-			 * missing falls through to the original asset path below — the
-			 * fallback IS the old code. 🔴 ч.248: strictly-newer gate, same
-			 * as zapret_prepare_install — ties/lagging feed go to the asset
-			 * path, never a no-op reinstall. */
-			if (feed_configured()) {
-				const fcand = feed_candidate('byedpi');
-				const curv = feed_installed_version('byedpi');
-				if (fcand && (curv == null ||
-				    feed_vercmp_base(feed_strip_rev(fcand.version), feed_strip_rev(curv)) > 0))
-					return { source: 'feed', feed_pkg: 'byedpi', pkg_manager,
-						version: fcand.version,
-						note: `источник обновлений: byedpi ${fcand.version}` };
-			}
-
-			let arch = null;
-			const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
-			if (afd) { arch = trim(afd.read('all')); afd.close(); }
+			/* ч.265 (де-форк): оригинальный статик-тарбол hufrea/byedpi —
+			 * byedpi-<ver>-<goarch>.tar.gz, SHA256 = per-asset digest из API
+			 * (гейт: install отказывает без совпадения). Фид-first для движков
+			 * снят; версии жить в маркере /etc/ravnex/engines/byedpi.version. */
+			const arch = detect_arch_rpc();
 			if (!length(arch))
 				return { error: 'Cannot detect architecture' };
-
-			const token_fd = popen('uci get ravnex.config.github_token 2>/dev/null');
-			let token = null;
-			if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
-			const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
-
-			const api_fd = popen(`wget -qO- ${auth} "https://api.github.com/repos/1andrevich/ByeDPI-OpenWrt/releases/latest" 2>/dev/null`);
-			if (!api_fd)
-				return { error: 'Failed to fetch release info' };
-			const api_out = api_fd.read('all');
-			api_fd.close();
-
-			const tag_m = match(api_out, /"tag_name"\s*:\s*"([^"]+)"/);
-			if (!tag_m)
-				return { error: 'Cannot parse release tag' };
-			const tag = tag_m[1];
-			const version = replace(tag, /^v/, '');
-
-			const ext = (pkg_manager === 'apk') ? 'apk' : 'ipk';
-			const dl_url = `https://github.com/1andrevich/ByeDPI-OpenWrt/releases/download/${tag}/byedpi_${version}_${arch}.${ext}`;
-			const tmp_path = `/tmp/byedpi_${version}_${arch}.${ext}`;
-
-			return { dl_url, tmp_path, pkg_manager, version };
+			/* OPENWRT_ARCH (префиксом) → goarch ассетов hufrea. Что не смаплено —
+			 * того у hufrea действительно нет; честный отказ вместо подмены. */
+			const BD_MAP = [
+				['aarch64', 'aarch64'],
+				['arm_arm1176jzf-s_vfp', 'armv6'],
+				['arm_cortex-a', 'armv7l'],
+				['x86_64', 'x86_64'],
+				['i386_pentium4', 'i686'],
+				['mipsel_24kc', 'mipsel'],
+				['mipsel_74kc', 'mipsel'],
+				['mipsel_mips32', 'mipsel'],
+				['mipsel_24kc_24kf', 'mipsel'],
+				['mips_24kc', 'mips'],
+				['mips_4kec', 'mips'],
+				['mips_mips32', 'mips'],
+				['powerpc', 'powerpc']
+			];
+			let bdarch = null;
+			for (let e in BD_MAP) {
+				if (substr(arch, 0, length(e[0])) == e[0]) { bdarch = e[1]; break; }
+			}
+			if (!bdarch)
+				return { error: `byedpi (hufrea) не публикует сборку для архитектуры ${arch}` };
+			const rel = gh_release_json('hufrea/byedpi');
+			if (!rel || !rel.tag_name)
+				return { error: 'Failed to fetch release info (hufrea/byedpi)' };
+			const version = replace('' + rel.tag_name, /^v/, '');
+			/* у hufrea в именах ассетов ведущий «0.» отброшен: 0.17.3 → 17.3 */
+			const ver2 = replace(version, /^0\./, '');
+			const name = `byedpi-${ver2}-${bdarch}.tar.gz`;
+			let url = null, sha = '';
+			for (let asset in (rel.assets || [])) {
+				if (('' + asset?.name) === name) {
+					url = asset?.browser_download_url || null;
+					sha = rpc_asset_digest(asset);
+					break;
+				}
+			}
+			if (!url)
+				return { error: `в релизе hufrea/byedpi нет ${name}` };
+			if (!length(sha))
+				return { error: `у ассета ${name} нет SHA256-digest в API — установка честно отменена` };
+			return {
+				dl_url: url,
+				tmp_path: `/tmp/byedpi-${ver2}-${bdarch}.tar.gz`,
+				pkg_manager: detect_pm_rpc(),
+				version,
+				sha256: sha
+			};
 		}
 	},
 
 	byedpi_install_pkg: {
-		args: { tmp_path: 'tmp_path', pkg_manager: 'pkg_manager' },
+		args: { tmp_path: 'tmp_path', pkg_manager: 'pkg_manager', sha256: 'sha256' },
 		call: function(req) {
 			const tmp_path = req.args?.tmp_path;
-			const pkg_manager = req.args?.pkg_manager;
-			if (!tmp_path || !pkg_manager)
+			const want_sha = trim('' + (req.args?.sha256 || ''));
+			if (!tmp_path)
 				return { result: false, error: 'Missing arguments' };
 			if (!access(tmp_path))
 				return { result: false, error: 'Package file not found' };
-			let ret;
-			if (pkg_manager === 'apk') {
-				/* Signing key (see zapret_install_pkg): skip the GitHub fetch if it's
-				 * already present (a provisioning tool may pre-place it); otherwise
-				 * a SHORT-timeout best-effort wget so a throttled GitHub can't hang the
-				 * ubus call. Install trusted if the key is there, else --allow-untrusted. */
-				if (!access('/etc/apk/keys/homeproxy-hiddify.pub')) {
-					if (gh_fetch('https://github.com/1andrevich/homeproxy-hiddify/releases/latest/download/homeproxy-hiddify.pub', '/tmp/homeproxy-hiddify.pub', 20000) === 0)
-						system('[ -s /tmp/homeproxy-hiddify.pub ] && cp /tmp/homeproxy-hiddify.pub /etc/apk/keys/ 2>/dev/null; rm -f /tmp/homeproxy-hiddify.pub');
-				}
-				if (access('/etc/apk/keys/homeproxy-hiddify.pub'))
-					ret = system(`apk add ${shellquote(tmp_path)}`, 120000);
-				else
-					ret = system(`apk add --allow-untrusted ${shellquote(tmp_path)}`, 120000);
-			} else {
-				/* --force-reinstall (piggybank ch.261(1ж)): opkg treats an EQUAL
-				 * version file as a no-op, so a tie-repair left the old binary
-				 * with a green access() post-check. Reinstall forces the file
-				 * through; downgrades still need --force-downgrade, which we
-				 * deliberately do NOT pass (the prepare gate refuses laggards). */
-				ret = system(`opkg install --force-reinstall ${shellquote(tmp_path)}`);
+			if (!match(tmp_path, /^\/tmp\/[a-zA-Z0-9._-]+\.tar\.gz$/))
+				return { result: false, error: 'unexpected download format' };
+			/* SHA256-гейт (решение 3): downloader не проверяет — проверяет
+			 * установщик. Нет digest в аргументах = установка честно отклонена. */
+			if (!match(want_sha, /^[0-9a-f]{64}$/))
+				return { result: false, error: 'prepare не передал SHA256-digest — установка отменена (обновите панель)' };
+			let sum = '';
+			const hfd = popen(`sha256sum ${shellquote(tmp_path)} 2>/dev/null`);
+			if (hfd) { sum = trim(hfd.read('all')); hfd.close(); }
+			const hm = match(sum, /^([0-9a-f]{64})/);
+			if (!hm || hm[1] != want_sha) {
+				system(`rm -f ${shellquote(tmp_path)}`);
+				return { result: false, error: `SHA256 mismatch for byedpi — файл удалён, установка отменена` };
 			}
-			system(`rm -f ${shellquote(tmp_path)}`);
-			/* opkg/apk can exit non-zero on a SUCCESSFUL install (e.g. the package's
-			 * postinst starts its own service and that step fails while every file
-			 * still lands). Trust the installed binary (same probe as byedpi_status),
-			 * not the exit code. */
+			/* ч.265 (де-форк): оригинальный статик-тарбол hufrea — ciadpi-<arch>
+			 * → /usr/bin/ciadpi, маркер версии. pkg_manager больше не участвует
+			 * (тарбол — не пакет); аргумент сохранён ради совместимости. */
+			const stage = '/usr/libexec/.byedpi-up';
+			const cmd =
+				`{ rm -rf ${shellquote(stage)}; mkdir -p ${shellquote(stage)}; }` +
+				` && tar -xzf ${shellquote(tmp_path)} -C ${shellquote(stage)}` +
+				` && BIN=$(find ${shellquote(stage)} -type f -name 'ciadpi*' | head -n1)` +
+				` && [ -n "$BIN" ] && [ -s "$BIN" ] && chmod 755 "$BIN"` +
+				` && [ -n "$("$BIN" --version 2>&1 | head -c 120)" ]` +
+				` && mv -f "$BIN" /usr/bin/ciadpi` +
+				` && rm -rf ${shellquote(stage)} ${shellquote(tmp_path)}`;
+			const rc = system(cmd, 120000);
+			system(`rm -rf ${shellquote(stage)}`);
 			const installed = !!access('/usr/bin/ciadpi');
 			if (installed) {
+				const mv = match(tmp_path, /byedpi-([0-9][0-9.]*)-/);
+				if (mv) {
+					system('mkdir -p /etc/ravnex/engines');
+					system(`printf %s ${shellquote(mv[1])} > /etc/ravnex/engines/byedpi.version`);
+				}
+				/* Наш конфиг гоняет ciadpi через собственный procd-инстанс —
+				 * отдельная служба пакета остаётся выключенной (как раньше). */
 				system('/etc/init.d/ciadpi stop 2>/dev/null; true');
 				system('/etc/init.d/ciadpi disable 2>/dev/null; true');
+			} else {
+				return { result: false, error: `ciadpi install failed (rc=${rc})` };
 			}
 			return { result: installed };
 		}
@@ -4707,12 +4828,25 @@ const methods = {
 			 * strategy-test instance) — no ps|grep sweep (audit 36). */
 			pm_kill_matched({ exe: 'ciadpi' }, 3000);
 			let ret;
-			if (access('/usr/bin/apk'))
-				ret = system('apk del byedpi');
-			else if (access('/bin/opkg'))
-				ret = system('opkg remove byedpi');
-			else
-				return { result: false, error: 'No package manager' };
+			/* ч.265: тарбол-установка не оставляет PM-запись — сначала пробуем
+			 * пакет, при его отсутствии чистим файлы+маркер напрямую. */
+			const pm = detect_pm_rpc();
+			let have_pkg = false;
+			if (pm === 'apk') {
+				const pfd = popen('apk info -e byedpi 2>/dev/null');
+				if (pfd) { have_pkg = length(trim(pfd.read('all'))) > 0; pfd.close(); }
+				if (have_pkg) ret = system('apk del byedpi');
+			} else if (pm === 'opkg') {
+				const pfd = popen('opkg list-installed byedpi 2>/dev/null');
+				if (pfd) { have_pkg = length(trim(pfd.read('all'))) > 0; pfd.close(); }
+				if (have_pkg) ret = system('opkg remove byedpi');
+			} else {
+				ret = -1;
+			}
+			if (!have_pkg) {
+				system('rm -f /usr/bin/ciadpi /etc/ravnex/engines/byedpi.version');
+				ret = 0;
+			}
 			return { result: ret === 0 };
 		}
 	},
@@ -4722,21 +4856,25 @@ const methods = {
 			const installed = !!access('/opt/zapret2/nfq2/nfqws2');
 			let version = null;
 			if (installed) {
-				if (access('/usr/bin/apk')) {
-					const fd = popen('apk info zapret2 2>/dev/null | head -1');
-					if (fd) {
-						const out = trim(fd.read('all'));
-						fd.close();
-						const m = match(out, /zapret2-([0-9][0-9.]*)/);
-						if (m) version = m[1];
-					}
-				} else if (access('/bin/opkg')) {
-					const fd = popen('opkg status zapret2 2>/dev/null');
-					if (fd) {
-						const out = fd.read('all');
-						fd.close();
-						const m = match(out, /Version: ([0-9][0-9.]*)/);
-						if (m) version = m[1];
+				/* ч.265: marker first (original-tarball install writes it). */
+				version = engine_marker_version('zapret2');
+				if (!version) {
+					if (access('/usr/bin/apk')) {
+						const fd = popen('apk info zapret2 2>/dev/null | head -1');
+						if (fd) {
+							const out = trim(fd.read('all'));
+							fd.close();
+							const m = match(out, /zapret2-([0-9][0-9.]*)/);
+							if (m) version = m[1];
+						}
+					} else if (access('/bin/opkg')) {
+						const fd = popen('opkg status zapret2 2>/dev/null');
+						if (fd) {
+							const out = fd.read('all');
+							fd.close();
+							const m = match(out, /Version: ([0-9][0-9.]*)/);
+							if (m) version = m[1];
+						}
 					}
 				}
 			}
@@ -4771,96 +4909,129 @@ const methods = {
 
 	zapret_check_update: {
 		call: function(req) {
-			return check_update_reply(installed_pkg_version('zapret2', /zapret2-([0-9][0-9.]*)/),
-				gh_latest_tag('1andrevich/zapret2-openwrt'));
+			return check_update_reply(engine_marker_version('zapret2') ||
+				installed_pkg_version('zapret2', /zapret2-([0-9][0-9.]*)/),
+				gh_latest_tag('bol-van/zapret2'));
 		}
 	},
 
 	zapret_prepare_install: {
 		call: function(req) {
-			let pkg_manager = null;
-			if (access('/usr/bin/apk') || access('/sbin/apk') || access('/usr/sbin/apk')) pkg_manager = 'apk';
-			else if (access('/bin/opkg') || access('/usr/bin/opkg')) pkg_manager = 'opkg';
-			if (!pkg_manager)
-				return { error: 'No supported package manager (apk/opkg)' };
-
-			/* V2 feed-first (mirror under our signature, verbatim name/version)
-			 * — the asset path below stays as the honest fallback.
-			 * 🔴 ч.248: the feed hit only when the feed is STRICTLY newer than
-			 * the installed package (mosdns gate tightened): a tie or a lagging
-			 * feed falls through to the upstream asset path, so «Обновить»
-			 * delivers what «Проверить обновление» promised instead of a
-			 * no-op reinstall with the old version left on screen. */
-			if (feed_configured()) {
-				const fcand = feed_candidate('zapret2');
-				const curv = feed_installed_version('zapret2');
-				if (fcand && (curv == null ||
-				    feed_vercmp_base(feed_strip_rev(fcand.version), feed_strip_rev(curv)) > 0))
-					return { source: 'feed', feed_pkg: 'zapret2', pkg_manager,
-						version: fcand.version,
-						note: `источник обновлений: zapret2 ${fcand.version}` };
+			/* ч.265 (де-форк): оригинальный openwrt-embedded тарбол bol-van —
+			 * zapret2-<tag>-openwrt-embedded.tar.gz (все архи + UPX внутри;
+			 * SHA256 = per-asset digest из API). Установка раскладывает только
+			 * binaries/lua/files/fake поверх /opt/zapret2, чужие доп-скрипты
+			 * существующей установки не трогает; маркер версии отдельно. */
+			const rel = gh_release_json('bol-van/zapret2');
+			if (!rel || !rel.tag_name)
+				return { error: 'Failed to fetch release info (bol-van/zapret2)' };
+			const tag = '' + rel.tag_name;
+			const version = replace(tag, /^v/, '');
+			const name = `zapret2-${tag}-openwrt-embedded.tar.gz`;
+			let url = null, sha = '';
+			for (let asset in (rel.assets || [])) {
+				if (('' + asset?.name) === name) {
+					url = asset?.browser_download_url || null;
+					sha = rpc_asset_digest(asset);
+					break;
+				}
 			}
-
-			let arch = null;
-			const afd = popen("awk -F\\' '/DISTRIB_ARCH/ {print $2}' /etc/openwrt_release 2>/dev/null");
-			if (afd) { arch = trim(afd.read('all')); afd.close(); }
-			if (!length(arch))
-				return { error: 'Cannot detect architecture' };
-
-			/* Asset names are version-less, so no GitHub API call is needed —
-			 * releases/latest/download/<name> resolves to the newest release. */
-			const ext = (pkg_manager === 'apk') ? 'apk' : 'ipk';
-			const dl_url = `https://github.com/1andrevich/zapret2-openwrt/releases/latest/download/zapret2_${arch}.${ext}`;
-			const tmp_path = `/tmp/zapret2_${arch}.${ext}`;
-
-			return { dl_url, tmp_path, pkg_manager };
+			if (!url)
+				return { error: `в релизе bol-van/zapret2 нет ${name}` };
+			if (!length(sha))
+				return { error: `у ассета ${name} нет SHA256-digest в API — установка честно отменена` };
+			return {
+				dl_url: url,
+				tmp_path: `/tmp/${name}`,
+				pkg_manager: detect_pm_rpc(),
+				version,
+				sha256: sha
+			};
 		}
 	},
 
 	zapret_install_pkg: {
-		args: { tmp_path: 'tmp_path', pkg_manager: 'pkg_manager' },
+		args: { tmp_path: 'tmp_path', pkg_manager: 'pkg_manager', sha256: 'sha256' },
 		call: function(req) {
 			const tmp_path = req.args?.tmp_path;
-			const pkg_manager = req.args?.pkg_manager;
-			if (!tmp_path || !pkg_manager)
+			const want_sha = trim('' + (req.args?.sha256 || ''));
+			if (!tmp_path)
 				return { result: false, error: 'Missing arguments' };
 			if (!access(tmp_path))
 				return { result: false, error: 'Package file not found' };
-			let ret;
-			if (pkg_manager === 'apk') {
-				/* Signing key: if it's ALREADY present (e.g. pre-placed by a provisioning
-				 * tool, or a prior install), skip the GitHub fetch entirely. Only
-				 * if it's missing do a SHORT-timeout best-effort wget — the old un-timed
-				 * one hung on a throttled GitHub until the ubus call timed out (exit 249).
-				 * Then install trusted if the key is there, else --allow-untrusted. */
-				if (!access('/etc/apk/keys/zapret2-1andrevich.pub')) {
-					if (gh_fetch('https://github.com/1andrevich/zapret2-openwrt/releases/latest/download/zapret2-1andrevich.pub', '/tmp/zapret2-1andrevich.pub', 20000) === 0)
-						system('[ -s /tmp/zapret2-1andrevich.pub ] && cp /tmp/zapret2-1andrevich.pub /etc/apk/keys/ 2>/dev/null; rm -f /tmp/zapret2-1andrevich.pub');
-				}
-				if (access('/etc/apk/keys/zapret2-1andrevich.pub'))
-					ret = system(`apk add ${shellquote(tmp_path)}`, 120000);
-				else
-					ret = system(`apk add --allow-untrusted ${shellquote(tmp_path)}`, 120000);
-			} else {
-				system('opkg update 2>/dev/null');
-				/* --force-reinstall (piggybank ch.261(1ж)): same tie-repair fix as
-				 * byedpi_install_pkg - an EQUAL version file is otherwise a
-				 * silent no-op with a green access() post-check. */
-				ret = system(`opkg install --force-reinstall ${shellquote(tmp_path)}`);
+			if (!match(tmp_path, /^\/tmp\/zapret2-v[0-9][0-9A-Za-z._-]*-openwrt-embedded\.tar\.gz$/))
+				return { result: false, error: 'unexpected download format' };
+			if (!match(want_sha, /^[0-9a-f]{64}$/))
+				return { result: false, error: 'prepare не передал SHA256-digest — установка отменена (обновите панель)' };
+			let sum = '';
+			const hfd = popen(`sha256sum ${shellquote(tmp_path)} 2>/dev/null`);
+			if (hfd) { sum = trim(hfd.read('all')); hfd.close(); }
+			const hm = match(sum, /^([0-9a-f]{64})/);
+			if (!hm || hm[1] != want_sha) {
+				system(`rm -f ${shellquote(tmp_path)}`);
+				return { result: false, error: `SHA256 mismatch for zapret2 — файл удалён, установка отменена` };
 			}
-			system(`rm -f ${shellquote(tmp_path)}`);
-			/* opkg/apk can exit non-zero on a SUCCESSFUL install (e.g. the package's
-			 * postinst starts its own service and that step fails while every file
-			 * still lands). Trust the installed binary (same probe as zapret_status),
-			 * not the exit code. */
+			const arch = detect_arch_rpc();
+			if (!length(arch))
+				return { result: false, error: 'Cannot detect architecture' };
+			const Z2_MAP = [
+				['aarch64', 'linux-arm64'],
+				['arm_cortex-a', 'linux-arm'],
+				['x86_64', 'linux-x86_64'],
+				['i386_pentium4', 'linux-x86'],
+				['mipsel_24kc', 'linux-mipsel'],
+				['mipsel_74kc', 'linux-mipsel'],
+				['mipsel_mips32', 'linux-mipsel'],
+				['mipsel_24kc_24kf', 'linux-mipsel'],
+				['mips_24kc', 'linux-mips'],
+				['mips_4kec', 'linux-mips'],
+				['mips_mips32', 'linux-mips'],
+				['mips64_mips64r2', 'linux-mips64'],
+				['mips64_octeonplus', 'linux-mips64'],
+				['riscv64_generic', 'linux-riscv64'],
+				['powerpc', 'linux-ppc']
+			];
+			let zdir = null;
+			for (let e in Z2_MAP) {
+				if (substr(arch, 0, length(e[0])) == e[0]) { zdir = e[1]; break; }
+			}
+			if (!zdir)
+				return { result: false, error: `bol-van/zapret2 не публикует сборку для архитектуры ${arch}` };
+			/* ч.265: раскладываем ТОЛЬКО binaries/lua/files/fake поверх
+			 * /opt/zapret2 — доп-скрипты существующей установки (config, comfunc,
+			 * ipset-обвязка) остаются нетронутыми. nfqws2 заменяется атомарно
+			 * (.new + mv — rename поверх работающего экземпляра безопасен). */
+			const stage = '/usr/libexec/.zapret-up';
+			const cmd =
+				`{ rm -rf ${shellquote(stage)}; mkdir -p ${shellquote(stage)}; }` +
+				` && tar -xzf ${shellquote(tmp_path)} -C ${shellquote(stage)}` +
+				` && ROOT=$(find ${shellquote(stage)} -maxdepth 1 -type d -name 'zapret2-v*' | head -n1)` +
+				` && [ -n "$ROOT" ] && BIN="$ROOT/binaries/${zdir}/nfqws2" && [ -s "$BIN" ] && chmod 755 "$BIN"` +
+				` && [ -n "$("$BIN" 2>&1 | head -c 80)" ]` +
+				` && mkdir -p /opt/zapret2/nfq2 /opt/zapret2/lua /opt/zapret2/files/fake` +
+				` && cp -f "$BIN" /opt/zapret2/nfq2/.nfqws2.new` +
+				` && mv -f /opt/zapret2/nfq2/.nfqws2.new /opt/zapret2/nfq2/nfqws2` +
+				` && { cp -f "$ROOT"/binaries/${zdir}/mdig "$ROOT"/binaries/${zdir}/ip2net /opt/zapret2/ 2>/dev/null || true; }` +
+				` && cp -f "$ROOT"/lua/*.gz /opt/zapret2/lua/` +
+				` && cp -f "$ROOT"/files/fake/*.bin /opt/zapret2/files/fake/` +
+				` && chmod 755 /opt/zapret2/nfq2/nfqws2 /opt/zapret2/mdig /opt/zapret2/ip2net 2>/dev/null` +
+				` && chmod 644 /opt/zapret2/lua/*.gz /opt/zapret2/files/fake/*.bin 2>/dev/null` +
+				` && rm -rf ${shellquote(stage)} ${shellquote(tmp_path)}`;
+			const rc = system(cmd, 180000);
+			system(`rm -rf ${shellquote(stage)}`);
 			const installed = !!access('/opt/zapret2/nfq2/nfqws2');
-			if (installed) {
-				/* Keep the package's own service out of the way — HomeProxy runs its own
-				 * nfqws2 instance (qnum 200) and installs the NFQUEUE rule itself. */
-				system('/etc/init.d/zapret2 stop 2>/dev/null; true');
-				system('/etc/init.d/zapret2 disable 2>/dev/null; true');
+			if (!installed)
+				return { result: false, error: `nfqws2 install failed (rc=${rc})` };
+			const mv = match(tmp_path, /zapret2-v([0-9][0-9.]*)-openwrt/);
+			if (mv) {
+				system('mkdir -p /etc/ravnex/engines');
+				system(`printf %s ${shellquote(mv[1])} > /etc/ravnex/engines/zapret2.version`);
 			}
-			return { result: installed };
+			/* Собственный сервис пакета остаётся выключенным — наша обвязка
+			 * гоняет nfqws2 сама (qnum 200, свои правила NFQUEUE). */
+			system('/etc/init.d/zapret2 stop 2>/dev/null; true');
+			system('/etc/init.d/zapret2 disable 2>/dev/null; true');
+			return { result: true };
 		}
 	},
 
@@ -4874,12 +5045,25 @@ const methods = {
 			 * the prod instance is stopped above). */
 			pm_kill_matched({ exe: 'nfqws2' }, 3000);
 			let ret;
-			if (access('/usr/bin/apk'))
-				ret = system('apk del zapret2');
-			else if (access('/bin/opkg'))
-				ret = system('opkg remove zapret2');
-			else
-				return { result: false, error: 'No package manager' };
+			/* ч.265: тарбол-установка не оставляет PM-запись — пакет при наличии
+			 * сносит всё /opt/zapret2; без пакета чистим только наши биты. */
+			const pm = detect_pm_rpc();
+			let have_pkg = false;
+			if (pm === 'apk') {
+				const pfd = popen('apk info -e zapret2 2>/dev/null');
+				if (pfd) { have_pkg = length(trim(pfd.read('all'))) > 0; pfd.close(); }
+				if (have_pkg) ret = system('apk del zapret2');
+			} else if (pm === 'opkg') {
+				const pfd = popen('opkg list-installed zapret2 2>/dev/null');
+				if (pfd) { have_pkg = length(trim(pfd.read('all'))) > 0; pfd.close(); }
+				if (have_pkg) ret = system('opkg remove zapret2');
+			} else {
+				ret = -1;
+			}
+			if (!have_pkg) {
+				system('rm -f /opt/zapret2/nfq2/nfqws2 /etc/ravnex/engines/zapret2.version');
+				ret = 0;
+			}
 			return { result: ret === 0 };
 		}
 	},

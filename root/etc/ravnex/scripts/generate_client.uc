@@ -186,7 +186,7 @@ const ipv6_support = uci.get(uciconfig, ucimain, 'ipv6_support') || '0';
  * skipped main node falls back to the URLTest pool (or direct), and the skip
  * list is exposed to the UI via $RUN_DIR/core_skipped.json.
  * Verified empirically (device, 2026-09-17) on hiddify-core 4.1.0
- * (hiddify-sing-box 1.13.1) and sing-box-extended 1.14.0-extended-2.7.1:
+ * (hiddify sing-box dialect 1.13.1) and sing-box-extended 1.14.0-extended-2.7.1:
  * the extended build ships WITHOUT with_naive_outbound (NaïveProxy dropped);
  * everything else this app can configure — vless / vmess / trojan /
  * shadowsocks / shadowtls / socks / http / ssh / hysteria(2) / tuic / anytls /
@@ -244,7 +244,8 @@ const hp_core = hp_core_info();
  * FATAL to continuing using this feature» (проверено на устройстве, v5.1.0).
  * Новый диалект — переопределение `http_client.detour` на самом rule_set.
  * Гейт по мажорной версии целевого ядра: hiddify ≥5 → http_client; всё
- * остальное (hiddify 4.x fork / sing-box-extended 1.14 / custom) →
+ * остальное (старые сборки семейства hiddify / sing-box-extended 1.14 /
+ * custom) →
  * download_detour. Отдельная глобальная секция http_client не нужна:
  * частичный объект с одним detour валиден сам по себе (остальные поля —
  * дефолты). */

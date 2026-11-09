@@ -20,26 +20,28 @@
 # packages.adb is still built for apk tooling and humans; the client reads
 # manifest.json only.
 #
-# Components:
+# Components (ч.265 «ВСЁ ИЗ ОРИГИНАЛЬНЫХ РЕПОЗИТОРИЕВ» — де-форк/де-фид ядер):
 #   OUR BUILDS (upstream raw binaries, packaged by us, $VER-$REV):
-#     hiddify-core (+ hiddify-core-compact UPX)   hiddify/hiddify-core tar.gz
 #     mosdns                                      IrineSistiana/mosdns zip
 #     probe_pool, sni_sniffer                     our Go helpers from release zips
-#   MIRRORS (foreign payloads REBUILT with our key, NAME+VERSION preserved
-#   verbatim so the client's vercmp against the installed binary stays true):
-#     sing-box-extended                shtorm-7 ipk → repack
-#     sing-box-extended-lite           MANCrimSon normal tarball (compressed
-#                                      stays on the proven installer path)
-#     byedpi                           1andrevich ipk → repack
-#     zapret2                          1andrevich ipk → repack
+#   OUR PACKAGING OF ORIGINAL BINARIES (decision 5: engines with no upstream
+#   OpenWrt packages are packaged by US from the ORIGINAL static binaries):
+#     byedpi        hufrea/byedpi static tarball  → our apk+ipk
+#     zapret2       bol-van/zapret2 openwrt-embedded tar.gz → our apk+ipk
 #
-# arch→asset tables mirror the app exactly (core_mgmt.uc HIDDIFY_UPSTREAM_ASSET,
+# The PROXY CORES left the feed completely: hiddify/hiddify-core publishes
+# OpenWrt apk+ipk itself (v5.4.0+), sing-box-extended = shtorm-7 apk+ipk,
+# lite = MANCrimSon tarballs — the app installs them straight from the
+# originals (SHA256 API-digest gate), so building/mirroring them here would
+# be a second uncontrolled source. feed-first for cores is REMOVED from the
+# client as well (core_mgmt.uc, seance 177).
+#
+# arch→asset tables mirror the app exactly (core_mgmt.uc GOARCH maps,
 # luci.ravnex byedpi/zapret2 maps) so a feed package exists wherever the
 # app knows how to run the component. Labels with no upstream asset simply
-# omit that component from the arch's manifest (the client falls back to the
-# asset path / installer).
+# omit that component from the arch's manifest.
 #
-# Requirements: apk (apk-tools v3 with mkpkg/mkndx, host build), upx-ucl, jq,
+# Requirements: apk (apk-tools v3 with mkpkg/mkndx, host build), jq,
 # curl, tar, unzip, openssl. The signing key comes from APK_SIGN_KEY (path);
 # when empty an unsigned feed is built (client needs --allow-untrusted then —
 # the app's feed_status reports the honest state).
@@ -57,23 +59,6 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 # ── arch → upstream asset tables (mirrors of the app's own maps) ─────────────
-hid_asset() {
-	case "$1" in
-	aarch64_cortex-a53|aarch64_cortex-a72|aarch64_cortex-a76|aarch64_generic) echo 'hiddify-core-linux-arm64-musl.tar.gz';;
-	arm_cortex-a5_vfpv4|arm_cortex-a7_neon-vfpv4|arm_cortex-a7_vfpv4|arm_cortex-a8_vfpv3|arm_cortex-a9_neon|arm_cortex-a9_vfpv3-d16|arm_cortex-a15_neon-vfpv4) echo 'hiddify-core-linux-armv7-musl.tar.gz';;
-	arm_arm926ej-s) echo 'hiddify-core-linux-armv5.tar.gz';;
-	arm_arm1176jzf-s_vfp) echo 'hiddify-core-linux-armv6.tar.gz';;
-	mipsel_24kc|mipsel_74kc|mipsel_mips32) echo 'hiddify-core-linux-mipsle-softfloat.tar.gz';;
-	mipsel_24kc_24kf) echo 'hiddify-core-linux-mipsle.tar.gz';;
-	mips_24kc|mips_4kec|mips_mips32) echo 'hiddify-core-linux-mips-softfloat.tar.gz';;
-	mips64_mips64r2|mips64_octeonplus) echo 'hiddify-core-linux-mips64-softfloat.tar.gz';;
-	x86_64) echo 'hiddify-core-linux-amd64-musl.tar.gz';;
-	i386_pentium4) echo 'hiddify-core-linux-386-musl.tar.gz';;
-	i386_pentium-mmx) echo 'hiddify-core-linux-386-softfloat.tar.gz';;
-	riscv64_generic) echo 'hiddify-core-linux-riscv64.tar.gz';;
-	*) return 1;;
-	esac
-}
 mosdns_asset() {
 	case "$1" in
 	aarch64_generic|aarch64_cortex-a53|aarch64_cortex-a72|aarch64_cortex-a76) echo 'mosdns-linux-arm64.zip';;
@@ -96,34 +81,38 @@ helper_asset() {
 	*) return 1;;
 	esac
 }
-# MANCrimSon lite tarballs use Go arch names; variant = normal only (the
-# compressed build stays on the project installer path — it ships a sh
-# wrapper + UPX binary whose layout the feed does not replicate).
-lite_goarch() {
+# hufrea/byedpi static tarballs use Go arch names with the leading "0."
+# dropped from the version (0.17.3 → 17.3). Mirror of rpcd BD_MAP.
+byedpi_goarch() {
 	case "$1" in
-	aarch64_generic|aarch64_cortex-a53|aarch64_cortex-a72|aarch64_cortex-a76) echo 'arm64';;
-	arm_cortex-a5_vfpv4|arm_cortex-a7_neon-vfpv4|arm_cortex-a7_vfpv4|arm_cortex-a8_vfpv3|arm_cortex-a9_neon|arm_cortex-a9_vfpv3-d16|arm_cortex-a15_neon-vfpv4|arm_fa526) echo 'armv7';;
-	x86_64) echo 'amd64';;
-	mips_24kc|mips_74kc|mips_mips32) echo 'mips-softfloat';;
-	mipsel_24kc|mipsel_74kc) echo 'mipsle-softfloat';;
+	aarch64*) echo 'aarch64';;
+	arm_arm1176jzf-s_vfp) echo 'armv6';;
+	arm_cortex-a*) echo 'armv7l';;
+	x86_64) echo 'x86_64';;
+	i386_pentium4) echo 'i686';;
+	mipsel*) echo 'mipsel';;
+	mips*) echo 'mips';;
+	powerpc*) echo 'powerpc';;
 	*) return 1;;
 	esac
 }
-# shtorm-7 / 1andrevich publish OpenWrt packages under the OpenWrt arch label
-# directly (verified 2026-11-08: sing-box-extended_<ver>_openwrt_<arch>.ipk,
-# byedpi_<ver>_<arch>.ipk, zapret2_<arch>.ipk); exact-name attempt, honest skip.
-sbx_ipk_url() { # <ver> <arch>
-	echo "$GHDL/shtorm-7/sing-box-extended/releases/download/v$1/sing-box-extended_${1}_openwrt_${2}.ipk"
+# bol-van/zapret2 openwrt-embedded carries binaries/linux-<dir>/. Mirror of
+# rpcd Z2_MAP.
+zapret2_dir() {
+	case "$1" in
+	aarch64*) echo 'linux-arm64';;
+	arm_cortex-a*) echo 'linux-arm';;
+	x86_64) echo 'linux-x86_64';;
+	i386_pentium4) echo 'linux-x86';;
+	mipsel_24kc_24kf) echo 'linux-mipsel';;
+	mipsel*) echo 'linux-mipsel';;
+	mips64*) echo 'linux-mips64';;
+	mips*) echo 'linux-mips';;
+	riscv64*) echo 'linux-riscv64';;
+	powerpc*) echo 'linux-ppc';;
+	*) return 1;;
+	esac
 }
-byedpi_ipk_url() { # <ver> <arch>
-	echo "$GHDL/1andrevich/ByeDPI-OpenWrt/releases/download/v$1/byedpi_${1}_${2}.ipk"
-}
-zapret2_ipk_url() { # <ver> <arch>
-	echo "$GHDL/1andrevich/zapret2-openwrt/releases/download/v$1/zapret2_${2}.ipk"
-}
-# UPX compact: same classes the app refuses (MIPS soft-float SIGILL) + formats
-# upx cannot pack (riscv64). armv5/v6 pack fine but stay full — small fleet.
-upx_ok() { case "$1" in mips*|riscv64*) return 1;; *) return 0;; esac; }
 
 IFS=',' read -r -a ARCH_LIST <<< "$ARCHS"
 
@@ -159,17 +148,13 @@ tag_of() {
 }
 
 echo "── versions ──────────────────────────────────────────────"
-HID_TAG=$(tag_of hiddify/hiddify-core);                 HID_VER=${HID_TAG#v}
 MOS_TAG=$(tag_of IrineSistiana/mosdns);                 MOS_VER=${MOS_TAG#v}
 HELP_TAG=$(tag_of ezdizzy/ravnex);                HELP_VER=${HELP_TAG#v}
-SBX_TAG=$(tag_of shtorm-7/sing-box-extended);           SBX_VER=${SBX_TAG#v}
-LITE_TAG=$(tag_of MANCrimSon/sing-box-extended-lite);   LITE_VER=${LITE_TAG#v}
-BYD_TAG=$(tag_of 1andrevich/ByeDPI-OpenWrt);            BYD_VER=${BYD_TAG#v}
-Z2_TAG=$(tag_of 1andrevich/zapret2-openwrt);            Z2_VER=${Z2_TAG#v}
-echo "hiddify-core=$HID_VER mosdns=$MOS_VER helpers=$HELP_VER rev=$REV series=$SERIES"
-echo "sing-box-extended=$SBX_VER lite=$LITE_VER byedpi=$BYD_VER zapret2=$Z2_VER"
+BYD_TAG=$(tag_of hufrea/byedpi);                        BYD_VER=${BYD_TAG#v}
+Z2_TAG=$(tag_of bol-van/zapret2);                       Z2_VER=${Z2_TAG#v}
+echo "mosdns=$MOS_VER helpers=$HELP_VER byedpi=$BYD_VER zapret2=$Z2_VER rev=$REV series=$SERIES"
 # Session 161: an exhausted ladder must abort, not package empty versions.
-for v in "$HID_VER" "$MOS_VER" "$HELP_VER" "$SBX_VER" "$LITE_VER" "$BYD_VER" "$Z2_VER"; do
+for v in "$MOS_VER" "$HELP_VER" "$BYD_VER" "$Z2_VER"; do
 	[ -n "$v" ] || { echo "ERROR: an upstream tag resolve failed (see above) - aborting"; exit 1; }
 done
 
@@ -305,28 +290,11 @@ own_pkg() { # <stageroot> <name> <ver> <arch> <descr>
 for A in "${ARCH_LIST[@]}"; do
 	echo "── arch $A ────────────────────────────────────────────────"
 	D="$OUT/releases/$SERIES/$A"; mkdir -p "$D"
-	HA=$(hid_asset "$A" || true)
 	MA=$(mosdns_asset "$A" || true)
 	GA=$(helper_asset "$A" || true)
-	LG=$(lite_goarch "$A" || true)
+	BG=$(byedpi_goarch "$A" || true)
+	ZD=$(zapret2_dir "$A" || true)
 
-	if [ -n "${HA:-}" ]; then
-		SRC=$(fetch_bin "$GHDL/hiddify/hiddify-core/releases/latest/download/$HA" "$HA" || true)
-		if [ -n "${SRC:-}" ]; then
-			rm -rf "$WORK/x" "$WORK/root"; mkdir -p "$WORK/x" "$WORK/root/usr/bin"; tar -xzf "$SRC" -C "$WORK/x"
-			BIN=$(find "$WORK/x" -type f -name 'hiddify-core' | head -1)
-			[ -n "$BIN" ] || echo "SKIP hiddify-core $A (no binary in tarball)"
-			if [ -n "${BIN:-}" ]; then
-				mkdir -p "$WORK/root/usr/bin"; cp "$BIN" "$WORK/root/usr/bin/hiddify-core"; chmod 755 "$WORK/root/usr/bin/hiddify-core"
-				own_pkg "$WORK/root" hiddify-core "$HID_VER-$REV" "$A" "Ravnex hiddify-core (full upstream build)"
-				if upx_ok "$A"; then
-					cp "$BIN" "$WORK/root/usr/bin/hiddify-core"
-					upx -q -9 "$WORK/root/usr/bin/hiddify-core" >/dev/null
-					own_pkg "$WORK/root" hiddify-core-compact "$HID_VER-$REV" "$A" "Ravnex hiddify-core (UPX compact)"
-				fi
-			fi
-		fi
-	fi
 	if [ -n "${MA:-}" ]; then
 		SRC=$(fetch_bin "$GHDL/IrineSistiana/mosdns/releases/latest/download/$MA" "$MA" || true)
 		if [ -n "${SRC:-}" ]; then
@@ -357,30 +325,40 @@ for A in "${ARCH_LIST[@]}"; do
 		done
 	fi
 
-	# ── mirrors: name/version preserved, our signatures ─────────────────────
-	if [ -n "${SBX_VER:-}" ]; then
-		SRC=$(fetch_bin "$(sbx_ipk_url "$SBX_VER" "$A")" "sbx-$A.ipk" || true)
-		[ -n "${SRC:-}" ] && repack_ipk "$SRC" "$A" "sing-box-extended (mirror of shtorm-7, Ravnex-signed)" || echo "SKIP sing-box-extended $A (no upstream ipk)"
-	fi
-	if [ -n "${BYD_VER:-}" ]; then
-		SRC=$(fetch_bin "$(byedpi_ipk_url "$BYD_VER" "$A")" "byedpi-$A.ipk" || true)
-		[ -n "${SRC:-}" ] && repack_ipk "$SRC" "$A" "byedpi (mirror of 1andrevich/ByeDPI-OpenWrt, Ravnex-signed)" || echo "SKIP byedpi $A (no upstream ipk)"
-	fi
-	if [ -n "${Z2_VER:-}" ]; then
-		SRC=$(fetch_bin "$(zapret2_ipk_url "$Z2_VER" "$A")" "zapret2-$A.ipk" || true)
-		[ -n "${SRC:-}" ] && repack_ipk "$SRC" "$A" "zapret2 nfqws2 (mirror of 1andrevich/zapret2-openwrt, Ravnex-signed)" || echo "SKIP zapret2 $A (no upstream ipk)"
-	fi
-	if [ -n "${LG:-}" ] && [ -n "${LITE_VER:-}" ]; then
-		SRC=$(fetch_bin "$GHDL/MANCrimSon/sing-box-extended-lite/releases/download/$LITE_TAG/sing-box-extended-lite-$LITE_VER-linux-$LG.tar.gz" "lite-$A.tar.gz" || true)
+	# ── engines: OUR packages built from the ORIGINAL upstream binaries ──────
+	# (decision 5, seance 177: byedpi/zapret2 have no upstream OpenWrt packages
+	# — we package the original static binaries ourselves; no more 1andrevich
+	# mirrors. The proxies' own cores left the feed entirely.)
+	if [ -n "${BG:-}" ]; then
+		BV2=${BYD_VER#0.}   # hufrea drops the leading "0." in asset names
+		SRC=$(fetch_bin "$GHDL/hufrea/byedpi/releases/download/$BYD_TAG/byedpi-$BV2-$BG.tar.gz" "byedpi-$BG.tar.gz" || true)
 		if [ -n "${SRC:-}" ]; then
-			rm -rf "$WORK/x" "$WORK/root"; mkdir -p "$WORK/x" "$WORK/root/usr/bin"
-			tar -xzf "$SRC" -C "$WORK/x"
-			BIN=$(find "$WORK/x" -maxdepth 2 -type f -name 'sing-box' | head -1)
+			rm -rf "$WORK/x" "$WORK/root"; mkdir -p "$WORK/x" "$WORK/root/usr/bin"; tar -xzf "$SRC" -C "$WORK/x"
+			BIN=$(find "$WORK/x" -type f -name 'ciadpi*' | head -1)
 			if [ -n "${BIN:-}" ]; then
-				cp "$BIN" "$WORK/root/usr/bin/sing-box"; chmod 755 "$WORK/root/usr/bin/sing-box"
-				own_pkg "$WORK/root" sing-box-extended-lite "$LITE_VER" "$A" "sing-box-extended-lite (mirror of MANCrimSon normal build $LITE_VER, Ravnex-signed)"
+				cp "$BIN" "$WORK/root/usr/bin/ciadpi"; chmod 755 "$WORK/root/usr/bin/ciadpi"
+				own_pkg "$WORK/root" byedpi "$BYD_VER-$REV" "$A" "Ravnex byedpi (upstream hufrea static build $BYD_VER)"
 			else
-				echo "SKIP sing-box-extended-lite $A (no sing-box binary in tarball)"
+				echo "SKIP byedpi $A (no ciadpi binary in tarball)"
+			fi
+		fi
+	fi
+	if [ -n "${ZD:-}" ]; then
+		SRC=$(fetch_bin "$GHDL/bol-van/zapret2/releases/download/$Z2_TAG/zapret2-$Z2_TAG-openwrt-embedded.tar.gz" "zapret2-embedded.tar.gz" || true)
+		if [ -n "${SRC:-}" ]; then
+			rm -rf "$WORK/x" "$WORK/root"
+			mkdir -p "$WORK/x" "$WORK/root/opt/zapret2/nfq2" "$WORK/root/opt/zapret2/lua" "$WORK/root/opt/zapret2/files/fake"
+			tar -xzf "$SRC" -C "$WORK/x"
+			R2=$(find "$WORK/x" -maxdepth 1 -type d -name 'zapret2-v*' | head -1)
+			if [ -n "$R2" ] && [ -s "$R2/binaries/$ZD/nfqws2" ]; then
+				cp "$R2/binaries/$ZD/nfqws2" "$WORK/root/opt/zapret2/nfq2/nfqws2"; chmod 755 "$WORK/root/opt/zapret2/nfq2/nfqws2"
+				cp "$R2/binaries/$ZD/mdig" "$R2/binaries/$ZD/ip2net" "$WORK/root/opt/zapret2/" 2>/dev/null || true
+				chmod 755 "$WORK/root/opt/zapret2/mdig" "$WORK/root/opt/zapret2/ip2net" 2>/dev/null || true
+				cp "$R2"/lua/*.gz "$WORK/root/opt/zapret2/lua/" || true
+				cp "$R2"/files/fake/*.bin "$WORK/root/opt/zapret2/files/fake/" || true
+				own_pkg "$WORK/root" zapret2 "$Z2_VER-$REV" "$A" "Ravnex zapret2 nfqws2 (upstream bol-van openwrt-embedded $Z2_VER)"
+			else
+				echo "SKIP zapret2 $A (no binaries/$ZD/nfqws2 in the embedded tarball)"
 			fi
 		fi
 	fi
