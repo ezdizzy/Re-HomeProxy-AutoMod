@@ -46,12 +46,30 @@ const TMO = 20;          /* per-request curl --max-time                 */
  * The muxed 18 (360p) is the fallback; video-only high-itag formats are
  * preferred (bigger files make the throughput window honest). Each client
  * carries its long-stable public innertube API key — without it the
- * endpoint answers 400 FAILED_PRECONDITION (caught live, ч.116). */
+ * endpoint answers 400 FAILED_PRECONDITION (caught live, ч.116).
+ *
+ * ч.269 (сеанс 181, живой факт 2026-11-09): ANDROID 19.09.37 и IOS стали
+ * отвечать FAILED_PRECONDITION при любом теле (Google завернул старые
+ * клиенты) → real-stream слой (yts/yts2) ТИХО умирал между кэшами, а свип
+ * гонял deep-батарею без потоковой метрики. Первичным стал ANDROID_VR
+ * 1.60.19 (clientName 28) с заголовками X-YouTube-Client-Name/-Version —
+ * проверено живьём: OK + 27 plain-URL. Старые клиенты оставлены фолбэками. */
 const CLIENTS = [
+	{
+		name: 'android_vr',
+		url: 'https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-dfac2NfvGNXzMyFxA&prettyPrint=false',
+		ua: 'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12; GB) gzip',
+		cname: '28', cver: '1.60.19',
+		body: { context: { client: { clientName: 'ANDROID_VR', clientVersion: '1.60.19',
+			androidSdkVersion: 32, osName: 'Android', osVersion: '12',
+			deviceMake: 'Oculus', deviceModel: 'Quest 3', hl: 'en', gl: 'US' } },
+			videoId: VIDEO_ID, contentCheckOk: true, racyCheckOk: true }
+	},
 	{
 		name: 'android',
 		url: 'https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-dfac2NfvGNXzMyFxA&prettyPrint=false',
 		ua: 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+		cname: '3', cver: '19.09.37',
 		body: { context: { client: { clientName: 'ANDROID', clientVersion: '19.09.37',
 			androidSdkVersion: 30, hl: 'en', gl: 'US' } },
 			videoId: VIDEO_ID, contentCheckOk: true, racyCheckOk: true }
@@ -60,6 +78,7 @@ const CLIENTS = [
 		name: 'ios',
 		url: 'https://www.youtube.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc&prettyPrint=false',
 		ua: 'com.google.ios.youtube/19.29.1 (iPhone14,3; U; iOS 15.6) gzip',
+		cname: '5', cver: '19.29.1',
 		body: { context: { client: { clientName: 'IOS', clientVersion: '19.29.1',
 			deviceMake: 'Apple', deviceModel: 'iPhone14,3', osName: 'iPhone',
 			osVersion: '15.6.1', hl: 'en', gl: 'US' } },
@@ -84,12 +103,17 @@ function emit(o, cached) {
 }
 
 /* POST the player request through the CONFIGURED path (router-origin
- * curl rides the app's own interception, exactly like LAN clients). */
+ * curl rides the app's own interception, exactly like LAN clients).
+ * ч.269: clients carry their X-YouTube-Client-Name/-Version headers —
+ * without them ANDROID/VR answers FAILED_PRECONDITION (caught live). */
 function player_request(cl, body_file) {
 	const of = '/tmp/yt_player.' + cl.name + '.json';
 	system(`rm -f '${of}' 2>/dev/null`);
 	const cmd = `curl -s --max-time ${TMO} -A '${cl.ua}' ` +
-		`-H 'Content-Type: application/json' --data-binary @'${body_file}' ` +
+		`-H 'Content-Type: application/json' ` +
+		`-H 'X-YouTube-Client-Name: ${cl.cname}' ` +
+		`-H 'X-YouTube-Client-Version: ${cl.cver}' ` +
+		`--data-binary @'${body_file}' ` +
 		`'${cl.url}' -o '${of}' 2>/dev/null`;
 	const rc = system(cmd, TMO * 1000 + 4000);
 	const raw = (rc == 0) ? readfile(of) : null;

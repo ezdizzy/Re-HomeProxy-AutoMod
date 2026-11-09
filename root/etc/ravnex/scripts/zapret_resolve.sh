@@ -69,10 +69,15 @@ set_from() {  # $1 = nslookup output file → sorted unique IPv4 to stdout
 		| sort -u
 }
 
-lookup_bg() {  # $1=host  $2=resolverspec(empty=device)  $3=outfile
+lookup_bg() {  # $1=host  $2=resolverspec(empty=device)  $3=outfile  $4=budget_s(default 2)
+	# ч.269: внешние UDP/53 у части провайдеров отвечают МЕДЛЕННО (TSPU-шейпинг
+	# мелких UDP) — 2-с будильник почти всегда убивал plain/plain2 раньше
+	# ответа (живой факт свипа 2026-11-09: plain/plain2 пусты при живом
+	# nslookup). Внешним видам бюджет 5 с (они нужны только для сравнения
+	# наборов, свип идёт асинхронно), устройству — прежние 2 с + ретрай.
 	nslookup "$1" $2 > "$3" 2>&1 &
 	np=$!
-	( sleep 2; kill "$np" 2>/dev/null ) >/dev/null 2>&1 & sw=$!
+	( sleep "${4:-2}"; kill "$np" 2>/dev/null ) >/dev/null 2>&1 & sw=$!
 	wait "$np" 2>/dev/null
 	kill "$sw" 2>/dev/null
 }
@@ -89,8 +94,8 @@ resolve_tag() {  # $1=tag  $2=host
 		sleep 1
 		lookup_bg "$2" "" "$TMP/raw_dev_$1"
 	fi
-	lookup_bg "$2" "8.8.8.8" "$TMP/raw_pl_$1"
-	lookup_bg "$2" "1.1.1.1" "$TMP/raw_pl2_$1"
+	lookup_bg "$2" "8.8.8.8" "$TMP/raw_pl_$1" 5
+	lookup_bg "$2" "1.1.1.1" "$TMP/raw_pl2_$1" 5
 	doh_query "$2" > "$TMP/raw_doh_$1" 2>/dev/null
 	set_from "$TMP/raw_dev_$1" > "$TMP/dev_$1"
 	set_from "$TMP/raw_pl_$1" > "$TMP/pl_$1"

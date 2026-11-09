@@ -27,7 +27,7 @@
  *    "results":[{"tag","label","host","ip","code","tls","redirect","rc",
  *                "ok","reason","deep_ok","deep_total","deep":[item,…]}]}
  *   item = {"id","code","sec","bytes","speed","rc","ok","app_state","kind",
- *           "geo_refused","waf"[,"ttfb"]}
+ *           "geo_refused","waf"[,"ttfb"][,"host","ip","edge"(stream items)]}
  *
  * Уроки учтены: 8 (ARGV ненадёжен — манифест через stdin), 245/252 (программа
  * — ucode -c, без export), 20/31 (for-in по массиву = элементы), 246 (нет
@@ -97,7 +97,16 @@ function deep_item(id) {
 	 * 2026-11-04: старт ВИДЕО не равен старту миниатюр). rc — последний токен. */
 	item.ttfb = (length(parts) > 4) ? int(num(parts[4]) * 1000.0) : 0;
 	item.rc = (length(parts) > 5) ? int(num(parts[5])) : ((length(parts) > 4) ? int(num(parts[4])) : 1);
-	if (id === 'yts' || id === 'yts2') {
+	if (id === 'yts' || id === 'yts2' || id === 'yts3' || id === 'yts4') {
+		/* ч.269: per-edge stream items — dhost_/dip_ files carry the pinned
+		 * pool edge (host + its own IP); each item records them so the
+		 * ranking/verdict can see WHICH pool member was measured and the
+		 * merge can attribute an infra-dead edge to the path, not strategy. */
+		const hp = TMP + '/dhost_' + id;
+		const pp = TMP + '/dip_' + id;
+		item.host = access(hp) ? trim(readfile(hp) || '') : null;
+		item.ip = access(pp) ? trim(readfile(pp) || '') : null;
+		item.edge = (id === 'yts') ? 'primary' : 'pool';
 		item.ok = ((item.code === '200' || item.code === '206') &&
 			item.speed >= YTS_MIN_SPEED && item.bytes >= YTS_MIN_BYTES) ? 1 : 0;
 		return item;

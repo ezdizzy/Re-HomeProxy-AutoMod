@@ -162,12 +162,65 @@ if [ "$DEEP" = "1" ]; then
 			YTV_URLS="$YTV_URLS https://i.ytimg.com/vi/$vid/mqdefault.jpg https://i.ytimg.com/vi/$vid/hq720.jpg"
 		done
 	fi
+	# ч.269 (сеанс 181): the CDN POOL of the stream host — the same sn-XXXX
+	# suffix is served by SEVERAL rrN hosts = SEVERAL DISTINCT IPs, and a
+	# provider path can BLACKHOLE one pool IP while its neighbours are fine
+	# (live fact 2026-11-09: rr5---sn-nx5pm-3ggl = .48 dead, .45-.47 alive;
+	# three of the user's dead videos were pinned to exactly that edge).
+	# The deep battery therefore measures UP TO 4 POOL EDGES (yts = the URL's
+	# own edge, yts2..yts4 = other DISTINCT pool IPs). When the fuzzer passed
+	# EDGE_HINTS (lines "host ip" from zapret_edges.sh, reachable-first,
+	# dead edges excluded), they lead the candidate list; otherwise the pool
+	# is enumerated here (rr1..rr6 of the suffix).
+	YTS_HOST=""
 	if [ -n "$YTV_URL" ]; then
 		DEEP_PROBES="$DEEP_PROBES yts|$YTV_URL"
-		# Ф6.4 (audit 85 + the user's live report 2026-11-04): videos live on
-		# DIFFERENT googlevideo edges — the real stream is measured on the
-		# SECOND resolved edge too (yts2); one edge lied before.
-		DEEP_PROBES="$DEEP_PROBES yts2|$YTV_URL"
+		YTS_HOST=$(printf '%s' "$YTV_URL" | sed -E 's#^https://([^/]+).*#\1#')
+	fi
+	if [ -n "$YTS_HOST" ]; then
+		mkdir -p "$TMP" 2>/dev/null
+		case "$YTS_HOST" in rr[0-9]*---*)
+			SUFFIX=$(printf '%s' "$YTS_HOST" | sed -E 's/^rr[0-9]*---//')
+			: > "$TMP/pool.txt"
+			if [ -n "$EDGE_HINTS" ]; then
+				# reachable-first hints from the sweep's edge matrix
+				printf '%s\n' "$EDGE_HINTS" | while IFS= read -r hl; do
+					hh=${hl%% *}; ii=${hl#* }
+					[ -n "$hh" ] && [ -n "$ii" ] || continue
+					case "$hh" in *"$SUFFIX") echo "$hh $ii" >> "$TMP/pool.txt" ;; esac
+				done
+				# the URL's own edge always participates (it anchors the URL)
+				eh=$(grep -F "$YTS_HOST " "$TMP/pool.txt" 2>/dev/null | head -1)
+				[ -n "$eh" ] || echo "$YTS_HOST $(nslookup "$YTS_HOST" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' | head -1)" >> "$TMP/pool.txt"
+			else
+				for k in 1 2 3 4 5 6; do
+					PH="rr$k---$SUFFIX"
+					PIP=$(nslookup "$PH" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+						| grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' | head -1)
+					[ -n "$PIP" ] || continue
+					echo "$PH $PIP" >> "$TMP/pool.txt"
+				done
+				# URL's own edge first (its host must anchor yts)
+				(grep -F "$YTS_HOST " "$TMP/pool.txt" 2>/dev/null; grep -vF "$YTS_HOST " "$TMP/pool.txt" 2>/dev/null) > "$TMP/pool2.txt"
+				mv -f "$TMP/pool2.txt" "$TMP/pool.txt" 2>/dev/null
+			fi
+		;; esac
+		# add extra pool-edge tags for the NEXT distinct IPs (up to yts4 total)
+		PE_TAB=""
+		NEED=3
+		if [ -s "$TMP/pool.txt" ]; then
+			while read -r ph pi; do
+				[ -n "$ph" ] && [ -n "$pi" ] || continue
+				[ "$ph" = "$YTS_HOST" ] && continue
+				case " $PE_TAB " in *" $pi "*) continue ;; esac
+				case "$NEED" in
+					3) DEEP_PROBES="$DEEP_PROBES yts2|$YTV_URL"; PE_TAB="$PE_TAB$pi "; NEED=2 ;;
+					2) DEEP_PROBES="$DEEP_PROBES yts3|$YTV_URL"; PE_TAB="$PE_TAB$pi "; NEED=1 ;;
+					1) DEEP_PROBES="$DEEP_PROBES yts4|$YTV_URL"; PE_TAB="$PE_TAB$pi "; NEED=0 ;;
+				esac
+				[ "$NEED" = "0" ] && break
+			done < "$TMP/pool.txt"
+		fi
 	fi
 	# Browser-like fingerprint probe (audit 90): the stock curl fingerprint is
 	# NOT a browser's — a strategy/WAF can pass the bare probe and challenge
@@ -264,8 +317,11 @@ fi
 # ч.237: deep adds the fresh-edge retry of the non-yt tags (dc/st/tg, up to
 # 2 probes × 9 s per retried tag) + the STUN voice probe — 170 s deep cap,
 # the plain handshake pass keeps 100 s.
+# ч.269: pool-edge battery (yts2..yts4) probes launch in PARALLEL with the
+# rest, but the per-item stream retry adds up to 4 sequential 9-s repeats —
+# deep cap raised to 210 s.
 DWATCH=100
-[ "$DEEP" = "1" ] && DWATCH=170
+[ "$DEEP" = "1" ] && DWATCH=210
 ( sleep "$DWATCH"; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
 WATCH_PID=$!
 
@@ -327,28 +383,34 @@ if [ "$DEEP" = "1" ]; then
 		echo "$sip" > "$TMP/dip_$did"
 		echo "$SHOST" > "$TMP/dhost_$did"
 		echo "STUN" > "$TMP/durl_$did"
-	elif [ "$did" = "yts2" ]; then
-		# Ф6.4/ч.236: the SECOND real-stream edge — a DIFFERENT public A of the
-		# SAME videoplayback host the yts probe rides (the user's live report:
-		# videos live on different edges; one edge lied). ч.236 bugfix: the old
-		# code resolved redirector.googlevideo.com and wrote it as dhost —
-		# curl --resolve matches the URL host, so the pin never applied and
-		# yts2 silently duplicated yts over plain DNS rotation. Picks the
-		# first A that DIFFERS from the yts edge; falls back to the yts IP
-		# when the resolver has a single A (same edge, honest note upstream).
-		dh2=$(printf '%s' "$durl" | sed -E 's#^https?://([^/]+).*#\1#')
-		nslookup "$dh2" 2>/dev/null \
-			| grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
-			| grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' \
-			| sort -u > "$TMP/yt2_ips"
+	elif [ "$did" = "yts2" ] || [ "$did" = "yts3" ] || [ "$did" = "yts4" ]; then
+		# ч.269: POOL-EDGE picker — the k-th DISTINCT pool IP (the yts edge
+		# excluded), host = the pool rr-host that owns it. EDGE_HINTS (the
+		# sweep's live-path edge matrix, reachable first) orders the picks:
+		# yts2 gets the BEST alternate edge, not a random A. Pool exhausted →
+		# honest same-edge fallback (the ranking dedupes identical edges).
+		k=$((${did#yts} - 1))
+		pick=""; pickh=""
 		ytsip=$(cat "$TMP/dip_yts" 2>/dev/null)
-		pick=$(grep -v "^${ytsip}$" "$TMP/yt2_ips" 2>/dev/null | head -1)
+		SEEN=" "
+		n=0
+		if [ -s "$TMP/pool.txt" ]; then
+			while read -r ph pi; do
+				[ -n "$ph" ] && [ -n "$pi" ] || continue
+				[ -n "$ytsip" ] && [ "$pi" = "$ytsip" ] && continue
+				case "$SEEN" in *" $pi "*) continue ;; esac
+				n=$((n + 1))
+				SEEN="$SEEN$pi "
+				if [ "$n" = "$k" ]; then pick="$pi"; pickh="$ph"; break; fi
+			done < "$TMP/pool.txt"
+		fi
 		if [ -n "$pick" ]; then
 			echo "$pick" > "$TMP/dip_$did"
+			echo "$pickh" > "$TMP/dhost_$did"
 		else
 			cp "$TMP/dip_yts" "$TMP/dip_$did" 2>/dev/null
+			cat "$TMP/dhost_yts" 2>/dev/null > "$TMP/dhost_$did"
 		fi
-		echo "$dh2" > "$TMP/dhost_$did"
 	elif [ "${did%f}" != "$did" ]; then
 		# Ф6.4 fingerprint variant: the SAME page under the browser-like
 		# profile — the base id's resolution is REUSED (no second DNS hit).
@@ -358,6 +420,12 @@ if [ "$DEEP" = "1" ]; then
 		[ -n "$dh" ] && echo "$dh" > "$TMP/dhost_$did"
 	else
 		dip=$(nslookup "$dhost" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^127\.' | tail -1)
+		# ч.269: a stream host with a pool table gets its PINNED pool IP
+		# (the same map yts2..yts4 pick from — no LAST-A lottery)
+		if [ "$did" = "yts" ] && [ -s "$TMP/pool.txt" ]; then
+			poolip=$(grep -F "$dhost " "$TMP/pool.txt" 2>/dev/null | head -1 | awk '{print $2}')
+			[ -n "$poolip" ] && dip="$poolip"
+		fi
 		echo "$dip" > "$TMP/dip_$did"
 		echo "$dhost" > "$TMP/dhost_$did"
 	fi
@@ -659,10 +727,10 @@ STUNRUN
 		# in --baseline (no desync) they are meaningless by construction and
 		# would only hang the pass on DPI-blocked connects: honest absence.
 		if [ "$BASELINE" = "1" ]; then
-			case "$did" in ytv|yts|yts2) continue ;; esac
+			case "$did" in ytv|yts|yts2|yts3|yts4) continue ;; esac
 		fi
 		DRANGE=""
-		case "$did" in yts|yts2) DRANGE="-r 0-4194303" ;; esac
+		case "$did" in yts|yts2|yts3|yts4) DRANGE="-r 0-4194303" ;; esac
 		if [ "$did" = "ytv" ]; then
 			# SUSTAINED-FLOW throughput: real thumbnails over keep-alive
 			# flows (--max-time caps EACH window; curl exits 28 on a
@@ -748,7 +816,7 @@ YTVFLOW
 		# classification (yts keeps /dev/null — its verdict is speed-based);
 		# fingerprint variants (ids with "f") run the browser-like profile.
 		DBODY="$TMP/b_$did"
-		case "$did" in yts|yts2) DBODY="/dev/null" ;; esac
+		case "$did" in yts|yts2|yts3|yts4) DBODY="/dev/null" ;; esac
 		if [ "${did%f}" != "$did" ]; then
 			if [ -n "$PROBE_UID" ]; then
 				su -s /bin/sh daemon -c "sh '${TMP}/fp_flow.sh' '${dhost}:443:${dip}' '${durl}' '${TMP}/b_${did}' > '${TMP}/d_${did}'" >/dev/null 2>&1 &
@@ -855,6 +923,40 @@ for BT in dc st tg; do
 	done
 	EDGE_RETRY="$EDGE_RETRY $BT"
 done
+
+# ч.269: FRESH-EDGE RETRY of the yt STREAM items (yts..yts4) — the pool
+# pins now carry REAL per-edge IPs, so a dead edge measures the EDGE, not
+# the strategy (the ч.269 live fact: one pool IP blackholed by the path,
+# neighbours fine). Trigger = the item produced NO HTTP answer at all
+# (first field 000 — a slow-but-flowing edge keeps its honest speed data).
+# ONE fresh resolve of the item's OWN host; the repeat runs ONLY when the
+# resolver actually moved us (same honest guard as the dc/st/tg loop); the
+# fresh IP gets its own bypass + temp-queue rule under the CMT comment.
+for did in yts yts2 yts3 yts4; do
+	[ -f "$TMP/d_$did" ] || continue
+	raw=$(cat "$TMP/d_$did" 2>/dev/null)
+	case "$raw" in
+		000*) : ;;
+		*) continue ;;
+	esac
+	DH=$(cat "$TMP/dhost_$did" 2>/dev/null)
+	[ -n "$DH" ] || continue
+	NIP=$(nslookup "$DH" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|0\.)' | head -1)
+	[ -n "$NIP" ] || continue
+	OIP=$(cat "$TMP/dip_$did" 2>/dev/null)
+	if [ -n "$OIP" ] && [ "$NIP" = "$OIP" ]; then
+		continue
+	fi
+	if nft list chain inet fw4 homeproxy_output_redir >/dev/null 2>&1; then
+		nft insert rule inet fw4 homeproxy_output_redir ip daddr "{ $NIP }" tcp dport 443 counter return comment "\"$CMT\"" 2>/dev/null
+	fi
+	RUID="$PROBE_UID"
+	[ -n "$RUID" ] || RUID=0
+	nft add rule inet "$TABLE" out "meta skuid $RUID meta mark and $DMARK == 0 ip daddr { $NIP } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
+	echo "$NIP" > "$TMP/dip_$did"
+	deep_retry_item "$did"
+	EDGE_RETRY="$EDGE_RETRY $did"
+done
 fi
 
 # 5c. Ф6.4: classification + unified result build (audit 82) — ONE ucode pass:
@@ -884,7 +986,7 @@ fi
 			firsth=0
 			printf '["%s","%s","%s"]' "$tag" "$label" "$host"
 		done
-		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf","dcv"],"st":["stp","stpf"]}}\n'
+		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2","yts3","yts4"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf","dcv"],"st":["stp","stpf"]}}\n'
 	} > "$TMP/manifest.json"
 	ucode /etc/ravnex/scripts/zapret_deep_build.uc < "$TMP/manifest.json"
 else

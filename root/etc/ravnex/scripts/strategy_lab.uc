@@ -121,14 +121,26 @@ export const GATE_MANDATORY = {
  *   deep_items — массив deep-пунктов ЭТОЙ стратегии по ресурсу (может быть
  *   null — стратегия не deep-тестировалась: потолок best_available).
  * Выход: 'best_verified' | 'best_available' | 'no_candidate'. */
-export function strategy_verdict(reach_ok, deep_items) {
+export function strategy_verdict(reach_ok, deep_items, ignore_ids) {
 	if (reach_ok !== true)
 		return 'no_candidate';
 	if (deep_items == null || type(deep_items) !== 'array' || length(deep_items) === 0)
 		return (reach_ok === true) ? 'best_available' : 'no_candidate';
-	for (let it in deep_items)
-		if (type(it) === 'object' && it.ok != 1)
+	for (let it in deep_items) {
+		if (type(it) !== 'object')
+			continue;
+		if (ignore_ids != null && type(ignore_ids) === 'array') {
+			/* ч.269: компонент, чей провал ПРОВАЙДЕРСКИЙ (baseline тоже
+			 * молчит), не демотит стратегию — но и не считается подтверждением */
+			let skip = false;
+			for (let x in ignore_ids)
+				if ('' + x === '' + it.id) { skip = true; break; }
+			if (skip)
+				continue;
+		}
+		if (it.ok != 1)
 			return 'best_available';
+	}
 	return 'best_verified';
 };
 
@@ -164,9 +176,29 @@ export function strategy_verdict(reach_ok, deep_items) {
  *   'best_available' (только доступные — ТОЛЬКО вручную с предупреждением),
  *   'no_candidate' (никто; what_failed называет, ЧТО не работает).
  *   device_confirmed — выбор сделан по метке с устройства (true|false). */
-export function resource_verdict(entries, quic_vn, udp_any, device, dead) {
+export function resource_verdict(entries, quic_vn, udp_any, device, dead, extra) {
 	const out = { verdict: 'no_candidate', chosen: null,
 		what_failed: [], notes: [], device_confirmed: false };
+	/* ч.269 (сеанс 181): extra — контекст уровня СВИПА, влияющий на честность
+	 * вердикта, но НЕ на лабораторные факты:
+	 *   dns           — {verdict, note} DNS-наборов тега ресурса
+	 *                   (device_fail капает best_verified → best_available —
+	 *                   измерение шло по резервному пути; divergence = note);
+	 *   dead_edges    — [{host,ip}] инфраструктурно мёртвые края пула (край
+	 *                   не ответил НИ У ОДНОЙ стратегии в двух проходах) —
+	 *                   свойство ПУТИ (провайдера), видео с такого края не
+	 *                   открываются независимо от стратегии;
+	 *   stun_baseline — false ⇒ STUN молчит и без стратегии (baseline):
+	 *                   провал dcv = состояние провайдера, НЕ вина стратегии
+	 *                   (сегодня dcv молчаливо демотил discord до
+	 *                   best_available, живых pass dcv не было — «первое
+	 *                   измерение silence» ч.237); true ⇒ dcv-провал реален;
+	 *   scan_note     — примечание из провайдер-скана (если есть). */
+	const ex = (extra != null && type(extra) === 'object') ? extra : null;
+	const ex_dns = (ex != null && type(ex.dns) === 'object') ? ex.dns : null;
+	const ex_dead = (ex != null && type(ex.dead_edges) === 'array') ? ex.dead_edges : null;
+	const ex_stun = (ex != null) ? ex.stun_baseline : null;
+	const ex_scan = (ex != null && ex.scan_note != null) ? ('' + ex.scan_note) : null;
 	/* ч.234: метка в device_verdicts.json — ОБЪЕКТ { verdict: 'works'|… };
 	 * прежний dv делал '' + объект (≠ 'works') — метка была МЕРТВА в
 	 * лабораторном вердикте с момента появления (ч.232): свип ч.233 писал
@@ -181,12 +213,13 @@ export function resource_verdict(entries, quic_vn, udp_any, device, dead) {
 				return '' + (mv.verdict || '');
 			return '' + mv;
 		}) : (() => '');
+	const ignore_ids = (ex_stun === false) ? ['dcv'] : null;
 	let verified = null, available = null, dev_confirmed = null;
 	let refuted_verified = null, any_refuted = false;
 	for (let e in entries) {
 		if (type(e) !== 'object')
 			continue;
-		const v = strategy_verdict(e.reach_ok === true, e.deep_items);
+		const v = strategy_verdict(e.reach_ok === true, e.deep_items, ignore_ids);
 		const d = dv(e.args);
 		if (d === 'works') {
 			/* устройство сказало «работает» — сильнее любой лаборатории,
@@ -250,7 +283,8 @@ export function resource_verdict(entries, quic_vn, udp_any, device, dead) {
 	const mand = {
 		ytp: 'страница YouTube', yti: 'CDN миниатюр YouTube',
 		yts: 'реальный видеопоток YouTube', ytv: 'поток миниатюр (sustained)',
-		dcp: 'страница Discord', tgp: 'страница Telegram'
+		dcp: 'страница Discord', tgp: 'страница Telegram',
+		dcv: 'голос Discord (STUN, UDP/3478)'
 	};
 	const mand_ids = keys(mand);
 	for (let mi = 0; mi < length(mand_ids); mi++) {
@@ -290,6 +324,53 @@ export function resource_verdict(entries, quic_vn, udp_any, device, dead) {
 	} else if (quic_vn === 'vn' && udp_any !== true) {
 		push(out.notes, 'QUIC (UDP/443) у провайдера ОТКРЫТ (состояние провайдера, не вердикт стратегий), но ни одна стратегия корпуса не несёт UDP-профиля — QUIC-попытки браузера идут без дезинка, браузер добивает их TCP-фоллбеком');
 	}
+
+	/* ч.269: честный контекст уровня пути/провайдера — notes рядом с
+	 * вердиктом (рендер уже печатает notes в карточке ресурса). */
+	if (out.chosen != null) {
+		for (let e2 in entries)
+			if (type(e2) === 'object' && ('' + e2.args) === ('' + out.chosen.args)) {
+				out.chosen.unstable_edges = int(e2.unstable_edges || 0);
+				break;
+			}
+	}
+	if (ex_stun === false) {
+		push(out.notes, 'STUN (голос Discord, UDP/3478) молчит и БЕЗ стратегии (baseline тоже) — провайдерский уровень UDP, а не вина стратегий: провал dcv больше не демотит вердикт (решение пользователя «baseline + provider-note», сеанс 181)');
+	} else if (ex_stun === true) {
+		push(out.notes, 'STUN (голос Discord) на baseline ОТВЕЧАЕТ — провал dcv у стратегии означает реальный провал её UDP-профиля на голосовом контуре');
+	}
+	if (ex_dead != null && length(ex_dead) > 0) {
+		let shown = 0;
+		for (let de in ex_dead) {
+			if (type(de) !== 'object' || de.ip == null || shown >= 3)
+				continue;
+			push(out.notes, 'крае CDN ' + ('' + (de.host || '?')) + ' (' + de.ip + ') отрезан ПО ПУТИ: не ответил ни у одной стратегии в обоих проходах — инфраструктура, не стратегия; видео с этого края не открываются независимо от выбора (феномен «одна выдача — разные видео»)');
+			shown++;
+		}
+	}
+	if (ex_dns != null) {
+		const dvv = '' + (ex_dns.verdict || '');
+		const dnn = '' + (ex_dns.note || '');
+		if (dvv === 'device_fail') {
+			if (out.verdict === 'best_verified') {
+				out.verdict = 'best_available';
+				push(out.notes, 'вердикт СНИЖЕН до «только вручную»: DNS пути устройства не ответил (' + (length(dnn) ? dnn : 'наборы DNS не сравнимы') + ') — измерение шло по резервному пути');
+			} else {
+				push(out.notes, 'DNS пути устройства не ответил — ' + (length(dnn) ? dnn : 'измерение DNS неполно'));
+			}
+		} else if (dvv === 'divergence') {
+			push(out.notes, 'DNS-наборы расходятся (гео/anycast/CDN-политика, НЕ доказательство подмены)' + (length(dnn) ? (': ' + dnn) : ''));
+		} else if (dvv === 'device_only') {
+			push(out.notes, 'внешние резолверы не ответили (UDP-фильтрация у провайдера) — сравнение DNS-наборов невозможно, набор устройства взят как есть');
+		}
+	}
+	if (ex_scan != null && length(ex_scan))
+		push(out.notes, ex_scan);
+	/* ч.269: нестабильность краёв выбранной стратегии (entropy) — честная
+	 * оговорка рядом с вердиктом (метрики шумнее, когда края флипуют). */
+	if (out.chosen != null && out.chosen.unstable_edges != null &&
+		int(out.chosen.unstable_edges) > 0)
+		push(out.notes, 'края видеопотока выбранной стратегии ФЛИПУЮТ между проходами (нестабильность пути) — её метрики шумнее соседних');
 	return out;
 };
 
@@ -447,6 +528,41 @@ export function selftest() {
 		{ name: 'C', args: '--c', reach_ok: false, deep_items: null }
 	], 'silence', true, null, false);
 	t('no dead flag → no_candidate', rv12.verdict === 'no_candidate');
+
+	/* ч.269 (сеанс 181): контекст свипа — STUN-baseline, инфраструктурно
+	 * мёртвые края, DNS-кап, entropy-оговорка. */
+	const rv13 = resource_verdict([
+		{ name: 'G', args: '--g', reach_ok: true,
+			deep_items: [ { id: 'dcp', ok: 1 }, { id: 'dcv', ok: 0 } ] }
+	], 'vn', false, null, false,
+		{ stun_baseline: false });
+	t('provider-cut dcv does not demote', rv13.verdict === 'best_verified' &&
+		index(join(';', rv13.notes), 'провайдерский уровень') >= 0);
+	const rv14 = resource_verdict([
+		{ name: 'G', args: '--g', reach_ok: true,
+			deep_items: [ { id: 'dcp', ok: 1 }, { id: 'dcv', ok: 0 } ] }
+	], 'vn', false, null, false,
+		{ stun_baseline: true });
+	t('live dcv failure still demotes', rv14.verdict === 'best_available');
+	const rv15 = resource_verdict([
+		{ name: 'H', args: '--h', reach_ok: true, deep_items: ok_deep }
+	], 'vn', true, null, false,
+		{ dns: { verdict: 'device_fail', note: 'нет ответа' } });
+	t('dns device_fail caps verified', rv15.verdict === 'best_available' &&
+		index(join(';', rv15.notes), 'СНИЖЕН') >= 0);
+	const rv16 = resource_verdict([
+		{ name: 'I', args: '--i', reach_ok: true, deep_items: ok_deep }
+	], 'vn', true, null, false,
+		{ dns: { verdict: 'divergence', note: '' },
+			dead_edges: [ { host: 'rr5---sn-x', ip: '185.221.46.48' } ] });
+	t('divergence note only + dead edge note', rv16.verdict === 'best_verified' &&
+		index(join(';', rv16.notes), '185.221.46.48') >= 0 &&
+		index(join(';', rv16.notes), 'расходятся') >= 0);
+	const rv17 = resource_verdict([
+		{ name: 'J', args: '--j', reach_ok: true, deep_items: ok_deep, unstable_edges: 2 }
+	], 'vn', true, null, false, null);
+	t('unstable chosen flagged', rv17.verdict === 'best_verified' &&
+		index(join(';', rv17.notes), 'ФЛИПУЮТ') >= 0);
 
 	/* dims_of: независимость измерений (66/71) */
 	const d1 = dims_of([ { ok: true, tls_ms: 100 }, { ok: true, tls_ms: 300 } ],

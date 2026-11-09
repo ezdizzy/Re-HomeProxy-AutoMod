@@ -121,6 +121,9 @@ import { access, popen, readfile, open, stat, writefile, mkdir, chmod, rename } 
  * the module receives the bot primitives (api object) and never touches
  * the daemon internals itself. */
 import * as ctrl from '/etc/ravnex/scripts/telegram_control.uc';
+/* ч.269 (сеанс 181): «⚡ Стратегии» — device-метки стратегий (ресурс ×
+ * стратегия) тем же паттерном модуля: примитивы демона в api-объекте. */
+import * as strats from '/etc/ravnex/scripts/telegram_strategies.uc';
 /* Control state summary for /status (plan 15): the same library the
  * rpcd backend and the enforcer use. */
 import { client_states, main_opt } from '/etc/ravnex/scripts/control.uc';
@@ -1329,6 +1332,7 @@ const HELP = '<b>Команды</b>\n' +
 	'/audit [N] [слово] — журнал действий из чата и контроля (админ+)\n' +
 	'/mute · /unmute — пуш-уведомления вкл/выкл\n' +
 	'/alerts — тумблеры категорий уведомлений (оператор+)\n' +
+	'/strategies — метки стратегий: работает/не работает (оператор+)\n' +
 	'/users — пользователи и роли (админ+)\n' +
 	'/restart — перезапуск службы\n' +
 	'/help — этот список\n\n' +
@@ -1431,7 +1435,7 @@ function main_menu_kb() {
 		[ [ '🆘 Safe Mode', 'act:safe' ], [ '🎚 Режим', 'act:mode' ] ],
 		[ [ '⚙️ Движки', 'act:engine' ], [ '⬆ Обновления', 'act:update' ] ],
 		[ [ '📋 Подписки', 'act:subs' ], [ '🔔 Уведомления', 'act:alerts' ] ],
-		[ [ '❓ Помощь', 'act:help' ] ]
+		[ [ '⚡ Стратегии', 'zt:menu' ], [ '❓ Помощь', 'act:help' ] ]
 	]);
 }
 
@@ -2732,6 +2736,7 @@ const CMD_MIN = {
 	safe: 'operator', safeoff: 'operator',
 	switch: 'operator', close: 'operator', mute: 'operator', unmute: 'operator',
 	alerts: 'operator',
+	strategies: 'operator',
 	pause: 'operator', resume: 'operator',
 	service: 'admin', restart: 'admin', snapshot: 'admin', logs: 'admin',
 	diagnostics: 'admin', audit: 'admin',
@@ -2765,6 +2770,15 @@ function handle_command(chat_id, text, role, uid) {
 			return;
 	} catch (e) {
 		log('control cmd: ' + e);
+	}
+	/* ч.269: «⚡ Стратегии» — метки ресурс × стратегия через RPC-дверь
+	 * zapret_device_verdict_set (тот же store, что читают автопилот/автоподбор). */
+	try {
+		ctrl_api.role = role;
+		if (strats.handle_command(ctrl_api, chat_id, cmd, rest))
+			return;
+	} catch (e) {
+		log('strategies cmd: ' + e);
 	}
 	if (cmd === 'status') {
 		tg_send_html(chat_id, cmd_status(), kb_rows([ [ '📡 Серверы', 'act:nodes' ], [ 'Снапшот', 'act:snapshot' ], [ 'Перезапуск', 'act:restart' ], [ '🏠 Главная', 'act:menu' ] ]));
@@ -2885,6 +2899,7 @@ const CB_MIN_PREFIX = [
 	[ 'ctl:tunb:', 'operator' ], [ 'ctl:tal60:', 'operator' ], [ 'ctl:tal1440:', 'operator' ],
 	[ 'act:subupd:', 'admin' ], [ 'act:subdel:', 'admin' ],
 	[ 'alt:', 'operator' ],
+	[ 'zt:', 'operator' ],
 	[ 'ctl:pm:', 'admin' ], [ 'ctl:gm:', 'admin' ],
 	[ 'act:doctor', 'viewer' ],
 	[ 'ctl:devi:', 'viewer' ], [ 'ctl:dev:', 'viewer' ],
@@ -3130,11 +3145,15 @@ function handle_update(u) {
 		} else {
 			/* «Контроль» callbacks — device actions first, then the panel
 			 * views; an unconsumed callback is acknowledged silently.
-			 * Ф8.2: the module sees the TAPPER's role (api.role). */
+			 * Ф8.2: the module sees the TAPPER's role (api.role).
+			 * ч.269: the strategies module answers 'zt:' callbacks first
+			 * (its own RBAC re-check inside). */
 			let consumed = false;
 			try {
 				ctrl_api.role = role;
-				consumed = ctrl.handle_dev_action(ctrl_api, chat_id, data, cbid);
+				consumed = strats.handle_cb(ctrl_api, chat_id, data, cbid);
+				if (!consumed)
+					consumed = ctrl.handle_dev_action(ctrl_api, chat_id, data, cbid);
 				if (!consumed)
 					consumed = ctrl.handle_cb(ctrl_api, chat_id, data, cbid);
 			} catch (e) {

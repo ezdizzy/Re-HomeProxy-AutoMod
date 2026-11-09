@@ -820,6 +820,27 @@ function pick_resource(fz, res, exclude_args) {
 			} else if (sa > 0 || sb > 0)
 				return sb - sa;
 		}
+		/* ч.269 (сеанс 181): tie-break по НАДЁЖНОСТИ при полной ничьей —
+		 * выше ok_rate, затем ниже джиттер рукопожатий ресурсного тега.
+		 * Спред/флап края = нестабильность пути: флапающая стратегия не
+		 * выигрывает пустую ничью. */
+		const rt = (RESOURCES[res] != null) ? RESOURCES[res].tag : null;
+		const hstat = (e2) => {
+			let orate = null, jit = null;
+			if (rt != null && e2.s != null && type(e2.s.hosts) === 'array')
+				for (let hh in e2.s.hosts) {
+					if (type(hh) !== 'object' || hh.tag !== rt) continue;
+					orate = (hh.ok_rate != null) ? (1.0 * hh.ok_rate) : null;
+					jit = (hh.jitter_ms != null) ? int(hh.jitter_ms) : null;
+					break;
+				}
+			return { o: orate, j: jit };
+		};
+		const hs_a = hstat(a), hs_b = hstat(b);
+		if (hs_a.o != null && hs_b.o != null && hs_a.o != hs_b.o)
+			return (hs_a.o > hs_b.o) ? -1 : 1;
+		if (hs_a.j != null && hs_b.j != null && hs_a.j != hs_b.j)
+			return hs_a.j - hs_b.j;
 		return (a.ms - b.ms) || (b.s.score - a.s.score);
 	});
 	if (!length(elig))

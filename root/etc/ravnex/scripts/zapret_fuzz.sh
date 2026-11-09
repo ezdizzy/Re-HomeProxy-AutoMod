@@ -135,10 +135,56 @@ print(join(" ", parts));
 # BEFORE any candidate runs on our queue — the per-strategy A/B below is
 # compared against THIS, not against a guess.
 YIP=$(printf '%s\n' "$IPS" | tr ' ' '\n' | sed -n 's/^yt=//p' | head -n 1)
+# ч.269: DONE must exist before the edge-matrix status echo below (the old
+# init sat after the baseline pass — the edges stage printed an empty "done")
+DONE=0
+IDX=0
 if [ -n "$YIP" ] && [ -x /usr/bin/probe_pool ]; then
 	sh /etc/ravnex/scripts/zapret_test.sh --quic "" "yt=$YIP" 2>/dev/null > "$TMP/quic_base.json"
 	grep -q '^{"ok"' "$TMP/quic_base.json" 2>/dev/null || rm -f "$TMP/quic_base.json"
 	loadmark quic_base
+fi
+
+# ч.269 (сеанс 181, приёмка свипа): STUN-бейслайн Discord-голоса БЕЗ
+# стратегии — provider-state для вердикта discord (решение юзера
+# «baseline + provider-note»). Живой факт приёмки: baseline-проход гоняется
+# БЕЗ --deep ⇒ dcv в нём НЕ измеряется, stun_baseline оставался null и провал
+# dcv честно (но слепо) демотил discord. Здесь выделенный дешёвый baseline:
+# только dc-глубина (dcp/dcpf/dcv; потоковые пробы в baseline честно
+# отсутствуют) ⇒ «STUN молчит и без стратегии» = измеримый факт.
+DIPB=$(printf '%s\n' "$IPS" | tr ' ' '\n' | sed -n 's/^dc=//p' | head -n 1)
+if [ -n "$DIPB" ]; then
+	sh /etc/ravnex/scripts/zapret_test.sh --baseline --deep "" "dc=$DIPB" 2>/dev/null > "$TMP/stun_base.json"
+	# ч.269 observability (live fact of sweeps 2-3: the file was absent at
+	# merge time while the standalone replica always produces it — the next
+	# sweep self-diagnoses via fuzz_stderr.log)
+	echo "stun_base bytes=$(wc -c < "$TMP/stun_base.json" 2>/dev/null) head=$(head -c 60 "$TMP/stun_base.json" 2>/dev/null | tr -d '\n')" >> /var/run/ravnex/fuzz_stderr.log 2>/dev/null
+	grep -q '^{"ok"' "$TMP/stun_base.json" 2>/dev/null || rm -f "$TMP/stun_base.json"
+	loadmark stun_base
+fi
+
+# ч.269 (сеанс 181): КАРТА КРАЁВ CDN-ПУЛА через ЖИВОЙ путь — прямой ответ на
+# феномен юзера «одна выдача — одни видео грузятся, другие нет» (живой диагноз:
+# rr2..rr5 пула sn-nx5pm-3ggl = 4 IP, 185.221.46.48 отрезан по пути ЦЕЛИКОМ,
+# соседи живы; мёртвый край НЕ зависит от стратегии). Матрица снимается ДО
+# кандидатов: (1) результат едет в итог JSON (диагностика для юзера), (2)
+# глубокая батарея получает EDGE_HINTS «живые впереди» (мёртвый край не
+# должен отжигать 4-МБ таймауты на каждой стратегии), (3) инфраструктурно
+# мёртвые края попадают в вердикт-заметки, а не в штраф стратегий.
+# Чистое наблюдение: zapret_edges.sh НЕ трогает nft — пробы идут по
+# продуктовому пути с применённой стратегией, как у LAN-клиента.
+YTURL_EARLY=$(ucode /etc/ravnex/scripts/yt_stream_probe.uc get 2>/dev/null | ucode -e '
+import {readfile} from "fs";
+let j = null;
+try { j = json(readfile("/dev/stdin") || ""); } catch (e) { j = null; }
+if (j && j.ok && j.url) print(j.url);
+' 2>/dev/null)
+if [ -n "$YTURL_EARLY" ]; then
+	L1E=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null); [ -n "$L1E" ] || L1E=0
+	echo "{\"running\":true,\"done\":$DONE,\"total\":$TOTAL,\"rounds\":$ROUNDS,\"load\":$L1E,\"stage\":\"edges\",\"current\":\"карта краёв CDN-пула (live)…\"}" > "$STATUS"
+	sh /etc/ravnex/scripts/zapret_edges.sh "$YTURL_EARLY" 2>/dev/null > "$TMP/edge_matrix.json"
+	grep -q '^{"ok"' "$TMP/edge_matrix.json" 2>/dev/null || rm -f "$TMP/edge_matrix.json"
+	loadmark edges
 fi
 
 mkdir -p "$TMP"
@@ -539,27 +585,49 @@ fi
 # strategy (see the rank pass above). d<i>.json / d<i>b.json map back through
 # the list; the merge averages what both passes measured.
 TOPN=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); print(length((j && j.list) || 0));' 2>/dev/null)
-YTV_URL=$(ucode /etc/ravnex/scripts/yt_stream_probe.uc get 2>/dev/null | ucode -e '
-import {readfile} from "fs";
-let j = null;
-try { j = json(readfile("/dev/stdin") || ""); } catch (e) { j = null; }
-if (j && j.ok && j.url) print(j.url);
-' 2>/dev/null)
+# ч.269: the stream URL was fetched EARLY (the edge-matrix phase) — reuse it;
+# a fresh fetch here would re-hammer innertube for the same answer.
+YTV_URL="$YTURL_EARLY"
 if [ -z "$YTV_URL" ]; then
 	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","note":"deep battery: page/CDN/edge + the sustained-flow throughput probe (the real-stream URL is unavailable)"}' > "$STATUS"
 else
 	echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","note":"deep battery includes the real video-stream probe"}' > "$STATUS"
 fi
+# ч.269: EDGE_HINTS для глубокой батареи — «host ip» строк живых краёв из
+# карты (мёртвые исключены: стратегия не обязана чинить инфраструктуру).
+# Ротация по проходам (аудит 2): проход 1 идёт в порядке карты, проход 2 —
+# в обратном, чтобы первичность края не была привязана к проходу.
+EH_FWD=""
+EH_REV=""
+if [ -s "$TMP/edge_matrix.json" ]; then
+	EH_FWD=$(ucode -e '
+import {readfile} from "fs";
+let j = null;
+try { j = json(readfile("'$TMP'/edge_matrix.json") || ""); } catch (e) { j = null; }
+if (j != null && type(j.edges) == "array") {
+	let parts = [];
+	for (let e in j.edges) {
+		if (type(e) != "object" || !e.host || !e.ip) continue;
+		if (e.tls_ok == 0 && ("" + (e.get_code || "0")) == "0") continue;
+		push(parts, e.host + " " + e.ip);
+	}
+	print(join("\n", parts));
+}' 2>/dev/null)
+	EH_REV=$(printf '%s\n' "$EH_FWD" | tac 2>/dev/null)
+	[ -n "$EH_REV" ] || EH_REV="$EH_FWD"
+fi
 # deep_pass <suffix> <pass#> — one full battery pass; results land in d<i><suf>.json.
 deep_pass() {
 	i=0
+	_EH="$EH_FWD"
+	[ "$2" = "2" ] && [ -n "$EH_REV" ] && _EH="$EH_REV"
 	while [ "$i" -lt "$TOPN" ]; do
 		i=$((i + 1))
 		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
 		DL1=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null); [ -n "$DL1" ] || DL1=0
 		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","load":'$DL1',"done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
-		YTV_URL="$YTV_URL" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+		YTV_URL="$YTV_URL" EDGE_HINTS="$_EH" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
 		loadmark "deep${i}_p$2"
 	done
 }
@@ -594,7 +662,7 @@ print(ok ? "0" : "1");' 2>/dev/null)
 		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
 		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep retry '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
-		YTV_URL="$YTV_URL" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+		YTV_URL="$YTV_URL" EDGE_HINTS="$EH_FWD" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
 	done
 }
 # ч.235: fresh edges before the deep battery — the battery is the EXPENSIVE
@@ -745,13 +813,13 @@ for (let r in drawn) {
 		let hdok = 0, dtot_h = 0, stream = 0, start_ms = 0, stream2 = 0, vstart = 0;
 		for (let it in (res.deep || [])) {
 			if (type(it) != "object" || it.id == null) continue;
-			if ((it.id == "ytv" || it.id == "yts") && int(it.speed || 0) > stream)
+			if ((it.id == "ytv" || it.id == "yts" || it.id == "yts2" || it.id == "yts3" || it.id == "yts4") && int(it.speed || 0) > stream)
 				stream = int(it.speed || 0);
 			if (it.id == "ytv" && int(it.ttfb || 0) > start_ms)
 				start_ms = int(it.ttfb || 0);
-			if ((it.id == "yts" || it.id == "yts2") && int(it.ttfb || 0) > vstart)
+			if ((it.id == "yts" || it.id == "yts2" || it.id == "yts3" || it.id == "yts4") && int(it.ttfb || 0) > vstart)
 				vstart = int(it.ttfb || 0);
-			if (it.id == "yts2" && int(it.speed || 0) > stream2)
+			if ((it.id == "yts2" || it.id == "yts3" || it.id == "yts4") && int(it.speed || 0) > stream2)
 				stream2 = int(it.speed || 0);
 			if (!diff_ids[it.id]) continue;
 			dtot_h++;
@@ -766,9 +834,10 @@ for (let r in drawn) {
 		/* The matching entry of the SECOND pass — metrics AVERAGE over both
 		 * (int mean), the deep verdict counts SUM (2 passes = 2x items). */
 		let m2 = null;
+		let res2hit = null;
 		if (r.results2 != null)
 			for (let res2 in r.results2)
-				if (type(res2) == "object" && res2.tag == res.tag) { m2 = collect(res2); break; }
+				if (type(res2) == "object" && res2.tag == res.tag) { m2 = collect(res2); res2hit = res2; break; }
 		let stream = m1.stream, start_ms = m1.start_ms, stream2 = m1.stream2, vstart = m1.vstart;
 		let hok = m1.hdok, htot = m1.dtot_h;
 		if (m2 != null) {
@@ -794,10 +863,88 @@ for (let r in drawn) {
 			s.start_ms = start_ms;
 			if (stream2 > 0) s.stream2 = stream2;
 			if (vstart > 0) s.stream_start_ms = vstart;
+			/* ч.269: per-edge stream map — every pool edge carries host+ip
+			 * and BOTH pass verdicts; the merge turns a consistently dead
+			 * edge into an infra note (never a strategy penalty), and a
+			 * FLIPPING edge into an instability flag (entropy). */
+			const byid = (arr) => {
+				const m = {};
+				if (type(arr) !== "array") return m;
+				for (let it in arr) {
+					if (type(it) !== "object" || it.id == null) continue;
+					m["" + it.id] = it;
+				}
+				return m;
+			};
+			const pa = byid(res.deep);
+			const pb = (res2hit != null) ? byid(res2hit.deep) : {};
+			const em = [];
+			for (let eid in ["yts", "yts2", "yts3", "yts4"]) {
+				const a = pa[eid], b = pb[eid];
+				if (a == null && b == null) continue;
+				push(em, { id: eid,
+					host: (a != null && a.host != null) ? ("" + a.host) : ((b != null && b.host != null) ? ("" + b.host) : null),
+					ip: (a != null && a.ip != null) ? ("" + a.ip) : ((b != null && b.ip != null) ? ("" + b.ip) : null),
+					ok1: (a != null) ? ((a.ok == 1) ? 1 : 0) : null,
+					ok2: (b != null) ? ((b.ok == 1) ? 1 : 0) : null,
+					spd1: (a != null) ? int(a.speed || 0) : null,
+					spd2: (b != null) ? int(b.speed || 0) : null });
+			}
+			s.edge_map = em;
+			let flips = 0, deadc = 0;
+			for (let e in em) {
+				if (e.ok1 != null && e.ok2 != null && e.ok1 != e.ok2) flips++;
+				if (e.ok1 == 0 && e.ok2 == 0) deadc++;
+			}
+			s.unstable_edges = flips;
+			s.dead_edges_consistent = deadc;
 		}
 	}
 	s.deep = { ok: dok, total: dtot, hosts: hosts, passes: r.passes };
 }
+
+/* ч.269: INFRA-DEAD edges — an edge EVERY measured strategy failed on both
+ * passes (and, when present, the live edge matrix agrees) is the PATH
+ * property, not a strategy property: surfaced as notes, never as a penalty. */
+const emx = parse(TMP + "/edge_matrix.json");
+const infra_dead_edges = [];
+{
+	const per_ip = {};
+	for (let r in drawn) {
+		const s = r.s;
+		if (s.edge_map == null) continue;
+		for (let e in s.edge_map) {
+			if (e.ip == null) continue;
+			const rec = per_ip[e.ip] || { host: e.host, have: 0, dead: 0 };
+			if (e.ok1 != null && e.ok2 != null) {
+				rec.have++;
+				if (e.ok1 == 0 && e.ok2 == 0) rec.dead++;
+			}
+			per_ip[e.ip] = rec;
+		}
+	}
+	for (let ip in keys(per_ip)) {
+		const rec = per_ip[ip];
+		if (rec.have >= 2 && rec.dead == rec.have)
+			push(infra_dead_edges, { ip: ip, host: rec.host });
+	}
+}
+/* ч.269 (приёмка свипа): the LIVE edge matrix is the primary source of
+ * infra-dead edges — the deep battery never measures the dead ones (they
+ * are excluded via EDGE_HINTS), so without this union the verdict notes
+ * stayed silent about exactly the edges that explain the user phenomenon
+ * (live fact: matrix says rr5=.48/rr6=.49 tls=0 get=000, deep battery has
+ * nothing on them). Union, dedup by ip. */
+if (emx != null && type(emx.edges) == "array")
+	for (let me in emx.edges) {
+		if (type(me) != "object" || me.ip == null) continue;
+		if (me.tls_ok != 0 || ("" + (me.get_code || "0")) != "0") continue;
+		let dup = false;
+		for (let d2 in infra_dead_edges)
+			if (d2.ip == me.ip) { dup = true; break; }
+		if (!dup)
+			push(infra_dead_edges, { ip: me.ip, host: me.host });
+	}
 /* ── Ф6.4 v3: измерения, второй IP, QUIC A/B, вердикты ─────────────────── */
 
 /* (аудит 84) baseline-СЕРИЯ: контрольный проход после прогона; хост,
@@ -1018,6 +1165,48 @@ const udp_any = (function () {
 	return false;
 })();
 const qv = (quic != null && quic.verdict != null) ? quic.verdict : "";
+/* ч.269: контекст вердиктов — DNS-наборы тега, инфраструктурно мёртвые края,
+ * STUN-baseline (Discord голос: провайдер режет UDP/3478?) и провайдер-скан. */
+const rj = parse(TMP + "/resolve.json");
+const dns_sets = (rj != null && type(rj) === "object" && type(rj.dns) === "object") ? rj.dns : null;
+const stun_sb = parse(TMP + "/stun_base.json");
+const stun_baseline = (function () {
+	/* ч.269: the DEDICATED no-strategy STUN baseline (cheap dc-only
+	 * baseline+deep run) — the honest provider-state source; the old
+	 * fallback (baseline.json deep dcv) never existed: the baseline pass
+	 * runs WITHOUT --deep, so dcv was never measured there. */
+	if (stun_sb != null && type(stun_sb.results) == "array")
+		for (let r in stun_sb.results) {
+			if (type(r) != "object" || r.tag != "dc") continue;
+			for (let it in (r.deep || [])) {
+				if (type(it) == "object" && it.id == "dcv") return (it.ok == 1);
+			}
+		}
+	return null;
+})();
+/* ч.269 observability: how many dc deep items the baseline+deep probe
+ * actually carried (0 ⇒ the probe degenerated — the merge must say so
+ * instead of silently judging dcv without a baseline). */
+const stun_items = (function () {
+	let n = 0;
+	if (stun_sb != null && type(stun_sb.results) == "array")
+		for (let r in stun_sb.results) {
+			if (type(r) != "object" || r.tag != "dc") continue;
+			n += length(r.deep || []);
+		}
+	return n;
+})();
+const scanj = parse("/var/run/ravnex/wizard_scan_result.json");
+let scan_note = null;
+if (scanj != null && type(scanj) === "object") {
+	for (let sk in ["isp_name", "isp", "provider", "asn_name"]) {
+		const sv = scanj[sk];
+		if (sv != null && type(sv) === "string" && length(sv)) {
+			scan_note = "провайдер (скан): " + sv;
+			break;
+		}
+	}
+}
 /* Verdicts walk the FINAL order (deep-tested first, the visible table
  * head) — chosen must match what the user sees on top, not the raw
  * handshake rank. */
@@ -1045,14 +1234,23 @@ for (let ri = 0; ri < length(rn_keys); ri++) {
 				for (let dh in s.deep.hosts)
 					if (dh.tag == tag) deep_items = dh.items || [];
 		}
-		push(entries, { name: s.name, args: s.args, reach_ok: reach_ok, deep_items: deep_items });
+		push(entries, { name: s.name, args: s.args, reach_ok: reach_ok, deep_items: deep_items,
+			unstable_edges: int(s.unstable_edges || 0) });
 	}
 	/* ч.234: dead-тег (никто не прошёл хост + оба контрольных прохода
 	 * провалены, dead_map выше) — вход честного «измерение невозможно»;
 	 * general (tag=null) имеет только синтетический reach-пункт — false. */
 	const dead_tag = (tag == null) ? false : (dead_map[tag] == true);
+	const extra = {
+		dns: (tag != null && dns_sets != null && type(dns_sets[tag]) === "object")
+			? { verdict: "" + (dns_sets[tag].verdict || ""), note: "" + (dns_sets[tag].note || "") }
+			: null,
+		dead_edges: (resname === "youtube") ? infra_dead_edges : null,
+		stun_baseline: (resname === "discord") ? stun_baseline : null,
+		scan_note: scan_note
+	};
 	verdicts[resname] = resource_verdict(entries, (qv != "") ? qv : null,
-		udp_any, dev_of(resname), dead_tag);
+		udp_any, dev_of(resname), dead_tag, extra);
 }
 
 const bnote = [];
@@ -1068,9 +1266,6 @@ if (ctrl && type(ctrl.results) == "array")
 		if (type(r) == "object")
 			push(cnote, { tag: r.tag, label: r.label || r.tag, host: r.host || "", ok: (r.ok == 1),
 				uok: (u_meas2) ? (r.uok == 1) : null });
-/* Ф6.4 (аудит 58/83): наборы DNS четырёх взглядов — из resolver-файла. */
-const rj = parse(TMP + "/resolve.json");
-const dns_sets = (rj != null && type(rj) === "object" && type(rj.dns) === "object") ? rj.dns : null;
 
 /* ч.229: the note may claim "the current strategy" ONLY when it was
  * actually measured (rank.cur_measured — set at the append site in the
@@ -1105,6 +1300,10 @@ writefile(RESULT, sprintf("%.J\n", {
 	dead_hosts: dead_hosts,
 	baseline_series: { first: bnote, control: cnote, drift: drift },
 	dns_sets: dns_sets,
+	edge_matrix: emx,
+	infra_dead_edges: infra_dead_edges,
+	stun_baseline: stun_baseline,
+	stun_items: stun_items,
 	verdicts: verdicts,
 	deep_note: "top " + deepN + " of " + length(dlist_items) + " selected deep-checked: family-diverse leaders + imported/generated bests" + (cur_measured ? " + the current strategy" : "") + "; failed: " + ((length(deep_failed)) ? join(", ", deep_failed) : "none") + "; probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank" + (u_meas2 ? "; Passed = curl AND browser ClientHello (utls_probe chrome)" : "; browser ClientHello probe NOT installed — Passed measures only the curl class")
 }));
