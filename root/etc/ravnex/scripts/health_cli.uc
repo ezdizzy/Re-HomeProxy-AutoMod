@@ -18,8 +18,9 @@
  * /proc/meminfo) every 20 s; deep pass = ≤6 forks (service list, /proc scan,
  * Clash API, netstat, nft, op journal) every ~2 min. Any non-ok entry → fast
  * mode (5 s / every 2nd tick) for 120 s after the last non-ok tick. Deep pass
- * is SKIPPED while MemAvailable < 48 MB (light stays — detection never dies,
- * only the expensive refinements wait).
+ * is SKIPPED while MemAvailable is below the RAM-derived deep edge (pmgr
+ * mem_thresholds_kb; 48 MB on a 1 GB board — light stays — detection never
+ * dies, only the expensive refinements wait).
  *
  * Ф10.1 resource profile: the all-ok light cadence scales by the profile
  * factor (Lite ×3, Balanced ×2, Performance ×1 — re-read every tick, live);
@@ -39,7 +40,8 @@
 'use strict';
 
 import { access, readfile, open, stat } from 'fs';
-import { reg_self, reg_hb, res_profile } from '/etc/ravnex/scripts/pmgr.uc';
+import { reg_self, reg_hb, res_profile,
+	mem_total_kb as pm_mem_total_kb, mem_thresholds_kb as pm_mem_thresholds_kb } from '/etc/ravnex/scripts/pmgr.uc';
 import {
 	compute_and_store, snapshot, selftest, HEALTH_PATH,
 	MEM_DEEP_SKIP_KB, parse_meminfo_kb
@@ -118,11 +120,16 @@ function run_daemon() {
 			const now = time();
 			const fast = (now < fast_until);
 			/* Deep cadence: first tick always deep (fills svc_map + carries);
-			 * afterwards strictly by the divider, unless memory is short. */
+			 * afterwards strictly by the divider, unless memory is short.
+			 * ч.264: deep-skip от RAM (pmgr.mem_thresholds_kb; фолбэк —
+			 * абсолютный MEM_DEEP_SKIP_KB, /proc-дыра не даёт ложного скипа). */
 			let deep = (tick === 0) || (deep_countdown <= 0);
-			if (deep && tick > 0 && mem_available_kb() < MEM_DEEP_SKIP_KB) {
+			const mem_tot = pm_mem_total_kb();
+			const deep_skip_kb = (mem_tot > 0) ? int(pm_mem_thresholds_kb(mem_tot).deep) : MEM_DEEP_SKIP_KB;
+			if (deep && tick > 0 && mem_available_kb() < deep_skip_kb) {
 				deep = false;
-				log('deep pass skipped: MemAvailable < 48 MB (OOM edge, lesson 197)');
+				log('deep pass skipped: MemAvailable < ' + sprintf('%d', int(deep_skip_kb / 1024)) +
+					' MB (OOM edge, lesson 197; RAM-derived)');
 				deep_countdown = 1;   /* retry on the next tick */
 			}
 			if (deep)

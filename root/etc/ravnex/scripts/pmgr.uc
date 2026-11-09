@@ -170,6 +170,56 @@ export function mem_avail_kb(path) {
 	return (m != null) ? int(m[1]) : 0;
 };
 
+/* MemTotal in kB, 0 when unreadable (same tab-safe shape as mem_avail_kb). */
+export function mem_total_kb(path) {
+	const p = (path != null && length('' + path)) ? '' + path : '/proc/meminfo';
+	const mi = readfile(p);
+	if (mi == null)
+		return 0;
+	const m = match(mi, /MemTotal:[[:space:]]*([0-9]+)/);
+	return (m != null) ? int(m[1]) : 0;
+};
+
+/* ── ч.264: пороги памяти/циклов ОТ RAM (копилка аудита ч.263, вариант B) ──
+ * Абсолютные пороги заменены RAM-производными; ряд 1 GiB совпадает с
+ * прежними константами ТОЧНО (нулевое изменение поведения на 1 GiB-классе),
+ * меньшие платы масштабируются вниз с честными полами. Неизвестный MemTotal
+ * (0/<=0) = ряд 1 GiB (1048576 kB) — никогда строже исторических констант,
+ * /proc-дыра не даёт ложных срабатываний.
+ *   warn = clamp(MemTotal/16, 24576, 131072)  -> 1 GiB: 65536 (прежде абс.)
+ *   crit = warn/2, пол 12288                  -> 1 GiB: 32768 (прежде абс.)
+ *   deep = warn*3/4                           -> 1 GiB: 49152 (прежде абс.)
+ * Циклы resource-aware (прежде 100/300 МБ абс.): slow = 100/1024 доли RAM
+ * (= RAM/10.24; на киби-кратных размерах точен):
+ *   slow = clamp(MemTotal*100/1024, 16384)    -> 1 GiB: 102400
+ *   fast = 3*slow (зазор >= 8192)             -> 1 GiB: 307200
+ * На реальных платах (например, 986 MiB у «1 ГБ»-бокса) значения чуть
+ * отличаются от круглых констант — честнее абсолюта, поведение то же. */
+export function mem_thresholds_kb(total_kb) {
+	const total = (int(total_kb) > 0) ? int(total_kb) : 1048576;
+	let warn = int(total / 16);
+	if (warn < 24576)
+		warn = 24576;
+	if (warn > 131072)
+		warn = 131072;
+	let crit = int(warn / 2);
+	if (crit < 12288)
+		crit = 12288;
+	const deep = int(warn * 3 / 4);
+	return { warn: warn, crit: crit, deep: deep };
+};
+
+export function cycle_gates_kb(total_kb) {
+	const total = (int(total_kb) > 0) ? int(total_kb) : 1048576;
+	let slow = int(total * 100 / 1024);
+	if (slow < 16384)
+		slow = 16384;
+	let fast = slow * 3;
+	if (fast < slow + 8192)
+		fast = slow + 8192;
+	return { slow: slow, fast: fast };
+};
+
 /* /proc/<pid>/stat: comm may contain spaces and ')' — split after the LAST
  * ')'. Post-tail fields (0-based): state=0, ppid=1, …, starttime=19
  * (overall field 22). Returns null when the process is gone. */
@@ -1027,6 +1077,24 @@ export function selftest() {
 		!entry_alive({ pid: tpid, start: tinfo.start, exe: tinfo.exe })),
 		sprintf('killed %d', length(tr.killed)));
 	system('rm -f /tmp/pmgr_st_tree.pid');
+	/* ч.264: RAM-derived thresholds/gates (копилка аудита). Ряд 1 GiB = прежние
+	 * абсолютные константы, 128 МБ = полы, 0/минус = фолбэк на ряд 1 GiB. */
+	const mt1 = mem_thresholds_kb(1048576);
+	check('mem_th_1gb', mt1.warn === 65536 && mt1.crit === 32768 && mt1.deep === 49152, null);
+	const mt2 = mem_thresholds_kb(131072);
+	check('mem_th_128mb', mt2.warn === 24576 && mt2.crit === 12288 && mt2.deep === 18432, null);
+	const mt3 = mem_thresholds_kb(0);
+	check('mem_th_fallback', mt3.warn === 65536 && mt3.crit === 32768 && mt3.deep === 49152, null);
+	const mt4 = mem_thresholds_kb(-5);
+	check('mem_th_negative', mt4.warn === 65536, null);
+	const cg1 = cycle_gates_kb(1048576);
+	check('cycle_1gb', cg1.slow === 102400 && cg1.fast === 307200, null);
+	const cg2 = cycle_gates_kb(131072);
+	check('cycle_128mb', cg2.slow === 16384 && cg2.fast === 49152, null);
+	const cg3 = cycle_gates_kb(0);
+	check('cycle_fallback', cg3.slow === 102400 && cg3.fast === 307200, null);
+	const mtot_live = mem_total_kb();
+	check('mem_total_live', mtot_live > 0, sprintf('%d kB', mtot_live));
 	let all_ok = true;
 	for (let c in checks)
 		if (!c.ok)

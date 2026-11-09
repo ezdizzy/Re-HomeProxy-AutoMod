@@ -324,12 +324,12 @@ return view.extend({
 				const what = (e.level !== 'ok' && e.what === 'fd')
 					? ' (fd)' : '';
 				const tr = addRow(table, [
-					{ text: e.label || e.name, color: 'inherit' },
+					{ text: (e.label || e.name) + (e.trend ? ' ↗' : ''), color: 'inherit' },
 					{ text: rssTxt, color: sv.color },
 					{ text: limTxt, color: C_GREY },
 					{ text: fdTxt, color: (e.level !== 'ok' && e.what === 'fd') ? sv.color : 'inherit' },
 					{ text: fdLim, color: C_GREY },
-					{ el: E('span', { 'style': 'color:' + sv.color, 'title': (e.what === 'fd' ? 'fd' : 'RSS') + what }, [ sv.text ]) }
+					{ el: E('span', { 'style': 'color:' + sv.color, 'title': (e.what === 'fd' ? 'fd' : 'RSS') + (e.trend ? ' · ' + e.trend : '') + what }, [ sv.text ]) }
 				]);
 				if (e.level === 'crit')
 					imp(tr, { background: 'rgba(224,82,82,.10)' });

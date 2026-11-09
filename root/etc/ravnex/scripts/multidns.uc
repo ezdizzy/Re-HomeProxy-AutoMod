@@ -1255,10 +1255,11 @@ function mosdns_running() {
 function mosdns_try(conf_path) {
 	/* Ф10.2 OOM victim ordering: mosdns is respawnable (multidns re-adopts
 	 * it within seconds — ch.204) and heavy (Go heap) — a positive
-	 * oom_score_adj keeps the killer away from dnsmasq/uhttpd; GOMEMLIMIT=32M
-	 * on lite-class boxes keeps the heap inside a 128 MB budget.
-	 * The wrapper exec's mosdns — cmdline identity (pm_find exe+arg) intact. */
-	system('setsid /etc/ravnex/scripts/oom_adj.sh 100 32 ' + MOSDNS + ' start -c ' + shellquote(conf_path) + ' -d ' + shellquote(MD_DIR)
+	 * oom_score_adj keeps the killer away from dnsmasq/uhttpd. GOMEMLIMIT
+	 * caps the heap on every box (ч.257 wave); 64 MiB (ч.264, копилка аудита
+	 * — прежний 32 никогда не давал warn-бюджету 96 МБ шанса сработать и
+	 * душел кэш на активных днях), под crit 160 МБ остаётся запас. */
+	system('setsid /etc/ravnex/scripts/oom_adj.sh 100 64 ' + MOSDNS + ' start -c ' + shellquote(conf_path) + ' -d ' + shellquote(MD_DIR)
 		+ ' </dev/null >>' + shellquote(LOG_FILE + '.md') + ' 2>&1 &');
 	for (let i = 0; i < 10; i = i + 1) {
 		sleep(1000);

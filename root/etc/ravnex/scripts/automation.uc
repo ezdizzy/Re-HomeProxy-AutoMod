@@ -53,7 +53,8 @@ import {
 	reg_self as pm_reg_self, reg_hb as pm_reg_hb, reg_hb_pid as pm_reg_hb_pid,
 	proc_info as pm_proc_info,
 	res_profile as pm_res_profile, MEM_GATE_KB as PM_MEM_GATE_KB,
-	mem_avail_kb as pm_mem_avail_kb
+	mem_avail_kb as pm_mem_avail_kb,
+	mem_total_kb as pm_mem_total_kb, cycle_gates_kb as pm_cycle_gates_kb
 } from '/etc/ravnex/scripts/pmgr.uc';
 /* Ф6.2 Discovery Engine: ЕДИНЫЙ сбор обнаружения. conntrack теперь парсится
  * через discovery.uc — ТОЛЬКО оригинальный tuple (B5.1: клиентские адреса
@@ -4570,11 +4571,18 @@ echo done > "$PRE.done"
 		if (resource_aware) {
 			let load1 = num(split(readfile('/proc/loadavg') || '', ' ')[0]);
 			let mem_avail = 0;
-			let mm = match(readfile('/proc/meminfo') || '', /MemAvailable:\s+([0-9]+)/);
+			let mem_total = 0;
+			const minfo = readfile('/proc/meminfo') || '';
+			let mm = match(minfo, /MemAvailable:\s+([0-9]+)/);
 			if (mm) mem_avail = int(mm[1]) || 0;
-			if (load1 > sys_cores * 0.7 || (mem_avail > 0 && mem_avail < 100 * 1024)) {
+			let mt = match(minfo, /MemTotal:\s+([0-9]+)/);
+			if (mt) mem_total = int(mt[1]) || 0;
+			/* ч.264: gates от RAM (pmgr.cycle_gates_kb; фолбэк = ряд 1 ГБ =
+			 * прежние 100/300 МБ — /proc-дыра не меняет поведения). */
+			const cg = pm_cycle_gates_kb(mem_total);
+			if (load1 > sys_cores * 0.7 || (mem_avail > 0 && mem_avail < cg.slow)) {
 				cycle_sleep = 30;
-			} else if (load1 < sys_cores * 0.3 && (mem_avail <= 0 || mem_avail > 300 * 1024)) {
+			} else if (load1 < sys_cores * 0.3 && (mem_avail <= 0 || mem_avail > cg.fast)) {
 				cycle_sleep = 5;
 			}
 			if (cycle_sleep !== last_cycle_sleep) {

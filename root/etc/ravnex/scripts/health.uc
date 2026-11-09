@@ -69,7 +69,8 @@ import {
 } from '/etc/ravnex/scripts/statestore.uc';
 import {
 	REG_PATH as PM_REG_PATH, entry_alive as pm_entry_alive,
-	reg_get as pm_reg_get, reg_set as pm_reg_set
+	reg_get as pm_reg_get, reg_set as pm_reg_set,
+	mem_thresholds_kb as pm_mem_thresholds_kb
 } from '/etc/ravnex/scripts/pmgr.uc';
 import { list_ops as op_list } from '/etc/ravnex/scripts/opman.uc';
 import { emit as ev_emit } from '/etc/ravnex/scripts/eventbus.uc';
@@ -90,7 +91,10 @@ const SNI_STATE_PATH = RUN_DIR + '/sni_state.json';
 const PP_HB_PATH = RUN_DIR + '/pp.daemon.json';
 
 /* Память роутера (урок 197: Keenetic живёт на грани — OOM-киллер убивал ядро
- * при 727 МБ RSS). Пороги в КБ MemAvailable. */
+ * при 727 МБ RSS). Пороги в КБ MemAvailable.
+ * ч.264: канон = pmgr.mem_thresholds_kb(MemTotal) — ряд 1 ГБ равен этим
+ * константам; они остаются статическими фолбэками для callers без MemTotal
+ * (DEEP_SKIP также дефолт deep-skip в CLI). */
 export const MEM_WARN_KB = 65536;      /* < 64 МБ — degraded */
 export const MEM_CRIT_KB = 32768;      /* < 32 МБ — down */
 export const MEM_DEEP_SKIP_KB = 49152; /* < 48 МБ — глубокие проверки пропустить */
@@ -877,18 +881,22 @@ function generators_entry(now) {
 	return generators_entry_from(op_list(), now);
 };
 
-export function system_entry_from(mem_kb, load1) {
+/* ч.264: пороги от RAM (копилка аудита). total_kb ≤ 0 → ряд 1 ГБ = прежние
+ * абсолютные MEM_*_KB константы, старые вызовы не меняют поведения. */
+export function system_entry_from(mem_kb, load1, total_kb) {
 	const label = 'Память/нагрузка роутера';
-	const detail = { mem_available_kb: mem_kb, load1: load1 };
+	const th = pm_mem_thresholds_kb(total_kb);
+	const detail = { mem_available_kb: mem_kb, load1: load1,
+		mem_warn_kb: int(th.warn), mem_crit_kb: int(th.crit) };
 	if (mem_kb < 0)
 		return mk_entry('system', label, 'system', 'degraded', 'indirect',
 			'MemAvailable недоступен (/proc/meminfo не прочитан)', detail);
 	const mb = int(mem_kb / 1024);
 	detail.mem_mb = mb;
-	if (mem_kb < MEM_CRIT_KB)
+	if (mem_kb < int(th.crit))
 		return mk_entry('system', label, 'system', 'down', 'certain',
 			'критически мало памяти (' + mb + ' МБ) — OOM-киллер убивает процессы', detail);
-	if (mem_kb < MEM_WARN_KB)
+	if (mem_kb < int(th.warn))
 		return mk_entry('system', label, 'system', 'degraded', 'certain',
 			'мало памяти (' + mb + ' МБ) — риск OOM (урок 197: массовые пробы)', detail);
 	return mk_entry('system', label, 'system', 'ok', 'certain',
@@ -896,9 +904,12 @@ export function system_entry_from(mem_kb, load1) {
 };
 
 function system_entry() {
+	const mi = readfile('/proc/meminfo') || '';
+	const mt = match(mi, /MemTotal:\s+([0-9]+)/);
 	return system_entry_from(
-		parse_meminfo_kb(readfile('/proc/meminfo')),
-		parse_load1(readfile('/proc/loadavg')));
+		parse_meminfo_kb(mi),
+		parse_load1(readfile('/proc/loadavg')),
+		(mt != null) ? int(mt[1]) : 0);
 };
 
 /* ── глубокий проход (fork'и: service list + скан + wget + netstat + nft) ──
@@ -1320,6 +1331,14 @@ export function selftest() {
 	check('sys_warn', system_entry_from(MEM_WARN_KB - 1024, '0.4').status === 'degraded', null);
 	check('sys_crit', system_entry_from(MEM_CRIT_KB - 1024, '3.1').status === 'down', null);
 	check('sys_unreadable', system_entry_from(-1, null).status === 'degraded', null);
+	/* ч.264: RAM-пороги. Явный total=1 ГБ = прежние константы (ряд совпадает);
+	 * 128 МБ-плата: пол warn 24576 / crit 12288 — малый available деградирует
+	 * раньше, но пол не даёт down при нормальном для lite остатке. */
+	check('sys_ram_1gb_equal', system_entry_from(MEM_CRIT_KB - 1024, '3.1', 1048576).status === 'down', null);
+	check('sys_ram_128mb_floor',
+		system_entry_from(20000, '0.4', 131072).status === 'degraded' &&
+		system_entry_from(11000, '0.4', 131072).status === 'down' &&
+		system_entry_from(60000, '0.4', 131072).status === 'ok', null);
 
 	/* probe_pool_entry_from: ленивая резидентная семантика (ч.164). */
 	check('pp_alive', probe_pool_entry_from({ pid: 5 }, -1, 600).status === 'ok', null);

@@ -778,6 +778,14 @@ start_service() {
 	procd_set_param limits core="unlimited"
 	procd_set_param limits nofile="1000000 1000000"
 	procd_set_param stderr 1
+	# Respawn defaults (documented ch.264): a BARE `procd_set_param respawn`
+	# means procd defaults — threshold 3600 s / timeout 5 s / retry 5. A crash
+	# within 3600 s of start respawns the instance after 5 s; after 5 crashes
+	# inside the 3600 s window the instance STAYS DOWN until the next explicit
+	# service start (then Recovery/Sentinel svc_start picks it up). Left at
+	# defaults ON PURPOSE: Recovery/Sentinel restart the core by identity and
+	# before OOM territory (rss-crit gate, cooldown 600 s) — a shorter window
+	# would fight the coordinator loop instead of helping.
 	procd_set_param respawn
 
 	procd_close_instance

@@ -44,10 +44,16 @@ main monitoring:
 
 | Daemon | warn | crit | Action on crit |
 |---|---|---|---|
-| proxy core | 384 MB | 512 MB | **automatic core restart** before the OOM-killer fires |
+| proxy core | min(384 MB, 40% RAM) | max(min(512 MB, 55% RAM), 1.35×GOMEMLIMIT) | **automatic core restart** (2 confirmed passes in a row or a single ≥1.5×crit spike; 600 s cooldown after success) before the OOM-killer fires |
 | automation, mosdns | 96 MB | 160 MB | an honest «degraded» verdict |
 | probe_pool, sni_sniffer | 48 MB | 96 MB | an honest «degraded» verdict |
 | other daemons | 64 MB | 128 MB | an honest «degraded» verdict |
+
+The core budgets are dynamic and derive from the box hardware; the core fd budget is
+`clamp(nf_conntrack_max/8, 2048…16384)` (on 1 GB boards OpenWrt gives conntrack 63488 →
+fd 7936/15872). The system "low memory" thresholds (Health Monitor warn/crit/deep-skip)
+derive from RAM too (RAM/16, warn/2, warn×0.75 — on 1 GB that is the former absolute
+64/32/48 MB) and scale down with honest floors on smaller boards.
 
 An automatic core restart means ~20 seconds of dropped connections instead of the whole
 system collapsing — a deliberate lesser evil, and it rarely triggers (see the next safeguard).
@@ -56,7 +62,7 @@ system collapsing — a deliberate lesser evil, and it rarely triggers (see the 
 
 Go processes (proxy core, mosdns) get a soft-heap limit **on all boxes, not only tiny ones**:
 
-- proxy core — **384 MB**, mosdns — **32 MB**;
+- proxy core — **384 MB**, mosdns — **64 MB**;
 - the effective cap = `min(requested, half of the physical RAM)`, so a large request can never
   exceed half of the box's memory;
 - the cap is soft: near it Go just collects garbage more often, traffic is never cut.
@@ -64,6 +70,15 @@ Go processes (proxy core, mosdns) get a soft-heap limit **on all boxes, not only
 Historical background: before this safeguard the core's heap on 1 GB boxes was unlimited and
 under a load peak could grow to 727–750 MB with an OOM kill and collateral damage. Such a
 peak is now impossible by construction.
+
+### 4. Core respawn under procd — stock defaults
+
+The core service is declared with a bare `procd_set_param respawn` — procd defaults apply:
+**threshold 3600 s / timeout 5 s / retry 5**. A crash within 3600 s of start respawns the
+instance after 5 s; five crashes inside the window leave the instance down until an explicit
+service start (Recovery/Sentinel pick it up). The window is left at defaults on purpose: the
+coordinator restarts the core by identity BEFORE OOM territory (rss-crit gate + cooldown) —
+a more aggressive respawn would fight the coordinator instead of helping.
 
 ## The sleeping tab
 

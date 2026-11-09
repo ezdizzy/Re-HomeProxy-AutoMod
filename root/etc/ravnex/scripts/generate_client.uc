@@ -1541,6 +1541,13 @@ if (match(proxy_mode, /tproxy/))
 		listen_port: int(tproxy_port),
 		network: 'udp',
 		udp_timeout: strToTime(udp_timeout),
+		/* ч.264 (копилка аудита): NAT-лимит UDP ЯВНО — ядро держит запись
+		 * NAT до udp_timeout, но без явного потолка буря новых UDP-флоу
+		 * упирается только в недокументированный дефолт ядра. Потолок
+		 * фиксируем на 65536 записей (≥ nf_conntrack_max любого класса
+		 * боксов — запись никогда не станет узким местом, при этом рост
+		 * ограничен конструктивно; ~13 МБ worst-case на таблицу). */
+		udp_nat_max: 65536,
 	});
 if (match(proxy_mode, /tun/))
 	push(config.inbounds, {
@@ -1552,6 +1559,7 @@ if (match(proxy_mode, /tun/))
 		mtu: strToInt(tun_mtu),
 		auto_route: false,
 		udp_timeout: strToTime(udp_timeout),
+		udp_nat_max: 65536,   /* ч.264: см. комментарий tproxy-in */
 		stack: tcpip_stack,
 	});
 

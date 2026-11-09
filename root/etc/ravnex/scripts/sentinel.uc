@@ -931,6 +931,75 @@ export function res_findings(snap, prev_f) {
 	return out;
 };
 
+/* ── ч.264: тренд-наблюдение 2-го уровня (копилка аудита ч.263, B) ─────────
+ * Мягкое наблюдение ДО warn-линии: строгие подъёмы fd/RSS на серии из
+ * TREND_RUN_TICKS проходов при значении ≥ TREND_FLOOR_PCT% warn-бюджета
+ * помечают строку снапшота row.trend — карточка «Ресурсы демонов» показывает
+ * честную стрелку роста. Находок/алармов нет, overall не меняется: это
+ * НЕ деградация, а раннее наблюдение (restoring-class тайпчеки не задеты).
+ * Гвард с seed (урок 399): первый проход только засеивает базлайн, серия
+ * обязана накопиться. Состояние in-process: рестарт Sentinel'а = тихий
+ * пересев (пара проходов слепоты — приемлемо, ложных тревог не даёт). */
+const TREND_RUN_TICKS = 3;
+const TREND_FLOOR_PCT = 60;
+const _res_trend = {};
+
+export function res_trend_reset() {
+	const names = [];
+	for (let k in _res_trend)
+		push(names, k);
+	for (let k in names)
+		delete _res_trend[names[k]];
+};
+
+export function res_trend_apply(rows) {
+	if (rows == null || type(rows) !== 'array')
+		return;
+	for (let r in rows) {
+		if (r == null || type(r) !== 'object' || r.level !== 'ok')
+			continue;
+		const nm = '' + r.name;
+		const st = _res_trend[nm] || {};
+		const parts = [];
+		/* Строгое «больше прошлого замера» И ≥ floor% warn — иначе серия
+		 * обнуляется (гвард монотонности с seed: первый проход только
+		 * засеивает, trend невозможен до накопления серии). */
+		const fds = int(r.fds);
+		if (fds > 0 && int(r.fd_warn) > 0) {
+			const prev = int(st.fd_prev || 0);
+			if (prev > 0 && fds > prev &&
+			    fds * 100 >= int(r.fd_warn) * TREND_FLOOR_PCT)
+				st.fd_run = int(st.fd_run || 0) + 1;
+			else
+				st.fd_run = 0;
+			st.fd_prev = fds;
+			if (st.fd_run >= TREND_RUN_TICKS) {
+				const w = int(r.fd_warn);
+				push(parts, 'fd растёт ' + TREND_RUN_TICKS + '+ проходов (' +
+					int(fds * 100 / w) + '% бюджета)');
+			}
+		}
+		const kb = int(r.rss_kb);
+		if (kb > 0 && int(r.rss_warn_kb) > 0) {
+			const prev = int(st.rss_prev || 0);
+			if (prev > 0 && kb > prev &&
+			    kb * 100 >= int(r.rss_warn_kb) * TREND_FLOOR_PCT)
+				st.rss_run = int(st.rss_run || 0) + 1;
+			else
+				st.rss_run = 0;
+			st.rss_prev = kb;
+			if (st.rss_run >= TREND_RUN_TICKS) {
+				const w = int(r.rss_warn_kb);
+				push(parts, 'RSS растёт ' + TREND_RUN_TICKS + '+ проходов (' +
+					int(kb * 100 / w) + '% бюджета)');
+			}
+		}
+		_res_trend[nm] = st;
+		if (length(parts))
+			r.trend = join('; ', parts);
+	}
+};
+
 /* ── главный проход ────────────────────────────────────────────────────────
  * opts = { full: bool, grace_until: int, daemon_pid: int|null }.
  * Возвращает { data, events, baseline, repairs }. */
@@ -1091,6 +1160,8 @@ export function compute_and_store(opts) {
 		const ct_max = (ctraw != null) ? int(trim('' + ctraw)) : 0;
 		const ctx = { mem_kb: mem_total_kb, ct_max: ct_max, gml_mib: RES_CORE_GML_REQ_MIB };
 		const snap = res_snapshot(registry_map(), ctx);
+		/* ч.264: тренд-наблюдение — маркер в строках снапшота (без находок). */
+		res_trend_apply(snap);
 		const rf = res_findings(snap, prev_f);
 		/* Б5: RSS-крит ядра → действие core_restart (ключ res:core —
 		 * loop-guard и координатор работают по нему как по обычному поводу).
@@ -1540,6 +1611,38 @@ export function selftest() {
 
 	check('res_snapshot_dead_pid', length(res_snapshot({ core: { pid: 999999, start: 1 } })) === 0, null);
 	check('res_snapshot_empty', length(res_snapshot(null)) === 0, null);
+
+	/* ч.264: тренд-наблюдение — seed + серия из 3 подъёмов ≥60% warn +
+	 * удержание при дальнейшем росте + сброс при спаде + скип не-ok строк. */
+	res_trend_reset();
+	const trrow = function(fds, kb) {
+		return { name: 't', label: 't', pid: 1, rss_kb: kb, fds: fds,
+			level: 'ok', what: '', rss_warn_kb: 10000, rss_crit_kb: 20000,
+			fd_warn: 100, fd_crit: 200 };
+	};
+	res_trend_apply([ trrow(61, 1000) ]);   /* seed — серии нет */
+	const tr2 = trrow(65, 1000);
+	res_trend_apply([ tr2 ]);
+	const tr3 = trrow(70, 1000);
+	res_trend_apply([ tr3 ]);
+	check('trend_no_premature', tr3.trend == null, '' + tr3.trend);
+	const tr4 = trrow(76, 1000);
+	res_trend_apply([ tr4 ]);
+	check('trend_marks_series', tr4.trend != null && index('' + tr4.trend, 'fd растёт') === 0,
+		'' + tr4.trend);
+	const tr5 = trrow(80, 1000);
+	res_trend_apply([ tr5 ]);
+	check('trend_still_marked', tr5.trend != null, null);
+	const tr6 = trrow(50, 1000);
+	res_trend_apply([ tr6 ]);
+	check('trend_resets_on_dip', tr6.trend == null, '' + tr6.trend);
+	res_trend_reset();
+	const trw = trrow(80, 1000);
+	trw.level = 'warn';
+	res_trend_apply([ trw ]);
+	const trn = trrow(85, 1000);
+	res_trend_apply([ trn ]);
+	check('trend_skips_non_ok', trn.trend == null, '' + trn.trend);
 
 	/* Б5 (сеанс 161): рестарт ядра wanted ТОЛЬКО при core/rss-крите. */
 	check('rcr_crit', res_core_restart_wanted([
