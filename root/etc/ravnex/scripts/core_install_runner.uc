@@ -327,7 +327,9 @@ function main() {
 	if (op_id) {
 		try { op_stage(op_id, 'install'); } catch (e) { /* journal hiccup */ }
 	}
-	const inst = run_action('install_pkg', [core, prep.tmp_path, prep.pkg_manager], null, op_id);
+	const inst = run_action('install_pkg', (length('' + (prep.fork_version || '')))
+		? [core, prep.tmp_path, prep.pkg_manager, '' + prep.fork_version]
+		: [core, prep.tmp_path, prep.pkg_manager], null, op_id);
 	if (!inst.result) {
 		/* Recovery: the binary swap may have happened before the installer
 		 * died (health-check hang) — detect a valid lite/extended build on
@@ -384,9 +386,12 @@ function main() {
 		if (op_id) {
 			try { op_stage(op_id, 'postcheck'); } catch (e) { /* journal hiccup */ }
 		}
-		/* empty expect: the tarball/asset/fork version is not reliably known
-		 * up front — the probe itself is the honest check. */
-		pc = run_action('postcheck_restart', [core, ''], null, op_id);
+		/* empty expect for tarball/asset (version not reliably known up front —
+		 * the probe itself is the honest check); the FORK branch now knows its
+		 * release tag (prepare_install carries it for the downgrade gate), so
+		 * the post-check also verifies the serving binary equals that tag. */
+		const expect_v = (core === 'hiddify') ? ('' + (prep.fork_version || '')) : '';
+		pc = run_action('postcheck_restart', [core, expect_v], null, op_id);
 	}
 	const ok_install = (core === 'singbox-lite') ? true : (pc && pc.result === true && pc.alive === true);
 

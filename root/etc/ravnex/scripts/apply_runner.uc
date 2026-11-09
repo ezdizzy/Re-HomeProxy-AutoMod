@@ -241,6 +241,30 @@ function run_app_update(op_id, spec) {
 		return false;
 	}
 
+	/* 3b. i18n post-check (piggybank ch.261(1з)): app and i18n ride the SAME
+	 * release - a silently failed i18n install would leave the UI on stale
+	 * translations while the op goes green on the app version alone. Same
+	 * dual-name discovery as the app check (rename bridge), same equality
+	 * semantics: only checked when the release actually carried an i18n
+	 * asset (spec.i18n != null). A retry repairs it (equal = reinstall). */
+	if (spec.i18n != null && length('' + (spec.i18n.dl_url || ''))) {
+		const iout = (pm === 'apk')
+			? capture('apk info luci-i18n-ravnex-ru 2>/dev/null | head -1') + '\n' +
+			  capture('apk info luci-i18n-homeproxy-ru 2>/dev/null | head -1')
+			: capture('opkg status luci-i18n-ravnex-ru 2>/dev/null') + '\n' +
+			  capture('opkg status luci-i18n-homeproxy-ru 2>/dev/null');
+		const ivm = match(iout, /luci-i18n-ravnex-ru-([0-9][0-9.]*)/) ||
+			match(iout, /Version: ([0-9][0-9.]*)/) ||
+			match(iout, /luci-i18n-homeproxy-ru-([0-9][0-9.]*)/);
+		const inst_i = (ivm != null) ? ivm[1] : '';
+		if (inst_i != ('' + spec.version)) {
+			finish(op_id, false, false, 'i18n version check failed: installed ' +
+				(inst_i == '' ? '?' : inst_i) + ' != expected ' + spec.version +
+				((length(parts)) ? '; ' + join('; ', parts) : ''));
+			return false;
+		}
+	}
+
 	/* 4. Сервис-рестарт (пакет сервис не стартует — как и в прежнем пути) +
 	 * верификация ядра (та же verify_core, что у restart). */
 	stage(op_id, 'restarting');

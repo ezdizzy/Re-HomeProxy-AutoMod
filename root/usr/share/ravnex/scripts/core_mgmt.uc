@@ -491,6 +491,27 @@ function feed_bin_version(pkg) {
 	return null;
 }
 
+/* Fork/compact downgrade gate (piggybank ch.261(1г), session 174): the fork
+ * branch of the core updater had NO version gate - on a box whose /usr/bin
+ * binary is a newer upstream tarball, «Обновить» under a tight overlay would
+ * silently install the FROZEN fork (1andrevich, stuck at v4.1.0). The PM
+ * record cannot catch it (absent on tarball boxes, or a zoo agreeing with
+ * the old fork); the comparison therefore runs against the RUNNING BINARY
+ * probe. prepare_install carries the fork release tag as ARGV[4].
+ * Equal (repair/reinstall) and newer stay allowed; a failed version lookup
+ * (running binary not probeable or the tag unknown) never blocks the
+ * install — the runner's postcheck_restart tail keeps the outcome honest. */
+function fork_downgrade_error(core, cand_ver) {
+	const bin = (core === 'hiddify') ? '/usr/bin/hiddify-core' : '/usr/bin/sing-box';
+	const cur_info = core_features_cached(bin);
+	const cur = (cur_info && cur_info.version) ? '' + cur_info.version : '';
+	if (!length(cur) || !length(cand_ver))
+		return null;
+	return (feed_vercmp_base(feed_strip_rev('' + cand_ver), feed_strip_rev(cur)) < 0)
+		? `fork build ${cand_ver} is OLDER than the running core ${cur} - refusing a silent downgrade (install a newer build or the upstream tarball instead)`
+		: null;
+}
+
 /* V2 explicit-file install of one feed package (mirror of rpcd's
  * feed_install_pkg): manifest → exact file → ladder → sha256 gate →
  * `apk add ./x.apk` (signature checked by apk) | `opkg install ./x.ipk`
@@ -862,12 +883,29 @@ let result;
 							result = { error: `Not enough overlay space for the ${chosen === 'upx' ? 'compact' : 'full'} build: ${overlay_free_kb} KB free, need ~${need} KB.` };
 						} else {
 							const hp_path = (chosen === 'upx') ? 'download/upx' : 'latest/download';
+							/* Piggybank ch.261(1г): carry the fork release tag so
+							 * install_pkg can refuse a silent downgrade of a newer
+							 * upstream binary (the fork repo is frozen at v4.1.0).
+							 * Best-effort: a throttled/blind GitHub only drops the
+							 * gate, never the install (the postcheck tail keeps the
+							 * outcome honest). Same wget idiom as the singbox
+							 * prepare branch above. */
+							let fork_ver = '';
+							const ffd = popen('wget -qO- --timeout=10 https://api.github.com/repos/1andrevich/homeproxy-hiddify/releases/latest 2>/dev/null');
+							if (ffd) {
+								const fout = trim(ffd.read('all'));
+								ffd.close();
+								const fm = match(fout, /"tag_name"\s*:\s*"([^"]+)"/);
+								if (fm) fork_ver = replace(fm[1], /^v/, '');
+							}
 							result = {
 								pkg_manager, arch, variant: chosen, note,
 								source: 'fork',
 								dl_url: `https://github.com/1andrevich/hiddify-core/releases/${hp_path}/hiddify-core_${arch}${ext}`,
 								tmp_path: `/tmp/hiddify-core${ext}`
 							};
+							if (length(fork_ver))
+								result.fork_version = fork_ver;
 						}
 					}
 					}
@@ -1011,6 +1049,10 @@ let result;
 		result = exit_code === 0
 			? { result: true, note: 'upstream tar.gz build installed' }
 			: { result: false, error: 'upstream tarball extraction/validation failed' };
+	} else if (length(trim(ARGV[4] || '')) && fork_downgrade_error(core, trim(ARGV[4] || ''))) {
+		/* Fork/compact branch only (the runner passes prep.fork_version);
+		 * upstream-tarball/sing-box-asset stay latest-only by design. */
+		result = { result: false, error: fork_downgrade_error(core, trim(ARGV[4] || '')) };
 	} else {
 		/* Sibling hygiene (session 173 — mirror of the feed path): the fork
 		 * apk / GitHub asset occupies the same binary slot as its sibling;

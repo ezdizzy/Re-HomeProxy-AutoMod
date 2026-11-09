@@ -4668,7 +4668,12 @@ const methods = {
 				else
 					ret = system(`apk add --allow-untrusted ${shellquote(tmp_path)}`, 120000);
 			} else {
-				ret = system(`opkg install ${shellquote(tmp_path)}`);
+				/* --force-reinstall (piggybank ch.261(1ж)): opkg treats an EQUAL
+				 * version file as a no-op, so a tie-repair left the old binary
+				 * with a green access() post-check. Reinstall forces the file
+				 * through; downgrades still need --force-downgrade, which we
+				 * deliberately do NOT pass (the prepare gate refuses laggards). */
+				ret = system(`opkg install --force-reinstall ${shellquote(tmp_path)}`);
 			}
 			system(`rm -f ${shellquote(tmp_path)}`);
 			/* opkg/apk can exit non-zero on a SUCCESSFUL install (e.g. the package's
@@ -4838,7 +4843,10 @@ const methods = {
 					ret = system(`apk add --allow-untrusted ${shellquote(tmp_path)}`, 120000);
 			} else {
 				system('opkg update 2>/dev/null');
-				ret = system(`opkg install ${shellquote(tmp_path)}`);
+				/* --force-reinstall (piggybank ch.261(1ж)): same tie-repair fix as
+				 * byedpi_install_pkg - an EQUAL version file is otherwise a
+				 * silent no-op with a green access() post-check. */
+				ret = system(`opkg install --force-reinstall ${shellquote(tmp_path)}`);
 			}
 			system(`rm -f ${shellquote(tmp_path)}`);
 			/* opkg/apk can exit non-zero on a SUCCESSFUL install (e.g. the package's
