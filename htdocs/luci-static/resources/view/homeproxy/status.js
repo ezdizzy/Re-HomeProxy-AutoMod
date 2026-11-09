@@ -725,6 +725,20 @@ const callRulesetsLocalSeed = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Lists conveyor (seance 178): catalog + manifest + runtime statuses. */
+const callListsConveyorStatus = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'lists_conveyor_status',
+	expect: { '': {} }
+});
+
+const callListsConveyorUpdate = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'lists_conveyor_update_start',
+	params: [ 'scope', 'force' ],
+	expect: { '': {} }
+});
+
 function buildByeDPICard(byedpi, isMainNode) {
 	let installed = byedpi?.installed || false;
 	let version   = byedpi?.version   || null;
@@ -1465,8 +1479,182 @@ function buildRulesetsCard() {
 	]);
 }
 
-function buildCoreCard(core, coreInfo) {
-	const isHiddify = core === 'hiddify';
+/* Lists conveyor (seance 178): the catalog of external list sources with a
+ * sha256 gate and an origin manifest. Precision-first: small exact per-service
+ * categories by default; the mass layer (big aggregated lists) is opt-in and
+ * labelled with its real memory cost. White spots stay honest (SURROGATE). */
+function buildConveyorCard() {
+	const listEl = E('div', { style: 'font-size:.9em; margin:4px 0' },
+		[ E('em', { 'class': 'hpui-c-grey' }, '—') ]);
+	const resultEl = mkResult();
+	const setMsg = (txt, kind) => resultEl.setResult(txt, kind);
+	let pollTimer = null;
+
+	const fmtSize = (n) => (n != null && n >= 1024) ? (n / 1024).toFixed(0) + ' KB' : (n != null ? n + ' B' : '');
+	const fmtAge = (sec) => {
+		if (sec == null) return '';
+		if (sec < 3600) return _('%d min ago').format(Math.max(1, Math.floor(sec / 60)));
+		if (sec < 86400) return _('%d h ago').format(Math.floor(sec / 3600));
+		return _('%d d ago').format(Math.floor(sec / 86400));
+	};
+	const licBadge = (lic) => {
+		if (lic === 'none')
+			return E('span', { 'class': 'hpui-c-amber', 'title': _('No LICENSE upstream — consumed over the network with attribution; never embedded into the package') }, [ _('no license') ]);
+		if (lic === 'unknown')
+			return E('span', { 'class': 'hpui-c-amber', 'title': _('License not stated upstream — consumed over the network with attribution') }, [ _('license unstated') ]);
+		return E('span', { 'class': 'hpui-c-grey' }, [ lic ]);
+	};
+	const statusChip = (st) => {
+		if (st === 'ok' || st === 'kept')
+			return E('span', { 'class': 'hpui-c-green' }, [ st === 'kept' ? _('fresh') : _('updated') ]);
+		if (st === 'sha_mismatch')
+			return E('span', { 'class': 'hpui-c-red', 'title': _('sha256 mismatch — the previous file was kept') }, [ _('sha256 mismatch') ]);
+		if (st === 'failed')
+			return E('span', { 'class': 'hpui-c-red' }, [ _('failed') ]);
+		if (st === 'skipped' || st === 'too_large' || st === 'inline_skip')
+			return E('span', { 'class': 'hpui-c-grey' }, [ _('skipped') ]);
+		return E('span', { 'class': 'hpui-c-grey' }, [ st || _('not fetched yet') ]);
+	};
+
+	const render = (r) => {
+		listEl.innerHTML = '';
+		if (!r || r.error) {
+			listEl.appendChild(E('em', { 'class': 'hpui-c-red' }, [ (r && r.error) || _('RPC error') ]));
+			return;
+		}
+		const cat = r.catalog || [];
+		const man = r.manifest || null;
+		const entries = (man && man.entries) || {};
+		const local = r.local || {};
+		const run = r.runtime || null;
+		const groups = {};
+		for (let e in cat)
+			(groups[e.group || 'misc'] = groups[e.group || 'misc'] || []).push(e);
+
+		const tbl = E('table', { 'style': 'border-collapse:collapse; width:100%' });
+		const mkRow = (e) => {
+			const ent = entries[e.id] || {};
+			const lf = local[e.id] || {};
+			const tr = E('tr', { 'style': 'vertical-align:top' });
+			const tds = [];
+			const nameCell = E('div', {}, [
+				E('span', { 'style': 'font-family:monospace' }, [ e.tag ]),
+				' ',
+				(e.coverage === 'surrogate')
+					? E('span', { 'class': 'hpui-c-amber', 'title': (e.surrogate_note || '') + ' — ' + _('the honest approximation, not a guarantee') },
+						[ _('SURROGATE') ])
+					: null,
+				E('div', { 'style': 'opacity:.75; font-size:.92em' }, [ e.covers || e.name || e.id ])
+			]);
+			tds.push(E('td', { 'style': 'padding:3px 8px 3px 0; white-space:normal' }, [ nameCell ]));
+			tds.push(E('td', { 'style': 'padding:3px 8px; white-space:nowrap' }, [
+				E('div', { 'style': 'opacity:.85' }, [ e.repo || '—' ]),
+				E('div', {}, [ licBadge(e.license || '') ])
+			]));
+			const when = ent.published_at ? ('' + ent.published_at).slice(0, 10) :
+				(ent.fetched_ts ? new Date(int(ent.fetched_ts) * 1000).toLocaleDateString() : '');
+			tds.push(E('td', { 'style': 'padding:3px 8px; white-space:nowrap' },
+				[ when || '—', E('div', { 'style': 'opacity:.6; font-size:.92em' },
+					[ ent.via_hub ? _('via hub') : '' ]) ]));
+			const sha = ent.sha256 ? ('' + ent.sha256).substring(0, 10) : '';
+			tds.push(E('td', { 'style': 'padding:3px 8px; white-space:nowrap' },
+				[ sha ? E('span', { 'class': 'hpui-c-green', 'title': ('' + ent.sha256) + ' (' + (ent.digest_source || 'computed') + ')' }, [ '✓ ' + sha ]) : '—' ]));
+			tds.push(E('td', { 'style': 'padding:3px 8px; white-space:nowrap' },
+				[ lf.present === 'inline' ? _('inline') :
+					(lf.present ? (fmtSize(lf.size) + (lf.age != null ? ' · ' + fmtAge(lf.age) : '')) : _('not fetched')) ]));
+			tds.push(E('td', { 'style': 'padding:3px 8px; white-space:nowrap' }, [ statusChip(ent.status) ]));
+			const rb = mkBtn('⟳', 'ghost', { 'title': _('Update this category'), 'style': 'padding:0 6px' });
+			rb.onclick = () => startUpdate(e.id, false);
+			tds.push(E('td', { 'style': 'padding:3px 0' }, [ rb ]));
+			for (let td in tds) tr.appendChild(td);
+			return tr;
+		};
+		const groupTitle = (g) => ({
+			'ru-core': _('RU-blocked core'), 'video': _('Video / streaming'),
+			'messengers': _('Messengers'), 'social': _('Social & platforms'),
+			'ai': _('AI services'), 'games': _('Games'),
+			'cdn': _('CDN / hosting layers'), 'misc': _('Miscellaneous'),
+			'reverse': _('Reverse routing')
+		})[g] || g;
+
+		for (const g of ['ru-core', 'video', 'messengers', 'social', 'ai', 'games', 'cdn', 'misc', 'reverse']) {
+			if (!groups[g])
+				continue;
+			tbl.appendChild(E('tr', {}, [
+				E('td', { 'colspan': '7', 'style': 'padding:8px 0 2px; font-weight:bold; border-bottom:1px solid rgba(128,128,128,.3)' },
+					[ groupTitle(g) + (g === 'ru-core' ? ' · 🜚 = ' + _('opt-in mass layer') : '') ])
+			]));
+			for (let e in groups[g])
+				tbl.appendChild(mkRow(e));
+		}
+		listEl.appendChild(tbl);
+
+		if (run && run.running)
+			listEl.appendChild(E('em', { 'class': 'hpui-c-amber' },
+				[ _('Updating lists: %d of %d…').format(run.done || 0, run.total || 0) ]));
+		else if (man && man.summary) {
+			const bits = [ _('Last conveyor run: %s').format(new Date(int(man.summary.ts) * 1000).toLocaleString()) ];
+			if (man.summary.failed > 0)
+				bits.push(E('span', { 'class': 'hpui-c-red' }, [ _('failures: %d').format(man.summary.failed) ]));
+			listEl.appendChild(E('div', { 'style': 'margin:6px 0 2px; font-size:.9em; opacity:.85' }, bits));
+		}
+		if (r.last_op && r.last_op.status && r.last_op.status !== 'completed')
+			listEl.appendChild(E('em', { 'class': 'hpui-c-grey' },
+				[ _('Operation %s: %s').format(r.last_op.op_id, r.last_op.status) ]));
+
+		listEl.appendChild(E('div', { 'style': 'margin:8px 0 2px; font-size:.85em; opacity:.75' },
+			_('Precision-first: small exact lists are delivered by default; the 🜚 mass layer (big aggregated lists) is opt-in because it costs real memory. SURROGATE rows cover a service only approximately. Lists without an upstream license are consumed over the network with attribution — origin and license of every file are recorded in the manifest.')));
+	};
+
+	const refresh = () => L.resolveDefault(callListsConveyorStatus(), {}).then((r) => { render(r); return r; });
+
+	const startUpdate = (scope, force) => {
+		setMsg(_('Starting the lists update…'), 'grey');
+		return L.resolveDefault(callListsConveyorUpdate(scope || 'default', force ? '1' : '0'), {}).then((r) => {
+			if (!r || r.result === false) {
+				setMsg((r && r.error) || _('Failed'), 'red');
+				return;
+			}
+			setMsg(scope === 'all' ? _('Updating ALL categories…') : _('Updating in the background…'), 'grey');
+			if (pollTimer) window.clearInterval(pollTimer);
+			pollTimer = window.setInterval(() => {
+				refresh().then((s) => {
+					const rt = s && s.runtime;
+					const op = s && s.last_op;
+					if (pollTimer && ((!rt || !rt.running) && (!op || op.status === 'completed' || op.status === 'failed'))) {
+						window.clearInterval(pollTimer);
+						pollTimer = null;
+						const man = (s && s.manifest && s.manifest.summary) || null;
+						setMsg(man && man.failed > 0
+							? _('Finished with %d failure(s) — broken sources were skipped honestly.').format(man.failed)
+							: _('Conveyor finished'), man && man.failed > 0 ? 'amber' : 'green');
+					}
+				});
+			}, 2000);
+		});
+	};
+
+	const updDefBtn = mkBtn(_('Update lists (precise)'), 'primary');
+	updDefBtn.onclick = () => startUpdate('default', false);
+	const updAllBtn = mkBtn(_('Update ALL (incl. mass)'), 'ghost', { 'style': 'margin-left:4px' });
+	updAllBtn.onclick = () => startUpdate('all', false);
+	const refreshBtn = mkBtn(_('Refresh'), 'ghost', { 'style': 'margin-left:4px' });
+	refreshBtn.onclick = () => { setMsg('', null); return refresh(); };
+
+	refresh();
+	return E('div', { 'class': 'hpui-panel' }, [
+		E('div', { 'style': 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
+			E('strong', {}, _('Lists conveyor')),
+			updDefBtn, updAllBtn, refreshBtn
+		]),
+		resultEl,
+		E('div', { 'style': 'margin-top:4px; font-size:.9em; opacity:.85' },
+			_('Per-service routing lists from a CI-validated hub (ezdizzy/ravnex-lists) with upstream sources as reserves. Every file is sha256-gated and atomically placed; provenance, license and freshness are recorded per category. The routing rules themselves are configured on the Service rules page.')),
+		listEl
+	]);
+}
+
+function buildCoreCard(core, coreInfo) {	const isHiddify = core === 'hiddify';
 	const isLite = core === 'singbox-lite';
 	const name = isHiddify ? 'hiddify-core' : (isLite ? 'sing-box-extended-lite' : 'sing-box-extended');
 	const pkgMgr = coreInfo.pkg_manager;
@@ -2039,6 +2227,9 @@ return view.extend({
 		 * core's synchronous first-load on a cold boot. */
 		o = s.option(form.DummyValue, '_rulesets_card');
 		o.default = buildRulesetsCard();
+
+		o = s.option(form.DummyValue, '_conveyor_card');
+		o.default = buildConveyorCard();
 
 		/* ч.69: snapshots + emergency internet recovery. */
 		o = s.option(form.DummyValue, '_snapshots_card');

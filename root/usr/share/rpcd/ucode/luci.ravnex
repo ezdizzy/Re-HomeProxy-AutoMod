@@ -35,6 +35,10 @@ import {
 	bump_cursor as hc_bump_cursor
 } from '/etc/ravnex/scripts/control.uc';
 import { read_state as ss_read_state, atomic_write as ss_atomic_write } from '/etc/ravnex/scripts/statestore.uc';
+import {
+	CATALOG as LS_CATALOG, ATTRIBUTION as LS_ATTRIBUTION,
+	catalog_routable as ls_catalog_routable
+} from '/etc/ravnex/scripts/rulesets_catalog.uc';
 import { tail as ev_tail, clear as ev_clear, emit as ev_emit } from '/etc/ravnex/scripts/eventbus.uc';
 import {
 	begin as op_begin, get_op as op_get, list_ops as op_list,
@@ -3116,6 +3120,102 @@ function app_prepare_calc() {
 	return res;
 }
 
+/* ── Lists conveyor (seance 178; док 26) ───────────────────────────────────
+ * The catalog of external rule-list sources (rulesets_catalog.uc) + the
+ * detached runner (lists_conveyor.uc) deliver per-category lists with a
+ * sha256 gate and an origin manifest. The RPC never does network work in
+ * the caller thread: update/strategy-import run as opman operations, the
+ * zemidala freshness check as a detached one-shot (the rulesets_fresh_status
+ * pattern). */
+const LISTS_CONV_STATE = RUN_DIR + '/lists_conveyor.json';
+const LISTS_ZEMI_IDX = RUN_DIR + '/zemidala_index.json';
+const LISTS_ZEMI_LOCK = '/tmp/hp_zemi_check.lock';
+
+function lists_catalog_view() {
+	const out = [];
+	for (let e in LS_CATALOG) {
+		push(out, {
+			id: e.id, tag: e.tag, group: e.group, name: e.name,
+			layer: e.layer || 'precise',
+			covers: e.covers || '',
+			coverage: e.coverage || 'direct',
+			surrogate_note: e.surrogate_note || null,
+			consumption: e.consumption, format: e.format,
+			license: e.license || '',
+			license_note: LS_ATTRIBUTION[e.repo] || null,
+			repo: e.repo || null,
+			seed: e.seed === true, default_on: e.default_on === true,
+			heavy: e.heavy === true, role: e.role || null, of: e.of || null
+		});
+	}
+	return out;
+}
+
+function lists_conveyor_local(dir, entries) {
+	/* local file facts (size/age) for the catalog rows */
+	const out = {};
+	for (let e in LS_CATALOG) {
+		const base = (e.consumption === 'inline') ? null :
+			dir + '/' + e.tag + ((e.format === 'srs') ? '.srs' : ((e.format === 'txt-raw') ? '.lst' : '.json'));
+		if (!base) {
+			out[e.id] = { present: 'inline' };
+			continue;
+		}
+		if (access(base)) {
+			const st = stat(base);
+			out[e.id] = { present: true, size: st ? st.size : null,
+				mtime: st ? int(st.mtime) : null,
+				age: st ? (time() - int(st.mtime)) : null, path: base };
+		} else
+			out[e.id] = { present: false, path: base };
+	}
+	return out;
+}
+
+function lists_manifest_doc() {
+	const dir = rulesets_local_dir();
+	const mf = dir + '/manifest.json';
+	if (!access(mf))
+		return null;
+	const md = ss_read_state(mf);
+	return (md && md.data) ? md.data : null;
+}
+
+function lists_zemi_doc() {
+	if (!access(LISTS_ZEMI_IDX))
+		return null;
+	let j = null;
+	try { j = json(readfile(LISTS_ZEMI_IDX) || ''); } catch (e) { j = null; }
+	if (!j || !j.index)
+		return null;
+	j.stale = (time() - int(j.ts || 0)) > 21600;
+	return j;
+}
+
+/* Strategies imported from per-ASN sources into the corpus (attribution doc). */
+function lists_strategy_sources() {
+	const f = HP_DIR + '/strategy_sources.json';
+	if (!access(f))
+		return { asns: {} };
+	try {
+		const j = json(readfile(f) || '');
+		return (j && j.asns) ? j : { asns: {} };
+	} catch (e) { return { asns: {} }; }
+}
+
+/* Count the corpus candidates imported from per-ASN sources (zmd-AS<n>-*). */
+function lists_zmd_counts() {
+	const corpus = hp_corpus_read();
+	const by = {};
+	for (let c in (corpus.candidates || [])) {
+		const nm = '' + (c.name || '');
+		const m = match(nm, /^zmd-AS(\d+)-/);
+		if (m)
+			by[m[1]] = (by[m[1]] || 0) + 1;
+	}
+	return by;
+}
+
 const methods = {
 	acllist_read: {
 		args: { type: 'type' },
@@ -5761,6 +5861,117 @@ const methods = {
 		}
 	},
 
+	/* ── Lists conveyor (seance 178; док 26) ────────────────────────────────
+	 * Status = catalog + manifest + runtime + local files + ops. Update and
+	 * strategy import = opman ops with a detached runner; the conveyor writes
+	 * the manifest atomically and keeps the previous file on any failure. */
+	lists_conveyor_status: {
+		call: function() {
+			const dir = rulesets_local_dir();
+			const man = lists_manifest_doc();
+			const local = lists_conveyor_local(dir, man ? (man.entries || {}) : null);
+			let run = null;
+			if (access(LISTS_CONV_STATE)) {
+				try { run = json(readfile(LISTS_CONV_STATE) || ''); } catch (e) { run = null; }
+			}
+			/* latest op of the conveyor kinds (UI polling shortcut) */
+			let last_op = null;
+			for (let o in op_list()) {
+				if (o.kind === 'lists_update' || o.kind === 'strategy_import') {
+					last_op = { op_id: o.op_id, kind: o.kind, action: o.action,
+						status: o.status, stage: o.stage, verified: o.verified,
+						detail: o.detail, started: o.started, finished: o.finished };
+					break;
+				}
+			}
+			return {
+				catalog: lists_catalog_view(),
+				manifest: man,
+				runtime: run,
+				local: local,
+				last_op: last_op,
+				strategy_sources: lists_strategy_sources(),
+				zemidala: lists_zemi_doc(),
+				dir: dir
+			};
+		}
+	},
+
+	lists_conveyor_update_start: {
+		args: { scope: 'scope', force: 'force' },
+		call: function(req) {
+			const scope = trim('' + ((req && req.args && req.args.scope) || 'default'));
+			let ok_scope = (scope === 'all' || scope === 'default');
+			if (!ok_scope) {
+				const ce = ls_catalog_find(scope);
+				ok_scope = !!ce;
+			}
+			if (!ok_scope)
+				return { result: false, error: 'unknown scope' };
+			const force = (('' + ((req && req.args && req.args.force) || '')) === '1');
+			const r = op_begin('lists_update', 'lists conveyor update', 'rpcd',
+				'lists update scope=' + scope, 0);
+			if (!r.ok) {
+				if (r.busy) {
+					const held = (r.holder && r.holder.op_id) ? op_get(r.holder.op_id) : null;
+					if (held && held.action === 'lists conveyor update' &&
+					    (time() - int(held.started)) <= 5)
+						return { result: true, op_id: held.op_id, coalesced: true };
+					return { result: false, busy: true, error: 'another lists update is running',
+						op_id: (r.holder && r.holder.op_id) || '' };
+				}
+				return { result: false, error: r.error || 'op begin failed' };
+			}
+			const op = r.op;
+			system('/usr/bin/ucode ' + shellquote(HP_DIR + '/scripts/lists_conveyor.uc') +
+				' update ' + shellquote(op.op_id) + ' ' + shellquote(scope) +
+				(force ? ' force' : '') + ' >/dev/null 2>&1 &');
+			return { result: true, op_id: op.op_id, scope: scope };
+		}
+	},
+
+	lab_strategy_source_status: {
+		call: function() {
+			const zemi = lists_zemi_doc();
+			/* freshness runner (detached; GitHub API never in the RPC thread) */
+			if (!zemi || zemi.stale) {
+				const lt = stat(LISTS_ZEMI_LOCK);
+				if (!lt || (time() - int(lt.mtime)) > 900) {
+					system(`rm -f ${shellquote(LISTS_ZEMI_LOCK)}`);
+					writefile(LISTS_ZEMI_LOCK, sprintf('%d\n', time()));
+					system(`ucode ${shellquote(HP_DIR + '/scripts/lists_conveyor.uc')} strategies-check >/dev/null 2>&1 1000>&- &`);
+				}
+			}
+			return {
+				zemidala: zemi,
+				imported: lists_strategy_sources(),
+				corpus_zmd: lists_zmd_counts()
+			};
+		}
+	},
+
+	lab_strategy_import_start: {
+		args: { asn: 'asn' },
+		call: function(req) {
+			const asn = '' + int('' + ((req && req.args && req.args.asn) || ''));
+			if (!length(asn) || asn === '0' || !match(asn, /^\d{1,10}$/))
+				return { result: false, error: 'bad ASN' };
+			const r = op_begin('strategy_import', 'strategy import AS' + asn, 'rpcd',
+				'zemidala AS' + asn, 0);
+			if (!r.ok) {
+				if (r.busy)
+					return { result: false, busy: true, error: 'another lists/strategy op is running',
+						op_id: (r.holder && r.holder.op_id) || '' };
+				return { result: false, error: r.error || 'op begin failed' };
+			}
+			const op = r.op;
+			system('/usr/bin/ucode ' + shellquote(HP_DIR + '/scripts/lists_conveyor.uc') +
+				' strategy-import ' + shellquote(op.op_id) + ' ' + shellquote(asn) +
+				' >/dev/null 2>&1 &');
+			return { result: true, op_id: op.op_id, asn: asn };
+		}
+	},
+
 	/* Ф5.1: результат последнего цикла обновления подписок (пишет
 	 * update_subscriptions.uc атомарно) + живая книжка подписочных узлов.
 	 * UI показывает итог в ОДНОМ месте — в модале кнопки обновления. */
@@ -7768,20 +7979,9 @@ const methods = {
 		call: function(req) {
 			const src = trim((req && req.args && req.args.source) || '');
 			const node = trim((req && req.args && req.args.node) || '');
-			const SOURCES = {
-				'refilter': true, 'russia-inside': true, 'russia-outside': true,
-				'ukraine-inside': true, 'block': true,
-				'youtube': true, 'twitter': true,
-				'tiktok': true, 'telegram': true, 'roblox': true, 'porn': true, 'ovh': true,
-				'news': true, 'meta': true, 'hodca': true, 'hetzner': true, 'hdrezka': true,
-				'google_ai': true, 'google-meet': true, 'google_play': true, 'geoblock': true,
-				'anime': true, 'cloudflare': true, 'cloudfront': true, 'discord': true,
-				'digitalocean': true,
-				'openai': true, 'anthropic': true, 'whatsapp': true, 'twitch': true,
-				'valve': true, 'epicgames': true, 'riot': true, 'sony': true,
-				'electronicarts': true, 'ubisoft': true, 'blizzard': true, 'nintendo': true,
-				'wargaming': true, 'xbox': true
-			};
+			/* Whitelist = the lists catalog (seance 178): one authority,
+			 * updated with the conveyor — no per-release manual edits. */
+			const SOURCES = ls_catalog_routable();
 			if (!SOURCES[src])
 				return { result: false, error: 'unknown source' };
 
@@ -8396,20 +8596,9 @@ const methods = {
 		call: function(req) {
 			const src = trim('' + ((req && req.args && req.args.source) ?? ''));
 			const node = trim('' + ((req && req.args && req.args.node) ?? ''));
-			const SOURCES = {
-				'refilter': true, 'russia-inside': true, 'russia-outside': true,
-				'ukraine-inside': true, 'block': true,
-				'youtube': true, 'twitter': true,
-				'tiktok': true, 'telegram': true, 'roblox': true, 'porn': true, 'ovh': true,
-				'news': true, 'meta': true, 'hodca': true, 'hetzner': true, 'hdrezka': true,
-				'google_ai': true, 'google-meet': true, 'google_play': true, 'geoblock': true,
-				'anime': true, 'cloudflare': true, 'cloudfront': true, 'discord': true,
-				'digitalocean': true,
-				'openai': true, 'anthropic': true, 'whatsapp': true, 'twitch': true,
-				'valve': true, 'epicgames': true, 'riot': true, 'sony': true,
-				'electronicarts': true, 'ubisoft': true, 'blizzard': true, 'nintendo': true,
-				'wargaming': true, 'xbox': true
-			};
+			/* Whitelist = the lists catalog (seance 178): one authority,
+			 * updated with the conveyor — no per-release manual edits. */
+			const SOURCES = ls_catalog_routable();
 			if (!SOURCES[src])
 				return { result: false, error: 'unknown source' };
 			const c = cursor();

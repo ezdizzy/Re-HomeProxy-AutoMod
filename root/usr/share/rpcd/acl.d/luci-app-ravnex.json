@@ -31,6 +31,7 @@
 					"mosdns_status", "mosdns_check_update", "multidns_status", "diag_dns_multidns",
 					"automation_list_read", "automation_backup", "automation_geo_status",
 					"lists_list", "list_read", "list_export", "list_backup_list", "list_backup_read",
+					"lists_conveyor_status", "lab_strategy_source_status",
 					"control_status", "control_devices", "control_wifi_status", "control_events", "control_log_tail",
 					"app_support_bundle_status", "app_support_bundle_chunk", "app_support_bundle_text_status",
 					"feed_status"
@@ -71,6 +72,7 @@
 					"automation_geo_protect_set",
 					"list_create", "list_delete", "list_write", "list_import", "list_update",
 					"list_backup_create", "list_backup_restore", "wizard_preset_add",
+					"lists_conveyor_update_start", "lab_strategy_import_start",
 					"control_set", "control_set_paused", "recovery_action",
 					"control_client_add", "control_client_delete", "control_client_rename", "control_client_block",
 					"control_client_temp_block", "control_client_temp_allow", "control_client_wifi_block",

@@ -30,6 +30,16 @@ import {
  * атомарный механизм + версионированный конверт (schema_version/config_revision). */
 import { write_state as ss_write_state, read_state as ss_read_state } from '/etc/ravnex/scripts/statestore.uc';
 
+/* Lists conveyor (seance 178): the source catalog is the ONE authority for
+ * rule-set URLs — the generator reads catalog accessors and never hardcodes
+ * an upstream URL. The accessors return the hub-primary (ezdizzy/ravnex-lists)
+ * when the hub delivers the category; upstream URLs stay in the catalog as
+ * the conveyor's fallback ladder. */
+import {
+	catalog_url as ls_catalog_url, catalog_ip_url as ls_catalog_ip_url,
+	catalog_pair as ls_catalog_pair, catalog_find as ls_catalog_find
+} from '/etc/ravnex/scripts/rulesets_catalog.uc';
+
 const ubus = connect();
 
 /* Lesson 355: a REMOTE service rule-set can silently die when the upstream
@@ -3073,17 +3083,11 @@ if (!isEmpty(main_node)) {
 				}
 			}
 
-			/* W4 IP companions: itdoginfo publishes IP data only as mihomo
-			 * .mrs (unusable by sing-box) — Telegram MTProto DCs, Roblox and
-			 * Twitch stream edges are IP-based, so a domain-only rule lets
-			 * that traffic fall to the mass refilter_ip list. Sources listed
-			 * here pair their domain ruleset with an IP twin (tag '<tag>-ip',
-			 * URL below) inside the SAME routing rule. */
-			const SOURCE_IP_MAP = {
-				'telegram': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs',
-				'roblox': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/roblox.srs',
-				'twitch': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/twitch.srs'
-			};
+			/* W4 IP companions: Telegram MTProto DCs, Roblox and Twitch stream
+			 * edges are IP-based, so a domain-only rule lets that traffic
+			 * fall to the mass refilter_ip list. The IP twins (tag
+			 * '<tag>-ip') live in the lists catalog (rulesets_catalog.uc) —
+			 * the routing rule below pairs them with the domain rule-set. */
 
 			/* Routing rules. Sources with a shipped local list ride an INLINE
 			 * domain_suffix rule (lesson 355 — the remote asset can silently
@@ -3099,8 +3103,8 @@ if (!isEmpty(main_node)) {
 			} else {
 				let rule_sets;
 				if (cfg.source === 'refilter')
-					rule_sets = ['hp-ru-refilter-domain', 'hp-ru-refilter-ip'];
-				else if (SOURCE_IP_MAP[cfg.source])
+					rule_sets = ls_catalog_pair('refilter');
+				else if (ls_catalog_ip_url(cfg.source))
 					rule_sets = ['hp-ru-' + cfg.source, 'hp-ru-' + cfg.source + '-ip'];
 				else
 					rule_sets = ['hp-ru-' + cfg.source];
@@ -3121,53 +3125,66 @@ if (!isEmpty(main_node)) {
 			 * rule-set tag". The seen_rulesets state lives ABOVE the loop (ч.65)
 			 * so declarations dedup across ALL rules, not within one. */
 			if (cfg.source === 'refilter') {
-				if (!has_ruleset('hp-ru-refilter-domain')) {
-					remember_ruleset('hp-ru-refilter-domain');
+				const refilter_pair = ls_catalog_pair('refilter');
+				if (!has_ruleset(refilter_pair[0])) {
+					remember_ruleset(refilter_pair[0]);
 					push(config.route.rule_set, {
 						type: 'remote',
-						tag: 'hp-ru-refilter-domain',
+						tag: refilter_pair[0],
 						format: 'binary',
-						url: 'https://github.com/1andrevich/Re-filter-lists/releases/latest/download/ruleset-domain-refilter_domains.srs',
+						url: ls_catalog_url('refilter-domain'),
 						initial_path: ruleset_initial_path,
 						...hp_rs_dl(ruleset_detour),
 						update_interval: '1d'
 					});
 				}
-				if (!has_ruleset('hp-ru-refilter-ip')) {
-					remember_ruleset('hp-ru-refilter-ip');
+				if (!has_ruleset(refilter_pair[1])) {
+					remember_ruleset(refilter_pair[1]);
 					push(config.route.rule_set, {
 						type: 'remote',
-						tag: 'hp-ru-refilter-ip',
+						tag: refilter_pair[1],
 						format: 'binary',
-						url: 'https://github.com/1andrevich/Re-filter-lists/releases/latest/download/ruleset-ip-refilter_ipsum.srs',
+						url: ls_catalog_url('refilter-ip'),
 						initial_path: ruleset_initial_path,
 						...hp_rs_dl(ruleset_detour),
 						update_interval: '1d'
 					});
 				}
 			} else {
-				/* W4 source map: URL overrides. Default stays itdoginfo
-				 * (domain .srs only — itdoginfo publishes IP data as mihomo
-				 * .mrs, unusable by sing-box). AI/social domains come from
-				 * MetaCubeX/meta-rules-dat (sing branch); gaming IP sets from
-				 * Greeg0ry/b4geoip-forkop. All URLs HEAD-verified 2026-10-18. */
-				const SOURCE_URL_MAP = {
-					'openai': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/openai.srs',
-					'anthropic': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/anthropic.srs',
-					'whatsapp': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/whatsapp.srs',
-					'twitch': 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/twitch.srs',
-					'valve': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/valve.srs',
-					'epicgames': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/epicgames.srs',
-					'riot': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/riot.srs',
-					'sony': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/sony.srs',
-					'electronicarts': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/electronicarts.srs',
-					'ubisoft': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/ubisoft.srs',
-					'blizzard': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/blizzard.srs',
-					'nintendo': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/nintendo.srs',
-					'wargaming': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/wargaming.srs',
-					'xbox': 'https://github.com/Greeg0ry/b4geoip-forkop/releases/latest/download/xbox.srs'
-				};
-				if (hp_service_inline_domains(cfg.source)) {
+				/* URL selection = the catalog (hub primary, upstream reserves).
+				 * The itdog expression survives only as the last-resort default
+				 * for a source id that is missing from the catalog. */
+				const ce = ls_catalog_find(cfg.source);
+				if (ce && ce.consumption === 'local-json') {
+					/* Lists-conveyor converted categories (raw feeds turned
+					 * into sing-box source rule-sets): a LOCAL rule-set when
+					 * the conveyor has placed the file, else the hub's already
+					 * converted JSON as a normal remote rule-set. */
+					const lpath = ruleset_local_dir + '/' + ce.tag + '.json';
+					if (access(lpath)) {
+						if (!has_ruleset(ce.tag)) {
+							remember_ruleset(ce.tag);
+							push(config.route.rule_set, {
+								type: 'local',
+								tag: ce.tag,
+								format: 'source',
+								path: lpath
+							});
+						}
+					} else if (!has_ruleset(ce.tag) && length('' + (ls_catalog_url(cfg.source) || ''))) {
+						remember_ruleset(ce.tag);
+						push(config.route.rule_set, {
+							type: 'remote',
+							tag: ce.tag,
+							format: 'source',
+							url: ls_catalog_url(cfg.source),
+							initial_path: ruleset_initial_path
+								? (ruleset_local_dir + '/{tag}.json') : null,
+							...hp_rs_dl(ruleset_detour),
+							update_interval: '1d'
+						});
+					}
+				} else if (hp_service_inline_domains(cfg.source)) {
 					/* Shipped inline list (lesson 355) — no rule-set to
 					 * declare: the route/DNS rules above carry the
 					 * domain_suffix array directly. */
@@ -3177,20 +3194,20 @@ if (!isEmpty(main_node)) {
 						type: 'remote',
 						tag: 'hp-ru-' + cfg.source,
 						format: 'binary',
-						url: SOURCE_URL_MAP[cfg.source] ||
+						url: ls_catalog_url(cfg.source) ||
 						     ('https://github.com/itdoginfo/allow-domains/releases/latest/download/' + replace(cfg.source, '-', '_') + '.srs'),
 						initial_path: ruleset_initial_path,
 						...hp_rs_dl(ruleset_detour),
 						update_interval: '1d'
 					});
 				}
-				if (SOURCE_IP_MAP[cfg.source] && !has_ruleset('hp-ru-' + cfg.source + '-ip')) {
+				if (ls_catalog_ip_url(cfg.source) && !has_ruleset('hp-ru-' + cfg.source + '-ip')) {
 					remember_ruleset('hp-ru-' + cfg.source + '-ip');
 					push(config.route.rule_set, {
 						type: 'remote',
 						tag: 'hp-ru-' + cfg.source + '-ip',
 						format: 'binary',
-						url: SOURCE_IP_MAP[cfg.source],
+						url: ls_catalog_ip_url(cfg.source),
 						initial_path: ruleset_initial_path,
 						...hp_rs_dl(ruleset_detour),
 						update_interval: '1d'

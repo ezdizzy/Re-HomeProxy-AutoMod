@@ -7797,3 +7797,216 @@ msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\
 
 msgid "Own signed package source for OUR components (the app, mosdns, the automation helpers) and our own apk/ipk packaging of the DPI engines built from the original upstream binaries. Every component installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. The PROXY CORES are no longer delivered through this source: they install from the original upstream releases (SHA256-gated)."
 msgstr "Свой подписанный источник пакетов для НАШИХ компонентов (приложение, mosdns, хелперы автоматизации) и наша собственная упаковка движков в apk/ipk из оригинальных бинарников. Каждый компонент ставится явным файлом из манифеста источника — на apk-системах с проверкой подписи, на opkg — по sha256. Ничего не пишется в repositories.d, поэтому чужой репозиторий никогда не выкатит более новую версию наших компонентов. ПРОКСИ-ЯДРА больше не возятся этим источником: они ставятся из оригинальных релизов (с SHA256-гейтом)."
+
+msgid "Lists conveyor"
+msgstr "Конвейер списков"
+
+msgid "Update lists (precise)"
+msgstr "Обновить списки (точный слой)"
+
+msgid "Update ALL (incl. mass)"
+msgstr "Обновить ВСЕ (вкл. массовые)"
+
+msgid "Update this category"
+msgstr "Обновить эту категорию"
+
+msgid "Starting the lists update…"
+msgstr "Запускаю обновление списков…"
+
+msgid "Updating ALL categories…"
+msgstr "Обновляю ВСЕ категории…"
+
+msgid "Updating in the background…"
+msgstr "Обновляю в фоне…"
+
+msgid "Updating lists: %d of %d…"
+msgstr "Обновление списков: %d из %d…"
+
+msgid "Conveyor finished"
+msgstr "Конвейер завершил работу"
+
+msgid "Finished with %d failure(s) — broken sources were skipped honestly."
+msgstr "Завершено с ошибками: %d — сломанные источники честно пропущены."
+
+msgid "Last conveyor run: %s"
+msgstr "Последний прогон конвейера: %s"
+
+msgid "failures: %d"
+msgstr "ошибок: %d"
+
+msgid "Operation %s: %s"
+msgstr "Операция %s: %s"
+
+msgid "updated"
+msgstr "обновлено"
+
+msgid "sha256 mismatch"
+msgstr "ошибка sha256"
+
+msgid "sha256 mismatch — the previous file was kept"
+msgstr "Не совпал sha256 — прежний файл сохранён"
+
+msgid "skipped"
+msgstr "пропущено"
+
+msgid "not fetched yet"
+msgstr "ещё не скачивалось"
+
+msgid "not fetched"
+msgstr "не скачано"
+
+msgid "inline"
+msgstr "встроенный"
+
+msgid "No LICENSE upstream — consumed over the network with attribution; never embedded into the package"
+msgstr "У источника нет LICENSE — потребление по сети с атрибуцией; в пакет не встраивается"
+
+msgid "no license"
+msgstr "нет лицензии"
+
+msgid "License not stated upstream — consumed over the network with attribution"
+msgstr "Лицензия у источника не указана — потребление по сети с атрибуцией"
+
+msgid "license unstated"
+msgstr "лицензия не указана"
+
+msgid "the honest approximation, not a guarantee"
+msgstr "честное приближение, а не гарантия"
+
+msgid "SURROGATE"
+msgstr "СУРРОГАТ"
+
+msgid "via hub"
+msgstr "через хаб"
+
+msgid "RU-blocked core"
+msgstr "Ядро RU-блокировок"
+
+msgid "Video / streaming"
+msgstr "Видео / стриминг"
+
+msgid "Messengers"
+msgstr "Мессенджеры"
+
+msgid "Social & platforms"
+msgstr "Соцсети и платформы"
+
+msgid "AI services"
+msgstr "AI-сервисы"
+
+msgid "Games"
+msgstr "Игры"
+
+msgid "CDN / hosting layers"
+msgstr "CDN / хостинг-слои"
+
+msgid "Miscellaneous"
+msgstr "Разное"
+
+msgid "Reverse routing"
+msgstr "Обратная маршрутизация"
+
+msgid "opt-in mass layer"
+msgstr "массовый слой — только вручную"
+
+msgid "Precision-first: small exact lists are delivered by default; the 🜚 mass layer (big aggregated lists) is opt-in because it costs real memory. SURROGATE rows cover a service only approximately. Lists without an upstream license are consumed over the network with attribution — origin and license of every file are recorded in the manifest."
+msgstr "Точность вместо массы: по умолчанию доставляются маленькие точные списки; 🜚 массовый слой (большие агрегаты) — только вручную, потому что съедает реальную память. Строки СУРРОГАТ покрывают сервис лишь приблизительно. Списки без лицензии у источника потребляются по сети с атрибуцией — происхождение и лицензия каждого файла записаны в манифесте."
+
+msgid "Per-service routing lists from a CI-validated hub (ezdizzy/ravnex-lists) with upstream sources as reserves. Every file is sha256-gated and atomically placed; provenance, license and freshness are recorded per category. The routing rules themselves are configured on the Service rules page."
+msgstr "Списки маршрутизации по сервисам из CI-валидированного хаба (ezdizzy/ravnex-lists), оригинальные источники — резерв. Каждый файл проходит sha256-гейт и ставится атомарно; происхождение, лицензия и свежесть записаны по категориям. Сами правила маршрутизации настраиваются на странице «Правила для сервисов»."
+
+msgid "Strategies by provider (community index)"
+msgstr "Стратегии по провайдеру (каталог сообщества)"
+
+msgid "Import provider strategies"
+msgstr "Импортировать стратегии провайдера"
+
+msgid "(updating the provider index…)"
+msgstr "(обновляю индекс провайдеров…)"
+
+msgid "Imported: %s. The index is being refreshed in the background."
+msgstr "Импортировано: %s. Индекс обновляется в фоне."
+
+msgid "The provider index is being refreshed in the background — reopen the page in a minute."
+msgstr "Индекс провайдеров обновляется в фоне — откройте страницу через минуту."
+
+msgid "Nothing imported yet — pick your provider and import."
+msgstr "Пока ничего не импортировано — выберите своего провайдера и импортируйте."
+
+msgid "AS%s (%s): %d strategies in the corpus"
+msgstr "AS%s (%s): стратегий в корпусе: %d"
+
+msgid "Importing AS%s strategies…"
+msgstr "Импортирую стратегии AS%s…"
+
+msgid "Import failed: %s"
+msgstr "Импорт не удался: %s"
+
+msgid "Imported: %s. Run a fuzz to measure the new strategies."
+msgstr "Импортировано: %s. Запустите фаззинг, чтобы измерить новые стратегии."
+
+msgid "Community-verified nfqws2 strategies for YOUR provider ASN (zemidala/nfqws2-strategies, republished by the validated lists hub — no license upstream: consumed over the network with attribution). Imported strategies join the corpus as measured candidates; the Lab ranks them like any other."
+msgstr "Проверенные сообществом стратегии nfqws2 для ASN ВАШЕГО провайдера (zemidala/nfqws2-strategies, перепубликуется валидированным хабом списков — лицензии у источника нет: потребление по сети с атрибуцией). Импортированные стратегии попадают в корпус как измеряемые кандидаты; Лаборатория ранжирует их наравне с остальными."
+
+msgid "Netflix (SURROGATE — no dedicated RU list exists)"
+msgstr "Netflix (СУРРОГАТ — выделенного RU-списка не существует)"
+
+msgid "Spotify (SURROGATE — no dedicated RU list exists)"
+msgstr "Spotify (СУРРОГАТ — выделенного RU-списка не существует)"
+
+msgid "Signal"
+msgstr "Signal"
+
+msgid "RuTracker"
+msgstr "RuTracker"
+
+msgid "LinkedIn"
+msgstr "LinkedIn"
+
+msgid "VK"
+msgstr "VK"
+
+msgid "OK (Odnoklassniki)"
+msgstr "OK (Одноклассники)"
+
+msgid "Mail.ru"
+msgstr "Mail.ru"
+
+msgid "Dzen"
+msgstr "Дзен"
+
+msgid "Steam (store/client domains)"
+msgstr "Steam (магазин/клиент)"
+
+msgid "Google Gemini / AI Studio"
+msgstr "Google Gemini / AI Studio"
+
+msgid "DeepSeek"
+msgstr "DeepSeek"
+
+msgid "Perplexity"
+msgstr "Perplexity"
+
+msgid "Hugging Face"
+msgstr "Hugging Face"
+
+msgid "AI chatbots (aggregated, non-CN)"
+msgstr "AI-чат-боты (агрегат, не-CN)"
+
+msgid "Antifilter community (user-reported restricted sites)"
+msgstr "Antifilter community (сайты, о которых сообщают пользователи)"
+
+msgid "RunetFreedom ru-blocked (mass, 🜚 opt-in)"
+msgstr "RunetFreedom ru-blocked (массовый, 🜚 вручную)"
+
+msgid "Antifilter download FULL (700k+ domains, 🜚 heavy)"
+msgstr "Antifilter download ПОЛНЫЙ (700k+ доменов, 🜚 тяжёлый)"
+
+msgid "Antifilter domains.lst (raw feed, 🜚 opt-in)"
+msgstr "Antifilter domains.lst (сырой фид, 🜚 вручную)"
+
+msgid "Antifilter ipsum.lst (blocked networks, 🜚 opt-in)"
+msgstr "Antifilter ipsum.lst (заблокированные сети, 🜚 вручную)"
+
+msgid "Aggregated blocked IPs (~146 sources, 🜚 opt-in)"
+msgstr "Агрегат заблокированных IP (~146 источников, 🜚 вручную)"

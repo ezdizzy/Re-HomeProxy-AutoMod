@@ -155,6 +155,22 @@ const callFuzzStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Lists conveyor (seance 178): per-provider nfqws2 strategies (zemidala
+ * index republished by the validated hub). Import = an opman op; strategies
+ * land in the corpus group 'recommended' with traceable names zmd-AS<n>-*,
+ * the origin and the no-license attribution are recorded. */
+const callStrategySourceStatus = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'lab_strategy_source_status',
+	expect: { '': {} }
+});
+const callStrategyImportStart = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'lab_strategy_import_start',
+	params: [ 'asn' ],
+	expect: { '': {} }
+});
+
 const callFuzzApply = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'zapret_fuzz_apply',
@@ -2649,6 +2665,77 @@ return view.extend({
 		dpiCorpus.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('Update downloads the StressOzz/Zapret-Manager strategy catalog, converts it to nfqws2, tests every converted strategy on the router and shows the diff before applying anything. The generator derives new strategies from the best fuzz results when nothing works.') ]));
 
+		/* Per-provider strategies (zemidala via the lists hub): pick YOUR
+		 * provider ASN, import the community-verified strategies into the
+		 * corpus; the Strategy Lab measures them like everything else. */
+		const zemiLine = E('div', { 'class': 'wiz-note' });
+		const zemiSel = E('select', { 'class': 'hpui-select', 'style': 'max-width:100%' });
+		const zemiBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Import provider strategies') ]);
+		const zemiRow = E('div', { 'class': 'wiz-row' }, [ zemiSel, zemiBtn ]);
+		dpiCorpus.appendChild(E('div', { 'style': 'margin-top:6px; font-weight:bold' },
+			[ _('Strategies by provider (community index)') ]));
+		dpiCorpus.appendChild(zemiRow);
+		dpiCorpus.appendChild(zemiLine);
+		dpiCorpus.appendChild(E('p', { 'class': 'wiz-note' },
+			[ _('Community-verified nfqws2 strategies for YOUR provider ASN (zemidala/nfqws2-strategies, republished by the validated lists hub — no license upstream: consumed over the network with attribution). Imported strategies join the corpus as measured candidates; the Lab ranks them like any other.') ]));
+		function renderZemi(z) {
+			const sel = (z && z.zemidala && z.zemidala.index && z.zemidala.index.providers) || null;
+			zemiSel.innerHTML = '';
+			if (!sel) {
+				zemiSel.appendChild(E('option', {}, [ _('(updating the provider index…)') ]));
+				zemiBtn.disabled = true;
+				zemiLine.textContent = (z && z.imported && z.imported.asns && Object.keys(z.imported.asns).length)
+					? _('Imported: %s. The index is being refreshed in the background.').format(
+						Object.keys(z.imported.asns).map(function(a) { return 'AS' + a; }).join(', '))
+					: _('The provider index is being refreshed in the background — reopen the page in a minute.');
+				return;
+			}
+			zemiBtn.disabled = false;
+			sel.sort(function(a, b) { return (b.reports || 0) - (a.reports || 0); });
+			for (let p of sel)
+				zemiSel.appendChild(E('option', { value: '' + p.asn },
+					[ 'AS' + p.asn + ' — ' + (p.provider || '') + ' (' + (p.count || 0) + ', ' + (p.reports || 0) + ')' ]));
+			const imp = (z && z.imported && z.imported.asns) || {};
+			const zmd = (z && z.corpus_zmd) || {};
+			const parts = [];
+			for (let a in imp)
+				parts.push(_('AS%s (%s): %d strategies in the corpus').format(a, imp[a].provider || '', zmd[a] || 0));
+			zemiLine.textContent = parts.length ? parts.join(' · ') : _('Nothing imported yet — pick your provider and import.');
+		}
+
+		zemiBtn.addEventListener('click', function() {
+			const asn = zemiSel.value;
+			if (!asn)
+				return;
+			zemiBtn.disabled = true;
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' }, [ _('Importing AS%s strategies…').format(asn) ]));
+			L.resolveDefault(callStrategyImportStart(asn), {}).then(function(r) {
+				if (!r || r.result === false) {
+					zemiBtn.disabled = false;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Import failed: ') + ((r && r.error) || _('rpc error')) ]));
+					return;
+				}
+				const oid = r.op_id;
+				const poll = window.setInterval(function() {
+					L.resolveDefault(callOpStatus(oid), {}).then(function(o) {
+						const op = (o && o.op) || null;
+						if (!op)
+							return;
+						if (op.status === 'completed' || op.status === 'failed') {
+							window.clearInterval(poll);
+							zemiBtn.disabled = false;
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ (op.status === 'completed')
+									? _('Imported: %s. Run a fuzz to measure the new strategies.').format(op.detail || '')
+									: _('Import failed: %s').format(op.detail || '') ]));
+							refresh();
+						}
+					});
+				}, 2000);
+			});
+		});
+
 		function renderCorpus(meta, strat) {
 			const sig = JSON.stringify([ meta.count, meta.groups, meta.updated ]);
 			if (sig !== state.corpusSig) {
@@ -2764,7 +2851,8 @@ return view.extend({
 				L.resolveDefault(callComposeStatus(), {}),
 				L.resolveDefault(callAutoPickStatus(), {}),
 				L.resolveDefault(callAutoPilotStatus(), {}),
-				L.resolveDefault(callDeviceVerdicts(), {})
+				L.resolveDefault(callDeviceVerdicts(), {}),
+				L.resolveDefault(callStrategySourceStatus(), {})
 			]).then(function(data) {
 				if (data[0] && data[0].env) {
 					lastEnv = data[0].env;
@@ -2776,6 +2864,7 @@ return view.extend({
 				seedCompProfiles((data[1] || {}).comp_profiles);
 				renderStrategySel((data[2] && data[2].candidates) || []);
 				renderCorpus(data[1] ? (data[1].corpus || {}) : {}, data[3] || {});
+				renderZemi(data[9] || {});
 				renderLab(data[4] || {}, data[1] || {});
 				/* Ф8-F4: compose test progress/result + the server-snapshot
 				 * restore row (covers composition AND plain strategy applies). */

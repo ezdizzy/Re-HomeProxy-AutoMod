@@ -363,7 +363,29 @@ return view.extend({
 			{ source: 'tiktok', title: _('TikTok'), hosts: [ 'www.tiktok.com' ] },
 			{ source: 'roblox', title: _('Roblox'), hosts: [ 'roblox.com' ] },
 			{ source: 'google_play', title: _('Google Play'), hosts: [ 'play.google.com' ] },
-			{ source: 'google-meet', title: _('Google Meet'), hosts: [ 'meet.google.com' ] }
+			{ source: 'google-meet', title: _('Google Meet'), hosts: [ 'meet.google.com' ] },
+			/* Lists conveyor (seance 178): new per-service categories. */
+			{ source: 'netflix', title: _('Netflix (SURROGATE — no dedicated RU list exists)'),
+				hosts: [ 'www.netflix.com' ] },
+			{ source: 'spotify', title: _('Spotify (SURROGATE — no dedicated RU list exists)'),
+				hosts: [ 'open.spotify.com' ] },
+			{ source: 'signal', title: _('Signal'), hosts: [ 'signal.org' ] },
+			{ source: 'rutracker', title: _('RuTracker'), hosts: [ 'rutracker.org' ] },
+			{ source: 'linkedin', title: _('LinkedIn'), hosts: [ 'www.linkedin.com' ] },
+			{ source: 'vk', title: _('VK'), hosts: [ 'vk.com' ] },
+			{ source: 'ok', title: _('OK (Odnoklassniki)'), hosts: [ 'ok.ru' ] },
+			{ source: 'mailru', title: _('Mail.ru'), hosts: [ 'mail.ru' ] },
+			{ source: 'dzen', title: _('Dzen'), hosts: [ 'dzen.ru' ] },
+			{ source: 'steam', title: _('Steam (store/client domains)'), hosts: [ 'store.steampowered.com' ] },
+			{ source: 'gemini', title: _('Google Gemini / AI Studio'),
+				hosts: [ 'gemini.google.com', 'aistudio.google.com' ] },
+			{ source: 'deepseek', title: _('DeepSeek'), hosts: [ 'chat.deepseek.com' ] },
+			{ source: 'perplexity', title: _('Perplexity'), hosts: [ 'www.perplexity.ai' ] },
+			{ source: 'huggingface', title: _('Hugging Face'), hosts: [ 'huggingface.co' ] },
+			{ source: 'ai-chat', title: _('AI chatbots (aggregated, non-CN)'),
+				hosts: [ 'chatgpt.com' ] },
+			{ source: 'antifilter-community', title: _('Antifilter community (user-reported restricted sites)'),
+				hosts: [ 'kinozal.tv' ] }
 		];
 
 		/* A1: every rpcd SOURCE becomes an editable row, grouped. The mass
@@ -374,7 +396,14 @@ return view.extend({
 			{ source: 'refilter', title: _('Re-filter (mass list of blocked domains/IPs — a base, coverage is NOT exhaustive)'), hosts: [ 'instagram.com' ] },
 			{ source: 'block', title: _('Block (core RKN-blocked resources)'), hosts: [ 'signal.org' ] },
 			{ source: 'russia-outside', title: _('Russia Outside (RU-only services — for use abroad)') },
-			{ source: 'ukraine-inside', title: _('Ukraine Inside (resources blocked in UA)') }
+			{ source: 'ukraine-inside', title: _('Ukraine Inside (resources blocked in UA)') },
+			/* Lists conveyor: the opt-in MASS layer — big aggregated lists
+			 * that cost real router memory; precision-first keeps them off. */
+			{ source: 'rublocked', title: _('RunetFreedom ru-blocked (mass, 🜚 opt-in)'), hosts: [ 'instagram.com' ] },
+			{ source: 'rublocked-all', title: _('Antifilter download FULL (700k+ domains, 🜚 heavy)'), hosts: [ 'kinozal.tv' ] },
+			{ source: 'antifilter-domains', title: _('Antifilter domains.lst (raw feed, 🜚 opt-in)'), hosts: [ 'kinozal.tv' ] },
+			{ source: 'antifilter-ip', title: _('Antifilter ipsum.lst (blocked networks, 🜚 opt-in)') },
+			{ source: 'rublocked-ip-agg', title: _('Aggregated blocked IPs (~146 sources, 🜚 opt-in)') }
 		];
 		const CDN_PRESETS = [
 			{ source: 'cloudflare', title: _('Cloudflare CDN'), hosts: [ 'www.cloudflare.com' ] },
