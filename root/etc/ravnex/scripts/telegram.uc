@@ -182,6 +182,17 @@ let bot_id = 0;         /* resolved via getMe — the offset file is per bot */
 let rate_until = 0;     /* honest 429 status: skip polling until this time */
 let seeded_owner = false;
 let done = {};          /* idempotency journal: update_id -> ts (1 h ring) */
+/* Offset loss caught live (ch.262): a reboot wipes the tmpfs offset file
+ * and the 1 h done-journal ring expires before the daemon restarts, so the
+ * load lands on last_update_id = 0 — with the +1000 guard every real update
+ * id is «too far ahead» FOREVER (processed, done-marked, never confirmed) =>
+ * perpetual redelivery, expiring callback queries, a very laggy bot. When
+ * the offset FILE itself is absent (the ч.184 synthetic-probe case always
+ * had a file with a value), the first live poll batch may re-seed it:
+ * queue files exist ONLY via queue_put from live getUpdates results, so
+ * their ids are Telegram-authoritative (the same trust the done-journal
+ * seed already relies on). */
+let offset_lost = false;
 let cfg = {
 	enabled: '0', token: '', chat_id: '', mute: '0',
 	poll: '25', push_interval: '2',
@@ -3191,6 +3202,11 @@ function queue_files() {
 
 function queue_drain() {
 	const files = queue_files();
+	/* Offset-loss re-seed tracker (see offset_lost): adopt the batch max once
+	 * AFTER the drain — eager adoption of the first seen id would leave the
+	 * rest of an already-processed backlog unconfirmed forever (files are
+	 * iterated ascending and done-marked ones take the early-continue path). */
+	let adopt_mx = -1;
 	for (let i = 0; i < length(files); i++) {
 		const qid = int(files[i]);
 		const qpath = QUEUE_DIR + '/' + files[i];
@@ -3201,6 +3217,8 @@ function queue_drain() {
 			continue;
 		}
 		if (qid <= last_update_id || done['' + qid] != null) {
+			if (offset_lost && last_update_id === 0 && qid > adopt_mx)
+				adopt_mx = qid;   /* done-marked but never confirmed */
 			system(`rm -f ${shellquote(qpath)}`);   /* already confirmed / handled */
 			continue;
 		}
@@ -3217,10 +3235,22 @@ function queue_drain() {
 		 * id). */
 		if (qid > last_update_id && qid <= last_update_id + 1000) {
 			last_update_id = qid;
+			offset_lost = false;
 			writefile(off_file(), sprintf('%d', last_update_id));
 		} else if (qid > last_update_id) {
-			log('queue: update ' + qid + ' is too far ahead of the confirmed offset (' + last_update_id + ') — processed, offset NOT advanced');
+			if (offset_lost && last_update_id === 0) {
+				if (qid > adopt_mx)
+					adopt_mx = qid;
+			} else {
+				log('queue: update ' + qid + ' is too far ahead of the confirmed offset (' + last_update_id + ') — processed, offset NOT advanced');
+			}
 		}
+	}
+	if (adopt_mx > last_update_id) {
+		last_update_id = adopt_mx;
+		try { writefile(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
+		offset_lost = false;
+		log('offset re-seeded from the live batch (' + adopt_mx + ') — confirmation restored');
 	}
 }
 
@@ -3298,6 +3328,16 @@ function main() {
 						try { writefile(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
 						log('offset restored from the done-journal (' + mx + ')');
 					}
+				}
+				/* ch.262: journal empty (ring expired / quiet night) AND the
+				 * offset file itself gone (tmpfs reboot) — the load can only
+				 * land on 0, and the +1000 guard would then never advance
+				 * (every real id is «too far ahead»). Arm the live-batch
+				 * re-seed: the first drained batch re-establishes the
+				 * confirmed offset. */
+				if (last_update_id === 0 && !access(off_file())) {
+					offset_lost = true;
+					log('offset file absent — the first live batch will re-seed the confirmed offset');
 				}
 			}
 			/* Honest rate-limit state (audit 1.4): while a fresh 429 window
