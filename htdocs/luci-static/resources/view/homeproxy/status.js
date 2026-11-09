@@ -1528,7 +1528,7 @@ function buildConveyorCard() {
 		const local = r.local || {};
 		const run = r.runtime || null;
 		const groups = {};
-		for (let e in cat)
+		for (const e of cat)
 			(groups[e.group || 'misc'] = groups[e.group || 'misc'] || []).push(e);
 
 		const tbl = E('table', { 'style': 'border-collapse:collapse; width:100%' });
@@ -1537,22 +1537,22 @@ function buildConveyorCard() {
 			const lf = local[e.id] || {};
 			const tr = E('tr', { 'style': 'vertical-align:top' });
 			const tds = [];
-			const nameCell = E('div', {}, [
+			const nameParts = [
 				E('span', { 'style': 'font-family:monospace' }, [ e.tag ]),
-				' ',
-				(e.coverage === 'surrogate')
-					? E('span', { 'class': 'hpui-c-amber', 'title': (e.surrogate_note || '') + ' — ' + _('the honest approximation, not a guarantee') },
-						[ _('SURROGATE') ])
-					: null,
-				E('div', { 'style': 'opacity:.75; font-size:.92em' }, [ e.covers || e.name || e.id ])
-			]);
+				' '
+			];
+			if (e.coverage === 'surrogate')
+				nameParts.push(E('span', { 'class': 'hpui-c-amber', 'title': (e.surrogate_note || '') + ' — ' + _('the honest approximation, not a guarantee') },
+					[ _('SURROGATE') ]));
+			nameParts.push(E('div', { 'style': 'opacity:.75; font-size:.92em' }, [ e.covers || e.name || e.id ]));
+			const nameCell = E('div', {}, nameParts);
 			tds.push(E('td', { 'style': 'padding:3px 8px 3px 0; white-space:normal' }, [ nameCell ]));
 			tds.push(E('td', { 'style': 'padding:3px 8px; white-space:nowrap' }, [
 				E('div', { 'style': 'opacity:.85' }, [ e.repo || '—' ]),
 				E('div', {}, [ licBadge(e.license || '') ])
 			]));
 			const when = ent.published_at ? ('' + ent.published_at).slice(0, 10) :
-				(ent.fetched_ts ? new Date(int(ent.fetched_ts) * 1000).toLocaleDateString() : '');
+				(ent.fetched_ts ? new Date(parseInt(ent.fetched_ts, 10) * 1000).toLocaleDateString() : '');
 			tds.push(E('td', { 'style': 'padding:3px 8px; white-space:nowrap' },
 				[ when || '—', E('div', { 'style': 'opacity:.6; font-size:.92em' },
 					[ ent.via_hub ? _('via hub') : '' ]) ]));
@@ -1566,7 +1566,8 @@ function buildConveyorCard() {
 			const rb = mkBtn('⟳', 'ghost', { 'title': _('Update this category'), 'style': 'padding:0 6px' });
 			rb.onclick = () => startUpdate(e.id, false);
 			tds.push(E('td', { 'style': 'padding:3px 0' }, [ rb ]));
-			for (let td in tds) tr.appendChild(td);
+			for (const td of tds)
+				tr.appendChild(td);
 			return tr;
 		};
 		const groupTitle = (g) => ({
@@ -1584,7 +1585,7 @@ function buildConveyorCard() {
 				E('td', { 'colspan': '7', 'style': 'padding:8px 0 2px; font-weight:bold; border-bottom:1px solid rgba(128,128,128,.3)' },
 					[ groupTitle(g) + (g === 'ru-core' ? ' · 🜚 = ' + _('opt-in mass layer') : '') ])
 			]));
-			for (let e in groups[g])
+			for (const e of groups[g])
 				tbl.appendChild(mkRow(e));
 		}
 		listEl.appendChild(tbl);
@@ -1593,7 +1594,7 @@ function buildConveyorCard() {
 			listEl.appendChild(E('em', { 'class': 'hpui-c-amber' },
 				[ _('Updating lists: %d of %d…').format(run.done || 0, run.total || 0) ]));
 		else if (man && man.summary) {
-			const bits = [ _('Last conveyor run: %s').format(new Date(int(man.summary.ts) * 1000).toLocaleString()) ];
+			const bits = [ _('Last conveyor run: %s').format(new Date(parseInt(man.summary.ts, 10) * 1000).toLocaleString()) ];
 			if (man.summary.failed > 0)
 				bits.push(E('span', { 'class': 'hpui-c-red' }, [ _('failures: %d').format(man.summary.failed) ]));
 			listEl.appendChild(E('div', { 'style': 'margin:6px 0 2px; font-size:.9em; opacity:.85' }, bits));
