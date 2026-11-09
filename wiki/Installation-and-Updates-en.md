@@ -52,9 +52,10 @@ opkg install /tmp/app.ipk
 ```
 
 The core, ByeDPI, Zapret 2 and mosdns are installed from **Maintenance → Core management** —
-the installer detects the architecture and picks a build for your free space (including a
-compact UPX build for small routers). Installs are asynchronous with live progress. Detailed
-manual steps live in [Getting started](Getting-Started-en).
+the installer detects the architecture and picks a build for your free space (UPX builds of
+sing-box-extended/lite for small routers). The cores are installed only from the **original
+developer repositories**, every download SHA256-verified. Installs are asynchronous with live
+progress. Detailed manual steps live in [Getting started](Getting-Started-en).
 
 ---
 
@@ -69,21 +70,25 @@ called Ravnex once the new version is installed.
 
 ---
 
-## Own signed repository (the feed)
+## Own signed package source (the feed)
 
-Every component — cores, DPI engines, helpers — is delivered from **our feed**: mirrors of the
-upstreams' official releases, rebuilt under our signature by this repository's CI.
+**OUR components** — the app, mosdns, the automation helpers — and **our own apk/ipk packaging
+of the DPI engines** (byedpi ← hufrea static tarballs, zapret2 ← the bol-van openwrt-embedded
+release) are delivered from **our signed feed**: the packages are built by this repository's CI
+and signed with our key.
+
+The proxy cores (hiddify-core, sing-box-extended, lite) are **NOT delivered through the feed** —
+they install straight from the original releases with the SHA256 gate (see
+[Core Management](Core-Management-en)).
 
 - **manifest.json is the client contract**: which packages, versions, files and sha256 hashes
   the feed carries.
 - The download ladder: raw.githubusercontent → jsDelivr → the mirror from UCI (`github_mirror`).
 - The client never registers foreign repositories with the package manager (no `repositories.d`
   line at all) — a foreign feed cannot out-version our components.
-- For byedpi / zapret2 there is an honest fallback: without the feed the package is downloaded
-  from the upstream asset path.
 
-The feed status is visible on **Maintenance → the «Update source» card**: key presence, manifest
-reachability and freshness, an «installed → in feed» table per component, and the
+The source status is visible on **Maintenance → the «Update source» card**: key presence,
+manifest reachability and freshness, an «installed → offered» table per component, and the
 **Connect / Disconnect** buttons.
 
 ---

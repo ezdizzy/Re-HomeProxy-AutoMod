@@ -378,7 +378,7 @@ Re-running it opens the management menu of the installed system.
 
 The installer automatically detects the device architecture, the available space and selects a suitable build.
 
-Compact UPX variants and lightweight builds for resource-constrained devices are supported.
+All proxy cores and engines are installed directly from the ORIGINAL developer repositories (hiddify-core, shtorm-7, MANCrimSon, bol-van, hufrea) with SHA256 integrity verification. For resource-constrained devices, the compact UPX builds of sing-box-extended/lite are available where the originals publish them.
 
 Installation runs asynchronously, displaying the current stage and progress.
 
@@ -578,7 +578,6 @@ The project uses and develops solutions by the following developers:
 - [mosdns](https://github.com/IrineSistiana/mosdns) — the DNS infrastructure.
 - [Re:Filter](https://github.com/1andrevich/re-filter) and [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) — network rule sets.
 - [StressOzz/Zapret-Manager](https://github.com/StressOzz/Zapret-Manager) — the transport-strategy catalog.
-- [1andrevich/homeproxy-hiddify](https://github.com/1andrevich/homeproxy-hiddify) — one of the direct foundations of the previous development branch.
 
 We thank the authors of the listed projects and the entire OpenWrt community for open technologies, documentation and the ability to build our own solutions on top of them.
 

@@ -39,9 +39,9 @@ Because it is a marked *direct* outbound (not a tunnel), `zapret-out` falls back
 ## Enabling Zapret
 
 1. Install the engine: on **Maintenance → Core management** (the Zapret card), or enable Zapret
-   on the **Connection** page — the app offers to install the right
-   [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt) package for your architecture
-   right there.
+   on the **Connection** page — the app offers to install the original
+   [bol-van/zapret2](https://github.com/bol-van/zapret2) openwrt-embedded release for your
+   architecture right there (SHA256 integrity check).
 2. Open the **Blocking bypass** page: pick a strategy from the catalog (see below), press
    **Check** to verify it against your ISP, then apply it — this enables Zapret and restarts the
    service.

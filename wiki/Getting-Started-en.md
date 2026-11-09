@@ -14,10 +14,12 @@ installed (see [Installation & updates](Installation-and-Updates-en) for package
 The LuCI app is only the interface; the actual proxying is done by a separate **core** binary.
 Open **Maintenance → Core management** and install one of:
 
-- **hiddify-core** (default) — lighter, with a compact build for small routers; the only core
-  with **NaïveProxy**.
-- **sing-box-extended** — a newer sing-box base (WARP / MASQUE / TrustTunnel in the core);
-  no NaïveProxy — such nodes are skipped automatically.
+- **hiddify-core** (default) — the only core with **NaïveProxy**; installed from the original
+  hiddify package/tarball;
+- **sing-box-extended** — a newer sing-box base (WARP / MASQUE / TrustTunnel in the core), a
+  UPX build exists for small flash;
+- **sing-box-extended-lite** — a lightweight build for devices with very little flash;
+  no NaïveProxy/WARP/MASQUE — such nodes are skipped automatically.
 
 The installer picks the build for your storage. Details: **[Core management](Core-Management-en)**.
 
