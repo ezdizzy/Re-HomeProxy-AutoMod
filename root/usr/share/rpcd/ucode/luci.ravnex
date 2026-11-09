@@ -4268,11 +4268,32 @@ const methods = {
 		}
 	},
 
-	/* Close every active connection (curl: busybox wget cannot send DELETE). */
+	/* Close connections (curl: busybox wget cannot send DELETE). ч.270: the
+	 * optional `ids` argument is a CSV STRING of connection ids (ubus-STRING
+	 * contract, lesson 421): each listed id is closed individually via
+	 * DELETE /connections/<id>; empty/absent = close ALL (old behavior).
+	 * Ids are validated against a strict charset before they ever reach
+	 * the shell (the value is concatenated into a curl command line). */
 	monitor_connections_close: {
-		call: function() {
-			const rc = system('curl -s -m 3 -X DELETE http://127.0.0.1:9090/connections >/dev/null 2>&1');
-			return { result: (rc === 0) };
+		args: { ids: 'ids' },
+		call: function(req) {
+			const spec = trim('' + (req.args?.ids || ''));
+			if (spec == '') {
+				const rc = system('curl -s -m 3 -X DELETE http://127.0.0.1:9090/connections >/dev/null 2>&1');
+				return { result: (rc === 0), closed: 'all' };
+			}
+			let ok = 0, bad = 0;
+			for (let tok in split(spec, ',')) {
+				const v = trim(tok);
+				if (v == '' || length(v) > 128 || match(v, /^[A-Za-z0-9_-]+$/) == null) {
+					bad++;
+					continue;
+				}
+				const rc = system('curl -s -m 3 -X DELETE http://127.0.0.1:9090/connections/' + v + ' >/dev/null 2>&1');
+				if (rc === 0) ok++;
+				else bad++;
+			}
+			return { result: (bad == 0 && ok > 0), closed: ok, failed: bad };
 		}
 	},
 

@@ -18,6 +18,15 @@ msgstr ""
 msgid "Close all connections"
 msgstr ""
 
+msgid "Close selected"
+msgstr ""
+
+msgid "Close selected connections"
+msgstr ""
+
+msgid "Closed %d connection(s)."
+msgstr ""
+
 msgid "Connections"
 msgstr ""
 
@@ -46,6 +55,9 @@ msgid "Node monitoring is unavailable"
 msgstr ""
 
 msgid "Not in config"
+msgstr ""
+
+msgid "Nothing selected"
 msgstr ""
 
 msgid "Rule"
@@ -5106,6 +5118,9 @@ msgstr ""
 msgid "Entry deleted."
 msgstr ""
 
+msgid "Terminate selected connections (%d)? Apps reconnect on their own."
+msgstr ""
+
 msgid "Terminate every active connection right now? Apps reconnect on their own, but running downloads will be interrupted."
 msgstr ""
 
@@ -5230,6 +5245,9 @@ msgid "apply in window"
 msgstr ""
 
 msgid "Select at least one resource for the auto-pilot."
+msgstr ""
+
+msgid "Select all shown"
 msgstr ""
 
 msgid "Auto-pilot save failed: %s"

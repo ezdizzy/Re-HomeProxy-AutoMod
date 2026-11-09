@@ -22,6 +22,24 @@ msgstr "Цепочка"
 msgid "Close all connections"
 msgstr "Закрыть все соединения"
 
+msgid "Close selected"
+msgstr "Закрыть выбранные"
+
+msgid "Close selected connections"
+msgstr "Закрыть выбранные соединения"
+
+msgid "Closed %d connection(s)."
+msgstr "Закрыто соединений: %d."
+
+msgid "Select all shown"
+msgstr "Отметить все показанные"
+
+msgid "Nothing selected"
+msgstr "Ничего не выбрано"
+
+msgid "Terminate selected connections (%d)? Apps reconnect on their own."
+msgstr "Прервать выбранные соединения (%d)? Приложения переподключатся сами."
+
 msgid "Connections"
 msgstr "Соединения"
 

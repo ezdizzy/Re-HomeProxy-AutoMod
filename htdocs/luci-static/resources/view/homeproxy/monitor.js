@@ -33,6 +33,15 @@ const callMonitorConnectionsClose = rpc.declare({
 	expect: { '': {} }
 });
 
+/* ч.270: selective close — ids is a CSV string of connection ids (ubus-STRING
+ * contract, lesson 421); an empty string closes ALL (the old behavior). */
+const callMonitorConnectionsCloseSel = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'monitor_connections_close',
+	params: [ 'ids' ],
+	expect: { '': {} }
+});
+
 const callHotswapStatus = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'hotswap_status',
@@ -256,6 +265,47 @@ return view.extend({
 			})
 		}, [ _('Close all connections') ]);
 
+		/* ч.270: close ONLY the checked rows (filters+search respected by
+		 * construction — the user checks what they see). Selection survives
+		 * polls and filter toggles; ids that left the snapshot are pruned. */
+		let connSel = {};
+
+		const closeSelBtn = E('button', {
+			'class': 'hpui-btn hpui-btn-danger',
+			'disabled': true,
+			'click': ui.createHandlerFn(this, function() {
+				const ids = [];
+				for (const id in connSel)
+					if (connSel[id]) ids.push(id);
+				if (!ids.length) {
+					noteConn(false, _('Nothing selected'));
+					return;
+				}
+				return hp.confirmModal(_('Close selected connections'),
+					_('Terminate selected connections (%d)? Apps reconnect on their own.').format(ids.length), _('Close selected'))
+					.then(function(ok) {
+						if (!ok)
+							return;
+						noteConn(true, _('Closing…'));
+						return L.resolveDefault(callMonitorConnectionsCloseSel(ids.join(',')), {}).then(function(r) {
+							if (r && r.result === false)
+								noteConn(false, _('Failed to close connections'));
+							else
+								noteConn(true, _('Closed %d connection(s).').format((r && r.closed != null) ? r.closed : ids.length));
+							connSel = {};
+							return refreshConnections();
+						});
+					});
+			})
+		}, [ _('Close selected') ]);
+
+		function updateSelUi() {
+			let n = 0;
+			for (const id in connSel)
+				if (connSel[id]) n++;
+			closeSelBtn.disabled = (n === 0);
+		}
+
 		const connResult = E('div', {});
 
 		const panelNodes = E('div', { 'class': 'hpui-panel' }, [
@@ -266,7 +316,7 @@ return view.extend({
 
 		const panelConn = E('div', { 'class': 'hpui-panel' }, [
 			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('activity'), _('Connections') ]),
-			E('div', { 'style': 'display:flex; align-items:center; gap:12px; flex-wrap:wrap' }, [ connHead, closeBtn ]),
+			E('div', { 'style': 'display:flex; align-items:center; gap:12px; flex-wrap:wrap' }, [ connHead, closeSelBtn, closeBtn ]),
 			E('div', { 'style': 'display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:2px 0 8px' },
 				[ connSearch, connNetSel, connPathSel ]),
 			connTableWrap,
@@ -494,6 +544,17 @@ return view.extend({
 
 		function renderConnTable(r) {
 			const all = r.connections || [];
+
+			/* ч.270: prune the selection to ids still present in the snapshot
+			 * (BEFORE the filters — hiding rows by filtering must NOT lose
+			 * checks; a vanished connection must not stay checked). */
+			const present = {};
+			for (const c of all)
+				if (c.id) present[c.id] = true;
+			for (const id in connSel)
+				if (!present[id]) delete connSel[id];
+			updateSelUi();
+
 			/* Filters (client-side over the cached snapshot — no refetch). */
 			let conns = all;
 			if (connNet !== 'all')
@@ -539,11 +600,37 @@ return view.extend({
 			const prevWrap = connTableWrap.firstElementChild;
 			const scrollTop = (prevWrap && prevWrap.tagName === 'DIV') ? prevWrap.scrollTop : 0;
 
-			const table = makeTable([ _('Client'), _('Host'), _('Network'), _('Chain'), _('Rule'), _('Downloaded'), _('Uploaded') ]);
+			const table = makeTable([ E('input', { 'type': 'checkbox', 'title': _('Select all shown') }), _('Client'), _('Host'), _('Network'), _('Chain'), _('Rule'), _('Downloaded'), _('Uploaded') ]);
+			/* The master checkbox rides the header cell built by makeTable —
+			 * hook it after construction. */
+			const masterCb = table.querySelector('thead input[type="checkbox"]');
+			if (masterCb) {
+				let vis = 0, sel = 0;
+				for (const c of conns)
+					if (c.id) { vis++; if (connSel[c.id]) sel++; }
+				masterCb.checked = (vis > 0 && sel === vis);
+				masterCb.addEventListener('change', function() {
+					const on = masterCb.checked;
+					for (const c of conns)
+						if (c.id) { if (on) connSel[c.id] = true; else delete connSel[c.id]; }
+					renderConnTable(connCache);
+				});
+			}
 			for (const c of conns) {
 				const chain = (c.chain || []).map(chainLabel).join(' → ');
 				const cv = clientView(c);
+				const cb = E('input', { 'type': 'checkbox' });
+				if (c.id && connSel[c.id])
+					cb.checked = true;
+				cb.addEventListener('change', function() {
+					if (!c.id)
+						return;
+					if (cb.checked) connSel[c.id] = true;
+					else delete connSel[c.id];
+					updateSelUi();
+				});
 				addRow(table, [
+					{ el: cb },
 					{ el: E('span', { 'style': 'color:' + cv.color, 'title': cv.title || '' }, [ cv.text ]) },
 					{ text: c.host || c.destination || '—', color: 'inherit' },
 					{ text: (c.network || '').toUpperCase(), color: C_GREY },
