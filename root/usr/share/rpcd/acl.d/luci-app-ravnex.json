@@ -71,7 +71,7 @@
 					"automation_entry_add", "automation_entry_delete", "automation_entry_action", "automation_geo_update",
 					"automation_geo_protect_set",
 					"list_create", "list_delete", "list_write", "list_import", "list_update",
-					"list_backup_create", "list_backup_restore", "wizard_preset_add",
+					"list_backup_create", "list_backup_restore", "wizard_preset_add", "preset_pin_set",
 					"lists_conveyor_update_start", "lab_strategy_import_start",
 					"control_set", "control_set_paused", "recovery_action",
 					"control_client_add", "control_client_delete", "control_client_rename", "control_client_block",

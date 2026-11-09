@@ -8010,3 +8010,21 @@ msgstr "Antifilter ipsum.lst (заблокированные сети, 🜚 вр
 
 msgid "Aggregated blocked IPs (~146 sources, 🜚 opt-in)"
 msgstr "Агрегат заблокированных IP (~146 источников, 🜚 вручную)"
+
+msgid "The list is in the rows below — pick the route there. While \"No rule\" is picked, nothing is routed for it."
+msgstr "Список в строках ниже — выберите там путь. Пока выбрано «Нет правила», для него ничего не направляется."
+
+msgid "Pick a list in the catalog and press \"Add\" — its row appears in the rows below and stays. A rule appears only after you pick the route in the row; \"No rule\" just means the route is not decided yet, and ✕ deletes the row for good."
+msgstr "Выберите список в каталоге и нажмите «Добавить» — строка появится в списке ниже и останется. Правило появится только после выбора пути в строке; «Нет правила» означает лишь «путь пока не выбран», а ✕ удаляет строку насовсем."
+
+msgid "Mass list: big aggregates (hundreds of thousands of entries) cost real router memory and are never enabled by default. Add the row anyway?"
+msgstr "Массовый список: большие агрегаты (сотни тысяч записей) расходуют реальную память роутера и по умолчанию не включаются. Всё равно добавить строку?"
+
+msgid "The row is deleted — add the list from the catalog to bring it back."
+msgstr "Строка удалена — чтобы вернуть список, добавьте его из каталога."
+
+msgid "Delete the row (rules do not linger anywhere)"
+msgstr "Удалить строку (правила нигде не остаются жить)"
+
+msgid "not routed"
+msgstr "не направлен"

@@ -176,6 +176,10 @@ let S = {
 	general: { winner: null, probe: null, strikes: 0, note: '' },
 	last_apply: null,
 	tried: {},
+	/* s179 (user decision «вердикт + 2 прогона»): per-resource two-run lab
+	 * agreement + the ts of the fuzz result last seen by tick(). */
+	lab_agree: {},
+	last_fuzz_ts: 0,
 	next_check_ts: 0, next_cycle_ts: 0,
 	log: [],
 	manual_hold: null            /* Ф6.7: { ts, src } — Hot Swap 9 */
@@ -675,6 +679,48 @@ function tried_add(res, args) {
 		S.tried[res] = {};
 	S.tried[res][args] = time();
 	tried_prune();
+}
+
+/* s179 (user decision «вердикт + 2 прогона»): the lab VERDICT outranks the
+ * raw rating head for a resource. The rating favors the incumbent on
+ * noise-level differential probes ("probes identical do not rank") and the
+ * anti-flap margins then lock the incumbent forever (live 2026-11-09:
+ * Default kept while the verdict proved fakedsplit). Here the
+ * best_verified winner of the Strategy Lab IS the candidate — but a swap
+ * needs TWO consecutive fresh runs agreeing (n>=2, counted per result ts:
+ * a reused file never double-counts). Device/tried guards apply at the
+ * call site. Returns a winner-shaped cand with verdict_pick=true, or null
+ * (no verdict / not yet agreed / incumbent already the winner). */
+function verdict_pick(res, labv, cur, fts) {
+	if (type(S.lab_agree) !== 'object')
+		S.lab_agree = {};
+	const lv = (labv != null && type(labv[res]) === 'object') ? labv[res] : null;
+	if (lv == null || lv.verdict !== 'best_verified' || lv.chosen == null)
+		return null;
+	const args = '' + (lv.chosen.args || '');
+	if (!length(args) || !match(args, /^--[a-z]/))
+		return null;
+	if (cur && ('' + cur.args) === args) {
+		S.lab_agree[res] = null;
+		return null;
+	}
+	let ag = S.lab_agree[res];
+	if (ag == null || type(ag) !== 'object' || ag.args !== args)
+		ag = { args: args, name: '' + (lv.chosen.name || ''), n: 0, ts: fts };
+	if (ag.ts != fts) {
+		ag.n++;
+		ag.ts = fts;
+	}
+	S.lab_agree[res] = ag;
+	if (ag.n < 2)
+		return null;
+	return {
+		name: (ag.name || 'lab verdict winner'),
+		args: args,
+		tls_ms: int(lv.chosen.tls_ms || 0),
+		score: int(lv.chosen.score || 0),
+		verdict_pick: true
+	};
 }
 
 /* The resource's OWN deep verdict (differential-only items — the fuzzer
@@ -1287,7 +1333,17 @@ function cycle(cfg) {
 			labnone_n++;
 			continue;
 		}
-		const cand = pick_resource(fz, res, null);
+		/* s179: the lab verdict drives the candidate — pick_resource stays
+		 * as the fallback when the verdict has nothing agreed yet. */
+		const verdict_cand = verdict_pick(res, labv, cur, int(fz.ts));
+		const verdict_driven = (verdict_cand != null);
+		let cand = verdict_cand;
+		if (verdict_cand != null && tried_has(res, verdict_cand.args)) {
+			log_once('triedskip_' + res, res + ': победитель вердикта уже откатывался автопилотом (24 ч) — остаётся текущая');
+			cand = pick_resource(fz, res, null);
+		}
+		if (cand == null)
+			cand = pick_resource(fz, res, null);
 		let use = cand;
 		/* ч.232: device-правила переразметки. Подтверждённая на устройстве
 		 * ТЕКУЩАЯ не заменяется лабораторным лидером без его же подтверждения;
@@ -1303,6 +1359,17 @@ function cycle(cfg) {
 			log_once('devhold_' + res, res + ': текущая стратегия подтверждена на УСТРОЙСТВЕ — плановая замена не выполняется (метка сильнее лаборатории)');
 			explain(res, 'держу текущую: подтверждена устройством; лабораторный кандидат подтверждения устройства не имеет');
 			use = null;
+		}
+		else if (verdict_driven) {
+			/* s179: the two-run lab agreement IS the margin — no stream/start
+			 * flap arithmetic on top of a proven verdict; the device verdict
+			 * 'broken' on the lab winner still refuses the swap. */
+			if (cand_dv === 'broken') {
+				log_once('devbrok_' + res, res + ': победитель вердикта помечен «не работает на устройстве» — остаётся текущая');
+				explain(res, 'держу текущую: лабораторный победитель отвергнут меткой устройства');
+				use = null;
+			} else
+				explain(res, 'смена на «' + cand.name + '»: вердикт лаборатории best_verified подтверждён двумя прогонами подряд');
 		}
 		else if (cur && cand && (S.resources[res].strikes == 0)) {
 			/* ч.116 anti-flap: a switch needs a clear win on the resource's
@@ -1776,6 +1843,27 @@ function tick() {
 	 * работать в течение часа»). The gate restores the promised cadence. */
 	if (time() >= S.next_check_ts)
 		health(cfg);
+
+	/* s179 (user decision «вердикт + 2 прогона»): a fresh lab result —
+	 * scheduled sweep OR the user pressing the Lab button — pulls the
+	 * planned review closer (~15 min) instead of waiting the whole
+	 * interval_h. Holds/pending/busy states keep their priority. */
+	{
+		const fr = read_json(FUZZ_RESULT);
+		const fts = (fr != null && fr.ts != null) ? int(fr.ts) : 0;
+		if (fts > 0 && S.last_fuzz_ts > 0 && fts > S.last_fuzz_ts &&
+		    S.next_cycle_ts > 0) {
+			const early = time() + 15 * 60;
+			if (S.next_cycle_ts > early) {
+				S.next_cycle_ts = early;
+				log('свежий замер лаборатории — пересмотр победителей через ~15 мин (вердикт + 2 прогона)');
+			}
+		}
+		if (fts > 0 && fts != S.last_fuzz_ts) {
+			S.last_fuzz_ts = fts;
+			wstat();
+		}
+	}
 
 	if (time() >= S.next_cycle_ts) {
 		if (hold_active()) {

@@ -7994,3 +7994,21 @@ msgstr ""
 
 msgid "Aggregated blocked IPs (~146 sources, 🜚 opt-in)"
 msgstr ""
+
+msgid "The list is in the rows below — pick the route there. While \"No rule\" is picked, nothing is routed for it."
+msgstr ""
+
+msgid "Pick a list in the catalog and press \"Add\" — its row appears in the rows below and stays. A rule appears only after you pick the route in the row; \"No rule\" just means the route is not decided yet, and ✕ deletes the row for good."
+msgstr ""
+
+msgid "Mass list: big aggregates (hundreds of thousands of entries) cost real router memory and are never enabled by default. Add the row anyway?"
+msgstr ""
+
+msgid "The row is deleted — add the list from the catalog to bring it back."
+msgstr ""
+
+msgid "Delete the row (rules do not linger anywhere)"
+msgstr ""
+
+msgid "not routed"
+msgstr ""

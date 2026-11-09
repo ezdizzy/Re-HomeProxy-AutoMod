@@ -97,6 +97,15 @@ const callPresetDelete = rpc.declare({
 	expect: { '': {} }
 });
 
+/* s179: the catalog "Add" pin — keeps a row WITHOUT a rule ("undecided");
+ * a plain UCI list write, never a core restart. */
+const callPresetPinSet = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'preset_pin_set',
+	params: [ 'source', 'pinned' ],
+	expect: { '': {} }
+});
+
 /* Ф4.2 (U7): the "add a rule" master — ALWAYS creates a NEW rule section
  * (an extra exit for the same service is a legitimate shape). */
 const callPresetAdd = rpc.declare({
@@ -436,13 +445,12 @@ return view.extend({
 
 		/* D29 (refines D27): preset rows are NOT always visible. A row shows
 		 * when it has a rule (main or extra), when it is Re-filter and any VPN
-		 * node exists, or when it was revealed via the catalog. The old
-		 * per-browser Hiding is GONE: hiding kept the rule working while the
-		 * page pretended the service was unmanaged — the honest exit is a real
-		 * "Delete rule" (wizard_preset_delete); the stale hiding key is
-		 * dropped so previously hidden rows come back. */
+		 * node exists, or when it is PINNED from the catalog (s179, user
+		 * decision «добавил — путь не выбрал»: the pin survives reloads in
+		 * UCI, a row without a rule generates nothing). The old per-browser
+		 * reveal/hiding is gone for good. */
 		try { window.localStorage.removeItem('hp_rules_hidden_presets'); } catch (e) {}
-		const state = { presetsSig: null, pendingCheck: null, lastList: null, visRev: 0, revealed: {} };
+		const state = { presetsSig: null, pendingCheck: null, lastList: null, visRev: 0, pins: [] };
 		let lastEnv = null;
 
 		/* ── Base zone: presets ───────────────────────────────────────── */
@@ -1046,8 +1054,9 @@ return view.extend({
 			const env = (list && list.env) || {};
 			lastEnv = env;
 			state.lastList = list;
+			state.pins = (list && list.pins) || [];
 			const sig = JSON.stringify([ env, list.rules || {}, list.rule_counts || {},
-				((list.nodes || []).map(function(n) { return n.id; })), state.visRev ]);
+				((list.nodes || []).map(function(n) { return n.id; })), state.visRev, state.pins ]);
 			if (sig === state.presetsSig)
 				return;
 			state.presetsSig = sig;
@@ -1078,7 +1087,7 @@ return view.extend({
 					return true;
 				if (src === 'refilter')
 					return hasVpnNode;
-				return !!state.revealed[src];
+				return state.pins.indexOf(src) >= 0;
 			};
 
 			presetRows.innerHTML = '';
@@ -1111,7 +1120,11 @@ return view.extend({
 					titleWrap.appendChild(E('span', { 'class': 'wiz-hosts' }, [ ' · ' + preset.hosts.join(', ') ]));
 				row.appendChild(titleWrap);
 
-				row.appendChild(E('span', { 'class': 'wiz-state' }, [ ruleStateText(rule, count) ]));
+				row.appendChild(E('span', { 'class': 'wiz-state' }, [
+					(rule || state.pins.indexOf(preset.source) < 0)
+						? ruleStateText(rule, count)
+						: E('span', { 'class': 'hpui-b-grey hpui-badge' },
+							[ _('not routed') ]) ]));
 
 				const sel = E('select', { 'class': 'cbi-input-select wiz-select' });
 				/* D20/Ф3.3: the former "Direct (remove rule)" lied by accident —
@@ -1250,31 +1263,48 @@ return view.extend({
 					btns.appendChild(exBtn);
 				}
 
-				/* D29: the honest exit for the SOURCE rule — a real delete via
-				 * wizard_preset_delete (config regenerates through the opman
-				 * door). The row itself is a catalog preset: with no rule it
-				 * drops off the page (comes back via the catalog), the state
-				 * becomes D20 "No rule" — the service follows the general
-				 * routing rules. Extra exits keep their own delete buttons. */
-				if (rule) {
+				/* D29 + s179: the honest exit is a REAL delete (wizard_preset_
+				 * delete; the last section of a source also drops the catalog
+				 * pin). A pinned row without a rule has no section — its ✕
+				 * just unpins (instant, no restart), the row is gone for
+				 * good and can be re-added from the catalog. Extra exits keep
+				 * their own delete buttons. */
+				const pinned = state.pins.indexOf(preset.source) >= 0;
+				if (rule || pinned) {
 					/* Block E: the delete is a compact ✕ (the row keeps all
 					 * its actions in ONE row); the tooltip carries the name. */
 					const delBtn = E('button', {
 						'class': 'hpui-btn hpui-btn-danger wiz-del', type: 'button',
-						'title': _('Delete rule')
+						'title': _('Delete the row (rules do not linger anywhere)')
 					}, [ '✕' ]);
 					delBtn.addEventListener('click', function() {
 						delBtn.disabled = true;
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting…') ]));
-						L.resolveDefault(callPresetDelete(rule.section_id), {}).then(function(r) {
+						const unpinAfter = !rule || (count <= 1 && !(extras && extras.length));
+						const fin = function(r, okMsg) {
 							if (!r || r.result === false)
 								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
 									[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
-							else
-								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-									[ _('Rule deleted — the service follows the general routing rules again ("No rule").') ]));
-							refresh();
-						}).finally(function() { delBtn.disabled = false; });
+							else if (unpinAfter)
+								callPresetPinSet(preset.source, '0').then(function() {
+									dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ okMsg ]));
+									refresh();
+								});
+							else {
+								dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ okMsg ]));
+								refresh();
+							}
+						};
+						if (rule)
+							L.resolveDefault(callPresetDelete(rule.section_id), {}).then(function(r) {
+								fin(r, unpinAfter
+									? _('The row is deleted — add the list from the catalog to bring it back.')
+									: _('Rule deleted — the service follows the general routing rules again ("No rule").'));
+							}).finally(function() { delBtn.disabled = false; });
+						else
+							L.resolveDefault(callPresetPinSet(preset.source, '0'), {}).then(function(r) {
+								fin(r, _('The row is deleted — add the list from the catalog to bring it back.'));
+							}).finally(function() { delBtn.disabled = false; });
 					});
 					btns.appendChild(delBtn);
 				}
@@ -1424,36 +1454,32 @@ return view.extend({
 				[ _('Other'), MISC_PRESETS, null, 'layers' ]
 			];
 
-			/* D27: the "add a rule" master becomes the CATALOG of lists —
-			 * picking a list reveals its row on the page. Rules are still
-			 * created and edited IN the row; a second exit of the same
-			 * service is added by the button inside its row (rpcd
-			 * wizard_preset_add is unchanged). */
+			/* D27 + s179 (user decision): the catalog lists the presets as
+			 * PLAIN NAMES (the mass titles already carry the size caveat in
+			 * parentheses) — the "rules none / possibly covered" suffix that
+			 * was glued to every option confused more than it explained.
+			 * "Add" PINS the list: its row appears in the rows below and
+			 * STAYS there (UCI pin, survives reloads) until the user picks
+			 * the route in the row or deletes the row. */
 			const mBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button', style: 'margin:2px 0' },
 				[ _('Add a rule') ]);
 			const mForm = E('div', { 'class': 'wiz-svc', style: 'display:none; margin:8px 0' });
 			const mSrc = E('select', { 'class': 'cbi-input-select', style: 'min-width:260px' });
 			const mShow = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
-				[ _('Show') ]);
+				[ _('Add') ]);
 			const fillCatalog = function() {
-				/* B6.6: a list without its own rule may still be covered by an
-				 * enabled mass list — the honest catalog marker says
-				 * "possibly covered" instead of implying the list is dead. */
-				const massCovered = !!((list.rules || {})['russia-inside'] && list.rules['russia-inside'].enabled) ||
-					!!((list.rules || {})['refilter'] && list.rules['refilter'].enabled);
 				dom.content(mSrc, [ E('option', { value: '' }, [ _('Pick a list…') ]) ]);
 				let any = false;
 				for (let g2 in GROUPS) {
+					const isMass = (GROUPS[g2][0] === _('Mass lists'));
 					const opts = [];
 					for (let p2 in GROUPS[g2][1]) {
 						const it = GROUPS[g2][1][p2];
 						if (rowVisible(it.source))
 							continue;
 						any = true;
-						opts.push(E('option', { value: it.source },
-							[ it.title + (massCovered
-								? (' — ' + _('no rule (possibly covered by a mass list)'))
-								: (' — ' + _('no rule'))) ]));
+						opts.push(E('option', { value: it.source, 'data-mass': isMass ? '1' : '0' },
+							[ it.title ]));
 					}
 					if (opts.length)
 						mSrc.appendChild(E('optgroup', { label: GROUPS[g2][0] }, opts));
@@ -1466,12 +1492,28 @@ return view.extend({
 				const src = String(mSrc.value || '');
 				if (!src)
 					return;
-				state.revealed[src] = true;
-				state.visRev++;
-				mForm.style.display = 'none';
-				dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-					[ _('The row is on the page.') ]));
-				renderPresets(state.lastList);
+				const opt = mSrc.querySelector('option[value="' + src + '"]');
+				const mass = !!(opt && opt.getAttribute('data-mass') === '1');
+				/* Mass layer opt-in (user decision): one honest confirmation —
+				 * big aggregates cost real memory on the router. */
+				if (mass && !window.confirm(_('Mass list: big aggregates (hundreds of thousands of entries) cost real router memory and are never enabled by default. Add the row anyway?')))
+					return;
+				mShow.disabled = true;
+				callPresetPinSet(src, '1').then(function(r) {
+					mShow.disabled = false;
+					if (!r || r.result === false) {
+						dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
+						return;
+					}
+					if (state.pins.indexOf(src) < 0)
+						state.pins.push(src);
+					mForm.style.display = 'none';
+					dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+						[ _('The list is in the rows below — pick the route there. While "No rule" is picked, nothing is routed for it.') ]));
+					renderPresets(state.lastList);
+					fillCatalog();
+				}).catch(function() { mShow.disabled = false; });
 			});
 			mBtn.addEventListener('click', function() {
 				if (mForm.style.display === 'none') {
@@ -1482,7 +1524,7 @@ return view.extend({
 			});
 			mForm.appendChild(E('div', { 'class': 'wiz-row' }, [ mSrc, mShow ]));
 			presetRows.appendChild(E('div', { 'class': 'hpui-hint', style: 'margin:0 0 4px' },
-				[ _('Pick a list in the catalog — its row appears on the page; a row without a rule disappears after a reload.') ]));
+				[ _('Pick a list in the catalog and press "Add" — its row appears in the rows below and stays. A rule appears only after you pick the route in the row; "No rule" just means the route is not decided yet, and ✕ deletes the row for good.') ]));
 			presetRows.appendChild(mBtn);
 			presetRows.appendChild(mForm);
 

@@ -3216,6 +3216,54 @@ function lists_zmd_counts() {
 	return by;
 }
 
+/* s179: catalog pin (user decision «добавил, но путь не выбрал»).
+ * A pinned source keeps its row on the rules page WITHOUT a rule:
+ * nothing is generated for it and the traffic follows the normal
+ * rules — "No rule" is an honest undecided state, not a hidden rule.
+ * Storage = the UCI LIST ravnex.config.pinned_presets (list options
+ * write through the uci CLI — delete + add_list, the urltest_nodes
+ * pattern). NEVER spawns a reload: pin/unpin is invisible to the
+ * core config. */
+function preset_pin_cur(c) {
+	const raw = c.get('ravnex', 'config', 'pinned_presets');
+	const out = [];
+	if (type(raw) === 'array')
+		for (let p in raw) {
+			const v = '' + p;
+			if (!length(v))
+				continue;
+			let seen = false;
+			for (let q in out)
+				if (('' + q) === v) { seen = true; break; }
+			if (!seen)
+				push(out, v);
+		}
+	return out;
+}
+function preset_pin_write(src, want) {
+	const c = cursor();
+	const cur = preset_pin_cur(c);
+	let had = false;
+	for (let p in cur)
+		if (('' + p) === src) { had = true; break; }
+	if (had === want)
+		return { had: had, changed: false };
+	const keep = [];
+	for (let p in cur)
+		if (('' + p) !== src)
+			push(keep, '' + p);
+	if (want)
+		push(keep, src);
+	if (length(keep) > 400)
+		return { had: had, changed: false, error: 'pin list overflow' };
+	if (length(cur))
+		system('uci -q delete ravnex.config.pinned_presets');
+	for (let p in keep)
+		system(`uci add_list ravnex.config.pinned_presets=${shellquote('' + p)}`);
+	system('uci -q commit ravnex');
+	return { had: had, changed: true };
+}
+
 const methods = {
 	acllist_read: {
 		args: { type: 'type' },
@@ -7942,6 +7990,12 @@ const methods = {
 			let mixed = '5330';
 			if (mfd) { mixed = trim(mfd.read('all')) || '5330'; mfd.close(); }
 			const lports = hp_listen_ports();
+			/* s179: pins (rows added without a route) + the one-line catalog
+			 * descriptions from the lists catalog (single source of truth —
+			 * the JS preset arrays carry the titles, the backend the covers). */
+			const descs = {};
+			for (let e in LS_CATALOG)
+				descs[e.id] = e.covers || e.name || '';
 			return {
 				result: true,
 				env: {
@@ -7957,7 +8011,9 @@ const methods = {
 				nodes: nodes,
 				rules: rules,
 				rule_extras: extras,
-				rule_counts: counts
+				rule_counts: counts,
+				pins: preset_pin_cur(c),
+				desc: descs
 			};
 		}
 	},
@@ -8089,6 +8145,9 @@ const methods = {
 				system('uci -q delete ravnex.' + target + '.urltest_nodes');
 				system('uci -q commit ravnex');
 			}
+			/* s179: a DECIDED row no longer needs the pin — the rule itself
+			 * keeps the row on the page from now on. */
+			preset_pin_write(src, false);
 
 			/* Apply IMMEDIATELY (same path as the manual editor: regenerate +
 			 * full reload — a rule needs the core restart, unlike learned-list
@@ -8119,8 +8178,21 @@ const methods = {
 			const sec = c.get_all('ravnex', sid);
 			if (!sec || sec['.type'] !== 'proxy_ru_rule')
 				return { result: false, error: 'not a routing rule section' };
+			const src = '' + (sec.source || '');
 			c.delete('ravnex', sid);
 			c.commit('ravnex');
+			/* s179 (user decision): the ✕ button deletes the ROW for good —
+			 * when the LAST section of this source is gone the pin goes too,
+			 * so the row does not linger collapsed anywhere. */
+			if (length(src)) {
+				let left = 0;
+				c.foreach('ravnex', 'proxy_ru_rule', (s) => {
+					if (('' + (s.source || '')) === src)
+						left++;
+				});
+				if (left === 0)
+					preset_pin_write(src, false);
+			}
 			/* Ф1.1b: apply through the opman door (was a synchronous
 			 * generate+reload inside rpcd). */
 			const ap = op_spawn('reload', 'routing rule delete');
@@ -8128,6 +8200,23 @@ const methods = {
 				apply: { hot: false, result: ap.result === true,
 					op_id: ap.op_id || '', busy: ap.busy === true,
 					error: ap.error || '' } };
+		}
+	},
+
+	/* s179 (user decision): the catalog "Add" button — pin a list so its
+	 * row persists WITHOUT a rule ("undecided"); unpins on ✕. Cheap:
+	 * a UCI list write only, NO core restart. */
+	preset_pin_set: {
+		args: { source: 'source', pinned: 'pinned' },
+		call: function(req) {
+			const src = trim((req && req.args && req.args.source) || '');
+			if (!length(src) || !ls_catalog_routable()[src])
+				return { result: false, error: 'unknown source' };
+			const want = (trim('' + ((req && req.args && req.args.pinned) || '')) === '1');
+			const r = preset_pin_write(src, want);
+			if (r.error)
+				return { result: false, error: r.error };
+			return { result: true, pinned: want, unchanged: !r.changed };
 		}
 	},
 
