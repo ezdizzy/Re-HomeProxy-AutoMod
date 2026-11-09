@@ -222,6 +222,34 @@ if [ "$DEEP" = "1" ]; then
 			done < "$TMP/pool.txt"
 		fi
 	fi
+	# ч.270: PER-STRATEGY DEAD-EDGE mini-probes (dedg1, dedg2) — DEAD_HINTS
+	# (lines "host ip" of the MATRIX-DEAD edges, the mirror of EDGE_HINTS)
+	# re-tests those edges UNDER EACH CANDIDATE strategy with a 1 MB ranged
+	# pull: a strategy that REVIVES a dead edge carries a first-class
+	# differential signal (live proof of session 182: .48 revived under
+	# Hostfakesplit while dead under the fakedsplit catch-all). Cap 2 edges
+	# (wall-time budget); dedg items are NEVER retried on a fresh edge —
+	# staying dead under THIS strategy is exactly the signal.
+	if [ -n "$YTV_URL" ] && [ -n "$DEAD_HINTS" ]; then
+		: > "$TMP/dead.txt"
+		printf '%s\n' "$DEAD_HINTS" | while IFS= read -r dl; do
+			dh2=${dl%% *}; di2=${dl#* }
+			[ -n "$dh2" ] && [ -n "$di2" ] || continue
+			case "$di2" in *[!0-9]*) continue ;; esac
+			echo "$dh2 $di2" >> "$TMP/dead.txt"
+		done
+		DEDG_N=0
+		if [ -s "$TMP/dead.txt" ]; then
+			while read -r dh3 di3; do
+				[ -n "$dh3" ] && [ -n "$di3" ] || continue
+				DEDG_N=$((DEDG_N + 1))
+				[ "$DEDG_N" -gt 2 ] && break
+				echo "$di3" > "$TMP/dead_ip_dedg$DEDG_N"
+				echo "$dh3" > "$TMP/dead_host_dedg$DEDG_N"
+				DEEP_PROBES="$DEEP_PROBES dedg$DEDG_N|$YTV_URL"
+			done < "$TMP/dead.txt"
+		fi
+	fi
 	# Browser-like fingerprint probe (audit 90): the stock curl fingerprint is
 	# NOT a browser's — a strategy/WAF can pass the bare probe and challenge
 	# the browser-shaped one (or vice versa). One shared script, su-safe.
@@ -411,6 +439,12 @@ if [ "$DEEP" = "1" ]; then
 			cp "$TMP/dip_yts" "$TMP/dip_$did" 2>/dev/null
 			cat "$TMP/dhost_yts" 2>/dev/null > "$TMP/dhost_$did"
 		fi
+	elif [ "${did#dedg}" != "$did" ]; then
+		# ч.270: dead-edge revive probe — the pin comes from DEAD_HINTS (the
+		# matrix-dead edge), NEVER from a resolver: re-resolving would defeat
+		# the whole point of measuring THIS dead edge under THIS strategy.
+		cat "$TMP/dead_ip_$did" 2>/dev/null > "$TMP/dip_$did"
+		cat "$TMP/dead_host_$did" 2>/dev/null > "$TMP/dhost_$did"
 	elif [ "${did%f}" != "$did" ]; then
 		# Ф6.4 fingerprint variant: the SAME page under the browser-like
 		# profile — the base id's resolution is REUSED (no second DNS hit).
@@ -727,10 +761,10 @@ STUNRUN
 		# in --baseline (no desync) they are meaningless by construction and
 		# would only hang the pass on DPI-blocked connects: honest absence.
 		if [ "$BASELINE" = "1" ]; then
-			case "$did" in ytv|yts|yts2|yts3|yts4) continue ;; esac
+			case "$did" in ytv|yts|yts2|yts3|yts4|dedg1|dedg2) continue ;; esac
 		fi
 		DRANGE=""
-		case "$did" in yts|yts2|yts3|yts4) DRANGE="-r 0-4194303" ;; esac
+		case "$did" in yts|yts2|yts3|yts4) DRANGE="-r 0-4194303" ;; dedg1|dedg2) DRANGE="-r 0-1048575" ;; esac
 		if [ "$did" = "ytv" ]; then
 			# SUSTAINED-FLOW throughput: real thumbnails over keep-alive
 			# flows (--max-time caps EACH window; curl exits 28 on a
@@ -816,7 +850,7 @@ YTVFLOW
 		# classification (yts keeps /dev/null — its verdict is speed-based);
 		# fingerprint variants (ids with "f") run the browser-like profile.
 		DBODY="$TMP/b_$did"
-		case "$did" in yts|yts2|yts3|yts4) DBODY="/dev/null" ;; esac
+		case "$did" in yts|yts2|yts3|yts4|dedg1|dedg2) DBODY="/dev/null" ;; esac
 		if [ "${did%f}" != "$did" ]; then
 			if [ -n "$PROBE_UID" ]; then
 				su -s /bin/sh daemon -c "sh '${TMP}/fp_flow.sh' '${dhost}:443:${dip}' '${durl}' '${TMP}/b_${did}' > '${TMP}/d_${did}'" >/dev/null 2>&1 &
@@ -986,7 +1020,7 @@ fi
 			firsth=0
 			printf '["%s","%s","%s"]' "$tag" "$label" "$host"
 		done
-		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2","yts3","yts4"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf","dcv"],"st":["stp","stpf"]}}\n'
+		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2","yts3","yts4","dedg1","dedg2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf","dcv"],"st":["stp","stpf"]}}\n'
 	} > "$TMP/manifest.json"
 	ucode /etc/ravnex/scripts/zapret_deep_build.uc < "$TMP/manifest.json"
 else

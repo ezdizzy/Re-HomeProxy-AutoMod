@@ -89,6 +89,26 @@ function deep_item(id) {
 		item.kind = 'stun';
 		return item;
 	}
+	if (index(id, 'dedg') === 0) {
+		/* ч.270: dead-edge REVIVE probe (per-strategy, 1 MB range) — планка
+		 * честно-низкая: течёт ЛЮБОЙ реальный ответ (2xx/206, ≥256 KB при
+		 * ≥64 КБ/с) = край несёт трафик ПОД ЭТОЙ стратегией = ожил. Заглушка
+		 * 1561 байт (404-страница), подвисший коннект или обрыв = край мёртв
+		 * и здесь (это тоже сигнал — «стратегия край не оживляет»). */
+		item.sec = num(parts[1]);
+		item.bytes = int(num(parts[2]));
+		item.speed = int(num(parts[3]));
+		item.ttfb = (length(parts) > 4) ? int(num(parts[4]) * 1000.0) : 0;
+		item.rc = (length(parts) > 5) ? int(num(parts[5])) : ((length(parts) > 4) ? int(num(parts[4])) : 1);
+		const dhp = TMP + '/dhost_' + id;
+		const dpp = TMP + '/dip_' + id;
+		item.host = access(dhp) ? trim(readfile(dhp) || '') : null;
+		item.ip = access(dpp) ? trim(readfile(dpp) || '') : null;
+		item.edge = 'dead';
+		item.ok = ((item.code === '200' || item.code === '206') &&
+			item.bytes >= 262144 && item.speed >= 65536) ? 1 : 0;
+		return item;
+	}
 	item.sec = num(parts[1]);
 	item.bytes = int(num(parts[2]));
 	item.speed = int(num(parts[3]));

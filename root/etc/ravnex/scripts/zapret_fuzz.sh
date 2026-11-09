@@ -158,8 +158,16 @@ if [ -n "$DIPB" ]; then
 	# ч.269 observability (live fact of sweeps 2-3: the file was absent at
 	# merge time while the standalone replica always produces it — the next
 	# sweep self-diagnoses via fuzz_stderr.log)
-	echo "stun_base bytes=$(wc -c < "$TMP/stun_base.json" 2>/dev/null) head=$(head -c 60 "$TMP/stun_base.json" 2>/dev/null | tr -d '\n')" >> /var/run/ravnex/fuzz_stderr.log 2>/dev/null
-	grep -q '^{"ok"' "$TMP/stun_base.json" 2>/dev/null || rm -f "$TMP/stun_base.json"
+echo "stun_base bytes=$(wc -c < "$TMP/stun_base.json" 2>/dev/null) head=$(head -c 60 "$TMP/stun_base.json" 2>/dev/null | tr -d '\n')" >> /var/run/ravnex/fuzz_stderr.log 2>/dev/null
+# ч.270 ROOT CAUSE of the ch.269 STUN anomaly (the diagnostic line caught it
+# live): the builder prints PRETTY multi-line JSON ({ + newline first), and
+# the anchored guard `grep -q '^{"ok"'` only matches a single-line blob —
+# every sweep DELETED a perfectly valid baseline file → stun_items=0 → dcv
+# demoted silently. Guard = the write is COMPLETE (closing brace at EOF). The
+# merge parse (json) handles multi-line fine; ok:0 in the content is EXPECTED
+# (blocked-resource handshakes fail without desync — dcv is the only item
+# whose baseline verdict matters here).
+tail -c 2 "$TMP/stun_base.json" 2>/dev/null | grep -q '}' || rm -f "$TMP/stun_base.json"
 	loadmark stun_base
 fi
 
@@ -616,6 +624,28 @@ if (j != null && type(j.edges) == "array") {
 	EH_REV=$(printf '%s\n' "$EH_FWD" | tac 2>/dev/null)
 	[ -n "$EH_REV" ] || EH_REV="$EH_FWD"
 fi
+# ч.270: DEAD_HINTS — «host ip» строки МЁРТВЫХ краёв карты (зеркало
+# EDGE_HINTS, которое их исключало). Глубокая батарея пере-пробует их ПОД
+# КАЖДОЙ стратегией (1 MB range): стратегия, ОЖИВЛЯЮЩАЯ мёртвый край, несёт
+# первосортный дифференцирующий признак — живое доказательство сеанса 182:
+# .48 оживает под Hostfakesplit и был мёртв под fakedsplit catch-all, значит
+# «мёртвость края» НЕ инфраструктура, а свойство формы потока стратегии.
+DEAD_HINTS=""
+if [ -s "$TMP/edge_matrix.json" ]; then
+	DEAD_HINTS=$(ucode -e '
+import {readfile} from "fs";
+let j = null;
+try { j = json(readfile("'$TMP'/edge_matrix.json") || ""); } catch (e) { j = null; }
+if (j != null && type(j.edges) == "array") {
+	let parts = [];
+	for (let e in j.edges) {
+		if (type(e) != "object" || !e.host || !e.ip) continue;
+		if (e.tls_ok != 0) continue;
+		push(parts, e.host + " " + e.ip);
+	}
+	print(join("\n", parts));
+}' 2>/dev/null)
+fi
 # deep_pass <suffix> <pass#> — one full battery pass; results land in d<i><suf>.json.
 deep_pass() {
 	i=0
@@ -627,7 +657,7 @@ deep_pass() {
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
 		DL1=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null); [ -n "$DL1" ] || DL1=0
 		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","load":'$DL1',"done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
-		YTV_URL="$YTV_URL" EDGE_HINTS="$_EH" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+		YTV_URL="$YTV_URL" EDGE_HINTS="$_EH" DEAD_HINTS="$DEAD_HINTS" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
 		loadmark "deep${i}_p$2"
 	done
 }
@@ -662,7 +692,7 @@ print(ok ? "0" : "1");' 2>/dev/null)
 		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
 		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep retry '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
-		YTV_URL="$YTV_URL" EDGE_HINTS="$EH_FWD" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+		YTV_URL="$YTV_URL" EDGE_HINTS="$EH_FWD" DEAD_HINTS="$DEAD_HINTS" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
 	done
 }
 # ч.235: fresh edges before the deep battery — the battery is the EXPENSIVE
@@ -898,10 +928,44 @@ for (let r in drawn) {
 			}
 			s.unstable_edges = flips;
 			s.dead_edges_consistent = deadc;
+			/* ч.270: dead-edge REVIVE per strategy — the dedg items carry the
+			 * matrix-dead edges re-probed UNDER THIS STRATEGY; ok==1 = revived
+			 * (first-class differential signal, weight above band). */
+			let revd = [];
+			for (let it in (res.deep || [])) {
+				if (type(it) != "object" || it.id == null) continue;
+				if (index(("" + it.id), "dedg") !== 0) continue;
+				if (it.ok == 1)
+					push(revd, { ip: (it.ip != null) ? ("" + it.ip) : null,
+						host: (it.host != null) ? ("" + it.host) : null });
+			}
+			s.dead_edge_revive = length(revd);
+			if (length(revd) > 0) s.revived_edges = revd;
 		}
 	}
 	s.deep = { ok: dok, total: dtot, hosts: hosts, passes: r.passes };
 }
+
+/* ч.270: the DEAD-EDGE REVIVE registry — edges that AT LEAST ONE deep
+ * strategy revived (dedg ok) are NOT infrastructure-dead: their death is a
+ * property of the flow shape the strategy builds (live proof of session 182:
+ * .48 revived under Hostfakesplit, dead under the fakedsplit catch-all).
+ * This redefines infra_dead (the ч.269 model «matrix says dead = forever»
+ * is retired; a revived edge re-enters the pool for the next sweeps). */
+const revived_ips = {};
+for (let r in drawn)
+	for (let res in r.results) {
+		if (type(res) != "object" || res.tag == null) continue;
+		for (let it in (res.deep || [])) {
+			if (type(it) != "object" || it.id == null) continue;
+			if (index(("" + it.id), "dedg") !== 0) continue;
+			if (it.ok == 1 && it.ip != null)
+				revived_ips["" + it.ip] = { host: ("" + (it.host || "")) };
+		}
+	}
+const revived_edges = [];
+for (let rip in keys(revived_ips))
+	push(revived_edges, { ip: rip, host: revived_ips[rip].host });
 
 /* ч.269: INFRA-DEAD edges — an edge EVERY measured strategy failed on both
  * passes (and, when present, the live edge matrix agrees) is the PATH
@@ -934,11 +998,14 @@ const infra_dead_edges = [];
  * are excluded via EDGE_HINTS), so without this union the verdict notes
  * stayed silent about exactly the edges that explain the user phenomenon
  * (live fact: matrix says rr5=.48/rr6=.49 tls=0 get=000, deep battery has
- * nothing on them). Union, dedup by ip. */
+ * nothing on them). Union, dedup by ip.
+ * ч.270: REVISED — a matrix-dead edge that at least one strategy REVIVED
+ * (dedg ok) is excluded: its death was strategy-shaped, not infra. */
 if (emx != null && type(emx.edges) == "array")
 	for (let me in emx.edges) {
 		if (type(me) != "object" || me.ip == null) continue;
 		if (me.tls_ok != 0 || ("" + (me.get_code || "0")) != "0") continue;
+		if (revived_ips["" + me.ip] != null) continue;
 		let dup = false;
 		for (let d2 in infra_dead_edges)
 			if (d2.ip == me.ip) { dup = true; break; }
@@ -1246,6 +1313,7 @@ for (let ri = 0; ri < length(rn_keys); ri++) {
 			? { verdict: "" + (dns_sets[tag].verdict || ""), note: "" + (dns_sets[tag].note || "") }
 			: null,
 		dead_edges: (resname === "youtube") ? infra_dead_edges : null,
+		revived: (resname === "youtube") ? revived_edges : null,
 		stun_baseline: (resname === "discord") ? stun_baseline : null,
 		scan_note: scan_note
 	};
@@ -1302,6 +1370,7 @@ writefile(RESULT, sprintf("%.J\n", {
 	dns_sets: dns_sets,
 	edge_matrix: emx,
 	infra_dead_edges: infra_dead_edges,
+	revived_edges: revived_edges,
 	stun_baseline: stun_baseline,
 	stun_items: stun_items,
 	verdicts: verdicts,

@@ -129,6 +129,12 @@ export function strategy_verdict(reach_ok, deep_items, ignore_ids) {
 	for (let it in deep_items) {
 		if (type(it) !== 'object')
 			continue;
+		/* ч.270: dedg* (dead-edge revive) НЕ участвует в обязательном гейте —
+		 * оживление это БОНУС-измерение: стратегия, не оживившая край, не
+		 * провалила ресурс (край может ожить под другой стратегией — именно
+		 * это и есть дифференцирующий признак сеанса 182). */
+		if (index('' + it.id, 'dedg') === 0)
+			continue;
 		if (ignore_ids != null && type(ignore_ids) === 'array') {
 			/* ч.269: компонент, чей провал ПРОВАЙДЕРСКИЙ (baseline тоже
 			 * молчит), не демотит стратегию — но и не считается подтверждением */
@@ -198,6 +204,7 @@ export function resource_verdict(entries, quic_vn, udp_any, device, dead, extra)
 	const ex_dns = (ex != null && type(ex.dns) === 'object') ? ex.dns : null;
 	const ex_dead = (ex != null && type(ex.dead_edges) === 'array') ? ex.dead_edges : null;
 	const ex_stun = (ex != null) ? ex.stun_baseline : null;
+	const ex_rev = (ex != null && type(ex.revived) === 'array') ? ex.revived : null;
 	const ex_scan = (ex != null && ex.scan_note != null) ? ('' + ex.scan_note) : null;
 	/* ч.234: метка в device_verdicts.json — ОБЪЕКТ { verdict: 'works'|… };
 	 * прежний dv делал '' + объект (≠ 'works') — метка была МЕРТВА в
@@ -347,6 +354,17 @@ export function resource_verdict(entries, quic_vn, udp_any, device, dead, extra)
 			push(out.notes, 'крае CDN ' + ('' + (de.host || '?')) + ' (' + de.ip + ') отрезан ПО ПУТИ: не ответил ни у одной стратегии в обоих проходах — инфраструктура, не стратегия; видео с этого края не открываются независимо от выбора (феномен «одна выдача — разные видео»)');
 			shown++;
 		}
+	}
+	/* ч.270: revive-заметка — мёртвость края СТРАТЕГИЯ-зависима (сеанс 182:
+	 * .48 оживает под Hostfakesplit, мёртв под fakedsplit catch-all; после
+	 * ревизии такие края больше НЕ входят в infra_dead). */
+	if (ex_rev != null && length(ex_rev) > 0) {
+		const rips = [];
+		for (let re2 in ex_rev)
+			if (type(re2) === 'object' && re2.ip != null)
+				push(rips, '' + re2.ip);
+		if (length(rips) > 0)
+			push(out.notes, 'край(-я) пула ' + join(', ', rips) + ' ОЖИВАЮТ не всеми стратегиями (1 MB проба под каждой): мёртвость края зависит от формы потока стратегии, а не от инфраструктуры — revive считается первосортным признаком выбора');
 	}
 	if (ex_dns != null) {
 		const dvv = '' + (ex_dns.verdict || '');
@@ -503,6 +521,18 @@ export function selftest() {
 	], 'vn', true, null);
 	t('no device map → lab order', rv8.verdict === 'best_verified' &&
 		rv8.chosen.args === '--default' && rv8.device_confirmed === false);
+	/* ч.270: dedg (dead-edge revive) НЕ демотит вердикт — бонус-измерение */
+	t('dedg fail does not demote',
+		strategy_verdict(true, [ { id: 'ytp', ok: 1 }, { id: 'yti', ok: 1 }, { id: 'dedg1', ok: 0 } ]) === 'best_verified');
+	t('dedg pass still passes',
+		strategy_verdict(true, [ { id: 'ytp', ok: 1 }, { id: 'yti', ok: 1 }, { id: 'dedg2', ok: 1 } ]) === 'best_verified');
+	/* ч.270: revive-заметка рядом с вердиктом youtube */
+	const rv20 = resource_verdict([
+		{ name: 'A', args: '--a', reach_ok: true, deep_items: ok_deep }
+	], 'vn', true, null, false,
+		{ revived: [ { ip: '185.221.46.48', host: 'rr5---sn-nx5pm-3ggl.googlevideo.com' } ] });
+	t('revived note present', rv20.verdict === 'best_verified' &&
+		index(join(';', rv20.notes), 'ОЖИВАЮТ не всеми стратегиями') >= 0);
 	/* ч.234: строковое значение метки — обратная совместимость */
 	const rv9 = resource_verdict([
 		{ name: 'Composite', args: '--composite', reach_ok: false, deep_items: null }

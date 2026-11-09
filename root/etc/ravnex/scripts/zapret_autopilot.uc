@@ -770,7 +770,8 @@ function pick_resource(fz, res, exclude_args) {
 						stms = int(dh.start_ms || 0);
 					}
 			push(elig, { s: s, ms: int(h.tls_ms) || 0, deep: dr,
-				deep_pass: dp, deep_total: dt, stream: stm, start: stms });
+				deep_pass: dp, deep_total: dt, stream: stm, start: stms,
+				revive: int(s.dead_edge_revive || 0) });
 		}
 	}
 	/* ч.116 ranking: a MEASURED strategy ranks first — the resource's own
@@ -798,6 +799,14 @@ function pick_resource(fz, res, exclude_args) {
 		const da = dband(a), dbb = dband(b);
 		if (da != dbb)
 			return da - dbb;
+		/* ч.270: оживление мёртвого края — первосортный дифференцирующий
+		 * признак, вес ВЫШЕ band: стратегия, оживившая ≥1 «мёртвый» край
+		 * матрицы под собой, выигрывает ничью band'ов сразу (живое
+		 * доказательство сеанса 182: .48 оживает под Hostfakesplit, мёртв
+		 * под fakedsplit catch-all — смерть края shaped-зависима). */
+		const ra = int(a.revive || 0), rb = int(b.revive || 0);
+		if (ra != rb)
+			return rb - ra;
 		const ba = band(a), bb = band(b);
 		if (ba != bb)
 			return ba - bb;
