@@ -93,7 +93,7 @@ const callAiNodesCheck = rpc.declare({
 const callPresetDelete = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'wizard_preset_delete',
-	params: [ 'section_id' ],
+	params: [ 'section_id', 'scope' ],
 	expect: { '': {} }
 });
 
@@ -1073,21 +1073,17 @@ return view.extend({
 					[ _('The pinned diagnostic inbounds are not listening (the core is off or in "Direct" mode) — path checks are limited.') ]));
 
 			/* D29: which rows show on the page — see the comment at `state`.
-			 * The YouTube/Discord "installed and configured strategy" gates
-			 * are a separate plan item; for now a no-rule row shows only via
-			 * the catalog reveal (Re-filter — via the VPN-node check). */
-			const hasVpnNode = (list.nodes || []).some(function(n) { return n.type !== 'direct'; });
+			 * s180 (live report): a row exists ONLY by an explicit user act —
+			 * a rule or a catalog pin. The old auto-visibility («Re-filter
+			 * whenever a VPN node exists») built a row WITHOUT a delete
+			 * button — the user could not remove it by any means. */
 			const hasRuleOf = function(src) {
 				const r = (list.rules || {})[src];
 				const ex = (list.rule_extras || {})[src] || [];
 				return !!(r || ex.length);
 			};
 			const rowVisible = function(src) {
-				if (hasRuleOf(src))
-					return true;
-				if (src === 'refilter')
-					return hasVpnNode;
-				return state.pins.indexOf(src) >= 0;
+				return hasRuleOf(src) || state.pins.indexOf(src) >= 0;
 			};
 
 			presetRows.innerHTML = '';
@@ -1263,43 +1259,36 @@ return view.extend({
 					btns.appendChild(exBtn);
 				}
 
-				/* D29 + s179: the honest exit is a REAL delete (wizard_preset_
-				 * delete; the last section of a source also drops the catalog
-				 * pin). A pinned row without a rule has no section — its ✕
-				 * just unpins (instant, no restart), the row is gone for
-				 * good and can be re-added from the catalog. Extra exits keep
-				 * their own delete buttons. */
+				/* D27 + s180: ✕ deletes the WHOLE ROW in one press — every
+				 * rule section of this source plus the catalog pin (the user
+				 * reads the row as one object; the old one-section delete
+				 * read as «the row came back», live report 2026-11-09).
+				 * A pinned row without a rule has no section — its ✕ just
+				 * unpins (instant, no restart). Extra exits keep their own
+				 * single-rule delete buttons. */
 				const pinned = state.pins.indexOf(preset.source) >= 0;
 				if (rule || pinned) {
 					/* Block E: the delete is a compact ✕ (the row keeps all
 					 * its actions in ONE row); the tooltip carries the name. */
 					const delBtn = E('button', {
 						'class': 'hpui-btn hpui-btn-danger wiz-del', type: 'button',
-						'title': _('Delete the row (rules do not linger anywhere)')
+						'title': _('Delete the row')
 					}, [ '✕' ]);
 					delBtn.addEventListener('click', function() {
 						delBtn.disabled = true;
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting…') ]));
-						const unpinAfter = !rule || (count <= 1 && !(extras && extras.length));
 						const fin = function(r, okMsg) {
 							if (!r || r.result === false)
 								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
 									[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
-							else if (unpinAfter)
-								callPresetPinSet(preset.source, '0').then(function() {
-									dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ okMsg ]));
-									refresh();
-								});
 							else {
 								dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ okMsg ]));
 								refresh();
 							}
 						};
 						if (rule)
-							L.resolveDefault(callPresetDelete(rule.section_id), {}).then(function(r) {
-								fin(r, unpinAfter
-									? _('The row is deleted — add the list from the catalog to bring it back.')
-									: _('Rule deleted — the service follows the general routing rules again ("No rule").'));
+							L.resolveDefault(callPresetDelete(rule.section_id, 'row'), {}).then(function(r) {
+								fin(r, _('The row is deleted — add the list from the catalog to bring it back.'));
 							}).finally(function() { delBtn.disabled = false; });
 						else
 							L.resolveDefault(callPresetPinSet(preset.source, '0'), {}).then(function(r) {
@@ -1524,7 +1513,7 @@ return view.extend({
 			});
 			mForm.appendChild(E('div', { 'class': 'wiz-row' }, [ mSrc, mShow ]));
 			presetRows.appendChild(E('div', { 'class': 'hpui-hint', style: 'margin:0 0 4px' },
-				[ _('Pick a list in the catalog and press "Add" — its row appears in the rows below and stays. A rule appears only after you pick the route in the row; "No rule" just means the route is not decided yet, and ✕ deletes the row for good.') ]));
+				[ _('Pick a list in the catalog and press "Add" — its row appears in the rows below and stays. A rule appears only after you pick the route in the row; "No rule" just means the route is not decided yet.') ]));
 			presetRows.appendChild(mBtn);
 			presetRows.appendChild(mForm);
 

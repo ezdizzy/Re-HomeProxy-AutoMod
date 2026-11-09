@@ -6844,9 +6844,6 @@ msgstr "Подбор стратегии"
 msgid "Delete rule"
 msgstr "Удалить правило"
 
-msgid "Rule deleted — the service follows the general routing rules again (\"No rule\")."
-msgstr "Правило удалено — сервис снова идёт по общим правилам маршрутизации («Нет правила»)."
-
 msgid "Pick a list in the catalog — its row appears on the page; a row without a rule disappears after a reload."
 msgstr "Выберите список в каталоге — его строка появится на странице; строка без правила пропадёт после перезагрузки страницы."
 
@@ -8014,8 +8011,8 @@ msgstr "Агрегат заблокированных IP (~146 источник�
 msgid "The list is in the rows below — pick the route there. While \"No rule\" is picked, nothing is routed for it."
 msgstr "Список в строках ниже — выберите там путь. Пока выбрано «Нет правила», для него ничего не направляется."
 
-msgid "Pick a list in the catalog and press \"Add\" — its row appears in the rows below and stays. A rule appears only after you pick the route in the row; \"No rule\" just means the route is not decided yet, and ✕ deletes the row for good."
-msgstr "Выберите список в каталоге и нажмите «Добавить» — строка появится в списке ниже и останется. Правило появится только после выбора пути в строке; «Нет правила» означает лишь «путь пока не выбран», а ✕ удаляет строку насовсем."
+msgid "Pick a list in the catalog and press \"Add\" — its row appears in the rows below and stays. A rule appears only after you pick the route in the row; \"No rule\" just means the route is not decided yet."
+msgstr "Выберите список в каталоге и нажмите «Добавить» — строка появится в списке ниже и останется. Правило появится только после выбора пути в строке; «Нет правила» означает лишь «путь пока не выбран»."
 
 msgid "Mass list: big aggregates (hundreds of thousands of entries) cost real router memory and are never enabled by default. Add the row anyway?"
 msgstr "Массовый список: большие агрегаты (сотни тысяч записей) расходуют реальную память роутера и по умолчанию не включаются. Всё равно добавить строку?"
@@ -8023,8 +8020,8 @@ msgstr "Массовый список: большие агрегаты (сотн
 msgid "The row is deleted — add the list from the catalog to bring it back."
 msgstr "Строка удалена — чтобы вернуть список, добавьте его из каталога."
 
-msgid "Delete the row (rules do not linger anywhere)"
-msgstr "Удалить строку (правила нигде не остаются жить)"
+msgid "Delete the row"
+msgstr "Удалить строку"
 
 msgid "not routed"
 msgstr "не направлен"

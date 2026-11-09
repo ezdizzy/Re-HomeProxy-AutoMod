@@ -8102,10 +8102,15 @@ const methods = {
 					rules_for_source: count, unchanged: true };
 
 			if (node === '') {
-				/* "Direct" preset = no rule at all (default route IS direct). */
+				/* "Direct" preset = no rule at all (default route IS direct).
+				 * s180: honest verification — a silent no-op delete must read
+				 * as an RPC failure (lesson 417 class guard). */
 				if (target) {
 					c.delete('ravnex', target);
 					c.commit('ravnex');
+					const cf2 = cursor();
+					if (cf2.get_all('ravnex', target))
+						return { result: false, error: 'delete did not persist (uci layer)' };
 					/* Ф1.1b: apply through the opman door (was a synchronous
 					 * generate+reload inside rpcd — unserialized, unverified,
 					 * 20 s client XHR window). The op runner regenerates inside
@@ -8165,13 +8170,18 @@ const methods = {
 		}
 	},
 
-	/* Remove ONE rule section by id (the UI shows which rule it deletes —
-	 * deleting "all rules of a source" would be destructive to manual
-	 * combined setups like YouTube→main + YouTube→Zapret). */
+	/* Remove rule section(s). scope='row' (s180, user decision): the ✕
+	 * button deletes the WHOLE ROW in one press — every rule section of
+	 * the source plus the catalog pin; the user reads the row as one
+	 * object, and the old one-section delete read as «the row came back»
+	 * (live report 2026-11-09). Default scope (extra-exit Delete buttons)
+	 * removes ONE section by id; when the last section of a source goes,
+	 * the pin goes too, so the row does not linger collapsed anywhere. */
 	wizard_preset_delete: {
-		args: { section_id: 'section_id' },
+		args: { section_id: 'section_id', scope: 'scope' },
 		call: function(req) {
-			const sid = trim((req && req.args && req.args.section_id) || '');
+			const a = (req && req.args) || {};
+			const sid = trim('' + (a.section_id || ''));
 			if (!length(sid))
 				return { result: false, error: 'no section id' };
 			const c = cursor();
@@ -8179,14 +8189,50 @@ const methods = {
 			if (!sec || sec['.type'] !== 'proxy_ru_rule')
 				return { result: false, error: 'not a routing rule section' };
 			const src = '' + (sec.source || '');
-			c.delete('ravnex', sid);
-			c.commit('ravnex');
-			/* s179 (user decision): the ✕ button deletes the ROW for good —
-			 * when the LAST section of this source is gone the pin goes too,
-			 * so the row does not linger collapsed anywhere. */
-			if (length(src)) {
+			const scope_row = (trim('' + (a.scope || '')) === 'row');
+			let deleted = 0;
+			/* s180 (user decision): ✕ = the WHOLE ROW in one press — every
+			 * rule section of the source plus the pin. Default scope (the
+			 * extra-exit Delete buttons) removes ONE section; when the last
+			 * section of a source goes, the pin goes too.
+			 * 🔴 УРОК 417 (s180, live): ucode `for..in` по массиву даёт
+			 * ЭЛЕМЕНТЫ — `sids[i]` внутри такого цикла = ИНДЕКСАЦИЯ ПО
+			 * ЗНАЧЕНИЮ = null (`c.delete(conf, null)` = тихий no-op с
+			 * честным ret=null при формальном «успехе» RPC; оп оставался
+			 * completed, config_revision рос, файл не менялся — это и была
+			 * форма бага юзера «строка висит»). Зеркало урока 414 в другую
+			 * сторону: зеркалим for..in в ОБОИХ направлениях и проверяем,
+			 * что цикл носит ЗНАЧЕНИЕ, а не ключ. */
+			if (scope_row) {
+				const sids = [];
+				if (length(src))
+					c.foreach('ravnex', 'proxy_ru_rule', (s) => {
+						if (('' + (s.source || '')) === src)
+							push(sids, '' + s['.name']);
+					});
+				for (let sidv in sids) {
+					c.delete('ravnex', '' + sidv);
+					deleted++;
+				}
+				if (deleted > 0) {
+					c.commit('ravnex');
+					if (length(src))
+						preset_pin_write(src, false);
+				}
+			} else {
+				c.delete('ravnex', sid);
+				c.commit('ravnex');
+				deleted = 1;
+			}
+			/* Honest verification on a FRESH view: the section must actually
+			 * be gone from the file — a silent no-op must read as an RPC
+			 * failure, never as a green light. */
+			const cf = cursor();
+			if (cf.get_all('ravnex', sid))
+				return { result: false, error: 'delete did not persist (uci layer)' };
+			if (!scope_row && length(src)) {
 				let left = 0;
-				c.foreach('ravnex', 'proxy_ru_rule', (s) => {
+				cf.foreach('ravnex', 'proxy_ru_rule', (s) => {
 					if (('' + (s.source || '')) === src)
 						left++;
 				});
@@ -8196,7 +8242,8 @@ const methods = {
 			/* Ф1.1b: apply through the opman door (was a synchronous
 			 * generate+reload inside rpcd). */
 			const ap = op_spawn('reload', 'routing rule delete');
-			return { result: true, action: 'removed', section_id: sid,
+			return { result: true, action: (deleted > 1) ? 'removed_row' : 'removed',
+				section_id: sid, deleted: deleted,
 				apply: { hot: false, result: ap.result === true,
 					op_id: ap.op_id || '', busy: ap.busy === true,
 					error: ap.error || '' } };
@@ -8534,6 +8581,9 @@ const methods = {
 			const bk = list_backup_snapshot('delete: ' + ('' + (sec.name ?? sid)));
 			c.delete('ravnex', sid);
 			c.commit('ravnex');
+			const cf3 = cursor();
+			if (list_section(cf3, sid))
+				return { result: false, error: 'delete did not persist (uci layer)' };
 			system('rm -f ' + shellquote(LISTS_DIR + '/' + sid + '.txt') +
 				' ' + shellquote(LISTS_DIR + '/' + sid + '.json'));
 			const ap = op_spawn('reload', 'user list delete');
