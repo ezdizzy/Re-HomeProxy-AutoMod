@@ -195,7 +195,10 @@ export function classify_key(key) {
 			? { action: ACT_HUNG_KILL, target: nm, class: 'hung' }
 			: { action: null, target: nm, class: 'hung_other' };
 	}
-	/* Б5: только res:core (RSS-крит ядра) — авто-рестарт; прочие res:* —
+	/* Б5: res:core → ACT_CORE_RESTART по КЛЮЧУ; УРОВЕНЬ находки различает
+	 * гейт в collect_findings (ч.263: авто-рестарт только по rss-криту,
+	 * fd/warn-находки — без авто-ремонта). Ручная заявка (validate_manual)
+	 * гейт НЕ проходит — слова пользователя достаточно. Прочие res:* —
 	 * proposal-класс (бюджеты не лечатся рестартом их процессов). */
 	if (index(k, 'res:') === 0) {
 		const nm = substr(k, index(k, ':') + 1);
@@ -260,8 +263,25 @@ export function collect_findings(sent_data, health_data) {
 		const c = classify_key('' + k);
 		if (c == null)
 			continue;   /* loop: и hung_other — не координаторская зона */
-		if (c.action != null)
+		if (c.action != null) {
+			/* 🔴 Б5-гейт (ч.263): классификация ставит res:core
+			 * ACT_CORE_RESTART по ключу, не различая уровень находки.
+			 * Живой случай ч.263: fd-warn (2166/2048) убил здоровое ядро
+			 * identity-kill'ом, шторм реконнектов клиентов собрал fd ≥
+			 * 90%-полосы снова меньше чем за минуту — второй kill; «падение
+			 * ядра» целиком рукотворное. Исполним ремонт ТОЛЬКО для
+			 * rss-крит: fd-крит сознательно без авто-ремонта (соединения
+			 * падают — fd освобождаются сами, fallback-гейт
+			 * res_core_restart_wanted того же мнения), warn — наблюдение,
+			 * находки без level (окно апгрейда) — fail-safe без рестарта.
+			 * По-настоящему мёртвое ядро — зона svc-контура (health down →
+			 * svc:hiddify-c). */
+			if (c.class === 'res' &&
+			    !(f != null && type(f) === 'object' &&
+			      f.what === 'rss' && f.level === 'crit'))
+				continue;
 			add(k, f.label || k, f.reason || '', c.action, c.target, c.class);
+		}
 		else if (c.class === 'monitor' || c.class === 'config')
 			add(k, f.label || k, f.reason || '', null, k, c.class);
 		/* hung_other (ленивые дети automation) пропускается: сами восстанавливаются. */
@@ -512,8 +532,10 @@ function do_hung_kill(name) {
 /* Б5 (сеанс 161): плановый рестарт ядра при RSS-крите — та же механика
  * identity-kill, но семантика «сброс утечки ДО OOM»: процесс ядра жив,
  * завершается по identity, procd respawn поднимает с чистой памятью.
- * Короткая пауза трафика дешевле oom-kill'а с коллатеральными жертвами. */
-function do_core_restart(name) {
+ * Короткая пауза трафика дешевле oom-kill'а с коллатеральными жертвами.
+ * 🔴 ч.263: причина едет в текст ЧЕСТНО (до этого был захардкоженный
+ * «RSS-крит сброшен» — при находке другого сорта лог врал о триггере). */
+function do_core_restart(name, reason) {
 	const e = pm_reg_get('' + name);
 	if (e == null || type(e) !== 'object' || pm_entry_alive(e) !== true)
 		return { ok: true, stale: true, detail: 'ядро уже не работает (identity мертва) — рестарт не нужен, за живость отвечает svc-контур' };
@@ -522,10 +544,12 @@ function do_core_restart(name) {
 		return { ok: false, detail: 'не удалось завершить ядро по identity (pid ' +
 			int(e.pid) + ') — попытка останется в кампании' };
 	return { ok: true, detail: 'ядро перезапущено по identity (pid ' + int(e.pid) +
-		') — RSS-крит сброшен, procd вернёт процесс с чистой памятью' };
+		') — ' + ((reason != null && length('' + reason) > 0)
+			? ('' + reason) : 'причина устранена') +
+		', procd вернёт процесс с чистой памятью' };
 };
 
-export function execute_action(action, target, op_id) {
+export function execute_action(action, target, op_id, reason) {
 	if (action === ACT_SVC_START)
 		return run_svc_start(op_id);
 	if (action === ACT_OP_FINISH)
@@ -533,7 +557,7 @@ export function execute_action(action, target, op_id) {
 	if (action === ACT_HUNG_KILL)
 		return do_hung_kill(target);
 	if (action === ACT_CORE_RESTART)
-		return do_core_restart(target);
+		return do_core_restart(target, reason);
 	return { ok: false, detail: 'неизвестное действие «' + action + '»' };
 };
 
@@ -764,7 +788,8 @@ export function compute_and_recover(opts) {
 			const b = op_begin('repair', cand.entry.action, 'recovery',
 				'recovery: ' + cand.key, 0);
 			if (b != null && b.ok === true) {
-				const res = execute_action(cand.entry.action, cand.entry.target, b.op.op_id);
+				const res = execute_action(cand.entry.action, cand.entry.target,
+					b.op.op_id, cand.entry.reason);
 				op_finish(b.op.op_id, res.ok === true, false, '' + (res.detail || ''));
 				if (res.stale === true) {
 					/* Повод устарел (цель уже закрыта/мертва) — кампания
@@ -958,6 +983,29 @@ export function selftest() {
 	check('cf_tun_route_svc', f['svc:tun-route'] != null &&
 		f['svc:tun-route'].target === 'tun-route', 'TUN-watcher is a procd instance');
 	check('cf_lazy_skipped', f['probe_pool'] == null, 'lazy prober never a recovery key');
+
+	/* 🔴 Б5-гейт (ч.263): ACT_CORE_RESTART у res:core исполним ТОЛЬКО по
+	 * rss-крит-находке; fd-warn/fd-крит/rss-warn/legacy-без-level — без
+	 * авто-ремонта (живой случай: fd-warn 2166/2048 дважды убил здоровое
+	 * ядро через окно респавна). */
+	const cf_rc = function(fd) {
+		return collect_findings({ findings: { 'res:core': fd } }, {});
+	};
+	const cf_rssc = cf_rc({ label: 'Ядро (hiddify-core)', reason: 'RSS 600.0 МБ при бюджете 512 МБ — зона OOM-грани', what: 'rss', level: 'crit' });
+	check('cf_res_rsscrit_restart', cf_rssc['res:core'] != null &&
+		cf_rssc['res:core'].action === ACT_CORE_RESTART &&
+		cf_rssc['res:core'].class === 'res', null);
+	check('cf_res_fdwarn_norestart', cf_rc({ label: 'Ядро (hiddify-core)',
+		reason: 'открытых fd: 2166 при бюджете 2048', what: 'fd', level: 'warn' })['res:core'] == null,
+		'fd-warn must not identity-kill the core');
+	check('cf_res_fdcrit_norestart', cf_rc({ label: 'Ядро (hiddify-core)',
+		reason: 'открытых fd: 4200 при бюджете 4096', what: 'fd', level: 'crit' })['res:core'] == null,
+		'fd-crit core has no auto-restart by decision (connections drop fds naturally)');
+	check('cf_res_rsswarn_norestart', cf_rc({ label: 'Ядро (hiddify-core)',
+		reason: 'RSS 400.0 МБ при бюджете 384 МБ', what: 'rss', level: 'warn' })['res:core'] == null, null);
+	check('cf_res_legacy_norestart', cf_rc({ label: 'Ядро (hiddify-core)',
+		reason: 'legacy, поле level отсутствует', what: 'rss' })['res:core'] == null,
+		'finding without level (upgrade window) must not kill the core');
 
 	/* backoff. */
 	check('backoff_1', backoff_sec(1) === 30, null);

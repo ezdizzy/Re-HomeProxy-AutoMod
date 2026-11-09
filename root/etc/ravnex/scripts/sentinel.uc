@@ -706,7 +706,8 @@ export function res_snapshot(regst) {
 };
 
 /* Причина находки перерасхода (вынесено ч.230 — один текст для свежего
- * вердикта и для гистерезис-удержания). */
+ * вердикта и для гистерезис-удержания). level едет В находке (ч.263):
+ * Recovery гейтит рестарт ядра на what==='rss' && level==='crit'. */
 function res_finding(r, level, what) {
 	let reason;
 	if (what === 'fd')
@@ -721,7 +722,7 @@ function res_finding(r, level, what) {
 				: ' при бюджете ' + sprintf('%.0f', int(r.rss_warn_kb) / 1024) + ' МБ — потребление выше штатного, наблюдение участится');
 	return {
 		status: 'degraded', label: res_label(r.name), reason: reason,
-		confidence: 'certain', what: what
+		confidence: 'certain', what: what, level: level
 	};
 };
 
@@ -1315,6 +1316,9 @@ export function selftest() {
 	check('res_findings_one', length(rf1) === 1 && rf1['res:core'] != null &&
 		rf1['res:core'].status === 'degraded' && rf1['res:mosdns'] == null, null);
 	check('res_findings_label', length(rf1) === 1 && rf1['res:core'].label === 'Ядро (hiddify-core)', null);
+	check('res_findings_level', length(rf1) === 1 && rf1['res:core'].level === 'warn' &&
+		rf1['res:core'].what === 'rss',
+		'level rides the finding — Recovery gate (ч.263) needs it');
 	check('res_findings_empty', length(res_findings(null)) === 0 && length(res_findings([])) === 0, null);
 
 	/* ч.230: гистерезис res-находок — активная fd-находка держится в полосе
