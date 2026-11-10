@@ -341,6 +341,42 @@ const ex_pools = (ex != null && type(ex.pools) === 'array') ? ex.pools : null;
 				out.chosen.unstable_edges = int(e2.unstable_edges || 0);
 				break;
 			}
+		/* ч.272/185 dedgu: the browser sign — did the CHOSEN strategy carry a
+		 * chrome ClientHello through the same dead edges its curl revived?
+		 * ок ≠ браузер ок (ч.271 live fact; сеанс 185 matrix: on a revivable
+		 * pool five formator classes lift uok=1, a hard pool lifts none).
+		 * Signed beside the verdict, never into it: dead-edge revive is a
+		 * bonus measurement (ч.270), the browser twin inherits that role. */
+		for (let e3 in entries) {
+			if (type(e3) !== 'object' || ('' + e3.args) !== ('' + out.chosen.args))
+				continue;
+			let dbok = 0, dbtot = 0, unmeasured = false;
+			if (e3.deep_items != null && type(e3.deep_items) === 'array')
+				/* урок 417: ucode for..in по массиву даёт ЭЛЕМЕНТЫ — индексация
+				 * по значению внутри такого цикла = null (поймано селфтестом) */
+				for (let di in e3.deep_items) {
+					if (type(di) !== 'object' || index('' + di.id, 'dedg') !== 0)
+						continue;
+					if (di.uok == null) {
+						unmeasured = true;
+						continue;
+					}
+					dbtot++;
+					if (di.uok == 1)
+						dbok++;
+				}
+			if (dbtot > 0) {
+				out.chosen.dead_browser_ok = dbok;
+				out.chosen.dead_browser_total = dbtot;
+				push(out.notes, 'браузерная проба мёртвых краёв (chrome-ClientHello): ' +
+					dbok + '/' + dbtot + ' ожили под выбранной стратегией' +
+					((dbok == dbtot) ? ' — стратегия браузер-совместима на мягком классе пулов' :
+						((dbok == 0) ? ' — браузерный Hello под ней на оживлённых curl краях НЕ выживает' : '')));
+			} else if (unmeasured) {
+				push(out.notes, 'браузерная проба мёртвых краёв не проводилась (utls_probe не установлен) — «браузер-совместимость» не измерена');
+			}
+			break;
+		}
 	}
 	if (ex_stun === false) {
 		push(out.notes, 'STUN (голос Discord, UDP/3478) молчит и БЕЗ стратегии (baseline тоже) — провайдерский уровень UDP, а не вина стратегий: провал dcv больше не демотит вердикт (решение пользователя «baseline + provider-note», сеанс 181)');
@@ -546,6 +582,38 @@ export function selftest() {
 		strategy_verdict(true, [ { id: 'ytp', ok: 1 }, { id: 'yti', ok: 1 }, { id: 'dedg1', ok: 0 } ]) === 'best_verified');
 	t('dedg pass still passes',
 		strategy_verdict(true, [ { id: 'ytp', ok: 1 }, { id: 'yti', ok: 1 }, { id: 'dedg2', ok: 1 } ]) === 'best_verified');
+	/* ч.272/185: dedgu — браузерный знак у выбранной стратегии (рядом,
+	 * не в вердикт): uok=1 считается, отсутствие uok = честное «не измерено» */
+	const db_deep = [ { id: 'ytp', ok: 1 }, { id: 'yti', ok: 1 },
+		{ id: 'dedg1', ok: 1, uok: 1, utls_ms: 42 }, { id: 'dedg2', ok: 0, uok: 0, u_err: 'timeout' } ];
+	const rv21 = resource_verdict([
+		{ name: 'A', args: '--a', reach_ok: true, deep_items: db_deep }
+	], 'vn', true, null);
+	t('dedgu browser sign attached',
+		rv21.verdict === 'best_verified' &&
+		rv21.chosen.dead_browser_ok === 1 && rv21.chosen.dead_browser_total === 2 &&
+		index(join(';', rv21.notes), 'chrome-ClientHello') >= 0);
+	const rv22 = resource_verdict([
+		{ name: 'B', args: '--b', reach_ok: true, deep_items: ok_deep }
+	], 'vn', true, null);
+	/* без dedg-пунктов (мёртвых краёв не было) — чистое отсутствие:
+	 * ни полей, ни заметки (заявлять нечего) */
+	t('dedgu absent = clean absence',
+		rv22.verdict === 'best_verified' &&
+		rv22.chosen.dead_browser_ok == null &&
+		rv22.chosen.dead_browser_total == null &&
+		index(join(';', rv22.notes), 'chrome-ClientHello') < 0);
+	/* dedg-пункты есть, uok нет (utls-бинарник отсутствовал) — честное
+	 * «не измерено», а не ноль из нуля */
+	const rv23 = resource_verdict([
+		{ name: 'C', args: '--c', reach_ok: true,
+			deep_items: [ { id: 'ytp', ok: 1 }, { id: 'yti', ok: 1 },
+				{ id: 'dedg1', ok: 1 } ] }
+	], 'vn', true, null);
+	t('dedgu unmeasured (no uok) = honest note',
+		rv23.verdict === 'best_verified' &&
+		rv23.chosen.dead_browser_ok == null &&
+		index(join(';', rv23.notes), 'не проводилась') >= 0);
 	/* ч.270: revive-заметка рядом с вердиктом youtube */
 	const rv20 = resource_verdict([
 		{ name: 'A', args: '--a', reach_ok: true, deep_items: ok_deep }

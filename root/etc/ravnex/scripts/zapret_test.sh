@@ -912,6 +912,22 @@ YTVFLOW
 		else
 			( out=$(curl -sL $DRANGE --max-redirs 3 --resolve "${dhost}:443:${dip}" -o "$DBODY" -w '%{http_code} %{time_total} %{size_download} %{speed_download} %{time_starttransfer}' --connect-timeout 4 --max-time 9 -k "$durl" 2>/dev/null); echo "$out $?" > "$TMP/d_$did" ) >/dev/null 2>&1 &
 		fi
+		# ч.272/185 dedgu: the browser ClientHello probe (utls chrome) rides the
+		# SAME temp queue for the dead-edge items — curl revive ≠ browser revive
+		# (session 183 live fact: TSPU eats the browser hello while curl passes;
+		# session 185 live matrix: on a revivable pool FIVE formator classes lift
+		# uok=1 for the chrome hello on the honest direct contour). The verdict
+		# file u_dedgN feeds deep_build's browser sign. Absent binary → honest
+		# curl-only (same contract as the handshake pass).
+		case "$did" in dedg1|dedg2)
+			if [ -n "$UTLS" ]; then
+				if [ -n "$PROBE_UID" ]; then
+					su -s /bin/sh daemon -c "/usr/bin/utls_probe -host '${dhost}' -ip '${dip}' -fp chrome -timeout 10 > '${TMP}/u_${did}'" >/dev/null 2>&1 &
+				else
+					( /usr/bin/utls_probe -host "${dhost}" -ip "${dip}" -fp chrome -timeout 10 > "$TMP/u_$did" 2>/dev/null ) &
+				fi
+			fi
+		;; esac
 	done
 	dn=0
 	while [ "$dn" -lt 45 ]; do
@@ -919,6 +935,12 @@ YTVFLOW
 		for dp in $DEEP_PROBES; do
 			did=${dp%%|*}
 			[ -s "$TMP/d_$did" ] || all=0
+			# dedgu verdict rides the collection window too — a half-written
+			# u_dedgN would race the builder (the handshake pass guards the
+			# same way).
+			if [ -n "$UTLS" ]; then
+				case "$did" in dedg1|dedg2) [ -s "$TMP/u_$did" ] || all=0 ;; esac
+			fi
 		done
 	[ "$all" = 1 ] && break
 	sleep 1

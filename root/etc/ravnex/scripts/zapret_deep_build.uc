@@ -55,6 +55,24 @@ const num = (v) => {
 	return (n != n) ? 0.0 : n;   /* NaN-проверка без isNaN (его может не быть) */
 };
 
+/* ч.232: браузерная ClientHello-проба тега (utls_probe) → {uok, utls_ms,
+ * u_err}|null. ok в этой записи остаётся классом CURL; политику « Passed =
+ * оба класса» применяет ранжирующий merge. Честное отсутствие (нет файла)
+ * = бинарник не установлен — «не измерено», не провал (урок 91).
+ * ч.185: declared BEFORE deep_item — ucode лексическая резолюция (урок 405):
+ * deep_item вызывает её для dedg-тегов (dedgu). */
+function utls_item(tag) {
+	const up = TMP + '/u_' + tag;
+	if (!access(up)) return null;
+	let j = null;
+	try { j = json(readfile(up) || ''); } catch (e) { j = null; }
+	if (j == null || type(j) !== 'object')
+		return null;
+	if (j.ok == 1)
+		return { uok: 1, utls_ms: int(j.tls_ms || 0), alpn: '' + (j.alpn || ''), u_err: '' };
+	return { uok: 0, utls_ms: 0, alpn: '', u_err: '' + (j.err || 'fail') };
+}
+
 /* Один пункт deep-батареи → унифицированная запись (или null — пробы не
  * было: честное отсутствие, не «провал», урок 91). */
 function deep_item(id) {
@@ -107,6 +125,18 @@ function deep_item(id) {
 		item.edge = 'dead';
 		item.ok = ((item.code === '200' || item.code === '206') &&
 			item.bytes >= 262144 && item.speed >= 65536) ? 1 : 0;
+		/* ч.185 dedgu: the browser-verdict twin of the curl revive — uok=1 on a
+		 * dead edge means the strategy carries a BROWSER hello through it (the
+		 * «браузер-совместимая стратегия» sign; curl-only revive stays visible
+		 * in item.ok as before). Absent u_ file = unmeasured (no utls binary),
+		 * honest absence keeps the payload identical to pre-dedgu sweeps. */
+		const du = utls_item(id);
+		if (du != null) {
+			item.uok = du.uok;
+			item.utls_ms = du.utls_ms;
+			if (du.uok != 1)
+				item.u_err = du.u_err;
+		}
 		return item;
 	}
 	item.sec = num(parts[1]);
@@ -176,22 +206,6 @@ function hand_item(tag) {
 		reason = (rcmap['' + rc] != null) ? rcmap['' + rc] : 'fail';
 	}
 	return { code: code, tls: tls, redirect: redirect, rc: rc, ok: ok, reason: reason };
-}
-
-/* ч.232: браузерная ClientHello-проба тега (utls_probe) → {uok, utls_ms,
- * u_err}|null. ok в этой записи остаётся классом CURL; политику « Passed =
- * оба класса» применяет ранжирующий merge. Честное отсутствие (нет файла)
- * = бинарник не установлен — «не измерено», не провал (урок 91). */
-function utls_item(tag) {
-	const up = TMP + '/u_' + tag;
-	if (!access(up)) return null;
-	let j = null;
-	try { j = json(readfile(up) || ''); } catch (e) { j = null; }
-	if (j == null || type(j) !== 'object')
-		return null;
-	if (j.ok == 1)
-		return { uok: 1, utls_ms: int(j.tls_ms || 0), alpn: '' + (j.alpn || ''), u_err: '' };
-	return { uok: 0, utls_ms: 0, alpn: '', u_err: '' + (j.err || 'fail') };
 }
 
 	let deep_all = 0, deep_total_all = 0;
