@@ -8171,3 +8171,12 @@ msgstr "Глобальный QUIC-блок ВКЛЮЧЁН и проверен �
 
 msgid "Global QUIC block is OFF and verified — only the engine-side googlevideo reject remains."
 msgstr "Глобальный QUIC-блок ВЫКЛЮЧЕН и проверен — остаётся только per-origin reject googlevideo в ядре."
+
+msgid "For mismatches the first layers cannot classify: the plain-view IP is looked up via Team Cymru origin ASN (TXT over DoH through the tunnel) and cached by network prefix — one answer covers the whole range. If the ASN belongs to a CDN/anycast network (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), the mismatch is not poisoning. Adds an external lookup only for candidates that stayed ambiguous; extend the list via /etc/ravnex/resources/cdn_asn.txt (one ASN number per line). Applied after Restart service."
+msgstr "Для расхождений, которые первые слои не смогли классифицировать: IP в plain-виде уточняется через Team Cymru origin ASN (TXT-запрос по DoH через туннель) и кэшируется по сетевому префиксу — один ответ покрывает весь диапазон. Если ASN принадлежит CDN/anycast-сети (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), расхождение — не подмена. Внешний запрос добавляется только для кандидатов, оставшихся неоднозначными; список расширяется через /etc/ravnex/resources/cdn_asn.txt (по одному номеру ASN в строке). Применяется после «Перезапустить службу»."
+
+msgid "The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled)."
+msgstr "Стратегия обслуживает трафик, направленный в ByeDPI (главный узел = ByeDPI, правила сервисов или профили Композиции ниже). «Сохранить» записывает стратегию и флаги и перезапускает сервис; сам ByeDPI включается на странице «Подключение». «UDP поверх TCP» оборачивает UDP-трафик в TCP-поток ByeDPI; «Звонки Discord через Zapret» направляет голосовые UDP-порты Discord в Zapret (требуется включённый Zapret)."
+
+msgid "/etc/ravnex/certs/..., /etc/acme/..., /etc/ssl/..."
+msgstr "/etc/ravnex/certs/…, /etc/acme/…, /etc/ssl/…"

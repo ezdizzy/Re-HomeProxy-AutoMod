@@ -8153,3 +8153,36 @@ msgstr ""
 
 msgid "Global QUIC block is OFF and verified — only the engine-side googlevideo reject remains."
 msgstr ""
+
+msgid "For mismatches the first layers cannot classify: the plain-view IP is looked up via Team Cymru origin ASN (TXT over DoH through the tunnel) and cached by network prefix — one answer covers the whole range. If the ASN belongs to a CDN/anycast network (Google, Cloudflare, Microsoft, Akamai, Amazon, Fastly…), the mismatch is not poisoning. Adds an external lookup only for candidates that stayed ambiguous; extend the list via /etc/ravnex/resources/cdn_asn.txt (one ASN number per line). Applied after Restart service."
+msgstr ""
+
+msgid "The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled)."
+msgstr ""
+
+msgid "/etc/ravnex/certs/..., /etc/acme/..., /etc/ssl/..."
+msgstr ""
+
+# s188: ucode-side sweep msgids lived in po, were missing in templates (pot drift)
+msgid "QUIC (UDP 443) to the YouTube video edge is OPEN (measured) — provider state at the sweep moment, NOT a strategy verdict: strategies without fake-QUIC leave browser QUIC attempts unserved (the browser falls back to TCP)."
+msgstr "QUIC (UDP 443) до видео-края YouTube ОТКРЫТ (замер) — состояние провайдера в момент свипа, НЕ вердикт стратегий: стратегии без fake-QUIC оставляют QUIC-попытки браузера без дезинка (браузер падает на TCP)."
+
+# s188: ucode-side sweep msgids lived in po, were missing in templates (pot drift)
+msgid "QUIC (UDP 443) to the YouTube video edge is REJECTED (measured) — provider state at the sweep moment, NOT a strategy verdict: the browser falls back to TCP quickly; TCP-only strategies serve the whole resource."
+msgstr "QUIC (UDP 443) до видео-края YouTube ОТВЕРГАЕТСЯ (замер) — состояние провайдера в момент свипа, НЕ вердикт стратегий: браузер быстро падает на TCP; TCP-only стратегии обслуживают весь ресурс."
+
+# s188: ucode-side sweep msgids lived in po, were missing in templates (pot drift)
+msgid "QUIC (UDP 443) to the YouTube video edge got NO answer (measured) — provider state at the sweep moment, NOT a strategy verdict: the browser falls back to TCP; TCP-only strategies serve the whole resource."
+msgstr "QUIC (UDP 443) до видео-края YouTube НЕ ОТВЕЧАЕТ (замер) — состояние провайдера в момент свипа, НЕ вердикт стратегий: браузер падает на TCP; TCP-only стратегии обслуживают весь ресурс."
+
+# s188: ucode-side sweep msgids lived in po, were missing in templates (pot drift)
+msgid "MEASUREMENT UNAVAILABLE"
+msgstr "НЕ УДАЛОСЬ ИЗМЕРИТЬ"
+
+# s188: ucode-side sweep msgids lived in po, were missing in templates (pot drift)
+msgid "the test host did not answer for ANY strategy and in both control passes — a measurement failure (network drift/TSPU), not a strategy verdict; re-run the sweep later."
+msgstr "тестовый хост не ответил НИ У ОДНОЙ стратегии и в обоих контрольных проходах — отказ измерения (дрейф сети/TSPU), а не вердикт стратегий; повторите свип позже."
+
+# s188: ucode-side sweep msgids lived in po, were missing in templates (pot drift)
+msgid "Served via node rule — lab verdict not applicable"
+msgstr "Обслуживается правилом на узел — лабораторный вердикт не применим"
