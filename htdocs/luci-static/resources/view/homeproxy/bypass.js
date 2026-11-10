@@ -198,6 +198,15 @@ const callYtSteerSet = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Session 189: manual forget of the auto-learned dead pools (tmpfs state
+ * cleared + verified regen; the content guard keeps an ALIVE pool from
+ * being re-learned, a dead one returns on its own within minutes). */
+const callYtSteerLearnedClear = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'yt_steer_learned_clear',
+	expect: { '': {} }
+});
+
 const callByedpiTest = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'byedpi_strategy_test',
@@ -772,9 +781,27 @@ return view.extend({
 		const steerBox = E('input', { type: 'checkbox' });
 		steerBox.checked = (uci.get('ravnex', 'config', 'yt_steer_dead') === '1');
 		const steerNote = E('p', { 'class': 'wiz-note', style: 'margin-top:2px' });
+		const steerClear = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button', style: 'margin-left:12px' },
+			[ _('Forget learned pools') ]);
+		steerClear.addEventListener('click', function() {
+			if (!window.confirm(_('Forget the learned dead YouTube pools? The core config regenerates (a short connection blip); an ALIVE pool will not be re-learned (the content guard), a dead one returns on its own within minutes.')))
+				return;
+			steerClear.disabled = true;
+			dom.content(steerNote, E('span', { 'class': 'hpui-hint' }, [ _('Applying…') ]));
+			L.resolveDefault(callYtSteerLearnedClear(), {}).then(function(r) {
+				steerClear.disabled = false;
+				if (r && r.result === true) {
+					dom.content(steerNote, E('span', { 'class': 'hpui-hint' },
+						[ _('Learned pools forgotten — the config is regenerated.') ]));
+					return;
+				}
+				dom.content(steerNote, E('span', { 'class': 'hpui-hint' },
+					[ _('Failed: ') + ((r && r.error) || _('rpc error')) ]));
+			});
+		});
 		dpiMap.appendChild(E('div', { 'class': 'wiz-row', style: 'margin-top:6px' },
 			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
-				[ steerBox, ' ' + _('Steer dead YouTube pools (DNS refuse)') ]) ]));
+				[ steerBox, ' ' + _('Steer dead YouTube pools (DNS refuse)') ]), steerClear ]));
 		dpiMap.appendChild(E('p', { 'class': 'wiz-note', style: 'margin-top:2px' },
 			[ _('Pools that never delivered a single alive edge under ANY measured strategy (dead whole, fresh ≤48 h) are DNS-REJECTED in the core config: instant refusal, the player switches to a live edge in milliseconds instead of hanging 5–10 s. The pool catalog is maintained by the Strategy Lab sweeps; the pool currently serving the stream is never refused; an empty catalog means nothing is refused. Toggling regenerates the core config (verified apply). The catalog feeder runs inside MultiDNS (mosdns).') ]));
 		dpiMap.appendChild(steerNote);

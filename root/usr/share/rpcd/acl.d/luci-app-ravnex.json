@@ -57,7 +57,7 @@
 					"zapret_fuzz_start", "zapret_fuzz_apply", "zapret_device_verdict_set",
 					"wizard_compose_run", "wizard_compose_apply", "wizard_compose_rollback", "wizard_compose_save",
 					"wizard_dpi_probe", "wizard_autopilot_set", "wizard_autopilot_hold_release", "wizard_byedpi_set", "wizard_auto_pick_start",
-				"yt_steer_set", "yt_steer_regenerate",
+				"yt_steer_set", "yt_steer_regenerate", "yt_steer_learned_clear",
 					"wizard_provider_scan", "wizard_dpidetect_update", "wizard_ai_nodes_check",
 					"wizard_service_profile_run",
 					"wizard_preset_apply", "wizard_preset_delete", "wizard_strategy_update",

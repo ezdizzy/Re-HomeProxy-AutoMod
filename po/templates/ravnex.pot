@@ -8186,3 +8186,15 @@ msgstr "тестовый хост не ответил НИ У ОДНОЙ стр�
 # s188: ucode-side sweep msgids lived in po, were missing in templates (pot drift)
 msgid "Served via node rule — lab verdict not applicable"
 msgstr "Обслуживается правилом на узел — лабораторный вердикт не применим"
+
+# s189: learned-pools forget button (bypass.js serving map)
+msgid "Forget learned pools"
+msgstr ""
+
+# s189: learned-pools forget button (bypass.js serving map)
+msgid "Forget the learned dead YouTube pools? The core config regenerates (a short connection blip); an ALIVE pool will not be re-learned (the content guard), a dead one returns on its own within minutes."
+msgstr ""
+
+# s189: learned-pools forget button (bypass.js serving map)
+msgid "Learned pools forgotten — the config is regenerated."
+msgstr ""

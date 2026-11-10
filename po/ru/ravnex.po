@@ -8180,3 +8180,12 @@ msgstr "Стратегия обслуживает трафик, направле
 
 msgid "/etc/ravnex/certs/..., /etc/acme/..., /etc/ssl/..."
 msgstr "/etc/ravnex/certs/…, /etc/acme/…, /etc/ssl/…"
+
+msgid "Forget learned pools"
+msgstr "Забыть выученные пулы"
+
+msgid "Forget the learned dead YouTube pools? The core config regenerates (a short connection blip); an ALIVE pool will not be re-learned (the content guard), a dead one returns on its own within minutes."
+msgstr "Забыть выученные мёртвые пулы YouTube? Конфиг ядра перегенерируется (короткий обрыв соединений); ЖИВОЙ пул не переучится (гвард контента), мёртвый вернётся сам за минуты."
+
+msgid "Learned pools forgotten — the config is regenerated."
+msgstr "Выученные пулы забыты — конфиг перегенерирован."
