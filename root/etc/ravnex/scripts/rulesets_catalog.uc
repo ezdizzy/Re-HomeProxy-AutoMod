@@ -704,10 +704,23 @@ export const CATALOG = [
 		covers: 'Domains working only from UA', consumption: 'remote', format: 'srs', seed: false, default_on: false, heavy: false,
 		license: 'none', repo: 'itdoginfo/allow-domains',
 		sources: [ { url: 'https://github.com/itdoginfo/allow-domains/releases/latest/download/ukraine_inside.srs', kind: 'release', file: 'ukraine_inside.srs' } ] },
-	{ id: 'google_ai', tag: 'hp-ru-google_ai', group: 'ai', name: 'Google AI (shipped inline list)',
-		covers: 'Google AI endpoints — shipped inline (lesson 355), conveyor skips it',
-		consumption: 'inline', format: 'inline', seed: false, default_on: true, heavy: false,
-		license: 'none', repo: 'itdoginfo/allow-domains', sources: [] },
+	{ id: 'google_ai', tag: 'hp-ru-google_ai', group: 'ai',
+		name: 'Google AI / Gemini (hub, self-updating)',
+		covers: 'Gemini/Google AI Studio domains — hub cat-gemini.srs (CI-validated, self-updating)',
+		/* Сеанс 184: захардкоженный инлайн-список (lesson 355) заменён
+		 * ОБНОВЛЯЕМЫМ рулесетом хаба. CI хаба валидирует каждый ассет
+		 * (непустота/SRS-магия/sha256 в манифесте) — закрывает класс отказа,
+		 * из-за которого инлайн и появился (мёртвый itdog google_ai.srs:
+		 * 375 Б, ноль gemini-доменов). inline_pref:false = remote-рулесет
+		 * даже при живом shipped-списке; resources/rule_google_ai.txt
+		 * остаётся в пакете как откат (вернуть inline_pref — инлайн-рендер
+		 * вернётся без прочих правок). Побочный эффект фикса аудита №4:
+		 * 'remote' делает google_ai routable — RPC-вхайтлист правил
+		 * принимает источник, UI-предложение «Google AI» больше не тупик. */
+		consumption: 'remote', format: 'srs', inline_pref: false, seed: false, default_on: true, heavy: false,
+		hub_id: 'gemini',
+		license: 'MIT-derived', repo: 'MetaCubeX/meta-rules-dat',
+		sources: [ { url: 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/google-gemini.srs', kind: 'raw' } ] },
 	{ id: 'twitch', tag: 'hp-ru-twitch', group: 'video', name: 'Twitch (domains)',
 		covers: 'Twitch domains',
 		coverage: 'surrogate',
@@ -766,11 +779,13 @@ function hub_ext(e) {
 }
 
 /* The hub source record for an entry, or null when the hub does not publish
- * the category (inline lists, heavy archives marked hub:false). */
+ * the category (inline lists, heavy archives marked hub:false). Сеанс 184:
+ * hub_id переопределяет имя хабной категории, когда legacy-источник приложения
+ * не совпадает с каталожным id хаба (google_ai → gemini). */
 export function hub_source_for(e) {
 	if (!e || e.consumption === 'inline' || e.consumption === 'archive' || e.hub === false)
 		return null;
-	const f = 'cat-' + e.id + hub_ext(e);
+	const f = 'cat-' + (e.hub_id || e.id) + hub_ext(e);
 	return {
 		url: 'https://github.com/' + HUB_REPO + '/releases/latest/download/' + f,
 		kind: 'release', repo: HUB_REPO, file: f, hub: true

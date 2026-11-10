@@ -82,6 +82,7 @@ import {
 	finish as op_finish, get_op as op_get
 } from '/etc/ravnex/scripts/opman.uc';
 import { emit as ev_emit } from '/etc/ravnex/scripts/eventbus.uc';
+import { cursor as uci_cursor } from 'uci';
 
 /* ── константы (урок 216: всё наверху, выше первой функции) ─────────────── */
 
@@ -427,6 +428,138 @@ export function config_findings(checks) {
 	return out;
 };
 
+/* ── дрейф правил UCI ↔ конфиг ядра (сеанс 184) ───────────────────────────
+ * Живой случай (ночь 183→184): правило YouTube в UCI вернулось на zapret-out,
+ * а работающее ядро продолжало исполнять конфиг, сгенерированный в момент
+ * ручного узла VPN — UI говорил одно, трафик шёл по-другому, молча.
+ * Гейт — ТОЛЬКО детектор: регенерация конфига = зона apply (Ф2.3),
+ * Sentinel не применяет конфигурацию сам. */
+
+/* SPECIAL-значения node правила: ожидаемый tag outbound ядра совпадает
+ * буквально. Всё прочее (cfg-<id>) рендерится клоном hp-ru-<src>-out. */
+const DRIFT_SPECIAL_NODES = [ 'zapret-out', 'direct-out', 'byedpi-out', 'main-out' ];
+
+/* Карта «источник → outbound» из ЖИВОГО конфига ядра. Источник берётся
+ * СНАЧАЛА из outbound-тега hp-ru-<src>-out (правило может матчить инлайн
+ * доменами — живой случай google_ai), а для спец-полос (outbound = сам узел,
+ * например zapret-out) — из rule_set hp-ru-<src>(-ip). Чистая функция
+ * (selftest). */
+export function core_rule_map(cfg) {
+	const m = {};
+	if (cfg == null || type(cfg) !== 'object')
+		return m;
+	const rules = (cfg.route != null && cfg.route.rules != null && type(cfg.route.rules) === 'array')
+		? cfg.route.rules : [];
+	for (let i = 0; i < length(rules); i++) {
+		const r = rules[i];
+		if (('' + (r.action || '')) !== 'route' || !length('' + (r.outbound || '')))
+			continue;
+		let src = null;
+		const ob = '' + r.outbound;
+		const tm = match(ob, /^hp-ru-(.+)-out$/);
+		if (tm != null && length(tm[1]))
+			src = tm[1];
+		if (src == null) {
+			const sets = (r.rule_set != null && type(r.rule_set) === 'array') ? r.rule_set : [];
+			for (let k = 0; k < length(sets); k++) {
+				const rs = '' + sets[k];
+				if (substr(rs, 0, 6) !== 'hp-ru-')
+					continue;
+				let s2 = substr(rs, 6);
+				const ip = index(s2, '-ip');
+				if (ip > 0)
+					s2 = substr(s2, 0, ip);
+				if (length(s2)) {
+					src = s2;
+					break;
+				}
+			}
+		}
+		if (src == null || !length(src) || m[src] != null)
+			continue;
+		m[src] = ob;
+	}
+	return m;
+};
+
+/* Карта «tag → {type, server}» исходящих конфига ядра (для сверки клона
+ * правила с узлом). Чистая функция. */
+export function core_outb_map(cfg) {
+	const m = {};
+	const obs = (cfg != null && cfg.outbounds != null && type(cfg.outbounds) === 'array') ? cfg.outbounds : [];
+	for (let i = 0; i < length(obs); i++) {
+		const o = obs[i];
+		if (o == null || !length('' + (o.tag || '')))
+			continue;
+		m['' + o.tag] = { type: '' + (o.type || ''), server: '' + (o.server || '') };
+	}
+	return m;
+};
+
+/* Сверка (чистая функция — selftest). rules_obj = { src: node } по ПЕРВОМУ
+ * включённому правилу источника (семантика rule_node_of автопилота).
+ * Возвращает массив человекочитаемых расхождений (пусто = сходится). */
+export function drift_hits(core_map, outb, rules_obj) {
+	const hits = [];
+	if (core_map == null || rules_obj == null)
+		return hits;
+	const special = ' ' + join(' ', DRIFT_SPECIAL_NODES) + ' ';
+	for (let src in rules_obj) {
+		const node = '' + rules_obj[src];
+		if (!length(node))
+			continue;
+		const core = core_map[src];
+		if (core == null) {
+			push(hits, src + ': правило включено в UCI, но в конфиге ядра его нет');
+			continue;
+		}
+		if (index(special, ' ' + node + ' ') >= 0) {
+			if (core !== node)
+				push(hits, src + ': UCI → ' + node + ', ядро несёт ' + core);
+			continue;
+		}
+		/* cfg-<id>: клон обязан существовать и совпадать с узлом по type/server
+		 * (подмена узла без регенерации ловится здесь же). */
+		const want_tag = 'hp-ru-' + src + '-out';
+		if (core !== want_tag) {
+			push(hits, src + ': UCI узел ' + node + ', ядро несёт ' + core);
+			continue;
+		}
+		const clone = (outb != null && outb[want_tag] != null) ? outb[want_tag] : null;
+		const srcob = (outb != null && outb['cfg-' + node + '-out'] != null) ? outb['cfg-' + node + '-out'] : null;
+		if (clone == null) {
+			push(hits, src + ': UCI узел ' + node + ', клона ' + want_tag + ' в конфиге ядра нет');
+			continue;
+		}
+		if (srcob == null)
+			continue;   /* узел удалён из конфига — судить не по чему (честный предел) */
+		if (('' + (clone.type || '')) !== ('' + (srcob.type || '')) ||
+		    (('' + (clone.server || '')) !== ('' + (srcob.server || ''))))
+			push(hits, src + ': UCI узел ' + node + ' (' + (srcob.type || '?') + ' ' + (srcob.server || '?') +
+				'), ядро несёт клон ' + (clone.type || '?') + ' ' + (clone.server || '?'));
+	}
+	return hits;
+};
+
+/* Первое включённое правило каждого источника из UCI (read-only).
+ * null = курсор недоступен (окно коммита) — проверка честно пропускается. */
+function uci_rule_nodes() {
+	const first = {};
+	try {
+		uci_cursor().foreach('ravnex', 'proxy_ru_rule', (s) => {
+			if (('' + (s.enabled || '')) !== '1')
+				return;
+			const src = trim('' + (s.source || ''));
+			if (!length(src) || first[src] != null)
+				return;
+			first[src] = '' + (s.node || '');
+		});
+	} catch (e) {
+		return null;
+	}
+	return first;
+}
+
 function build_config_checks(core_expected, mdns_expected) {
 	const checks = [];
 	push(checks, {
@@ -453,6 +586,23 @@ function build_config_checks(core_expected, mdns_expected) {
 			ok: access(CORE_LKG),
 			reason: '.lastgood отсутствует — страховка Ф1.2 ещё не создана (её напишет первый верифицированный старт)'
 		});
+		/* Дрейф правил UCI ↔ конфиг ядра (сеанс 184): молчаливое расхождение
+		 * «UI говорит Zapret, ядро несёт VPN-клон» держится до ближайшей
+		 * регенерации. Детектор без авто-ремонта (регенерация = зона apply). */
+		{
+			const cfgj = (raw != null) ? parse_json(raw) : null;
+			const rules_u = uci_rule_nodes();
+			if (cfgj != null && rules_u != null) {
+				const dh = drift_hits(core_rule_map(cfgj), core_outb_map(cfgj), rules_u);
+				push(checks, {
+					key: 'drift_routing', label: 'Сходимость правил (UCI ↔ конфиг ядра)', severity: 'degraded',
+					ok: length(dh) === 0,
+					reason: length(dh)
+						? (join('; ', dh) + ' — ближайшая регенерация (кнопка «Применить») выровняет маршрут')
+						: ''
+				});
+			}
+		}
 	}
 	if (mdns_expected) {
 		push(checks, {
@@ -1608,6 +1758,47 @@ export function selftest() {
 	check('res_hyst_clear', row_out['res:core'] == null, null);
 	check('res_hyst_class_match', length(res_findings([ mkrow(1900) ],
 		{ 'res:core': { status: 'degraded', label: 'x', reason: 'x', what: 'rss' } })) === 0, null);
+
+	/* Дрейф правил UCI ↔ конфиг ядра (сеанс 184). */
+	const drm = core_rule_map({ route: { rules: [
+		{ action: 'route', outbound: 'zapret-out', rule_set: [ 'hp-ru-discord' ] },
+		{ action: 'route', outbound: 'hp-ru-youtube-out', rule_set: [ 'hp-ru-youtube' ] },
+		{ action: 'route', outbound: 'hp-ru-telegram-out', rule_set: [ 'hp-ru-telegram', 'hp-ru-telegram-ip' ] },
+		{ action: 'sniff', rule_set: [ 'hp-ru-valve' ] }
+	] } });
+	check('drift_core_map', drm['discord'] === 'zapret-out' && drm['youtube'] === 'hp-ru-youtube-out' &&
+		drm['telegram'] === 'hp-ru-telegram-out' && drm['valve'] == null, null);
+	const dobmap = {
+		'zapret-out': { type: 'direct', server: '' },
+		'hp-ru-youtube-out': { type: 'naive', server: 'vpn-a.example' },
+		'cfg-d9648d31-out': { type: 'naive', server: 'vpn-a.example' },
+		'hp-ru-google_ai-out': { type: 'hysteria2', server: 'vpn-a.example' },
+		'cfg-d50be58b-out': { type: 'hysteria2', server: 'vpn-a.example' }
+	};
+	const dh1 = drift_hits({ youtube: 'hp-ru-youtube-out' }, dobmap, { youtube: 'zapret-out' });
+	check('drift_special_mismatch', length(dh1) === 1 && index(dh1[0], 'youtube') === 0 &&
+		index(dh1[0], 'zapret-out') > 0, 'UCI zapret-out vs core tunnel clone = the morning divergence');
+	const dh2 = drift_hits({ youtube: 'hp-ru-youtube-out' }, dobmap, { youtube: 'd9648d31' });
+	check('drift_clone_consistent', length(dh2) === 0, 'matching node clone is clean');
+	const dh3 = drift_hits({ youtube: 'hp-ru-youtube-out' }, dobmap, { youtube: 'd50be58b' });
+	check('drift_clone_stale_swap', length(dh3) === 1 && index(dh3[0], 'd50be58b') > 0,
+		'node swapped without regeneration is caught');
+	const dh4 = drift_hits({ discord: 'zapret-out' }, dobmap, { discord: 'zapret-out' });
+	check('drift_special_ok', length(dh4) === 0, null);
+	const dh5 = drift_hits({}, dobmap, { youtube: 'zapret-out' });
+	check('drift_rule_missing', length(dh5) === 1 && index(dh5[0], 'нет') > 0, null);
+	const dh6 = drift_hits({ google_ai: 'hp-ru-google_ai-out' }, dobmap, { google_ai: 'd50be58b' });
+	check('drift_clone_same', length(dh6) === 0, 'type+server equal = clean');
+	const dh7 = drift_hits({ google_ai: 'hp-ru-google_ai-out' }, dobmap, { google_ai: 'd9648d31' });
+	check('drift_clone_type_diff', length(dh7) === 1, 'clone type/server mismatch caught');
+	check('drift_null_inputs', length(drift_hits(null, dobmap, {})) === 0 && length(core_rule_map(null)) === 0, null);
+	const dh8 = drift_hits({ youtube: 'zapret-out' }, dobmap, { youtube: '' });
+	check('drift_empty_node_skip', length(dh8) === 0, 'empty node value is skipped honestly');
+	const drm2 = core_rule_map({ route: { rules: [
+		{ action: 'route', outbound: 'hp-ru-google_ai-out', domain: [ 'gemini.google.com' ] }
+	] } });
+	check('drift_core_map_inline_domain', drm2['google_ai'] === 'hp-ru-google_ai-out',
+		'inline-domain matcher rule is mapped via its clone tag (live google_ai case)');
 
 	check('res_snapshot_dead_pid', length(res_snapshot({ core: { pid: 999999, start: 1 } })) === 0, null);
 	check('res_snapshot_empty', length(res_snapshot(null)) === 0, null);

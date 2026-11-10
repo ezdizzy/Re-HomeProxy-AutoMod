@@ -70,6 +70,17 @@ function hp_service_inline_domains(src) {
 	return length(out) ? out : null;
 }
 
+/* Сеанс 184: категория может ПРЕДПОЧИТАТЬ обновляемый remote-рулесет хаба,
+ * даже когда shipped-список жив (флаг inline_pref:false в каталоге).
+ * Хаб-CI валидирует каждый ассет (непустота, SRS-магия, sha256 в манифесте) —
+ * класс отказа lesson 355 («мёртвый апстрим прислал пустой .srs») для
+ * хаб-пути закрыт. Shipped-список остаётся честным откатом: вернуть
+ * inline_pref true — инлайн-рендер вернётся без прочих правок. */
+function hp_remote_preferred(src) {
+	const ce = ls_catalog_find(src);
+	return (ce != null && ce.inline_pref === false);
+}
+
 /* const features = ubus.call('luci.ravnex', 'singbox_get_features') || {}; */
 
 /* UCI config start */
@@ -1343,7 +1354,7 @@ if (!isEmpty(main_node)) {
 			const dnst = ru_dns_target_of(cfg);
 			if (!dnst)
 				continue;
-			const inline_dns = hp_service_inline_domains(cfg.source);
+			const inline_dns = hp_remote_preferred(cfg.source) ? null : hp_service_inline_domains(cfg.source);
 			if (inline_dns)
 				push(config.dns.rules, {
 					domain_suffix: inline_dns,
@@ -3092,7 +3103,7 @@ if (!isEmpty(main_node)) {
 			/* Routing rules. Sources with a shipped local list ride an INLINE
 			 * domain_suffix rule (lesson 355 — the remote asset can silently
 			 * go stale and the rule dies without a trace). */
-			const inline_dom = hp_service_inline_domains(cfg.source);
+			const inline_dom = hp_remote_preferred(cfg.source) ? null : hp_service_inline_domains(cfg.source);
 			if (inline_dom) {
 				push(config.route.rules, {
 					domain_suffix: inline_dom,
@@ -3184,10 +3195,12 @@ if (!isEmpty(main_node)) {
 							update_interval: '1d'
 						});
 					}
-				} else if (hp_service_inline_domains(cfg.source)) {
+				} else if (!hp_remote_preferred(cfg.source) && hp_service_inline_domains(cfg.source)) {
 					/* Shipped inline list (lesson 355) — no rule-set to
 					 * declare: the route/DNS rules above carry the
-					 * domain_suffix array directly. */
+					 * domain_suffix array directly. Сеанс 184: категория с
+					 * inline_pref:false (google_ai → hub) минует ветку и
+					 * объявляет remote-рулесет ниже. */
 				} else if (!has_ruleset('hp-ru-' + cfg.source)) {
 					remember_ruleset('hp-ru-' + cfg.source);
 					push(config.route.rule_set, {

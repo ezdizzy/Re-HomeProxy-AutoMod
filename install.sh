@@ -63,6 +63,59 @@ jtrue() { printf '%s'   "$1" | grep -qE "\"result\"[[:space:]]*:[[:space:]]*true
 jerr()  { printf '%s\n' "$1" | grep -qE "\"error\""; }
 jfalse(){ printf '%s'   "$1" | grep -qE "\"$2\"[[:space:]]*:[[:space:]]*false"; }
 
+# --- Транспорт загрузок (сеанс 184): TSPU у части провайдеров режет
+# TLS-отпечаток busybox-wget на GitHub (полевой репорт: «невозможно скачать
+# подпись», затем «невозможно скачать приложение», при том что установщики
+# других проектов проходят — они качают curl'ом; урок gh_fetch ч.244:
+# curl-отпечаток проходит TSPU-дыру, wget умирает). Лестница на каждый URL:
+# curl → wget → jsDelivr-твин (другой CDN/edge) → GH_MIRROR, два круга с
+# паузой (TSPU-дыры флапают). Каждый шаг проверяет непустоту результата.
+HAVE_CURL=""
+command -v curl >/dev/null 2>&1 && HAVE_CURL=1
+
+# github-URL → jsDelivr-твин (пусто = твина нет; release-ассеты jsDelivr
+# не раздаёт вовсе — там лестница без твина, для пакетов приложения есть
+# feed-фолбэк ниже).
+jsdelivr_of() {
+	case "$1" in
+	https://raw.githubusercontent.com/*/refs/heads/*)
+		printf '%s' "$1" | sed 's#https://raw.githubusercontent.com/\([^/]*\)/refs/heads/\([^/]*\)/#https://cdn.jsdelivr.net/gh/\1@\2/#';;
+	https://raw.githubusercontent.com/*)
+		printf '%s' "$1" | sed 's#https://raw.githubusercontent.com/#https://cdn.jsdelivr.net/gh/#';;
+	https://github.com/*/raw/refs/heads/*)
+		printf '%s' "$1" | sed 's#https://github.com/\([^/]*\)/raw/refs/heads/\([^/]*\)/#https://cdn.jsdelivr.net/gh/\1@\2/#';;
+	https://github.com/*/raw/*)
+		printf '%s' "$1" | sed 's#https://github.com/\([^/]*\)/raw/#https://cdn.jsdelivr.net/gh/\1/#';;
+	*)
+		printf ''; ;;
+	esac
+}
+
+fetch_one() {     # <url> <файл> — обе утилиты против одного URL
+	local out="$2"
+	if [ -n "$HAVE_CURL" ]; then
+		curl -fsSL --connect-timeout 10 --max-time 90 -o "$out" "$1" 2>/dev/null && [ -s "$out" ] && return 0
+	fi
+	wget -qO "$out" --timeout=20 "$1" 2>/dev/null && [ -s "$out" ] && return 0
+	return 1
+}
+
+fetch_ladder() {  # <url> <файл> — полный лестничный прогон
+	local try=0 alt mu
+	while [ "$try" -lt 2 ]; do
+		fetch_one "$1" "$2" && return 0
+		alt=$(jsdelivr_of "$1")
+		[ -n "$alt" ] && fetch_one "$alt" "$2" && return 0
+		if [ -n "$GH_MIRROR" ]; then
+			mu=$(printf '%s' "$1" | sed "s#https://github.com#${GH_MIRROR}#")
+			[ "$mu" != "$1" ] && fetch_one "$mu" "$2" && return 0
+		fi
+		try=$((try+1))
+		[ "$try" -lt 2 ] && sleep 2
+	done
+	return 1
+}
+
 # --- Загрузка «сначала GitHub, при сбое — зеркало» для первого хопа (app + ключ),
 #     пока ещё нет собственного gh_fetch приложения. dl <url> <файл>
 # В режиме --local загрузка = файл из каталога (по точному имени или по префиксу).
@@ -72,12 +125,7 @@ dl() {
 		[ -n "$lf" ] && cp "$lf" "$2" && return 0
 		return 1
 	fi
-	wget -qO "$2" --timeout=20 "$1" 2>/dev/null && [ -s "$2" ] && return 0
-	if [ -n "$GH_MIRROR" ]; then
-		m=$(echo "$1" | sed "s#https://github.com#${GH_MIRROR}#")
-		wget -qO "$2" --timeout=20 "$m" 2>/dev/null && [ -s "$2" ] && return 0
-	fi
-	return 1
+	fetch_ladder "$1" "$2"
 }
 # local_of <url> — файл в каталоге --local: точное имя, затем префикс до первого
 # разделителя (hiddify-core_..., luci-app-ravnex-..., probe_pool-linux-...).
@@ -92,7 +140,11 @@ local_of() {
 	[ -n "$f" ] && { printf '%s' "$f"; return 0; }
 	return 1
 }
-api() { [ -n "$LOCAL_DIR" ] && return 0; wget -qO- --timeout=20 "$1" 2>/dev/null; }   # GitHub API (без зеркала); --local — обновления не проверяются
+api() { [ -n "$LOCAL_DIR" ] && return 0;   # GitHub API (без зеркала/tвина); --local — обновления не проверяются
+	if [ -n "$HAVE_CURL" ]; then
+		curl -fsSL --connect-timeout 10 --max-time 30 "$1" 2>/dev/null && return 0
+	fi
+	wget -qO- --timeout=20 "$1" 2>/dev/null; }
 
 # Р9 ШАГ 4 (ч.255): пакет переименован — ядро скриптов теперь в /usr/share/ravnex.
 # Фолбэк на старый путь: инсталлер может работать в режиме настройки на боксе,
@@ -118,15 +170,11 @@ feed_manifest() {
 	for u in \
 		"https://raw.githubusercontent.com/${HP_REPO}/refs/heads/feed/$rel" \
 		"https://cdn.jsdelivr.net/gh/${HP_REPO}@feed/$rel"; do
-		if wget -qO /tmp/feed_manifest.json --timeout=15 "$u" 2>/dev/null && [ -s /tmp/feed_manifest.json ]; then
-			FEED_MAN=/tmp/feed_manifest.json; return 0
-		fi
+		fetch_one "$u" /tmp/feed_manifest.json && { FEED_MAN=/tmp/feed_manifest.json; return 0; }
 	done
 	if [ -n "$GH_MIRROR" ]; then
 		u="${GH_MIRROR}/${HP_REPO}/raw/refs/heads/feed/$rel"
-		if wget -qO /tmp/feed_manifest.json --timeout=15 "$u" 2>/dev/null && [ -s /tmp/feed_manifest.json ]; then
-			FEED_MAN=/tmp/feed_manifest.json; return 0
-		fi
+		fetch_one "$u" /tmp/feed_manifest.json && { FEED_MAN=/tmp/feed_manifest.json; return 0; }
 	fi
 	return 1
 }
@@ -162,11 +210,11 @@ feed_install() { # <pkg> — явный файл из манифеста + sha25
 	for u in \
 		"https://raw.githubusercontent.com/${HP_REPO}/refs/heads/feed/$rel" \
 		"https://cdn.jsdelivr.net/gh/${HP_REPO}@feed/$rel"; do
-		wget -qO "$tmp" --timeout=15 "$u" 2>/dev/null && [ -s "$tmp" ] && { done_=1; break; }
+		fetch_one "$u" "$tmp" && [ -s "$tmp" ] && { done_=1; break; }
 	done
 	if [ -z "$done_" ] && [ -n "$GH_MIRROR" ]; then
 		u="${GH_MIRROR}/${HP_REPO}/raw/refs/heads/feed/$rel"
-		wget -qO "$tmp" --timeout=15 "$u" 2>/dev/null && [ -s "$tmp" ] && done_=1
+		fetch_one "$u" "$tmp" && [ -s "$tmp" ] && done_=1
 	fi
 	[ -n "$done_" ] || return 1
 	got=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
@@ -176,11 +224,9 @@ feed_install() { # <pkg> — явный файл из манифеста + sha25
 		return 1
 	fi
 	if [ "$PM" = apk ]; then
-		if apk info -e "$1" >/dev/null 2>&1; then
-			apk upgrade "$tmp" >/dev/null 2>&1 || apk add "$tmp" >/dev/null 2>&1
-		else
-			apk add "$tmp" >/dev/null 2>&1
-		fi
+		# Только apk add: `apk upgrade ./file` — НЕ файловая форма apk 3.x
+		# (тихий no-op/даунгрейд, урок ч.248; безусловный add ставит и апгрейдит).
+		apk add "$tmp" >/dev/null 2>&1
 	else
 		opkg install --force-reinstall "$tmp" >/dev/null 2>&1
 	fi
@@ -406,6 +452,20 @@ ARCH="$DISTRIB_ARCH"; VER="$DISTRIB_RELEASE"
 if   command -v apk  >/dev/null 2>&1; then PM=apk;  EXT=apk
 elif command -v opkg >/dev/null 2>&1; then PM=opkg; EXT=ipk
 else die "Не найден поддерживаемый менеджер пакетов (apk/opkg)."; fi
+
+# Сеанс 184: curl ЗАРАНЕЕ (best-effort). Основные загрузки идут раньше, чем
+# у скрипта появился свой curl-этап, а у части провайдеров busybox-wget
+# режется TSPU'м на GitHub (curl-отпечаток проходит ту же дыру). Дistro-фиды
+# обычно не нарезаются; неудача не фатальна — лестница ниже умеет wget+jsDelivr.
+if [ -z "$HAVE_CURL" ] && [ -z "$LOCAL_DIR" ]; then
+	info "  ставлю curl для надёжных загрузок (wget у некоторых провайдеров режется)..."
+	if [ "$PM" = apk ]; then
+		apk add curl >/dev/null 2>&1
+	else
+		opkg update >/dev/null 2>&1; opkg install curl >/dev/null 2>&1
+	fi
+	command -v curl >/dev/null 2>&1 && HAVE_CURL=1
+fi
 case "$VER" in
 	# 23.05 — EOL, поддержка снята (ucode-mod-digest больше не зависит от пакета,
 	# но старый ucode/23.05 не тестировался). Явный отказ вместо сломанной установки.
@@ -637,24 +697,48 @@ app_install_pkgs() {
 		| grep -o "https://github\.com/[^\"]*luci-app-ravnex[^\"]*${SUFFIX}\.${EXT}" | head -1)
 	[ -z "$APPURL" ] && APPURL=$(printf '%s' "$REL" \
 		| grep -o "https://github\.com/[^\"]*luci-app-re-homeproxy[^\"]*${SUFFIX}\.${EXT}" | head -1)
+	APP_FROM_FEED=0
 	if [ -z "$APPURL" ]; then warn "  не нашёл пакет luci-app-ravnex${SUFFIX}.${EXT} (GitHub заблокирован?)."; return 1; fi
-	dl "$APPURL" /tmp/app.$EXT || { warn "  не удалось скачать приложение."; return 1; }
-	if [ "$PM" = apk ]; then
-		apk add /tmp/app.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  apk add завершился ошибкой."; return 1; }
+	if dl "$APPURL" /tmp/app.$EXT; then
+		if [ "$PM" = apk ]; then
+			apk add /tmp/app.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  apk add завершился ошибкой."; return 1; }
+		else
+			opkg update >/dev/null 2>&1; opkg install --force-reinstall /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  opkg install завершился ошибкой."; return 1; }
+		fi
+		rm -f /tmp/app.$EXT
 	else
-		opkg update >/dev/null 2>&1; opkg install --force-reinstall /tmp/app.$EXT || { rm -f /tmp/app.$EXT; warn "  opkg install завершился ошибкой."; return 1; }
+		# Сеанс 184: release-ассет не имеет jsDelivr-твина — последний шанс
+		# на GitHub-резаном провайдере это ФИД (те же пакеты лежат файлами
+		# ветки feed = raw+jsDelivr доступны лестнице). Ключ фида ставит feed_init.
+		rm -f /tmp/app.$EXT
+		warn "  не удалось скачать приложение с GitHub — пробую источник обновлений (feed)..."
+		feed_init || true
+		if feed_install luci-app-ravnex || feed_install luci-app-re-homeproxy; then
+			ok "  приложение установлено из источника обновлений."
+			APP_FROM_FEED=1
+		else
+			warn "  не удалось скачать приложение."; return 1
+		fi
 	fi
-	rm -f /tmp/app.$EXT
 
 	LURL=$(printf '%s' "$REL" \
 		| grep -o "https://github\.com/[^\"]*luci-i18n-ravnex-ru[^\"]*\.${EXT}" | head -1)
 	[ -z "$LURL" ] && LURL=$(printf '%s' "$REL" \
 		| grep -o "https://github\.com/[^\"]*luci-i18n-homeproxy-ru[^\"]*\.${EXT}" | head -1)
+	I18N_DONE=0
 	if [ -n "$LURL" ] && dl "$LURL" /tmp/i18n.$EXT; then
 		if [ "$PM" = apk ]; then apk add /tmp/i18n.$EXT 2>/dev/null || apk add --allow-untrusted /tmp/i18n.$EXT; \
 		else opkg install /tmp/i18n.$EXT; fi
-		rm -f /tmp/i18n.$EXT
+		I18N_DONE=1
 	fi
+	if [ "$I18N_DONE" != "1" ]; then
+		# Сеанс 184: локаль тоже есть в фиде — на GitHub-резаном провайдере
+		# release-ассет локали может не скачаться (фолбэк = тот же фид).
+		rm -f /tmp/i18n.$EXT 2>/dev/null
+		feed_init || true
+		feed_install luci-i18n-ravnex-ru || feed_install luci-i18n-homeproxy-ru
+	fi
+	rm -f /tmp/i18n.$EXT 2>/dev/null
 	return 0
 }
 
@@ -1502,6 +1586,8 @@ if [ "$APP_INSTALLED" = 1 ]; then
 	menu
 	exit 0
 fi
+
+feed_init || true   # источник обновлений ДО установки приложения: фолбэк «приложение из фида» работает сразу (сеанс 184)
 
 install_app
 
