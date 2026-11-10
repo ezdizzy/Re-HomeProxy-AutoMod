@@ -1187,11 +1187,17 @@ function build_mosdns_conf() {
 	push(lines, '  - tag: seq_plain');
 	push(lines, '    type: sequence');
 	push(lines, '    args:');
-	/* сеанс 188: мёртвые пулы YouTube → REFUSED (exec reject, дефолт rc=5).
-	 * ПЕРВЫЙ матч, до кэшей — мёртвый пул никогда не кэшируется и не форвардится. */
+	/* сеанс 188: мёртвые пулы YouTube → отказ ПЕРВЫМ матчем, до кэшей.
+	 * сеанс 189 (решение юзера): rc=3 (NXDOMAIN) вместо дефолтного REFUSED:
+	 * dnsmasq при REFUSED переспрашивает следующий server= и доходил до
+	 * провайдерского пола (80.244.40.40) — браузер получал живой IP мёртвого
+	 * пула (доказано живьём). NXDOMAIN = авторитетный негативный ответ —
+	 * dnsmasq его возвращает клиенту, не переспрашивая. Форма exec-строки
+	 * 'reject 3' доказана изолированным инстансом (flags 81 83); тип-плагин
+	 * reject и ключ args в этой сборке НЕ существуют (form A/B = fatal). */
 	push(lines, '      - matches:');
 	push(lines, '          - ' + yaml_q('qname $steer_dead'));
-	push(lines, '        exec: reject');
+	push(lines, '        exec: reject 3');
 	if (have_secure) {
 		/* learned blocked domains → secure pool (defense in depth; sing-box already
 		 * routes proxy-domain → secure-dns, this catches any query reaching plain) */
@@ -1236,10 +1242,11 @@ function build_mosdns_conf() {
 		push(lines, '  - tag: seq_secure');
 		push(lines, '    type: sequence');
 		push(lines, '    args:');
-		/* сеанс 188: стиринг и в secure-пуле — до кэша (первый матч). */
+		/* сеанс 188: стиринг и в secure-пуле — до кэша (первый матч).
+		 * сеанс 189: rc=3 (NXDOMAIN), как в seq_plain — dnsmasq не переспрашивает. */
 		push(lines, '      - matches:');
 		push(lines, '          - ' + yaml_q('qname $steer_dead'));
-		push(lines, '        exec: reject');
+		push(lines, '        exec: reject 3');
 		if (have_secure) {
 			push(lines, '      - exec: $cache_secure');
 		}
