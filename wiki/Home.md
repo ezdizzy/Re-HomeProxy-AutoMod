@@ -22,7 +22,7 @@
 | [Core Management](Core-Management-en) | Choosing hiddify-core vs sing-box-extended, the smart installer, rule-sets safety net |
 | [Supported Protocols](Supported-Protocols-en) | All supported proxy protocols, build requirements, transport options |
 | [Subscriptions & Node Import](Subscriptions-en) | Share links, .conf, Amnezia vpn:// (AmneziaWG/Xray), subscriptions, base64 |
-| [Routing Master](Routing-Master-en) | The Blocking bypass hub: provider diagnostics, Strategy Lab, auto-pick, composition; Service rules — per-service exits with live checks |
+| [Routing Master](Routing-Master-en) | The Strategy master hub: provider diagnostics, Strategy Lab, auto-pick, composition; Service rules — per-service exits with live checks |
 | [Routing & Access Control](Routing-and-Access-Control-en) | Routing modes, the exit engine (URLTest / Hot Swap), UDP exit, OAuth resilience |
 | [Hot Swap & Reliability](Hot-Swap-and-Reliability-en) | Hot standby, anti-flap, the RU-internet invariant, last-known-good, watchdogs |
 | [Monitoring & Connections](Monitoring-and-Connections-en) | The node dashboard, live connections, daemon resources and the Health center |
@@ -51,7 +51,7 @@
 | [Управление ядром](Core-Management-ru) | Выбор hiddify-core или sing-box-extended, умный установщик, страховка rule-set'ов |
 | [Поддерживаемые протоколы](Supported-Protocols-ru) | Все поддерживаемые протоколы, требования к сборке, варианты транспорта |
 | [Подписки и импорт узлов](Subscriptions-ru) | Share-ссылки, .conf, Amnezia vpn:// (AmneziaWG/Xray), подписки, base64 |
-| [Мастер маршрутизации](Routing-Master-ru) | «Обход блокировок»: диагностика провайдера, Стратегия-лаборатория, автоподбор, композиция; «Правила для сервисов» — выходы с живой проверкой |
+| [Мастер маршрутизации](Routing-Master-ru) | «Мастер стратегий»: диагностика провайдера, Стратегия-лаборатория, автоподбор, композиция; «Правила для сервисов» — выходы с живой проверкой |
 | [Маршрутизация и контроль доступа](Routing-and-Access-Control-ru) | Режимы маршрутизации, выход-движок (URLTest / Hot Swap), UDP-выход, OAuth-устойчивость |
 | [Hot Swap и надёжность](Hot-Swap-and-Reliability-ru) | Горячий резерв, анти-флап, инвариант RU-интернета, last-known-good, сторожа |
 | [Мониторинг и соединения](Monitoring-and-Connections-ru) | Дашборд узлов, живые соединения, ресурсы демонов и Центр здоровья |

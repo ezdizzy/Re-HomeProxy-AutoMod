@@ -42,7 +42,7 @@ Because it is a marked *direct* outbound (not a tunnel), `zapret-out` falls back
    on the **Connection** page — the app offers to install the original
    [bol-van/zapret2](https://github.com/bol-van/zapret2) openwrt-embedded release for your
    architecture right there (SHA256 integrity check).
-2. Open the **Blocking bypass** page: pick a strategy from the catalog (see below), press
+2. Open the **Strategy master** page: pick a strategy from the catalog (see below), press
    **Check** to verify it against your ISP, then apply it — this enables Zapret and restarts the
    service.
 
@@ -54,7 +54,7 @@ That's all for the engine. The `--qnum` / `--user` / `--fwmark` / `--lua-init` a
 
 A "strategy" is the set of `nfqws2` options applied to every flow routed to Zapret. There are **no hostlists** — the routing rules already decide *what* is sent here, so the strategy only decides *how* to desync it. As with ByeDPI, **there is no universal best strategy** — what works depends on your ISP's DPI.
 
-The **strategy picker** on the Blocking bypass page fills the strategy field for you; the catalog is grouped into:
+The **strategy picker** on the Strategy master page fills the strategy field for you; the catalog is grouped into:
 
 | Group | What it is |
 |-------|------------|
@@ -67,14 +67,14 @@ Strategies are shipped read-only in `/etc/ravnex/zapret_candidates.json` and are
 
 - **nfqws2 multi-strategies** — one `nfqws2` process with several profiles and separate
   hostlists: different resources get different desync tricks at the same time.
-- A **custom strategy generator** — assemble your own variant on the Blocking bypass page.
+- A **custom strategy generator** — assemble your own variant on the Strategy master page.
 - An **editable TSPU list** (dpi-detect) — which subnets count as TSPU.
 
 ---
 
 ## The strategy tester
 
-Because the right strategy is ISP-specific, the **Blocking bypass** page includes a **tester** that never touches your live traffic — it spins up a **temporary NFQUEUE scoped to the test sites** and checks whether each TLS handshake completes:
+Because the right strategy is ISP-specific, the **Strategy master** page includes a **tester** that never touches your live traffic — it spins up a **temporary NFQUEUE scoped to the test sites** and checks whether each TLS handshake completes:
 
 - **Check strategy** — runs whatever is in the strategy field against **YouTube**, **Telegram**, **Discord** and **Speedtest.net**, showing each site as ✓ / ✗ with the handshake time, plus an `ok/total` count.
 - **Strategy Lab** — quick/full **fuzzing** of the whole strategy corpus with a no-desync baseline, majority-of-rounds ranking and a history of the last runs. The currently applied strategy is measured too (the deep battery); hosts no candidate passed are honestly excluded from the counts. A verdict is a measurement **on this router**: differences up to ~25% count as noise. The full battery also includes a **UDP/STUN probe of the Discord voice edge** — an honest verdict by response (including «silence»).
@@ -88,7 +88,7 @@ Pick a strategy that passes all four sites. If several do, prefer one from the *
 
 ## Discord voice (opt-in)
 
-Enabling **Discord calls via Zapret** (on the Blocking bypass page) routes Discord's voice-server UDP ranges (and call/voice UDP ports) to `zapret-out` **before** the normal proxy/call rules, so Discord voice is desynced via Zapret instead of being proxied. The UDP port ranges come from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube). This option is honoured only when Zapret is enabled.
+Enabling **Discord calls via Zapret** (on the Strategy master page) routes Discord's voice-server UDP ranges (and call/voice UDP ports) to `zapret-out` **before** the normal proxy/call rules, so Discord voice is desynced via Zapret instead of being proxied. The UDP port ranges come from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube). This option is honoured only when Zapret is enabled.
 
 ---
 
@@ -123,7 +123,7 @@ There's no harm in installing both and using the tester on each — keep whichev
 | Symptom | Likely cause / fix |
 |---------|--------------------|
 | A site still loads slowly or won't open | The strategy isn't right for your ISP — run the **Full strategy test** and apply a passing one. |
-| Tester shows everything failing | `nfqws2` may not be installed/running — check the Blocking bypass page and the [Health center](Monitoring-and-Connections-en#health-center) (install / running / queue status). |
+| Tester shows everything failing | `nfqws2` may not be installed/running — check the Strategy master page and the [Health center](Monitoring-and-Connections-en#health-center) (install / running / queue status). |
 | Discord voice still drops | Enable **Zapret voice**, then re-test. |
 | A site is unreachable, not just slow | It may be IP-blocked, not throttled — Zapret can't help; route it through a proxy/VPN node. |
 

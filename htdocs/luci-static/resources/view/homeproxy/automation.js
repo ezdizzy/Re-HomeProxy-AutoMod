@@ -12,7 +12,7 @@
  * a recent-events feed, fed by the light automation_stats RPC) and the
  * EXPERT settings collapsed into a <details> (U4: the less the user sees
  * by default, the better). Level "DPI auto-pilot": the scheduled strategy
- * auto-pilot (moved here from the Blocking bypass page — its natural home
+ * auto-pilot (moved here from the Strategy master page — its natural home
  * is automation; the one-click auto-pick stays with the Strategy Lab).
  * Level "Logs": the engine log + the automation-family Event Bus feed
  * (learn/heal/outage + Hot Swap switches + URLTest watchdog + autopilot
@@ -308,7 +308,7 @@ tr.hpsrc-manual.hpsrc-manual-direct td:first-child { box-shadow: inset 3px 0 0 #
 .hpauto-feed-ev { display: flex; gap: 8px; font-size: .85em; margin: 2px 0; align-items: baseline; }
 .hpauto-feed-ev .t { opacity: .6; white-space: nowrap; font-size: .92em; }
 .hpauto-feed-ev .m { word-break: break-word; }
-/* The DPI auto-pilot block moved from the Blocking bypass page (Ф7.1) —
+/* The DPI auto-pilot block moved from the Strategy master page (Ф7.1) —
  * same visual language, the wiz-* classes live here now too. */
 .wiz-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius); background: var(--hp-panel-bg); margin: 6px 0; }
 .wiz-note { font-size: .88em; opacity: .8; margin: 8px 0; }
@@ -781,7 +781,7 @@ return view.extend({
 			[ _('The shared event journal of the automation family — learning, self-heals, Hot Swap switches, the URLTest watchdog and the DPI auto-pilot. The full feed of every subsystem lives on the Health center page.') ]));
 
 		/* ── DPI auto-pilot level (Ф7.1): the scheduled strategy auto-pilot
-		 * moved here from the Blocking bypass page — an always-on keeper is
+		 * moved here from the Strategy master page — an always-on keeper is
 		 * automation, not a strategy-setting. Same RPCs, same save contract;
 		 * the one-click auto-pick and the Strategy Lab stay on the bypass
 		 * page (they belong to measuring). ────────────────────────────── */
@@ -838,11 +838,9 @@ return view.extend({
 				title: _('Night auto-pick (01:00–06:00): a scheduled re-rank is allowed at night even outside the maintenance window — it applies only a strategy that is measurably better.') },
 				[ apNight, ' ' + _('Night auto-pick') ]) ]);
 		panes.dpi.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('The DPI auto-pilot keeps the bypass strategies working without attention: on schedule it re-ranks the tested strategies and applies the best one per resource; when a resource stops answering, the next alternative applies immediately. Every apply takes a server snapshot (Restore stays available) and verifies the resource live. One-click picks and fresh measurements live on the Blocking bypass page — the Strategy Lab.') ]));
-		panes.dpi.appendChild(E('div', { 'class': 'automation-actions' }, [
-			E('a', { 'class': 'hpui-btn hpui-btn-ghost', 'href': L.url('admin/services/ravnex/bypass') },
-				[ _('Strategy Lab and one-click auto-pick') ])
-		]));
+			[ _('The DPI auto-pilot keeps the bypass strategies working without attention: on schedule it re-ranks the tested strategies and applies the best one per resource; when a resource stops answering, the next alternative applies immediately. Every apply takes a server snapshot (Restore stays available) and verifies the resource live. One-click picks and fresh measurements live on the Strategy master page — the Strategy Lab.') ]));
+		/* ч.274 (user decision): the ghost lab-link is gone — the hint above is
+		 * the pointer, and the nav card/sidebar already lead to the page. */
 		panes.dpi.appendChild(E('div', { style: 'margin-top:10px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
 			[ apHead, apRow1, apResWrap, apRow3, apSaveMsg, E('p', { 'class': 'wiz-note' },
 				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The "apply in window" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
@@ -1039,7 +1037,11 @@ return view.extend({
 						continue;
 					const vt = (v2.verdict === 'best_verified') ? _('verified')
 						: (v2.verdict === 'best_available') ? _('available') : v2.verdict;
-					parts.push(apNames[rk2] + ' → ' + (v2.name || '—') + ' (' + vt + ')');
+					/* ч.274 dedgu: the browser sign rides beside the verdict —
+					 * absent = the probe class was not measured (honest nothing). */
+					const brow = (v2.brow_total > 0)
+						? ' · ' + _('browser: %s/%s').format(v2.brow_ok, v2.brow_total) : '';
+					parts.push(apNames[rk2] + ' → ' + (v2.name || '—') + ' (' + vt + brow + ')');
 				}
 				if (parts.length) {
 					const ageTxt = (data.lab_fuzz.age >= 6 * 3600)

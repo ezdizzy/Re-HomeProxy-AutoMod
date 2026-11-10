@@ -382,6 +382,20 @@ function entry_produce(e, s, ctx) {
 		}
 	}
 
+	/* ч.274 audit: the resource gate finally RUNS — before any download. A
+	 * weak box (little /tmp or little available RAM) gets an honest per-entry
+	 * refusal instead of a mid-download OOM or a full /tmp. Release kinds
+	 * know the announced size (the ZIP asset itself for release-zip members —
+	 * the whole archive lands in /tmp); raw/site kinds have no announced size
+	 * — the margins-only check still applies. */
+	const zgate_asset = (s.kind === 'release-zip' && rel && type(rel.assets) === 'array')
+		? release_asset(rel, substr(s.url, rindex(s.url, '/') + 1)) : null;
+	const gate_want = (zgate_asset && zgate_asset.size) ? int(zgate_asset.size)
+		: ((info && info.size) ? int(info.size) : 0);
+	const gerr = resources_gate(gate_want, gate_want);
+	if (gerr != null)
+		return { status: 'failed', error: gerr };
+
 	/* obtain the payload into a temp file */
 	const tmp = ctx.dir + '/.tmp-' + e.id + '-' + sprintf('%d', ctx.ts);
 	let payload = tmp;

@@ -731,7 +731,7 @@ return view.extend({
 		o = s.taboption('routing', form.Flag, 'byedpi_enabled', _('Enable ByeDPI'),
 			_('A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. ' +
 			  'Works by confusing your ISP\'s traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. ' +
-			  'Results depend on your ISP and may require trying different strategies on the Blocking bypass page. ' +
+			  'Results depend on your ISP and may require trying different strategies on the Strategy master page. ' +
 			  'ByeDPI will be installed automatically on first enable.'));
 		o.default = o.disabled;
 		o.rmempty = false;
@@ -740,7 +740,17 @@ return view.extend({
 			opt.renderWidget = function(section_id, option_index, cfgvalue) {
 				return Promise.resolve(_super(section_id, option_index, cfgvalue)).then(function(node) {
 					node.querySelector('input').addEventListener('change', async function(ev) {
-						if (!ev.target.checked) return;
+						if (!ev.target.checked) {
+							/* ч.274 audit: disabling the engine silently reroutes every RU
+							 * rule pointing at it (and service chains) to direct — make the
+							 * consequence explicit before the checkbox goes off. */
+							const ok = await hp.confirmModal(_('Disable ByeDPI?'),
+								_('With ByeDPI disabled, every rule pointing at it rides DIRECT until the engine is enabled again (nothing is proxied for those rules). Disable the engine?'),
+								_('Disable'));
+							if (!ok)
+								ev.target.checked = true;
+							return;
+						}
 						const status = await L.resolveDefault(callByeDPIStatus(), {});
 						if (status.installed) return;
 
@@ -823,7 +833,17 @@ return view.extend({
 			opt.renderWidget = function(section_id, option_index, cfgvalue) {
 				return Promise.resolve(_super(section_id, option_index, cfgvalue)).then(function(node) {
 					node.querySelector('input').addEventListener('change', async function(ev) {
-						if (!ev.target.checked) return;
+						if (!ev.target.checked) {
+							/* ч.274 audit: disabling the engine silently reroutes every RU
+							 * rule pointing at it (and service chains) to direct — make the
+							 * consequence explicit before the checkbox goes off. */
+							const ok = await hp.confirmModal(_('Disable Zapret?'),
+								_('With Zapret disabled, every rule pointing at it rides DIRECT until the engine is enabled again (nothing is protected for those rules). Disable the engine?'),
+								_('Disable'));
+							if (!ok)
+								ev.target.checked = true;
+							return;
+						}
 						const status = await L.resolveDefault(callZapretStatus(), {});
 						if (status.installed) {
 							/* Installed but the NFQUEUE kmod is missing → enabling would emit

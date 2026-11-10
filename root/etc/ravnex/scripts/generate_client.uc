@@ -1235,7 +1235,14 @@ if (!isEmpty(ntp_server))
  * the proxy pool and vice versa); one list for both eliminates the drift. */
 const ru_source_priority = (s) => s === 'refilter' ? 2 : s === 'russia-inside' ? 1 : 0;
 let ru_rules = [];
-uci.foreach(uciconfig, ucirurule, (cfg) => { if (cfg.enabled === '1') push(ru_rules, cfg); });
+/* ч.274 audit: UCI-first enabled node per source — parity with the sentinel
+ * core_rule_map contract (first ENABLED rule per source in UCI file order,
+ * sentinel.uc uci_rule_nodes): the classic hp-ru-<src>-out tag belongs to it. */
+let ru_uci_first = {};
+uci.foreach(uciconfig, ucirurule, (cfg) => { if (cfg.enabled === '1') {
+	if (ru_uci_first['' + cfg.source] == null)
+		ru_uci_first['' + cfg.source] = '' + cfg.node;
+	push(ru_rules, cfg); } });
 ru_rules = sort(ru_rules, (a, b) => ru_source_priority(a.source) - ru_source_priority(b.source));
 
 /* DNS start */
@@ -3029,6 +3036,27 @@ if (!isEmpty(main_node)) {
 		let seen_rulesets = {};
 		const has_ruleset = (tag) => !!seen_rulesets[tag];
 		const remember_ruleset = (tag) => { seen_rulesets[tag] = true; };
+		/* ч.274 audit (КРИТ «второй выход»): owner map for the per-source
+		 * outbound tags. The CLASSIC tag hp-ru-<src>-out belongs to the UCI-FIRST
+		 * enabled rule of the source (sentinel parity above); a second+ rule of
+		 * the SAME source with a DIFFERENT exit claims its own tag
+		 * hp-ru-<src>-<node>-out instead of silently riding the first rule's
+		 * clone. Same exit (node id, and for urltest pools the same node list)
+		 * still shares the tag it claimed. */
+		let hp_tag_owner = {};
+		const hp_claim_tag = (base, owner) => {
+			if (hp_tag_owner[base] == null || hp_tag_owner[base] === owner) {
+				hp_tag_owner[base] = owner;
+				return base;
+			}
+			for (let i = 2; ; i++) {
+				const alt = base + '-' + i;
+				if (hp_tag_owner[alt] == null || hp_tag_owner[alt] === owner) {
+					hp_tag_owner[alt] = owner;
+					return alt;
+				}
+			}
+		};
 
 		for (let cfg in ru_rules) {
 
@@ -3038,40 +3066,76 @@ if (!isEmpty(main_node)) {
 			let effective_outbound;
 			if (cfg.node === 'main-out' || isEmpty(cfg.node))
 				effective_outbound = 'main-out';
-			else if (cfg.node === 'byedpi-out')
-				effective_outbound = (byedpi_enabled === '1') ? 'byedpi-out' : 'direct-out';
-			else if (cfg.node === 'zapret-out')
-				effective_outbound = (zapret_enabled === '1') ? 'zapret-out' : 'direct-out';
-			else if (cfg.node === 'tgws-out')
+			else if (cfg.node === 'byedpi-out') {
+				/* ч.274 audit: a disabled engine previously swallowed the rule into
+				 * direct-out SILENTLY — the warn makes the skip visible in the
+				 * apply log (the UI-side disable confirmation is the other half). */
+				if (byedpi_enabled === '1')
+					effective_outbound = 'byedpi-out';
+				else {
+					warn('homeproxy: RU rule "' + cfg.name + '" points at ByeDPI but the engine is DISABLED - the rule rides direct-out.\n');
+					effective_outbound = 'direct-out';
+				}
+			} else if (cfg.node === 'zapret-out') {
+				if (zapret_enabled === '1')
+					effective_outbound = 'zapret-out';
+				else {
+					warn('homeproxy: RU rule "' + cfg.name + '" points at Zapret but the engine is DISABLED - the rule rides direct-out.\n');
+					effective_outbound = 'direct-out';
+				}
+			} else if (cfg.node === 'tgws-out')
 				/* D34b: tg-ws removed — a legacy rule node rides the main path. */
 				effective_outbound = has_outbound('main-out') ? 'main-out' : 'direct-out';
-			else
-				effective_outbound = 'hp-ru-' + cfg.source + '-out';
+			else {
+				/* ч.274 audit: classic tag = the UCI-first enabled rule of the
+				 * source; other exits claim their own tags instead of riding
+				 * the first rule's clone. For urltest rules the owner identity
+				 * includes the pool's usable node list, so two DIFFERENT pools
+				 * never share an outbound. */
+				const classic = 'hp-ru-' + cfg.source + '-out';
+				let owner = '' + cfg.node;
+				if (cfg.node === 'urltest')
+					owner += ':' + join(',', usable_nodes(cfg.urltest_nodes) || []);
+				let base = classic;
+				if (hp_tag_owner[classic] != null && ru_uci_first['' + cfg.source] !== '' + cfg.node)
+					base = 'hp-ru-' + cfg.source + '-' + cfg.node + '-out';
+				effective_outbound = hp_claim_tag(base, owner);
+			}
 
 			if (cfg.node === 'main-out' || isEmpty(cfg.node) || cfg.node === 'byedpi-out' || cfg.node === 'zapret-out' || cfg.node === 'tgws-out') {
 				/* no new outbound needed — main-out / byedpi-out / zapret-out already exist */
 			} else if (!has_outbound(effective_outbound)) {
 				if (cfg.node === 'urltest') {
 					const ut_nodes = usable_nodes(cfg.urltest_nodes);
-					push(config.outbounds, {
-						type: 'urltest',
-						tag: effective_outbound,
-						outbounds: map(ut_nodes, (k) => `cfg-${k}-out`),
-						interval: strToTime(cfg.urltest_interval || '180'),
-						tolerance: strToInt(cfg.urltest_tolerance || '150'),
-						idle_timeout: '1800s'
-					});
-					/* Generate underlying node outbounds, skipping already-generated tags */
-					for (let n in ut_nodes) {
-						if (has_outbound('cfg-' + n + '-out')) continue;
-						const nc = uci.get_all(uciconfig, n);
-						if (!nc) continue;
-						if (nc.type in ['wireguard', 'amneziawg']) {
-							push(config.endpoints, generate_endpoint(nc));
-							config.endpoints[length(config.endpoints)-1].tag = 'cfg-' + n + '-out';
-						} else {
-							push_outbound(config.outbounds, nc);
-							config.outbounds[length(config.outbounds)-1].tag = 'cfg-' + n + '-out';
+					/* ч.274 audit: an EMPTY pool (nodes removed or unsupported by
+					 * the core) would emit urltest outbounds:[] — the kernel
+					 * FATALS on it. Honest fallback: the rule rides main-out
+					 * (whose own empty-pool fallback keeps the net alive) — the
+					 * same shape as the unsupported-node branch below. */
+					if (!length(ut_nodes)) {
+						warn('homeproxy: RU rule "' + cfg.name + '" carries an EMPTY URLTest pool - the rule rides main-out instead of a fatal empty urltest outbound.\n');
+						effective_outbound = has_outbound('main-out') ? 'main-out' : 'direct-out';
+					} else {
+						push(config.outbounds, {
+							type: 'urltest',
+							tag: effective_outbound,
+							outbounds: map(ut_nodes, (k) => `cfg-${k}-out`),
+							interval: strToTime(cfg.urltest_interval || '180'),
+							tolerance: strToInt(cfg.urltest_tolerance || '150'),
+							idle_timeout: '1800s'
+						});
+						/* Generate underlying node outbounds, skipping already-generated tags */
+						for (let n in ut_nodes) {
+							if (has_outbound('cfg-' + n + '-out')) continue;
+							const nc = uci.get_all(uciconfig, n);
+							if (!nc) continue;
+							if (nc.type in ['wireguard', 'amneziawg']) {
+								push(config.endpoints, generate_endpoint(nc));
+								config.endpoints[length(config.endpoints)-1].tag = 'cfg-' + n + '-out';
+							} else {
+								push_outbound(config.outbounds, nc);
+								config.outbounds[length(config.outbounds)-1].tag = 'cfg-' + n + '-out';
+							}
 						}
 					}
 				} else if (!isEmpty(cfg.node)) {

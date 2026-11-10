@@ -476,6 +476,7 @@ return view.extend({
 		 * are the exceptions" is the tail step + the guard in the middle. */
 		const ORDER_MAP = [
 			[ 'tool', _('Pin "Always direct"'), _('A host pinned in the Automation table — outranks every list: one host forced to direct wins over everything.') ],
+			[ 'crosshair', _('Expert rules (raw)'), _('Expert raw routing rules (the expert mode below) emit right after the direct pins, above everything else on this page — they win first match over every list tier.') ],
 			[ 'activity', _('Service ports'), _('Torrents stay direct, calls ride the voice ports — port-scoped rules, not tied to a domain.') ],
 			[ 'send', _('Service rules — THIS page'), _('Preset rows for services and mass lists (Services, Russia Inside, Re-filter). The rows below edit exactly this tier.') ],
 			[ 'refresh', _('OAuth stability'), _('Login/auth domains ride the main exit together with their service — a proxy switch never breaks a login.') ],
@@ -891,7 +892,21 @@ return view.extend({
 				saveBtn.addEventListener('click', function() {
 					saveBtn.disabled = true;
 					listArea(_('Saving…'));
-					L.resolveDefault(callListUpdate(ed.id, nameIn.value, exitSel.value, '', ''), {}).then(function(r1) {
+					/* ч.274 audit: the Edit modal's pool picker was collected on the
+					 * create path only — the Save sent '' as urltest_nodes and the RPC
+					 * (protective: empty = no change) silently DROPPED pool edits.
+					 * Collect the checked ids like create:959 does; an explicitly
+					 * emptied urltest pool is sent as '[]' (honest clear; the backend
+					 * generation now falls back to main-out for an empty pool). */
+					let poolArg = '';
+					if (exitSel.value === 'urltest' && poolBox2 && poolBox2._checks) {
+						const ids2 = [];
+						for (let c2 in poolBox2._checks)
+							if (poolBox2._checks[c2].checked)
+								ids2.push(poolBox2._checks[c2].value);
+						poolArg = JSON.stringify(ids2);
+					}
+					L.resolveDefault(callListUpdate(ed.id, nameIn.value, exitSel.value, '', poolArg), {}).then(function(r1) {
 						if (!r1 || r1.result === false) {
 							listArea(_('Failed: ') + ((r1 && r1.error) || _('RPC error')));
 							return null;
@@ -2139,8 +2154,10 @@ return view.extend({
 			this.value('direct-out', _('Direct'));
 			/* "Same as main node" (main-out) exists in every app-managed mode (Ф3.1);
 			 * gate it on the main-node VALUE being set, not on a mode, to avoid
-			 * offering a tag that won't exist. */
-			if (uci.get('ravnex', 'config', 'main_node'))
+			 * offering a tag that won't exist. ч.274 audit: a DIRECT main node is
+			 * still "set" — offer the tag only when it actually proxies. */
+			const _mainNode = uci.get('ravnex', 'config', 'main_node');
+			if (_mainNode && _mainNode !== 'direct-out' && _mainNode !== 'nil')
 				this.value('main-out', _('Same as main node') + ' 🔗');
 			/* byedpi-out IS emitted in every routing mode whenever ByeDPI is
 			 * enabled — a rule can target it directly, no routing node needed. */

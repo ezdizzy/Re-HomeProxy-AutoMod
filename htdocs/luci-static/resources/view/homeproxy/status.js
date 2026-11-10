@@ -845,7 +845,7 @@ function buildByeDPICard(byedpi, isMainNode) {
 			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' });
 			/* innerHTML: the description contains HTML links E() would escape */
 			el.innerHTML = _('Local SOCKS5 DPI bypass proxy by <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> (installed from the original releases, SHA256-gated). ' +
-			'Enable on the Connection page; strategies are configured on the Blocking bypass page.');
+			'Enable on the Connection page; strategies are configured on the Strategy master page.');
 			return el;
 		})()
 	]);
@@ -956,7 +956,7 @@ function buildZapretCard(zapret, isMainNode) {
 	/* The DPI Strategy Fuzzer first moved to the (now removed) Node
 	 * Settings → Zapret tab (ч.70), then into the Routing Wizard DPI pane
 	 * (Ф3; the node.js tabs moved there for good in сеанс 24), and since
-	 * R3 v3c lives on the Blocking bypass page («Strategy Lab» zone) —
+	 * R3 v3c lives on the Strategy master page («Strategy Lab» zone) —
 	 * the wizard is abolished. This card keeps only a shortcut there. */
 	const labBtn = mkBtn(_('Strategy Lab'), 'ghost', {
 		style: 'margin-left:4px'
@@ -977,11 +977,11 @@ function buildZapretCard(zapret, isMainNode) {
 			const el = E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' });
 			/* innerHTML: the description contains HTML links E() would escape */
 			el.innerHTML = _('Packet-level (NFQUEUE) DPI bypass by <a href="https://github.com/bol-van/zapret2" target="_blank">bol-van/zapret2</a> (nfqws2, installed from the original openwrt-embedded release, SHA256-gated). ' +
-			  'Configure on the Blocking bypass page.');
+			'Configure on the Strategy master page.');
 			return el;
 		})(),
 		E('div', { style: 'margin-top:8px; border-top:1px solid rgba(128,128,128,.25); padding-top:6px; font-size:.9em; opacity:.9' }, [
-			E('span', {}, _('Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives on the Blocking bypass page — "Strategy Lab".')),
+			E('span', {}, _('Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives on the Strategy master page — "Strategy Lab".')),
 			labBtn
 		])
 	]);
@@ -1057,7 +1057,7 @@ function buildCurlCard(curl) {
 		]),
 		resultEl,
 		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' },
-			_('Enables real HTTP-based ByeDPI strategy testing. Required for the "Test" and "Test all presets" buttons on the Blocking bypass page.'))
+			_('Enables real HTTP-based ByeDPI strategy testing. Required for the "Test" and "Test all presets" buttons on the Strategy master page.'))
 	]);
 }
 
@@ -1578,16 +1578,26 @@ function buildConveyorCard() {
 			'reverse': _('Reverse routing')
 		})[g] || g;
 
-		for (const g of ['ru-core', 'video', 'messengers', 'social', 'ai', 'games', 'cdn', 'misc', 'reverse']) {
-			if (!groups[g])
-				continue;
+		const KNOWN_GROUPS = ['ru-core', 'video', 'messengers', 'social', 'ai', 'games', 'cdn', 'misc', 'reverse'];
+		const renderGroup = (g) => {
 			tbl.appendChild(E('tr', {}, [
 				E('td', { 'colspan': '7', 'style': 'padding:8px 0 2px; font-weight:bold; border-bottom:1px solid rgba(128,128,128,.3)' },
 					[ groupTitle(g) + (g === 'ru-core' ? ' · 🜚 = ' + _('opt-in mass layer') : '') ])
 			]));
 			for (const e of groups[g])
 				tbl.appendChild(mkRow(e));
+		};
+		for (const g of KNOWN_GROUPS) {
+			if (groups[g])
+				renderGroup(g);
 		}
+		/* ч.274 honesty: a catalog group outside the known whitelist must still
+		 * render (the renderCorpus leftover-group pattern) — silent invisibility
+		 * for a whole category is a lie by omission. */
+		Object.keys(groups).forEach(function(gk) {
+			if (KNOWN_GROUPS.indexOf(gk) < 0)
+				renderGroup(gk);
+		});
 		listEl.appendChild(tbl);
 
 		if (run && run.running)
@@ -2242,7 +2252,7 @@ return view.extend({
 
 		s = m.section(form.NamedSection, 'config', 'ravnex', _('AntiDPI'));
 		s.anonymous = true;
-		s.description = _('Install, update and manage the two bypass engines — ByeDPI and Zapret. Which one actually serves the traffic is configured on the Blocking bypass page.');
+		s.description = _('Install, update and manage the two bypass engines — ByeDPI and Zapret. Which one actually serves the traffic is configured on the Strategy master page.');
 
 		o = s.option(form.DummyValue, '_byedpi_card');
 		o.default = buildByeDPICard(byedpiStatus, uci.get('ravnex', 'config', 'main_node') === 'byedpi-out');

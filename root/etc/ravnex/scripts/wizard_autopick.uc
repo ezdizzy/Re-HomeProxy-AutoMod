@@ -133,6 +133,30 @@ function read_json(path) {
 	try { return json(readfile(path) || ''); } catch (e) { return null; }
 }
 
+/* ч.274 audit: the spawn-validate gate — same contract as the rpcd-side
+ * hp_zapret_validate (luci.ravnex): the strategy must survive a REAL nfqws2
+ * launch (--validate) BEFORE it is written into UCI. null = passed (an absent
+ * engine skips the gate — the apply path handles that honestly on its own);
+ * a string = honest refusal. */
+function zapret_spawn_validate(strat) {
+	if (!length(strat) || !access(NFQWS))
+		return null;
+	const fd = popen(`sh ${sq('/etc/ravnex/scripts/zapret_test.sh')} --validate ${sq(strat)} 2>/dev/null`);
+	if (!fd)
+		return 'запуск валидации не состоялся (popen)';
+	const out = trim(fd.read('all') || '');
+	fd.close();
+	let j = null;
+	try { j = json(out); } catch (e) { j = null; }
+	if (type(j) !== 'object')
+		return 'валидация не вернула результат';
+	if (int(j.ok) === 1 && j.validate === 'alive')
+		return null;
+	if (j.validate === 'dead')
+		return 'nfqws2 отклонил стратегию (не пережил запуск)';
+	return 'валидация не пройдена (validate=' + (j.validate || '?') + ')';
+}
+
 function note(res, msg) {
 	if (res.notes == null)
 		res.notes = [];
@@ -927,6 +951,16 @@ function main() {
 			wstat(res);
 			return;
 		}
+	}
+	/* ч.274 audit: no strategy reaches UCI without surviving the nfqws2
+	 * launch-validation (the fuzz-apply RPC and the composer already gate
+	 * their paths — the autopick daemon was the unvalidated hole). */
+	const vref = zapret_spawn_validate(final_args);
+	if (vref != null) {
+		res.running = false; res.stage = 'error';
+		res.error = 'валидация не пройдена, применение отменено: ' + vref;
+		wstat(res);
+		return;
 	}
 	c.set('ravnex', 'config', 'zapret_cmd_opts', final_args);
 	c.set('ravnex', 'config', 'zapret_enabled', '1');

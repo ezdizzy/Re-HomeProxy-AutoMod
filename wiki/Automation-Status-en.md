@@ -61,7 +61,7 @@ continue.
 ## The DPI autopilot
 
 A permanent strategy watchdog (as opposed to the one-shot **auto-pick** on
-[Blocking bypass](Routing-Master-en)):
+[Strategy master](Routing-Master-en)):
 
 - on schedule it re-ranks the verified strategies and applies the best one per resource;
 - when a resource stops answering it immediately applies the next alternative;

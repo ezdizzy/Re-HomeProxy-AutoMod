@@ -371,11 +371,12 @@ return baseclass.extend({
 	--hp-grey: #9a9a9a; --hp-grey-soft: rgba(154,154,154,.18); --hp-grey-line: rgba(154,154,154,.5);
 	--hp-ink-green: #16a34a; --hp-ink-red: #e05252; --hp-ink-amber: #b8860b; --hp-ink-blue: #4d8fe0; --hp-ink-grey: #8a8a8a;
 	/* Surfaces / shapes / type (D5: local system fonts only). */
-	--hp-panel-bg: rgba(128,128,128,.07);
-	--hp-panel-bg-2: rgba(127,127,127,.04);
+	--hp-panel-bg: #ffffff;
+	--hp-panel-bg-2: #f6f8fb;
 	--hp-panel-line: rgba(128,128,128,.3);
 	--hp-panel-line-strong: rgba(128,128,128,.35);
-	--hp-radius-sm: 6px; --hp-radius: 8px; --hp-radius-lg: 10px;
+	--hp-radius-sm: 8px; --hp-radius: 12px; --hp-radius-lg: 16px;
+	--hp-pill: 999px; /* ч.274 design v4: Tachyon-look pills (segmented controls, buttons, badges) */
 	--hp-shadow: 0 1px 2px rgba(0,0,0,.08), 0 2px 10px rgba(0,0,0,.06);
 	--hp-console-bg: #1e1e1e; --hp-console-line: #333; --hp-console-fg: #ddd;
 	--hp-table-head: #757575;
@@ -419,8 +420,12 @@ return baseclass.extend({
 .hpui-c-blue { color: var(--hp-blue); } .hpui-c-grey { color: var(--hp-grey); }
 .hpui-c-amber { color: var(--hp-amber); }
 .hpui-ic { width: 1.05em; height: 1.05em; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -.15em; flex: none; }
-.hpui-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px 0; border-bottom: 2px solid var(--hp-panel-line); }
-.hpui-tab { appearance: none; border: 1px solid transparent; background: var(--hp-panel-bg-2); color: inherit; padding: 7px 16px; border-radius: var(--hp-radius-sm) var(--hp-radius-sm) 0 0; cursor: pointer; font-size: 1em; font-weight: 500; }
+/* ч.274 design v4 (Tachyon look): segmented pill tabs — a pill container with
+ * a filled active chip replaces the underline tab strip. Geometry only: the
+ * accent/active color machinery (and the cbi-tabmenu !important guards below)
+ * is untouched, so every page opts in for free. */
+.hpui-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px 0; padding: 4px; border-bottom: none; background: var(--hp-panel-bg-2); border-radius: var(--hp-pill); border: 1px solid var(--hp-panel-line); }
+.hpui-tab { appearance: none; border: 1px solid transparent; background: transparent; color: inherit; padding: 7px 16px; border-radius: var(--hp-pill); cursor: pointer; font-size: 1em; font-weight: 500; }
 .hpui-tab:hover { background: rgba(128,128,128,.20); }
 .hpui-tab.active { background: var(--hp-accent-soft); border-color: var(--hp-accent-line); color: var(--hp-accent-strong); font-weight: 700; }
 .hpui-pane { display: none; }
@@ -432,7 +437,7 @@ table.hpui-table { border-collapse: separate; border-spacing: 0; width: 100%; }
 table.hpui-table thead th { position: sticky; top: 0; z-index: 2; background: var(--hp-table-head); color: var(--hp-table-head-fg, #f5f5f5); text-align: left; font-weight: 600; padding: 8px 10px; white-space: nowrap; border-bottom: 1px solid rgba(0,0,0,.35); }
 table.hpui-table tbody td { padding: 6px 10px; border-bottom: 1px solid rgba(128,128,128,.18); vertical-align: middle; }
 table.hpui-table tbody tr:hover td { background: rgba(128,128,128,.13); }
-.hpui-badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: .82em; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
+.hpui-badge { display: inline-block; padding: 2px 9px; border-radius: var(--hp-pill); font-size: .82em; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
 .hpui-b-red { background: var(--hp-red-soft); color: var(--hp-ink-red); border-color: var(--hp-red-line); }
 .hpui-b-green { background: var(--hp-accent-soft); color: var(--hp-ink-green); border-color: var(--hp-accent-line); }
 .hpui-b-amber { background: var(--hp-amber-soft); color: var(--hp-ink-amber); border-color: var(--hp-amber-line); }
@@ -462,16 +467,16 @@ body.hp-shell table.table tr.cbi-section-table-row:hover td { background: var(--
  * styles them (incl. :hover) with higher specificity than a plain ul>li rule —
  * so the disabled state MUST be re-styled explicitly or hover/normal states
  * silently fall back to the theme gradient. */
-ul.cbi-tabmenu { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px 0; padding: 0; background: none; border-bottom: 2px solid var(--hp-panel-line); border-radius: 0; }
-ul.cbi-tabmenu > li { flex: 0 1 auto; display: flex; align-items: center; height: auto; max-width: none; margin: 0; background: var(--hp-panel-bg-2); border: 1px solid transparent; border-bottom: none; border-radius: var(--hp-radius-sm) var(--hp-radius-sm) 0 0; box-shadow: none; color: inherit; cursor: pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease; }
-ul.cbi-tabmenu > li > a, ul.cbi-tabmenu > li > div { display: block; padding: 7px 16px; color: inherit; text-decoration: none; text-shadow: none; font-weight: 500; font-size: 1em; line-height: 1.4; white-space: nowrap; border-radius: var(--hp-radius-sm) var(--hp-radius-sm) 0 0; outline: none; }
+ul.cbi-tabmenu { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px 0; padding: 4px; background: var(--hp-panel-bg-2); border: 1px solid var(--hp-panel-line); border-bottom: 1px solid var(--hp-panel-line); border-radius: var(--hp-pill); }
+ul.cbi-tabmenu > li { flex: 0 1 auto; display: flex; align-items: center; height: auto; max-width: none; margin: 0; background: transparent; border: 1px solid transparent; border-bottom: 1px solid transparent; border-radius: var(--hp-pill); box-shadow: none; color: inherit; cursor: pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease; }
+ul.cbi-tabmenu > li > a, ul.cbi-tabmenu > li > div { display: block; padding: 7px 16px; color: inherit; text-decoration: none; text-shadow: none; font-weight: 500; font-size: 1em; line-height: 1.4; white-space: nowrap; border-radius: var(--hp-pill); outline: none; }
 ul.cbi-tabmenu > li:hover { background: rgba(128,128,128,.20); }
 /* !important guards: the bootstrap theme styles the disabled/hover states via
  * .cbi-tabmenu > .cbi-tab-disabled(:hover) and must never win back these
  * states — belt and suspenders on top of the higher-specificity selectors. */
 ul.cbi-tabmenu > li.cbi-tab-disabled { background: var(--hp-panel-bg-2) !important; border-color: transparent !important; color: inherit !important; }
 ul.cbi-tabmenu > li.cbi-tab-disabled:hover { background: rgba(128,128,128,.20) !important; }
-ul.cbi-tabmenu > li.cbi-tab { background: var(--hp-accent-soft) !important; border-color: var(--hp-accent-line) !important; color: var(--hp-accent-strong) !important; }
+ul.cbi-tabmenu > li.cbi-tab { background: var(--hp-accent-soft) !important; border-color: var(--hp-accent-line) !important; color: var(--hp-accent-strong) !important; border-radius: var(--hp-pill) !important; }
 ul.cbi-tabmenu > li.cbi-tab > a, ul.cbi-tabmenu > li.cbi-tab > div { font-weight: 700; color: inherit; }
 ul.cbi-tabmenu > li > a:hover, ul.cbi-tabmenu > li:hover > a, ul.cbi-tabmenu > li:hover > div { color: inherit; text-decoration: none; }
 /* Brand hover glow — the highlight the theme draws around BUTTONS on hover
@@ -548,7 +553,7 @@ table.hpui-table tbody tr { transition: background-color var(--hp-dur-1) var(--h
 /* Action button family with the full state machinery (Ф9.3 consumes these):
  * hover, keyboard focus ring, press, disabled and a busy state that reveals
  * an embedded .hpui-spin spinner the page put inside the button upfront. */
-.hpui-btn { appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 7px 14px; border-radius: var(--hp-radius-sm); border: 1px solid var(--hp-input-line); background: var(--hp-panel-bg-2); color: inherit; font: inherit; font-size: .92em; font-weight: 600; line-height: 1.35; cursor: pointer; text-decoration: none; transition: background-color var(--hp-dur-1) var(--hp-ease), border-color var(--hp-dur-1) var(--hp-ease), color var(--hp-dur-1) var(--hp-ease), box-shadow var(--hp-dur-1) var(--hp-ease), transform 80ms var(--hp-ease); }
+.hpui-btn { appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 7px 16px; border-radius: var(--hp-pill); border: 1px solid var(--hp-input-line); background: var(--hp-panel-bg); color: inherit; font: inherit; font-size: .92em; font-weight: 600; line-height: 1.35; cursor: pointer; text-decoration: none; transition: background-color var(--hp-dur-1) var(--hp-ease), border-color var(--hp-dur-1) var(--hp-ease), color var(--hp-dur-1) var(--hp-ease), box-shadow var(--hp-dur-1) var(--hp-ease), transform 80ms var(--hp-ease); }
 .hpui-btn:hover { border-color: var(--hp-accent-line); background: var(--hp-hover); }
 .hpui-btn:focus-visible { outline: none; box-shadow: var(--hp-focus-ring); }
 .hpui-btn:active { transform: translateY(1px); }
@@ -975,10 +980,10 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 	--hp-fg: #e2e8f0;
 	--hp-fg-dim: rgba(226,232,240,.62);
 	--hp-fg-faint: rgba(226,232,240,.40);
-	--hp-panel-bg: rgba(255,255,255,.045);
-	--hp-panel-bg-2: rgba(255,255,255,.028);
-	--hp-panel-line: rgba(255,255,255,.10);
-	--hp-panel-line-strong: rgba(255,255,255,.16);
+	--hp-panel-bg: #161d26;   /* ч.274 design v4: solid elevated cards (Tachyon look) */
+	--hp-panel-bg-2: #121a23;
+	--hp-panel-line: rgba(255,255,255,.12);
+	--hp-panel-line-strong: rgba(255,255,255,.18);
 	--hp-table-head: #1b2431;
 	--hp-table-head-fg: #c9d3e0;
 	--hp-console-bg: #0f151d;
@@ -999,9 +1004,9 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 	--hp-fg-dim: rgba(27,36,49,.64);
 	--hp-fg-faint: rgba(27,36,49,.45);
 	--hp-panel-bg: #ffffff;
-	--hp-panel-bg-2: rgba(27,36,49,.03);
-	--hp-panel-line: rgba(27,36,49,.10);
-	--hp-panel-line-strong: rgba(27,36,49,.16);
+	--hp-panel-bg-2: #f6f8fb;
+	--hp-panel-line: rgba(27,36,49,.12);
+	--hp-panel-line-strong: rgba(27,36,49,.18);
 	--hp-table-head: #dfe5ee;
 	--hp-table-head-fg: #38455a;
 	--hp-console-bg: #f6f8fb;

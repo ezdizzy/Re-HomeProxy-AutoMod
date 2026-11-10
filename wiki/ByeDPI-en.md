@@ -27,7 +27,7 @@ Think of ByeDPI as a complement to a VPN node (offload throttled sites like YouT
 1. Enable ByeDPI on the **Connection** page (if `ciadpi` is not installed yet, the app offers to
    install the right `byedpi` package for your architecture right there; you can also install it
    from **Maintenance → Core management**).
-2. Open the **Blocking bypass** page — the **ByeDPI strategy** card: pick a preset (see below) or
+2. Open the **Strategy master** page — the **ByeDPI strategy** card: pick a preset (see below) or
    type your own options, then save (the service restarts).
 
 That's all that's needed for the engine. Ravnex starts `ciadpi` for you and prevents it from looping back through the proxy automatically — you do not need to touch the firewall or process settings. The same card carries the engine option flags (UDP over TCP, Block QUIC) and the preset sweep button.
@@ -63,7 +63,7 @@ Why adaptive matters: a **fixed** fake-TTL strategy (the Fake-TTL group, presets
 
 ## The strategy tester
 
-Because the right strategy is ISP-specific, the **ByeDPI strategy** card on the Blocking bypass page includes a **tester**:
+Because the right strategy is ISP-specific, the **ByeDPI strategy** card on the Strategy master page includes a **tester**:
 
 - **Test** — tests the strategy currently in the input against four reference sites and shows a result per site:
   - **YouTube** and **Telegram** — *far* servers

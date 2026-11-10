@@ -6879,8 +6879,14 @@ const methods = {
 							const v = fj.verdicts[rn];
 							if (type(v) !== 'object')
 								continue;
+							/* ч.274 dedgu: the chosen strategy's browser sign travels
+							 * beside the verdict (absent = probe class unmeasured —
+							 * honest nothing, never a fake zero). */
+							const ch = (v.chosen != null && type(v.chosen) === 'object') ? v.chosen : null;
 							vd[rn] = { verdict: '' + (v.verdict || ''),
-								name: (v.chosen != null && type(v.chosen) === 'object') ? ('' + (v.chosen.name || '')) : '' };
+								name: (ch != null) ? ('' + (ch.name || '')) : '',
+								brow_ok: (ch != null && ch.dead_browser_ok != null) ? int(ch.dead_browser_ok) : null,
+								brow_total: (ch != null && ch.dead_browser_total != null) ? int(ch.dead_browser_total) : null };
 						}
 						lab_fuzz = { ts: int(fj.ts), age: time() - int(fj.ts), verdicts: vd };
 					}

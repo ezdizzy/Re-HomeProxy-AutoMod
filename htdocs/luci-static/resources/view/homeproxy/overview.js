@@ -370,7 +370,7 @@ return view.extend({
 			[ 'exit',   'shuffle', _('Where your traffic goes'),
 				_('The server your devices use to reach the internet right now.'),
 				_('Change server'), 'admin/services/ravnex/client' ],
-			[ 'bypass', 'shield',   _('Blocking bypass'),
+			[ 'bypass', 'shield',   _('Strategy master'),
 				_('Zapret and ByeDPI open blocked sites without a VPN subscription.'),
 				_('Configure'), 'admin/services/ravnex/bypass' ],
 			[ 'learn',  'refresh',  _('Auto-bypass'),

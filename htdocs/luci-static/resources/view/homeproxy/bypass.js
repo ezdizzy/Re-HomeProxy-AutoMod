@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2024-2026 1andrevich
  *
- * Ravnex — Blocking bypass page (R3 v3c, 19-UX_REDESIGN стр. 4).
+ * Ravnex — Strategy master page (R3 v3c, 19-UX_REDESIGN стр. 4).
  *
  * ONE page for the whole «how do the blocked sites open» concern. The four
  * zones moved here 1:1 from the Routing Wizard DPI section (the wizard is
@@ -518,7 +518,7 @@ return view.extend({
 
 		dpiPanes.dpiOv.appendChild(dpiResultRow);
 		const bypRoot = E('div', {});
-		bypRoot.appendChild(hp.pageIntro(_('Blocking bypass'),
+		bypRoot.appendChild(hp.pageIntro(_('Strategy master'),
 			_('How the blocked sites open: what works right now (the Serving map), the strategy picking, the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it.')));
 		bypRoot.appendChild(dpiTabBar);
 		for (let t in DPI_TABS)
@@ -1961,6 +1961,18 @@ return view.extend({
 							badge('hpui-b-green', _('BEST VERIFIED')),
 							' ' + (RESL[rn] || rn) + ': ' + v.chosen.name
 						]));
+						/* ч.274 dedgu: the browser sign of the winner — did the
+						 * browser-class ClientHello survive the dead edges this
+						 * strategy revived? Absent = probe class unmeasured. */
+						const dbt = (v.chosen.dead_browser_total > 0) ? v.chosen.dead_browser_total : 0;
+						if (dbt > 0) {
+							const dbo = v.chosen.dead_browser_ok || 0;
+							box.appendChild(E('div', { 'class': 'wiz-note', style: 'opacity:.85' }, [
+								badge(dbo > 0 ? 'hpui-b-green' : 'hpui-b-amber',
+									_('browser: %s/%s').format(dbo, dbt)),
+								' ' + _('Browser-ClientHello class on the dead edges this strategy revived — the curl class and the browser class can disagree.')
+							]));
+						}
 						/* ч.235 (вариант (i), согласован с пользователем): честная
 						 * current-ремарка вместо утверждения «прошла». Полный
 						 * проход — серый бейдж и прежний текст; частичный —
@@ -2670,7 +2682,7 @@ return view.extend({
 		dpiCorpus.appendChild(corpusBtns);
 		dpiCorpus.appendChild(prevBox);
 		dpiCorpus.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('Update downloads the StressOzz/Zapret-Manager strategy catalog, converts it to nfqws2, tests every converted strategy on the router and shows the diff before applying anything. The generator derives new strategies from the best fuzz results when nothing works.') ]));
+			[ _('The catalog gathers strategies from several public sources: the StressOzz/Zapret-Manager catalogs (converted to nfqws2 by the update), the imported Tachyon corpus, the provider-community index (republished by our validated lists hub) and the built-in generator that derives new strategies from the best fuzz results when nothing works. Every strategy is tested on the router and shows the diff before anything is applied.') ]));
 
 		/* Per-provider strategies (zemidala via the lists hub): pick YOUR
 		 * provider ASN, import the community-verified strategies into the

@@ -1008,7 +1008,7 @@ return view.extend({
 			E('div', { 'class': 'hpui-panel' }, [
 				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('layers'), _('Proxy policy') ]),
 				E('p', { 'class': 'hpui-hint' }, [
-					_('«Auto» on a device card means «like everyone else» — this policy. A card mode (Direct/Proxied/Gaming/Global) overrides it for that one device. What is proxied for the whole home is decided on the Service rules and Blocking bypass pages.')
+					_('«Auto» on a device card means «like everyone else» — this policy. A card mode (Direct/Proxied/Gaming/Global) overrides it for that one device. What is proxied for the whole home is decided on the Service rules and Strategy master pages.')
 				]),
 				E('div', { 'class': 'dev-field', 'style': 'max-width:480px' }, [
 					E('label', {}, [ _('Common policy for "Auto" devices') ]),

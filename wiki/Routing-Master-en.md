@@ -3,7 +3,7 @@
 # Routing Master
 
 The routing control center: two pages that together decide «which resource rides which exit» —
-**Blocking bypass** (transport-layer engines and strategies) and **Service rules** (which service rides
+**Strategy master** (transport-layer engines and strategies) and **Service rules** (which service rides
 which exit).
 
 > Both work in the **«Blocking bypass»** mode. In «Everything via node» all traffic is tunneled
@@ -26,7 +26,7 @@ or ByeDPI instead of the proxy — that saves subscription traffic.
 
 ---
 
-## The «Blocking bypass» page
+## The «Strategy master» page
 
 ### Provider diagnostics
 

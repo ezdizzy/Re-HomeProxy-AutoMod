@@ -711,7 +711,7 @@ return view.extend({
 
 		return E('div', {}, [
 			hp.pageIntro(_('Monitoring'),
-				_('How healthy the servers are right now: the live delay of every node the core measures, the running engine and core, and the active connections with their speed. Read-only — the changes happen on the Servers and Blocking bypass pages.')),
+				_('How healthy the servers are right now: the live delay of every node the core measures, the running engine and core, and the active connections with their speed. Read-only — the changes happen on the Servers and Strategy master pages.')),
 			panelNodes, panelConn, panelRes ]);
 	}
 });

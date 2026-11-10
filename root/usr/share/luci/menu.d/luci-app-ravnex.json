@@ -43,7 +43,7 @@
 		}
 	},
 	"admin/services/ravnex/bypass": {
-		"title": "Blocking bypass",
+		"title": "Strategy master",
 		"order": 17,
 		"action": {
 			"type": "view",

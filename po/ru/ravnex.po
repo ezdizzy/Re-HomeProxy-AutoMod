@@ -8046,3 +8046,62 @@ msgstr "Удалить строку"
 
 msgid "not routed"
 msgstr "не направлен"
+
+# ── ч.274 (сеанс 186): dedgu-бейдж + волна аудита + «Мастер стратегий» ──
+
+msgid "Strategy master"
+msgstr "Мастер стратегий"
+
+msgid "browser: %s/%s"
+msgstr "браузер: %s/%s"
+
+msgid "Browser-ClientHello class on the dead edges this strategy revived — the curl class and the browser class can disagree."
+msgstr "Браузерный класс (Chrome ClientHello) на мёртвых краях, которые оживила эта стратегия, — класс curl и класс браузера могут расходиться."
+
+msgid "Disable ByeDPI?"
+msgstr "Отключить ByeDPI?"
+
+msgid "With ByeDPI disabled, every rule pointing at it rides DIRECT until the engine is enabled again (nothing is proxied for those rules). Disable the engine?"
+msgstr "С выключенным ByeDPI каждое правило, указывающее на него, идёт НАПРЯМУЮ, пока движок не включён снова (для этих правил ничего не проксируется). Отключить движок?"
+
+msgid "Disable Zapret?"
+msgstr "Отключить Zapret?"
+
+msgid "With Zapret disabled, every rule pointing at it rides DIRECT until the engine is enabled again (nothing is protected for those rules). Disable the engine?"
+msgstr "С выключенным Zapret каждое правило, указывающее на него, идёт НАПРЯМУЮ, пока движок не включён снова (для этих правил не работает защита). Отключить движок?"
+
+msgid "Expert rules (raw)"
+msgstr "Эксперт-правила (raw)"
+
+msgid "Expert raw routing rules (the expert mode below) emit right after the direct pins, above everything else on this page — they win first match over every list tier."
+msgstr "Экспертные raw-правила маршрутизации (эксперт-режим ниже) выпускаются сразу после direct-пинов, выше всего остального на этой странице — их первый матч выигрывает раньше любого уровня списков."
+
+msgid "The catalog gathers strategies from several public sources: the StressOzz/Zapret-Manager catalogs (converted to nfqws2 by the update), the imported Tachyon corpus, the provider-community index (republished by our validated lists hub) and the built-in generator that derives new strategies from the best fuzz results when nothing works. Every strategy is tested on the router and shows the diff before anything is applied."
+msgstr "Каталог собирает стратегии из нескольких открытых источников: каталоги StressOzz/Zapret-Manager (конвертируются в nfqws2 при обновлении), импортированный корпус Tachyon, индекс стратегий сообщества по провайдерам (републикуется нашим проверенным хабом списков) и встроенный генератор, выводящий новые стратегии из лучших результатов фаззинга, когда ничего не сработало. Каждая стратегия проверяется на роутере, и различия показываются до применения чего-либо."
+
+msgid "Strategy testing (current strategy, batch fuzzing with baseline and history, Apply) lives on the Strategy master page — \"Strategy Lab\"."
+msgstr "Проверка стратегий (текущая стратегия, пакетный фаззинг с baseline и историей, применение) живёт на странице «Мастер стратегий» — «Лаборатория»."
+
+msgid "Enables real HTTP-based ByeDPI strategy testing. Required for the \"Test\" and \"Test all presets\" buttons on the Strategy master page."
+msgstr "Включает полноценное HTTP-тестирование стратегий ByeDPI. Необходим для кнопок «Проверить» и «Проверить все предустановки» на странице «Мастер стратегий»."
+
+msgid "A free way to unblock throttled sites (e.g. YouTube) without a VPN subscription. Works by confusing your ISP's traffic analysis — your traffic is NOT encrypted or hidden, your ISP can still see which sites you visit. Results depend on your ISP and may require trying different strategies on the Strategy master page. ByeDPI will be installed automatically on first enable."
+msgstr "Бесплатный способ разблокировать замедлённые сайты (например, YouTube) без VPN-подписки. Работает, сбивая систему анализа трафика провайдера — трафик НЕ шифруется и НЕ скрывается, провайдер по-прежнему видит, какие сайты вы посещаете. Результат зависит от провайдера и может потребовать подбора стратегии на странице «Мастер стратегий». При первом включении ByeDPI установится автоматически."
+
+msgid "How healthy the servers are right now: the live delay of every node the core measures, the running engine and core, and the active connections with their speed. Read-only — the changes happen on the Servers and Strategy master pages."
+msgstr "Как чувствуют себя серверы прямо сейчас: живая задержка каждого узла по измерениям ядра, работающий движок и ядро, активные соединения со скоростями. Страница только для чтения — изменения делаются на «Серверах» и в «Мастере стратегий»."
+
+msgid "Install, update and manage the two bypass engines — ByeDPI and Zapret. Which one actually serves the traffic is configured on the Strategy master page."
+msgstr "Установка, обновление и управление двумя движками обхода — ByeDPI и Zapret. Какой из них реально обслуживает трафик, настраивается на странице «Мастер стратегий»."
+
+msgid "The DPI auto-pilot keeps the bypass strategies working without attention: on schedule it re-ranks the tested strategies and applies the best one per resource; when a resource stops answering, the next alternative applies immediately. Every apply takes a server snapshot (Restore stays available) and verifies the resource live. One-click picks and fresh measurements live on the Strategy master page — the Strategy Lab."
+msgstr "Автопилот DPI держит стратегии обхода рабочими без вашего участия: по расписанию переразмечает проверенные стратегии и применяет лучшую для каждого ресурса; когда ресурс перестаёт отвечать — сразу применяет следующую альтернативу. Каждое применение делает серверный снимок (Restore остаётся доступным) и проверяет ресурс вживую. Подбор в один клик и свежие замеры — на странице «Мастер стратегий», в Стратегии-лаборатории."
+
+msgid "«Auto» on a device card means «like everyone else» — this policy. A card mode (Direct/Proxied/Gaming/Global) overrides it for that one device. What is proxied for the whole home is decided on the Service rules and Strategy master pages."
+msgstr "«Авто» на карточке устройства означает «как у всех» — то есть эту политику. Свой режим на карточке (Напрямую/Через прокси/Gaming/Глобальный) переопределяет её для этого устройства. Что проксируется для всего дома, решают страницы «Правила для сервисов» и «Мастер стратегий»."
+
+msgid "Local SOCKS5 DPI bypass proxy by <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea/byedpi</a> (installed from the original releases, SHA256-gated). Enable on the Connection page; strategies are configured on the Strategy master page."
+msgstr "Локальный SOCKS5-прокси для обхода DPI от <a href=\"https://github.com/hufrea/byedpi\" target=\"_blank\">hufrea/byedpi</a> (ставится из оригинальных релизов, SHA256-гейт). Включается на странице «Подключение»; стратегии настраиваются на странице «Мастер стратегий»."
+
+msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2, installed from the original openwrt-embedded release, SHA256-gated). Configure on the Strategy master page."
+msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2, ставится из оригинального openwrt-embedded-релиза, SHA256-гейт). Настраивается на странице «Мастер стратегий»."
