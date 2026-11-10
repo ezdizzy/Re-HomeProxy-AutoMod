@@ -50,6 +50,63 @@ const YT_FRESH_SEC = 172800;
 const ZOMBIE_MIN_AGE = 60;
 const ZOMBIE_MIN_HITS = 3;
 
+/* ── сеанс 189: гвард ложного выучивания ЖИВОГО пула ──────────────────────
+ * Сценарий (пойман живьём на трафике юзера 189): видео на живом пуле
+ * стартует/буферизуется/столлится — конн открыт, download < 8192, возраст
+ * уже > 60 с (столл юзера: 1383 Б за 2 мин). Детектор видит «зомби» и
+ * копит хиты; три таких столла = пул «выучен» = DNS-отказ ЕДИНСТВЕННОМУ
+ * живому пулу = полное падение видео. Лечится пул-уровневым свидетельством
+ * контента: ЛЮБОЙ конн (даже direct-out, даже закрытый-в-этом-скане) с
+ * download >= 8192 в любом скане = пул жив. Пока свидетельство свежее
+ * (CONTENT_GUARD_SEC), выучивание заблокировано, а накопленные зомби-хиты
+ * невыученного пула сбрасываются (столл — не мёртвость). Выученные пулы
+ * гвард не трогает (авто-unlearn = отдельная ревизия, копилка). */
+const CONTENT_DL = 8192;
+const CONTENT_GUARD_SEC = 21600;
+
+/* ── сеанс 189: RFC3339 → epoch ───────────────────────────────────────────
+ * 🔴 КЛАСС БАГА (пойман живьём): clash-api несёт start как RFC3339-строку
+ * ("2026-11-10T20:01:03.274594401Z") — int() парсит только ведущие "2026"
+ * (ГОД), поэтому возраст-гейт ZOMBIE_MIN_AGE был всегда истинен и хиты
+ * копились с первой секунды жизни конна. Селфтесты 188 это пропускали:
+ * их conn() строил числовой start. Чистая арифметика days-from-civil
+ * (Hinnant); ucode '/' дробный — все деления через int(); regex ERE
+ * без (?:) и \d. Формат Go RFC3339Nano: дата T время [.дробь] (Z|±HH:MM). */
+function rfc3339_to_epoch(s) {
+	const str = '' + (s || '');
+	const m = match(str, /^([0-9]+)-([0-9]+)-([0-9]+)[Tt ]([0-9]+):([0-9]+):([0-9]+)/);
+	if (m == null || length(m) < 7)
+		return 0;
+	const y = int(m[1]), mo = int(m[2]), d = int(m[3]);
+	const hh = int(m[4]), mm = int(m[5]), ss = int(m[6]);
+	if (mo < 1 || mo > 12 || d < 1 || d > 31 || hh > 23 || mm > 59 || ss > 60)
+		return 0;
+	let yy = y;
+	if (mo <= 2) yy -= 1;
+	const era = int((yy >= 0 ? yy : yy - 399) / 400);
+	const yoe = yy - era * 400;
+	const doy = int((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + d - 1;
+	const doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy;
+	let ep = (era * 146097 + doe - 719468) * 86400 + hh * 3600 + mm * 60 + ss;
+	const mz = match(str, /([+-])([0-9][0-9]):([0-9][0-9])$/);
+	if (mz != null && length(mz) > 3) {
+		const off = int(mz[2]) * 3600 + int(mz[3]) * 60;
+		ep += (mz[1] === '+') ? -off : off;
+	}
+	return ep;
+}
+
+function conn_start_epoch(e) {
+	const st = (e != null) ? e.start : null;
+	if (st == null)
+		return 0;
+	/* ucode type() для целых = 'integer', для дробных = 'double' — строковый
+	 * путь только для строк (RFC3339), всё остальное = числовой epoch. */
+	if (type(st) !== 'string')
+		return int(st);
+	return rfc3339_to_epoch(st);
+}
+
 export function zombie_pools(conns, now, learned, current_suffix) {
 	/* 🔴 клон входа (сеанс 188, пойман своим же селфтестом): мутация passed-in
 	 * объекта алиасит state caller'а — rb-скан изменял ra.learned задним
@@ -64,6 +121,7 @@ export function zombie_pools(conns, now, learned, current_suffix) {
 	}
 	const cur = lc(trim('' + (current_suffix || '')));
 	const touched = {};
+	const content = {};
 	for (let e in (conns || [])) {
 		if (e == null || type(e) !== 'object')
 			continue;
@@ -81,6 +139,10 @@ export function zombie_pools(conns, now, learned, current_suffix) {
 		if (m == null || length(m) < 3)
 			continue;
 		const pool = m[2];
+		/* сеанс 189: свидетельство контента — считается ДО всех зомби-фильтров
+		 * (в т.ч. direct-out: пул, качающий по direct, жив как пул). */
+		if (int(e.download || 0) >= CONTENT_DL)
+			content[pool] = true;
 		if (length(cur) && index(cur, pool + '.') === 0)
 			continue;
 		const ch = e.chains || [];
@@ -93,13 +155,28 @@ export function zombie_pools(conns, now, learned, current_suffix) {
 		/* «нет КОНТЕНТА»: TLS-полёт (сертификат 3–5 КБ) и 404-тело — не контент;
 		 * реальный видеопоток за 60 с = сотни КБ. Порог 8 КБ (живой калибровкой
 		 * holders 188: TLS-ok-зомби несли ~4 КБ и должны учиться). */
-		if (int(e.download || 0) >= 8192)
+		if (int(e.download || 0) >= CONTENT_DL)
 			continue;
-		if ((now - int(e.start || 0)) < ZOMBIE_MIN_AGE)
+		if ((now - conn_start_epoch(e)) < ZOMBIE_MIN_AGE)
 			continue;
 		touched[pool] = int(touched[pool] || 0) + 1;
 	}
 	const new_pools = [];
+	/* сеанс 189: контент-свидетельство пулов ВНЕ зомби-скана (в т.ч. текущий
+	 * стрим, исключённый из зомби per-конном) — персистится в state, чтобы
+	 * гвард контента жил и после того, как стрим ушёл с пула. Такие пулы
+	 * попадают в state с hits=0 — merge каталога их не стирит (гейт hits>=3). */
+	const cks = keys(content);
+	sort(cks, (a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
+	for (let pool in cks) {
+		if (touched[pool] != null)
+			continue;
+		const prev = out.pools[pool];
+		const row = (prev != null && type(prev) === 'object') ? prev : { first_ts: now };
+		row.last_ts = int(row.last_ts || 0) || now;
+		row.last_content_ts = now;
+		out.pools[pool] = row;
+	}
 	const ks = keys(touched);
 	sort(ks, (a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
 	for (let pool in ks) {
@@ -108,6 +185,17 @@ export function zombie_pools(conns, now, learned, current_suffix) {
 		const row = (prev != null && type(prev) === 'object') ? prev : { first_ts: now };
 		row.last_ts = now;
 		row.hits = int(row.hits || 0) + int(touched[pool]);
+		if (content[pool])
+			row.last_content_ts = now;
+		/* сеанс 189: гвард контента — ДО перехода порога. Невыученный пул со
+		 * свежим контентом не учится, его зомби-хиты обнуляются (столл живого
+		 * пула — не мёртвость). Уже выученный (was) — не трогается. */
+		const cg = int(row.last_content_ts || 0);
+		if (!was && cg > 0 && (now - cg) < CONTENT_GUARD_SEC) {
+			row.hits = 0;
+			out.pools[pool] = row;
+			continue;
+		}
 		out.pools[pool] = row;
 		if (!was && int(row.hits) >= ZOMBIE_MIN_HITS)
 			push(new_pools, pool);
@@ -236,10 +324,13 @@ export function selftest() {
 		const rd = zombie_pools(d, NOW, r1.learned, '');
 		return rd.learned.pools['sn-dddd99'] == null;
 	})());
-	t('zombie: real download excluded', (function () {
+	t('zombie: real download excluded (content evidence instead)', (function () {
 		const d = [conn('rr9---sn-aaaa77.googlevideo.com', 16384, 300)];
 		const rd = zombie_pools(d, NOW, r1.learned, '');
-		return rd.learned.pools['sn-aaaa77'] == null;
+		return rd.learned.pools['sn-aaaa77'] != null &&
+			int(rd.learned.pools['sn-aaaa77'].hits) === 0 &&
+			int(rd.learned.pools['sn-aaaa77'].last_content_ts) === NOW &&
+			length(rd.new_pools) === 0;
 	})());
 	t('zombie: too young excluded', (function () {
 		const d = [conn('rr9---sn-bbbb88.googlevideo.com', 0, 30)];
@@ -273,6 +364,92 @@ export function selftest() {
 		const d = [conn('example.com', 0, 300)];
 		const rd = zombie_pools(d, NOW, null, '');
 		return length(keys(rd.learned.pools)) === 0;
+	})());
+
+	/* ── сеанс 189: RFC3339 age gate (живой баг-класс int('2026-…')=2026) ── */
+	t('epoch: live sample 188/189', rfc3339_to_epoch('2026-11-10T20:01:03.274594401Z') === 1794340863);
+	t('epoch: unix zero', rfc3339_to_epoch('1970-01-01T00:00:00Z') === 0);
+	t('epoch: offset +03:00 folds to UTC', rfc3339_to_epoch('2026-11-10T23:01:03+03:00') === 1794340863);
+	t('epoch: offset -05:00 folds to UTC', rfc3339_to_epoch('2026-11-10T15:01:03-05:00') === 1794340863);
+	t('epoch: garbage -> 0', rfc3339_to_epoch('not-a-date') === 0 && rfc3339_to_epoch('') === 0);
+	t('zombie: young RFC3339 conn NOT counted (int-trap regression)', (function () {
+		const d = [{
+			metadata: { host: 'rr9---sn-eeee77.googlevideo.com' },
+			download: 0,
+			start: '2026-11-10T20:01:03.274594401Z', /* 1794340863 */
+			chains: ['zapret-out'],
+			closed: false
+		}];
+		const rd = zombie_pools(d, 1794340863 + 30, null, ''); /* 30 с жизни */
+		return rd.learned.pools['sn-eeee77'] == null;
+	})());
+	t('zombie: old RFC3339 conn counted', (function () {
+		const d = [
+			{ metadata: { host: 'rr9---sn-ffff88.googlevideo.com' }, download: 0,
+			  start: '2026-11-10T20:01:03.274594401Z', chains: ['zapret-out'], closed: false },
+			{ metadata: { host: 'rr8---sn-ffff88.googlevideo.com' }, download: 100,
+			  start: '2026-11-10T20:01:03.274594401Z', chains: ['zapret-out'], closed: false },
+			{ metadata: { host: 'rr7---sn-ffff88.googlevideo.com' }, download: 0,
+			  start: '2026-11-10T20:01:03.274594401Z', chains: ['zapret-out'], closed: false }
+		];
+		const rd = zombie_pools(d, 1794340863 + 120, null, '');
+		return length(rd.new_pools) === 1 && int(rd.learned.pools['sn-ffff88'].hits) === 3;
+	})());
+	t('zombie: numeric start still works (188 compat)', (function () {
+		const d = [conn('rr9---sn-gggg99.googlevideo.com', 0, 120)];
+		const rd = zombie_pools(d, NOW, null, '');
+		return int(rd.learned.pools['sn-gggg99'].hits) === 1;
+	})());
+
+	/* ── сеанс 189: гвард контента (ложное выучивание живого пула) ── */
+	t('guard: stalled conns + real content -> NOT learned, hits reset', (function () {
+		const d = [
+			/* 3 столла (класс юзера 189: старт видео на живом пуле) */
+			conn('rr1---sn-aaaa11.googlevideo.com', 1383, 130),
+			conn('rr2---sn-aaaa11.googlevideo.com', 6286, 200),
+			conn('rr3---sn-aaaa11.googlevideo.com', 2376, 170),
+			/* + реальный контент на другом крае того же пула */
+			conn('rr4---sn-aaaa11.googlevideo.com', 2781377, 300)
+		];
+		const rd = zombie_pools(d, NOW, null, '');
+		return rd.learned.pools['sn-aaaa11'] != null &&
+			int(rd.learned.pools['sn-aaaa11'].hits) === 0 &&
+			length(rd.new_pools) === 0 &&
+			int(rd.learned.pools['sn-aaaa11'].last_content_ts) === NOW;
+	})());
+	t('guard: content evidence expires -> pool learnable again', (function () {
+		const state = { pools: { 'sn-bbbb22': { first_ts: NOW - 40000, last_ts: NOW - 30000, hits: 0, last_content_ts: NOW - 30000 - CONTENT_GUARD_SEC } } };
+		const d = [
+			conn('rr1---sn-bbbb22.googlevideo.com', 0, 130),
+			conn('rr2---sn-bbbb22.googlevideo.com', 0, 130),
+			conn('rr3---sn-bbbb22.googlevideo.com', 0, 130)
+		];
+		const rd = zombie_pools(d, NOW, state, '');
+		return length(rd.new_pools) === 1 && int(rd.learned.pools['sn-bbbb22'].hits) === 3;
+	})());
+	t('guard: content on ANY chain (direct too) protects the pool', (function () {
+		const d = [
+			conn('rr1---sn-cccc33.googlevideo.com', 0, 130),
+			conn('rr2---sn-cccc33.googlevideo.com', 0, 130),
+			conn('rr9---sn-cccc33.googlevideo.com', 16384, 300, ['direct-out'])
+		];
+		const rd = zombie_pools(d, NOW, null, '');
+		return length(rd.new_pools) === 0 && int(rd.learned.pools['sn-cccc33'].hits) === 0;
+	})());
+	t('guard: ALREADY learned pool untouched by content guard', (function () {
+		const state = { pools: { 'sn-dddd44': { first_ts: NOW - 400, last_ts: NOW - 300, hits: 6 } } };
+		const d = [
+			conn('rr1---sn-dddd44.googlevideo.com', 0, 130),
+			conn('rr2---sn-dddd44.googlevideo.com', 2781377, 300)
+		];
+		const rd = zombie_pools(d, NOW, state, '');
+		return int(rd.learned.pools['sn-dddd44'].hits) === 7 && length(rd.new_pools) === 0;
+	})());
+	t('guard: input state not mutated (clone contract 188)', (function () {
+		const state = { pools: { 'sn-eeee55': { first_ts: 1, last_ts: 2, hits: 2 } } };
+		const d = [conn('rr1---sn-eeee55.googlevideo.com', 0, 130)];
+		zombie_pools(d, NOW, state, '');
+		return int(state.pools['sn-eeee55'].hits) === 2;
 	})());
 
 	return { pass: length(pass), fail: length(fail), details: fail };

@@ -7006,6 +7006,22 @@ const methods = {
 	 * (регенерация + верифицированный рестарт, как wizard_preset_apply).
 	 * Фидер данных — multidns.uc (dead_whole из каталога свипов, ≤48 ч,
 	 * текущий стрим-суффикс не отказывается). */
+	/* ── сеанс 189: реген-дверь автообучения пулов ──────────────────────────
+	 * Выученные зомби-пулы живут в каталоге (yt_steer_dead.json), но route-слой
+	 * ядра несёт их как INLINE domain_keyword — часть ТЕКСТА конфига: hot-reload
+	 * local rule_set (сеанс 189: доказан живьём на DNS-слое, клейм 188 опроверг)
+	 * инлайны не покрывает в принципе. Дверь = op 'restart' (генерация →
+	 * candidate → старт → verify), как у yt_steer_set. Вызывает automation-тик
+	 * с кулдауном 900 с; ручной вызов = тоже легален (opman сериализует). */
+	yt_steer_regenerate: {
+		call: function(req) {
+			if ((cursor().get('ravnex', 'config', 'yt_steer_dead') || '0') !== '1')
+				return { result: false, error: 'negative steering disabled' };
+			const ap = op_spawn('restart', 'yt steering: learned dead pools -> route layer (auto-learn regen)');
+			return ap;
+		}
+	},
+
 	yt_steer_set: {
 		args: { value: 'value' },
 		call: function(req) {

@@ -1922,6 +1922,47 @@ function yt_learn_write_atomic(path, txt) {
 	system('mv -f ' + shellquote(tmp) + ' ' + shellquote(path));
 }
 
+/* ── сеанс 189: реген-дверь после обучения пулов ──────────────────────────
+ * Выученные пулы достигают route-слоя ТОЛЬКО регенерацией: route.rules несёт
+ * их как INLINE domain_keyword — часть ТЕКСТА конфига ядра; hot-reload
+ * local rule_set файлами (доказан живьём 189 на DNS-слое) инлайны не
+ * покрывает. Дверь = opman 'restart' (генерация → candidate → старт →
+ * verify), та же, что у yt_steer_set. Кулдаун 900 с против поминутных
+ * рестартов в зомби-шторме. Состояние пишется ДО вызова (рестарт службы
+ * убивает ЭТОТ демон — ответ ubus прочитать не успеем; при отказе двери
+ * кулдаун сгорает впустую — ретрай через 15 мин, это безопасно). */
+const YT_REGEN_STATE = RUN_DIR + '/yt_steer_regen.json';
+const YT_REGEN_COOLDOWN = 900;
+
+function yt_steer_regen_request() {
+	try {
+		let last = 0;
+		if (access(YT_REGEN_STATE)) {
+			try {
+				const rs = json(readfile(YT_REGEN_STATE) || '');
+				if (rs != null && type(rs) === 'object')
+					last = int(rs.ts || 0);
+			} catch (e) { last = 0; }
+		}
+		const now = time();
+		if (last > 0 && (now - last) < YT_REGEN_COOLDOWN) {
+			log('YT learned pools: regen door on cooldown (' +
+				(YT_REGEN_COOLDOWN - (now - last)) + 's left) - route layer follows at its next regen');
+			return;
+		}
+		yt_learn_write_atomic(YT_REGEN_STATE, sprintf('%.J\n', { ts: now, op_id: '' }));
+		const out = capture('ubus -t 3 call luci.ravnex yt_steer_regenerate 2>/dev/null');
+		let ap = null;
+		try { ap = json(out || ''); } catch (e) { ap = null; }
+		if (ap != null && type(ap) === 'object' && ap.result === true && ap.busy !== true)
+			log('YT learned pools: regen door opened (op ' + (ap.op_id || '?') + ') - route layer gets them after the restart');
+		else
+			log('YT learned pools: regen door busy/refused - retry after cooldown');
+	} catch (e) {
+		dbg('yt_regen error: ' + sprintf('%s', e));
+	}
+}
+
 function yt_steer_learn_pass() {
 	try {
 		if ((uci.get('ravnex', 'config', 'yt_steer_dead') || '0') !== '1')
@@ -1955,9 +1996,14 @@ function yt_steer_learn_pass() {
 		else {
 			const prev = (learned != null && type(learned) === 'object' && learned.pools) ? learned.pools : {};
 			for (let p in keys(pools)) {
-				const a = int(pools[p] && pools[p].hits || 0);
-				const b = int(prev[p] && prev[p].hits || 0);
-				if (a !== b)
+				const nr = pools[p], or = prev[p];
+				/* сеанс 189: меняется и hits, и контент-свидетельство (гвард
+				 * ложного выучивания персистится в learned-файл) */
+				if (int(nr && nr.hits || 0) !== int(or && or.hits || 0)) {
+					changed_cnt++;
+					continue;
+				}
+				if (int(nr && nr.last_content_ts || 0) !== int(or && or.last_content_ts || 0))
 					changed_cnt++;
 			}
 		}
@@ -1991,6 +2037,7 @@ function yt_steer_learn_pass() {
 			log('YT zombie pools learned: ' + join(', ', r.new_pools) +
 				' — DNS-layer refuses them in ~30s (mosdns rebuild); route layer follows at the next regen.');
 			eng_event('yt_learn', 'выучены мёртвые пулы YouTube: ' + join(', ', r.new_pools));
+			yt_steer_regen_request();
 		}
 	} catch (e) {
 		dbg('yt_learn error: ' + sprintf('%s', e));
