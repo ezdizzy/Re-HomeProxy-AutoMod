@@ -1093,11 +1093,17 @@ return view.extend({
 			if (e.status === 'upstream_blocked')
 				return E('span', { 'class': 'hpbadge hpb-noproxy' }, [ _('Upstream-blocked') ]);
 			if (e.status === 'blocked')
-				return E('span', { 'class': 'hpbadge hpb-blocked' },
-					[ e.kind === 'dns_poison' ? _('Blocked (DNS)') :
-					  e.kind === 'stub' ? _('Blocked (stub)') :
-					  e.kind === 'tls_dpi' ? _('Blocked (DPI)') :
-					  e.kind ? _('Blocked (refusal)') : _('Blocked') ]);
+				return E('span', { 'class': 'hpbadge hpb-blocked' }, [
+					/* сеанс 187 G2: транспортные подп-kind'ы + G1 RKN-подсказка. */
+					e.kind === 'dns_poison' ? _('Blocked (DNS)') :
+					e.kind === 'stub' ? _('Blocked (stub)') :
+					e.kind === 'tls_dpi' ? _('Blocked (DPI)') :
+					e.kind === 'tcp_refused' ? _('Blocked (TCP refused)') :
+					e.kind === 'connect_timeout' ? _('Blocked (connect timeout)') :
+					e.kind === 'tls_timeout' ? _('Blocked (TLS timeout)') :
+					e.kind === 'tls_mitm' ? _('Blocked (TLS MITM)') :
+					e.kind ? _('Blocked (refusal)') :
+					e.rkn_hint ? _('Blocked (listed?)') : _('Blocked') ]);
 			if (e.status === 'direct')
 				return E('span', { 'class': 'hpbadge hpb-direct' }, [ _('Direct') ]);
 			if (e.status === 'direct_pending')
@@ -1136,14 +1142,23 @@ return view.extend({
 					stub:       _('ISP block page: the connection is redirected to the provider stub'),
 					sigpage:    _('block page served with HTTP 200 (body signature match)'),
 					tls_dpi:    _('TLS DPI: the handshake is reset right after ClientHello (SNI filtering)'),
-					hardcode:   _('censorship refusal code (403/406/451) — direct is refused, proxy works')
+					hardcode:   _('censorship refusal code (403/406/451) — direct is refused, proxy works'),
+					/* сеанс 187 G2: транспортные подп-kind'ы (только из полей
+					 * щупа; tls_mitm — спящая ветка, на текущей сборке щупа
+					 * недостижима — держим честную подпись на будущее). */
+					tcp_refused:      _('the TCP dial is refused outright (connection refused / unreachable)'),
+					connect_timeout:  _('the TCP dial times out — nothing answers on the direct path'),
+					tls_timeout:      _('the TLS handshake is silently dropped after ClientHello (no server reply)'),
+					tls_mitm:         _('a TLS certificate substitute answered (MITM shape) — probe class for future probe builds')
 				};
 				let kind = KINDS[e.kind] || null;
 				if (!e.direct && !e.proxy)
 					return (kind || _('blocked (details not recorded)')) +
+						(e.rkn_hint ? ' · ' + _('also present in the local registry lists (%s) — likely a registry block, not necessarily DPI').format(e.rkn_hint) : '') +
 						(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '');
 				let d = e.direct || '✗', p = e.proxy || '✓';
 				return (kind ? (kind + ' · ') : '') + _('direct %s ✗ / proxy %s ✓').format(d, p) +
+					(e.rkn_hint ? ' · ' + _('also present in the local registry lists (%s) — likely a registry block, not necessarily DPI').format(e.rkn_hint) : '') +
 					(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '');
 			}
 			if (e.status === 'blocked_no_proxy') return _('blocked both ways');
@@ -1297,7 +1312,12 @@ return view.extend({
 			[ 'dns_poison', _('Blocked (DNS)') ],
 			[ 'stub',       _('Blocked (stub)') ],
 			[ 'sigpage',    _('Block page') ],
-			[ 'hardcode',   _('Blocked (refusal)') ]
+			[ 'hardcode',   _('Blocked (refusal)') ],
+			/* сеанс 187 G2: транспортные подп-kind'ы в панели «Вердикты». */
+			[ 'tcp_refused',     _('Blocked (TCP refused)') ],
+			[ 'connect_timeout', _('Blocked (connect timeout)') ],
+			[ 'tls_timeout',     _('Blocked (TLS timeout)') ],
+			[ 'tls_mitm',        _('Blocked (TLS MITM)') ]
 		];
 		const STATUS_BADGES = [
 			[ 'blocked',          _('Blocked') ],

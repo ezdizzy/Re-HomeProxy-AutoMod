@@ -421,6 +421,20 @@ const ex_pools = (ex != null && type(ex.pools) === 'array') ? ex.pools : null;
 		}
 		if (length(partial) > 0)
 			push(out.notes, 'пулы с частичной чернотой: ' + join(', ', partial) + ' — видео из чёрных краёв может не открываться, это свойство пула, не стратегии');
+		/* сеанс 187: DIRECT-слой (RU-правда) — свип того же каталога через
+		 * честный RU-direct + применённую стратегию (zapret_fuzz pool_matrix_direct).
+		 * Ключи alive_dir/... отсутствуют = прямой проход не измерен — ноты нет
+		 * (не фейк-ноль). Одна агрегированная строка рядом с вердиктом. */
+		let dAlive = 0, dDead = 0, dWhole = 0, dSeen = false;
+		for (let pl2 in ex_pools) {
+			if (type(pl2) !== 'object' || pl2.alive_dir == null) continue;
+			dSeen = true;
+			dAlive += int(pl2.alive_dir || 0);
+			dDead += int(pl2.dead_dir || 0);
+			if (int(pl2.dead_whole_dir || 0) == 1) dWhole++;
+		}
+		if (dSeen)
+			push(out.notes, 'RU-direct слой (та же матрица пулов под применённой стратегией мимо узла — «RU-правда»): ' + dAlive + ' живых / ' + dDead + ' мёртвых краёв, пулов мёртвых целиком: ' + dWhole + '; live-вид может отличаться, если правило ресурса ведёт через узел');
 	}
 	if (ex_dns != null) {
 		const dvv = '' + (ex_dns.verdict || '');
@@ -693,6 +707,25 @@ export function selftest() {
 	const d2 = dims_of([ { ok: false, tls_ms: 0 } ], null, 'byedpi');
 	t('dims byedpi udp=false', d2.compatibility.engine_can_udp === false);
 	t('dims untested deep null', d2.compatibility.deep_total == null);
+
+	/* сеанс 187: DIRECT-слой (RU-правда) — нота появляется только при
+	 * наличии dir-ключей (не измерено = ноты нет) и несёт агрегат. */
+	const rvD1 = resource_verdict([
+		{ name: 'A', args: '--a', reach_ok: true, deep_items: null }
+	], 'vn', false, null, false, { pools: [
+		{ suffix: 'sn-aa11.googlevideo.com', alive: 4, dead: 2, dead_whole: 0,
+			alive_dir: 6, dead_dir: 0, dead_whole_dir: 0 },
+		{ suffix: 'sn-bb22.googlevideo.com', alive: 0, dead: 3, dead_whole: 1,
+			alive_dir: 0, dead_dir: 3, dead_whole_dir: 1 }
+	] });
+	t('direct-layer note present', index(join(';', rvD1.notes), 'RU-direct слой') >= 0);
+	t('direct-layer aggregates', index(join(';', rvD1.notes), '6 живых / 3 мёртвых') >= 0);
+	const rvD2 = resource_verdict([
+		{ name: 'A', args: '--a', reach_ok: true, deep_items: null }
+	], 'vn', false, null, false, { pools: [
+		{ suffix: 'sn-aa11.googlevideo.com', alive: 4, dead: 2, dead_whole: 0 }
+	] });
+	t('direct-layer absent when unmeasured', index(join(';', rvD2.notes), 'RU-direct слой') < 0);
 
 	return { pass: length(pass), fail: length(fail), details: fail };
 };

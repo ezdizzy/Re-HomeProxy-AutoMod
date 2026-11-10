@@ -6998,6 +6998,33 @@ const methods = {
 		}
 	},
 
+	/* ── сеанс 187: негативный стиринг YouTube (DNS-refuse мёртвых пулов) ──
+	 * UCI ravnex.config.yt_steer_dead ('0' дефолт). ПИВОТ сеанса 187: отказ
+	 * живёт в DNS-слое ЯДРА (generate_client читает файл набора при
+	 * регенерации; mosdns-матчер этой сборки доказанно не работает) —
+	 * поэтому смена значения сразу проходит через opman-дверь
+	 * (регенерация + верифицированный рестарт, как wizard_preset_apply).
+	 * Фидер данных — multidns.uc (dead_whole из каталога свипов, ≤48 ч,
+	 * текущий стрим-суффикс не отказывается). */
+	yt_steer_set: {
+		args: { value: 'value' },
+		call: function(req) {
+			const s = trim('' + ((req && req.args && req.args.value) || ''));
+		if (!(s in ['0', '1']))
+			return { result: false, error: 'bad flag value' };
+		hp_apply_backup_write();
+			const c = cursor();
+			const prev = '' + (c.get('ravnex', 'config', 'yt_steer_dead') || '0');
+			c.set('ravnex', 'config', 'yt_steer_dead', s);
+			c.commit('ravnex');
+			if (prev === s)
+				return { result: true, unchanged: true, value: s };
+			const ap = op_spawn('reload', 'negative steering ' + (s === '1' ? 'on' : 'off') + ' (DNS-layer refuse of dead youtube pools)');
+			ap.value = s;
+			return ap;
+		}
+	},
+
 	/* ── Ф8-F7 T3: one-click strategy auto-pick ("Автоподбор") ─────────────
 	 * The RPC owns the lock and the validation; the runner
 	 * (scripts/wizard_autopick.uc) drives fuzz→pick→rule→apply→verify and
@@ -7128,6 +7155,10 @@ const methods = {
 					 * reasons column. */
 						if (st.block_kind) e.kind = st.block_kind;
 						if (st.waf_seen) e.waf_seen = st.waf_seen;
+						/* сеанс 187 G1-readside: корроборация с реестровыми
+						 * списками (cat локального набора) — подсказка класса
+						 * причины, UI показывает её только у blocked. */
+						if (st.rkn_hint) e.rkn_hint = st.rkn_hint;
 						/* Ф6.6/B5.18: история доказательств записи (метод обучения,
 						 * счётчики проверок/самолечений, причина снятия) — UI
 						 * показывает их в колонке «Почему». */

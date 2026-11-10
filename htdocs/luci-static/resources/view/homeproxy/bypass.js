@@ -189,6 +189,15 @@ const callByedpiSet = rpc.declare({
 	expect: { '': {} }
 });
 
+/* Session 187: negative steering of dead YouTube pools (DNS refuse).
+ * The daemon (multidns) picks the UCI flag up on its next tick. */
+const callYtSteerSet = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'yt_steer_set',
+	params: [ 'value' ],
+	expect: { '': {} }
+});
+
 const callByedpiTest = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'byedpi_strategy_test',
@@ -758,6 +767,34 @@ return view.extend({
 		dpiMap.appendChild(E('p', { 'class': 'wiz-note', style: 'margin-top:2px' },
 			[ _('The map is live: the rule column shows where the resource is routed, the strategy column — the engine profile actually serving it now (an own scoped profile, the general tail, or a global strategy). «Check» probes the resource through the configured path (YouTube: the page, the thumbnail CDN, the video edge AND the real video stream measured in KB/s).') ]));
 
+		/* Сеанс 187: негативный стиринг — мёртвые пулы YouTube отвечаются
+		 * DNS-отказом (0.0.0.0) мгновенно; плеер ротит на живой край сам. */
+		const steerBox = E('input', { type: 'checkbox' });
+		steerBox.checked = (uci.get('ravnex', 'config', 'yt_steer_dead') === '1');
+		const steerNote = E('p', { 'class': 'wiz-note', style: 'margin-top:2px' });
+		dpiMap.appendChild(E('div', { 'class': 'wiz-row', style: 'margin-top:6px' },
+			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+				[ steerBox, ' ' + _('Steer dead YouTube pools (DNS refuse)') ]) ]));
+		dpiMap.appendChild(E('p', { 'class': 'wiz-note', style: 'margin-top:2px' },
+			[ _('Pools that never delivered a single alive edge under ANY measured strategy (dead whole, fresh ≤48 h) are DNS-REJECTED in the core config: instant refusal, the player switches to a live edge in milliseconds instead of hanging 5–10 s. The pool catalog is maintained by the Strategy Lab sweeps; the pool currently serving the stream is never refused; an empty catalog means nothing is refused. Toggling regenerates the core config (verified apply). The catalog feeder runs inside MultiDNS (mosdns).') ]));
+		dpiMap.appendChild(steerNote);
+		steerBox.addEventListener('click', function() {
+			const want = steerBox.checked ? '1' : '0';
+			dom.content(steerNote, E('span', { 'class': 'hpui-hint' }, [ _('Saving…') ]));
+			L.resolveDefault(callYtSteerSet(want), {}).then(function(r) {
+				if (r && r.result === true) {
+					dom.content(steerNote, E('span', { 'class': 'hpui-hint' },
+						[ (r.unchanged ? _('Steering already in this state.') :
+							((want === '1') ? _('Steering ON — MultiDNS picks it up on its next tick (dead pools answer 0.0.0.0).')
+								: _('Steering OFF — the refuse set is cleared on the next MultiDNS tick.'))) ]));
+					return;
+				}
+				steerBox.checked = !steerBox.checked;
+				dom.content(steerNote, E('span', { 'class': 'hpui-hint' },
+					[ _('Save failed: ') + ((r && r.error) || _('rpc error')) ]));
+			});
+		});
+
 		function servingText(rk, rule, dpiSt) {
 			const z = dpiSt.zapret || {}, b = dpiSt.byedpi || {};
 			if (rule && rule.node === 'byedpi-out')
@@ -1198,18 +1235,19 @@ return view.extend({
 
 		const bUot = E('input', { type: 'checkbox' });
 		bUot.checked = (uci.get('ravnex', 'config', 'byedpi_udp_over_tcp') !== '0');
-		const bQuic = E('input', { type: 'checkbox' });
-		bQuic.checked = (uci.get('ravnex', 'config', 'byedpi_block_quic') === '1');
+		/* сеанс 187: Block QUIC переехал в отдельный блок «QUIC» на странице
+		 * «Подключение» (это сетевой глобальный режим, не настройка движка).
+		 * Save передаёт ТЕКУЩЕЕ UCI-значение без изменения — флаг не теряется. */
+		const bQuicCur = (uci.get('ravnex', 'config', 'byedpi_block_quic') === '1') ? '1' : '0';
 		const bVoice = E('input', { type: 'checkbox' });
 		bVoice.checked = (uci.get('ravnex', 'config', 'zapret_voice') === '1');
 		const bFlag = (input, text) => E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
 			[ input, ' ' + text ]);
 		byeBox.appendChild(E('div', { 'class': 'wiz-row' },
 			[ bFlag(bUot, _('UDP over TCP')),
-			  bFlag(bQuic, _('Block QUIC (UDP port 443)') + ' ⚠️'),
 			  bFlag(bVoice, _('Discord calls via Zapret')) ]));
 		byeBox.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Block QUIC drops outgoing UDP 443 so browsers fall back to TCP where the strategy works; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled).') ]));
+			[ _('The strategy serves the flows routed to ByeDPI (Main node = ByeDPI, service rules, or the Composition profiles below). Save writes the strategy and the flags and restarts the service; ByeDPI itself is enabled on the Connection page. UDP over TCP wraps UDP traffic into the ByeDPI TCP stream; Discord calls via Zapret routes the Discord voice UDP ports to Zapret (needs Zapret enabled).') ]));
 		const bDesc = E('p', { 'class': 'wiz-note' });
 		/* innerHTML: the description contains HTML links E() would escape */
 		bDesc.innerHTML = _('Grouped by technique. Based on <a href="https://github.com/hufrea/byedpi" target="_blank">hufrea/byedpi</a> and community testing. See also <a href="https://github.com/fatyzzz/Byedpi-Setup" target="_blank">fatyzzz/Byedpi-Setup</a>.');
@@ -1220,7 +1258,7 @@ return view.extend({
 			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 				[ _('Saving the ByeDPI options — the service restarts…') ]));
 			L.resolveDefault(callByedpiSet(String(bStratInput.value || '').trim(),
-				bUot.checked ? '1' : '0', bQuic.checked ? '1' : '0',
+				bUot.checked ? '1' : '0', bQuicCur,
 				bVoice.checked ? '1' : '0'), {}).then(function(r) {
 				bSave.disabled = false;
 				if (r && r.unchanged) {

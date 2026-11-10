@@ -94,6 +94,10 @@ const DEAD_IPS_FILE = MD_DIR + '/dead_ips.txt';
 const PROXY_DOMAINS_FILE = MD_DIR + '/proxy_domains.txt';
 const PROXY_IPS_FILE = MD_DIR + '/proxy_ips.txt';
 const QUARANTINE_FILE = MD_DIR + '/quarantine_domains.txt';
+/* Сеанс 187: негативный стиринг YouTube переехал на DNS-слой ядра —
+ * деривация (yt_steer.uc steer_pools) живёт в generate_client.uc при
+ * регенерации; в multidns стиринга больше НЕТ (qname-матчер этой сборки
+ * mosdns не работает на файловых domain_set — доказано живьём). */
 const DNS_LOG = '/var/log/dnsmasq-q.log';   /* dnsmasq query log (enabled by the automation daemon) */
 let PROXY = '127.0.0.1:5338';   /* dedicated mdns-proxy-in (mixed) pinned to main-out;
                                  * port follows homeproxy.multidns.proxy_port (set in bootstrap/main) */
@@ -963,6 +967,14 @@ function build_mosdns_conf() {
 	push(lines, 'log:');
 	push(lines, '  level: warn');
 	push(lines, '');
+	/* сеанс 187-PIVOT: стиринг переехал на DNS-слой ядра (generate_client
+	 * читает yt_dead_pools.txt при регенерации и отвечает action:'reject'
+	 * в dns.rules). ЖИВОЙ ФАКТ: qname-матчер этой сборки mosdns на файловом
+	 * domain_set не срабатывает (5453 отвечал реальными IP при заполненном
+	 * наборе, что бы ни обещала документация v5) — шаг в seq_plain был
+	 * мёртвым кодом и убран; ступень youtube-DNS всё равно живёт в
+	 * seq_secure (secure-dns=5454), мимо неё. Файл остаётся ИСТОЧНИКОМ
+	 * данных (фидер ниже), потребитель = генератор ядра. */
 	push(lines, 'plugins:');
 
 	let mode = uci.get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru';

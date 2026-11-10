@@ -8105,3 +8105,69 @@ msgstr "Локальный SOCKS5-прокси для обхода DPI от <a h
 
 msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2, installed from the original openwrt-embedded release, SHA256-gated). Configure on the Strategy master page."
 msgstr "Обход DPI на уровне пакетов (NFQUEUE) от <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2, ставится из оригинального openwrt-embedded-релиза, SHA256-гейт). Настраивается на странице «Мастер стратегий»."
+
+msgid "Steer dead YouTube pools (DNS refuse)"
+msgstr "Стиринг мёртвых пулов YouTube (DNS-отказ)"
+
+msgid "Pools that never delivered a single alive edge under ANY measured strategy (dead whole, fresh ≤48 h) are DNS-REJECTED in the core config: instant refusal, the player switches to a live edge in milliseconds instead of hanging 5–10 s. The pool catalog is maintained by the Strategy Lab sweeps; the pool currently serving the stream is never refused; an empty catalog means nothing is refused. Toggling regenerates the core config (verified apply). The catalog feeder runs inside MultiDNS (mosdns)."
+msgstr "Пулы, не отдавшие ни одного живого края ни под одной измеренной стратегией (мёртвые целиком, свежесть ≤48 ч), отвергаются на DNS-слое конфига ядра: мгновенный отказ — плеер переключается на живой край за миллисекунды вместо 5–10 с зависания. Каталог пулов ведут прогоны Стратегии-лаборатории; пул, обслуживающий текущий стрим, никогда не отказывается; пустой каталог = отказов нет. Переключение регенерирует конфиг ядра (проверяемый apply). Фидер каталога живёт внутри MultiDNS (mosdns)."
+
+msgid "Steering already in this state."
+msgstr "Стиринг уже в этом состоянии."
+
+msgid "Steering ON — MultiDNS picks it up on its next tick (dead pools answer 0.0.0.0)."
+msgstr "Стиринг включён — MultiDNS подхватит на ближайшем тике (мёртвые пулы отвечают 0.0.0.0)."
+
+msgid "Steering OFF — the refuse set is cleared on the next MultiDNS tick."
+msgstr "Стиринг выключен — набор отказа будет очищен на ближайшем тике MultiDNS."
+
+msgid "Blocked (TCP refused)"
+msgstr "Заблокирован (TCP отказ)"
+
+msgid "Blocked (connect timeout)"
+msgstr "Заблокирован (таймаут соединения)"
+
+msgid "Blocked (TLS timeout)"
+msgstr "Заблокирован (TLS таймаут)"
+
+msgid "Blocked (TLS MITM)"
+msgstr "Заблокирован (TLS MITM)"
+
+msgid "Blocked (listed?)"
+msgstr "Заблокирован (в списках?)"
+
+msgid "the TCP dial is refused outright (connection refused / unreachable)"
+msgstr "TCP-соединение отклоняется сразу (connection refused / недостижимо)"
+
+msgid "the TCP dial times out — nothing answers on the direct path"
+msgstr "TCP-соединение уходит в таймаут — на прямом пути никто не отвечает"
+
+msgid "the TLS handshake is silently dropped after ClientHello (no server reply)"
+msgstr "TLS-рукопожатие молча роняется после ClientHello (сервер не отвечает)"
+
+msgid "a TLS certificate substitute answered (MITM shape) — probe class for future probe builds"
+msgstr "ответил подставной TLS-сертификат (форма MITM) — класс для будущих сборок щупа"
+
+msgid "also present in the local registry lists (%s) — likely a registry block, not necessarily DPI"
+msgstr "также присутствует в локальных реестровых списках (%s) — вероятно, реестровая блокировка, не обязательно DPI"
+
+msgid "Save QUIC settings"
+msgstr "Сохранить настройки QUIC"
+
+msgid "Block QUIC globally (hard mode, whole LAN)"
+msgstr "Блокировать QUIC глобально (жёсткий режим, вся домашняя сеть)"
+
+msgid "HARD mode: drops ALL forwarded UDP/443 at the firewall — browser QUIC/HTTP-3 dies for the whole home network, and so does everything that legitimately uses UDP/443: DoH/DoQ (HTTP/3 DNS) on LAN devices, tunnels and nodes on UDP/443 (WireGuard/AmneziaWG, QUIC-based proxies). QUIC to googlevideo is ALWAYS rejected in the core config (per-origin, engine-side — no firewall race); this switch is only for the «no QUIC anywhere» posture. Off = the engine-side reject alone."
+msgstr "ЖЁСТКИЙ режим: файрвол отбрасывает ВЕСЬ транзитный UDP/443 — QUIC/HTTP-3 умирает во всей домашней сети, вместе с тем, что легитимно использует UDP/443: DoH/DoQ (DNS поверх HTTP/3) на устройствах LAN, туннели и узлы на UDP/443 (WireGuard/AmneziaWG, QUIC-прокси). QUIC к googlevideo отвергается В КОНФИГЕ ЯДРА всегда (per-origin, на стороне движка — без гонок файрвола); этот тумблер — только для режима «QUIC негде жить». Выключено = остаётся только per-origin reject в ядре."
+
+msgid "QUIC settings saved — nothing changed, no restart needed."
+msgstr "Настройки QUIC сохранены — ничего не изменилось, рестарт не нужен."
+
+msgid "Applying — the services reload…"
+msgstr "Применяю — службы перезагружаются…"
+
+msgid "Global QUIC block is ON and verified — all LAN UDP/443 is dropped."
+msgstr "Глобальный QUIC-блок ВКЛЮЧЁН и проверен — весь LAN UDP/443 отбрасывается."
+
+msgid "Global QUIC block is OFF and verified — only the engine-side googlevideo reject remains."
+msgstr "Глобальный QUIC-блок ВЫКЛЮЧЕН и проверен — остаётся только per-origin reject googlevideo в ядре."

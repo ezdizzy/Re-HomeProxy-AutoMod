@@ -68,6 +68,17 @@ const callOpStatus = rpc.declare({
 	expect: { '': {} }
 });
 
+/* сеанс 187: глобальный QUIC-режим переехал сюда из карточки ByeDPI
+ * («Мастер стратегий») — это сетевой режим всей LAN, а не настройка
+ * движка. RPC тот же wizard_byedpi_set: несменяемые аргументы передаются
+ * из свежего UCI, меняется только block_quic. */
+const callQuicSet = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'wizard_byedpi_set',
+	params: [ 'cmd_opts', 'udp_over_tcp', 'block_quic', 'zapret_voice' ],
+	expect: { '': {} }
+});
+
 const CORE_MGMT = '/usr/share/ravnex/scripts/core_mgmt.uc';
 
 const callByeDPIStatus = rpc.declare({
@@ -1125,6 +1136,46 @@ return view.extend({
 			]);
 		}
 
+		/* ── сеанс 187: блок «QUIC» (перенос из карточки ByeDPI) ────────── */
+		const quicRes = E('div', { 'class': 'hpui-hint', style: 'margin-top:6px' });
+		const quicGlob = E('input', { type: 'checkbox' });
+		quicGlob.checked = (uci.get('ravnex', 'config', 'byedpi_block_quic') === '1');
+		const quicSave = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' },
+			[ _('Save QUIC settings') ]);
+		const quicCard = E('div', { 'class': 'hpui-panel', style: 'margin:0 0 14px 0' }, [
+			E('h4', { 'class': 'hpui-h4' }, [ hp.icon('shield'), _('QUIC') ]),
+			E('div', { 'class': 'rurow', style: 'margin-top:4px' },
+				[ E('label', { 'class': 'hpui-hint', style: 'margin:0; cursor:pointer; font-weight:600' },
+					[ quicGlob, ' ' + _('Block QUIC globally (hard mode, whole LAN)') ]), quicSave ]),
+			E('p', { 'class': 'hpui-hint', style: 'margin:6px 0 0 0' },
+				[ _('HARD mode: drops ALL forwarded UDP/443 at the firewall — browser QUIC/HTTP-3 dies for the whole home network, and so does everything that legitimately uses UDP/443: DoH/DoQ (HTTP/3 DNS) on LAN devices, tunnels and nodes on UDP/443 (WireGuard/AmneziaWG, QUIC-based proxies). QUIC to googlevideo is ALWAYS rejected in the core config (per-origin, engine-side — no firewall race); this switch is only for the «no QUIC anywhere» posture. Off = the engine-side reject alone.') ]),
+			quicRes
+		]);
+		quicSave.addEventListener('click', function() {
+			quicSave.disabled = true;
+			quicRes.textContent = _('Saving…');
+			const curOpts = uci.get('ravnex', 'config', 'byedpi_cmd_opts') || '';
+			const curUot = (uci.get('ravnex', 'config', 'byedpi_udp_over_tcp') !== '0') ? '1' : '0';
+			const curVoice = (uci.get('ravnex', 'config', 'zapret_voice') === '1') ? '1' : '0';
+			L.resolveDefault(callQuicSet(String(curOpts), curUot,
+				quicGlob.checked ? '1' : '0', curVoice), {}).then(function(r) {
+				quicSave.disabled = false;
+				if (r && r.unchanged) {
+					quicRes.textContent = _('QUIC settings saved — nothing changed, no restart needed.');
+					return;
+				}
+				if (!r || r.result === false) {
+					quicRes.textContent = _('Save failed: ') + ((r && r.error) || _('rpc error'));
+					return;
+				}
+				quicRes.textContent = _('Applying — the services reload…');
+				pollGeoOp(r, function() { quicRes.textContent = ''; },
+					quicGlob.checked
+						? _('Global QUIC block is ON and verified — all LAN UDP/443 is dropped.')
+						: _('Global QUIC block is OFF and verified — only the engine-side googlevideo reject remains.'));
+			});
+		});
+
 		return m.render().then(function(node) {
 			/* Ф9.14: collapse the expert WAN & interface section into a
 			 * <details> (U4: the less the user sees, the fewer mistakes —
@@ -1148,6 +1199,7 @@ return view.extend({
 				hp.pageIntro(_('Connection'),
 					_('How the traffic leaves your home: which server is the main one, how the routing mode decides what goes through the proxy, and what keeps the connection alive when a server dies. Everyday service→exit rules live on the Service rules page; DNS pools common to all modes — on the DNS settings page.')),
 				ruCard,
+				quicCard,
 				node
 			].filter(function(x) { return x; }));
 		});

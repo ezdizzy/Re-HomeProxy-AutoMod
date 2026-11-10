@@ -8087,3 +8087,69 @@ msgstr ""
 
 msgid "Packet-level (NFQUEUE) DPI bypass by <a href=\"https://github.com/bol-van/zapret2\" target=\"_blank\">bol-van/zapret2</a> (nfqws2, installed from the original openwrt-embedded release, SHA256-gated). Configure on the Strategy master page."
 msgstr ""
+
+msgid "Steer dead YouTube pools (DNS refuse)"
+msgstr ""
+
+msgid "Pools that never delivered a single alive edge under ANY measured strategy (dead whole, fresh ≤48 h) are DNS-REJECTED in the core config: instant refusal, the player switches to a live edge in milliseconds instead of hanging 5–10 s. The pool catalog is maintained by the Strategy Lab sweeps; the pool currently serving the stream is never refused; an empty catalog means nothing is refused. Toggling regenerates the core config (verified apply). The catalog feeder runs inside MultiDNS (mosdns)."
+msgstr ""
+
+msgid "Steering already in this state."
+msgstr ""
+
+msgid "Steering ON — MultiDNS picks it up on its next tick (dead pools answer 0.0.0.0)."
+msgstr ""
+
+msgid "Steering OFF — the refuse set is cleared on the next MultiDNS tick."
+msgstr ""
+
+msgid "Blocked (TCP refused)"
+msgstr ""
+
+msgid "Blocked (connect timeout)"
+msgstr ""
+
+msgid "Blocked (TLS timeout)"
+msgstr ""
+
+msgid "Blocked (TLS MITM)"
+msgstr ""
+
+msgid "Blocked (listed?)"
+msgstr ""
+
+msgid "the TCP dial is refused outright (connection refused / unreachable)"
+msgstr ""
+
+msgid "the TCP dial times out — nothing answers on the direct path"
+msgstr ""
+
+msgid "the TLS handshake is silently dropped after ClientHello (no server reply)"
+msgstr ""
+
+msgid "a TLS certificate substitute answered (MITM shape) — probe class for future probe builds"
+msgstr ""
+
+msgid "also present in the local registry lists (%s) — likely a registry block, not necessarily DPI"
+msgstr ""
+
+msgid "Save QUIC settings"
+msgstr ""
+
+msgid "Block QUIC globally (hard mode, whole LAN)"
+msgstr ""
+
+msgid "HARD mode: drops ALL forwarded UDP/443 at the firewall — browser QUIC/HTTP-3 dies for the whole home network, and so does everything that legitimately uses UDP/443: DoH/DoQ (HTTP/3 DNS) on LAN devices, tunnels and nodes on UDP/443 (WireGuard/AmneziaWG, QUIC-based proxies). QUIC to googlevideo is ALWAYS rejected in the core config (per-origin, engine-side — no firewall race); this switch is only for the «no QUIC anywhere» posture. Off = the engine-side reject alone."
+msgstr ""
+
+msgid "QUIC settings saved — nothing changed, no restart needed."
+msgstr ""
+
+msgid "Applying — the services reload…"
+msgstr ""
+
+msgid "Global QUIC block is ON and verified — all LAN UDP/443 is dropped."
+msgstr ""
+
+msgid "Global QUIC block is OFF and verified — only the engine-side googlevideo reject remains."
+msgstr ""

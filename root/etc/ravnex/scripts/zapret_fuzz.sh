@@ -286,6 +286,18 @@ if (j != null && type(j.pools) == "array")
 ' 2>/dev/null
 	fi
 	loadmark edges_multipool
+	# ── сеанс 187: DIRECT-слой (RU-правда) — тот же каталог через TEMP-контур ──
+	# Live-строки меряют «вид из настроенного пути» (правило youtube может
+	# вести на узел = вид из этого узла, дискриминант ч.273); direct-строки =
+	# честный RU-direct + ПРИМЕНЁННАЯ стратегия (то, что увидит юзер в
+	# архитектуре «всё youtube на движке»). Всё аддитивно:
+	# alive_dir/dead_dir/dead_whole_dir + поле pool_matrix_direct; провал
+	# прохода (нет очереди/нет движка) честно убирает файл — свип живёт.
+	if [ -s "$TMP/pool_matrix.json" ]; then
+		sh /etc/ravnex/scripts/zapret_edges.sh --contour temp "$POOL_LIST" 2>/dev/null > "$TMP/pool_matrix_direct.json"
+		grep -q '"ok":1' "$TMP/pool_matrix_direct.json" 2>/dev/null || rm -f "$TMP/pool_matrix_direct.json"
+	fi
+	loadmark edges_direct
 fi
 
 mkdir -p "$TMP"
@@ -1143,6 +1155,26 @@ if (emx != null && type(emx.edges) == "array")
 const pmx = parse(TMP + "/pool_matrix.json");
 const pool_map = {};
 const pool_extra = [];
+/* сеанс 187: DIRECT-слой (RU-правда) — второй столбец карты краёв из
+ * zapret_edges.sh --contour temp (честный RU-direct + ПРИМЕНЁННАЯ стратегия).
+ * Аддитивные ключи alive_dir/dead_dir/dead_whole_dir рядом с live-значениями;
+ * их ОТСУТСТВИЕ = прямой проход не измерен (нет очереди/движка) — не
+ * фейк-ноль (прецедент dedgu «не измерено»). */
+const pmxd = parse(TMP + "/pool_matrix_direct.json");
+const dir_map = {};
+if (pmxd != null && type(pmxd.pools) == "array")
+	for (let dp in pmxd.pools) {
+		if (type(dp) != "object" || dp.suffix == null) continue;
+		let dalive = 0, ddead = 0;
+		if (type(dp.edges) == "array")
+			for (let de in dp.edges) {
+				if (type(de) != "object") continue;
+				if (de.tls_ok == 0 && ("" + (de.get_code || "0")) == "0") ddead++;
+				else dalive++;
+			}
+		dir_map["" + dp.suffix] = { alive: dalive, dead: ddead,
+			dead_whole: (dp.ok != 1 || (ddead > 0 && dalive == 0)) ? 1 : 0 };
+	}
 if (pmx != null && type(pmx.pools) == "array")
 	for (let p in pmx.pools) {
 		if (type(p) != "object" || p.suffix == null) continue;
@@ -1159,7 +1191,16 @@ if (pmx != null && type(pmx.pools) == "array")
 		if (substr(ss, length(ss) - length(gtail)) == gtail)
 			ss = substr(ss, 0, length(ss) - length(gtail));
 		pool_map["" + p.suffix] = { alive: alive, dead: dead, dead_whole: whole ? 1 : 0 };
-		push(pool_extra, { suffix: ss, alive: alive, dead: dead, dead_whole: whole ? 1 : 0 });
+		const dm = dir_map["" + p.suffix];
+		if (dm != null) {
+			pool_map["" + p.suffix].alive_dir = dm.alive;
+			pool_map["" + p.suffix].dead_dir = dm.dead;
+			pool_map["" + p.suffix].dead_whole_dir = dm.dead_whole;
+			push(pool_extra, { suffix: ss, alive: alive, dead: dead, dead_whole: whole ? 1 : 0,
+				alive_dir: dm.alive, dead_dir: dm.dead, dead_whole_dir: dm.dead_whole });
+		} else {
+			push(pool_extra, { suffix: ss, alive: alive, dead: dead, dead_whole: whole ? 1 : 0 });
+		}
 	}
 let pstate = {};
 const POOLSF = "/var/run/ravnex/zapret_pools.json";
@@ -1167,9 +1208,24 @@ if (access(POOLSF)) {
 	const pj = parse(POOLSF);
 	if (pj != null && type(pj.pools) == "object") pstate = pj.pools;
 }
-for (let s in keys(pool_map))
-	pstate[s] = { last_ts: now, alive: pool_map[s].alive, dead: pool_map[s].dead,
+for (let s in keys(pool_map)) {
+	/* сеанс 187: dir-ключи едут в персист — свежие из dir_map, иначе
+	 * предыдущие (нет измерения = нет записи, не фейк-ноль). */
+	const prev_p = (type(pstate[s]) == "object") ? pstate[s] : null;
+	const dm2 = dir_map[s];
+	const row2 = { last_ts: now, alive: pool_map[s].alive, dead: pool_map[s].dead,
 		dead_whole: pool_map[s].dead_whole };
+	if (dm2 != null) {
+		row2.alive_dir = dm2.alive;
+		row2.dead_dir = dm2.dead;
+		row2.dead_whole_dir = dm2.dead_whole;
+	} else if (prev_p != null && prev_p.alive_dir != null) {
+		row2.alive_dir = prev_p.alive_dir;
+		row2.dead_dir = prev_p.dead_dir;
+		row2.dead_whole_dir = prev_p.dead_whole_dir;
+	}
+	pstate[s] = row2;
+}
 /* touch the primary even when the whole edges stage failed (the catalog
  * itself is a fact: the stream pool was referenced today) */
 const PSUF_FULL = "'$PSUF'.googlevideo.com";
@@ -1188,7 +1244,16 @@ for (let r in prow) {
 	if (length(keys(pnew)) >= 40) break;
 	pnew[r.s] = pstate[r.s];
 }
-writefile(POOLSF, sprintf("%.J\n", { ts: now, pools: pnew }));
+/* сеанс 187: атомарная запись персиста (урок automation.atomic_write:
+ * writefile = truncate+write — читатель посреди записи видит ОБРЕЗАННЫЙ
+ * JSON; живой случай пойнан: фидер стиринга читал pools.json и получал
+ * «unexpected end of data» → честный пустой набор, но данными впустую).
+ * tmp + mv -f — контракт проекта. ⚠ heredoc однократно-кавыченный:
+ * ВНУТРИ него нельзя строк с одинарными кавычками (урок 187: они рвут
+ * shell-литерал и молча калечат программу ucode — пойман живьём: mv не
+ * выполнился, персист остался .tmp) — mv с ДВОЙНЫМИ кавычками. */
+writefile(POOLSF + ".tmp", sprintf("%.J\n", { ts: now, pools: pnew }));
+system(`mv -f "${POOLSF}.tmp" "${POOLSF}"`);
 
 /* ── Ф6.4 v3: измерения, второй IP, QUIC A/B, вердикты ─────────────────── */
 
@@ -1549,6 +1614,7 @@ writefile(RESULT, sprintf("%.J\n", {
 	dns_sets: dns_sets,
 	edge_matrix: emx,
 	pool_matrix: pmx,
+	pool_matrix_direct: pmxd,
 	pools_state: pnew,
 	infra_dead_edges: infra_dead_edges,
 	revived_edges: revived_edges,

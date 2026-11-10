@@ -163,6 +163,80 @@ export function validate_learned_ip(ip, env) {
 	return null;
 };
 
+/* ── сеанс 187 G2: транспортные подп-kind'ы для неклассифицированных
+ * отказов ──
+ * Выводится ТОЛЬКО из полей, которые Go-щуп (probe_pool) УЖЕ возвращает:
+ * code (curl RC или HTTP-код), phase (последняя достигнутая фаза:
+ * dns|tcp|tls|http), tls_note (classifyTLSFailure: reset|spoof|alert|
+ * mitm|timeout|tcp). НИКАКИХ новых проб; вызывается ПОСЛЕ существующей
+ * kind-цепочки (tls_dpi/stub/… разбирают свои формы первыми).
+ *
+ * Таблица (main.go: executeTCPProbe/classifyTLSFailure + шелл-RC):
+ *   code '7'                → tcp_refused  (dial refused/no-route/unreachable)
+ *   code '28', phase 'tcp'  → connect_timeout (чистый dial-таймаут)
+ *   code '28', phase ''     → connect_timeout (TCP-сторона без фазы: dial и есть фаза)
+ *   code '28', phase 'tls', note 'timeout' → tls_timeout (тихий дроп после ClientHello)
+ *   code '000', phase 'tls'/'tcp', note 'tcp' → tcp_refused ( refusal на стадии
+ *                                TLS-набора — соединение не установилось)
+ *   code '000', phase 'tls', note 'mitm' → tls_mitm («спящая» ветка: текущая
+ *                                сборка щупа ходит с InsecureSkipVerify=true,
+ *                                заметка mitm недостижима; ветку держим для
+ *                                будущего Go-гейта верификации сертификата)
+ *   всё прочее (dns-фаза, alert, HTTP-side 28/000 без фазы, живые коды) → ''
+ *   — честное «не различимо этими полями», не фейк-ноль. */
+export function transport_kind(code, phase, tls_note) {
+	const c = trim('' + (code == null ? '' : code));
+	const p = trim('' + (phase == null ? '' : phase));
+	const tn = trim('' + (tls_note == null ? '' : tls_note));
+	if (p === 'dns')
+		return '';
+	if (c === '7')
+		return 'tcp_refused';
+	if (c === '28') {
+		if (p === 'tcp' || p === '')
+			return 'connect_timeout';
+		if (p === 'tls' && tn === 'timeout')
+			return 'tls_timeout';
+		return '';
+	}
+	if (c === '000') {
+		if ((p === 'tls' || p === 'tcp') && tn === 'tcp')
+			return 'tcp_refused';
+		if (p === 'tls' && tn === 'mitm')
+			return 'tls_mitm';
+		return '';
+	}
+	return '';
+};
+
+/* ── сеанс 187 G1-readside: корроборация по реестровым спискам ──
+ * Хост, который движок выучил как заблокированный, может УЖЕ стоять в
+ * реестровых/комьюнити-списках, доставленных конвейером (локальное зеркало
+ * хаба). Совпадение — это ПОДСКАЗКА класса причины («Blocked (RKN-listed?)»,
+ * знак вопроса обязателен: перекрытие списка ≠ доказательство причины), она
+ * НИКАК не влияет на learn/heal. sets — массив {cat, entries}; entries —
+ * ОБЪЕКТ-набор нижнекореженных суффиксов БЕЗ ведущих точек (нормализация —
+ * забота загрузчика). Матч: точное имя или любой родительский суффикс.
+ * Возвращает cat первого совпавшего набора или null («не измерено»). */
+export function rkn_corroborate(host, sets) {
+	const h = lc(trim('' + (host == null ? '' : host)));
+	if (!length(h) || sets == null || type(sets) !== 'array')
+		return null;
+	for (let s in sets) {
+		if (type(s) !== 'object' || type(s.entries) !== 'object')
+			continue;
+		if (s.entries[h])
+			return '' + (s.cat || '');
+		const parts = split(h, '.');
+		for (let i = 1; i < length(parts); i++) {
+			const anc = join('.', slice(parts, i));
+			if (s.entries[anc])
+				return '' + (s.cat || '');
+		}
+	}
+	return null;
+};
+
 /* ── Selftest ──
  * Тот же контракт, что service_optimizer/service_profiles:
  * возвращает { pass, fail, details }. */
@@ -222,6 +296,39 @@ export function selftest() {
 	t('div stale window', src_diversity({ src_dns: now - 10000 }, now) === 0);
 	t('div no record', src_diversity(null, now) === 0);
 	t('div three sources', src_diversity({ src_clash: now - 5, src_sni: now - 5, src_dns: now - 5 }, now) === 3);
+
+	/* сеанс 187 G2: transport_kind — таблица из полей Go-щупа */
+	t('tk 7 → tcp_refused', transport_kind('7', '', '') === 'tcp_refused');
+	t('tk 7 tls-note tolerated', transport_kind('7', 'tls', 'reset') === 'tcp_refused');
+	t('tk 28 tcp → connect_timeout', transport_kind('28', 'tcp', '') === 'connect_timeout');
+	t('tk 28 no-phase (TCP row) → connect_timeout', transport_kind('28', '', '') === 'connect_timeout');
+	t('tk 28 tls+timeout → tls_timeout', transport_kind('28', 'tls', 'timeout') === 'tls_timeout');
+	t('tk 28 tls+reset → "" (tls_dpi owns it)', transport_kind('28', 'tls', 'reset') === '');
+	t('tk 28 http-phase honest ""', transport_kind('28', 'http', 'timeout') === '');
+	t('tk 000 tls tcp → tcp_refused', transport_kind('000', 'tls', 'tcp') === 'tcp_refused');
+	t('tk 000 tcp tcp → tcp_refused', transport_kind('000', 'tcp', 'tcp') === 'tcp_refused');
+	t('tk 000 tls mitm → tls_mitm (sleeping)', transport_kind('000', 'tls', 'mitm') === 'tls_mitm');
+	t('tk 000 tls reset → "" (tls_dpi owns it)', transport_kind('000', 'tls', 'reset') === '');
+	t('tk 000 tls alert → "" (kopilka)', transport_kind('000', 'tls', 'alert') === '');
+	t('tk dns-phase never kinds', transport_kind('28', 'dns', 'timeout') === '');
+	t('tk ok-code honest ""', transport_kind('200', 'http', '') === '');
+	t('tk numeric code tolerated', transport_kind(7, null, null) === 'tcp_refused');
+	t('tk null inputs safe', transport_kind(null, null, null) === '');
+
+	/* сеанс 187 G1: rkn_corroborate — точный и родительский суффикс */
+	const sets = [
+		{ cat: 'antifilter', entries: { 'rutracker.org': true, 'example.com': true, 'zapret.example.ru': true } },
+		{ cat: 'watchlist', entries: { 'cdnnetwork.example': true } }
+	];
+	t('rkn exact match', rkn_corroborate('rutracker.org', sets) === 'antifilter');
+	t('rkn subdomain match', rkn_corroborate('www2.rutracker.org', sets) === 'antifilter');
+	t('rkn second set', rkn_corroborate('a.cdnnetwork.example', sets) === 'watchlist');
+	t('rkn no match', rkn_corroborate('wikipedia.org', sets) == null);
+	t('rkn empty sets', rkn_corroborate('rutracker.org', []) == null);
+	t('rkn garbage host', rkn_corroborate('   ', sets) == null);
+	t('rkn case folded', rkn_corroborate('RuTracker.ORG', sets) === 'antifilter');
+	t('rkn leaf-first (deep ancestor)', rkn_corroborate('deep.sub.zapret.example.ru', sets) === 'antifilter');
+	t('rkn null sets', rkn_corroborate('rutracker.org', null) == null);
 
 	return { pass: length(pass), fail: length(fail), details: fail };
 };

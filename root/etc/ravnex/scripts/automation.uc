@@ -67,7 +67,8 @@ import { conntrack_flows, is_special_ip } from '/etc/ravnex/scripts/discovery.uc
  * свидетельств для pain-порога (B5.12, урок 254). Проверяется selftest'ом
  * модуля на роутере. */
 import {
-	validate_learned_ip, uuid_collapse, psl_parent, src_diversity
+	validate_learned_ip, uuid_collapse, psl_parent, src_diversity,
+	transport_kind, rkn_corroborate
 } from '/etc/ravnex/scripts/learn_core.uc';
 
 const HP_DIR = '/etc/ravnex';
@@ -2495,7 +2496,11 @@ echo done > "$PRE.done"
 			if (side === 'tcp' || side === 'tcpproxy') {
 				let ok = false;
 				for (let c in TCP_OK_EXIT) if ('' + res.code === '' + c) ok = true;
-				out[res.id] = { code: ('' + res.code), ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: int(res.rtt_ms) || 0 };
+				/* сеанс 187 G2: transport sub-kind on the TCP row too — RC 7/28
+				 * map to tcp_refused/connect_timeout (the TCP dial IS the
+				 * phase); 35/56 stay unkinded (reset-family, owned upstream). */
+				out[res.id] = { code: ('' + res.code), ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: int(res.rtt_ms) || 0,
+					kind: transport_kind('' + res.code, '', '') };
 			} else {
 				let code = '' + (res.code || '000');
 				let body = '' + (res.body_head || '');
@@ -2544,6 +2549,14 @@ echo done > "$PRE.done"
 					else if (c === 'block' && !waf &&
 					         (code === '403' || code === '406' || code === '451'))
 						kind = 'hardcode';
+					/* сеанс 187 G2: транспортные подп-kind'ы (tcp_refused/
+					 * connect_timeout/tls_timeout/tls_mitm) — выводятся ТОЛЬКО
+					 * из уже возвращённых полей (code/phase/tls_note), никаких
+					 * новых проб; идут ПОСЛЕ сигнатурной цепочки (tls_dpi и
+					 * компания разбирают свои формы первыми). Спящая ветка
+					 * tls_mitm задокументирована в learn_core.transport_kind. */
+					if (!length(kind))
+						kind = transport_kind(code, '' + (res.phase || ''), tlsn);
 				}
 				out[res.id] = { code: code, ok: (c === 'ok') && !block && !geo, block: block, geo: geo,
 					fp: '' + (res.fp || ''), ip: (side === 'direct' && res.ip) ? res.ip : null,
@@ -2614,11 +2627,12 @@ echo done > "$PRE.done"
 				 * pool reports as tls_note=reset). Exit 56 = recv failure. */
 				let tlsn = '';
 				if (!ok && (code === '35' || code === '56')) tlsn = 'reset';
-				/* The shell fallback carries no TLS diagnostics beyond the
-				 * exit-code note (tls_note above) — kind stays empty here by
-				 * design: instant-learn signals come from the native path
-				 * (probe_pool), the shell path keeps the conservative verdicts. */
-				res = { code: length(code) ? code : '-1', ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: rtt_ms, kind: '', waf: false, tls_note: tlsn };
+				/* Session-187 G2: the shell TCP row now carries the DERIVED
+				 * transport sub-kind (RC 7/28 → tcp_refused/connect_timeout);
+				 * instant-learn signals still come from the native path only —
+				 * the conservative-verdicts contract is intact (kind outputs
+				 * are descriptive, never in the INSTANT map). */
+				res = { code: length(code) ? code : '-1', ok: ok, block: false, geo: false, fp: '', ip: null, rtt_ms: rtt_ms, kind: transport_kind(code, '', tlsn), waf: false, tls_note: tlsn };
 			} else {
 				let c = classify_code(code);
 				let block = (c === 'block');
@@ -3126,6 +3140,52 @@ echo done > "$PRE.done"
 			'простой ' + (now - since) + ' с; очередь перепроверки: ' + length(recheck_queue));
 	}
 
+	/* ── сеанс 187 G1-readside: локальные реестровые наборы для корроборации ──
+	 * Ленивый разовый загрузчик локального зеркала хаб-списка
+	 * hp-ru-antifilter-domains.json (local-json слой конвейера, ≤2 МБ по
+	 * SIZE-ГУАРДУ хаба; кап 8 МБ = честный отказ разбора большего). БЕЗ WAN:
+	 * только уже скачанное конвейером. Ноль совпадений/нет файла = пустой
+	 * набор — «не измерено» (не фейк-ноль), ретро-разметки нет (урок dedgu). */
+	const RKN_LOCAL_TAG = 'hp-ru-antifilter-domains';
+	const RKN_LOCAL_MAX_BYTES = 8 * 1024 * 1024;
+	let rkn_sets_cache = null;
+	function rkn_sets_load() {
+		if (rkn_sets_cache != null)
+			return rkn_sets_cache;
+		rkn_sets_cache = [];
+		try {
+			const dir = trim(uci.get('ravnex', 'config', 'ruleset_local_path') || '') || '/etc/ravnex/rulesets';
+			const path = dir + '/' + RKN_LOCAL_TAG + '.json';
+			if (access(path)) {
+				const sx = stat(path);
+				const sz = (sx != null) ? int(sx.size || 0) : 0;
+				if (sz > 0 && sz <= RKN_LOCAL_MAX_BYTES) {
+					const j = json(readfile(path) || '');
+					const rules = (j != null && type(j.rules) === 'array') ? j.rules : [];
+					const set = {};
+					let cnt = 0;
+					for (let r in rules) {
+						if (type(r) !== 'object' || type(r.domain_suffix) !== 'array') continue;
+						for (let dname in r.domain_suffix) {
+							let ent = lc(trim('' + dname));
+							if (substr(ent, 0, 1) === '.')
+								ent = substr(ent, 1);
+							if (length(ent) && ent !== '+' && !set[ent]) {
+								set[ent] = true;
+								cnt++;
+							}
+						}
+					}
+					if (cnt > 0)
+						rkn_sets_cache = [ { cat: RKN_LOCAL_TAG, entries: set } ];
+				}
+			}
+		} catch (e) {
+			rkn_sets_cache = [];
+		}
+		return rkn_sets_cache;
+	}
+
 	function classify(dom, d, p, is_ip, tcp_direct, rtt_direct, rtt_proxy) {
 		/* Outage gate (2026-11-03): with the canary baseline failed nothing is
 		 * learnable — the caller skips the waves entirely; this choke point
@@ -3357,12 +3417,16 @@ echo done > "$PRE.done"
 					if (is_auth_like(dom))
 						sync_auth_families();
 				}
-				st.status = 'blocked';
-				st.confirms = 0;
-				delete st.dconfirms;
-				return;
-			}
-			/* Unreachable direct (000/timeout/RST) can be a transient blip — require
+			st.status = 'blocked';
+			st.confirms = 0;
+			delete st.dconfirms;
+			/* сеанс 187 G1-readside: корроборация с реестровыми списками —
+			 * ПОДСКАЗКА класса причины («Blocked (RKN-listed?)»), на
+			 * learn/heal не влияет. Совпадение теперь = на момент learn. */
+			st.rkn_hint = rkn_corroborate(dom, rkn_sets_load());
+			return;
+		}
+		/* Unreachable direct (000/timeout/RST) can be a transient blip — require
 			 * ONE extra confirmation before learning. A hard refusal (4xx/5xx) is a
 			 * strong block signal and learns at the normal min_confirm. Learned IPs
 			 * are riskier than domains (no SNI boundary): they always need at least
@@ -3423,10 +3487,12 @@ echo done > "$PRE.done"
 			 * itself, exactly the traffic we must not learn from. */
 			else if (!is_ip && !is_auth_like(dom) && hot_set[dom] && need > min_confirm)
 				need = min_confirm;
-			st.status = 'blocked';
-			st.confirms = (st.confirms || 0) + 1;
-			if (st.confirms >= need) {
-				if (is_ip) {
+		st.status = 'blocked';
+		st.confirms = (st.confirms || 0) + 1;
+		if (st.confirms >= need) {
+			/* сеанс 187 G1-readside: корроборация (лестничный learn). */
+			st.rkn_hint = rkn_corroborate(dom, rkn_sets_load());
+			if (is_ip) {
 					/* Last line of defence before the write: rDNS the candidate —
 					 * a bare IP naming a RU-TLD host is RU infrastructure that
 					 * always goes direct, never a learnable block. */
@@ -4362,7 +4428,10 @@ echo done > "$PRE.done"
 		/* Verdict distribution over the live state (in-memory walk, cheap). */
 		let v = { blocked: 0, direct: 0, direct_pending: 0, blocked_no_proxy: 0, geo_blocked: 0, geo: 0,
 			upstream_blocked: 0,
-			kinds: { tls_dpi: 0, dns_poison: 0, stub: 0, sigpage: 0, hardcode: 0, upstream_blocked: 0 } };
+			/* сеанс 187 G2: +4 транспортных подп-kind'а (чат RPC отдаёт
+			 * verbatim — новые ключи проходят без правок RPC). */
+			kinds: { tls_dpi: 0, dns_poison: 0, stub: 0, sigpage: 0, hardcode: 0, upstream_blocked: 0,
+				tcp_refused: 0, connect_timeout: 0, tls_timeout: 0, tls_mitm: 0 } };
 		for (let h in keys(state)) {
 			if (h === '__dns_offset') continue;
 			const st = state[h];

@@ -172,6 +172,128 @@ if [ "$1" = "--pools" ]; then
 	exit 0
 fi
 
+# ── Direct-contour mode (сеанс 187, REPORT_s187_yt_ab_design.md §3) ─────────
+# --contour temp|"temp-bare" "suffix list" — the SAME pool catalog measured
+# through the TEMP contour = honest RU-direct (bypass-return in
+# homeproxy_output_redir + OWN nfqueue + nfqws2 carrying the APPLIED
+# ravnex.config.zapret_cmd_opts): «что увидит юзер, если youtube идёт мимо
+# узла под текущим движком». temp-bare = no strategy listener (bare direct
+# reference; the bypassed packets pass the empty queue unchanged). Rows carry
+# "contour":"direct"; the QUIC sub-check is skipped (its UDP path cannot ride
+# the TCP-only rig — reporting it as "-" keeps the field honest). No lab_lock
+# here: the parent fuzz already owns it; the resmgr queue IS the guard.
+if [ "$1" = "--contour" ]; then
+	CONTOUR="$2"
+	shift 2
+	case "$CONTOUR" in
+		temp|temp-bare) : ;;
+		*) emit_fail "unknown contour: $CONTOUR" ;;
+	esac
+	command -v nft >/dev/null 2>&1 || emit_fail "nft missing"
+	nft list chain inet fw4 homeproxy_output_redir >/dev/null 2>&1 || emit_fail "output_redir chain missing"
+	QNUM=""
+	NFQ_PID=""
+	cleanup_contour() {
+		for hnd in $(nft -a list chain inet fw4 homeproxy_output_redir 2>/dev/null | grep "edgec$$" | grep -oE 'handle [0-9]+' | grep -oE '[0-9]+'); do
+			nft delete rule inet fw4 homeproxy_output_redir handle "$hnd" 2>/dev/null
+		done
+		nft delete table inet edge_ctest 2>/dev/null
+		if [ -n "$NFQ_PID" ]; then
+			ucode /etc/ravnex/scripts/pmgr_cli.uc kill_args "$NFQWS2BIN" "--qnum=$QNUM" >/dev/null 2>&1
+			kill "$NFQ_PID" 2>/dev/null
+		fi
+		if [ -n "$QNUM" ]; then
+			ucode -e "import {release} from '/etc/ravnex/scripts/test_resmgr.uc'; release($QNUM, 'edges_temp');" >/dev/null 2>&1
+		fi
+	}
+	trap cleanup_contour EXIT INT TERM
+
+	QOUT=$(ucode -e 'import {acquire} from "/etc/ravnex/scripts/test_resmgr.uc"; print(sprintf("%.J", acquire("edges_temp")));' 2>/dev/null)
+	QNUM=$(printf '%s' "$QOUT" | sed -n 's/.*"qnum":[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+	case "$QNUM" in ''|*[!0-9]*) emit_fail "no free test queue (209-212)" ;; esac
+
+	nft add table inet edge_ctest 2>/dev/null
+	nft add chain inet edge_ctest out '{ type filter hook output priority -150; policy accept; }' 2>/dev/null
+
+	STRAT_CONT=0
+	NFQWS2BIN=/opt/zapret2/nfq2/nfqws2
+	if [ "$CONTOUR" = "temp" ]; then
+		STRAT=$(uci -q get ravnex.config.zapret_cmd_opts 2>/dev/null)
+		[ -n "$(printf '%s' "$STRAT" | tr -d '[:space:]')" ] || emit_fail "zapret_cmd_opts empty - nothing to mirror"
+		[ -x "$NFQWS2BIN" ] || emit_fail "nfqws2 not installed"
+		"$NFQWS2BIN" --qnum="$QNUM" --user=daemon --fwmark=0x40000000 --lua-init=@/opt/zapret2/lua/zapret-lib.lua --lua-init=@/opt/zapret2/lua/zapret-antidpi.lua --lua-init=@/opt/zapret2/lua/zapret-auto.lua $STRAT >/dev/null 2>&1 &
+		NFQ_PID=$!
+		sleep 2
+		[ -n "$(ps w 2>/dev/null | grep -- "--qnum=$QNUM" | grep -v grep)" ] || emit_fail "nfqws candidate died with applied args"
+		STRAT_CONT=1
+	fi
+
+	PUID=$(id -u daemon 2>/dev/null)
+	case "$PUID" in ''|*[!0-9]*) PUID="" ;; esac
+	ct_stage() { # $1=IPS
+		if [ -n "$PUID" ]; then
+			nft add rule inet edge_ctest out "meta skuid $PUID meta mark and 0x40000000 == 0 ip daddr { $1 } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
+		fi
+		nft add rule inet edge_ctest out "meta skuid 0 meta mark and 0x40000000 == 0 ip daddr { $1 } tcp dport 443 ct original packets 1-12 counter queue num $QNUM bypass" 2>/dev/null
+		nft add rule inet edge_ctest out "meta mark and 0x40000000 != 0 notrack" 2>/dev/null
+		nft insert rule inet fw4 homeproxy_output_redir ip daddr "{ $1 }" tcp dport 443 counter return comment "\"edgec$$\"" 2>/dev/null
+	}
+	ct_unstage() {
+		for hnd in $(nft -a list chain inet fw4 homeproxy_output_redir 2>/dev/null | grep "edgec$$" | grep -oE 'handle [0-9]+' | grep -oE '[0-9]+'); do
+			nft delete rule inet fw4 homeproxy_output_redir handle "$hnd" 2>/dev/null
+		done
+		nft flush chain inet edge_ctest out 2>/dev/null
+	}
+
+	COUT=""
+	CSEP=""
+	CN=0
+	CDEDUP=""
+	LIST=$(printf '%s' "${1:-}" | tr ',;' ' ')
+	for craw in $LIST; do
+		[ -n "$craw" ] || continue
+		CSFX=$(printf '%s' "$craw" | sed -E 's#^https?://##; s/^rr[0-9]+---//' | cut -d'/' -f1)
+		case "$CSFX" in
+			*[!.a-z0-9-]*|"") continue ;;
+		esac
+		case "$CSFX" in
+			*.googlevideo.com) : ;;
+			sn-*) CSFX="$CSFX.googlevideo.com" ;;
+			*) continue ;;
+		esac
+		case "$CDEDUP" in *"[$CSFX]"*) continue ;; esac
+		CDEDUP="$CDEDUP[$CSFX]"
+		[ "$CN" -lt 10 ] || break
+		CN=$((CN + 1))
+		CPOOL=$(enumerate_pool "$CSFX")
+		if [ -z "$(printf '%s' "$CPOOL" | tr -d '[:space:]')" ]; then
+			COUT="$COUT$CSEP{\"ok\":0,\"suffix\":\"$CSFX\",\"error\":\"pool enumeration returned nothing\",\"contour\":\"direct\"}"
+			CSEP=","
+			continue
+		fi
+		CROWS=/tmp/zapret_edges_ct.$$
+		: > "$CROWS"
+		printf '%s' "$CPOOL" | {
+			_CRSEP=""
+			while read -r CPIP CPH; do
+				[ -n "$CPIP" ] && [ -n "$CPH" ] || continue
+				CROW=$(measure_row "$CPH" "$CPIP" 0 0)
+				CROW=${CROW%\}}
+				printf '%s%s,\"contour\":\"direct\"}' "$_CRSEP" "$CROW" >> "$CROWS"
+				_CRSEP=","
+			done
+		}
+		_EROWS=$(cat "$CROWS" 2>/dev/null)
+		_EN=$(grep -o '"host"' "$CROWS" 2>/dev/null | wc -l)
+		[ -n "$_EN" ] || _EN=0
+		rm -f "$CROWS" 2>/dev/null
+		COUT="$COUT$CSEP{\"ok\":1,\"suffix\":\"$CSFX\",\"edge_count\":$_EN,\"contour\":\"direct\",\"edges\":[$_EROWS]}"
+		CSEP=","
+	done
+	echo "{\"ok\":1,\"engine\":\"temp\",\"contour\":\"direct\",\"strategy\":$STRAT_CONT,\"pools\":[$COUT]}"
+	exit 0
+fi
+
 [ -z "$URL" ] && [ -s "$CACHE" ] && URL=$(grep -oE '"url": *"https://[^"]+' "$CACHE" 2>/dev/null | head -1 | cut -d'"' -f4)
 [ -n "$URL" ] || emit_fail "no videoplayback URL (set $1 or have a fresh yt_stream.json)"
 

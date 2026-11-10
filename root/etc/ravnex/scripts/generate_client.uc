@@ -25,6 +25,11 @@ import {
 import {
 	find_daemons as pm_find, reg_get as pm_reg_get, entry_alive as pm_entry_alive
 } from '/etc/ravnex/scripts/pmgr.uc';
+/* сеанс 187: деривация негативного стиринга (steer_pools + суффикс текущего
+ * стрима) — тот же модуль, что и у фидера, с селфтест-гейтом. */
+import {
+	steer_pools, current_suffix_from_host
+} from '/etc/ravnex/scripts/yt_steer.uc';
 
 /* State Store (Ф1.7, аудит 10): state-файлы генератора — через канонический
  * атомарный механизм + версионированный конверт (schema_version/config_revision). */
@@ -1357,6 +1362,48 @@ if (!isEmpty(main_node)) {
 				return (zapret_enabled === '1') ? 'secure-dns' : null;
 			return 'secure-dns';
 		};
+		/* сеанс 187: НЕГАТИВНЫЙ СТИРИНГ YouTube — мёртвые пулы (dead_whole
+		 * из каталога свипов /var/run/ravnex/zapret_pools.json, свежесть ≤48 ч,
+		 * деривация = yt_steer.uc steer_pools, СЕЛФТЕСТ-гейт модуля) отвергаются
+		 * НА СЛОЕ DNS ЯДРА: клиент получает мгновенный отказ и ротит на живой
+		 * край, вместо 5-10 с таймаута. Пивот ×2: (1) с mosdns на ядро —
+		 * qname-матчер этой сборки mosdns не срабатывает на файловом domain_set
+		 * (доказано живьём: 5453 отвечал реальными IP при заполненном наборе);
+		 * (2) чтение ЗАПИСИ фидера заменено прямым деривом из каталога — гонка
+		 * «RPC-регенерация vs тик фидера» (файл пустеет при OFF и восстанавливается
+		 * тиком) давала пустой набор на регене. Форма правила = проверенный
+		 * шаблон rejects (oauth-domain): ЛОКАЛЬНЫЙ rule_set + action:'reject';
+		 * инлайн domain_suffix-массив в reject-правиле не сработал на этом ядре.
+		 * Свежесть = момент регенерации (автопилот применяет после свипов). */
+		if ((uci.get(uciconfig, 'config', 'yt_steer_dead') || '0') === '1') {
+			const steer_cat = access('/var/run/ravnex/zapret_pools.json') ?
+				(json(readfile('/var/run/ravnex/zapret_pools.json') || '') || null) : null;
+			const steer_stream = access('/var/run/ravnex/yt_stream.json') ?
+				(json(readfile('/var/run/ravnex/yt_stream.json') || '') || null) : null;
+			const steer_rows = (steer_cat != null && type(steer_cat.pools) === 'object') ?
+				steer_pools(steer_cat.pools, time(),
+					(steer_stream != null && type(steer_stream) === 'object') ?
+						current_suffix_from_host('' + (steer_stream.host || '')) : '') : [];
+			if (length(steer_rows)) {
+				/* Форма = ПРОВЕРЕННЫЙ шаблон rejects (oauth-domain): ЛОКАЛЬНЫЙ
+				 * rule_set (декларация — в ROUTE-секции ниже; здесь config.route
+				 * ещё не существует — живьём пойман краш генератора и LKG-откат)
+				 * + dns-правило action:'reject'. Инлайн domain_suffix-массив в
+				 * reject-правиле на этом ядре не сработал (пойман живьём: 5333
+				 * отвечал реальными IP при правиле в конфиге). */
+				const steer_rs = HP_DIR + '/resources/yt_steer_dead.json';
+				const rs_body = { version: 1, rules: [ { domain_suffix: steer_rows } ] };
+				writefile(steer_rs + '.tmp', sprintf('%.J\n', rs_body));
+				system(`mv -f '${steer_rs}.tmp' '${steer_rs}'`);
+				/* Дедуп-гвард = ТОЛЬКО в route-секции ниже: has_ruleset объявлен
+				 * ТЕКСТУАЛЬНО ПОЗЖЕ этого места (урок 405) — вызов здесь валил
+				 * генератор (ReferenceError) и уводил apply в LKG. */
+				push(config.dns.rules, {
+					rule_set: 'yt-steer-dead',
+					action: 'reject'
+				});
+			}
+		}
 		for (let cfg in ru_rules) {
 			const dnst = ru_dns_target_of(cfg);
 			if (!dnst)
@@ -2949,6 +2996,42 @@ if (!isEmpty(main_node)) {
 			});
 		}
 
+		/* сеанс 187 (решение юзера): per-origin QUIC reject — UDP/443 к
+		 * googlevideo роняется в ЯДРЕ (sing-box route-reject, домен-адресуемо),
+		 * браузер мгновенно падает на TCP (экономия 2–4 с на стартах видео).
+		 * Глобальный prerouting-drop (byedpi_block_quic) остаётся ЖЁСТКИМ
+		 * опциональным режимом: он бьёт по ВСЕМУ LAN UDP/443 (DoH/h3-DNS на
+		 * устройствах, туннели/узлы на UDP/443) — блок «QUIC» на странице
+		 * «Подключение» описывает это честно. */
+		push(config.route.rules, {
+			domain_suffix: ['googlevideo.com'],
+			network: 'udp',
+			port: [443],
+			action: 'reject'
+		});
+		/* сеанс 187: негативный стиринг на СЛОЕ МАРШРУТА — дополнение к
+		 * DNS-отказу (этот сеанс доказал: REJECT в dns.rules этого ядра не
+		 * срабатывает ни в одной форме — mosdns-матчер и инлайн, и SVCB-oauth
+		 * тоже молчит; ЖИВОЙ ФАКТ). Route-reject работает по имени ПОСЛЕ
+		 * сниффа SNI: соединение к мёртвому пулу получает мгновенный отказ
+		 * и плеер ротит — тот же UX, что мгновенный DNS-отказ. Правило стоит
+		 * ПЕРЕД per-source правилами (первый матч). */
+		if ((uci.get(uciconfig, 'config', 'yt_steer_dead') || '0') === '1' &&
+			access(HP_DIR + '/resources/yt_steer_dead.json')) {
+			push(config.route.rules, {
+				rule_set: 'yt-steer-dead',
+				network: 'udp',
+				port: [443],
+				action: 'reject'
+			});
+			push(config.route.rules, {
+				rule_set: 'yt-steer-dead',
+				network: 'tcp',
+				port: [443],
+				action: 'reject'
+			});
+		}
+
 		/* Call proxying rules: UDP media ports + XMPP/SIP ports for VoIP apps */
 		/* Torrent bypass first — takes priority over proxy_calls port ranges (51413 overlaps 50000:65530) */
 		if (no_proxy_torrents === '1') {
@@ -3322,6 +3405,18 @@ if (!isEmpty(main_node)) {
 				format: 'source',
 				path: HP_DIR + '/resources/oauth_domain.json'
 			});
+			/* сеанс 187: декларация rule_set негативного стиринга (файл пишет
+			 * DNS-секция при деривации; здесь только объявление — config.route
+			 * в DNS-секции ещё не существует, урок этого сеанса). */
+			if ((uci.get(uciconfig, 'config', 'yt_steer_dead') || '0') === '1' &&
+				access(HP_DIR + '/resources/yt_steer_dead.json')) {
+				push(config.route.rule_set, {
+					type: 'local',
+					tag: 'yt-steer-dead',
+					format: 'source',
+					path: HP_DIR + '/resources/yt_steer_dead.json'
+				});
+			}
 			push(config.route.rule_set, {
 				type: 'local',
 				tag: 'auto-auth-domain',
