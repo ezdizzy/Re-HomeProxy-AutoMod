@@ -2148,6 +2148,9 @@ msgstr ""
 msgid "TCP fast open"
 msgstr ""
 
+msgid "Tachyon (import)"
+msgstr ""
+
 msgid "Telegram"
 msgstr ""
 

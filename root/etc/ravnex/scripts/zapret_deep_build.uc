@@ -117,16 +117,19 @@ function deep_item(id) {
 	 * 2026-11-04: старт ВИДЕО не равен старту миниатюр). rc — последний токен. */
 	item.ttfb = (length(parts) > 4) ? int(num(parts[4]) * 1000.0) : 0;
 	item.rc = (length(parts) > 5) ? int(num(parts[5])) : ((length(parts) > 4) ? int(num(parts[4])) : 1);
-	if (id === 'yts' || id === 'yts2' || id === 'yts3' || id === 'yts4') {
+	if (id === 'yts' || id === 'yts2' || id === 'yts3' || id === 'yts4' || id === 'yts5') {
 		/* ч.269: per-edge stream items — dhost_/dip_ files carry the pinned
 		 * pool edge (host + its own IP); each item records them so the
 		 * ranking/verdict can see WHICH pool member was measured and the
-		 * merge can attribute an infra-dead edge to the path, not strategy. */
+		 * merge can attribute an infra-dead edge to the path, not strategy.
+		 * ч.183: yts5 = CROSS-POOL edge (edge='cross') — does the stream play
+		 * from a FOREIGN pool under this strategy. Same ok gate (200/206,
+		 * ≥131072 B/s, ≥524288 B) — the speed metric is family-consistent. */
 		const hp = TMP + '/dhost_' + id;
 		const pp = TMP + '/dip_' + id;
 		item.host = access(hp) ? trim(readfile(hp) || '') : null;
 		item.ip = access(pp) ? trim(readfile(pp) || '') : null;
-		item.edge = (id === 'yts') ? 'primary' : 'pool';
+		item.edge = (id === 'yts') ? 'primary' : ((id === 'yts5') ? 'cross' : 'pool');
 		item.ok = ((item.code === '200' || item.code === '206') &&
 			item.speed >= YTS_MIN_SPEED && item.bytes >= YTS_MIN_BYTES) ? 1 : 0;
 		return item;

@@ -1297,6 +1297,9 @@ msgstr "TCP"
 msgid "TCP fast open"
 msgstr "TCP быстрое открытие"
 
+msgid "Tachyon (import)"
+msgstr "Tachyon (импорт)"
+
 msgid "TLS"
 msgstr "TLS"
 

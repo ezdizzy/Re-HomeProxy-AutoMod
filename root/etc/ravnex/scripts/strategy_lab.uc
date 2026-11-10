@@ -206,6 +206,7 @@ export function resource_verdict(entries, quic_vn, udp_any, device, dead, extra)
 	const ex_stun = (ex != null) ? ex.stun_baseline : null;
 	const ex_rev = (ex != null && type(ex.revived) === 'array') ? ex.revived : null;
 	const ex_scan = (ex != null && ex.scan_note != null) ? ('' + ex.scan_note) : null;
+const ex_pools = (ex != null && type(ex.pools) === 'array') ? ex.pools : null;
 	/* ч.234: метка в device_verdicts.json — ОБЪЕКТ { verdict: 'works'|… };
 	 * прежний dv делал '' + объект (≠ 'works') — метка была МЕРТВА в
 	 * лабораторном вердикте с момента появления (ч.232): свип ч.233 писал
@@ -365,6 +366,25 @@ export function resource_verdict(entries, quic_vn, udp_any, device, dead, extra)
 				push(rips, '' + re2.ip);
 		if (length(rips) > 0)
 			push(out.notes, 'край(-я) пула ' + join(', ', rips) + ' ОЖИВАЮТ не всеми стратегиями (1 MB проба под каждой): мёртвость края зависит от формы потока стратегии, а не от инфраструктуры — revive считается первосортным признаком выбора');
+	}
+	/* ч.183: МУЛЬТИПУЛОВАЯ правда — «пул мёртв целиком» не спрашивает
+	 * стратегии: выдача из такого пула не играет ни при какой. Честный
+	 * вердикт юзеру = перегенерировать страницу (новая выдача обычно из
+	 * другого пула), а не крутить список стратегий. */
+	if (ex_pools != null) {
+		let pw = 0, partial = [];
+		for (let pl in ex_pools) {
+			if (type(pl) !== 'object' || pl.suffix == null) continue;
+			const ps = '' + pl.suffix;
+			const pd = int(pl.dead || 0), pa = int(pl.alive || 0);
+			if (int(pl.dead_whole) == 1 && pd > 0 && pw < 3) {
+				push(out.notes, 'пул ' + ps + ' мёртв ЦЕЛИКОМ (' + pd + ' краёв не отвечают): выдача из него не играет НИ ПРИ КАКОЙ стратегии — обновите страницу/откройте другое видео (новая выдача обычно из другого пула), винить стратегию бессмысленно');
+				pw++;
+			} else if (pd > 0 && pa > 0 && length(partial) < 4)
+				push(partial, ps + ' (' + pa + '/' + (pa + pd) + ' краёв живы)');
+		}
+		if (length(partial) > 0)
+			push(out.notes, 'пулы с частичной чернотой: ' + join(', ', partial) + ' — видео из чёрных краёв может не открываться, это свойство пула, не стратегии');
 	}
 	if (ex_dns != null) {
 		const dvv = '' + (ex_dns.verdict || '');

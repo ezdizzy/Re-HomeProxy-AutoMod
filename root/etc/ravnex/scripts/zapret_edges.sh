@@ -15,9 +15,17 @@
 #
 # Input:  $1 = a videoplayback URL (or any googlevideo URL) — its host defines
 #         the pool suffix; empty → the yt_stream.json cache host.
+#         OR $1 = --pools, $2 = suffix list (CSV/space): measure EVERY pool
+#         independently (сeанс 183: whole /29 blackouts per pool in ONE moment —
+#         nx5pm alive while 5goeen7y/aj5goc were dead entirely) and emit ONE
+#         combined JSON {"ok":1,"engine":"live","pools":[{suffix,edges},…]}.
+#         Multipool has no per-pool videoplayback URL → no ranged 2MB pull,
+#         primary=0 for every edge; the probes themselves are identical.
 # Output: one JSON line {"ok":N,"suffix":"sn-…","engine":"live",
 #         "edges":[{"host","ip","tls_ok","tls_ms","get_code","get_bytes",
-#                   "get_spd","quic","primary":0|1},…],"note":""}
+#                   "get_score"→"get_spd","quic","primary":0|1},…],"note":""}
+#         (multipool mode: {"ok":1,"engine":"live","pools":[…]}; a pool whose
+#         enumeration returns nothing is recorded as a fail entry, not a crash)
 #
 # Per edge: utls_probe (chrome ClientHello, 6 s) + a root-path HTTP fetch
 # (server liveness; the primary edge additionally gets a ranged 2 MB pull of
@@ -28,44 +36,14 @@ CACHE=/var/run/ravnex/yt_stream.json
 
 emit_fail() { echo "{\"ok\":0,\"error\":\"$1\"}"; exit 0; }
 
-[ -z "$URL" ] && [ -s "$CACHE" ] && URL=$(grep -oE '"url": *"https://[^"]+' "$CACHE" 2>/dev/null | head -1 | cut -d'"' -f4)
-[ -n "$URL" ] || emit_fail "no videoplayback URL (set $1 or have a fresh yt_stream.json)"
-
-HOST=$(printf '%s' "$URL" | sed -E 's#^https://([^/]+).*#\1#')
-case "$HOST" in
-	*.googlevideo.com) : ;;
-	*) emit_fail "URL host is not googlevideo: $HOST" ;;
-esac
-SUFFIX=$(printf '%s' "$HOST" | sed -E 's/^rr[0-9]*---//')
-
-# enumerate pool members rr1..rr6 of the same suffix, distinct public IPs
-POOL=""
-for k in 1 2 3 4 5 6; do
-	PH="rr$k---$SUFFIX"
-	PIP=$(nslookup "$PH" 2>/dev/null \
-		| grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
-		| grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|198\.(1[89])\.|2[4-9][0-9]\.|0\.)' \
-		| head -1)
-	[ -n "$PIP" ] || continue
-	case "$POOL" in *"[$PIP]"*) continue ;; esac
-	POOL="$POOL[$PIP]$PH
-"
-done
-
-[ -n "$(printf '%s' "$POOL" | tr -d '[:space:]')" ] || emit_fail "pool enumeration returned nothing for $SUFFIX"
-
-EJSON=""
-printf '%s' "$POOL" | { SEP=""
-while IFS= read -r line; do
-	[ -n "$line" ] || continue
-	PIP=${line%%]*}
-	PIP=${PIP#[}
-	PH=${line#*]}
-	PRIMARY=0
-	[ "$PH" = "$HOST" ] && PRIMARY=1
+# ONE probe implementation for BOTH modes (double-copy lesson: a forked
+# probe body always drifted) — prints the edge row JSON on stdout.
+# Args: host ip primary(0|1). Uses $URL for the primary ranged pull.
+measure_row() {
+	_PH="$1"; _PIP="$2"; _PRIMARY="$3"; _DOQ="${4:-1}"
 	# TLS ClientHello (browser fingerprint)
 	TLS_OK=0; TLS_MS=0
-	UOUT=$(/usr/bin/utls_probe -host "$PH" -ip "$PIP" -fp chrome -timeout 6 2>/dev/null | head -1)
+	UOUT=$(/usr/bin/utls_probe -host "$_PH" -ip "$_PIP" -fp chrome -timeout 6 2>/dev/null | head -1)
 	case "$UOUT" in
 		*'ok":1'*|*'ok": true'*)
 			TLS_OK=1
@@ -74,9 +52,9 @@ while IFS= read -r line; do
 	esac
 	# HTTP liveness (root path; a live googlevideo edge answers 404 quickly)
 	GCODE=0; GBYTES=0; GSPD=0
-	COUT=$(curl -s --resolve "$PH:443:$PIP" -o /dev/null \
+	COUT=$(curl -s --resolve "$_PH:443:$_PIP" -o /dev/null \
 		-w '%{http_code}|%{size_download}|%{speed_download}' \
-		--connect-timeout 4 --max-time 8 "https://$PH/" 2>/dev/null)
+		--connect-timeout 4 --max-time 8 "https://$_PH/" 2>/dev/null)
 	GCODE=$(printf '%s' "$COUT" | cut -d'|' -f1)
 	GBYTES=$(printf '%s' "$COUT" | cut -d'|' -f2)
 	GSPD=$(printf '%s' "$COUT" | cut -d'|' -f3)
@@ -84,8 +62,8 @@ while IFS= read -r line; do
 	case "$GBYTES" in ''|*[!0-9]*) GBYTES=0 ;; esac
 	case "$GSPD" in ''|*[!0-9]*|*.*) GSPD=0 ;; esac
 	# real throughput on the primary edge only (ranged 2 MB of the actual URL)
-	if [ "$PRIMARY" = "1" ]; then
-		C2=$(curl -s --resolve "$PH:443:$PIP" -r 0-2097151 -o /dev/null \
+	if [ "$_PRIMARY" = "1" ]; then
+		C2=$(curl -s --resolve "$_PH:443:$_PIP" -r 0-2097151 -o /dev/null \
 			-w '%{http_code}|%{size_download}|%{speed_download}' \
 			--connect-timeout 4 --max-time 10 "$URL" 2>/dev/null)
 		P_CODE=$(printf '%s' "$C2" | cut -d'|' -f1)
@@ -98,23 +76,130 @@ while IFS= read -r line; do
 			;;
 		esac
 	fi
-	# QUIC contour (probe_pool VN-level)
+	# QUIC contour (probe_pool VN-level). Only where the edge ANSWERED
+	# something (TLS or root-HTTP): a black edge answers nothing anywhere,
+	# the probe is a fixed ~5 s tax per dead edge and a fully black /29
+	# would pay it 5-6 times per pool. On a dead edge "-" is as honest.
+	# Field name rides BOTH probe_pool generations: the 3.1.0 helpers emit
+	# "verdict", the older ones "quic" (live fact 2026-11-10: every edge
+	# showed quic:"-" because the parser greped a field the binary no
+	# longer prints).
 	QV="-"
-	if [ -x /usr/bin/probe_pool ]; then
-		QV=$(/usr/bin/probe_pool -quic-check "$PIP" -quic-host "$PH" 2>/dev/null \
-			| grep -oE '"quic":"[a-z]+"' | head -1 | cut -d'"' -f4)
+	if [ "${_DOQ:-1}" = "1" ] && { [ "$TLS_OK" = "1" ] || [ "$GCODE" != "0" ]; } \
+		&& [ -x /usr/bin/probe_pool ]; then
+		QV=$(/usr/bin/probe_pool -quic-check "$_PIP" -quic-host "$_PH" 2>/dev/null \
+			| grep -oE '"(verdict|quic)":"[a-z]+"' | head -1 | cut -d'"' -f4)
 		[ -n "$QV" ] || QV="-"
 	fi
 	case "$GSPD" in ''|*[!0-9]*) GSPD=0 ;; esac
 	case "$TLS_MS" in ''|*[!0-9]*) TLS_MS=0 ;; esac
-	printf '%s{"host":"%s","ip":"%s","tls_ok":%d,"tls_ms":%d,"get_code":%s,"get_bytes":%s,"get_spd":%s,"quic":"%s","primary":%d}' \
-		"$SEP" "$PH" "$PIP" "$TLS_OK" "$TLS_MS" "$GCODE" "$GBYTES" "$GSPD" "$QV" "$PRIMARY"
-	SEP=","
-done
-} > /tmp/zapret_edges_rows.$$
+	printf '%s' "{\"host\":\"$_PH\",\"ip\":\"$_PIP\",\"tls_ok\":$TLS_OK,\"tls_ms\":$TLS_MS,\"get_code\":$GCODE,\"get_bytes\":$GBYTES,\"get_spd\":$GSPD,\"quic\":\"$QV\",\"primary\":$_PRIMARY}"
+}
+
+# Enumerate rr1..rr6 of one suffix into "ip host" lines (fresh nslookup,
+# distinct public IPs; private/reserved ranges excluded). Arg: suffix.
+enumerate_pool() {
+	_POOL=""
+	for k in 1 2 3 4 5 6; do
+		PH="rr$k---$1"
+		PIP=$(nslookup "$PH" 2>/dev/null \
+			| grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+			| grep -vE '^(10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|198\.(1[89])\.|2[4-9][0-9]\.|0\.)' \
+			| head -1)
+		[ -n "$PIP" ] || continue
+		case "$_POOL" in *"[$PIP]"*) continue ;; esac
+		_POOL="$_POOL[$PIP]"
+		printf '%s %s\n' "$PIP" "$PH"
+	done
+}
+
+# ── Multipool mode (сеанс 183) ────────────────────────────────────────────────
+if [ "$1" = "--pools" ]; then
+	URL=""
+	LIST=$(printf '%s' "${2:-}" | tr ',;' ' ')
+	OUT=""
+	SEP=""
+	NPOOLS=0
+	DEDUP=""
+	for raw in $LIST; do
+		[ -n "$raw" ] || continue
+		SFX=$(printf '%s' "$raw" | sed -E 's#^https?://##; s/^rr[0-9]+---//' | cut -d'/' -f1)
+		# normalize: bare sn-… gets the googlevideo.com tail; junk is skipped
+		case "$SFX" in
+			*[!.a-z0-9-]*|"") continue ;;
+		esac
+		case "$SFX" in
+			*.googlevideo.com) : ;;
+			sn-*) SFX="$SFX.googlevideo.com" ;;
+			*) continue ;;
+		esac
+		# dedup AFTER normalization: the catalog feeds bare and full forms
+		# from different sources (live conns vs persisted history) — without
+		# this the cap-10 slot budget paid for duplicate measurements
+		# (live fact: aj5goc-5x and 5goeen7y measured twice, 5go7yner and
+		# q4flrnsk never reached)
+		case "$DEDUP" in *"[$SFX]"*) continue ;; esac
+		DEDUP="$DEDUP[$SFX]"
+		[ "$NPOOLS" -lt 10 ] || break
+		NPOOLS=$((NPOOLS + 1))
+		POOL=$(enumerate_pool "$SFX")
+		if [ -z "$(printf '%s' "$POOL" | tr -d '[:space:]')" ]; then
+			OUT="$OUT$SEP{\"ok\":0,\"suffix\":\"$SFX\",\"error\":\"pool enumeration returned nothing\"}"
+			SEP=","
+			continue
+		fi
+		ROWS=/tmp/zapret_edges_mp.$$
+		: > "$ROWS"
+		printf '%s' "$POOL" | {
+			RSEP=""
+			while read -r PIP PH; do
+				[ -n "$PIP" ] && [ -n "$PH" ] || continue
+				# QUIC check only where the edge answered something (a black
+				# /29 answers nothing anywhere — the probe is a fixed ~5 s tax)
+				OUT_ROW=$(measure_row "$PH" "$PIP" 0)
+				printf '%s%s' "$RSEP" "$OUT_ROW" >> "$ROWS"
+				RSEP=","
+			done
+		}
+		EROWS=$(cat "$ROWS" 2>/dev/null)
+		NEDGE=$(grep -o '"host"' "$ROWS" 2>/dev/null | wc -l)
+		[ -n "$NEDGE" ] || NEDGE=0
+		rm -f "$ROWS" 2>/dev/null
+		OUT="$OUT$SEP{\"ok\":1,\"suffix\":\"$SFX\",\"engine\":\"live\",\"edge_count\":$NEDGE,\"edges\":[$EROWS]}"
+		SEP=","
+	done
+	echo "{\"ok\":1,\"engine\":\"live\",\"pools\":[$OUT]}"
+	exit 0
+fi
+
+[ -z "$URL" ] && [ -s "$CACHE" ] && URL=$(grep -oE '"url": *"https://[^"]+' "$CACHE" 2>/dev/null | head -1 | cut -d'"' -f4)
+[ -n "$URL" ] || emit_fail "no videoplayback URL (set $1 or have a fresh yt_stream.json)"
+
+HOST=$(printf '%s' "$URL" | sed -E 's#^https://([^/]+).*#\1#')
+case "$HOST" in
+	*.googlevideo.com) : ;;
+	*) emit_fail "URL host is not googlevideo: $HOST" ;;
+esac
+SUFFIX=$(printf '%s' "$HOST" | sed -E 's/^rr[0-9]*---//')
+
+# enumerate pool members rr1..rr6 of the same suffix, distinct public IPs
+POOL=$(enumerate_pool "$SUFFIX")
+
+[ -n "$(printf '%s' "$POOL" | tr -d '[:space:]')" ] || emit_fail "pool enumeration returned nothing for $SUFFIX"
+
+ROWS=/tmp/zapret_edges_rows.$$
+: > "$ROWS"
+printf '%s' "$POOL" | {
+	while read -r PIP PH; do
+		[ -n "$PIP" ] && [ -n "$PH" ] || continue
+		PRIMARY=0
+		[ "$PH" = "$HOST" ] && PRIMARY=1
+		printf '%s%s' "$SEP" "$(measure_row "$PH" "$PIP" $PRIMARY)" >> "$ROWS"
+		SEP=","
+	done
+}
 
 # assemble (the pipe runs the loop in a subshell; the rows file carries data out)
-ROWS=/tmp/zapret_edges_rows.$$
 # count OCCURRENCES, not lines: the rows print on ONE line (live fact of the
 # first acceptance sweep: grep -c counted 1 for a 6-edge matrix)
 NEDGE=$(grep -o '"host"' "$ROWS" 2>/dev/null | wc -l)

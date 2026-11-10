@@ -631,10 +631,17 @@ return view.extend({
 
 		/* ── DPI section (Ф3): engine status, strategy, Lab, corpus ────── */
 
+		/* ч.183: the group vocabulary is EXTENSIBLE — a corpus import that
+		 * carries an unknown group (tachyon/community lived INVISIBLE in the
+		 * pickers and the count line until now) must still surface. The
+		 * optgroup order follows the array; renderCorpus additionally prints
+		 * leftover group counts verbatim. */
 		const DPI_GROUPS = [
 			[ 'recommended', _('Recommended') ],
 			[ 'imported', _('Imported (catalog)') ],
 			[ 'generated', _('Generated') ],
+			[ 'tachyon', _('Tachyon (import)') ],
+			[ 'community', _('Community') ],
 			[ 'auto', _('Full-test pool') ]
 		];
 
@@ -2742,9 +2749,18 @@ return view.extend({
 				state.corpusSig = sig;
 				const g = meta.groups || {};
 				const parts = [ _('corpus: %d strategies').format(meta.count || 0) ];
-				for (let gg in DPI_GROUPS)
+				const known = {};
+				for (let gg in DPI_GROUPS) {
+					known[DPI_GROUPS[gg][0]] = true;
 					if (g[DPI_GROUPS[gg][0]])
 						parts.push(DPI_GROUPS[gg][1] + ': ' + g[DPI_GROUPS[gg][0]]);
+				}
+				/* ч.183: ANY group not in DPI_GROUPS still shows its count —
+				 * a future import must never silently vanish from the line
+				 * (the whole-project rule: added somewhere → check the rest). */
+				for (let gk in g)
+					if (!known[gk])
+						parts.push(gk + ': ' + g[gk]);
 				if (meta.updated)
 					parts.push(_('updated %s').format(new Date(Number(meta.updated) * 1000).toLocaleString()));
 				corpusLine.textContent = parts.join(' · ');

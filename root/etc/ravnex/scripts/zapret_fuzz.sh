@@ -95,7 +95,41 @@ fi
 if [ "$MODE" = "full" ]; then
 	PAIRS=$(ucode -e 'import {readfile} from "fs"; let j=json(readfile("'$CAND'")); for (let c in (j.candidates||[])) if (type(c)=="object") print((c.name||"?") + "\t" + (c.group||"") + "\t" + c.args + "\n");' 2>/dev/null)
 else
-	PAIRS=$(ucode -e 'import {readfile} from "fs"; let j=json(readfile("'$CAND'")); for (let c in (j.candidates||[])) if (type(c)=="object" && c.group=="recommended") print((c.name||"?") + "\t" + (c.group||"") + "\t" + c.args + "\n");' 2>/dev/null)
+	# ч.183: quick measures recommended in full PLUS a SMALL DETERMINISTIC
+	# ROTATION over the other groups (the corpus grew 2.6x with Tachyon —
+	# a quick that never touches 68 strategies is blind on the axis the
+	# user cares about). Rotation seed = sweep history length: successive
+	# sweeps visit DIFFERENT members, coverage converges over runs.
+	PAIRS=$(ucode -e '
+import {readfile} from "fs";
+let j = json(readfile("'$CAND'"));
+let hist = 0;
+try { let h = json(readfile("/var/run/ravnex/zapret_fuzz_history.json")); if (h != null && type(h.runs) == "array") hist = length(h.runs); } catch (e) { hist = 0; }
+const QUOTA = { tachyon: 3, community: 1, auto: 1, imported: 1, generated: 1 };
+const out = [];
+for (let c in (j.candidates || []))
+	if (type(c) == "object" && (c.group || "") == "recommended")
+		push(out, (c.name || "?") + "\t" + (c.group || "") + "\t" + c.args + "\n");
+for (let grp in keys(QUOTA)) {
+	const pool = [];
+	for (let c in (j.candidates || []))
+		if (type(c) == "object" && (c.group || "") == grp)
+			push(pool, c);
+	if (length(pool) == 0) continue;
+	const cap = QUOTA[grp];
+	if (cap >= length(pool)) {
+		for (let c in pool)
+			push(out, (c.name || "?") + "\t" + (c.group || "") + "\t" + c.args + "\n");
+		continue;
+	}
+	const off = hist % length(pool);
+	for (let n = 0; n < cap; n++) {
+		const c = pool[(off + n) % length(pool)];
+		push(out, (c.name || "?") + "\t" + (c.group || "") + "\t" + c.args + "\n");
+	}
+}
+print(join("", out));
+' 2>/dev/null)
 fi
 TOTAL=$(printf '%s\n' "$PAIRS" | grep -c '[^[:space:]]')
 [ "$TOTAL" -lt 1 ] && { echo '{"running":false,"done":0,"total":0,"error":"empty corpus"}' > "$STATUS"; exit 0; }
@@ -189,10 +223,69 @@ if (j && j.ok && j.url) print(j.url);
 ' 2>/dev/null)
 if [ -n "$YTURL_EARLY" ]; then
 	L1E=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null); [ -n "$L1E" ] || L1E=0
-	echo "{\"running\":true,\"done\":$DONE,\"total\":$TOTAL,\"rounds\":$ROUNDS,\"load\":$L1E,\"stage\":\"edges\",\"current\":\"карта краёв CDN-пула (live)…\"}" > "$STATUS"
-	sh /etc/ravnex/scripts/zapret_edges.sh "$YTURL_EARLY" 2>/dev/null > "$TMP/edge_matrix.json"
-	grep -q '^{"ok"' "$TMP/edge_matrix.json" 2>/dev/null || rm -f "$TMP/edge_matrix.json"
-	loadmark edges
+	echo "{\"running\":true,\"done\":$DONE,\"total\":$TOTAL,\"rounds\":$ROUNDS,\"load\":$L1E,\"stage\":\"edges\",\"current\":\"карта пулов CDN (live, мультипул)…\"}" > "$STATUS"
+	# ч.183 МУЛЬТИПУЛ: одна матрица одного пула ничего не знает про ЦЕЛЫЕ
+	# /29-блэкауты в ДРУГИХ пулах (живой факт сеанса 183: 6/9 пулов черны
+	# целиком в один момент при живых q4fl*/nx5pm; «видео не открывается» =
+	# watch-страница выдала чёрный пул). Каталог пулов:
+	#  (1) суффикс текущего стрима (всегда первый),
+	#  (2) mn= фолбек-цепочка самого URL (Google сам перечисляет пулы, куда
+	#      может прыгнуть отдача),
+	#  (3) ЖИВЫЕ конны ядра (/connections — rr-хосты прямо сейчас),
+	#  (4) персист-история zapret_pools.json (≤48 ч, свежие сверху),
+	#  (5) EXTRA_POOLS (ручная дверь re-shoot).
+	PSUF=$(printf '%s' "$YTURL_EARLY" | sed -E 's#https://rr[0-9]*---##; s#\.googlevideo\.com.*##')
+	MNLIST=$(printf '%s' "$YTURL_EARLY" | sed -n 's/.*[?&]mn=//p' | cut -d'&' -f1 | sed 's/%2[cC]/ /g')
+	CNLIST=$(curl -s --max-time 3 http://127.0.0.1:9090/connections 2>/dev/null \
+		| grep -oE 'rr[0-9]+---sn-[a-z0-9]+[a-z0-9.-]*\.googlevideo\.com' \
+		| sed -E 's/^rr[0-9]+---//; s/\.googlevideo\.com//' \
+		| sort -u | tr '\n' ' ')
+	HISTPOOLS=$(ucode -e '
+import {readfile, access} from "fs";
+let j = null;
+try { j = json(readfile("/var/run/ravnex/zapret_pools.json") || ""); } catch (e) { j = null; }
+if (j != null && type(j.pools) == "object") {
+	let rows = [];
+	for (let s in keys(j.pools)) {
+		const p = j.pools[s];
+		if (type(p) != "object") continue;
+		if (time() - int(p.last_ts || 0) > 172800) continue;
+		let ss = "" + s;
+		/* emit the BARE suffix: the other catalog sources are bare and the
+		 * consumer dedups on the normalized form */
+		const gtail = ".googlevideo.com";
+		if (substr(ss, length(ss) - length(gtail)) == gtail)
+			ss = substr(ss, 0, length(ss) - length(gtail));
+		push(rows, { s: ss, ts: int(p.last_ts || 0) });
+	}
+	sort(rows, (a, b) => b.ts - a.ts);
+	let out = [];
+	for (let r in rows) push(out, r.s);
+	print(join(" ", out));
+}' 2>/dev/null)
+	POOL_LIST=$(printf '%s' "$PSUF $MNLIST $CNLIST $EXTRA_POOLS $HISTPOOLS" \
+		| tr ' ' '\n' | sed '/^$/d' | awk '!seen[$0]++' | head -10 | tr '\n' ' ')
+	sh /etc/ravnex/scripts/zapret_edges.sh --pools "$POOL_LIST" 2>/dev/null > "$TMP/pool_matrix.json"
+	grep -q '"ok":1' "$TMP/pool_matrix.json" 2>/dev/null || rm -f "$TMP/pool_matrix.json"
+	# Primary-pool matrix rides OUT as edge_matrix.json — every existing
+	# consumer (EH/DEAD hint builders, the merge infra-dead union, the result
+	# field, verdict dead_edges) keeps its exact contract; other pools travel
+	# in pool_matrix.json (+ pool_map in the merge).
+	if [ -s "$TMP/pool_matrix.json" ]; then
+		ucode -e '
+import {readfile, writefile} from "fs";
+let j = null;
+try { j = json(readfile("'$TMP'/pool_matrix.json") || ""); } catch (e) { j = null; }
+const psuf = "'$PSUF'";
+if (j != null && type(j.pools) == "array")
+	for (let p in j.pools)
+		if (type(p) == "object" && p.suffix == psuf + ".googlevideo.com") {
+			writefile("'$TMP'/edge_matrix.json", sprintf("%.J\n", p));
+			break;
+		}
+' 2>/dev/null
+	fi
+	loadmark edges_multipool
 fi
 
 mkdir -p "$TMP"
@@ -526,8 +619,10 @@ for (let i = 0; i < length(strategies) && length(keys(fams_seen)) < 9; i++) {
 	fams_seen[f] = true;
 	push(covered, i + 1);
 }
-/* 4. the best imported and generated strategy (the user catalogs) */
-for (let gi in ["imported", "generated"]) {
+/* 4. the best imported and generated strategy (the user catalogs); ч.183:
+ * the tachyon/community groups join the quota — an import of 68 strategies
+ * deserves its best measured rep in the deep battery, not invisibility. */
+for (let gi in ["imported", "generated", "tachyon", "community"]) {
 	for (let i = 0; i < length(strategies); i++) {
 		if (strategies[i].group != gi || int(strategies[i].ok) <= 0) continue;
 		if (index(covered, i + 1) < 0)
@@ -646,6 +741,34 @@ if (j != null && type(j.edges) == "array") {
 	print(join("\n", parts));
 }' 2>/dev/null)
 fi
+# ч.183: CROSSPOOL_HINTS — ЖИВЫЕ края ДРУГИХ пулов (pool_matrix, не основной
+# суффикс). Глубокая батарея получает yts5: межпуловый тянутый пункт — «стрим
+# под этой стратегией играет из ЧУЖОГО пула или нет» (внутрипуловая ротация
+# yts2..yts4 не видит пуловую чёрноту). Один пункт на стратегию, дёшево.
+CROSSPOOL_HINTS=""
+if [ -s "$TMP/pool_matrix.json" ]; then
+	CROSSPOOL_HINTS=$(ucode -e '
+import {readfile} from "fs";
+let j = null;
+try { j = json(readfile("'$TMP'/pool_matrix.json") || ""); } catch (e) { j = null; }
+const psuf = "'$PSUF'.googlevideo.com";
+if (j != null && type(j.pools) == "array") {
+	let parts = [];
+	for (let p in j.pools) {
+		if (type(p) != "object" || p.ok != 1) continue;
+		if ("" + p.suffix == psuf) continue;
+		if (type(p.edges) != "array") continue;
+		for (let e in p.edges) {
+			if (type(e) != "object" || !e.host || !e.ip) continue;
+			if (e.tls_ok == 0 && ("" + (e.get_code || "0")) == "0") continue;
+			push(parts, e.host + " " + e.ip);
+		}
+	}
+	/* cap: one item per strategy — 4 rows are plenty for the rotation */
+	while (length(parts) > 4) shift(parts);
+	print(join("\n", parts));
+}' 2>/dev/null)
+fi
 # deep_pass <suffix> <pass#> — one full battery pass; results land in d<i><suf>.json.
 deep_pass() {
 	i=0
@@ -657,7 +780,7 @@ deep_pass() {
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
 		DL1=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null); [ -n "$DL1" ] || DL1=0
 		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","load":'$DL1',"done2":'$i',"total2":'$TOPN',"current":"deep check '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
-		YTV_URL="$YTV_URL" EDGE_HINTS="$_EH" DEAD_HINTS="$DEAD_HINTS" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+		YTV_URL="$YTV_URL" EDGE_HINTS="$_EH" DEAD_HINTS="$DEAD_HINTS" CROSSPOOL_HINTS="$CROSSPOOL_HINTS" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
 		loadmark "deep${i}_p$2"
 	done
 }
@@ -692,7 +815,7 @@ print(ok ? "0" : "1");' 2>/dev/null)
 		ARGS=$(ucode -e 'import {readfile} from "fs"; let j = json(readfile("'$TMP'/deep_list.json")); let e = (j && j.list) ? j.list['"$((i-1))"'] : null; print(e ? e.args : "");' 2>/dev/null)
 		[ -z "$(printf '%s' "$ARGS" | tr -d '[:space:]')" ] && continue
 		echo '{"running":true,"done":'$DONE',"total":'$TOTAL',"rounds":'$ROUNDS',"probe_mode":"'$PMODE'","stage":"deep","done2":'$i',"total2":'$TOPN',"current":"deep retry '"$i"'/'"$TOPN"' (pass '"$2"')"}' > "$STATUS"
-		YTV_URL="$YTV_URL" EDGE_HINTS="$EH_FWD" DEAD_HINTS="$DEAD_HINTS" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
+		YTV_URL="$YTV_URL" EDGE_HINTS="$EH_FWD" DEAD_HINTS="$DEAD_HINTS" CROSSPOOL_HINTS="$CROSSPOOL_HINTS" sh /etc/ravnex/scripts/zapret_test.sh --deep "$ARGS" "$IPS" 2>/dev/null > "$TMP/d$i$1.json"
 	done
 }
 # ч.235: fresh edges before the deep battery — the battery is the EXPENSIVE
@@ -843,11 +966,11 @@ for (let r in drawn) {
 		let hdok = 0, dtot_h = 0, stream = 0, start_ms = 0, stream2 = 0, vstart = 0;
 		for (let it in (res.deep || [])) {
 			if (type(it) != "object" || it.id == null) continue;
-			if ((it.id == "ytv" || it.id == "yts" || it.id == "yts2" || it.id == "yts3" || it.id == "yts4") && int(it.speed || 0) > stream)
+			if ((it.id == "ytv" || it.id == "yts" || it.id == "yts2" || it.id == "yts3" || it.id == "yts4" || it.id == "yts5") && int(it.speed || 0) > stream)
 				stream = int(it.speed || 0);
 			if (it.id == "ytv" && int(it.ttfb || 0) > start_ms)
 				start_ms = int(it.ttfb || 0);
-			if ((it.id == "yts" || it.id == "yts2" || it.id == "yts3" || it.id == "yts4") && int(it.ttfb || 0) > vstart)
+			if ((it.id == "yts" || it.id == "yts2" || it.id == "yts3" || it.id == "yts4" || it.id == "yts5") && int(it.ttfb || 0) > vstart)
 				vstart = int(it.ttfb || 0);
 			if ((it.id == "yts2" || it.id == "yts3" || it.id == "yts4") && int(it.speed || 0) > stream2)
 				stream2 = int(it.speed || 0);
@@ -909,7 +1032,7 @@ for (let r in drawn) {
 			const pa = byid(res.deep);
 			const pb = (res2hit != null) ? byid(res2hit.deep) : {};
 			const em = [];
-			for (let eid in ["yts", "yts2", "yts3", "yts4"]) {
+			for (let eid in ["yts", "yts2", "yts3", "yts4", "yts5"]) {
 				const a = pa[eid], b = pb[eid];
 				if (a == null && b == null) continue;
 				push(em, { id: eid,
@@ -1012,6 +1135,61 @@ if (emx != null && type(emx.edges) == "array")
 		if (!dup)
 			push(infra_dead_edges, { ip: me.ip, host: me.host });
 	}
+/* ── ч.183 МУЛЬТИПУЛОВАЯ ПРАВДА ────────────────────────────────────────── */
+/* per-pool карта из pool_matrix.json: вердикт честности «пул мёртв ЦЕЛИКОМ =
+ * выдача не играется НИ ПРИ КАКОЙ стратегии — перегенерируйте страницу».
+ * Персист /var/run/ravnex/zapret_pools.json несёт межсвиповое ВРЕМЯ: ротация
+ * /29-блэкаутов измеряется МЕЖДУ прогонами (re-shoot), а не внутри одного. */
+const pmx = parse(TMP + "/pool_matrix.json");
+const pool_map = {};
+const pool_extra = [];
+if (pmx != null && type(pmx.pools) == "array")
+	for (let p in pmx.pools) {
+		if (type(p) != "object" || p.suffix == null) continue;
+		let alive = 0, dead = 0;
+		if (type(p.edges) == "array")
+			for (let e in p.edges) {
+				if (type(e) != "object") continue;
+				if (e.tls_ok == 0 && ("" + (e.get_code || "0")) == "0") dead++;
+				else alive++;
+			}
+		const whole = (p.ok != 1 || (dead > 0 && alive == 0));
+		let ss = "" + p.suffix;
+		const gtail = ".googlevideo.com";
+		if (substr(ss, length(ss) - length(gtail)) == gtail)
+			ss = substr(ss, 0, length(ss) - length(gtail));
+		pool_map["" + p.suffix] = { alive: alive, dead: dead, dead_whole: whole ? 1 : 0 };
+		push(pool_extra, { suffix: ss, alive: alive, dead: dead, dead_whole: whole ? 1 : 0 });
+	}
+let pstate = {};
+const POOLSF = "/var/run/ravnex/zapret_pools.json";
+if (access(POOLSF)) {
+	const pj = parse(POOLSF);
+	if (pj != null && type(pj.pools) == "object") pstate = pj.pools;
+}
+for (let s in keys(pool_map))
+	pstate[s] = { last_ts: now, alive: pool_map[s].alive, dead: pool_map[s].dead,
+		dead_whole: pool_map[s].dead_whole };
+/* touch the primary even when the whole edges stage failed (the catalog
+ * itself is a fact: the stream pool was referenced today) */
+const PSUF_FULL = "'$PSUF'.googlevideo.com";
+if (pstate[PSUF_FULL] == null)
+	pstate[PSUF_FULL] = { last_ts: now, alive: -1, dead: -1, dead_whole: -1 };
+else
+	pstate[PSUF_FULL].last_ts = now;
+/* prune >30d, cap 40 by freshness (LRU) */
+let prow = [];
+for (let s in keys(pstate))
+	if (type(pstate[s]) == "object" && now - int(pstate[s].last_ts || 0) <= 2592000)
+		push(prow, { s: s, ts: int(pstate[s].last_ts || 0) });
+sort(prow, (a, b) => b.ts - a.ts);
+let pnew = {};
+for (let r in prow) {
+	if (length(keys(pnew)) >= 40) break;
+	pnew[r.s] = pstate[r.s];
+}
+writefile(POOLSF, sprintf("%.J\n", { ts: now, pools: pnew }));
+
 /* ── Ф6.4 v3: измерения, второй IP, QUIC A/B, вердикты ─────────────────── */
 
 /* (аудит 84) baseline-СЕРИЯ: контрольный проход после прогона; хост,
@@ -1314,6 +1492,7 @@ for (let ri = 0; ri < length(rn_keys); ri++) {
 			: null,
 		dead_edges: (resname === "youtube") ? infra_dead_edges : null,
 		revived: (resname === "youtube") ? revived_edges : null,
+		pools: (resname === "youtube") ? pool_extra : null,
 		stun_baseline: (resname === "discord") ? stun_baseline : null,
 		scan_note: scan_note
 	};
@@ -1369,12 +1548,14 @@ writefile(RESULT, sprintf("%.J\n", {
 	baseline_series: { first: bnote, control: cnote, drift: drift },
 	dns_sets: dns_sets,
 	edge_matrix: emx,
+	pool_matrix: pmx,
+	pools_state: pnew,
 	infra_dead_edges: infra_dead_edges,
 	revived_edges: revived_edges,
 	stun_baseline: stun_baseline,
 	stun_items: stun_items,
 	verdicts: verdicts,
-	deep_note: "top " + deepN + " of " + length(dlist_items) + " selected deep-checked: family-diverse leaders + imported/generated bests" + (cur_measured ? " + the current strategy" : "") + "; failed: " + ((length(deep_failed)) ? join(", ", deep_failed) : "none") + "; probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank" + (u_meas2 ? "; Passed = curl AND browser ClientHello (utls_probe chrome)" : "; browser ClientHello probe NOT installed — Passed measures only the curl class")
+	deep_note: "top " + deepN + " of " + length(dlist_items) + " selected deep-checked: family-diverse leaders + imported/generated/tachyon/community bests" + (cur_measured ? " + the current strategy" : "") + "; failed: " + ((length(deep_failed)) ? join(", ", deep_failed) : "none") + "; probes identical across all deep-tested strategies (" + join(", ", skipped_ids) + ") do not rank" + (u_meas2 ? "; Passed = curl AND browser ClientHello (utls_probe chrome)" : "; browser ClientHello probe NOT installed — Passed measures only the curl class")
 }));
 
 /* history: keep the last 5 runs (tmpfs — survives until reboot) */

@@ -235,7 +235,10 @@ if [ "$DEEP" = "1" ]; then
 		printf '%s\n' "$DEAD_HINTS" | while IFS= read -r dl; do
 			dh2=${dl%% *}; di2=${dl#* }
 			[ -n "$dh2" ] && [ -n "$di2" ] || continue
-			case "$di2" in *[!0-9]*) continue ;; esac
+			# IPv4 has DOTS: the born-broken *[!0-9]* rejected every IP and
+			# dedg items never fired in any sweep (live fact 2026-11-10, the
+			# whole-pool research caught it). Non-[digit/dot] is still refused.
+			case "$di2" in *[!0-9.]*) continue ;; esac
 			echo "$dh2 $di2" >> "$TMP/dead.txt"
 		done
 		DEDG_N=0
@@ -246,8 +249,37 @@ if [ "$DEEP" = "1" ]; then
 				[ "$DEDG_N" -gt 2 ] && break
 				echo "$di3" > "$TMP/dead_ip_dedg$DEDG_N"
 				echo "$dh3" > "$TMP/dead_host_dedg$DEDG_N"
-				DEEP_PROBES="$DEEP_PROBES dedg$DEDG_N|$YTV_URL"
+				# ч.183 FIX (third dedg layer): the probe URL must carry the
+				# DEAD edge's host — the ranged curl keys --resolve on the URL
+				# host, so the raw $YTV_URL would resolve and measure the
+				# ALIVE primary edge instead of the pinned dead one (the
+				# videoplayback params are host-agnostic across pools).
+				XURL=$(printf '%s' "$YTV_URL" | sed -E "s#^(https://)[^/]+#$dh3#")
+				[ -n "$XURL" ] && DEEP_PROBES="$DEEP_PROBES dedg$DEDG_N|$XURL" \
+					|| DEEP_PROBES="$DEEP_PROBES dedg$DEDG_N|$YTV_URL"
 			done < "$TMP/dead.txt"
+		fi
+	fi
+	# ч.183: CROSS-POOL stream item (yts5) — CROSSPOOL_HINTS carries ALIVE
+	# edges of OTHER pools (the sweep's pool_matrix). One ranged pull per
+	# strategy answers «играет ли стрим из чужого пула под ЭТОЙ стратегией»
+	# (внутрипуловая ротация yts2..yts4 пуловую чёрноту не видит).
+	if [ -n "$YTV_URL" ] && [ -n "$CROSSPOOL_HINTS" ]; then
+		: > "$TMP/xpool.txt"
+		printf '%s\n' "$CROSSPOOL_HINTS" | while IFS= read -r xl; do
+			xh2=${xl%% *}; xi2=${xl#* }
+			[ -n "$xh2" ] && [ -n "$xi2" ] || continue
+			case "$xi2" in *[!0-9.]*) continue ;; esac
+			case "$xh2" in rr[0-9]*---*.googlevideo.com) : ;; *) continue ;; esac
+			echo "$xh2 $xi2" >> "$TMP/xpool.txt"
+		done
+		if [ -s "$TMP/xpool.txt" ]; then
+			read -r xh3 xi3 < "$TMP/xpool.txt"
+			[ -n "$xh3" ] && [ -n "$xi3" ] && {
+				echo "$xh3" > "$TMP/xpool_host"
+				echo "$xi3" > "$TMP/xpool_ip"
+				DEEP_PROBES="$DEEP_PROBES yts5|$YTV_URL"
+			}
 		fi
 	fi
 	# Browser-like fingerprint probe (audit 90): the stock curl fingerprint is
@@ -386,7 +418,7 @@ if [ "$DEEP" = "1" ]; then
 		# web.telegram.org и resurrect'ят tg в deep-результатах (живой факт:
 		# tg:0/0 в deep и unmeasured-вердикт при полностью убранном tg).
 		case "$did" in
-			y*) BT=yt ;;
+			y*|dedg*) BT=yt ;;
 			t*) BT=tg ;;
 			d*) BT=dc ;;
 			*) BT=st ;;
@@ -439,6 +471,11 @@ if [ "$DEEP" = "1" ]; then
 			cp "$TMP/dip_yts" "$TMP/dip_$did" 2>/dev/null
 			cat "$TMP/dhost_yts" 2>/dev/null > "$TMP/dhost_$did"
 		fi
+	elif [ "$did" = "yts5" ]; then
+		# ч.183: CROSS-POOL pin — the foreign-pool ALIVE edge chosen by the
+		# sweep's pool matrix, NEVER from a resolver (the matrix picked it).
+		cat "$TMP/xpool_ip" 2>/dev/null > "$TMP/dip_$did"
+		cat "$TMP/xpool_host" 2>/dev/null > "$TMP/dhost_$did"
 	elif [ "${did#dedg}" != "$did" ]; then
 		# ч.270: dead-edge revive probe — the pin comes from DEAD_HINTS (the
 		# matrix-dead edge), NEVER from a resolver: re-resolving would defeat
@@ -466,6 +503,17 @@ if [ "$DEEP" = "1" ]; then
 		# ч.237: the URL rides along (the fresh-edge retry re-runs the exact
 		# probe after a fresh resolve)
 		echo "$durl" > "$TMP/durl_$did"
+		# ч.183: yts5 carries a REWRITTEN URL — the foreign-pool host replaces
+		# the URL's own host, so SNI/Host = the edge ACTUALLY measured (the
+		# videoplayback path/params are host-agnostic across googlevideo
+		# pools — that IS how the mn= fallback chain works).
+		if [ "$did" = "yts5" ] && [ -s "$TMP/xpool_host" ]; then
+			XH=$(cat "$TMP/xpool_host" 2>/dev/null)
+			case "$XH" in rr[0-9]*---*.googlevideo.com)
+				XURL=$(printf '%s' "$durl" | sed -E "s#^(https://)[^/]+#$XH#")
+				[ -n "$XURL" ] && echo "$XURL" > "$TMP/durl_yts5"
+			;; esac
+		fi
 		dep=$(cat "$TMP/dip_$did" 2>/dev/null)
 		[ -n "$dep" ] && case ",$IPSET," in *",$dep,"*) ;; *) IPSET="$IPSET,$dep";; esac
 	done
@@ -761,10 +809,10 @@ STUNRUN
 		# in --baseline (no desync) they are meaningless by construction and
 		# would only hang the pass on DPI-blocked connects: honest absence.
 		if [ "$BASELINE" = "1" ]; then
-			case "$did" in ytv|yts|yts2|yts3|yts4|dedg1|dedg2) continue ;; esac
+			case "$did" in ytv|yts|yts2|yts3|yts4|yts5|dedg1|dedg2) continue ;; esac
 		fi
 		DRANGE=""
-		case "$did" in yts|yts2|yts3|yts4) DRANGE="-r 0-4194303" ;; dedg1|dedg2) DRANGE="-r 0-1048575" ;; esac
+		case "$did" in yts|yts2|yts3|yts4|yts5) DRANGE="-r 0-4194303" ;; dedg1|dedg2) DRANGE="-r 0-1048575" ;; esac
 		if [ "$did" = "ytv" ]; then
 			# SUSTAINED-FLOW throughput: real thumbnails over keep-alive
 			# flows (--max-time caps EACH window; curl exits 28 on a
@@ -850,7 +898,7 @@ YTVFLOW
 		# classification (yts keeps /dev/null — its verdict is speed-based);
 		# fingerprint variants (ids with "f") run the browser-like profile.
 		DBODY="$TMP/b_$did"
-		case "$did" in yts|yts2|yts3|yts4|dedg1|dedg2) DBODY="/dev/null" ;; esac
+		case "$did" in yts|yts2|yts3|yts4|yts5|dedg1|dedg2) DBODY="/dev/null" ;; esac
 		if [ "${did%f}" != "$did" ]; then
 			if [ -n "$PROBE_UID" ]; then
 				su -s /bin/sh daemon -c "sh '${TMP}/fp_flow.sh' '${dhost}:443:${dip}' '${durl}' '${TMP}/b_${did}' > '${TMP}/d_${did}'" >/dev/null 2>&1 &
@@ -966,7 +1014,7 @@ done
 # ONE fresh resolve of the item's OWN host; the repeat runs ONLY when the
 # resolver actually moved us (same honest guard as the dc/st/tg loop); the
 # fresh IP gets its own bypass + temp-queue rule under the CMT comment.
-for did in yts yts2 yts3 yts4; do
+for did in yts yts2 yts3 yts4 yts5; do
 	[ -f "$TMP/d_$did" ] || continue
 	raw=$(cat "$TMP/d_$did" 2>/dev/null)
 	case "$raw" in
@@ -1020,7 +1068,7 @@ fi
 			firsth=0
 			printf '["%s","%s","%s"]' "$tag" "$label" "$host"
 		done
-		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2","yts3","yts4","dedg1","dedg2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf","dcv"],"st":["stp","stpf"]}}\n'
+		printf '],"owners":{"yt":["ytp","ytpf","yti","ytv","yts","yts2","yts3","yts4","yts5","dedg1","dedg2"],"tg":["tgp","tgpf"],"dc":["dcp","dcpf","dcv"],"st":["stp","stpf"]}}\n'
 	} > "$TMP/manifest.json"
 	ucode /etc/ravnex/scripts/zapret_deep_build.uc < "$TMP/manifest.json"
 else
