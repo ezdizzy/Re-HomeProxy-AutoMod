@@ -94,6 +94,13 @@ const DEAD_IPS_FILE = MD_DIR + '/dead_ips.txt';
 const PROXY_DOMAINS_FILE = MD_DIR + '/proxy_domains.txt';
 const PROXY_IPS_FILE = MD_DIR + '/proxy_ips.txt';
 const QUARANTINE_FILE = MD_DIR + '/quarantine_domains.txt';
+/* сеанс 188: DNS-слой негативного стиринга ВОЗВРАЩЁН — живой факт (тест на
+ * :5599): файловый domain_set с ПРЕФИКСОМ keyword: матчит substring'ом и
+ * `exec: reject` даёт REFUSED; plain-суффиксы не матчатся (label-boundary —
+ * тот же корень, что у ядра). Источник = каталог стиринга ядра
+ * (RES/yt_steer_dead.json, keywords "sn-<pool>."); шаги = первый матч
+ * seq_plain/seq_secure → reject, ДО кэшей (мёртвый пул никогда не кэшируется). */
+const STEER_FILE = MD_DIR + '/steer_domain.txt';
 /* Сеанс 187: негативный стиринг YouTube переехал на DNS-слой ядра —
  * деривация (yt_steer.uc steer_pools) живёт в generate_client.uc при
  * регенерации; в multidns стиринга больше НЕТ (qname-матчер этой сборки
@@ -957,6 +964,31 @@ function ensure_data_files() {
 	} catch (e) { /* best effort */ }
 	let cur_q = access(QUARANTINE_FILE) ? (readfile(QUARANTINE_FILE) || '') : null;
 	if (cur_q == null || cur_q !== qcontent) { atomic_write(QUARANTINE_FILE, qcontent); changed = true; }
+	/* сеанс 188: каталог стиринга ядра → текстовый domain_set ("keyword:"-строки,
+	 * sorted). UCI yt_steer_dead !== '1' → пустой файл (стиринг выключен целиком).
+	 * Читатель терпит старый формат (domain_suffix). */
+	let steer_txt = '';
+	try {
+		if ((uci.get('ravnex', 'config', 'yt_steer_dead') || '0') === '1' &&
+			access(RES + '/yt_steer_dead.json')) {
+			let sf = json(readfile(RES + '/yt_steer_dead.json') || '');
+			let kw = [];
+			for (let sr in ((sf != null && type(sf) === 'object' && sf.rules) || []))
+				for (let sd in (sr.domain_keyword || sr.domain_suffix || []))
+					push(kw, '' + sd);
+			sort(kw, (a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
+			let seen = {};
+			let kw_lines = [];
+			for (let sd in kw) {
+				if (seen[sd]) continue;
+				seen[sd] = true;
+				push(kw_lines, 'keyword:' + sd);
+			}
+			steer_txt = length(kw_lines) ? (join('\n', kw_lines) + '\n') : '';
+		}
+	} catch (e) { steer_txt = ''; }
+	let cur_s = access(STEER_FILE) ? (readfile(STEER_FILE) || '') : null;
+	if (cur_s == null || cur_s !== steer_txt) { atomic_write(STEER_FILE, steer_txt); changed = true; }
 	return changed;
 }
 
@@ -966,6 +998,12 @@ function build_mosdns_conf() {
 	let lines = [];
 	push(lines, 'log:');
 	push(lines, '  level: warn');
+	push(lines, '');
+	/* сеанс 188: stamp КОНТЕНТА стиринга в комментарии YAML. file-domain_set
+	 * читается ОДИН раз при старте — без стампа смена файла не вызвала бы
+	 * рестарт (rebuild_if_changed сравнивает текст YAML; путь в конфиге
+	 * константный). Любая смена контента → смена стампа → рестарт. */
+	push(lines, '# steer_rev: ' + replace(trim(access(STEER_FILE) ? (readfile(STEER_FILE) || '') : ''), '\n', '|'));
 	push(lines, '');
 	/* сеанс 187-PIVOT: стиринг переехал на DNS-слой ядра (generate_client
 	 * читает yt_dead_pools.txt при регенерации и отвечает action:'reject'
@@ -1139,11 +1177,21 @@ function build_mosdns_conf() {
 	push(lines, '    args:');
 	push(lines, '      files:');
 	push(lines, '        - ' + yaml_q(QUARANTINE_FILE));
+	push(lines, '  - tag: steer_dead');
+	push(lines, '    type: domain_set');
+	push(lines, '    args:');
+	push(lines, '      files:');
+	push(lines, '        - ' + yaml_q(STEER_FILE));
 
 	/* --- plain sequence --- */
 	push(lines, '  - tag: seq_plain');
 	push(lines, '    type: sequence');
 	push(lines, '    args:');
+	/* сеанс 188: мёртвые пулы YouTube → REFUSED (exec reject, дефолт rc=5).
+	 * ПЕРВЫЙ матч, до кэшей — мёртвый пул никогда не кэшируется и не форвардится. */
+	push(lines, '      - matches:');
+	push(lines, '          - ' + yaml_q('qname $steer_dead'));
+	push(lines, '        exec: reject');
 	if (have_secure) {
 		/* learned blocked domains → secure pool (defense in depth; sing-box already
 		 * routes proxy-domain → secure-dns, this catches any query reaching plain) */
@@ -1188,6 +1236,10 @@ function build_mosdns_conf() {
 		push(lines, '  - tag: seq_secure');
 		push(lines, '    type: sequence');
 		push(lines, '    args:');
+		/* сеанс 188: стиринг и в secure-пуле — до кэша (первый матч). */
+		push(lines, '      - matches:');
+		push(lines, '          - ' + yaml_q('qname $steer_dead'));
+		push(lines, '        exec: reject');
 		if (have_secure) {
 			push(lines, '      - exec: $cache_secure');
 		}

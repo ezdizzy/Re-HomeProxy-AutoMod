@@ -70,6 +70,12 @@ import {
 	validate_learned_ip, uuid_collapse, psl_parent, src_diversity,
 	transport_kind, rkn_corroborate
 } from '/etc/ravnex/scripts/learn_core.uc';
+/* сеанс 188 (решение юзера): автообучение мёртвых пулов YouTube из живых
+ * зомби-соединений clash-api. Чистая логика = yt_steer.uc (selftest-гейт),
+ * I/O здесь. */
+import {
+	zombie_pools, current_suffix_from_host
+} from '/etc/ravnex/scripts/yt_steer.uc';
 
 const HP_DIR = '/etc/ravnex';
 const RUN_DIR = '/var/run/ravnex';
@@ -1893,6 +1899,104 @@ function do_failover_reload() {
 	 * a second full stop/start right after the trigger's one. */
 	log('DNS failover: config regenerated, UCI committed - service reload happens via the procd config trigger.');
 }
+
+/* ── сеанс 188 (решение юзера): автообучение мёртвых пулов YouTube ────────
+ * Google ротирует идентификаторы пулов CDN; свип-каталог меряет их разово и
+ * отстаёт. Зомби-коннекты (edge принял TCP, отдачи нет) = живое свидетельство
+ * мёртвости. Скан из тика (≤1/мин): clash-api /connections → zombie_pools()
+ * (чистая логика yt_steer.uc) → при НОВЫХ пулах: learned-файл + СЛИЯНИЕ в
+ * каталог стиринга (оба атомарно). Применение: DNS-слой (mosdns) подхватывает
+ * сам за ~30 с (зеркало+штамп → рестарт mosdns), route-слой ядра — при
+ * следующей регенерации (hot-reload local rule_set этой сборкой ядра НЕ
+ * поддерживается — доказано живьём 188). Всё best-effort: ошибка = пропуск
+ * тика, демону ничего не грозит. */
+const YT_LEARNED_FILE = RUN_DIR + '/yt_steer_learned.json';
+/* 🔴 188: learned-файл = tmpfs (/var/run), НЕ /etc (overlay-флеш): скан раз в
+ * минуту при зомби-шторме писал бы флеш — износ. Потеря при ребуте безопасна:
+ * зомби копятся заново за минуты (тот же класс трафика). */
+const YT_STEER_CAT = RES + '/yt_steer_dead.json';
+
+function yt_learn_write_atomic(path, txt) {
+	const tmp = path + '.tmp';
+	writefile(tmp, txt);
+	system('mv -f ' + shellquote(tmp) + ' ' + shellquote(path));
+}
+
+function yt_steer_learn_pass() {
+	try {
+		if ((uci.get('ravnex', 'config', 'yt_steer_dead') || '0') !== '1')
+			return;
+		const raw = capture(`curl -s --max-time 4 http://127.0.0.1:9090/connections 2>/dev/null`);
+		if (!raw)
+			return;
+		const doc = json(raw);
+		if (doc == null || type(doc) !== 'object')
+			return;
+		let cur_kw = '';
+		const stream_f = RUN_DIR + '/yt_stream.json';
+		if (access(stream_f)) {
+			try {
+				const s = json(readfile(stream_f) || '');
+				if (s != null && type(s) === 'object')
+					cur_kw = current_suffix_from_host('' + (s.host || ''));
+			} catch (e) { cur_kw = ''; }
+		}
+		let learned = null;
+		if (access(YT_LEARNED_FILE)) {
+			try { learned = json(readfile(YT_LEARNED_FILE) || ''); } catch (e) { learned = null; }
+		}
+		const r = zombie_pools(doc.connections || '', time(), learned, cur_kw);
+		if (r == null || type(r) !== 'object' || r.learned == null)
+			return;
+		const pools = r.learned.pools || {};
+		let changed_cnt = 0;
+		if (learned == null)
+			changed_cnt = length(keys(pools));
+		else {
+			const prev = (learned != null && type(learned) === 'object' && learned.pools) ? learned.pools : {};
+			for (let p in keys(pools)) {
+				const a = int(pools[p] && pools[p].hits || 0);
+				const b = int(prev[p] && prev[p].hits || 0);
+				if (a !== b)
+					changed_cnt++;
+			}
+		}
+		if (!changed_cnt)
+			return;
+		yt_learn_write_atomic(YT_LEARNED_FILE, sprintf('%.J\n', { version: 1, pools: pools }));
+		if (length(r.new_pools)) {
+			/* merge в каталог стиринга: текущие правила + выученные, dedupe+sort */
+			let kw = [];
+			if (access(YT_STEER_CAT)) {
+				try {
+					const cat = json(readfile(YT_STEER_CAT) || '');
+					if (cat != null && type(cat) === 'object' && cat.rules && length(cat.rules) > 0) {
+						const src_kw = cat.rules[0].domain_keyword || [];
+						for (let k in src_kw)
+							push(kw, '' + k);
+					}
+				} catch (e) { kw = []; }
+			}
+			const seen = {};
+			for (let k in kw) seen[k] = true;
+			for (let p in r.new_pools) {
+				const kk = p + '.';
+				if (!seen[kk]) { seen[kk] = true; push(kw, kk); }
+			}
+			sort(kw, (a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
+			yt_learn_write_atomic(YT_STEER_CAT, sprintf('%.J\n', {
+				version: 1,
+				rules: [ { domain_keyword: kw } ]
+			}));
+			log('YT zombie pools learned: ' + join(', ', r.new_pools) +
+				' — DNS-layer refuses them in ~30s (mosdns rebuild); route layer follows at the next regen.');
+			eng_event('yt_learn', 'выучены мёртвые пулы YouTube: ' + join(', ', r.new_pools));
+		}
+	} catch (e) {
+		dbg('yt_learn error: ' + sprintf('%s', e));
+	}
+}
+
 
 	function dns_failover_check() {
 		/* MultiDNS already races EVERY server in each pool and returns the fastest
@@ -4508,6 +4612,8 @@ echo done > "$PRE.done"
 
 	let last_failover = 0;
 	let last_geo_check = 0;
+	/* сеанс 188: зомби-скан пулов YouTube (не чаще раза в минуту) */
+	let last_yt_learn = 0;
 	while (true) {
 		pm_reg_hb('automation');
 		/* ч.248: probe_pool / sni_sniffer are FOREIGN entries (Go binaries we
@@ -4600,6 +4706,9 @@ echo done > "$PRE.done"
 		/* DNS failover (C) at most once per minute. */
 		let now = time();
 		if (dns_failover === '1' && (now - last_failover) > 60) { last_failover = now; dns_failover_check(); }
+
+		/* сеанс 188 (решение юзера): зомби-пулы YouTube — скан не чаще раза в минуту. */
+		if ((now - last_yt_learn) > 60) { last_yt_learn = now; yt_steer_learn_pass(); }
 
 		/* RU-geo auto-update (hourly check, background execution): refresh the
 		 * downloaded databases when they are older than the configured interval. */

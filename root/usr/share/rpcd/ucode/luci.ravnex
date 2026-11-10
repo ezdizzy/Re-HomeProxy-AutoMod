@@ -7019,7 +7019,11 @@ const methods = {
 			c.commit('ravnex');
 			if (prev === s)
 				return { result: true, unchanged: true, value: s };
-			const ap = op_spawn('reload', 'negative steering ' + (s === '1' ? 'on' : 'off') + ' (DNS-layer refuse of dead youtube pools)');
+			/* сеанс 188-фикс (решение юзера): op 'reload' = procd-signal + respawn —
+			 * ядро перечитывало СТАРЫЙ файл, генерации НЕ БЫЛО (регенерировал
+			 * фоновый целитель с задержкой). 'restart' = честная полная дверь:
+			 * генерация → candidate → старт → verify. */
+			const ap = op_spawn('restart', 'negative steering ' + (s === '1' ? 'on' : 'off') + ' (instant refuse of dead youtube pools)');
 			ap.value = s;
 			return ap;
 		}

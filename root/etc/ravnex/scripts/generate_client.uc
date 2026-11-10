@@ -26,9 +26,10 @@ import {
 	find_daemons as pm_find, reg_get as pm_reg_get, entry_alive as pm_entry_alive
 } from '/etc/ravnex/scripts/pmgr.uc';
 /* сеанс 187: деривация негативного стиринга (steer_pools + суффикс текущего
- * стрима) — тот же модуль, что и у фидера, с селфтест-гейтом. */
+ * стрима) — тот же модуль, что и у фидера, с селфтест-гейтом; 188: +
+ * pool_keyword_from_suffix (слияние выученных зомби-пулов). */
 import {
-	steer_pools, current_suffix_from_host
+	steer_pools, current_suffix_from_host, pool_keyword_from_suffix
 } from '/etc/ravnex/scripts/yt_steer.uc';
 
 /* State Store (Ф1.7, аудит 10): state-файлы генератора — через канонический
@@ -1380,10 +1381,53 @@ if (!isEmpty(main_node)) {
 				(json(readfile('/var/run/ravnex/zapret_pools.json') || '') || null) : null;
 			const steer_stream = access('/var/run/ravnex/yt_stream.json') ?
 				(json(readfile('/var/run/ravnex/yt_stream.json') || '') || null) : null;
-			const steer_rows = (steer_cat != null && type(steer_cat.pools) === 'object') ?
-				steer_pools(steer_cat.pools, time(),
-					(steer_stream != null && type(steer_stream) === 'object') ?
-						current_suffix_from_host('' + (steer_stream.host || '')) : '') : [];
+			const steer_cur = (steer_stream != null && type(steer_stream) === 'object') ?
+				current_suffix_from_host('' + (steer_stream.host || '')) : '';
+			let steer_rows = (steer_cat != null && type(steer_cat.pools) === 'object') ?
+				steer_pools(steer_cat.pools, time(), steer_cur) : [];
+			/* сеанс 188 (решение юзера): ВЫУЧЕННЫЕ зомби-пулы (автообучение
+			 * automation-тика из живых соединений, yt_steer_learned.json) —
+			 * в тот же поток: регенерация и DNS-слой несут их наравне со
+			 * свип-каталогом. Гварды те же: hits>=3, свежесть 48 ч, пул
+			 * текущего стрима исключается префиксом. */
+			try {
+				/* 188: learned-файл = tmpfs (флеш-износ /etc недопустим при
+				 * поминутных сканах); потеря при ребуте = переучивание. */
+				const steer_lf = '/var/run/ravnex/yt_steer_learned.json';
+				if (access(steer_lf)) {
+					const lf = json(readfile(steer_lf) || '');
+					const lp = (lf != null && type(lf) === 'object' && lf.pools) ? lf.pools : {};
+					const lks = keys(lp);
+					sort(lks, (a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
+					const now_ts = time();
+					for (let pool in lks) {
+						const lr = lp[pool];
+						if (lr == null || type(lr) !== 'object')
+							continue;
+						if (int(lr.hits || 0) < 3)
+							continue;
+						const ts = int(lr.last_ts || 0);
+						if (ts <= 0 || (now_ts - ts) > 172800)
+							continue;
+						const kw = pool_keyword_from_suffix(pool);
+						if (!length(kw))
+							continue;
+						if (length(steer_cur) && index(steer_cur, kw) === 0)
+							continue;
+						push(steer_rows, kw);
+					}
+					/* dedupe + sort (свип-строки уже отсортированы; merge — нет) */
+					let sseen = {};
+					let smerged = [];
+					for (let kw in steer_rows) {
+						if (sseen[kw]) continue;
+						sseen[kw] = true;
+						push(smerged, kw);
+					}
+					sort(smerged, (a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
+					steer_rows = smerged;
+				}
+			} catch (e) { /* learned-файл бит/недоступен — свип-строки остаются */ }
 			if (length(steer_rows)) {
 				/* 188-урок (живьём, clash-api): matcher ядра (sing-box
 				 * 1.15-alpha) строит label-trie — googlevideo-кластер в хосте
@@ -2676,6 +2720,23 @@ config.route = {
 				action: 'reject'
 			});
 		}
+		/* 188-эксперимент: rule_set-путь на route-слое с keyword-файлом —
+		 * dns2 (rule_set) с keyword-формой ЗАЖЁГСЯ живьём (REFUSED :5333),
+		 * route-вариант проверяется тем же дискриминатором; файл rule_set
+		 * горячо перегружается ядром (см. learned hot-reload) — тогда
+		 * выученные пулы применяются БЕЗ рестартов. */
+		push(config.route.rules, {
+			rule_set: 'yt-steer-dead',
+			network: 'udp',
+			port: [443],
+			action: 'reject'
+		});
+		push(config.route.rules, {
+			rule_set: 'yt-steer-dead',
+			network: 'tcp',
+			port: [443],
+			action: 'reject'
+		});
 	}
 
 /* Diagnostic test inbounds: pin each to a fixed outbound so the auto-detection daemon
