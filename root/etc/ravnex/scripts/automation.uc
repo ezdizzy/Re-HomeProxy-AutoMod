@@ -1906,9 +1906,11 @@ function do_failover_reload() {
  * мёртвости. Скан из тика (≤1/мин): clash-api /connections → zombie_pools()
  * (чистая логика yt_steer.uc) → при НОВЫХ пулах: learned-файл + СЛИЯНИЕ в
  * каталог стиринга (оба атомарно). Применение: DNS-слой (mosdns) подхватывает
- * сам за ~30 с (зеркало+штамп → рестарт mosdns), route-слой ядра — при
- * следующей регенерации (hot-reload local rule_set этой сборкой ядра НЕ
- * поддерживается — доказано живьём 188). Всё best-effort: ошибка = пропуск
+ * сам за ~30 с (зеркало+штамп → рестарт mosdns, теперь NXDOMAIN — сеанс 189);
+ * route-слой = РЕГЕН-ДВЕРЬ (yt_steer_regenerate, кулдаун 900 с) — inline
+ * domain_keyword живёт в тексте конфига, файловый hot-reload его не покрывает
+ * (сам hot-reload local rule_set существует и доказан живьём 189 — клейм 188
+ * «не поддерживается» = артефакт теста). Всё best-effort: ошибка = пропуск
  * тика, демону ничего не грозит. */
 const YT_LEARNED_FILE = RUN_DIR + '/yt_steer_learned.json';
 /* 🔴 188: learned-файл = tmpfs (/var/run), НЕ /etc (overlay-флеш): скан раз в
@@ -2035,7 +2037,7 @@ function yt_steer_learn_pass() {
 				rules: [ { domain_keyword: kw } ]
 			}));
 			log('YT zombie pools learned: ' + join(', ', r.new_pools) +
-				' — DNS-layer refuses them in ~30s (mosdns rebuild); route layer follows at the next regen.');
+				' — DNS-layer refuses them (NXDOMAIN) within ~30s (mosdns rebuild); route layer follows the regen door (cooldown 900s).');
 			eng_event('yt_learn', 'выучены мёртвые пулы YouTube: ' + join(', ', r.new_pools));
 			yt_steer_regen_request();
 		}
