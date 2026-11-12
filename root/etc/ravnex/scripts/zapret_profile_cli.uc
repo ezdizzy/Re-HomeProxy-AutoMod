@@ -59,6 +59,23 @@ function t_block_scope() {
 		block_scope('X --hostlist-domains=example.com', { 'example.com': 'myres' }) === 'myres');
 	check('scope_label_path',
 		block_scope('X --hostlist=/srv/myres.txt', { myres: 'myres' }) === 'myres');
+	/* сеанс 194: кастомный профиль = ТОЧНОЕ множество доменов — его блок
+	 * не должен затеняться отличительными доменами ресурса (CSV youtube-
+	 * хостлиста несёт 'googlevideo', и блок custom:googlevideo.com
+	 * приписывался youtube). Равенство метки — первым; надмножество
+	 * остаётся за словарём ресурсов. */
+	check('scope_label_eq_beats_res',
+		block_scope('X --hostlist-domains=googlevideo.com',
+			{ 'googlevideo.com': 'mygv' }) === 'mygv');
+	check('scope_res_when_label_other',
+		block_scope('X --hostlist-domains=a,googlevideo.com,b',
+			{ 'other.net': 'myres' }) === 'youtube');
+	check('scope_label_eq_norm_set',
+		block_scope('X --hostlist-domains=googlevideo.com,ytimg.com',
+			{ 'googlevideo.com, ytimg.com': 'gv2' }) === 'gv2');
+	check('scope_superset_stays_res',
+		block_scope('X --hostlist-domains=www.youtube.com,googlevideo.com,youtu.be,ytimg.com',
+			{ 'googlevideo.com': 'mygv' }) === 'youtube');
 }
 
 function t_domains_for() {

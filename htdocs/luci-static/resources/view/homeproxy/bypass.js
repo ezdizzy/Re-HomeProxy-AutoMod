@@ -795,8 +795,9 @@ return view.extend({
 		 * ПЕРЕЕХАЛИ на «Автообход» (поведение системы, а не состояние;
 		 * был противоречием «на вкладке-обзоре действий нет»). */
 
-		function servingText(rk, rule, dpiSt) {
+		function servingText(rk, rule, dpiSt, isCustom) {
 			const z = dpiSt.zapret || {}, b = dpiSt.byedpi || {};
+			const blocks = z.blocks || [];
 			if (rule && rule.node === 'byedpi-out')
 				return (b.opts) ? 'ByeDPI: ' + shortStrategy(b.opts, 60) : 'ByeDPI: ' + _('no strategy set');
 			if (rule && rule.node === 'zapret-out') {
@@ -806,7 +807,6 @@ return view.extend({
 				 * no scope shown. Own block → its strategy; no own block →
 				 * the general tail; no hostlists at all → the honest
 				 * «the strategy is global for the engine». */
-				const blocks = z.blocks || [];
 				if (blocks.length) {
 					const scoped = blocks.filter(function(bk) { return bk.scope === rk; });
 					if (scoped.length) {
@@ -829,6 +829,19 @@ return view.extend({
 						shortStrategy(z.strategy, 60) + ' — ' +
 						_('global strategy (serves every flow routed to Zapret)')
 					: 'Zapret: ' + _('no strategy set');
+			}
+			/* сеанс 194: у custom-профиля нет СВОЕГО правила маршрутизации —
+			 * его домены едут тем путём, который их уже несёт (например,
+			 * правило YouTube), и внутри nfqws2 их обслуживает его блок
+			 * по hostlist. Показываем блок честно, а не «правила нет». */
+			if (!rule && isCustom && blocks.length) {
+				const scoped2 = blocks.filter(function(sbk) { return sbk.scope === rk; });
+				if (scoped2.length) {
+					const tls2 = scoped2.filter(function(tb) { return /--filter-tcp=443/.test(tb.base || ''); });
+					const cbk = tls2.length ? tls2[0] : scoped2[0];
+					return 'Zapret: ' + (cbk.name || shortStrategy(cbk.base, 60)) +
+						' — ' + _('own profile');
+				}
 			}
 			if (rule && rule.node)
 				return _('Rides %s — no DPI strategy applies.').format(nodeText(rule.node));
@@ -870,7 +883,7 @@ return view.extend({
 					ruleTd.appendChild(ruleStateText(rule, counts[scopedKey] || counts[rk] || 0));
 				tr.appendChild(ruleTd);
 				tr.appendChild(E('td', { style: 'font-size:.85em' },
-					[ servingText(scopedKey, rule, dpiSt || {}) ]));
+					[ servingText(scopedKey, rule, dpiSt || {}, isCustom) ]));
 				const lastTd = E('td', { style: 'white-space:nowrap' }, [ '—' ]);
 				if (apOk && st.resources && st.resources[rk]) {
 					const p = st.resources[rk].probe || {};

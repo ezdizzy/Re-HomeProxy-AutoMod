@@ -63,6 +63,7 @@ import { compose as explain_compose } from '/etc/ravnex/scripts/explain.uc';
 import {
 	split_new as zp_split_new, extract_blobs as zp_extract_blobs,
 	block_scope as zp_block_scope, domains_for as zp_domains_for,
+	csv_norm as zp_csv_norm,
 	resolve_strategy as zp_resolve_strategy, ciadpi_struct as zp_ciadpi_struct,
 	compose_all as zp_compose_all, blocks_from_string as zp_blocks_from_string,
 	profiles_read as zp_profiles_read, profiles_valid as zp_profiles_valid,
@@ -1864,9 +1865,13 @@ function hp_compose_build(profiles) {
 	return zp_compose_all(profiles, hp_corpus_read());
 }
 
-/* Метки кастомных профилей для карты: {domains-CSV-как-в-UCI: label}.
- * block_scope ищет ПОДСТРОКУ пути/CSV — полный CSV совпадает точно.
- * null-курсор (окно коммита) = пустая карта (честный предел). */
+/* Метки кастомных профилей для карты: {канонический-CSV: метка}.
+ * Ключ = канонический CSV, который compose кладёт в --hostlist-domains
+ * (csv_norm от join(',', domains_for(custom,…))) — равенство
+ * блок↔профиль бит-в-бит (с.194). Пустой label = сами домены:
+ * композишн-билдер имя не спрашивает, а карта ключует по p.label ||
+ * p.domains — скоуп должен совпасть с ним. null-курсор (окно коммита)
+ * = пустая карта (честный предел). */
 function hp_profile_labels(c) {
 	const prs = zp_profiles_read(c);
 	const out = {};
@@ -1874,8 +1879,12 @@ function hp_profile_labels(c) {
 		return out;
 	for (let i = 0; i < length(prs); i++) {
 		const p = prs[i];
-		if (p.resource === 'custom' && length(p.label) && length(p.domains))
-			out[p.domains] = p.label;
+		if (p.resource === 'custom' && length(p.domains)) {
+			const doms = zp_domains_for('custom', p.domains);
+			const key = zp_csv_norm((doms != null) ? join(',', doms) : p.domains);
+			if (length(key))
+				out[key] = (length(p.label)) ? p.label : p.domains;
+		}
 	}
 	return out;
 }
