@@ -1599,6 +1599,10 @@ return view.extend({
 				const deadline = Date.now() + 600000;
 				const tick = function() {
 					return L.resolveDefault(callSubscriptionStatus(), null).then(function(st) {
+						/* Audit F1 (с.193): the up-to-10-min watcher dies with
+						 * the section. */
+						if (!subResult.isConnected)
+							return;
 						const last = st && st.last;
 						if (!last || (('' + (last.ts || 0)) === ('' + prevTs))) {
 							if (Date.now() > tsDeadline) {
@@ -1613,13 +1617,15 @@ return view.extend({
 						updating = false;
 						if (st) {
 							subStatus = st;
-							rebuildSubCards();
+							if (subResult.isConnected)
+								rebuildSubCards();
 						}
-						if (last) {
+						if (last && subResult.isConnected) {
 							renderVerdict(last);
 							return refreshNodeStatuses();
 						}
-						note(false, _('Update finished (no status report — it was produced before this feature existed).'));
+						if (subResult.isConnected)
+							note(false, _('Update finished (no status report — it was produced before this feature existed).'));
 					});
 				};
 				return tick();
@@ -1643,6 +1649,9 @@ return view.extend({
 				const deadline = Date.now() + 150000;
 				const tick = function() {
 					return L.resolveDefault(callOpStatus(r.op_id), {}).then(function(st) {
+						/* Audit F1 class: the watcher dies with the section. */
+						if (!subResult.isConnected)
+							return;
 						const op = st && st.op;
 						if (op && op.status !== 'completed' && op.status !== 'failed' &&
 						    Date.now() < deadline)
@@ -1747,10 +1756,12 @@ return view.extend({
 						}
 					if (r.need_restart)
 						return applyNow(function() {
-							setTimeout(function() { location.reload(); }, 1500);
+							/* Audit F2 (с.193): in-place section refresh
+							 * instead of a whole-page reload. */
+							setTimeout(function() { hp.embedRefresh('node'); }, 1200);
 						});
 					note(true, _('Subscription removed (no nodes — nothing to apply).'));
-					setTimeout(function() { location.reload(); }, 1500);
+					setTimeout(function() { hp.embedRefresh('node'); }, 1200);
 					});
 				} }, [ _('Remove') ])
 			]));
@@ -1785,7 +1796,8 @@ return view.extend({
 				}
 				subUrlInput.value = '';
 				note(true, _('Subscription added.'));
-				setTimeout(function() { location.reload(); }, 1500);
+				/* Audit F2: in-place refresh instead of location.reload(). */
+				setTimeout(function() { hp.embedRefresh('node'); }, 1200);
 			});
 		}
 

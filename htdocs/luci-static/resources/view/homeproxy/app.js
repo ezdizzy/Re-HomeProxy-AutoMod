@@ -1,14 +1,17 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-only
  *
- * Ravnex — app shell, Tachyon model (R3 v3, ч.280).
+ * Ravnex — app shell, Tachyon model (R3 v3e2, ч.280 + с.193).
  *
  * ONE LuCI menu entry renders this view; the router's own chrome (Flint
  * header/menu) stays alive — nothing is overlaid, the «Router settings»
  * escape button of the fullscreen take-over is gone by design. The app
- * navigation is an in-page sidebar CARD (5 categories + Home, collapse,
- * left/right position) exactly like the studied Tachyon layout, and the
- * sections are the REAL view modules mounted in place:
+ * navigation is an in-page sidebar CARD (categories + Home, Basic/Expert
+ * switch, collapse, left/right position, mobile drawer) built by the ONE
+ * factory in homeproxy.js (hp.buildEmbedCard) — the pre-paint boot anchors
+ * that same graph at module-eval time and this view ADOPTS it, so entering
+ * Services→Ravnex shows the card immediately instead of blinking in 2-3 s
+ * later. The sections are the REAL view modules mounted in place:
  *
  *   view.homeproxy.<name> — load() then render(), the node goes into the
  *   workspace container; switching tears the section down (polls are gated
@@ -16,7 +19,9 @@
  *
  * Legacy URLs (admin/services/ravnex/<page>) remain routable as titleless
  * menu nodes pointed at this same view — the section comes from the URL,
- * so old bookmarks land on the right page. Nothing is lost, СМОТРИ В ЦЕЛОЕ.
+ * so old bookmarks land on the right page. Every in-page link to one of
+ * our sections (Home cards, cross-page links) is intercepted and mounts
+ * in place; the href stays bookable. Nothing is lost, СМОТРИ В ЦЕЛОЕ.
  */
 
 'use strict';
@@ -26,38 +31,7 @@
 'require ui';
 'require view';
 
-/* Same msgids the old menu.d used — already translated in ravnex.po. */
-const PAGE_TITLES = {
-	overview: _('Home page'),
-	client: _('Connection'),
-	dns: _('DNS settings'),
-	node: _('Servers'),
-	bypass: _('Strategy master'),
-	rules: _('Service rules'),
-	automation: _('Auto-bypass'),
-	devices: _('Devices'),
-	control: _('Access Control'),
-	telegram: _('Phone control'),
-	status: _('Maintenance'),
-	monitor: _('Monitoring'),
-	health: _('Health center'),
-	server: _('Server mode')
-};
-
-function currentSection() {
-	/* Children are plain aliases to the root, so the dispatcher rewrites
-	 * dispatchpath to the root — the ORIGINAL URL (window.location) is the
-	 * only reliable carrier of the section for legacy bookmarks. */
-	const m = String(window.location.pathname || '').match(/\/(?:cgi-bin\/luci\/)?admin\/services\/(?:ravnex|homeproxy)\/([a-z]+)/);
-	if (m && PAGE_TITLES[m[1]])
-		return m[1];
-	const path = (L.env.dispatchpath || []);
-	for (let i = 0; i < path.length; i++) {
-		if (PAGE_TITLES[path[i]])
-			return path[i];
-	}
-	return 'overview';
-}
+const PAGE_TITLES = hp.PAGE_TITLES;
 
 return view.extend({
 	load() {
@@ -70,111 +44,78 @@ return view.extend({
 
 		const self = this;
 
-		/* ── Sidebar card ─────────────────────────────────────────── */
-		const card = E('aside', { 'id': 'hp-embed-card' });
+		/* Adopt the pre-paint skeleton when it ran (the usual path) — the
+		 * card, nav and workspace the user is already looking at; else
+		 * build the identical graph fresh. Handlers are wired HERE. */
+		const ctx = hp.adoptEmbedSkeleton() || hp.buildEmbedCard();
+		const { root, card, navEl, sections, holder } = ctx;
 
-		const collapseBtn = E('button', {
-			'class': 'hp-sb-collapse', 'type': 'button',
-			'title': _('Collapse sidebar')
-		}, [ hp.icon('chev-left') ]);
-		collapseBtn.addEventListener('click', () => {
+		this._rootEl = root;
+
+		/* ── Card handlers ────────────────────────────────────────── */
+		ctx.collapseBtn.addEventListener('click', () => {
 			const on = card.classList.toggle('collapsed');
-			collapseBtn.replaceChildren(hp.icon(on ? 'chev-right' : 'chev-left'));
-			collapseBtn.setAttribute('title', on ? _('Expand sidebar') : _('Collapse sidebar'));
+			ctx.collapseBtn.replaceChildren(hp.icon(on ? 'chev-right' : 'chev-left'));
+			ctx.collapseBtn.setAttribute('title', on ? _('Expand sidebar') : _('Collapse sidebar'));
 			try { window.localStorage.setItem('hp-embed-collapsed', on ? '1' : '0'); } catch (e) {}
 		});
-
-		const brandEl = E('div', { 'class': 'hp-sb-brand' }, [
-			E('img', { 'class': 'hp-sb-logo', 'src': L.resource('ravnex-raven-192.png'), 'alt': 'Ravnex' }),
-			E('div', { 'class': 'hp-sb-brand-txt' }, [
-				E('div', { 'class': 'hp-sb-name' }, [ 'Ravnex' ]),
-				E('div', { 'class': 'hp-sb-slogan' }, [ 'Own the Route.' ])
-			]),
-			collapseBtn
-		]);
-
-		let collapsed = false;
-		try { collapsed = window.localStorage.getItem('hp-embed-collapsed') === '1'; } catch (e) {}
-		if (collapsed)
+		if (window.localStorage.getItem('hp-embed-collapsed') === '1')
 			card.classList.add('collapsed');
 
-		const navEl = E('div', { 'class': 'hp-sb-nav', 'id': 'hp-embed-nav' });
-		const sections = {};
+		ctx.posBtn.addEventListener('click', () => {
+			ctx.pos = (ctx.pos === 'left') ? 'right' : 'left';
+			root.setAttribute('data-pos', ctx.pos);
+			ctx.posBtn.replaceChildren(ctx.pos === 'left' ? '⇥' : '⇤');
+			try { window.localStorage.setItem('hp-embed-pos', ctx.pos); } catch (e) {}
+		});
 
-		const buildNav = (activeName) => {
-			navEl.replaceChildren();
-			for (let c = 0; c < hp.APP_CATS.length; c++) {
-				const cat = hp.APP_CATS[c];
-				const secEl = E('div', { 'class': 'hp-sb-section' });
-				if (cat.cap)
-					secEl.appendChild(E('div', { 'class': 'hp-sb-cap' }, [ _(cat.cap) ]));
-				for (let p = 0; p < cat.pages.length; p++) {
-					const name = cat.pages[p];
-					const item = E('a', {
-						'class': 'hp-sb-item' + (name === activeName ? ' active' : ''),
-						'href': L.url('admin/services/ravnex', name === 'overview' ? 'overview' : name)
-					}, [
-						hp.icon(hp.NAV_ICONS[name] || 'compass'),
-						E('span', { 'class': 'hp-sb-item-t' }, [ _(PAGE_TITLES[name]) ])
-					]);
-					item.addEventListener('click', function(ev) {
-						/* In-place mount, no full page load (the whole point of
-						 * the Tachyon model). The URL is kept bookable. */
-						ev.preventDefault();
-						try { window.history.replaceState(null, '', item.href); } catch (e) {}
-						self.mount(name);
-					});
-					sections[name] = item;
-					secEl.appendChild(item);
-				}
-				if (secEl.children.length > (cat.cap ? 1 : 0))
-					navEl.appendChild(secEl);
-			}
+		/* Basic/Expert (Tachyon Simple/Advanced): Basic hides the expert
+		 * pages, the choice sticks per browser. */
+		const setMode = (m) => {
+			ctx.mode = m;
+			try { window.localStorage.setItem('hp-embed-mode', m); } catch (e) {}
+			ctx.segBasic.classList.toggle('on', m === 'basic');
+			ctx.segExpert.classList.toggle('on', m === 'expert');
+			ctx.rebuildNav(mounted || hp.currentSection());
 		};
+		ctx.segBasic.addEventListener('click', () => setMode('basic'));
+		ctx.segExpert.addEventListener('click', () => setMode('expert'));
+		ctx.segBasic.classList.toggle('on', ctx.mode === 'basic');
+		ctx.segExpert.classList.toggle('on', ctx.mode === 'expert');
 
-		/* ── Status footer (the same shellStatus as the fullscreen shell) ── */
-		const sbDot = E('span', { 'class': 'hpui-dot', 'id': 'hp-embed-dot' });
-		const sbText = E('div', { 'class': 'hp-sb-status-t' }, [ '…' ]);
-		const sbSub = E('div', { 'class': 'hp-sb-status-s' }, [ '' ]);
-		const statusEl = E('div', { 'class': 'hp-sb-status' }, [
-			sbDot,
-			E('div', { 'class': 'hp-sb-status-txt' }, [ sbText, sbSub ])
-		]);
-
-		card.appendChild(brandEl);
-		card.appendChild(navEl);
-		card.appendChild(statusEl);
-
-		/* ── Workspace ────────────────────────────────────────────── */
-		const main = E('div', { 'class': 'hp-embed-main' });
-		const titleEl = E('h2', {}, [ '' ]);
-		const holder = E('div', { 'id': 'hp-embed-view' });
-		main.appendChild(titleEl);
-		main.appendChild(holder);
-
-		const root = E('div', { 'class': 'hp-embed-root' }, [ card, main ]);
-		this._rootEl = root;
+		/* Mobile drawer (burger): the card slides over the content. */
+		const closeMobile = () => { root.classList.remove('mobile-open'); };
+		ctx.burger.addEventListener('click', () => { root.classList.toggle('mobile-open'); });
+		ctx.backdrop.addEventListener('click', closeMobile);
 
 		let mounted = null;
 
 		/* Mount a section view in place: load() → render() → node. Every
 		 * poll the section registers is gated (see hp.embedPollBegin) and
-		 * released when the section leaves — nothing leaks across switches. */
-		this.mount = function(name) {
-			if (mounted === name)
+		 * released when the section leaves — nothing leaks across switches.
+		 * force=true re-runs the CURRENT section (hp.embedRefresh hook). */
+		this.mount = function(name, force) {
+			if (mounted === name && !force)
 				return;
-			mounted = name;
+
+			closeMobile();
 
 			if (self.embedClean) {
 				try { self.embedClean.end(); } catch (e) {}
 				self.embedClean = null;
 			}
+			/* A section may have raised the RPC client timeout (health
+			 * center); whatever leaves, leaves it as it found it. */
+			if (hp.__hpSavedRpcTimeout != null) {
+				try { L.env.rpctimeout = hp.__hpSavedRpcTimeout; } catch (e) {}
+				hp.__hpSavedRpcTimeout = null;
+			}
 			self.embedClean = hp.embedPollBegin();
 
+			mounted = name;
 			for (const k in sections)
 				sections[k].classList.toggle('active', k === name);
 
-			titleEl.textContent = _(PAGE_TITLES[name]);
 			try { document.title = _(PAGE_TITLES[name]) + ' | Ravnex'; } catch (e) {}
 
 			holder.replaceChildren(E('p', { 'class': 'spinning' }, [ _('Loading…') ]));
@@ -205,6 +146,10 @@ return view.extend({
 						holder.appendChild(node);
 					});
 				}).catch((e) => {
+					/* Audit A3: never paint a DEAD section's error over a
+					 * section the user already switched to. */
+					if (mounted !== name)
+						return;
 					holder.replaceChildren(E('p', {}, [
 						_('Error') + ': ' + (e && e.message ? e.message : e)
 					]));
@@ -212,34 +157,39 @@ return view.extend({
 			});
 		};
 
-		buildNav(currentSection());
+		/* ONE delegated click handler owns all in-page navigation: the
+		 * card items, the Home cards, every cross-section link. Internal
+		 * hrefs stay bookable (middle-click/new-tab still full-load). */
+		root.addEventListener('click', function(ev) {
+			if (ev.defaultPrevented || ev.button !== 0 ||
+			    ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey)
+				return;
+			const a = (ev.target && ev.target.closest) ? ev.target.closest('a[href]') : null;
+			if (!a)
+				return;
+			const href = a.getAttribute('href') || '';
+			const m = href.match(/admin\/services\/(?:ravnex|homeproxy)\/([a-z]+)(?:\?[^#]*)?(#.*)?$/);
+			if (!m || !PAGE_TITLES[m[1]])
+				return;
+			ev.preventDefault();
+			try { window.history.replaceState(null, '', a.href); } catch (e) {}
+			self.mount(m[1]);
+		});
 
 		/* Section status line poll — lives as long as the app shell does. */
-		hp.shellStatus(sbDot, sbText, sbSub);
+		hp.shellStatus(ctx.sbDot, ctx.sbText, ctx.sbSub);
 
-		/* Left/right position of the card (Tachyon has the same toggle). */
-		let pos = 'left';
-		try { pos = window.localStorage.getItem('hp-embed-pos') === 'right' ? 'right' : 'left'; } catch (e) {}
-		root.setAttribute('data-pos', pos);
-		const posBtn = E('button', {
-			'class': 'hp-sb-collapse', 'type': 'button',
-			'title': _('Move the menu to the other side'),
-			'style': 'margin: 6px auto 0; display: block;'
-		}, [ pos === 'left' ? '⇥' : '⇤' ]);
-		posBtn.addEventListener('click', () => {
-			pos = (pos === 'left') ? 'right' : 'left';
-			root.setAttribute('data-pos', pos);
-			posBtn.replaceChildren(pos === 'left' ? '⇥' : '⇤');
-			try { window.localStorage.setItem('hp-embed-pos', pos); } catch (e) {}
-		});
-		card.appendChild(posBtn);
-
-		this.mount(currentSection());
+		/* In-place refresh hook for the sections (node.js subscriptions
+		 * et al.): remount the given section instead of reloading the
+		 * whole page. */
+		hp.__embedRemount = function(n) { self.mount(n, true); };
 
 		/* Anchor keeper: any stray second dispatch pass may swap #view
-		 * content (observed live, wave A acceptance). This URL owns exactly
-		 * one view — ours — so losing the shell is always wrong. Cheap
-		 * idempotent re-anchor; NOT hidden-gated (the shell is structural). */
+		 * content (observed live, wave A acceptance). Registered with the
+		 * ORIGINAL poll.add BEFORE the first mount() wraps it (audit A1:
+		 * a keeper registered through the wrapper died with the first
+		 * section teardown). Cheap idempotent re-anchor; NOT hidden-gated
+		 * (the shell is structural). */
 		poll.add(L.bind(function() {
 			try {
 				const vp = document.getElementById('view');
@@ -249,7 +199,7 @@ return view.extend({
 			return Promise.resolve();
 		}, this), hp.pollSec(2));
 
-		try { window.__HP_DEBUG = { rootReturned: true, holderInRoot: root.contains(holder), navItems: navEl.querySelectorAll('.hp-sb-item').length }; } catch (e) { window.__HP_DEBUG = { buildErr: String(e) }; }
+		this.mount(hp.currentSection());
 
 		return root;
 	}

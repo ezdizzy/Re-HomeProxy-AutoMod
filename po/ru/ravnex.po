@@ -8291,3 +8291,30 @@ msgstr "Клиенты"
 
 msgid "Analytics"
 msgstr "Аналитика"
+
+msgid "Basic"
+msgstr "Обычный"
+
+msgid "Expert"
+msgstr "Экспертный"
+
+msgid "Move the menu to the other side"
+msgstr "Переставить меню на другую сторону"
+
+msgid "Inherited from the current UCI profile: the strategy and domains above are what serves this resource now."
+msgstr "Унаследовано из текущего профиля UCI: стратегия и домены выше — то, чем этот ресурс обслуживается сейчас."
+
+msgid "Import status lost — check the operation journal."
+msgstr "Статус импорта потерян — сверьтесь с журналом операций."
+
+msgid "Composition test status lost — check the operations journal."
+msgstr "Статус проверки композиции потерян — сверьтесь с журналом операций."
+
+msgid "The test is still running after 10 minutes — the stage display stopped; the result will surface in the status card."
+msgstr "Проверка идёт дольше 10 минут — индикация этапов остановилась; результат появится в карточке статуса."
+
+msgid "Apply this composition? It REPLACES the whole profile set: %d profile(s) live now, their strategies go to the server snapshot (Restore stays available) and the applied line is rebuilt from the composition. A short engine restart follows."
+msgstr "Применить эту композицию? Она ЗАМЕНЯЕТ весь набор профилей: сейчас в живых профилей: %d, их стратегии уйдут в серверный снапшот (Restore останется доступным), применённая строка пересобирается из композиции. Затем короткий рестарт движка."
+
+msgid "Apply this composition? The applied line is rebuilt from the composition and a short engine restart follows (the previous strategies go to the server snapshot — Restore stays available)."
+msgstr "Применить эту композицию? Применённая строка пересобирается из композиции, затем короткий рестарт движка (прежние стратегии уйдут в серверный снапшот — Restore останется доступным)."

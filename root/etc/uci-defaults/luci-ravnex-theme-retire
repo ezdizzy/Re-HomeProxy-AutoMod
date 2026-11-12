@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# The Ravnex theme is RETIRED (R3 v3e2, с.193): the app follows the ROUTER
+# theme now (bootstrap/Flint/whatever the user chose), it never sets its own.
+# Every box that ended up ON the ravnex theme must be moved to the stock
+# theme BEFORE the theme files disappear from the package — a dangling
+# mediaurlbase would blank the whole UI after the upgrade.
+
+if [ "$(uci -q get luci.main.mediaurlbase)" = "/luci-static/ravnex" ]; then
+	uci -q set luci.main.mediaurlbase="/luci-static/bootstrap"
+fi
+
+uci -q delete luci.themes.Ravnex
+uci -q commit luci
+
+exit 0

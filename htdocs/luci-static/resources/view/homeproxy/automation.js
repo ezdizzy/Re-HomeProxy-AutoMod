@@ -196,8 +196,12 @@ function downloadList(content) {
  * line (the same helper also polls the Restart-service operation). The
  * verdict lands in the ONE result area of the level via `sink(ok, text)`
  * (ui.action_buttons_result_placement) — the global toast is the fallback. */
-function applyLearnedOp(desc, after, okText, sink) {
+function applyLearnedOp(desc, after, okText, sink, el) {
 	const report = (ok, text) => {
+		/* Audit B3 class (с.193): a watcher that outlived its section
+		 * stays silent — the verdict goes nowhere. */
+		if (el && !el.isConnected)
+			return;
 		if (sink)
 			sink(ok, text);
 		else
@@ -216,6 +220,9 @@ function applyLearnedOp(desc, after, okText, sink) {
 	const deadline = Date.now() + 150000;
 	const tick = function() {
 		return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st) {
+			/* Audit B3 class: the recursive watcher dies with the section. */
+			if (el && !el.isConnected)
+				return;
 			const op = st && st.op;
 			if (op && op.status !== 'completed' && op.status !== 'failed') {
 				if (Date.now() > deadline) {
@@ -647,7 +654,8 @@ return view.extend({
 					}
 					return applyLearnedOp({ op_id: r.op_id }, function() {},
 						_('Service restarted and verified.'),
-						function(ok, text) { resultNote(engResult, ok, text); });
+						function(ok, text) { resultNote(engResult, ok, text); },
+						engResult);
 				});
 			})
 		]);
@@ -712,7 +720,7 @@ return view.extend({
 						resultNote(sitesResult, false, _('Restore failed: ') + ((r && r.error) || ''));
 					else
 						resultNote(sitesResult, true, _('Restore complete — added %d site(s).').format(r.added || 0));
-					return applyLearnedOp(r && r.apply, refresh, null, sitesSink);
+					return applyLearnedOp(r && r.apply, refresh, null, sitesSink, sitesResult);
 				}).catch(function(e) {
 					resultNote(sitesResult, false, _('Restore failed: ') + e);
 				});
@@ -751,7 +759,7 @@ return view.extend({
 						return callClear().then(function(r) {
 							if (r && r.result === false)
 								resultNote(sitesResult, false, _('Clear failed: ') + ((r && r.error) || ''));
-							return applyLearnedOp(r && r.apply, refresh, null, sitesSink);
+							return applyLearnedOp(r && r.apply, refresh, null, sitesSink, sitesResult);
 						});
 					});
 			}, 'danger'),
@@ -1241,7 +1249,7 @@ return view.extend({
 					if (this.classList.contains('on')) return;
 					this.disabled = true;
 					callEntryAction(entry.host, mode).then(function(r) {
-						return applyLearnedOp(r && r.apply, refresh, null, sitesSink);
+						return applyLearnedOp(r && r.apply, refresh, null, sitesSink, sitesResult);
 					}).finally(function() { b.disabled = false; });
 				});
 				return b;
@@ -1326,7 +1334,7 @@ return view.extend({
 						.then(function(ok) {
 							if (!ok) { delBtn.disabled = false; return; }
 							callEntryDelete(e.host).then(function(r) {
-								return applyLearnedOp(r && r.apply, refresh, _('Entry deleted.'), sitesSink);
+								return applyLearnedOp(r && r.apply, refresh, _('Entry deleted.'), sitesSink, sitesResult);
 							}).finally(function() { delBtn.disabled = false; });
 						});
 				});

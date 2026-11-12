@@ -27,7 +27,7 @@
 	} catch (e) {}
 })();
 
-return baseclass.extend({
+const api = baseclass.extend({
 	dns_strategy: {
 		'': _('Default'),
 		'prefer_ipv4': _('Prefer IPv4'),
@@ -652,6 +652,33 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		{ cap: 'Maintenance', pages: [ 'health', 'status' ] }
 	],
 
+	/* The same msgids the old menu.d used — already translated in ravnex.po.
+	 * Lives here (not in app.js) so the PRE-PAINT skeleton can build the
+	 * card nav before the app view finishes loading. */
+	PAGE_TITLES: {
+		overview: _('Home page'),
+		client: _('Connection'),
+		dns: _('DNS settings'),
+		node: _('Servers'),
+		bypass: _('Strategy master'),
+		rules: _('Service rules'),
+		automation: _('Auto-bypass'),
+		devices: _('Devices'),
+		control: _('Access Control'),
+		telegram: _('Phone control'),
+		status: _('Maintenance'),
+		monitor: _('Monitoring'),
+		health: _('Health center'),
+		server: _('Server mode')
+	},
+
+	/* Expert-only sections hidden when the card runs in Basic mode (the
+	 * Simple/Advanced switch, the Tachyon model). The daily set stays. */
+	APP_EXPERT: {
+		dns: true, node: true, rules: true, control: true,
+		telegram: true, monitor: true, server: true
+	},
+
 	/* Embed machinery: app.js calls embedBoot() BEFORE the first section
 	 * render. Views keep calling hp.uiShell() unchanged — the flag makes it
 	 * a cheap no-op (theme/styles already up). EMBED_CSS (below) restores
@@ -667,36 +694,275 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		this.uiStyle();
 		this.profilePrefetch();
 
-		const t = this.themeGet();
+		/* Glitch 4 (с.193): the app follows the ROUTER theme, it never sets
+		 * its own. The saved hp-theme preference and the system media query
+		 * are only the initial guess before the chrome exists. */
+		const t = this.themeProbeRouter();
 		document.documentElement.setAttribute('data-hp-theme', t);
+		this.embedThemeWatch();
 
 		document.body.classList.add('hp-shell', 'hp-embed');
 
 		/* The LuCI menu tree is cached per tab (see the fullscreen path) —
 		 * menu.d shrank to ONE entry, every tab must refresh once. */
 		try {
-			const MV = 'r3v3g2';
+			const MV = 'r3v3g3';
 			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
 				ui.menu.flushCache();
 				window.localStorage.setItem('hp-menu-ver', MV);
 			}
 		} catch (e) {}
 
-		document.head.appendChild(E('style', { id: 'hp-shell-style' }, [ this.SHELL_CSS ]));
-		document.head.appendChild(E('style', { id: 'hp-embed-style' }, [ this.EMBED_CSS ]));
+		/* Id-guarded: the pre-paint boot (module eval time) may already
+		 * have injected both sheets — never duplicate them. */
+		if (!document.getElementById('hp-shell-style'))
+			document.head.appendChild(E('style', { id: 'hp-shell-style' }, [ this.SHELL_CSS ]));
+		if (!document.getElementById('hp-embed-style'))
+			document.head.appendChild(E('style', { id: 'hp-embed-style' }, [ this.EMBED_CSS ]));
+	},
+
+	/* Which light/dark face the ROUTER theme currently wears. Order:
+	 * 1) bootstrap's own data-darkmode, 2) any data-bs-theme toggle
+	 * (Flint and other modern themes), 3) luminance of the real chrome
+	 * header, 4) the system preference as a last resort. The router's
+	 * own choice always wins over ours (glitch 4). */
+	themeProbeRouter() {
+		const el = document.documentElement;
+		const dm = el.getAttribute('data-darkmode');
+		if (dm === 'true') return 'dark';
+		if (dm === 'false') return 'light';
+		const bs = (el.getAttribute('data-bs-theme') || '').toLowerCase();
+		if (bs === 'dark' || bs === 'night') return 'dark';
+		if (bs === 'light' || bs === 'day') return 'light';
+		/* Luminance probe: the chrome of the router theme. A TRANSPARENT
+		 * background is NOT a dark one (Flint paints its header via
+		 * gradients/images — rgba(0,0,0,0) read as pitch black and the
+		 * app flipped dark under a light theme, found live с.193): only
+		 * opaque colors count, walking header → body → html. */
+		try {
+			const cands = [ document.querySelector('header, #header, .header, nav.navbar, .navbar, .app-header'),
+				document.body, document.documentElement ];
+			for (let i = 0; i < cands.length; i++) {
+				const node = cands[i];
+				if (!node)
+					continue;
+				const col = window.getComputedStyle(node).backgroundColor;
+				const m = col.match(/rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s\/]+([\d.]+))?\)/);
+				if (!m)
+					continue;
+				if (m[4] !== undefined && Number(m[4]) < 0.1)
+					continue;
+				const lum = (0.2126 * Number(m[1]) + 0.7152 * Number(m[2]) + 0.0722 * Number(m[3])) / 255;
+				return lum < 0.5 ? 'dark' : 'light';
+			}
+		} catch (e) {}
+		return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+	},
+
+	/* Follow live theme switches: bootstrap flips data-darkmode on the
+	 * media query, Flint and friends toggle data-bs-theme / body classes.
+	 * The --hp-* palette is keyed on html[data-hp-theme], so re-probing
+	 * and re-setting the attribute is a pure CSS re-skin — no rebuilds. */
+	embedThemeWatch() {
+		if (this.__themeWatch)
+			return;
+		this.__themeWatch = true;
+		const apply = () => {
+			try {
+				const t = this.themeProbeRouter();
+				if (t !== document.documentElement.getAttribute('data-hp-theme'))
+					document.documentElement.setAttribute('data-hp-theme', t);
+			} catch (e) {}
+		};
+		try {
+			new MutationObserver(apply).observe(document.documentElement,
+				{ attributes: true, attributeFilter: [ 'data-darkmode', 'data-bs-theme' ] });
+			new MutationObserver(apply).observe(document.body,
+				{ attributes: true, attributeFilter: [ 'class' ] });
+		} catch (e) {}
+		try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', apply); } catch (e) {}
+	},
+
+	/* Which section does THIS URL belong to (children are plain aliases to
+	 * the root, so the dispatcher rewrites dispatchpath — window.location
+	 * is the only reliable carrier; shared with the pre-paint skeleton). */
+	currentSection() {
+		const m = String(window.location.pathname || '').match(/\/(?:cgi-bin\/luci\/)?admin\/services\/(?:ravnex|homeproxy)\/([a-z]+)/);
+		if (m && this.PAGE_TITLES[m[1]])
+			return m[1];
+		const path = (L.env.dispatchpath || []);
+		for (let i = 0; i < path.length; i++) {
+			if (this.PAGE_TITLES[path[i]])
+				return path[i];
+		}
+		return 'overview';
+	},
+
+	/* The card graph (brand, nav, status stub, workspace, mode switch,
+	 * burger): ONE builder feeds BOTH consumers — the pre-paint skeleton
+	 * (anchors at module-eval time, before the app view finishes loading)
+	 * and the real app render, which adopts the very same node graph.
+	 * Handlers are wired by app.js after adoption (it owns the mount). */
+	buildEmbedCard() {
+		const titles = this.PAGE_TITLES;
+
+		let mode = 'basic';
+		try { mode = (window.localStorage.getItem('hp-embed-mode') === 'expert') ? 'expert' : 'basic'; } catch (e) {}
+
+		let pos = 'left';
+		try { pos = window.localStorage.getItem('hp-embed-pos') === 'right' ? 'right' : 'left'; } catch (e) {}
+
+		const card = E('aside', { 'id': 'hp-embed-card' });
+
+		const collapseBtn = E('button', {
+			'class': 'hp-sb-collapse', 'type': 'button',
+			'title': _('Collapse sidebar')
+		}, [ this.icon('chev-left') ]);
+
+		const brandEl = E('div', { 'class': 'hp-sb-brand' }, [
+			E('img', { 'class': 'hp-sb-logo', 'src': L.resource('ravnex-raven-192.png'), 'alt': 'Ravnex' }),
+			E('div', { 'class': 'hp-sb-brand-txt' }, [
+				E('div', { 'class': 'hp-sb-name' }, [ 'Ravnex' ]),
+				E('div', { 'class': 'hp-sb-slogan' }, [ 'Own the Route.' ])
+			]),
+			collapseBtn
+		]);
+
+		/* Simple/Advanced (Tachyon model): Basic hides the expert pages. */
+		const segBasic = E('button', { 'class': 'hp-sb-mode-btn', 'type': 'button', 'data-mode': 'basic' }, [ _('Basic') ]);
+		const segExpert = E('button', { 'class': 'hp-sb-mode-btn', 'type': 'button', 'data-mode': 'expert' }, [ _('Expert') ]);
+		const modeSeg = E('div', { 'class': 'hp-sb-mode', 'role': 'group' }, [ segBasic, segExpert ]);
+
+		const navEl = E('div', { 'class': 'hp-sb-nav', 'id': 'hp-embed-nav' });
+		const sections = {};
+
+		const buildNav = (activeName) => {
+			navEl.replaceChildren();
+			const basic = (mode === 'basic');
+			for (let c = 0; c < this.APP_CATS.length; c++) {
+				const cat = this.APP_CATS[c];
+				const secEl = E('div', { 'class': 'hp-sb-section' });
+				if (cat.cap)
+					secEl.appendChild(E('div', { 'class': 'hp-sb-cap' }, [ _(cat.cap) ]));
+				for (let p = 0; p < cat.pages.length; p++) {
+					const name = cat.pages[p];
+					if (basic && this.APP_EXPERT[name])
+						continue;
+					const item = E('a', {
+						'class': 'hp-sb-item' + (name === activeName ? ' active' : ''),
+						'href': L.url('admin/services/ravnex', name === 'overview' ? 'overview' : name),
+						'data-hp-section': name
+					}, [
+						this.icon(this.NAV_ICONS[name] || 'compass'),
+						E('span', { 'class': 'hp-sb-item-t' }, [ _(titles[name]) ])
+					]);
+					sections[name] = item;
+					secEl.appendChild(item);
+				}
+				if (secEl.children.length > (cat.cap ? 1 : 0))
+					navEl.appendChild(secEl);
+			}
+		};
+
+		const sbDot = E('span', { 'class': 'hpui-dot', 'id': 'hp-embed-dot' });
+		const sbText = E('div', { 'class': 'hp-sb-status-t' }, [ '…' ]);
+		const sbSub = E('div', { 'class': 'hp-sb-status-s' }, [ '' ]);
+		const statusEl = E('div', { 'class': 'hp-sb-status' }, [
+			sbDot,
+			E('div', { 'class': 'hp-sb-status-txt' }, [ sbText, sbSub ])
+		]);
+
+		const posBtn = E('button', {
+			'class': 'hp-sb-collapse', 'type': 'button',
+			'title': _('Move the menu to the other side'),
+			'style': 'margin: 6px auto 0; display: block;'
+		}, [ pos === 'left' ? '⇥' : '⇤' ]);
+
+		card.appendChild(brandEl);
+		card.appendChild(modeSeg);
+		card.appendChild(navEl);
+		card.appendChild(statusEl);
+		card.appendChild(posBtn);
+
+		/* Collapsed state belongs to the builder: the pre-paint skeleton
+		 * must already match what app.js adopts (no expand→collapse flash). */
+		try {
+			if (window.localStorage.getItem('hp-embed-collapsed') === '1')
+				card.classList.add('collapsed');
+		} catch (e) {}
+
+		const main = E('div', { 'class': 'hp-embed-main' });
+		const burger = E('button', { 'class': 'hp-embed-burger', 'type': 'button', 'title': _('Menu') }, [ this.icon('menu') ]);
+		const holder = E('div', { 'id': 'hp-embed-view' });
+		main.appendChild(burger);
+		main.appendChild(holder);
+
+		const backdrop = E('div', { 'class': 'hp-mobile-backdrop' });
+		const root = E('div', { 'class': 'hp-embed-root' }, [ card, main, backdrop ]);
+		root.setAttribute('data-pos', pos);
+
+		buildNav(this.currentSection());
+
+		return { root, card, main, holder, navEl, sections, collapseBtn, posBtn,
+			burger, backdrop, modeSeg, segBasic, segExpert, mode, pos,
+			sbDot, sbText, sbSub,
+			rebuildNav: (activeName) => { buildNav(activeName || this.currentSection()); } };
+	},
+
+	/* Pre-paint skeleton: anchor the card graph NOW (module eval time),
+	 * while the app view module + its uci.load() are still in flight. The
+	 * app render adopts this exact graph — no late reflow, no blink. */
+	embedSkeleton() {
+		if (this.EMBED_SKEL)
+			return;
+		const vp = document.getElementById('view');
+		if (!vp || vp.querySelector('.hp-embed-root'))
+			return;
+		const ctx = this.buildEmbedCard();
+		ctx.holder.replaceChildren(E('p', { 'class': 'spinning' }, [ _('Loading…') ]));
+		while (vp.firstChild)
+			vp.removeChild(vp.firstChild);
+		vp.appendChild(ctx.root);
+		this.EMBED_SKEL = ctx;
+	},
+
+	adoptEmbedSkeleton() {
+		const s = this.EMBED_SKEL;
+		this.EMBED_SKEL = null;
+		return s || null;
+	},
+
+	/* In-place refresh hook: app.js registers the real remount; sections
+	 * call THIS instead of a bare location.reload() — the embed model keeps
+	 * the SPA alive (audit F2, с.193), a reload would tear down whatever
+	 * section the user is reading. Falls back to the old full reload when
+	 * the shell is not embedded (legacy path). */
+	embedRefresh(name) {
+		if (this.EMBED && typeof this.__embedRemount === 'function') {
+			try { this.__embedRemount(name); return; } catch (e) {}
+		}
+		window.location.reload();
 	},
 
 	/* Long section ops (compose check ~60-80 s) outlive the 20 s XHR window;
 	 * polls registered by a section must NOT outlive the section. Wrap
 	 * LuCI poll.add while a section is mounted: every handler gains a gate
 	 * that resolves silently after teardown, and removal is attempted too
-	 * (both belts — ids of LuCI poll entries vary between releases). */
+	 * (both belts — ids of LuCI poll entries vary between releases).
+	 * Re-entrancy (audit A1/A2, с.193): sessions are STACKED — nested
+	 * begin() never captures an outer wrapper as its «original», and end()
+	 * restores the true poll.add only when the LAST session dies and the
+	 * installed wrapper is still its own (never clobbers a newer one). */
 	embedPollBegin() {
-		const orig = poll.add;
 		const self = this;
+		if (!self.__pollSessions)
+			self.__pollSessions = [];
+		if (!self.__pollOrig)
+			self.__pollOrig = poll.add;
+		const orig = self.__pollOrig;
 		const live = [];
 		let dead = false;
-		poll.add = function(fn, iv) {
+		const wrap = function(fn, iv) {
 			const g = function() {
 				if (dead)
 					return Promise.resolve();
@@ -706,15 +972,23 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 			live.push(g);
 			return orig.call(poll, g, iv);
 		};
-		return {
+		const sess = {
 			end() {
 				dead = true;
 				for (let i = 0; i < live.length; i++) {
 					try { poll.remove(live[i]); } catch (e) {}
 				}
-				poll.add = orig;
+				const arr = self.__pollSessions || [];
+				const ix = arr.indexOf(sess);
+				if (ix >= 0)
+					arr.splice(ix, 1);
+				if (arr.length === 0 && poll.add === wrap)
+					poll.add = orig;
 			}
 		};
+		self.__pollSessions.push(sess);
+		poll.add = wrap;
+		return sess;
 	},
 
 	/* Ф9.1: the unified EVENT CENTER presentation data (Event Bus → UI).
@@ -1285,29 +1559,64 @@ body.hp-shell .cbi-tooltip {
 	#hp-sb-dot.ok { animation: hpui-pulse 2.6s var(--hp-ease-io) infinite; }
 	`,
 
-	/* ═══ R3 v3 embed (Tachyon model): the sidebar is a CARD in the page
+	/* ═══ R3 v3e2 embed (Tachyon model): the sidebar is a CARD in the page
 	 * flow, the router chrome stays visible. Overrides first (undo the
-	 * take-over), then the card geometry. Reuses .hp-sb-* atoms above. */
+	 * take-over), then the card geometry. Reuses .hp-sb-* atoms above.
+	 * с.193: neutralizers for the router themes (Flint/bootstrap push the
+	 * content aside for their own chrome — our card already sits in the
+	 * flow), the Basic/Expert mode switch, the mobile drawer and the
+	 * overflow lock that stops the page width dancing page-to-page. */
 	EMBED_CSS: `
-body.hp-shell.hp-embed { background: transparent !important; }
+body.hp-shell.hp-embed { background: transparent !important; overflow-x: hidden !important; }
 body.hp-shell.hp-embed > header:not(#hp-topbar) { display: block !important; }
 body.hp-shell.hp-embed > footer { display: block !important; }
-body.hp-shell.hp-embed #maincontent { margin: 0 auto !important; max-width: none; min-height: auto; }
+body.hp-shell.hp-embed #maincontent { margin: 0 auto !important; max-width: none; min-height: auto; padding: 0 10px; }
 #hp-topbar, #hp-sidebar { display: none !important; }
 
 .hp-embed-root { display: flex; align-items: flex-start; gap: 14px; width: 100%; max-width: 100%; min-width: 0; margin-top: 6px; box-sizing: border-box; }
 .hp-embed-root[data-pos="right"] { flex-direction: row-reverse; }
 #hp-embed-card { width: 232px; min-width: 232px; flex-shrink: 0; display: flex; flex-direction: column; position: sticky; top: 12px; max-height: calc(100vh - 28px); overflow-y: auto; overflow-x: hidden; background: var(--hp-panel-bg-2); border: 1px solid var(--hp-panel-line); border-radius: 14px; padding: 10px 8px; box-shadow: var(--hp-lift); box-sizing: border-box; transition: width .18s ease, min-width .18s ease; }
 #hp-embed-card.collapsed { width: 68px; min-width: 68px; align-items: center; }
-#hp-embed-card.collapsed .hp-sb-brand-txt, #hp-embed-card.collapsed .hp-sb-item-t, #hp-embed-card.collapsed .hp-sb-cap, #hp-embed-card.collapsed .hp-sb-status-txt { display: none; }
+#hp-embed-card.collapsed .hp-sb-brand-txt, #hp-embed-card.collapsed .hp-sb-item-t, #hp-embed-card.collapsed .hp-sb-cap, #hp-embed-card.collapsed .hp-sb-status-txt, #hp-embed-card.collapsed .hp-sb-mode { display: none; }
 #hp-embed-card.collapsed .hp-sb-brand { flex-direction: column; gap: 6px; width: 100%; }
 #hp-embed-card.collapsed .hp-sb-item, #hp-embed-card.collapsed .hp-sb-status { justify-content: center; padding: 9px 0; }
 #hp-embed-card.collapsed .hp-sb-collapse { margin: 4px auto 0; }
 .hp-embed-main { flex: 1 1 0%; min-width: 0; max-width: 100%; box-sizing: border-box; }
-.hp-embed-main > h2 { margin: 2px 0 10px; }
+
+/* Basic/Expert segmented switch (Tachyon Simple/Advanced). */
+.hp-sb-mode { display: flex; gap: 4px; margin: 6px 6px 8px; padding: 3px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-pill); background: var(--hp-panel-bg); flex: none; }
+.hp-sb-mode-btn { flex: 1 1 0; appearance: none; border: 1px solid transparent; background: transparent; color: inherit; padding: 5px 8px; border-radius: var(--hp-pill); cursor: pointer; font-size: .86em; opacity: .7; white-space: nowrap; }
+.hp-sb-mode-btn:hover { background: rgba(128,128,128,.18); opacity: 1; }
+.hp-sb-mode-btn.on { background: var(--hp-accent-soft); border-color: var(--hp-accent-line); color: var(--hp-accent-strong); font-weight: 700; opacity: 1; }
+
+/* In-page section heading: sections carry their own hp.pageIntro — it IS
+ * the page header (title + one-line purpose). Wrap it cleanly instead of
+ * letting it collide with bare content. */
+.hp-embed-root .hpui-intro { border-bottom: 1px solid var(--hp-panel-line); padding: 0 0 10px; margin: 0 0 12px; }
+.hp-embed-root .hpui-intro h2 { margin: 0; font-size: 1.4em; line-height: 1.3; }
+.hp-embed-root .hpui-intro .hpui-hint { margin: 4px 0 0; opacity: .75; }
+
+/* Mobile drawer: the card slides in over the content (Tachyon burger). */
+.hp-embed-burger { display: none; }
+.hp-mobile-backdrop { display: none; }
 @media (max-width: 900px) {
-	.hp-embed-root, .hp-embed-root[data-pos="right"] { flex-direction: column; }
-	#hp-embed-card { position: static; width: 100%; min-width: 0; max-height: none; }
+	.hp-embed-root, .hp-embed-root[data-pos="right"] { display: block; }
+	.hp-embed-burger { display: inline-flex; align-items: center; justify-content: center; appearance: none; border: 1px solid var(--hp-panel-line); background: var(--hp-panel-bg-2); color: inherit; border-radius: 10px; padding: 8px 10px; margin: 0 0 10px; cursor: pointer; }
+	.hp-embed-burger:focus-visible { outline: none; box-shadow: var(--hp-focus-ring); }
+	#hp-embed-card { position: fixed; left: 0; top: 0; bottom: 0; width: min(84vw, 300px); min-width: 0; max-height: none; z-index: 1200; border-radius: 0 14px 14px 0; transform: translateX(-106%); visibility: hidden; transition: transform .22s var(--hp-ease), visibility 0s linear .22s; }
+	.hp-embed-root[data-pos="right"] #hp-embed-card { left: auto; right: 0; border-radius: 14px 0 0 14px; transform: translateX(106%); }
+	.hp-embed-root.mobile-open #hp-embed-card, .hp-embed-root.mobile-open[data-pos="right"] #hp-embed-card { transform: none; box-shadow: 0 0 60px rgba(0,0,0,.45); visibility: visible; transition: transform .22s var(--hp-ease); }
+	/* The width stopper (glitch 6): wide tables scroll INSIDE their block
+	 * instead of dragging the page width page-to-page. */
+	#hp-embed-view table { display: block; max-width: 100%; overflow-x: auto; }
+	#hp-embed-card.collapsed { width: min(84vw, 300px); align-items: stretch; }
+	.hp-embed-root.mobile-open #hp-embed-card.collapsed .hp-sb-brand-txt,
+	.hp-embed-root.mobile-open #hp-embed-card.collapsed .hp-sb-item-t,
+	.hp-embed-root.mobile-open #hp-embed-card.collapsed .hp-sb-cap,
+	.hp-embed-root.mobile-open #hp-embed-card.collapsed .hp-sb-status-txt { display: block; }
+	.hp-embed-root.mobile-open #hp-embed-card.collapsed .hp-sb-mode { display: flex; }
+	.hp-mobile-backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 1100; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+	.hp-embed-root.mobile-open .hp-mobile-backdrop { opacity: 1; pointer-events: auto; }
 }
 `,
 
@@ -1594,3 +1903,25 @@ body.hp-shell.hp-embed #maincontent { margin: 0 auto !important; max-width: none
 		return true;
 	}
 });
+
+/* ═══ R3 v3e2 PRE-PAINT (glitch 1, с.193) ═══
+ * The app view renders only AFTER uci.load() — every Services→Ravnex entry
+ * spent 1-3 s showing raw LuCI chrome with an empty content area, then the
+ * whole thing reflowed (the «blink + jumpy card» report). Boot the chrome
+ * and anchor the card skeleton at MODULE EVAL time instead: the real app
+ * render adopts the very same node graph, so the swap is seamless. The
+ * data-page guard keeps every other LuCI page untouched. */
+try {
+	const body = document.body;
+	/* URL is the primary signal (works on every theme); body[data-page]
+	 * is the belt for exotic dispatcher rewrites. */
+	const onApp = /\/admin\/services\/(?:ravnex|homeproxy)(?:\/|$)/.test(String(window.location.pathname || ''));
+	const pg = body ? String(body.getAttribute('data-page') || '') : '';
+	if (body && (onApp || /(^|-)(ravnex|homeproxy)(-|$)/.test(pg)) && !api.SHELL_ACTIVE &&
+	    document.getElementById('view')) {
+		api.embedBoot();
+		api.embedSkeleton();
+	}
+} catch (e) {}
+
+return api;

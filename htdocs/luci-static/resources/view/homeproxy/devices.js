@@ -445,6 +445,9 @@ return view.extend({
 			const deadline = Date.now() + 120000;
 			const tick = function() {
 				L.resolveDefault(callOpStatus(apply.op_id), {}).then(function(st) {
+					/* Audit B3 class (с.193): the watcher dies with the section. */
+					if (!el.isConnected)
+						return;
 					const op = st && st.op;
 					if (op && op.status !== 'completed' && op.status !== 'failed' &&
 					    Date.now() < deadline)

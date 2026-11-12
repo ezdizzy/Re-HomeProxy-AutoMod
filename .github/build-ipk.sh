@@ -33,7 +33,7 @@ if [ "$RELEASE_TYPE" == "release" ]; then
 	fi
 else
 	# NOTE: the CI checks out a shallow clone, so `git rev-list --count HEAD` is always 1.
-	# Use a timestamp-based version so every build gets a UNIQUE package version —
+	# Use a timestamp-based version so every build gets a UNIQUE package version вЂ”
 	# otherwise reinstalling from a newer release with the same version string makes the
 	# package manager skip the file overwrite and the device keeps stale code.
 	# IMPORTANT: Alpine `apk` rejects hyphens in versions (only digits/dots/_suffix allowed),
@@ -82,18 +82,18 @@ export pkgname="'"$PKG_NAME"'"
 add_group_and_user
 # Deliberately NOT default_postinst: its init.d loop runs "/etc/init.d/ravnex
 # start" synchronously, and the service start is slow (mosdns bootstrap +
-# rule-set downloads + fw4) — slow enough to blow the 120s ubus timeout and
+# rule-set downloads + fw4) вЂ” slow enough to blow the 120s ubus timeout and
 # kill apk mid-transaction (observed: update failed, i18n updated, app stayed
 # old). The app update flow restarts the service in the background instead.
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
-	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
+	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme-retire /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
 		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
 	done
 	uci commit
 fi
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
-	# ch.253 Р9: the RPC object name changed (luci.homeproxy -> luci.ravnex);
+	# ch.253 Р 9: the RPC object name changed (luci.homeproxy -> luci.ravnex);
 	# SIGHUP does NOT reload the ucode method set (Makefile postinst lesson),
 	# a full restart is required. Delayed+setsid: survives apk teardown and
 	# does not block when the install runs THROUGH rpcd.
@@ -105,7 +105,7 @@ fi
 	# all sessions, incl. fresh logins, until uhttpd restarts). Restart it
 	# so every installer/updater ends with a clean tree.
 	/etc/init.d/uhttpd restart >/dev/null 2>&1
-	# ch.255 Р9 (package rename bridge): sweep the LAST pre-rename leftovers.
+	# ch.255 Р 9 (package rename bridge): sweep the LAST pre-rename leftovers.
 	# /usr/share/homeproxy is superseded by /usr/share/ravnex in this package
 	# (never copy the old dir over the new one - lesson 389, package wins);
 	# the legacy RU catalog is retired only when the renamed one is present
@@ -125,28 +125,28 @@ export root="${IPKG_INSTROOT}"
 export pkgname="'"$PKG_NAME"'"
 add_group_and_user
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
-	# Upgrade path (ch.253 Р9): apk upgrades run post-upgrade, not
+	# Upgrade path (ch.253 Р 9): apk upgrades run post-upgrade, not
 	# post-install - this hook now runs the FULL uci-defaults loop, because
 	# the UCI/directory migrator lives in luci-ravnex-migration (it runs
 	# BEFORE migrate_config.uc; see the stub). Legacy luci-homeproxy* names
 	# are consumed too (boxes that carry them unconsumed). Idempotent and
 	# gated: on a fresh box (no /etc/config/homeproxy) the migrator exits
 	# immediately.
-	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
+	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme-retire /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
 		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
 	done
 	uci commit
 fi
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
-	# ch.253 Р9: renamed RPC object - full rpcd restart, not SIGHUP
+	# ch.253 Р 9: renamed RPC object - full rpcd restart, not SIGHUP
 	# (SIGHUP only reloads ACLs/session; the ucode method set stays stale).
 	if command -v setsid >/dev/null 2>&1; then
 		setsid sh -c "sleep 3; /etc/init.d/rpcd restart" >/dev/null 2>&1 &
 	fi
 	# ch.252 menu hardening: clean menu tree for every updater.
 	/etc/init.d/uhttpd restart >/dev/null 2>&1
-	# ch.255 Р9 rename bridge: retire the pre-rename /usr/share/homeproxy and
+	# ch.255 Р 9 rename bridge: retire the pre-rename /usr/share/homeproxy and
 	# legacy RU catalog (same conditions as post-install, see above).
 	rm -rf /usr/share/homeproxy 2>/dev/null
 	if [ -f /usr/lib/lua/luci/i18n/ravnex.ru.lmo ]; then
@@ -155,7 +155,7 @@ fi
 	exit 0
 }' > "$TEMP_DIR/post-upgrade"
 
-	# ch.253 Р9: snapshot the ENTIRE old tree BEFORE apk unpacks (old
+	# ch.253 Р 9: snapshot the ENTIRE old tree BEFORE apk unpacks (old
 	# non-conffile files vanish with the old package - lesson 389; modified
 	# conffiles survive, unmodified ones are replaced). The migrator overlays
 	# user state FROM this snapshot, so nothing user-owned is lost. Also
@@ -221,12 +221,12 @@ else
 
 	# Rename handling (ipk): do NOT Provides the old names. opkg treats an installed
 	# package that is also Provided as *satisfying* the dependency and then never
-	# fires Conflicts — so old + new would coexist. Dropping Provides and keeping
+	# fires Conflicts вЂ” so old + new would coexist. Dropping Provides and keeping
 	# Conflicts+Replaces makes opkg cleanly replace the old pkg. (Nothing depends on
 	# the old names: the i18n packages depend on $PKG_NAME.) The apk path uses the
 	# Alpine rename idiom instead: provides + replaces (see the apk mkpkg call above).
-	# R9 ШАГ 4 (ch.255): the OWN legacy name luci-app-re-homeproxy joins
-	# Conflicts+Replaces — opkg (24.10) must retire it when installing
+	# R9 РЁРђР“ 4 (ch.255): the OWN legacy name luci-app-re-homeproxy joins
+	# Conflicts+Replaces вЂ” opkg (24.10) must retire it when installing
 	# luci-app-ravnex (proven live in an offline opkg sandbox before release).
 	cat > "$TEMP_PKG_DIR/CONTROL/control" <<-EOF
 		Package: $PKG_NAME
@@ -245,13 +245,13 @@ else
 	EOF
 	chmod 0644 "$TEMP_PKG_DIR/CONTROL/control"
 
-	# ch.255 Р9 fix: this line previously used a POWERSHELL newline escape
+	# ch.255 Р 9 fix: this line previously used a POWERSHELL newline escape
 	# (`n) inside a bash double-quoted string - the backtick opened a command
 	# substitution that swallowed ~50 following lines at parse time (and the
 	# generated CONTROL/conffiles was garbage on ipk builds). Proper bash:
 	echo -e '/etc/config/ravnex\n/etc/config/ravcontrol' > "$TEMP_PKG_DIR/CONTROL/conffiles"
 
-	# R9 ШАГ 4 (ch.255): opkg (24.10) honours Conflicts+Replaces only as a
+	# R9 РЁРђР“ 4 (ch.255): opkg (24.10) honours Conflicts+Replaces only as a
 	# file-takeover hint - it does NOT retire the replaced package from its
 	# db (proven live in an offline opkg root). Retire the OWN legacy package
 	# explicitly BEFORE the new files land (a postinst removal would race the
@@ -277,7 +277,7 @@ add_group_and_user
 # synchronously (slow: bootstrap + rule-set downloads + fw4) and can blow the
 # update timeout. The app update flow restarts the service in the background.
 [ -n "${IPKG_INSTROOT}" ] || { if [ -d /tmp/.uci ] || mkdir -p /tmp/.uci; then
-	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
+	for i in /etc/uci-defaults/luci-ravnex /etc/uci-defaults/luci-ravnex-migration /etc/uci-defaults/luci-ravnex-theme-retire /etc/uci-defaults/luci-homeproxy /etc/uci-defaults/luci-homeproxy-migration /etc/uci-defaults/luci-homeproxy-theme; do
 		[ -f "$i" ] && ( . "$i" ) && rm -f "$i"
 	done
 	uci commit
@@ -324,7 +324,7 @@ rm -rf "$TEMP_DIR"
 # Go sources live in .github/go/ precisely so `cp -fpR root/*` can never leak
 # them into the package tree.
 
-# Build i18n package for Russian. R9 ШАГ 4 (ch.255): renamed to
+# Build i18n package for Russian. R9 РЁРђР“ 4 (ch.255): renamed to
 # luci-i18n-ravnex-ru together with the app package; the po source is
 # po/ru/ravnex.po, the installed catalog stays /usr/lib/lua/luci/i18n/
 # ravnex.ru.lmo (the catalog file name IS the translation domain; ucode

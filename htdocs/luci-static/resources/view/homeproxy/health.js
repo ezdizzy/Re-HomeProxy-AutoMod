@@ -30,8 +30,13 @@
  * the text support report legitimately builds for ~25 s (log tails, UCI
  * scans), so the browser killed the call and the card showed «Пустой
  * отчёт». Raise THIS PAGE's client timeout; the server path is proven
- * fine (the same ubus call answers in full over the CLI). */
-L.env.rpctimeout = 60;
+ * fine (the same ubus call answers in full over the CLI).
+ * Audit D4 (с.193): module top-level ran ONCE and left the 60 s timeout
+ * GLOBAL for every view of the session — the raise is now scoped to the
+ * health mount: set at render, restored by the shell at section switch
+ * (app.js reads hp.__hpSavedRpcTimeout). */
+if (L.env.rpctimeout == null)
+	L.env.rpctimeout = 20;
 
 /* Diagnostics-specific additions on top of the shared hpui design system
  * (hp.uiStyle() — same visual language as the Automation tab). */
@@ -1292,6 +1297,9 @@ function buildCoreSection(view) {
 		const deadline = Date.now() + 120000;
 		const tick = function() {
 			return L.resolveDefault(callOpStatus(opId), {}).then(function(st) {
+				/* Audit B3 class (с.193): the watcher dies with the section. */
+				if (!el.isConnected)
+					return;
 				const op = st && st.op;
 				if (!op) {
 					dom.content(el, statusBadge(false, _('Operation status unavailable')));
@@ -1665,6 +1673,11 @@ function buildSupportSection(view) {
 		let off = 0;
 		function next() {
 			return L.resolveDefault(callBundleChunk(String(off)), {}).then(function(r) {
+				/* Audit D3 (с.193): a chunked download must not outlive
+				 * the section — abort instead of popping a surprise file
+				 * download for a page the user already left. */
+				if (!progressEl.isConnected)
+					throw new Error('aborted: section unmounted');
 				if (!r || r.error) throw new Error((r && r.error) || 'rpc error');
 				if (r.b64) {
 					const bin = atob(r.b64);
@@ -1685,7 +1698,9 @@ function buildSupportSection(view) {
 			});
 		}
 		next().catch(function(e) {
-			if (progressEl) progressEl.textContent = '';
+			if (progressEl && progressEl.isConnected) progressEl.textContent = '';
+			if (String(e && e.message || '').indexOf('aborted:') === 0)
+				return;
 			ui.addNotification(null, E('p', {}, _('Download failed: ') + e.message), 'error');
 		});
 	}
@@ -1707,6 +1722,9 @@ function buildSupportSection(view) {
 		let off = 0;
 		function next() {
 			return L.resolveDefault(callBundleChunk(String(off), 'text'), {}).then(function(r) {
+				/* Audit D3: same section-lifetime gate as downloadBundle. */
+				if (!progressEl.isConnected)
+					throw new Error('aborted: section unmounted');
 				if (!r || r.error) throw new Error((r && r.error) || 'rpc error');
 				if (r.b64) {
 					const bin = atob(r.b64);
@@ -1832,6 +1850,9 @@ function buildSupportSection(view) {
 				fetchReportText(meta, prog).then(function(text) {
 					renderText(text, meta.took_s);
 				}).catch(function(e) {
+					/* Aborted-by-unmount is silent (the user left the page). */
+					if (String(e && e.message || '').indexOf('aborted:') === 0 || !resultEl.isConnected)
+						return;
 					resultEl.innerHTML = '';
 					resultEl.appendChild(E('span', { 'class': 'diag-fail' },
 						[ _('Failed: %s').format(e.message) ]));
@@ -2015,7 +2036,15 @@ return view.extend({
 .hc-result { margin-top: 8px; }
 `;
 		const styleEl = E('style', { 'type': 'text/css' }, [ HC_CSS ]);
-		document.head.appendChild(E('style', {}, [ css ]));
+		/* Audit D4: raise the RPC timeout for THIS mount only. */
+		if (hp.__hpSavedRpcTimeout == null) {
+			hp.__hpSavedRpcTimeout = L.env.rpctimeout || 20;
+			L.env.rpctimeout = 60;
+		}
+		/* Audit C1 (с.193): id-guard the diag CSS — in-place remounts must
+		 * not pile duplicate <style> nodes into <head>. */
+		if (!document.getElementById('hp-diag-style'))
+			document.head.appendChild(E('style', { id: 'hp-diag-style' }, [ css ]));
 		document.head.appendChild(styleEl);
 
 		/* ── Check & repair + Provider zones (built once; their polls and
@@ -2080,25 +2109,32 @@ return view.extend({
 						noteResult(_('Manual request sent to the coordinator — it executes in the next tick.'), true);
 					else
 						noteResult((r && r.error) || _('Failed'), false);
-					window.setTimeout(refreshAll, 2500);
+					/* Audit B3 class: no refreshAll into a dead section. */
+					if (svcWrap.isConnected)
+						window.setTimeout(refreshAll, 2500);
 				});
 		}
 		function sendUnblock(ex) {
 			const key = ex.campaign ? ex.campaign.key : ex.name;
 			noteResult(_('Sending the unblock request…'), null);
 			L.resolveDefault(callRepair('unblock', key, ''), {}).then(function(r) {
-				if (r && r.result !== false)
-					noteResult(_('The campaign is reset — the coordinator will confirm in the next tick.'), true);
-				else
-					noteResult((r && r.error) || _('Failed'), false);
-				window.setTimeout(refreshAll, 2500);
-			});
+					if (r && r.result !== false)
+						noteResult(_('The campaign is reset — the coordinator will confirm in the next tick.'), true);
+					else
+						noteResult((r && r.error) || _('Failed'), false);
+					if (svcWrap.isConnected)
+						window.setTimeout(refreshAll, 2500);
+				});
 		}
 
 		function pollOp(opId) {
 			const deadline = Date.now() + 120000;
 			const tick = function() {
 				L.resolveDefault(callOpStatus(opId), {}).then(function(st) {
+					/* Audit B3 class (с.193): the watcher dies with the
+					 * section — no detached writes, no delayed refreshAll. */
+					if (!svcWrap.isConnected)
+						return;
 					const op = st && st.op;
 					if (!op) {
 						restartBtn.disabled = false;

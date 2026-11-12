@@ -203,8 +203,11 @@ return view.extend({
 		s.render = function () {
 			poll.add(hp.vpoll(function () {
 				return L.resolveDefault(getServiceStatus()).then((res) => {
+					/* Audit G2 (с.193): defensive guard like server.js — the
+					 * tick never writes into a missing node. */
 					let view = document.getElementById('service_status');
-					view.innerHTML = renderStatus(res, features);
+					if (view)
+						view.innerHTML = renderStatus(res, features);
 				});
 
 			}), hp.pollSec(5));
@@ -994,7 +997,7 @@ return view.extend({
 		 * exist. ONE result area under the card (ui.action_buttons_result_
 		 * placement); saves go through the tracked op with a verified
 		 * verdict. */
-		function pollGeoOp(desc, after, okText) {
+		function pollGeoOp(desc, after, okText, el) {
 			if (!desc || desc.hot || !desc.op_id) {
 				if (after) after();
 				return;
@@ -1003,6 +1006,10 @@ return view.extend({
 			const deadline = Date.now() + 150000;
 			const tick = function() {
 				return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st) {
+					/* Audit B3/G1 class (с.193): the watcher (and its
+					 * completion toast) dies with the section. */
+					if (el && !el.isConnected)
+						return;
 					const op = st && st.op;
 					if (op && op.status !== 'completed' && op.status !== 'failed') {
 						if (Date.now() > deadline) {
@@ -1077,12 +1084,13 @@ return view.extend({
 						ruResult.textContent = _('Saved — the auto-update settings are re-read by the daemon on its own hourly check.');
 						return;
 					}
-					/* The guard changed → generate+reload (tracked op). */
-					ruResult.textContent = _('Applying — the core config regenerates…');
-					pollGeoOp(r, function() { ruResult.textContent = ''; },
-						geoProtect.checked
-							? _('RU-protection is ON and verified — RU traffic stays direct.')
-							: _('RU-protection is OFF and verified — RU traffic may follow the lists.'));
+				/* The guard changed → generate+reload (tracked op). */
+				ruResult.textContent = _('Applying — the core config regenerates…');
+				pollGeoOp(r, function() { ruResult.textContent = ''; },
+					geoProtect.checked
+						? _('RU-protection is ON and verified — RU traffic stays direct.')
+						: _('RU-protection is OFF and verified — RU traffic may follow the lists.'),
+					ruResult);
 				}).catch(function(e) {
 					ruSave.disabled = false;
 					ruResult.textContent = _('Save failed: ') + e;
@@ -1168,11 +1176,12 @@ return view.extend({
 					quicRes.textContent = _('Save failed: ') + ((r && r.error) || _('rpc error'));
 					return;
 				}
-				quicRes.textContent = _('Applying — the services reload…');
-				pollGeoOp(r, function() { quicRes.textContent = ''; },
-					quicGlob.checked
-						? _('Global QUIC block is ON and verified — all LAN UDP/443 is dropped.')
-						: _('Global QUIC block is OFF and verified — only the engine-side googlevideo reject remains.'));
+			quicRes.textContent = _('Applying — the services reload…');
+			pollGeoOp(r, function() { quicRes.textContent = ''; },
+				quicGlob.checked
+					? _('Global QUIC block is ON and verified — all LAN UDP/443 is dropped.')
+					: _('Global QUIC block is OFF and verified — only the engine-side googlevideo reject remains.'),
+				quicRes);
 			});
 		});
 

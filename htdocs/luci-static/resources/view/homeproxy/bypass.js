@@ -448,6 +448,10 @@ return view.extend({
 			const deadline = Date.now() + 150000;
 			const tick = function() {
 				return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st2) {
+					/* Audit B3 (с.193): the recursive watcher dies with the
+					 * section — no detached writes, no dead-DOM retention. */
+					if (!dpiResult.isConnected)
+						return;
 					const op = st2 && st2.op;
 					if (op && op.status !== 'completed' && op.status !== 'failed') {
 						if (Date.now() > deadline) {
@@ -1118,6 +1122,48 @@ return view.extend({
 			lvlGlobalBtn.classList.toggle('active', v === 'global');
 			lvlScopedBtn.classList.toggle('active', v === 'scoped');
 			scopedRow.style.display = (v === 'scoped') ? '' : 'none';
+			if (v === 'scoped')
+				scopedSeed();
+		}
+		/* Bug (а), с.193: the scoped editor INHERITS the existing UCI
+		 * profile for the picked resource (strategy + domains) instead of
+		 * inviting a blind apply over it. The hint says what happened. */
+		function scopedSeed() {
+			const ps = (state.lastDpi && state.lastDpi.profiles_sync &&
+				state.lastDpi.profiles_sync.profiles) || [];
+			const res = scopedResSel.value;
+			let p = null;
+			for (let i = 0; i < ps.length; i++) {
+				if (ps[i] && ps[i].enabled !== false && ps[i].engine === 'zapret' &&
+				    ('' + (ps[i].resource || '')) === res)
+					p = ps[i];
+			}
+			if (res === 'custom') {
+				/* Custom resources live under custom:<name> — inherit the
+				 * MOST RECENT one (highest order) so the editor starts from
+				 * something real. */
+				for (let i = 0; i < ps.length; i++) {
+					if (ps[i] && ps[i].enabled !== false && ps[i].engine === 'zapret' &&
+					    /^custom:/.test('' + (ps[i].resource || '')))
+						p = ps[i];
+				}
+			}
+			if (!p)
+				return;
+			const st = '' + (p.strategy || '');
+			const dm = '' + (p.domains || '');
+			if (st)
+				stratInput.value = st;
+			if (res === 'custom' && dm)
+				scopedDomainsInp.value = dm;
+			scopedSeedNote();
+		}
+		function scopedSeedNote() {
+			const old = scopedRow.querySelector('.hp-scoped-seed');
+			if (old)
+				old.parentNode.removeChild(old);
+			scopedRow.appendChild(E('span', { 'class': 'wiz-note hp-scoped-seed', style: 'margin:0; width:100%' },
+				[ _('Inherited from the current UCI profile: the strategy and domains above are what serves this resource now.') ]));
 		}
 		/* Scoped-ряд: ресурс + (custom: имя + домены). */
 		const scopedResSel = E('select', { 'class': 'cbi-input-select wiz-select' });
@@ -1136,6 +1182,7 @@ return view.extend({
 			const isCustom = (scopedResSel.value === 'custom');
 			scopedLabelInp.style.display = isCustom ? '' : 'none';
 			scopedDomainsInp.style.display = isCustom ? '' : 'none';
+			scopedSeed();
 		});
 		const stratSel = E('select', { 'class': 'cbi-input-select wiz-select' });
 		const stratInput = E('input', { type: 'text', 'class': 'cbi-input-text wiz-strat',
@@ -1549,7 +1596,9 @@ return view.extend({
 					E('td', {}, [ pick ])
 				]));
 				chain = chain.then(function() {
-					if (stop.on) return;
+					/* Audit B4 (с.193): leaving the page aborts the ~12-min
+					 * chain instead of writing dots into a dead DOM. */
+					if (stop.on || !tbody.isConnected) return;
 					prog.textContent = (idx + 1) + ' / ' + BYEDPI_PRESETS.length + ': ' + BYEDPI_PRESETS[idx].name;
 					dots.textContent = '⏳';
 					return L.resolveDefault(callByedpiTest(BYEDPI_PRESETS[idx].args, '15335'), {}).then(function(r) {
@@ -1572,6 +1621,8 @@ return view.extend({
 				});
 			}
 			chain.then(function() {
+				if (!prog.isConnected)
+					return;
 				bTestAll.disabled = false;
 				stopBtn.parentNode.removeChild(stopBtn);
 				prog.textContent = stop.on
@@ -1790,26 +1841,97 @@ return view.extend({
 			});
 		}
 
-		/* Seed the builder once from the server draft (first dpi poll): the
-		 * user's saved profiles beat the empty default; nothing overwrites
-		 * unsaved local edits (compDirty). */
-		function seedCompProfiles(server) {
-			if (state.compSeeded || state.compDirty || !server || !server.length)
+		/* Seed the builder once (first dpi poll): the user's saved draft
+		 * beats the empty default. Bug (а), с.193: when the DRAFT is empty
+		 * but UCI already carries profiles (источник истины), the editor
+		 * must INHERIT them — the old «общего профиля нет» blind apply is
+		 * gone. Unsaved local edits still win (compDirty). */
+		function seedCompProfiles(dpi) {
+			if (state.compSeeded || state.compDirty)
+				return;
+			const uciProf = (dpi && dpi.profiles_sync && dpi.profiles_sync.profiles) || null;
+			const server = (dpi && dpi.comp_profiles) || null;
+			let src = null, kind = null;
+			if (server && server.length) { src = server; kind = 'draft'; }
+			else if (uciProf && uciProf.length) { src = uciProf; kind = 'uci'; }
+			if (!src)
 				return;
 			state.compSeeded = true;
 			const arr = [];
-			for (let i = 0; i < server.length; i++) {
-				const p = server[i];
-				if (p && (p.engine === 'zapret' || p.engine === 'byedpi'))
-					arr.push({
-						engine: p.engine, resource: p.resource || 'general',
-						domains: '' + (p.domains || ''), strategy: '' + (p.strategy || '')
-					});
+			for (let i = 0; i < src.length; i++) {
+				const p = src[i];
+				if (!p || !(p.engine === 'zapret' || p.engine === 'byedpi'))
+					continue;
+				if (kind === 'uci' && p.enabled === false)
+					continue;
+				let res = '' + (p.resource || 'general');
+				/* UCI custom profiles («custom:<имя>») map to the builder's
+				 * Custom list — the domains carry the identity. */
+				const cm = res.match(/^custom:(.+)$/);
+				if (cm)
+					res = 'custom';
+				if (!['youtube', 'discord', 'telegram', 'general', 'custom'].some(function(x) { return x === res; }))
+					continue;
+				arr.push({
+					engine: p.engine, resource: res,
+					domains: '' + (p.domains || ''), strategy: '' + (p.strategy || '')
+				});
 			}
 			if (arr.length) {
 				state.compProfiles = arr;
+				if (kind === 'uci')
+					state.compFromUci = true;
 				renderCompProfiles();
 			}
+		}
+
+		/* Bug (б), с.193: the long check is watched by a DEDICATED tiny
+		 * poller (ONLY the status file read — a few hundred bytes, far
+		 * under the 20 s XHR window) instead of piggybacking on the
+		 * 10-RPC page refresh, where one stalled call froze the whole
+		 * stage display intermittently (observed live, 1 of 2 runs). */
+		let composeJobTimer = null;
+		function composeJobStop() {
+			if (composeJobTimer) {
+				window.clearInterval(composeJobTimer);
+				composeJobTimer = null;
+			}
+		}
+		function composeJobStart() {
+			composeJobStop();
+			const t0 = Date.now();
+			composeJobTimer = window.setInterval(function() {
+				if (!dpiResult.isConnected) {
+					composeJobStop();
+					return;
+				}
+				L.resolveDefault(callComposeStatus(), {}).then(function(r) {
+					if (!dpiResult.isConnected) {
+						composeJobStop();
+						return;
+					}
+					const st = (r && r.status) || null;
+					if (!st) {
+						composeJobStop();
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Composition test status lost — check the operations journal.') ]));
+						compTestBtn.disabled = false;
+						return;
+					}
+					renderCompose({ status: st });
+					if (st.running) {
+						if (Date.now() - t0 > 600000) {
+							composeJobStop();
+							compTestBtn.disabled = false;
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('The test is still running after 10 minutes — the stage display stopped; the result will surface in the status card.') ]));
+						}
+						return;
+					}
+					composeJobStop();
+					compTestBtn.disabled = false;
+				});
+			}, 2500);
 		}
 
 		compTestBtn.addEventListener('click', function() {
@@ -1822,15 +1944,20 @@ return view.extend({
 				[ _('Building and testing the composition on the router…') ]));
 			/* profiles cross as a JSON-encoded STRING (issue #11). */
 			L.resolveDefault(callComposeRun(JSON.stringify(state.compProfiles)), {}).then(function(r) {
-				compTestBtn.disabled = false;
 				if (!r || r.result === false) {
+					compTestBtn.disabled = false;
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 						[ _('Compose failed: ') + ((r && r.error) || _('rpc error')) ]));
 					return;
 				}
 				state.compBuilt = { zapret: r.zapret || '', byedpi: r.byedpi || '' };
-				/* The compose status poll (renderCompose) takes over the
-				 * result area: stage progress first, then the final table. */
+				/* This run's DONE verdict is FRESH, not stale-from-before-
+				 * page-load: pre-arm the seed guard so the result renders. */
+				state.composeSeeded = true;
+				state.composeSig = 'run';
+				/* The run RPC returns AT ONCE (the worker tests in the
+				 * background) — the tiny status poller takes over. */
+				composeJobStart();
 			});
 		});
 
@@ -1841,6 +1968,22 @@ return view.extend({
 					_('Run "Test composition" first — Apply uses the server-built args.')), 'error');
 				return;
 			}
+			/* Bug (в), с.193: the SAME overwrite contract as the global
+			 * apply — the composition REPLACES the whole UCI profile set;
+			 * the user confirms it explicitly (counting what is replaced). */
+			const ps = (state.lastDpi && state.lastDpi.profiles_sync &&
+				state.lastDpi.profiles_sync.profiles) || [];
+			let nNow = 0;
+			for (let i = 0; i < ps.length; i++)
+				if (ps[i] && ps[i].enabled !== false)
+					nNow++;
+			hp.confirmModal(_('Apply composition'),
+				(nNow > 0)
+					? _('Apply this composition? It REPLACES the whole profile set: %d profile(s) live now, their strategies go to the server snapshot (Restore stays available) and the applied line is rebuilt from the composition. A short engine restart follows.').format(nNow)
+					: _('Apply this composition? The applied line is rebuilt from the composition and a short engine restart follows (the previous strategies go to the server snapshot — Restore stays available).'),
+				_('Apply')).then(function(ok) {
+				if (!ok)
+					return;
 			compApplyBtn.disabled = true;
 			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 				[ _('Applying composition — the service restarts…') ]));
@@ -1882,6 +2025,7 @@ return view.extend({
 					dom.content(dpiResult, box);
 				});
 			});
+				});
 		});
 
 		/* Compose status poll: progress while running, the final result table
@@ -2878,23 +3022,40 @@ return view.extend({
 						[ _('Import failed: ') + ((r && r.error) || _('rpc error')) ]));
 					return;
 				}
-				const oid = r.op_id;
-				const poll = window.setInterval(function() {
-					L.resolveDefault(callOpStatus(oid), {}).then(function(o) {
-						const op = (o && o.op) || null;
-						if (!op)
-							return;
-						if (op.status === 'completed' || op.status === 'failed') {
-							window.clearInterval(poll);
-							zemiBtn.disabled = false;
-							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-								[ (op.status === 'completed')
-									? _('Imported: %s. Run a fuzz to measure the new strategies.').format(op.detail || '')
-									: _('Import failed: %s').format(op.detail || '') ]));
-							refresh();
-						}
-					});
-				}, 2000);
+			const oid = r.op_id;
+			/* Audit B2 (с.193): the interval MUST die with the section
+			 * (isConnected gate) and must not loop forever when the op
+			 * registry is lost (rpcd restart mid-import) — cap the watch. */
+			const deadline = Date.now() + 600000;
+			const poll = window.setInterval(function() {
+				if (!dpiResult.isConnected) {
+					window.clearInterval(poll);
+					return;
+				}
+				L.resolveDefault(callOpStatus(oid), {}).then(function(o) {
+					if (!dpiResult.isConnected) {
+						window.clearInterval(poll);
+						return;
+					}
+					const op = (o && o.op) || null;
+					if (!op || Date.now() > deadline) {
+						window.clearInterval(poll);
+						zemiBtn.disabled = false;
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Import status lost — check the operation journal.') ]));
+						return;
+					}
+					if (op.status === 'completed' || op.status === 'failed') {
+						window.clearInterval(poll);
+						zemiBtn.disabled = false;
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ (op.status === 'completed')
+								? _('Imported: %s. Run a fuzz to measure the new strategies.').format(op.detail || '')
+								: _('Import failed: %s').format(op.detail || '') ]));
+						refresh();
+					}
+				});
+			}, 2000);
 			});
 		});
 
@@ -3024,14 +3185,20 @@ return view.extend({
 				L.resolveDefault(callAutoPilotStatus(), {}),
 				L.resolveDefault(callDeviceVerdicts(), {}),
 				L.resolveDefault(callStrategySourceStatus(), {})
-			]).then(function(data) {
-				if (data[0] && data[0].env)
+		]).then(function(data) {
+			/* Audit B1 (с.193): one gate for the WHOLE paint phase — RPC
+			 * continuations (button handlers, op polls) resolve after the
+			 * section is gone; painting by id into the next mount's nodes
+			 * (same ids) or into null is exactly the renderDpi crash class. */
+			if (!bypRoot.isConnected)
+				return;
+			if (data[0] && data[0].env)
 					lastEnv = data[0].env;
 				/* ч.232: live device marks (fresher than any sweep snapshot). */
 				state.dev = (data[8] && data[8].device) || state.dev || {};
 				renderDpi(data[1] || {});
 				state.lastDpi = data[1] || {};
-				seedCompProfiles((data[1] || {}).comp_profiles);
+				seedCompProfiles(data[1] || {});
 				renderStrategySel((data[2] && data[2].candidates) || []);
 				renderCorpus(data[1] ? (data[1].corpus || {}) : {}, data[3] || {});
 				renderZemi(data[9] || {});

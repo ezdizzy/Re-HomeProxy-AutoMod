@@ -343,7 +343,10 @@ return view.extend({
 
 	render: function() {
 		hp.uiShell();
-		document.head.appendChild(E('style', {}, [ CSS ]));
+		/* Audit C1 (с.193): id-guard — one sheet per page, in-place
+		 * remounts must not accumulate duplicate <style> in <head>. */
+		if (!document.getElementById('hp-ru-style-css'))
+			document.head.appendChild(E('style', { id: 'hp-ru-style-css' }, [ CSS ]));
 
 		/* Service presets over the itdoginfo/allow-domains sources the
 		 * generator already consumes (no new hardcode). `check` selects
@@ -633,6 +636,10 @@ return view.extend({
 		const deadline = Date.now() + 150000;
 		const tick = function() {
 			return L.resolveDefault(callOpStatus(desc.op_id), {}).then(function(st) {
+				/* Audit B3 class (с.193): the recursive watcher dies with
+				 * the section. */
+				if (!listsResult.isConnected)
+					return;
 				const op = st && st.op;
 				if (op && op.status !== 'completed' && op.status !== 'failed') {
 					if (Date.now() > deadline) {

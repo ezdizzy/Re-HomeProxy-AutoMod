@@ -45,11 +45,15 @@ function getServiceStatus() {
 	});
 }
 
-/* Poll one operation to completion; `onDone(ok, detail)` fires exactly once. */
-function pollOp(opId, onDone) {
+/* Poll one operation to completion; `onDone(ok, detail)` fires exactly once.
+ * `aliveEl` (optional) ties the watcher to a mounted section: after an
+ * in-place switch the poll stops silently (audit E3, с.193). */
+function pollOp(opId, onDone, aliveEl) {
 	const deadline = Date.now() + 150000;
 	const tick = function() {
 		return L.resolveDefault(callOpStatus(opId), {}).then(function(st) {
+			if (aliveEl && !aliveEl.isConnected)
+				return;
 			const op = st && st.op;
 			if (op && op.status !== 'completed' && op.status !== 'failed') {
 				if (Date.now() > deadline) {
@@ -1274,7 +1278,7 @@ function buildSnapshotsCard() {
 									setMsg(ok2 ? _('Restored: %s').format(name)
 										: ((r.error || _('Restore failed')) + (detail ? (' — ' + detail) : '')),
 										ok2 ? 'green' : 'red');
-								});
+								}, resultEl);
 							setMsg(r.result ? _('Restored: %s').format(name) : (r.error || _('Restore failed')),
 								r.result ? 'green' : 'red');
 						});
@@ -1447,6 +1451,12 @@ function buildRulesetsCard() {
 			setMsg(_('Downloading in the background…'), 'grey');
 			if (pollTimer) window.clearInterval(pollTimer);
 			pollTimer = window.setInterval(() => {
+				/* Audit E1 (с.193): the watcher dies with the section. */
+				if (!resultEl.isConnected) {
+					window.clearInterval(pollTimer);
+					pollTimer = null;
+					return;
+				}
 				refresh().then((r) => {
 					const seed = r && r.seed;
 					if (!seed || !seed.running) {
@@ -1629,6 +1639,12 @@ function buildConveyorCard() {
 			setMsg(scope === 'all' ? _('Updating ALL categories…') : _('Updating in the background…'), 'grey');
 			if (pollTimer) window.clearInterval(pollTimer);
 			pollTimer = window.setInterval(() => {
+				/* Audit E1 (с.193): the watcher dies with the section. */
+				if (!resultEl.isConnected) {
+					window.clearInterval(pollTimer);
+					pollTimer = null;
+					return;
+				}
 				refresh().then((s) => {
 					const rt = s && s.runtime;
 					const op = s && s.last_op;
