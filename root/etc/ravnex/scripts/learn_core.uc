@@ -128,6 +128,84 @@ export function src_diversity(st, now) {
 	return div;
 };
 
+/* ── s190: pragmatic IPv6 sanity for validate_learned_ip (ERE-safe).
+ * charset hex/colon only, no ':::', no lone edge colons, '::' at most once,
+ * every group 1-4 hex chars. Not a full RFC 4291 parser — it rejects junk,
+ * which is the only job of a LEARNED-entry validator. */
+function ipv6_groups_ok(s) {
+	const g = split(s, ':');
+	if (length(g) < 1 || length(g) > 8)
+		return 0;
+	for (let x in g) {
+		if (!length(x) || length(x) > 4)
+			return 0;
+		if (!match(x, /^[0-9a-fA-F]{1,4}$/))
+			return 0;
+	}
+	return 1;
+}
+
+function ipv6_sane(s) {
+	if (!match(s, /^[0-9a-fA-F:]{2,45}$/))
+		return 0;
+	if (match(s, /:::/))
+		return 0;
+	const L = length(s);
+	if (substr(s, 0, 1) === ':' && substr(s, 1, 1) !== ':')
+		return 0;
+	if (substr(s, L - 1, 1) === ':' && substr(s, L - 2, 1) !== ':')
+		return 0;
+	const parts = split(s, '::');
+	if (length(parts) > 2)
+		return 0;
+	if (length(parts) === 2) {
+		if (parts[0] !== '' && !ipv6_groups_ok(parts[0]))
+			return 0;
+		if (parts[1] !== '' && !ipv6_groups_ok(parts[1]))
+			return 0;
+		return 1;
+	}
+	return ipv6_groups_ok(s);
+}
+
+/* ── s190: resolver / time-sync infrastructure NEVER learned as blocked
+ * domains. A DNS/NTP endpoint does not serve HTTP on :443 — the probe reads
+ * direct 000/403/404 against a live proxy answer, which looks exactly like
+ * an instant block; once learned, the user's own DNS/NTP bootstrapping is
+ * dragged through the tunnel (live fact 2026-11-12: cloudflare-dns.com,
+ * dns.google, *.pool.ntp.org sat in auto_proxy_list.txt). Dot-boundary
+ * suffix match (exact or ".suffix"). */
+const NEVER_LEARN_SUFFIXES = [
+	'pool.ntp.org', 'ntp.org', 'time.nist.gov',
+	'time.apple.com', 'time.windows.com', 'time.google.com',
+	'time.facebook.com', 'time.cloudflare.com',
+	'cloudflare-dns.com', 'mozilla.cloudflare-dns.com', 'chrome.cloudflare-dns.com',
+	'security.cloudflare-dns.com', 'family.cloudflare-dns.com', 'wireguard.cloudflare-dns.com',
+	'dns.google', 'dns.google.com',
+	'dns.quad9.net', 'dns9.quad9.net', 'dns10.quad9.net', 'dns11.quad9.net',
+	'dns.adguard.com', 'dns.adguard-dns.com',
+	'doh.opendns.com', 'use-application-dns.net'
+];
+
+function never_learn_suffix_hit(h, s) {
+	const n = length(s);
+	if (length(h) < n)
+		return 0;
+	if (substr(h, length(h) - n, n) !== s)
+		return 0;
+	return (length(h) === n) ? 1 : (substr(h, length(h) - n - 1, 1) === '.' ? 1 : 0);
+}
+
+export function is_never_learn_domain(d) {
+	const h = lc(trim('' + (d == null ? '' : d)));
+	if (!length(h))
+		return 0;
+	for (let s in NEVER_LEARN_SUFFIXES)
+		if (never_learn_suffix_hit(h, s))
+			return 1;
+	return 0;
+};
+
 /* ── B5.17: единая валидация выученного IP ──
  * env — инъекция зависимостей (модуль не импортирует discovery/geo):
  *   special(ip) — IANA Special-Purpose (discovery.is_special_ip);
@@ -136,15 +214,38 @@ export function src_diversity(st, now) {
  *   invalid / private_range / shared_cdn / resolver_infrastructure /
  *   local / ru_network. */
 export function validate_learned_ip(ip, env) {
-	const s = trim('' + (ip == null ? '' : ip));
-	if (!length(s))
+	const s0 = trim('' + (ip == null ? '' : ip));
+	if (!length(s0))
 		return 'invalid';
-	const m = match(s, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-	if (m == null)
-		return 'invalid';
-	for (let i = 1; i <= 4; i++)
-		if (int(m[i]) > 255)
+	/* s190: callers pass EITHER a bare host (load/learn in automation.uc)
+	 * OR the classifier-normalized CIDR value (sync_learned_rulesets feeds
+	 * c.value, e.g. '93.184.216.34/32'). The dotted-quad regex alone rejected
+	 * every normalized value, so the generator dropped ALL learned IPs as
+	 * 'invalid' and auto_ip.json never routed ("0 ips" on every hot apply —
+	 * IP-shaped resources, hardcoded-IP apps, never covered). Strip one
+	 * optional /plen (family-bounded) and run the gates on the bare host.
+	 * ERE note: no \S — use [^/]+ (lesson: ucode ERE has no \d/\S). */
+	const ipv6 = (index(s0, ':') >= 0);
+	const plen_hi = ipv6 ? 128 : 32;
+	let s = s0;
+	const pm = match(s0, /^([^/]+)\/(\d{1,3})$/);
+	if (pm != null) {
+		const plen = int(pm[2]);
+		if (plen == null || plen < 0 || plen > plen_hi)
 			return 'invalid';
+		s = pm[1];
+	}
+	if (ipv6) {
+		if (!ipv6_sane(s))
+			return 'invalid';
+	} else {
+		const m = match(s, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+		if (m == null)
+			return 'invalid';
+		for (let i = 1; i <= 4; i++)
+			if (int(m[i]) > 255)
+				return 'invalid';
+	}
 	const e = (type(env) === 'object') ? env : null;
 	if (e == null)
 		return null;
@@ -264,6 +365,32 @@ export function selftest() {
 	t('vld shared cdn', validate_learned_ip('104.16.1.1', env) === 'shared_cdn');
 	t('vld ru', validate_learned_ip('95.161.1.1', env) === 'ru_network');
 	t('vld no-env passes', validate_learned_ip('93.184.216.34', null) == null);
+	/* s190: generator passes the NORMALIZED CIDR value (c.value) — the old
+	 * strict regex dropped every learned IP as 'invalid' ("0 ips" bug). */
+	t('vld cidr normalized ok', validate_learned_ip('93.184.216.34/32', env) == null);
+	t('vld plen overflow v4', validate_learned_ip('93.184.216.34/33', env) === 'invalid');
+	t('vld cidr no-env ok', validate_learned_ip('93.184.216.34/32', null) == null);
+	t('vld gate sees bare host', validate_learned_ip('100.64.1.1/32', env) === 'private_range');
+	t('vld v6 bare ok', validate_learned_ip('2606:4700:4700::1111', env) == null);
+	t('vld v6 cidr ok', validate_learned_ip('2001:db8::1/128', env) == null);
+	t('vld v6 plen overflow', validate_learned_ip('2001:db8::1/129', env) === 'invalid');
+	t('vld v6 triple-colon junk', validate_learned_ip('2001:db8:::1/64', env) === 'invalid');
+	t('vld v6 bad group junk', validate_learned_ip('2001:db8::zz11', env) === 'invalid');
+	t('vld cidr text junk', validate_learned_ip('10.0.0.1/hello', env) === 'invalid');
+
+	/* s190: never-learn guard (resolver/NTP/DoH infrastructure) */
+	t('nl ntp sub', is_never_learn_domain('0.pool.ntp.org') === 1);
+	t('nl ntp datadog sub', is_never_learn_domain('0.datadog.pool.ntp.org') === 1);
+	t('nl ntp openwrt sub', is_never_learn_domain('2.openwrt.pool.ntp.org') === 1);
+	t('nl doh cf', is_never_learn_domain('cloudflare-dns.com') === 1);
+	t('nl doh cf mozilla', is_never_learn_domain('mozilla.cloudflare-dns.com') === 1);
+	t('nl doh google', is_never_learn_domain('dns.google') === 1);
+	t('nl doh google com', is_never_learn_domain('dns.google.com') === 1);
+	t('nl not fooled apex', is_never_learn_domain('mail.google.com') === 0);
+	t('nl not fooled embed', is_never_learn_domain('ntpro.net') === 0);
+	t('nl not fooled sub', is_never_learn_domain('blog.cloudflare-dns.com.evil.example') === 0);
+	t('nl case-insensitive', is_never_learn_domain('0.POOL.NTP.ORG') === 1);
+	t('nl empty', is_never_learn_domain('') === 0);
 
 	/* uuid_collapse (B5.6) */
 	t('uuid pure fbcdn', uuid_collapse('12345678-abcd-4bcd-8def-123456789abc.xz.fbcdn.net') === 'xz.fbcdn.net');

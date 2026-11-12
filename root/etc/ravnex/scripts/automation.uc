@@ -68,7 +68,7 @@ import { conntrack_flows, is_special_ip } from '/etc/ravnex/scripts/discovery.uc
  * модуля на роутере. */
 import {
 	validate_learned_ip, uuid_collapse, psl_parent, src_diversity,
-	transport_kind, rkn_corroborate
+	transport_kind, rkn_corroborate, is_never_learn_domain
 } from '/etc/ravnex/scripts/learn_core.uc';
 /* сеанс 188 (решение юзера): автообучение мёртвых пулов YouTube из живых
  * зомби-соединений clash-api. Чистая логика = yt_steer.uc (selftest-гейт),
@@ -2990,6 +2990,14 @@ echo done > "$PRE.done"
 				dropped++;
 				continue;
 			}
+			/* s190: resolver/NTP/DoH infrastructure self-heal — older builds
+			 * learned these as "blocked" (probe sees no HTTP on :443); the
+			 * shrunken list is persisted below like the other heals. */
+			if (is_never_learn_domain(d)) {
+				log('dropping learned entry (resolver/NTP infrastructure, always direct): ' + d);
+				dropped++;
+				continue;
+			}
 			if (match(d, /\.(ru|su|рф|xn--p1ai)$/) || substr(d, -5) === '.рф') {
 				log('dropping learned entry (RU TLD always goes direct): ' + d);
 				dropped++;
@@ -3163,8 +3171,8 @@ echo done > "$PRE.done"
 			 * answers until their old TTL expires - this is the dominant part
 			 * of the "site works only minutes later" delay. */
 			dns_flush_main();
- 			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && r.ips) || 0) + ' ips' + ((r && r.dropped) ? (', ' + r.dropped + ' invalid dropped') : '') + '.');
- 			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && r.ips) || 0) + ' ip (hot)' + ((r && r.dropped) ? (', ' + r.dropped + ' dropped') : ''));
+ 			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && (r.auto_ips != null ? r.auto_ips : r.ips)) || 0) + ' ips' + ((r && r.dropped) ? (', ' + r.dropped + ' invalid dropped') : '') + '.');
+ 			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && (r.auto_ips != null ? r.auto_ips : r.ips)) || 0) + ' ip (hot)' + ((r && r.dropped) ? (', ' + r.dropped + ' dropped') : ''));
  			/* Ф2.4: one aggregated bus record per apply — a learn burst must
  			 * not flood the LuCI journal / the TG chat with per-host rows. */
  			ev_learn_flush('горячее применение');
@@ -3566,6 +3574,15 @@ echo done > "$PRE.done"
 					}
  			if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); push(learn_names, dom); }
  			} else if (!auto_set[dom]) {
+ 				/* s190: resolver/NTP/DoH infrastructure never learns as blocked —
+ 				 * the probe "failure" is the endpoint not speaking HTTP
+ 				 * (user report: DNS servers landed in the learned block). */
+ 				if (is_never_learn_domain(dom)) {
+ 					log('not learning (resolver/NTP infrastructure, always direct): ' + dom);
+ 					st.status = 'direct';
+ 					st.confirms = 0;
+ 					return;
+ 				}
  				auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')'); push(learn_names, dom);
 					if (is_auth_like(dom))
 						sync_auth_families();
@@ -3657,6 +3674,13 @@ echo done > "$PRE.done"
 					}
  					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); push(learn_names, dom); }
  				} else if (!auto_set[dom]) {
+ 					/* s190: same never-learn guard on the confirmed path. */
+ 					if (is_never_learn_domain(dom)) {
+ 						log('not learning (resolver/NTP infrastructure, always direct): ' + dom);
+ 						st.status = 'direct';
+ 						st.confirms = 0;
+ 						return;
+ 					}
  					auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom); push(learn_names, dom);
 					/* ч.61: a fresh auth-like learn extends its domain family. */
 					if (is_auth_like(dom))

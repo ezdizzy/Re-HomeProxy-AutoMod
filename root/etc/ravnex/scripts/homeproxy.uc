@@ -9,7 +9,7 @@ import { urldecode_params } from 'luci.http';
 /* Ф6.6/B5.17: единая валидация выученных IP — третья точка (генератор
  * правилетс-файлов). learn_core ничего не импортирует, discovery — только
  * fs; циклов нет. */
-import { validate_learned_ip } from '/etc/ravnex/scripts/learn_core.uc';
+import { validate_learned_ip, is_never_learn_domain } from '/etc/ravnex/scripts/learn_core.uc';
 import { is_special_ip } from '/etc/ravnex/scripts/discovery.uc';
 
 /* Global variables start */
@@ -434,6 +434,12 @@ export function sync_learned_rulesets(res_dir) {
 	 * silently lose its route). Only MISPLACEMENTS are fixed here: an IP-shaped
 	 * learned entry rides the IP set instead of a dead domain_suffix. */
 	for (let d in read_list_entries(res, 'auto_proxy_list.txt')) {
+		/* s190: resolver/NTP/DoH entries never route — even a lingering
+		 * polluted line in the learned list must not reach the rule-set. */
+		if (is_never_learn_domain(d)) {
+			drops++;
+			continue;
+		}
 		let c = classify_entry(d);
 		if (c && c.kind !== 'domain') {
 			auto_ips[c.value] = true;
@@ -1146,14 +1152,16 @@ export function selftest() {
 		let rj = (name) => { let raw = readfile(dir + '/' + name); let j = null; try { j = json(raw); } catch (e) { j = null; } return j; };
 
 		/* B6.1: голый IPv4 выученного списка → /32 маршрутизируется; битый
-		 * префикс и мусор отброшены И посчитаны (не молча) */
-		writefile(dir + '/auto_proxy_ip.txt', '93.184.216.34\n2001:db8::1\n1.2.3.4/33\nnot-an-ip\n# comment\n\n');
+		 * префикс и мусор отброшены И посчитаны (не молча). v6-семпл —
+		 * глобально-маршрутизируемый: 2001:db8::/32 = IANA documentation,
+		 * его честно ловит is_special_ip (s190). */
+		writefile(dir + '/auto_proxy_ip.txt', '93.184.216.34\n2606:4700:4700::1111\n1.2.3.4/33\nnot-an-ip\n# comment\n\n');
 		let r1 = sync_learned_rulesets(dir);
 		let j1 = rj('auto_ip.json');
 		ok('B6.1 counts', r1.auto_ips === 2 && r1.dropped === 2);
 		ok('B6.1 json cidr /32+/128', j1 && j1.rules[0] &&
 			index(j1.rules[0].ip_cidr, '93.184.216.34/32') >= 0 &&
-			index(j1.rules[0].ip_cidr, '2001:db8::1/128') >= 0);
+			index(j1.rules[0].ip_cidr, '2606:4700:4700::1111/128') >= 0);
 
 		/* B6.3: ручные IP (proxy_list + manual_proxy) → manual_ip.json,
 		 * выученные → auto_ip.json — два отдельных набора */
