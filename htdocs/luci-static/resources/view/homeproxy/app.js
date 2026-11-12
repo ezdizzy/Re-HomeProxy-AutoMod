@@ -70,18 +70,10 @@ return view.extend({
 		});
 
 		/* Basic/Expert (Tachyon Simple/Advanced): Basic hides the expert
-		 * pages, the choice sticks per browser. */
-		const setMode = (m) => {
-			ctx.mode = m;
-			try { window.localStorage.setItem('hp-embed-mode', m); } catch (e) {}
-			ctx.segBasic.classList.toggle('on', m === 'basic');
-			ctx.segExpert.classList.toggle('on', m === 'expert');
-			ctx.rebuildNav(mounted || hp.currentSection());
-		};
-		ctx.segBasic.addEventListener('click', () => setMode('basic'));
-		ctx.segExpert.addEventListener('click', () => setMode('expert'));
-		ctx.segBasic.classList.toggle('on', ctx.mode === 'basic');
-		ctx.segExpert.classList.toggle('on', ctx.mode === 'expert');
+		 * pages. The FACTORY owns the state (ctx.setMode — the closure
+		 * that buildNav reads); the view only wires the clicks. */
+		ctx.segBasic.addEventListener('click', () => ctx.setMode('basic'));
+		ctx.segExpert.addEventListener('click', () => ctx.setMode('expert'));
 
 		/* Mobile drawer (burger): the card slides over the content. */
 		const closeMobile = () => { root.classList.remove('mobile-open'); };
@@ -118,11 +110,18 @@ return view.extend({
 
 			try { document.title = _(PAGE_TITLES[name]) + ' | Ravnex'; } catch (e) {}
 
-			holder.replaceChildren(E('p', { 'class': 'spinning' }, [ _('Loading…') ]));
+			holder.replaceChildren(hp.embedLoading());
 
 			L.resolveDefault(L.require('view.homeproxy.' + name), null).then((mod) => {
-				if (!mod || mounted !== name)
+				if (mounted !== name)
 					return;
+				if (!mod) {
+					/* A chunk that cannot load (stale browser cache after an
+					 * update, the pre-login 403 class) used to leave the
+					 * silent spinner forever — say it honestly instead. */
+					holder.replaceChildren(hp.embedFailBox(name));
+					return;
+				}
 				holder.replaceChildren();
 				Promise.resolve(mod.load ? mod.load() : null).then((data) => {
 					if (mounted !== name)
@@ -144,6 +143,9 @@ return view.extend({
 								vp.replaceChildren(root);
 						} catch (e) {}
 						holder.appendChild(node);
+						/* Warm the other sections once per tab (stale-chunk
+						 * cure + instant first visits). */
+						hp.prefetchSections(name);
 					});
 				}).catch((e) => {
 					/* Audit A3: never paint a DEAD section's error over a

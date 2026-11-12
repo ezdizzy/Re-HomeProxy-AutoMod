@@ -699,6 +699,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		 * are only the initial guess before the chrome exists. */
 		const t = this.themeProbeRouter();
 		document.documentElement.setAttribute('data-hp-theme', t);
+		this.themeSyncColors();
 		this.embedThemeWatch();
 
 		document.body.classList.add('hp-shell', 'hp-embed');
@@ -772,6 +773,7 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 				const t = this.themeProbeRouter();
 				if (t !== document.documentElement.getAttribute('data-hp-theme'))
 					document.documentElement.setAttribute('data-hp-theme', t);
+				this.themeSyncColors();
 			} catch (e) {}
 		};
 		try {
@@ -864,6 +866,18 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 			}
 		};
 
+		/* THE mode setter (bug from live acceptance: app.js used to poke
+		 * ctx.mode without touching THIS closure — Expert clicked and
+		 * nothing happened). Persisted + pill states + nav rebuild. */
+		const setMode = (m) => {
+			mode = (m === 'expert') ? 'expert' : 'basic';
+			try { window.localStorage.setItem('hp-embed-mode', mode); } catch (e) {}
+			segBasic.classList.toggle('on', mode === 'basic');
+			segExpert.classList.toggle('on', mode === 'expert');
+			buildNav(this.currentSection());
+		};
+		setMode(mode);
+
 		const sbDot = E('span', { 'class': 'hpui-dot', 'id': 'hp-embed-dot' });
 		const sbText = E('div', { 'class': 'hp-sb-status-t' }, [ '…' ]);
 		const sbSub = E('div', { 'class': 'hp-sb-status-s' }, [ '' ]);
@@ -905,13 +919,16 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 
 		return { root, card, main, holder, navEl, sections, collapseBtn, posBtn,
 			burger, backdrop, modeSeg, segBasic, segExpert, mode, pos,
-			sbDot, sbText, sbSub,
+			sbDot, sbText, sbSub, setMode: setMode.bind(this),
 			rebuildNav: (activeName) => { buildNav(activeName || this.currentSection()); } };
 	},
 
 	/* Pre-paint skeleton: anchor the card graph NOW (module eval time),
 	 * while the app view module + its uci.load() are still in flight. The
-	 * app render adopts this exact graph — no late reflow, no blink. */
+	 * app render adopts this exact graph — no late reflow, no blink.
+	 * The workspace placeholder is OUR OWN visible spinner: bootstrap's
+	 * .spinning gif is dark-on-dark under the router's dark theme and
+	 * read as an EMPTY page (live report, с.193). */
 	embedSkeleton() {
 		if (this.EMBED_SKEL)
 			return;
@@ -919,11 +936,101 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		if (!vp || vp.querySelector('.hp-embed-root'))
 			return;
 		const ctx = this.buildEmbedCard();
-		ctx.holder.replaceChildren(E('p', { 'class': 'spinning' }, [ _('Loading…') ]));
+		ctx.holder.replaceChildren(this.embedLoading());
 		while (vp.firstChild)
 			vp.removeChild(vp.firstChild);
 		vp.appendChild(ctx.root);
 		this.EMBED_SKEL = ctx;
+	},
+
+	embedLoading() {
+		return E('div', { 'class': 'hp-embed-loading' }, [ _('Loading…') ]);
+	},
+
+	/* Honest failure box: a section chunk that cannot load (the known
+	 * pre-login 403-cache / stale-chunk class) used to leave the silent
+	 * spinner forever. Now: say it, offer the reload. */
+	embedFailBox(name) {
+		return E('div', { 'class': 'hpui-banner' }, [
+			E('p', {}, [ _('The %s page failed to load — the browser kept a stale copy from before the update. A reload fetches it fresh.').format(_(this.PAGE_TITLES[name] || name)) ]),
+			E('button', {
+				'class': 'btn cbi-button-action important', 'type': 'button',
+				'click': () => { try { window.location.reload(); } catch (e) {} }
+			}, [ _('Reload the page') ])
+		]);
+	},
+
+	/* Warm the OTHER section chunks once per tab: the browser keeps every
+	 * ?v= URL cached, and sections the user never opened before an update
+	 * surfaced LATE (or as cached junk) on first click — «то меню раньше,
+	 * то страница, всё вразнобой». cache:'reload' revalidates NOW and
+	 * replaces the stale entry (lesson ч.280-iv, applied at scale). */
+	prefetchSections(except) {
+		try {
+			const entries = window.performance.getEntriesByType('resource');
+			let v = null;
+			for (let i = 0; i < entries.length && !v; i++) {
+				const m = String(entries[i].name).match(/view\/homeproxy\/[a-z]+\.js\?v=([^&]+)/);
+				if (m)
+					v = m[1];
+			}
+			if (!v)
+				return;
+			const KEY = 'hp-embed-warm-2';
+			if (window.sessionStorage.getItem(KEY) === v)
+				return;
+			window.sessionStorage.setItem(KEY, v);
+			window.setTimeout(() => {
+				for (const n in this.PAGE_TITLES) {
+					if (n === except)
+						continue;
+					try {
+						window.fetch('/luci-static/resources/view/homeproxy/' + n + '.js?v=' + v, { cache: 'reload' });
+					} catch (e) {}
+				}
+			}, 3000);
+		} catch (e) {}
+	},
+
+	/* The app does not just follow the router's LIGHT/DARK choice — it
+	 * SAMPLES the router's actual surfaces and re-keys the --hp-* palette
+	 * onto them (inline vars beat the stylesheet): «цвета не соответствуют
+	 * теме роутера» fixed at the source. Only OPAQUE samples count. */
+	themeSyncColors() {
+		try {
+			const root = document.documentElement;
+			const rgbOf = (el) => {
+				if (!el)
+					return null;
+				const m = window.getComputedStyle(el).backgroundColor
+					.match(/rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s\/]+([\d.]+))?\)/);
+				if (!m || (m[4] !== undefined && Number(m[4]) < 0.1))
+					return null;
+				return [ Number(m[1]), Number(m[2]), Number(m[3]) ];
+			};
+			const css = (c) => 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+			const shade = (c, f) => c.map((v) => Math.max(0, Math.min(255,
+				Math.round(f > 0 ? v + (255 - v) * f : v * (1 + f)))));
+			const base = rgbOf(document.body) || rgbOf(document.querySelector('.container')) || rgbOf(root);
+			if (base) {
+				root.style.setProperty('--hp-shell-bg', css(base));
+				root.style.setProperty('--hp-shell-bg-2', css(shade(base, 0.05)));
+				root.style.setProperty('--hp-shell-bg-3', css(shade(base, -0.05)));
+				if (!rgbOf(document.querySelector('.cbi-section')))
+					root.style.setProperty('--hp-panel-bg', css(shade(base, 0.06)));
+				root.style.setProperty('--hp-panel-bg-2', css(shade(base, -0.02)));
+			}
+			/* Router-native panel (bootstrap .cbi-section) wins over the
+			 * shaded base when it exists at probe time. */
+			const panel = rgbOf(document.querySelector('.cbi-section, .cbi-map'));
+			if (panel) {
+				root.style.setProperty('--hp-panel-bg', css(panel));
+				root.style.setProperty('--hp-panel-bg-2', css(shade(panel, -0.03)));
+			}
+			const fgM = window.getComputedStyle(document.body).color.match(/rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+			if (fgM)
+				root.style.setProperty('--hp-fg', 'rgb(' + fgM[1] + ',' + fgM[2] + ',' + fgM[3] + ')');
+		} catch (e) {}
 	},
 
 	adoptEmbedSkeleton() {
@@ -1588,6 +1695,12 @@ body.hp-shell.hp-embed #maincontent { margin: 0 auto !important; max-width: none
 .hp-sb-mode-btn { flex: 1 1 0; appearance: none; border: 1px solid transparent; background: transparent; color: inherit; padding: 5px 8px; border-radius: var(--hp-pill); cursor: pointer; font-size: .86em; opacity: .7; white-space: nowrap; }
 .hp-sb-mode-btn:hover { background: rgba(128,128,128,.18); opacity: 1; }
 .hp-sb-mode-btn.on { background: var(--hp-accent-soft); border-color: var(--hp-accent-line); color: var(--hp-accent-strong); font-weight: 700; opacity: 1; }
+
+/* OUR OWN loading state (bootstrap .spinning is dark-on-dark under the
+ * router's dark theme — it read as an EMPTY page). */
+.hp-embed-loading { display: flex; align-items: center; gap: 10px; padding: 16px 2px; color: var(--hp-fg); opacity: .85; }
+.hp-embed-loading::before { content: ''; width: 14px; height: 14px; flex: none; border: 2px solid var(--hp-panel-line-strong); border-top-color: var(--hp-accent-strong); border-radius: 50%; animation: hp-embed-spin .8s linear infinite; }
+@keyframes hp-embed-spin { to { transform: rotate(360deg); } }
 
 /* In-page section heading: sections carry their own hp.pageIntro — it IS
  * the page header (title + one-line purpose). Wrap it cleanly instead of

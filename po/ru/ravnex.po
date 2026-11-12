@@ -8318,3 +8318,9 @@ msgstr "Применить эту композицию? Она ЗАМЕНЯЕТ 
 
 msgid "Apply this composition? The applied line is rebuilt from the composition and a short engine restart follows (the previous strategies go to the server snapshot — Restore stays available)."
 msgstr "Применить эту композицию? Применённая строка пересобирается из композиции, затем короткий рестарт движка (прежние стратегии уйдут в серверный снапшот — Restore останется доступным)."
+
+msgid "The %s page failed to load — the browser kept a stale copy from before the update. A reload fetches it fresh."
+msgstr "Страница «%s» не загрузилась — браузер удерживал устаревшую копию со времён обновления. Перезагрузка подтянет свежую."
+
+msgid "Reload the page"
+msgstr "Перезагрузить страницу"
