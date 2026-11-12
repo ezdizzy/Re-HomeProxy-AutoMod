@@ -453,7 +453,7 @@ return view.extend({
 		 * UCI, a row without a rule generates nothing). The old per-browser
 		 * reveal/hiding is gone for good. */
 		try { window.localStorage.removeItem('hp_rules_hidden_presets'); } catch (e) {}
-		const state = { presetsSig: null, pendingCheck: null, lastList: null, visRev: 0, pins: [] };
+		const state = { presetsSig: null, pendingCheck: null, lastList: null, visRev: 0, pins: [], draftSel: {} };
 		let lastEnv = null;
 
 		/* ── Base zone: presets ───────────────────────────────────────── */
@@ -1109,8 +1109,12 @@ return view.extend({
 			};
 
 			presetRows.innerHTML = '';
+			/* сеанс 194: the Apply button belongs to ONE row and touches only
+			 * the FIRST rule of its source — say so BEFORE the rows. */
 			presetRows.appendChild(E('div', { 'class': 'hpui-hint' },
 				[ _('The mass lists below already cover YouTube/Discord/Telegram and most blocked resources — a per-service rule overrides the mass list.') ]));
+			presetRows.appendChild(E('div', { 'class': 'hpui-hint' },
+				[ _('«Apply» belongs to its row: it applies THIS row only — the other rows keep their profiles, and each extra exit is edited by its own buttons.') ]));
 			/* U6/D20 honesty: "direct" wording made users read the empty action
 			 * as "this list goes into the Russian internet" — say what really
 			 * happens: no rule, general routing decides. */
@@ -1163,6 +1167,13 @@ return view.extend({
 				sel.value = (rule && rule.node) ? rule.node : '';
 				if (sel.selectedIndex < 0)
 					sel.value = '';
+				/* сеанс 194: a rebuild (4s poll / another row's apply) must not
+				 * silently drop an UNSAVED pick — restore this row's draft when
+				 * the option still exists; the draft clears on Apply/Delete. */
+				const draft = state.draftSel[preset.source];
+				if (draft != null && draft !== sel.value)
+					for (let oi = 0; oi < sel.options.length; oi++)
+						if (sel.options[oi].value === draft) { sel.value = draft; break; }
 
 				/* URLTest pool picker — revealed when the exit is "URLTest pool". */
 				const poolBox = E('div', { 'class': 'wiz-pool', style: 'display:none' });
@@ -1188,7 +1199,11 @@ return view.extend({
 							poolChecks[c].cb.checked = (cur.indexOf(poolChecks[c].id) >= 0);
 					}
 				};
-				sel.addEventListener('change', function() { poolTouched = false; syncPool(); });
+				sel.addEventListener('change', function() {
+					state.draftSel[preset.source] = sel.value;
+					poolTouched = false;
+					syncPool();
+				});
 				poolBox.addEventListener('change', function() { poolTouched = true; });
 				syncPool();
 
@@ -1201,7 +1216,10 @@ return view.extend({
 						if (poolChecks[c].cb.checked)
 							ids.push(poolChecks[c].id);
 					if (sel.value === 'urltest' && !ids.length) {
-						ui.addNotification(null, E('p', {}, _('Pick at least one node for the URLTest pool.')), 'error');
+						/* сеанс 194: errors answer in the SAME panel as success
+						 * — one button, one result place (no toasts). */
+						dom.content(checkResult, E('p', { 'class': 'hpui-hint', style: 'color:var(--hp-red)' },
+							[ _('Pick at least one node for the URLTest pool.') ]));
 						return;
 					}
 					applyBtn.disabled = true;
@@ -1220,18 +1238,28 @@ return view.extend({
 								'config generation failed': _('Config generation failed — the previous config stays active.')
 							};
 							const msg = ERRS[(r && r.error)] || ((r && r.error) || _('RPC error'));
-							ui.addNotification(null, E('p', {}, msg), 'error');
+							dom.content(checkResult, E('p', { 'class': 'hpui-hint', style: 'color:var(--hp-red)' },
+								[ _('Apply of %s failed: ').format(preset.title) + msg ]));
 							return;
 						}
+						/* The verdict carries the service NAME and the rule count —
+						 * with 5-10 rows on the page an unnamed «applied» told
+						 * nothing (report s194). */
+						const rcount = parseInt(((r && r.rules_for_source) || 0) + '', 10) || 0;
 						if (r && r.unchanged) {
 							/* Nothing changed — no restart, no auto-check, no
 							 * refresh (a refresh would wipe this message). */
 							dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-								[ _('Rule is already in place — nothing to apply.') ]));
+								[ _('Rule for %s is already in place — nothing to apply.').format(preset.title) ]));
+							delete state.draftSel[preset.source];
 							return;
 						}
-						dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-							[ _('Rule applied — the service is restarting, the check will run automatically…') ]));
+						const kids = [ _('Rule for %s applied — the service is restarting, the check will run automatically…').format(preset.title) ];
+						if (rcount > 1)
+							kids.push(E('div', { 'class': 'hpui-hint', style: 'margin:0' },
+								[ _('This service carries %s rules now — each extra exit is edited by its own buttons.').format('' + rcount) ]));
+						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, kids));
+						delete state.draftSel[preset.source];
 						/* Ф1.1b: the apply rides a tracked operation — the live
 						 * check waits for the op verdict before probing (the
 						 * reload may not even have started when the 8 s guard
@@ -1297,25 +1325,42 @@ return view.extend({
 						'title': _('Delete the row')
 					}, [ '✕' ]);
 					delBtn.addEventListener('click', function() {
+						/* сеанс 194: parity with «My lists» / the automation table —
+						 * a rule-bearing ✕ deletes EVERY rule of the source and
+						 * restarts the service, so it confirms; an unpinned-only ✕
+						 * stays instant (cheap and reversible). */
+						if (rule) {
+							hp.confirmModal(_('Delete the row'),
+								_('Delete the row "%s"? EVERY rule of this service is removed and the service restarts — the catalog brings the list back.').format(preset.title),
+								_('Delete')).then(function(ok) {
+									if (ok)
+										deleteRow();
+								});
+							return;
+						}
+						deleteRow();
+						function deleteRow() {
 						delBtn.disabled = true;
-						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting…') ]));
+						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting %s…').format(preset.title) ]));
 						const fin = function(r, okMsg) {
 							if (!r || r.result === false)
 								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
 									[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
 							else {
 								dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ okMsg ]));
+								delete state.draftSel[preset.source];
 								refresh();
 							}
 						};
 						if (rule)
 							L.resolveDefault(callPresetDelete(rule.section_id, 'row'), {}).then(function(r) {
-								fin(r, _('The row is deleted — add the list from the catalog to bring it back.'));
+								fin(r, _('Row %s deleted — add the list from the catalog to bring it back.').format(preset.title));
 							}).finally(function() { delBtn.disabled = false; });
 						else
 							L.resolveDefault(callPresetPinSet(preset.source, '0'), {}).then(function(r) {
-								fin(r, _('The row is deleted — add the list from the catalog to bring it back.'));
+								fin(r, _('Row %s deleted — add the list from the catalog to bring it back.').format(preset.title));
 							}).finally(function() { delBtn.disabled = false; });
+						}
 					});
 					btns.appendChild(delBtn);
 				}
@@ -1338,14 +1383,14 @@ return view.extend({
 					}, [ _('Delete') ]);
 					exDel.addEventListener('click', function() {
 						exDel.disabled = true;
-						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting…') ]));
+						dom.content(checkResult, E('p', { 'class': 'hpui-hint' }, [ _('Deleting %s…').format(preset.title) ]));
 						L.resolveDefault(callPresetDelete(ex.section_id), {}).then(function(r) {
 							if (!r || r.result === false)
 								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
 									[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
 							else
 								dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-									[ _('The extra rule is deleted.') ]));
+									[ _('The extra rule of %s is deleted.').format(preset.title) ]));
 							refresh();
 						}).finally(function() { exDel.disabled = false; });
 					});

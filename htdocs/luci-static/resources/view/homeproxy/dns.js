@@ -292,10 +292,45 @@ return view.extend({
 			});
 		}
 
+		/* сеанс 194: the three actions used to be silent (no verdict at all);
+		 * every button now answers in mdResult below (one result place) and
+		 * the destructive «Disable & restore» confirms first. */
+		const mdResult = E('div', { 'class': 'hpui-hint', style: 'margin:8px 0 0' });
+		function mdSay(text, isErr) {
+			mdResult.textContent = text;
+			mdResult.style.color = isErr ? 'var(--hp-red)' : '';
+		}
+		function mdVerdict(r, okText) {
+			return mdRefresh().then(function() {
+				mdSay((r && r.result === false)
+					? (_('Failed: ') + (r.error || _('rpc error')))
+					: okText, (r && r.result === false));
+			});
+		}
 		const mdActions = E('div', { 'style': 'margin-top:10px' }, [
-			mdBtn(_('Rebuild pools'), function() { return mdReload(); }),
-			mdBtn(_('Reset trends'), function() { return mdReset().then(mdRefresh); }),
-			mdBtn(_('Disable & restore DNS'), function() { return mdDisable().then(mdRefresh); })
+			mdBtn(_('Rebuild pools'), function() {
+				mdSay(_('Rebuilding the pools…'));
+				return Promise.resolve(mdReload()).then(function(r) {
+					return mdVerdict(r, _('The pools are rebuilt from the current lists — the quality daemon re-scores them.'));
+				}).catch(function(e) { mdSay(_('Failed: ') + e, true); });
+			}),
+			mdBtn(_('Reset trends'), function() {
+				mdSay(_('Resetting the trends…'));
+				return Promise.resolve(mdReset()).then(function(r) {
+					return mdVerdict(r, _('The trends are reset — fresh measurements will re-score the servers.'));
+				}).catch(function(e) { mdSay(_('Failed: ') + e, true); });
+			}),
+			mdBtn(_('Disable & restore DNS'), function() {
+				return hp.confirmModal(_('MultiDNS'),
+					_('Disable MultiDNS? The racing resolver will be stopped immediately.'), _('Disable')).then(function(ok) {
+						if (!ok)
+							return null;
+						mdSay(_('Disabling MultiDNS — the resolver stops, the standard DNS resolvers answer again…'));
+						return Promise.resolve(mdDisable()).then(function(r) {
+							return mdVerdict(r, _('MultiDNS is disabled — the standard DNS resolvers answer again (the flag is saved for the next Save & Apply).'));
+						}).catch(function(e) { mdSay(_('Failed: ') + e, true); });
+					});
+			})
 		]);
 
 		const mdPanel = E('div', { 'class': 'hpui-panel' }, [
@@ -303,6 +338,7 @@ return view.extend({
 			mdStatusEl,
 			mdTableEl,
 			mdActions,
+			mdResult,
 			E('p', { 'class': 'hpui-hint' }, [ _('MultiDNS races all configured DNS servers and shows their measured latency / success / open-ratio. A server that consistently fails (dead, or returns IPs that do not open the site) is pruned from the live pool and re-checked; the others race on every query (mosdns picks the fastest valid answer).') ])
 		]);
 

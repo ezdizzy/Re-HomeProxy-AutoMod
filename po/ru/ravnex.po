@@ -8324,3 +8324,96 @@ msgstr "Страница «%s» не загрузилась — браузер �
 
 msgid "Reload the page"
 msgstr "Перезагрузить страницу"
+
+msgid "enabled"
+msgstr "Включено"
+
+msgid "Profiles apply in order (first match wins): scoped ones first, «everything else» last. The Composition editor below edits this list; the applied line is built from it."
+msgstr "Профили применяются по порядку (первое совпадение выигрывает): сценарные — первыми, «всё остальное» — последним. Редактор композиции ниже правит этот список; применяемая строка собирается из него автоматически."
+
+msgid "Save and restart ByeDPI? The new strategy and flags apply at once — live connections through the engine drop for a moment."
+msgstr "Сохранить и перезапустить ByeDPI? Новая стратегия и флаги применяются сразу — живые соединения через движок на миг рвутся."
+
+msgid "Save and restart"
+msgstr "Сохранить и перезапустить"
+
+msgid "Rebuilding the pools…"
+msgstr "Пересборка пулов…"
+
+msgid "The pools are rebuilt from the current lists — the quality daemon re-scores them."
+msgstr "Пулы пересобраны из текущих списков — демон качества заново оценит серверы."
+
+msgid "Resetting the trends…"
+msgstr "Сброс трендов…"
+
+msgid "The trends are reset — fresh measurements will re-score the servers."
+msgstr "Тренды сброшены — свежие замеры заново оценят серверы."
+
+msgid "Disabling MultiDNS — the resolver stops, the standard DNS resolvers answer again…"
+msgstr "Выключение MultiDNS — резолвер останавливается, снова отвечают штатные DNS…"
+
+msgid "MultiDNS is disabled — the standard DNS resolvers answer again (the flag is saved for the next Save & Apply)."
+msgstr "MultiDNS выключен — снова отвечают штатные DNS-резолверы (флаг сохранится при следующем «Сохранить и применить»)."
+
+msgid "«Apply» belongs to its row: it applies THIS row only — the other rows keep their profiles, and each extra exit is edited by its own buttons."
+msgstr "«Применить» принадлежит своей строке: применяется только ЭТА строка — остальные строки не трогаются, а каждый доп. выход правится своими кнопками."
+
+msgid "Apply of %s failed: "
+msgstr "Применение для %s не удалось: "
+
+msgid "Rule for %s is already in place — nothing to apply."
+msgstr "Правило для %s уже действует — применять нечего."
+
+msgid "Rule for %s applied — the service is restarting, the check will run automatically…"
+msgstr "Правило для %s применено — сервис перезапускается, проверка запустится автоматически…"
+
+msgid "This service carries %s rules now — each extra exit is edited by its own buttons."
+msgstr "У этого сервиса сейчас %s правил(а) — каждый доп. выход правится своими кнопками."
+
+msgid "Delete the row \"%s\"? EVERY rule of this service is removed and the service restarts — the catalog brings the list back."
+msgstr "Удалить строку «%s»? Удаляются ВСЕ правила этого сервиса и сервис перезапускается — вернуть список можно из каталога."
+
+msgid "Deleting %s…"
+msgstr "Удаляется %s…"
+
+msgid "Row %s deleted — add the list from the catalog to bring it back."
+msgstr "Строка %s удалена — чтобы вернуть список, добавьте его из каталога."
+
+msgid "The extra rule of %s is deleted."
+msgstr "Доп. правило %s удалено."
+
+msgid "Clean the log"
+msgstr "Очистить журнал"
+
+msgid "Clear the %s log? The file is emptied — the erased lines are gone for good."
+msgstr "Очистить журнал %s? Файл опустошается — стёртые строки не восстанавливаются."
+
+msgid "Clean"
+msgstr "Очистить"
+
+msgid "The log is cleaned — new lines appear as they are written."
+msgstr "Журнал очищен — новые строки появятся по мере записи."
+
+msgid "Remove mosdns (MultiDNS)"
+msgstr "Удалить mosdns (MultiDNS)"
+
+msgid "Remove the mosdns package? The MultiDNS pools and its resolver stop."
+msgstr "Удалить пакет mosdns? Пулы MultiDNS и его резолвер останавливаются."
+
+msgid "Remove ByeDPI"
+msgstr "Удалить ByeDPI"
+
+msgid "Remove the ciadpi (ByeDPI) package? The ByeDPI engine stops."
+msgstr "Удалить пакет ciadpi (ByeDPI)? Движок ByeDPI останавливается."
+
+msgid "Remove Zapret"
+msgstr "Удалить Zapret"
+
+msgid "Remove the nfqws2 (Zapret) package? The Zapret engine stops."
+msgstr "Удалить пакет nfqws2 (Zapret)? Движок Zapret останавливается."
+
+msgid "Remove the core"
+msgstr "Удалить ядро"
+
+msgid "Remove the core? THE PROXY STOPS COMPLETELY — no tunnels or DPI routing run until a core is installed again."
+msgstr "Удалить ядро? ПРОКСИ ОСТАНАВЛИВАЕТСЯ ПОЛНОСТЬЮ — без ядра не работают ни туннели, ни DPI-маршрутизация, пока ядро не будет установлено снова."

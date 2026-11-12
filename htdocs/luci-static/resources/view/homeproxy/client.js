@@ -1013,8 +1013,11 @@ return view.extend({
 					const op = st && st.op;
 					if (op && op.status !== 'completed' && op.status !== 'failed') {
 						if (Date.now() > deadline) {
-							ui.addNotification(null, E('p', {},
-								_('The apply operation is still running — check the operations journal on the Health center page.')), 'info');
+							/* сеанс 194: the verdict answers WHERE the button
+							 * sits (one result place), not in a toast that
+							 * vanishes. */
+							if (el)
+								el.textContent = _('The apply operation is still running — check the operations journal on the Health center page.');
 							if (after) after();
 							return;
 						}
@@ -1022,10 +1025,9 @@ return view.extend({
 						return;
 					}
 					const ok = !!op && op.status === 'completed' && op.verified;
-					ui.addNotification(null, E('p', {}, ok
-						? doneText
-						: _('Apply failed: ') + ((op && (op.detail || op.error)) || _('rpc error'))),
-						ok ? 'info' : 'error');
+					if (el)
+						el.textContent = ok ? doneText
+							: (_('Apply failed: ') + ((op && (op.detail || op.error)) || _('rpc error')));
 					if (after) after();
 				});
 			};
@@ -1084,9 +1086,10 @@ return view.extend({
 						ruResult.textContent = _('Saved — the auto-update settings are re-read by the daemon on its own hourly check.');
 						return;
 					}
-				/* The guard changed → generate+reload (tracked op). */
+				/* The guard changed → generate+reload (tracked op). The verdict
+				 * stays in ruResult (after = no-op: it must not wipe it). */
 				ruResult.textContent = _('Applying — the core config regenerates…');
-				pollGeoOp(r, function() { ruResult.textContent = ''; },
+				pollGeoOp(r, function() {},
 					geoProtect.checked
 						? _('RU-protection is ON and verified — RU traffic stays direct.')
 						: _('RU-protection is OFF and verified — RU traffic may follow the lists.'),
@@ -1177,7 +1180,7 @@ return view.extend({
 					return;
 				}
 			quicRes.textContent = _('Applying — the services reload…');
-			pollGeoOp(r, function() { quicRes.textContent = ''; },
+			pollGeoOp(r, function() {},
 				quicGlob.checked
 					? _('Global QUIC block is ON and verified — all LAN UDP/443 is dropped.')
 					: _('Global QUIC block is OFF and verified — only the engine-side googlevideo reject remains.'),

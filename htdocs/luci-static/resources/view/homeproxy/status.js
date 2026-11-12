@@ -339,7 +339,19 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 					'type': 'button',
 					'style': 'padding: 2px 10px; font-size: .84em;',
 					'click': ui.createHandlerFn(this, () => {
-						return L.resolveDefault(callLogClean(filename), {});
+						/* сеанс 194: destructive AND silent — it confirms and
+						 * answers in the log box (one result place). */
+						return hp.confirmModal(_('Clean the log'),
+							_('Clear the %s log? The file is emptied — the erased lines are gone for good.').format(name),
+							_('Clean')).then((ok) => {
+								if (!ok)
+									return null;
+								return L.resolveDefault(callLogClean(filename), {}).then((r) => {
+									dom.content(log_textarea, [ (!r || r.result === false)
+										? _('Failed: ') + ((r && r.error) || _('rpc error'))
+										: _('The log is cleaned — new lines appear as they are written.') ]);
+								});
+							});
 					})
 				}, [ _('Clean log') ])
 			]),
@@ -608,6 +620,12 @@ function buildMosdnsCard(mdns, mos) {
 		style: 'margin-left:4px',
 		disabled: !installed || null,
 		click: async function() {
+			/* сеанс 194: a package removal is destructive — it confirms
+			 * (parity with the Disable toggles on the Connection page). */
+			if (!await hp.confirmModal(_('Remove mosdns (MultiDNS)'),
+				_('Remove the mosdns package? The MultiDNS pools and its resolver stop.'),
+				_('Remove')))
+				return;
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
 			setMsg(_('Removing...'), 'grey');
@@ -814,6 +832,12 @@ function buildByeDPICard(byedpi, isMainNode) {
 		disabled: !installed || isMainNode || null,
 		title: isMainNode ? _('Cannot remove: ByeDPI is selected as Main Node. Change Main Node first.') : '',
 		click: async function() {
+			/* сеанс 194: destructive — confirms (parity with the Connection
+			 * page Disable toggle). */
+			if (!await hp.confirmModal(_('Remove ByeDPI'),
+				_('Remove the ciadpi (ByeDPI) package? The ByeDPI engine stops.'),
+				_('Remove')))
+				return;
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
 			setMsg(_('Removing...'), 'grey');
@@ -931,6 +955,12 @@ function buildZapretCard(zapret, isMainNode) {
 		disabled: !installed || isMainNode || null,
 		title: isMainNode ? _('Cannot remove: Zapret is selected as Main Node. Change Main Node first.') : '',
 		click: async function() {
+			/* сеанс 194: destructive — confirms (parity with the Connection
+			 * page Disable toggle). */
+			if (!await hp.confirmModal(_('Remove Zapret'),
+				_('Remove the nfqws2 (Zapret) package? The Zapret engine stops.'),
+				_('Remove')))
+				return;
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
 			setMsg(_('Removing...'), 'grey');
@@ -1857,6 +1887,12 @@ function buildCoreCard(core, coreInfo) {	const isHiddify = core === 'hiddify';
 		style: 'margin-left:4px',
 		disabled: !installed || null,
 		click: async function() {
+			/* сеанс 194: destructive AND crippling (no tunnels without the
+			 * core) — it confirms loudly. */
+			if (!await hp.confirmModal(_('Remove the core'),
+				_('Remove the core? THE PROXY STOPS COMPLETELY — no tunnels or DPI routing run until a core is installed again.'),
+				_('Remove')))
+				return;
 			removeBtn.disabled  = true;
 			installBtn.disabled = true;
 			setMsg(_('Removing...'), 'grey');

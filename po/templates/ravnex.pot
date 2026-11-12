@@ -8300,3 +8300,96 @@ msgstr ""
 
 msgid "Analytics"
 msgstr ""
+
+msgid "enabled"
+msgstr ""
+
+msgid "Profiles apply in order (first match wins): scoped ones first, «everything else» last. The Composition editor below edits this list; the applied line is built from it."
+msgstr ""
+
+msgid "Save and restart ByeDPI? The new strategy and flags apply at once — live connections through the engine drop for a moment."
+msgstr ""
+
+msgid "Save and restart"
+msgstr ""
+
+msgid "Rebuilding the pools…"
+msgstr ""
+
+msgid "The pools are rebuilt from the current lists — the quality daemon re-scores them."
+msgstr ""
+
+msgid "Resetting the trends…"
+msgstr ""
+
+msgid "The trends are reset — fresh measurements will re-score the servers."
+msgstr ""
+
+msgid "Disabling MultiDNS — the resolver stops, the standard DNS resolvers answer again…"
+msgstr ""
+
+msgid "MultiDNS is disabled — the standard DNS resolvers answer again (the flag is saved for the next Save & Apply)."
+msgstr ""
+
+msgid "«Apply» belongs to its row: it applies THIS row only — the other rows keep their profiles, and each extra exit is edited by its own buttons."
+msgstr ""
+
+msgid "Apply of %s failed: "
+msgstr ""
+
+msgid "Rule for %s is already in place — nothing to apply."
+msgstr ""
+
+msgid "Rule for %s applied — the service is restarting, the check will run automatically…"
+msgstr ""
+
+msgid "This service carries %s rules now — each extra exit is edited by its own buttons."
+msgstr ""
+
+msgid "Delete the row \"%s\"? EVERY rule of this service is removed and the service restarts — the catalog brings the list back."
+msgstr ""
+
+msgid "Deleting %s…"
+msgstr ""
+
+msgid "Row %s deleted — add the list from the catalog to bring it back."
+msgstr ""
+
+msgid "The extra rule of %s is deleted."
+msgstr ""
+
+msgid "Clean the log"
+msgstr ""
+
+msgid "Clear the %s log? The file is emptied — the erased lines are gone for good."
+msgstr ""
+
+msgid "Clean"
+msgstr ""
+
+msgid "The log is cleaned — new lines appear as they are written."
+msgstr ""
+
+msgid "Remove mosdns (MultiDNS)"
+msgstr ""
+
+msgid "Remove the mosdns package? The MultiDNS pools and its resolver stop."
+msgstr ""
+
+msgid "Remove ByeDPI"
+msgstr ""
+
+msgid "Remove the ciadpi (ByeDPI) package? The ByeDPI engine stops."
+msgstr ""
+
+msgid "Remove Zapret"
+msgstr ""
+
+msgid "Remove the nfqws2 (Zapret) package? The Zapret engine stops."
+msgstr ""
+
+msgid "Remove the core"
+msgstr ""
+
+msgid "Remove the core? THE PROXY STOPS COMPLETELY — no tunnels or DPI routing run until a core is installed again."
+msgstr ""

@@ -1503,25 +1503,45 @@ return view.extend({
 		byeBox.appendChild(bDesc);
 
 		bSave.addEventListener('click', function() {
-			bSave.disabled = true;
-			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-				[ _('Saving the ByeDPI options — the service restarts…') ]));
-			L.resolveDefault(callByedpiSet(String(bStratInput.value || '').trim(),
-				bUot.checked ? '1' : '0', bQuicCur,
-				bVoice.checked ? '1' : '0'), {}).then(function(r) {
-				bSave.disabled = false;
-				if (r && r.unchanged) {
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('ByeDPI options saved — nothing changed, no restart needed.') ]));
-					return;
-				}
-				if (!r || (r.result === false && !r.op_id)) {
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Save failed: ') + ((r && r.error) || _('rpc error')) ]));
-					return;
-				}
-				pollApply(r, _('ByeDPI options applied and verified — the engine card above reflects the new state.'));
-			});
+			/* сеанс 194: parity with Apply strategy / composition — «Save»
+			 * here is an APPLY that restarts the service, so it confirms when
+			 * anything actually changes (an unchanged form skips the modal
+			 * and the RPC answers honestly). */
+			const sNew = String(bStratInput.value || '').trim();
+			const sCur = String(uci.get('ravnex', 'config', 'byedpi_cmd_opts') || '').trim();
+			const uotCur = (uci.get('ravnex', 'config', 'byedpi_udp_over_tcp') !== '0');
+			const vocCur = (uci.get('ravnex', 'config', 'zapret_voice') === '1');
+			const doSave = function() {
+				bSave.disabled = true;
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Saving the ByeDPI options — the service restarts…') ]));
+				L.resolveDefault(callByedpiSet(String(bStratInput.value || '').trim(),
+					bUot.checked ? '1' : '0', bQuicCur,
+					bVoice.checked ? '1' : '0'), {}).then(function(r) {
+					bSave.disabled = false;
+					if (r && r.unchanged) {
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('ByeDPI options saved — nothing changed, no restart needed.') ]));
+						return;
+					}
+					if (!r || (r.result === false && !r.op_id)) {
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Save failed: ') + ((r && r.error) || _('rpc error')) ]));
+						return;
+					}
+					pollApply(r, _('ByeDPI options applied and verified — the engine card above reflects the new state.'));
+				});
+			};
+			if (sNew === sCur && bUot.checked === uotCur && bVoice.checked === vocCur) {
+				doSave();
+				return;
+			}
+			hp.confirmModal(_('Save ByeDPI'),
+				_('Save and restart ByeDPI? The new strategy and flags apply at once — live connections through the engine drop for a moment.'),
+				_('Save and restart')).then(function(ok) {
+					if (ok)
+						doSave();
+				});
 		});
 
 		bTest.addEventListener('click', function() {
