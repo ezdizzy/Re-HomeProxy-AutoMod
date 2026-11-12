@@ -213,6 +213,9 @@ msgstr ""
 msgid "Append self-signed certificate"
 msgstr ""
 
+msgid "Manual apply"
+msgstr ""
+
 msgid "Application"
 msgstr ""
 

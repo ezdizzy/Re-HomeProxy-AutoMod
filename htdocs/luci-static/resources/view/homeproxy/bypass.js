@@ -410,7 +410,7 @@ return view.extend({
 		const DPI_TABS = [
 			[ 'dpiOv',  _('Overview') ],
 			[ 'dpiLab', _('Strategy Lab') ],
-			[ 'dpiMan', _('Application') ]
+			[ 'dpiMan', _('Manual apply') ]
 		];
 		const dpiPanes = {};
 		for (let t in DPI_TABS)
@@ -1130,6 +1130,12 @@ return view.extend({
 		const lvlBar = E('div', { 'class': 'hpui-tabs', style: 'margin:2px 0' });
 		lvlBar.appendChild(lvlGlobalBtn);
 		lvlBar.appendChild(lvlScopedBtn);
+		/* Live report s196: the level buttons had NO click wiring — green
+		 * never moved (the highlight the user saw on «For one resource» was
+		 * the focus ring) and the scoped row never opened. Wire them like
+		 * the DPI tab bar above. */
+		lvlGlobalBtn.addEventListener('click', function() { setZapLevel('global'); });
+		lvlScopedBtn.addEventListener('click', function() { setZapLevel('scoped'); });
 		function setZapLevel(v) {
 			zapLevel = v;
 			lvlGlobalBtn.classList.toggle('active', v === 'global');

@@ -1078,8 +1078,11 @@ msgstr "Стратегия резолвинга"
 msgid "Resources management"
 msgstr "Управление ресурсами"
 
+msgid "Manual apply"
+msgstr "Ручное применение"
+
 msgid "Application"
-msgstr "Применение"
+msgstr "Приложение"
 
 msgid "Core management"
 msgstr "Управление ядром"

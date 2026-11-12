@@ -1745,7 +1745,12 @@ body.hp-shell .cbi-tooltip {
 body.hp-shell.hp-embed { background: transparent !important; overflow-x: hidden !important; }
 body.hp-shell.hp-embed > header:not(#hp-topbar) { display: block !important; }
 body.hp-shell.hp-embed > footer { display: block !important; }
-body.hp-shell.hp-embed #maincontent { margin: 0 auto !important; max-width: none; min-height: auto; padding: 0 10px; }
+/* width:100% is NOT cosmetic: LuCI's cascade makes body a flex COLUMN and
+ * auto cross-axis margins disable item stretch — without a definite width
+ * #maincontent lives at fit-content and re-centers (the sidebar card jumps
+ * to the page center) whenever the content below is transiently narrow,
+ * e.g. the stock «Loading view…» spinner between sections. */
+body.hp-shell.hp-embed #maincontent { margin: 0 auto !important; max-width: none; width: 100%; min-height: auto; padding: 0 10px; }
 #hp-topbar, #hp-sidebar { display: none !important; }
 
 .hp-embed-root { display: flex; align-items: flex-start; gap: 14px; width: 100%; max-width: 100%; min-width: 0; margin-top: 6px; box-sizing: border-box; }
