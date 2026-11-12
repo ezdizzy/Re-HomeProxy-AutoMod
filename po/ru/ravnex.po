@@ -8282,3 +8282,12 @@ msgstr "Профилей ещё нет — стратегия применяет
 
 msgid "Dead-pool steering"
 msgstr "Стиринг мёртвых пулов"
+
+msgid "Routing"
+msgstr "Маршрутизация"
+
+msgid "Clients"
+msgstr "Клиенты"
+
+msgid "Analytics"
+msgstr "Аналитика"

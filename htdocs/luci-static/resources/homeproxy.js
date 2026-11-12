@@ -638,6 +638,85 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 
 	NAV_HIDDEN: {},
 
+	/* R3 v3 (Tachyon model, ч.280): ONE LuCI menu entry + the app sidebar as an
+	 * IN-PAGE card (router chrome stays alive — no take-over). The card is
+	 * rendered by view/homeproxy/app.js from this registry: 5 categories +
+	 * the top-level Home. Titles still come from the po catalogue via the
+	 * same msgids the old menu.d used, so no page retranslation. */
+	APP_CATS: [
+		{ cap: null, pages: [ 'overview' ] },
+		{ cap: 'Routing', pages: [ 'bypass', 'rules', 'automation' ] },
+		{ cap: 'Clients', pages: [ 'devices', 'control', 'telegram' ] },
+		{ cap: 'Analytics', pages: [ 'monitor' ] },
+		{ cap: 'System', pages: [ 'client', 'dns', 'node', 'server' ] },
+		{ cap: 'Maintenance', pages: [ 'health', 'status' ] }
+	],
+
+	/* Embed machinery: app.js calls embedBoot() BEFORE the first section
+	 * render. Views keep calling hp.uiShell() unchanged — the flag makes it
+	 * a cheap no-op (theme/styles already up). EMBED_CSS (below) restores
+	 * the LuCI chrome the fullscreen take-over used to hide while keeping
+	 * every body.hp-shell component style alive. */
+	EMBED: false,
+
+	embedBoot() {
+		if (this.SHELL_ACTIVE)
+			return;
+		this.SHELL_ACTIVE = true;
+		this.EMBED = true;
+		this.uiStyle();
+		this.profilePrefetch();
+
+		const t = this.themeGet();
+		document.documentElement.setAttribute('data-hp-theme', t);
+
+		document.body.classList.add('hp-shell', 'hp-embed');
+
+		/* The LuCI menu tree is cached per tab (see the fullscreen path) —
+		 * menu.d shrank to ONE entry, every tab must refresh once. */
+		try {
+			const MV = 'r3v3g2';
+			if (window.localStorage.getItem('hp-menu-ver') !== MV) {
+				ui.menu.flushCache();
+				window.localStorage.setItem('hp-menu-ver', MV);
+			}
+		} catch (e) {}
+
+		document.head.appendChild(E('style', { id: 'hp-shell-style' }, [ this.SHELL_CSS ]));
+		document.head.appendChild(E('style', { id: 'hp-embed-style' }, [ this.EMBED_CSS ]));
+	},
+
+	/* Long section ops (compose check ~60-80 s) outlive the 20 s XHR window;
+	 * polls registered by a section must NOT outlive the section. Wrap
+	 * LuCI poll.add while a section is mounted: every handler gains a gate
+	 * that resolves silently after teardown, and removal is attempted too
+	 * (both belts — ids of LuCI poll entries vary between releases). */
+	embedPollBegin() {
+		const orig = poll.add;
+		const self = this;
+		const live = [];
+		let dead = false;
+		poll.add = function(fn, iv) {
+			const g = function() {
+				if (dead)
+					return Promise.resolve();
+				return fn.apply(this, arguments);
+			};
+			g.__hpOrigin = fn;
+			live.push(g);
+			return orig.call(poll, g, iv);
+		};
+		return {
+			end() {
+				dead = true;
+				for (let i = 0; i < live.length; i++) {
+					try { poll.remove(live[i]); } catch (e) {}
+				}
+				poll.add = orig;
+			}
+		};
+	},
+
 	/* Ф9.1: the unified EVENT CENTER presentation data (Event Bus → UI).
 	 * ONE icon/color/source set shared by the Home events strip, the
 	 * Control journal and the Health center feed — the same event must
@@ -1203,8 +1282,35 @@ body.hp-shell .cbi-tooltip {
 .hp-sb-collapse:active, .hp-top-btn:active { transform: translateY(1px); }
 /* The live status dot breathes only when the system is healthy — a quiet
  * "alive" signal, not a distraction (scoped to the shell, not hub dots). */
-#hp-sb-dot.ok { animation: hpui-pulse 2.6s var(--hp-ease-io) infinite; }
+	#hp-sb-dot.ok { animation: hpui-pulse 2.6s var(--hp-ease-io) infinite; }
+	`,
+
+	/* ═══ R3 v3 embed (Tachyon model): the sidebar is a CARD in the page
+	 * flow, the router chrome stays visible. Overrides first (undo the
+	 * take-over), then the card geometry. Reuses .hp-sb-* atoms above. */
+	EMBED_CSS: `
+body.hp-shell.hp-embed { background: transparent !important; }
+body.hp-shell.hp-embed > header:not(#hp-topbar) { display: block !important; }
+body.hp-shell.hp-embed > footer { display: block !important; }
+body.hp-shell.hp-embed #maincontent { margin: 0 auto !important; max-width: none; min-height: auto; }
+#hp-topbar, #hp-sidebar { display: none !important; }
+
+.hp-embed-root { display: flex; align-items: flex-start; gap: 14px; width: 100%; max-width: 100%; min-width: 0; margin-top: 6px; box-sizing: border-box; }
+.hp-embed-root[data-pos="right"] { flex-direction: row-reverse; }
+#hp-embed-card { width: 232px; min-width: 232px; flex-shrink: 0; display: flex; flex-direction: column; position: sticky; top: 12px; max-height: calc(100vh - 28px); overflow-y: auto; overflow-x: hidden; background: var(--hp-panel-bg-2); border: 1px solid var(--hp-panel-line); border-radius: 14px; padding: 10px 8px; box-shadow: var(--hp-lift); box-sizing: border-box; transition: width .18s ease, min-width .18s ease; }
+#hp-embed-card.collapsed { width: 68px; min-width: 68px; align-items: center; }
+#hp-embed-card.collapsed .hp-sb-brand-txt, #hp-embed-card.collapsed .hp-sb-item-t, #hp-embed-card.collapsed .hp-sb-cap, #hp-embed-card.collapsed .hp-sb-status-txt { display: none; }
+#hp-embed-card.collapsed .hp-sb-brand { flex-direction: column; gap: 6px; width: 100%; }
+#hp-embed-card.collapsed .hp-sb-item, #hp-embed-card.collapsed .hp-sb-status { justify-content: center; padding: 9px 0; }
+#hp-embed-card.collapsed .hp-sb-collapse { margin: 4px auto 0; }
+.hp-embed-main { flex: 1 1 0%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.hp-embed-main > h2 { margin: 2px 0 10px; }
+@media (max-width: 900px) {
+	.hp-embed-root, .hp-embed-root[data-pos="right"] { flex-direction: column; }
+	#hp-embed-card { position: static; width: 100%; min-width: 0; max-height: none; }
+}
 `,
+
 
 	/* Inline SVG line chart shared by the Overview and Automation tabs
 	 * (Ф8-F5: one helper instead of the chartSvg/chartSvgEng duplicates).

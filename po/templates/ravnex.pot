@@ -8291,3 +8291,12 @@ msgstr ""
 
 msgid "Dead-pool steering"
 msgstr ""
+
+msgid "Routing"
+msgstr ""
+
+msgid "Clients"
+msgstr ""
+
+msgid "Analytics"
+msgstr ""
