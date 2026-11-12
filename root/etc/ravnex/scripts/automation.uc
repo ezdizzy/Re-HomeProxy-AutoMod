@@ -3829,54 +3829,176 @@ echo done > "$PRE.done"
 	 * тоже отвечающее заглушкой, флешу не подлежит (это не его кеш). */
 	const SINK_NETS = RES + '/dns_sinkhole_nets.txt';
 	let last_sink_tick = 0;
+	let sink_rot = 0;                /* s196: rotation cursor over learned domains */
+	let sink_beats = 0;              /* s196: completed ticks — heartbeat cadence */
 
 	function sinkhole_guard_tick() {
-		/* Маркер — любой выученный ДОМЕН (IP не показывает DNS-подмену). */
-		let marker = null;
+		/* s196: маркеры — выученные ДОМЕНЫ (IP не показывает DNS-подмену),
+		 * РОТАЦИЯ по 4 за тик по отсортированному списку. Один фиксированный
+		 * маркер следил бы за единственной точкой наблюдения: кеш-подмена
+		 * у dnsmasq случается у ТОГО домена, что был запрошен в окно аварии,
+		 * поэтому равномерный обход выученного набора ловит класс, а не везение. */
+		let doms = [];
 		for (let h in keys(auto_set))
-			if (!match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) { marker = h; break; }
-		if (marker == null)
+			if (!match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) push(doms, h);
+		if (!length(doms))
 			return;
+		doms = sort(doms);
+		const take = (length(doms) < 4) ? length(doms) : 4;
 		if (!access(SINK_NETS))
 			return;
-		let dip = null;
-		const out = capture(`nslookup -type=A ${shellquote(marker)} 127.0.0.1 2>/dev/null`);
-		for (let l in split(out, '\n')) {
-			const m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
-			if (m && m[2] !== '0.0.0.0' && substr(m[2], 0, 4) !== '127.') { dip = m[2]; break; }
-		}
-		if (dip == null)
-			return;                          /* NXDOMAIN/эпизод — не наш кейс */
-		let is_sink = false;
-		for (let n in read_lines(SINK_NETS)) {
-			const nn = trim(n);
-			if (!length(nn))
-				continue;
-			if (ipv4_in_net(dip, nn)) { is_sink = true; break; }
-		}
-		if (!is_sink)
-			return;
-		let core_dip = null;
-		const cout = capture(`nslookup -type=A ${shellquote(marker)} 127.0.0.1:5333 2>/dev/null`);
-		for (let l in split(cout, '\n')) {
-			const m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
-			if (m && m[2] !== '0.0.0.0' && substr(m[2], 0, 4) !== '127.') { core_dip = m[2]; break; }
-		}
-		let core_sink = false;
-		if (core_dip != null)
+		sink_beats++;
+		let flushed = false;
+		for (let k = 0; k < take && !flushed; k++) {
+			const marker = doms[(sink_rot + k) % length(doms)];
+			let dip = null;
+			const out = capture(`nslookup -type=A ${shellquote(marker)} 127.0.0.1 2>/dev/null`);
+			for (let l in split(out, '\n')) {
+				const m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
+				if (m && m[2] !== '0.0.0.0' && substr(m[2], 0, 4) !== '127.') { dip = m[2]; break; }
+			}
+			if (dip == null)
+				continue;                    /* NXDOMAIN/эпизод — не наш кейс */
+			let is_sink = false;
 			for (let n in read_lines(SINK_NETS)) {
 				const nn = trim(n);
 				if (!length(nn))
 					continue;
-				if (ipv4_in_net(core_dip, nn)) { core_sink = true; break; }
+				if (ipv4_in_net(dip, nn)) { is_sink = true; break; }
 			}
-		if (core_sink) {
-			log('DNS sinkhole answer seen at CORE (' + marker + ' → ' + dip + ') — not flushing dnsmasq, upstream view differs');
+			if (!is_sink)
+				continue;
+			let core_dip = null;
+			const cout = capture(`nslookup -type=A ${shellquote(marker)} 127.0.0.1:5333 2>/dev/null`);
+			for (let l in split(cout, '\n')) {
+				const m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
+				if (m && m[2] !== '0.0.0.0' && substr(m[2], 0, 4) !== '127.') { core_dip = m[2]; break; }
+			}
+			let core_sink = false;
+			if (core_dip != null)
+				for (let n in read_lines(SINK_NETS)) {
+					const nn = trim(n);
+					if (!length(nn))
+						continue;
+					if (ipv4_in_net(core_dip, nn)) { core_sink = true; break; }
+				}
+			if (core_sink) {
+				log('DNS sinkhole answer seen at CORE (' + marker + ' → ' + dip + ') — not flushing dnsmasq, upstream view differs');
+				continue;
+			}
+			log('DNS sinkhole in dnsmasq answer (' + marker + ' → ' + dip + ', core clean) — flushing DNS cache');
+			dns_flush_main();
+			eng_event('dnsmasq', 'Сброс DNS-кеша: sinkhole-подмена в ответе ' + marker + ' → ' + dip + ' (ядро отвечает чисто)');
+			/* Один флеш за тик: опустошённый кеш дальше отвечает уже честно. */
+			flushed = true;
+		}
+		sink_rot = (sink_rot + take) % length(doms);
+		/* Честная видимость (правило «не измерено = явная пометка»): без этой
+		 * строки чистый путь неотличим от мёртвого санитара. Раз в ~6 ч. */
+		if ((sink_beats % 24) === 0)
+			log('sanitizer: dnsmasq cache clean across ' + take + ' marker(s) of ' + length(doms) + ' learned (core answers clean)');
+	}
+
+	/* ── s196: G4-follow-up «владелец сменился → affected в перепроверку» ──
+	 * Профиль помнит владельца контура; hotswap пишет owner+history при каждой
+	 * реальной смене. Все exit_ctx-метки записей, полученные через СТАРОГО
+	 * владельца, — доказательства другого контура: честная реакция = ПЕРЕ-
+	 * ПРОВЕРИТЬ их, а не верить вслепую. Здесь ничего не решается и не
+	 * удаляется: affected-записи получают next_due = сейчас, штатный
+	 * heal-планировщик пересматривает их СВОИМ бюджетом (полное re-решение
+	 * direct vs proxy) и перемечает exit_ctx уже новым владельцем.
+	 * Базлайн владельца — state.__owner_seen: переживает prune (исключение
+	 * добавлено) и рестарт демона; ребут теряет tmpfs — первый взгляд после
+	 * ребута = adopt без волны (волна «до наблюдения» не заслуживается).
+	 * Соответствие по label/isp — всё, что несёт exit_ctx записи (sid в метке
+	 * нет — честная граница); равные label у разных узлов волну не дают
+	 * (нечего честно выбрать). Ручные пины (always proxy/direct) никогда не
+	 * переоцениваются этим путём — решение пользователя старше провенанса. */
+	let owner_sig = 0;
+	let owner_seen = false;
+	function owner_isp_key(o) {
+		if (o == null)
+			return '';
+		if (o.asn != null && length(o.asn))
+			return '' + o.asn;
+		if (o.country != null && length(o.country))
+			return 'cc:' + o.country;
+		return '';
+	}
+	function owner_watch_tick(now) {
+		let sig = 0;
+		try {
+			const sx = stat(PP_PROFILE_FILE);
+			sig = (sx && sx.size > 0) ? (sx.mtime || 0) : 0;
+		} catch (e) { sig = 0; }
+		if (owner_seen && sig === owner_sig)
+			return;
+		owner_sig = sig;
+		owner_seen = true;
+		if (sig === 0)
+			return;                          /* профиля ещё нет — нечего читать */
+		let doc = null;
+		try {
+			const raw = readfile(PP_PROFILE_FILE);
+			doc = (raw != null && length(trim(raw))) ? json(raw) : null;
+		} catch (e) { doc = null; }
+		const cs = (doc != null && type(doc) === 'object' && type(doc.data) === 'object' &&
+			type(doc.data.contours) === 'object') ? doc.data.contours : null;
+		if (cs == null)
+			return;                          /* битый профиль — ждать честного писателя */
+		const own_of = (tag) => {
+			const c = (type(cs[tag]) === 'object') ? cs[tag] : null;
+			const o = (c != null && type(c.owner) === 'object') ? c.owner : null;
+			return (o == null) ? null : {
+				label: (o.label != null && length(o.label)) ? '' + o.label : '',
+				isp: owner_isp_key(o)
+			};
+		};
+		const mo = own_of('main-out');
+		const di = own_of('direct-out');
+		const seen = (type(state.__owner_seen) === 'object') ? state.__owner_seen : null;
+		if (seen == null || type(seen.main) !== 'object' || type(seen.direct) !== 'object') {
+			state.__owner_seen = { main: mo, direct: di };   /* adopt, без волны */
 			return;
 		}
-		log('DNS sinkhole in dnsmasq answer (' + marker + ' → ' + dip + ', core clean) — flushing DNS cache');
-		dns_flush_main();
-		eng_event('dnsmasq', 'Сброс DNS-кеша: sinkhole-подмена в ответе', marker + ' → ' + dip + ' (ядро отвечает чисто)');
+		const main_changed = (mo != null && length(seen.main.label) > 0 &&
+			length(mo.label) > 0 && seen.main.label !== mo.label);
+		const isp_changed = (di != null && length(seen.direct.isp) > 0 &&
+			length(di.isp) > 0 && seen.direct.isp !== di.isp);
+		if (!main_changed && !isp_changed) {
+			/* Обогащение (geo/service_check) ≠ смена владельца: базлайн
+			 * освежается молча, чтобы будущая смена сравнивалась честно. */
+			state.__owner_seen = { main: mo, direct: di };
+			return;
+		}
+		let touched = 0;
+		for (let lst in [auto_set, auto_ip_set]) {
+			for (let h in keys(lst)) {
+				const st = state[h];
+				if (type(st) !== 'object' || type(st.exit_ctx) !== 'object')
+					continue;
+				const by_main = main_changed && ('' + (st.exit_ctx.main || '')) === seen.main.label;
+				const by_isp = isp_changed && ('' + (st.exit_ctx.isp || '')) === seen.direct.isp;
+				if (by_main || by_isp) {
+					st.next_due = now;
+					touched++;
+				}
+			}
+		}
+		state.__owner_seen = { main: mo, direct: di };
+		if (touched === 0)
+			return;
+		const parts = [];
+		if (main_changed)
+			push(parts, 'main-out: «' + seen.main.label + '» → «' + mo.label + '»');
+		if (isp_changed)
+			push(parts, 'direct/ISP: «' + seen.direct.isp + '» → «' + di.isp + '»');
+		const why = join(' · ', parts);
+		const hn = int(state.__heal_next || 0);
+		if (hn === 0 || hn > now + 120)
+			state.__heal_next = now + 120;   /* первый due вскоре состояться */
+		log('owner changed (' + why + ') — affected entries queued for re-check: ' + touched);
+		ev_auto('owner_change', 'владелец контура сменился — перепроверка', why + ' · на перепроверку: ' + touched + ' записей');
 	}
 
 	function pass(run_now) {
@@ -3938,11 +4060,15 @@ echo done > "$PRE.done"
 
 		load_engine_protect();
 
-		/* s195: санитар dnsmasq — раз в 15 мин и только в живом проходе. */
+		/* s195: санитар dnsmasq — раз в 15 мин и только в живом проходе.
+		 * s196: тот же 15-минутный гейт несёт и G4-follow-up — наблюдатель
+		 * владельца контура (один stat() на проход, чтение только на смену
+		 * mtime профиля). */
 		const sn_now = time();
 		if ((sn_now - last_sink_tick) > 900) {
 			last_sink_tick = sn_now;
 			try { sinkhole_guard_tick(); } catch (e2) { /* санитар не валит проход */ }
+			try { owner_watch_tick(sn_now); } catch (e3) { /* G4-follow-up не валит проход */ }
 		}
 
 /* Candidate intake: normalise case (DNS queries and SNI keep client-side
@@ -4677,7 +4803,7 @@ echo done > "$PRE.done"
 				/* B5.15/планировщик: служебные ключи heal-планировщика и
 				 * rDNS-курсора не записи — переживают чистку. */
 				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist' ||
-				    h === '__heal_cursor' || h === '__heal_next' || h === '__ptr_cursor') continue;
+				    h === '__heal_cursor' || h === '__heal_next' || h === '__owner_seen' || h === '__ptr_cursor') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let st = state[h];
 				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
@@ -4690,7 +4816,7 @@ echo done > "$PRE.done"
 			let rest = [];
 			for (let h in keys(state)) {
 				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist' ||
-				    h === '__heal_cursor' || h === '__heal_next' || h === '__ptr_cursor') continue;
+				    h === '__heal_cursor' || h === '__heal_next' || h === '__owner_seen' || h === '__ptr_cursor') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let cst = state[h];
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
