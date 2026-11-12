@@ -260,7 +260,7 @@ const CSS = `
 .rmap-step { flex: 1 1 100%; display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-radius-sm); background: var(--hp-panel-bg-2); }
 .rmap-n { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--hp-accent-fill, rgba(34,197,94,.12)); color: var(--hp-accent-strong); font-weight: 700; font-size: .82em; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
 .rmap-t { flex: 1 1 auto; font-size: .92em; }
-.rmap-t b { display: block; }
+.rmap-t b { display: inline; }
 .rmap-t .hpui-ic { color: var(--hp-accent-strong); width: 1.05em; height: 1.05em; flex: none; margin-right: 5px; vertical-align: -0.15em; }
 .rmap-t em { display: block; opacity: .75; font-size: .95em; font-style: normal; }
 .rmap-step.hpui-here { border-color: var(--hp-accent-strong); }
