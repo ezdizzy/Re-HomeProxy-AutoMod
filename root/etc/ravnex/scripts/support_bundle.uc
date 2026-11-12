@@ -56,6 +56,7 @@ import {
 } from '/etc/ravnex/scripts/pmgr.uc';
 
 const RUN_DIR = '/var/run/ravnex';
+const HP_DIR = '/etc/ravnex';
 const STAGE_BASE = '/tmp/ravnex_bundle';
 const META_FILE = '/tmp/ravnex_bundle_meta.json';
 const TEXT_META_FILE = '/tmp/ravnex_text_meta.json';
@@ -368,7 +369,9 @@ function build_states(stage) {
 		[RUN_DIR + '/hotswap.json', 'state_hotswap_core.json'],
 		[RUN_DIR + '/urltest_dead', 'state_urltest_dead.txt'],
 		[RUN_DIR + '/core_skipped.json', 'state_core_skipped.json'],
-		[RUN_DIR + '/multidns/multidns_state.json', 'state_multidns.json']
+		[RUN_DIR + '/multidns/multidns_state.json', 'state_multidns.json'],
+		/* G4: память владельца контура (персистентная) — в бандл для отладки. */
+		[HP_DIR + '/provider_profile.json', 'state_provider_profile.json']
 	];
 	let written = 0;
 	for (let s in states) {

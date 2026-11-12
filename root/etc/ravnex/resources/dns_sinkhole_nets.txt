@@ -1,0 +1,6 @@
+# s195: DNS-sinkhole nets of TSPU (DATA file, curated).
+# The «Cloudflare-looking» pair 188.114.96.1/.97.1 is the TSPU substitution
+# served for Cloudflare-fronted hosts over plain DNS (verified live 2026-11-12:
+# nearhot.com — plain resolver gave 188.114.96.1/.97.1, DoH gave 172.67.179.59
+# / 104.21.83.169). One network per line. Extend only with verified facts.
+188.114.96.0/23

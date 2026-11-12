@@ -338,6 +338,304 @@ export function rkn_corroborate(host, sets) {
 	return null;
 };
 
+/* ── сеанс 195 G4: «контур как объект» — ПАМЯТЬ владельца контура ──
+ * Реконструкция REPORT_s188_g4_design.md: контракт (генератор объявляет) и
+ * hotswap_state (движок владеет) уже существуют, третьей проекции — ПАМЯТИ —
+ * нет. Память живёт в персистентном /etc/ravnex/provider_profile.json
+ * (конверт State Store); первичный объект — КОНТУР, владелец = owner.
+ * Писатели: generate_client (декларации kind/uci_key/gen_sig), hotswap
+ * (смены владельца), luci.ravnex hp_profile_touch (измеренные факты).
+ * ЗДЕСЬ только ЧИСТАЯ логика: нормализация владельца (exit_stamp) и
+ * diff-слияние (profile_apply); I/O — у писателей. Дисциплина:
+ * только измеренные/объявленные факты; «не измерено» = поле отсутствует;
+ * никаких credentials (address_host с @/портом/путём отбрасывается);
+ * полевые `provider`-омонимы исключены (в hp_exit_lookup provider — имя
+ * lookup-сервиса, здесь поле называется owner, а провайдер = owner класса
+ * 'isp'). НЕ влияет на решения learn/heal — только доказуемость (G1). */
+
+const PP_OWNER_CLASS = { node: true, engine: true, isp: true };
+const PP_LABEL_CAP = 96;
+const PP_ORG_CAP = 96;
+const PP_ASN_CAP = 24;
+const PP_HOST_CAP = 128;
+const PP_SRC_CAP = 32;
+const PP_SID_CAP = 64;
+
+function pp_txt(v, cap) {
+	if (v == null)
+		return null;
+	const s = trim('' + v);
+	return length(s) ? substr(s, 0, cap) : null;
+};
+
+function pp_owner_identity(o) {
+	if (o == null || type(o) !== 'object')
+		return null;
+	const cls = '' + (o.class || '-');
+	/* ISP на коробке ОДИН (прямой контур = WAN): владелец класса 'isp'
+	 * идентифицируется классом, факты (ASN/org) — обогащение того же лица,
+	 * а не «смена владельца». Узловые/движковые — по sid. */
+	let key = o.sid;
+	if (cls !== 'node' && cls !== 'engine')
+		key = '';
+	return cls + '|' + (key || '');
+};
+
+function pp_owner_disp(o) {
+	if (o == null || type(o) !== 'object')
+		return '—';
+	if (o.label && length(o.label))
+		return o.label;
+	if (o.org && length(o.org))
+		return o.org;
+	if (o.asn && length(o.asn))
+		return o.asn;
+	return (o.class === 'isp') ? 'ISP' : '—';
+};
+
+/* Нормализация владельца: обрезки, lc кода страны, мусор → null, капы длин,
+ * address_host без credential-подобных форм (@ / порт / путь / схема).
+ * Возвращает чистый объект (пустые поля отсутствуют) или null, если нечего
+ * заявлять. */
+export function exit_stamp(patch) {
+	if (patch == null || type(patch) !== 'object')
+		return null;
+	const o = {};
+	const cls = (type(patch.class) === 'string' && PP_OWNER_CLASS[patch.class]) ? patch.class : null;
+	if (cls)
+		o.class = cls;
+	o.sid = pp_txt(patch.sid, PP_SID_CAP);
+	o.label = pp_txt(patch.label, PP_LABEL_CAP);
+	o.src = (pp_txt(patch.src, PP_SRC_CAP) != null) ? lc(pp_txt(patch.src, PP_SRC_CAP)) : null;
+	o.address_host = pp_txt(patch.address_host, PP_HOST_CAP);
+	if (o.address_host != null) {
+		let h = lc(o.address_host);
+		const sm = match(h, /^[a-z][a-z0-9+.-]*:\/\//);
+		if (sm)
+			h = substr(h, length(sm[0]));
+		/* '@' (userinfo), ':' (порт), '/' (путь) = credential-подобная форма —
+		 * честный отказ: в профиль попадает только голый сервер-хост (без
+		 * схемы/порта/пути, обязательно доменная форма с точкой). */
+		o.address_host = match(h, /^[a-z0-9._-]+\.[a-z0-9._-]+$/) ? h : null;
+	}
+	o.country = null;
+	const cc = pp_txt(patch.country_code, PP_ASN_CAP);
+	if (cc != null && match(cc, /^[a-zA-Z]{2}$/))
+		o.country = lc(cc);
+	o.asn = pp_txt(patch.asn, PP_ASN_CAP);
+	if (o.asn != null) {
+		/* ERE этой сборки НЕ имеет \d (урок) — только [0-9]. */
+		if (match(o.asn, /^AS[0-9]+$/i)) {
+			let a = '' + o.asn;
+			if (lc(substr(a, 0, 2)) === 'as')
+				a = substr(a, 2);
+			o.asn = 'AS' + a;
+		} else if (match(o.asn, /^[0-9]+$/))
+			o.asn = 'AS' + o.asn;
+		else
+			o.asn = null;
+	}
+	o.org = pp_txt(patch.org, PP_ORG_CAP);
+	for (let k in keys(o))
+		if (o[k] == null)
+			delete o[k];
+	return length(keys(o)) ? o : null;
+};
+
+/* Diff-слияние факта по контуру: патч (kind/uci_key/gen_sig/owner) применяется
+ * к doc.contours[tag]; битый doc разворачивается в каркас; мусорный патч —
+ * честный отказ (changed=false, ничего не тронуто). Смена ВЛАДЕЛЬЦА (identity
+ * class+sid/ASN) = history-ring + since_ts; обогащение тем же лицом (touch
+ * страну/ASN поверх узла) = история НЕ растёт, since_ts НЕ сбрасывается;
+ * флип-флап A→B→A в пределах flap_win → дедуп (ring не растёт). owner.ts
+ * ставится здесь; writer-src остаётся у установившего владельца (churn
+ * gen↔hotswap не дёргает записи). owner класса 'isp' зеркалится в
+ * doc.provider (алиас ISP-проекции: asn/name/country/src/ts). */
+export function profile_apply(doc, tag, patch, now, hist_cap) {
+	const now_i = (int(now) > 0) ? int(now) : time();
+	if (doc == null || type(doc) !== 'object')
+		doc = {};
+	if (doc.engine_version == null)
+		doc.engine_version = 1;
+	if (type(doc.contours) !== 'object')
+		doc.contours = {};
+	if (type(doc.history) !== 'array')
+		doc.history = [];
+	if (type(doc.provider) !== 'object')
+		doc.provider = {};
+	if (type(tag) !== 'string' || !length(trim(tag)) || patch == null || type(patch) !== 'object')
+		return { doc: doc, changed: false };
+	tag = trim(tag);
+	const cap = (int(hist_cap) > 0) ? int(hist_cap) : 16;
+	let ct = doc.contours[tag];
+	if (type(ct) !== 'object')
+		ct = { kind: null, uci_key: null, gen_sig: null, owner: null, since_ts: 0 };
+	let changed = false;
+
+	const nrm = (v) => ((v == null || !length(trim('' + v))) ? null : trim('' + v));
+	/* ОТСУТСТВУЮЩИЙ ключ патча = «не трогать» (укод не различает absent и null —
+	 * различаем по ключам патча); явная очистка = несуществующее поле, писатели
+	 * её не шлют. */
+	const pkeys = {};
+	for (let k in keys(patch))
+		pkeys[k] = true;
+	for (let f in [ 'kind', 'uci_key', 'gen_sig' ]) {
+		if (!pkeys[f])
+			continue;
+		const nv = nrm(patch[f]);
+		const ev = (ct[f] === '') ? null : ct[f];
+		if (nv !== ev) {
+			ct[f] = nv;
+			changed = true;
+		}
+	}
+
+	const no = (type(patch.owner) === 'object') ? patch.owner : null;
+	const nid = (no != null) ? pp_owner_identity(no) : null;
+	const cur = ct.owner;
+	const cid = (cur != null && type(cur) === 'object') ? pp_owner_identity(cur) : null;
+
+	if (no != null && nid != null && nid !== cid) {
+		/* Смена владельца (включая первую фиксацию с уже существующим
+		 * другим владельцем): history + since_ts; флип-флап — дедуп. */
+		const last = (length(doc.history) > 0) ? doc.history[length(doc.history) - 1] : null;
+		if (cur != null && last != null &&
+		    int(last.ts) > 0 && (now_i - int(last.ts)) <= 60 &&
+		    last.from_id === nid && last.to_id === cid) {
+			/* A→B→A в пределах 60 с: снимаем сам переход (ring не растёт). */
+			pop(doc.history);
+		} else if (cur != null) {
+			push(doc.history, {
+				ts: now_i,
+				contour: tag,
+				from: pp_owner_disp(cur),
+				to: pp_owner_disp(no),
+				from_id: cid,
+				to_id: nid,
+				reason: nrm(patch.reason),
+				src: nrm(no.src) || nrm(cur.src) || null
+			});
+			if (length(doc.history) > cap)
+				doc.history = slice(doc.history, length(doc.history) - cap);
+		}
+		ct.owner = {};
+		for (let k in keys(no))
+			if (no[k] != null)
+				ct.owner[k] = no[k];
+		ct.owner.ts = now_i;
+		ct.since_ts = now_i;
+		changed = true;
+	} else if (no != null && nid != null && cur != null && type(cur) === 'object') {
+		/* Обогащение тем же лицом: фактические поля + label (переименование —
+		 * НЕ смена владельца), без src (src = кто УСТАНОВИЛ владельца). */
+		let touched = false;
+		for (let f in [ 'label', 'address_host', 'country', 'asn', 'org' ]) {
+			const nv = no[f];
+			if (nv != null && nv !== cur[f]) {
+				ct.owner[f] = nv;
+				touched = true;
+			}
+		}
+		if (touched) {
+			ct.owner.ts = now_i;
+			changed = true;
+		}
+	}
+
+	if (changed && type(ct.owner) === 'object' && ct.owner.class === 'isp') {
+		/* Алиас ISP-проекции: name = org. Не трогаем чужие ключи (dpi и т.п.).
+		 * NULL-факты не затираем: «не измерено» = поле отсутствует, а не ложь. */
+		let pdirty = false;
+		for (let f in [ 'asn', 'country' ]) {
+			const nv = ct.owner[f];
+			if (nv != null && doc.provider[f] !== nv) {
+				doc.provider[f] = nv;
+				pdirty = true;
+			}
+		}
+		if (ct.owner.org != null && doc.provider.name !== ct.owner.org) {
+			doc.provider.name = ct.owner.org;
+			pdirty = true;
+		}
+		if (pdirty || (int(ct.owner.ts) || 0) !== (int(doc.provider.ts) || 0)) {
+			doc.provider.src = ct.owner.src || doc.provider.src || null;
+			doc.provider.ts = ct.owner.ts;
+			pdirty = true;
+		}
+		changed = changed || pdirty;
+	}
+
+	doc.contours[tag] = ct;
+	return { doc: doc, changed: changed };
+};
+
+function pv_like_usable(ip) {
+	/* Зеркало pv_ip_usable демона: 0.0.0.0/127.* = DNS-блокер, не «живой»
+	 * ответ — для вердикта «домен умер» такой ответ не считается. */
+	return ip !== '0.0.0.0' && substr(ip, 0, 4) !== '127.';
+};
+
+function dns_out_answers(raw) {
+	if (raw == null || !length('' + raw))
+		return 0;
+	const s = '' + raw;
+	let n = 0;
+	for (let l in split(s, '\n')) {
+		const m = match(trim(l), /^Address(\s+[0-9]+)?:\s*(\S+)/);
+		if (m && pv_like_usable(m[2]))
+			n++;
+	}
+	return n;
+};
+
+export function dns_nxdomain_verdict(plain_out, public_out) {
+	const p = dns_out_answers(plain_out);
+	const q = dns_out_answers(public_out);
+	if (p > 0 && q > 0)
+		return 'answered';
+	if (p === 0 && q === 0)
+		return 'dead_nxdomain';
+	return null;
+};
+
+/* ── сеанс 195 s-волна: DNS-здоровье выученных записей ──
+ * Два чистых инструмента для движка (I/O у демона):
+ *   ipv4_in_net(ip, cidr)      — принадлежность IPv4 сети вида a.b.c.d/p;
+ *   dns_nxdomain_verdict(p, q) — вердикт по ДВУМ сырым выводам nslookup:
+ *     оба «нет адреса» → 'dead_nxdomain' (домен умер ВСЕГДА — класс
+ *     «мёртвый VPN-хост» выучивать нельзя, а выученное снимается честно),
+ *     оба ответили → 'answered', расходятся → null (эпизод, ждать). */
+
+export function ipv4_in_net(ip, cidr) {
+	const i0 = trim('' + (ip == null ? '' : ip));
+	const c0 = trim('' + (cidr == null ? '' : cidr));
+	const im = match(i0, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	const cm = match(c0, /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(\/(\d{1,2}))?$/);
+	if (im == null || cm == null)
+		return false;
+	let mask = 32;
+	if (cm[5] != null) {
+		mask = int(cm[6]);
+		if (mask == null || mask < 0 || mask > 32)
+			return false;
+	}
+	for (let k = 1; k <= 4; k++) {
+		const io = int(im[k]), co = int(cm[k]);
+		if (io > 255 || co > 255)
+			return false;
+		if (mask <= 0)
+			return true;
+		const bits = (mask >= 8) ? 8 : mask;
+		const sh = 8 - bits;
+		/* Старшие биты байта сравниваются СДВИГОМ: маска ~bits в 64-битной
+		 * семантике ucode затирала бы не те биты (поймано selftest'ом). */
+		if ((io >> sh) !== (co >> sh))
+			return false;
+		mask -= bits;
+	}
+	return true;
+};
+
 /* ── Selftest ──
  * Тот же контракт, что service_optimizer/service_profiles:
  * возвращает { pass, fail, details }. */
@@ -456,6 +754,87 @@ export function selftest() {
 	t('rkn case folded', rkn_corroborate('RuTracker.ORG', sets) === 'antifilter');
 	t('rkn leaf-first (deep ancestor)', rkn_corroborate('deep.sub.zapret.example.ru', sets) === 'antifilter');
 	t('rkn null sets', rkn_corroborate('rutracker.org', null) == null);
+
+	/* ── сеанс 195 G4: exit_stamp — нормализация владельца контура ── */
+	t('ex junk scalar', exit_stamp('x') == null && exit_stamp(42) == null);
+	t('ex empty object', exit_stamp({}) == null);
+	t('ex class kept', exit_stamp({ class: 'node', label: 'A' }).class === 'node');
+	t('ex junk class dropped', exit_stamp({ class: 'ghost', label: 'A' }).class == null);
+	t('ex cc lowercased', exit_stamp({ country_code: 'NL' }).country === 'nl');
+	t('ex junk cc honest null', exit_stamp({ country_code: 'NotACode!' }) == null);
+	t('ex asn bare number', exit_stamp({ asn: '123' }).asn === 'AS123');
+	t('ex asn as-prefixed case', exit_stamp({ asn: 'as999' }).asn === 'AS999');
+	t('ex asn junk null', exit_stamp({ asn: 'garbage' }) == null);
+	t('ex host strips scheme', exit_stamp({ address_host: 'https://Srv.Example.com' }).address_host === 'srv.example.com');
+	t('ex host drops scheme+port', exit_stamp({ address_host: 'https://Srv.Example.com:8443' }) == null);
+	t('ex host drops credential shape', exit_stamp({ address_host: 'user@srv.example.com' }) == null);
+	t('ex host drops bare port form', exit_stamp({ address_host: 'srv.example.com:8443' }) == null);
+	let ex_big = '';
+	for (let i = 0; i < 300; i++)
+		ex_big += 'x';
+	t('ex cap label', length(exit_stamp({ label: ex_big }).label) === 96);
+	t('ex null fields absent', exit_stamp({ label: 'A' }).sid == null);
+
+	/* ── сеанс 195 G4: profile_apply — diff-слияние контура ── */
+	const r1 = profile_apply(null, 'main-out', { kind: 'node', uci_key: 'abc123', owner: exit_stamp({ class: 'node', sid: 'abc123', label: 'Node A', src: 'gen' }) }, 1000, null);
+	t('pa scaffold + first owner', r1.changed === true && r1.doc.contours['main-out'].kind === 'node' &&
+		r1.doc.engine_version === 1 && r1.doc.contours['main-out'].since_ts === 1000 &&
+		r1.doc.contours['main-out'].owner.label === 'Node A');
+	t('pa first owner writes no history', length(r1.doc.history) === 0);
+	const r2 = profile_apply(r1.doc, 'main-out', { owner: exit_stamp({ class: 'node', sid: 'abc123', label: 'Node A', src: 'gen' }) }, 1010, null);
+	t('pa same owner no write', r2.changed === false && length(r2.doc.history) === 0);
+	const r3 = profile_apply(r1.doc, 'main-out', { owner: exit_stamp({ class: 'node', sid: 'abc123', label: 'Node A', src: 'gen' }), gen_sig: 'e2:manual' }, 1020, null);
+	t('pa gen_sig change only', r3.changed === true && length(r3.doc.history) === 0 && r3.doc.contours['main-out'].gen_sig === 'e2:manual');
+	const r4 = profile_apply(r1.doc, 'main-out', { owner: exit_stamp({ class: 'node', sid: 'zzz9', label: 'Node B', src: 'hotswap' }) }, 1100, null);
+	t('pa owner change → history+since', r4.changed === true && length(r4.doc.history) === 1 &&
+		r4.doc.contours['main-out'].since_ts === 1100 && r4.doc.history[0].from === 'Node A' && r4.doc.history[0].to === 'Node B');
+	const r5a = profile_apply(null, 'c1', { owner: exit_stamp({ class: 'node', sid: 's1', label: 'Old', src: 'gen' }) }, 100, null);
+	const r5b = profile_apply(r5a.doc, 'c1', { owner: exit_stamp({ class: 'node', sid: 's1', label: 'New' }) }, 110, null);
+	t('pa label rename is enrichment, not ownership', r5b.changed === true && length(r5b.doc.history) === 0 &&
+		r5b.doc.contours['c1'].owner.label === 'New' && r5b.doc.contours['c1'].owner.src === 'gen' &&
+		r5b.doc.contours['c1'].since_ts === 100);
+	const r6a = profile_apply(null, 'c2', { owner: exit_stamp({ class: 'node', sid: 's2', label: 'N', src: 'gen' }) }, 100, null);
+	const r6b = profile_apply(r6a.doc, 'c2', { owner: exit_stamp({ class: 'node', sid: 's2', label: 'N', country_code: 'NL', asn: '60404' }) }, 110, null);
+	t('pa enrichment keeps since_ts and adds facts', r6b.changed === true && r6b.doc.contours['c2'].owner.country === 'nl' &&
+		r6b.doc.contours['c2'].owner.asn === 'AS60404' && r6b.doc.contours['c2'].since_ts === 100 &&
+		length(r6b.doc.history) === 0);
+	const r7a = profile_apply(null, 'c3', { owner: exit_stamp({ class: 'node', sid: 'sa', label: 'A' }) }, 1000, null);
+	const r7b = profile_apply(r7a.doc, 'c3', { owner: exit_stamp({ class: 'node', sid: 'sb', label: 'B' }) }, 1030, null);
+	const r7c = profile_apply(r7b.doc, 'c3', { owner: exit_stamp({ class: 'node', sid: 'sa', label: 'A' }) }, 1055, null);
+	t('pa flip-flap dedup 60 s', r7c.changed === true && length(r7c.doc.history) === 0 &&
+		r7c.doc.contours['c3'].owner.label === 'A');
+	const r8a = profile_apply(null, 'c4', { owner: exit_stamp({ class: 'node', sid: 'sa', label: 'A' }) }, 1000, null);
+	const r8b = profile_apply(r8a.doc, 'c4', { owner: exit_stamp({ class: 'node', sid: 'sb', label: 'B' }) }, 1030, null);
+	const r8c = profile_apply(r8b.doc, 'c4', { owner: exit_stamp({ class: 'node', sid: 'sa', label: 'A' }) }, 1120, null);
+	t('pa non-flap beyond 60 s keeps ring', length(r8c.doc.history) === 2);
+	let r10d = null;
+	for (let i = 0; i < 8; i++)
+		r10d = profile_apply(r10d, 'c5', { owner: exit_stamp({ class: 'node', sid: 'n' + (i % 2), label: (i % 2) ? 'B' : 'A' }) }, 1000 + i * 100, 3).doc;
+	t('pa ring cap', length(r10d.history) === 3);
+	t('pa junk patch honest refusal', profile_apply(null, 'c6', 'garbage', 10, null).changed === false &&
+		profile_apply(null, '', { kind: 'node' }, 10, null).changed === false);
+	const r9 = profile_apply(profile_apply(null, 'main-out', { kind: 'urltest' }, 10, null).doc, 'main-udp-out', { kind: 'urltest' }, 20, null);
+	t('pa foreign tag creates branch', r9.changed === true && r9.doc.contours['main-udp-out'].kind === 'urltest' &&
+		r9.doc.contours['main-out'].kind === 'urltest');
+	const r11 = profile_apply(null, 'direct-out', { owner: exit_stamp({ class: 'isp', asn: 'AS12389', org: 'Rostelecom', country_code: 'RU', src: 'geo_diag' }) }, 100, null);
+	t('pa provider mirror from isp owner', r11.changed === true && r11.doc.provider.asn === 'AS12389' &&
+		r11.doc.provider.name === 'Rostelecom' && r11.doc.provider.country === 'ru');
+
+	/* ── сеанс 195 s-волна: DNS-здоровье (ipv4_in_net, nxdomain-вердикт) ── */
+	t('net /23 covers both halves', ipv4_in_net('188.114.97.1', '188.114.96.0/23') === true);
+	t('net /23 outside', ipv4_in_net('188.115.0.1', '188.114.96.0/23') === false);
+	t('net /24 boundary', ipv4_in_net('188.114.96.255', '188.114.96.0/24') === true &&
+		ipv4_in_net('188.114.97.1', '188.114.96.0/24') === false);
+	t('net /32 exact', ipv4_in_net('80.244.44.132', '80.244.44.132/32') === true);
+	t('net /32 mismatch', ipv4_in_net('80.244.44.133', '80.244.44.132/32') === false);
+	t('net /0 open', ipv4_in_net('1.2.3.4', '0.0.0.0/0') === true);
+	t('net junk inputs', ipv4_in_net('junk', '188.114.96.0/23') === false && ipv4_in_net('188.114.96.1', 'junk') === false);
+	t('net plen junk', ipv4_in_net('188.114.96.1', '188.114.96.0/40') === false);
+	t('dns both empty = dead', dns_nxdomain_verdict("** server can't find de4.hotway.linkpc.net: NXDOMAIN\n", '** server can\'t find de4.hotway.linkpc.net: NXDOMAIN\n') === 'dead_nxdomain');
+	t('dns both answers = answered', dns_nxdomain_verdict('Address: 104.21.83.169\n', 'Address: 172.67.179.59\n') === 'answered');
+	t('dns disagreement inconclusive', dns_nxdomain_verdict("** server can't find x: NXDOMAIN\n", 'Address: 1.2.3.4\n') == null);
+	t('dns blocker-style not an answer', dns_nxdomain_verdict('Address: 0.0.0.0\n', '** server can\'t find x: NXDOMAIN\n') === 'dead_nxdomain');
+	t('dns empty inputs dead', dns_nxdomain_verdict('', null) === 'dead_nxdomain');
 
 	return { pass: length(pass), fail: length(fail), details: fail };
 };

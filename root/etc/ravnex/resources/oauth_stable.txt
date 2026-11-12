@@ -32,3 +32,18 @@ hcaptcha.com
 hcaptcha.net
 recaptcha.net
 challenges.cloudflare.com
+# s195 (user report: mobile ChatGPT app "region not supported"): the
+# OpenAI family IS one auth-flow — the Android app pings android.chat.openai.com
+# FIRST (app-health/auth on the plain exit → RU refuses the region), the web app
+# rides auth.openai.com on every re-login. Without this family the learned
+# chatgpt.com covers the site but NOT the login/health chain, so the mobile
+# client breaks while the desktop stays logged in. Same exit as the service,
+# secure DNS, QUIC rejected — consistent with the whole list above.
+auth.openai.com
+android.chat.openai.com
+chatgpt.com
+ab.chatgpt.com
+cdn.platform.openai.com
+platform.openai.com
+oaistatic.com
+oaiusercontent.com

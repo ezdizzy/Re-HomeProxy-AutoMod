@@ -52,6 +52,9 @@
 
 import { access, open, stat, popen, readfile } from 'fs';
 import { write_state as ss_write_state, read_state as ss_read_state, atomic_write } from '/etc/ravnex/scripts/statestore.uc';
+/* G4 (REPORT_s188_g4_design.md): смены владельца контура — в персистентную
+ * память /etc/ravnex/provider_profile.json (learn_core листовой). */
+import { exit_stamp, profile_apply } from '/etc/ravnex/scripts/learn_core.uc';
 import { reg_self as pm_reg_self, reg_hb as pm_reg_hb } from '/etc/ravnex/scripts/pmgr.uc';
 import { emit as ev_emit } from '/etc/ravnex/scripts/eventbus.uc';
 
@@ -63,6 +66,8 @@ const RUN_DIR = '/var/run/ravnex';
 const CONTRACT_FILE = RUN_DIR + '/exit_engine.json';
 const CONTRACT_LEGACY = RUN_DIR + '/hotswap.json';
 const STATE_FILE = RUN_DIR + '/hotswap_state.json';
+/* G4: память владельца контура — ПЕРСИСТЕНТНЫЙ (facts переживают ребут). */
+const PROFILE_FILE = '/etc/ravnex/provider_profile.json';
 const DEAD_FILE = RUN_DIR + '/urltest_dead';
 const LOG_FILE = RUN_DIR + '/hotswap.log';
 const API = 'http://127.0.0.1:9090';
@@ -796,6 +801,36 @@ function write_state(enabled, main_now) {
 		contours: contour_out,
 		updated: now
 	});
+
+	/* ── G4: память владельца контура (REPORT_s188_g4_design.md §5) ──────
+	 * diff против профиля: held сменился (переключение/фейловер/адопт) →
+	 * owner + history-ring в персистентный файл; обычный heartbeat держит
+	 * identity прежним → changed=false → записи нет (overlay не дёргается).
+	 * Владелец = конкретный узел (class node, sid из cfg-<sid>-out, label
+	 * человекочитаемый — урок ч.67). Любая ошибка — молча (память не должна
+	 * ломать движок), следующий тик самозаживится. */
+	try {
+		const prs = ss_read_state(PROFILE_FILE);
+		const pp = { doc: (prs != null) ? prs.data : null, changed: false };
+		for (let tag, ct in contours) {
+			if (ct.held == null || type(ct.held) !== 'string' || !length(ct.held))
+				continue;
+			const psm = match(ct.held, /^cfg-(.+)-out$/);
+			const pr = profile_apply(pp.doc, tag, {
+				owner: exit_stamp({
+					class: 'node',
+					sid: psm ? psm[1] : null,
+					label: tag_label(ct.held),
+					src: 'hotswap'
+				})
+			}, now, 16);
+			pp.doc = pr.doc;
+			pp.changed = pp.changed || pr.changed;
+		}
+		if (pp.changed && pp.doc != null)
+			ss_write_state(PROFILE_FILE, pp.doc);
+	} catch (e) { /* профиль не должен ломать движок */ }
+
 	last_state_write = now;
 }
 

@@ -34,7 +34,10 @@ import {
 	read_arp as hc_read_arp, schedule_active as hc_sched_active,
 	bump_cursor as hc_bump_cursor
 } from '/etc/ravnex/scripts/control.uc';
-import { read_state as ss_read_state, atomic_write as ss_atomic_write } from '/etc/ravnex/scripts/statestore.uc';
+import { read_state as ss_read_state, write_state as ss_write_state, atomic_write as ss_atomic_write } from '/etc/ravnex/scripts/statestore.uc';
+/* G4 (REPORT_s188_g4_design.md): touch измеренных фактов владельца контура в
+ * персистентную память /etc/ravnex/provider_profile.json (learn_core листовой). */
+import { exit_stamp, profile_apply } from '/etc/ravnex/scripts/learn_core.uc';
 import {
 	CATALOG as LS_CATALOG, ATTRIBUTION as LS_ATTRIBUTION,
 	catalog_routable as ls_catalog_routable
@@ -266,6 +269,37 @@ function auto_read_set(file) {
 function auto_write_set(file, s) {
 	let arr = sort(keys(s));
 	atomic_write(file, length(arr) ? join('\n', arr) + '\n' : '');
+}
+
+/* s195 G4-честность: удаление записи из списков (user или heal) обязано
+ * оставить ПРИЧИНУ в state (колонка «Почему» = «снято: …»), а не молча
+ * испарить историю. Вызывается ТОЛЬКО из RPC-дверей/гвардов — движок keeps
+ * свои метки в собственной волне (learn/heal). best-effort: неудача метки
+ * не валит действие (списки уже правду говорят). */
+function mark_deleted_state(entry, removed_now) {
+	try {
+		const sf = RUN_DIR + '/automation_state.json';
+		if (!access(sf))
+			return false;
+		const st = json(readfile(sf));
+		if (st == null || type(st) !== 'object' || type(st[entry]) !== 'object')
+			return false;
+		const dst = st[entry];
+		if (removed_now) {
+			dst.drop_reason = 'deleted by user (removed from the lists)';
+			dst.drop_t = time();
+			dst.status = 'direct';
+		} else if (!dst.drop_reason) {
+			/* Вне списков без причины (сирота-запись) — помечаем той же волной. */
+			dst.drop_reason = 'deleted by user (removed from the lists)';
+			dst.drop_t = time();
+			dst.status = 'direct';
+		}
+		atomic_write(sf, sprintf('%.J', st) + '\n');
+		return true;
+	} catch (e) {
+		return false;
+	}
 }
 
 /* Optional GitHub mirror (uci ravnex.config.github_mirror), used ONLY as a
@@ -1651,6 +1685,77 @@ function hp_exit_lookup(port) {
 		if (e) return e;
 	}
 	return null;
+}
+
+/* ── G4: touch измеренными фактами владельца контура (REPORT_s188_g4_design.md §5)
+ * geo_diag/service_check и так делают сетевой lookup выхода — добавка = одна
+ * идемпотентная запись при ИЗМЕНЕНИИ факта (diff внутри profile_apply; запись
+ * только при изменении — overlay не дёргается). Прямые/движковые контуры
+ * (direct-out/zapret-out/byedpi-out) = владелец ISP (class isp → зеркалится в
+ * provider-алиас). Узловый контур (main-out) — владелец = ЖИВОЙ пик селектора
+ * в момент измерения (clash API now; статику «held» знает движок, но факт
+ * честнее брать с момента измерения); нет живого пика → enrich ТЕКУЩЕГО
+ * владельца профиля; нет и его → skip (честная неполнота: некого атрибутировать).
+ * Ошибки глотаются: RPC-ответ не должен зависеть от памяти. */
+const HP_PROFILE_FILE = HP_DIR + '/provider_profile.json';
+
+function hp_profile_touch(tag, exit_obj, src) {
+	try {
+		if (tag == null || exit_obj == null || type(exit_obj) !== 'object')
+			return;
+		const isp = (tag === 'direct-out' || tag === 'zapret-out' || tag === 'byedpi-out');
+		let owner = null;
+		if (isp) {
+			owner = exit_stamp({
+				class: 'isp',
+				country: exit_obj.country,
+				country_code: exit_obj.country_code,
+				asn: exit_obj.asn,
+				org: exit_obj.org,
+				src: src
+			});
+		} else {
+			/* Владелец узлового контура в момент измерения: живой пик селектора
+			 * (adopt-honest), иначе текущий владелец профиля. */
+			let sid = null, label = null;
+			const clash = clash_api('/proxies/' + tag);
+			const now_tag = (clash && type(clash.now) === 'string') ? clash.now : null;
+			const lm = (now_tag != null) ? match(now_tag, /^cfg-(.+)-out$/) : null;
+			if (lm) {
+				sid = lm[1];
+				const lbl = cursor().get('ravnex', sid, 'label');
+				label = (lbl && length(lbl)) ? '' + lbl : sid;
+			} else {
+				const prs0 = ss_read_state(HP_PROFILE_FILE);
+				const cur0 = (prs0 != null && type(prs0.data) === 'object' &&
+					type(prs0.data.contours) === 'object' &&
+					type(prs0.data.contours[tag]) === 'object' &&
+					type(prs0.data.contours[tag].owner) === 'object') ? prs0.data.contours[tag].owner : null;
+				if (cur0 == null || cur0.class !== 'node')
+					return;                      /* атрибутировать некому — честно молчим */
+				sid = (cur0.sid && length(cur0.sid)) ? '' + cur0.sid : null;
+				label = (cur0.label && length(cur0.label)) ? '' + cur0.label : null;
+				if (sid == null)
+					return;
+			}
+			owner = exit_stamp({
+				class: 'node',
+				sid: sid,
+				label: label,
+				country: exit_obj.country,
+				country_code: exit_obj.country_code,
+				asn: exit_obj.asn,
+				org: exit_obj.org,
+				src: src
+			});
+		}
+		if (owner == null)
+			return;
+		const prs = ss_read_state(HP_PROFILE_FILE);
+		const pr = profile_apply((prs != null) ? prs.data : null, tag, { owner: owner }, time(), 16);
+		if (pr.changed)
+			ss_write_state(HP_PROFILE_FILE, pr.doc);
+	} catch (e) { /* память не должна ломать RPC */ }
 }
 
 /* Inbound listening check against the filtered listen-port list. */
@@ -3795,6 +3900,7 @@ const methods = {
 				switches: 0, last_switch: 0, last_reason: null,
 				interval: null, failback: null,
 				antiflap: false, pinned: null, suppressed: 0,
+				exit_owner: null,
 				hot: [], members: []
 			};
 
@@ -3830,8 +3936,29 @@ const methods = {
 						});
 					}
 				}
-				reply.active_label = label_of(reply.active);
-				reply.primary_label = label_of(reply.primary);
+			reply.active_label = label_of(reply.active);
+			reply.primary_label = label_of(reply.primary);
+		}
+
+			/* G4: факты владельца контура из персистентной памяти
+			 * (REPORT_s188_g4_design.md): кто держит main-out и что про него
+			 * измерено; absent = не измерено (честная неполнота). */
+			const g4prof = ss_read_state(HP_PROFILE_FILE);
+			if (g4prof != null && type(g4prof.data) === 'object' &&
+			    type(g4prof.data.contours) === 'object' &&
+			    type(g4prof.data.contours['main-out']) === 'object') {
+				const g4mc = g4prof.data.contours['main-out'];
+				if (type(g4mc.owner) === 'object') {
+					const g4po = g4mc.owner;
+					reply.exit_owner = {
+						label: (g4po.label && length(g4po.label)) ? '' + g4po.label : null,
+						country: (g4po.country && length(g4po.country)) ? '' + g4po.country : null,
+						asn: (g4po.asn && length(g4po.asn)) ? '' + g4po.asn : null,
+						org: (g4po.org && length(g4po.org)) ? '' + g4po.org : null,
+						since_ts: int(g4mc.since_ts) || 0,
+						ts: int(g4po.ts) || 0
+					};
+				}
 			}
 
 			if (grp && type(grp.all) === 'array' && length(grp.all)) {
@@ -7196,6 +7323,10 @@ const methods = {
 						if (st.heal_count != null) e.heals = int(st.heal_count) || 0;
 						if (st.drop_reason) e.drop_reason = st.drop_reason;
 						if (st.observed_host && st.observed_host !== host) e.observed_host = st.observed_host;
+						/* G4: провенанс вердикта — ЧЕРЕЗ ЧЬЁ владение измерено
+						 * ({main: узел, isp: ASN/CC, ts}); отсутствует = не измерено. */
+						if (type(st.exit_ctx) === 'object')
+							e.exit_ctx = st.exit_ctx;
 						if (type(st.evidence) === 'array' && length(st.evidence)) {
 							const lev = st.evidence[length(st.evidence) - 1];
 							e.ev_last = { t: int(lev.t || 0), d: '' + (lev.d || ''), p: '' + (lev.p || '') };
@@ -7739,6 +7870,11 @@ const methods = {
 			const UNSUPPORTED = { RU: true, BY: true, CN: true, HK: true, MO: true, IR: true, KP: true };
 			const exit = hp_exit_lookup(main_port);
 			const exit_direct = direct_port ? hp_exit_lookup(direct_port) : null;
+			/* G4: те же измерения попадают в память владельца контура. */
+			if (exit != null)
+				hp_profile_touch('main-out', exit, 'service_check');
+			if (exit_direct != null)
+				hp_profile_touch('direct-out', exit_direct, 'service_check');
 
 			const out = {
 				result: true,
@@ -10230,6 +10366,11 @@ const methods = {
 			/* Provider fallback chain lives in the shared helper (Ф2). */
 			const exit = hp_exit_lookup(main_port);
 			const exit_direct = direct_port ? hp_exit_lookup(direct_port) : null;
+			/* G4: те же измерения попадают в память владельца контура. */
+			if (exit != null)
+				hp_profile_touch('main-out', exit, 'geo_diag');
+			if (exit_direct != null)
+				hp_profile_touch('direct-out', exit_direct, 'geo_diag');
 
 			return {
 				mixed_port: mixed,
@@ -11253,10 +11394,16 @@ const methods = {
 			if (rm(HP_DIR + '/resources/auto_proxy_ip.txt')) removed = true;
 			if (rm(HP_DIR + '/resources/manual_proxy.txt')) removed = true;
 			if (rm(HP_DIR + '/resources/manual_direct.txt')) removed = true;
-			if (!removed)
+			if (!removed) {
+				/* G4-честность (s195): запись уже вне списков, но осталась в
+				 * state — доразово помечаем «снято» (повторный вызов легален:
+				 * тот же честный результат). */
+				mark_deleted_state(entry, false);
 				return { result: false, error: 'entry not found' };
+			}
+			const marked = mark_deleted_state(entry, true);
 			const apply = automation_apply_files(false);
-			return { result: true, apply: apply };
+			return { result: true, apply: apply, drop_reason: marked ? 'deleted' : null };
 		}
 	},
 

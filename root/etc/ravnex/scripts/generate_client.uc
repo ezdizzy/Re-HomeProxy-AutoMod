@@ -35,6 +35,9 @@ import {
 /* State Store (Ф1.7, аудит 10): state-файлы генератора — через канонический
  * атомарный механизм + версионированный конверт (schema_version/config_revision). */
 import { write_state as ss_write_state, read_state as ss_read_state } from '/etc/ravnex/scripts/statestore.uc';
+/* G4 (REPORT_s188_g4_design.md): декларации контуров в память владельца —
+ * learn_core листовой (без импортов), циклов нет. I/O профиля — здесь. */
+import { exit_stamp, profile_apply } from '/etc/ravnex/scripts/learn_core.uc';
 
 /* Lists conveyor (seance 178): the source catalog is the ONE authority for
  * rule-set URLs — the generator reads catalog accessors and never hardcodes
@@ -3867,6 +3870,139 @@ if (hotswap_state) {
 } else {
 	system('rm -f ' + hp_shellquote(RUN_DIR + '/exit_engine.json') + ' 2>/dev/null');
 	system('rm -f ' + hp_shellquote(RUN_DIR + '/hotswap.json') + ' 2>/dev/null');
+}
+
+/* ── G4: ДЕКЛАРАЦИИ контуров в профиль владельца (память, не состояние) ──
+ * /etc/ravnex/provider_profile.json — персистентный (переживает ребут).
+ * «Генератор объявляет → движок владеет → профиль помнит»: здесь только
+ * kind/uci_key/gen_sig этой генерации и владельцы узловых контуров (label +
+ * сервер-хост БЕЗ credentials); факты ISP (страна/ASN) допишет luci.ravnex
+ * (hp_profile_touch), смены held — hotswap. Прямой/движковый контур
+ * объявляется владельцем class 'isp' (выход = WAN). Warn-only: ошибка слияния
+ * НЕ ломает генерацию — конфиг уже выписан в candidate. Запись — ТОЛЬКО при
+ * изменении (profile_apply diff), чтобы overlay-flash не дёргался. */
+try {
+	const pp = { doc: null, changed: false };
+	try { pp.doc = ss_read_state('/etc/ravnex/provider_profile.json').data; } catch (e2) { pp.doc = null; }
+	const pp_gen = (spec) => {
+		const r = profile_apply(pp.doc, spec.tag, {
+			kind: spec.kind,
+			uci_key: spec.ukey,
+			gen_sig: spec.sig,
+			owner: (spec.owner != null) ? exit_stamp(spec.owner) : null
+		}, time(), 16);
+		pp.doc = r.doc;
+		pp.changed = pp.changed || r.changed;
+	};
+	let pp_sig = 'e2:synth';
+	if (hotswap_state)
+		pp_sig = sprintf('e2:%s fb%d up%d i%d da%d ro%d rw%d hy%d to%d',
+			hotswap_state.mode, hotswap_state.failback ? 1 : 0, hotswap_state.upgrade ? 1 : 0,
+			hotswap_state.probe.interval, hotswap_state.thresholds.dead_after,
+			hotswap_state.thresholds.recovery_oks, hotswap_state.thresholds.recovery_window,
+			hotswap_state.thresholds.hysteresis_rounds, hotswap_state.thresholds.tolerance);
+	if (hotswap_state) {
+		for (let tag, spec in hotswap_state.contours) {
+			let kind = 'urltest', ukey = null, owner = null;
+			if (spec.group == null && spec.manual_pick != null) {
+				kind = 'node';
+				const km = match(spec.manual_pick, /^cfg-(.+)-out$/);
+				ukey = km ? km[1] : spec.manual_pick;
+				const ncfg = uci.get_all(uciconfig, ukey);
+				const nlabel = hotswap_state.labels[spec.manual_pick];
+				owner = {
+					class: 'node',
+					sid: ukey,
+					label: (nlabel && length(nlabel)) ? '' + nlabel : ukey,
+					address_host: (ncfg && ncfg.address && length('' + ncfg.address)) ? ('' + ncfg.address) : null,
+					src: 'gen'
+				};
+			}
+			pp_gen({ tag: tag, kind: kind, ukey: ukey, sig: pp_sig, owner: owner });
+		}
+	} else if (main_node != null && main_node !== 'nil') {
+		/* Без движка: urltest = пустой пул → main-out = direct; синтетика
+		 * (byedpi/zapret/direct) — владелец WAN; одиночный узел — владелец узел. */
+		let kind = 'node', ukey = null, owner = null;
+		if (main_node === 'urltest') {
+			kind = 'direct';
+			owner = { class: 'isp', src: 'gen' };
+		} else if (main_node === 'byedpi-out') {
+			kind = (byedpi_enabled === '1') ? 'byedpi' : 'direct';
+			owner = { class: 'isp', src: 'gen' };
+		} else if (main_node === 'zapret-out') {
+			kind = (zapret_enabled === '1') ? 'zapret' : 'direct';
+			owner = { class: 'isp', src: 'gen' };
+		} else if (main_node === 'direct-out') {
+			kind = 'direct';
+			owner = { class: 'isp', src: 'gen' };
+		} else {
+			const ncfg = uci.get_all(uciconfig, main_node);
+			if (ncfg == null) {
+				kind = 'direct';
+				owner = { class: 'isp', src: 'gen' };
+			} else {
+				ukey = main_node;
+				const nlabel = uci.get(uciconfig, main_node, 'label');
+				owner = {
+					class: 'node',
+					sid: main_node,
+					label: (nlabel && length(nlabel)) ? '' + nlabel : main_node,
+					address_host: (ncfg.address && length('' + ncfg.address)) ? ('' + ncfg.address) : null,
+					src: 'gen'
+				};
+			}
+		}
+		pp_gen({ tag: 'main-out', kind: kind, ukey: ukey, sig: 'e2:synth', owner: owner });
+	}
+	/* UDP-контур вне движка: dedicated-синтетика/одиночный узел; urltest-ветка
+	 * уже покрыта hotswap_state (или пул слишком мал — отдельного контура нет). */
+	if (main_udp_node != null && main_udp_node !== 'nil' &&
+	    !(hotswap_state && hotswap_state.contours['main-udp-out']) &&
+	    main_udp_node !== 'same' && main_udp_node !== main_node) {
+		let ukind = 'node', uukey = null, uowner = null;
+		if (main_udp_node === 'urltest') {
+			/* Вне движка пул urltest мал: 0 узлов → direct-фолбэк, 1 узел →
+			 * голая kernel-группа под тегом main-udp-out. */
+			const uusable = [];
+			foreach_node((ucfg2) => {
+				if (hp_node_usable(ucfg2['.name']))
+					push(uusable, ucfg2['.name']);
+			});
+			if (length(uusable) === 0) {
+				ukind = 'direct';
+				uowner = { class: 'isp', src: 'gen' };
+			} else
+				ukind = 'urltest';
+		} else if (main_udp_node === 'byedpi-out') {
+			ukind = (byedpi_enabled === '1') ? 'byedpi' : 'direct';
+			uowner = { class: 'isp', src: 'gen' };
+		} else if (main_udp_node === 'zapret-out') {
+			ukind = (zapret_enabled === '1') ? 'zapret' : 'direct';
+			uowner = { class: 'isp', src: 'gen' };
+		} else {
+			const ucfg = uci.get_all(uciconfig, main_udp_node);
+			if (ucfg == null) {
+				ukind = 'direct';
+				uowner = { class: 'isp', src: 'gen' };
+			} else {
+				uukey = main_udp_node;
+				const ulabel = uci.get(uciconfig, main_udp_node, 'label');
+				uowner = {
+					class: 'node',
+					sid: main_udp_node,
+					label: (ulabel && length(ulabel)) ? '' + ulabel : main_udp_node,
+					address_host: (ucfg.address && length('' + ucfg.address)) ? ('' + ucfg.address) : null,
+					src: 'gen'
+				};
+			}
+		}
+		pp_gen({ tag: 'main-udp-out', kind: ukind, ukey: uukey, sig: 'e2:synth', owner: uowner });
+	}
+	if (pp.changed && pp.doc != null)
+		ss_write_state('/etc/ravnex/provider_profile.json', pp.doc);
+} catch (e) {
+	warn('homeproxy: provider profile merge failed: ' + e + '\n');
 }
 
 /* ── Capability bookkeeping + runtime check-heal ──────────────────────────

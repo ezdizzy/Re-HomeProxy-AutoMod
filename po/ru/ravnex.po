@@ -8417,3 +8417,6 @@ msgstr "Удалить ядро"
 
 msgid "Remove the core? THE PROXY STOPS COMPLETELY — no tunnels or DPI routing run until a core is installed again."
 msgstr "Удалить ядро? ПРОКСИ ОСТАНАВЛИВАЕТСЯ ПОЛНОСТЬЮ — без ядра не работают ни туннели, ни DPI-маршрутизация, пока ядро не будет установлено снова."
+
+msgid "measured via: %s"
+msgstr "измерено через: %s"

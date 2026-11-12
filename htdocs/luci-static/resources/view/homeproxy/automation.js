@@ -1181,6 +1181,21 @@ return view.extend({
 			return E('span', { 'class': 'hpbadge hpb-type' }, [ e.status || '—' ]);
 		}
 
+		/* G4 (REPORT_s188_g4_design.md): провенанс вердикта — ЧЕРЕЗ ЧЬЁ владение
+		 * контура он измерен (exit_ctx: узел и/или ISP). Поле отсутствует =
+		 * не измерено — строка не рисуется (честная неполнота, не фейк). */
+		function provText(e) {
+			const c = e.exit_ctx;
+			if (!c || (!c.main && !c.isp))
+				return '';
+			const bits = [];
+			if (c.main)
+				bits.push('«' + c.main + '»');
+			if (c.isp)
+				bits.push('ISP ' + c.isp);
+			return ' · ' + _('measured via: %s').format(bits.join(', '));
+		}
+
 		function reasonText(e) {
 			/* Ф6.6/B5.17: причина снятия записи (единая валидация IP). */
 			if (e.src === 'dropped') {
@@ -1198,7 +1213,7 @@ return view.extend({
 			if (e.status === 'geo')
 				return _('geo-sensitive service — always routed via proxy');
 			if (e.status === 'geo_blocked')
-				return _('the service refuses the current exit node — switch node and re-test');
+				return _('the service refuses the current exit node — switch node and re-test') + provText(e);
 			if (e.status === 'upstream_blocked')
 				return _('blocked by your own DNS blocker (0.0.0.0-style answers) — deliberately not learned into the proxy list');
 			if (e.src !== 'learned')
@@ -1223,11 +1238,13 @@ return view.extend({
 				if (!e.direct && !e.proxy)
 					return (kind || _('blocked (details not recorded)')) +
 						(e.rkn_hint ? ' · ' + _('also present in the local registry lists (%s) — likely a registry block, not necessarily DPI').format(e.rkn_hint) : '') +
-						(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '');
+						(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '') +
+						provText(e);
 				let d = e.direct || '✗', p = e.proxy || '✓';
 				return (kind ? (kind + ' · ') : '') + _('direct %s ✗ / proxy %s ✓').format(d, p) +
 					(e.rkn_hint ? ' · ' + _('also present in the local registry lists (%s) — likely a registry block, not necessarily DPI').format(e.rkn_hint) : '') +
-					(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '');
+					(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '') +
+					provText(e);
 			}
 			if (e.status === 'blocked_no_proxy') return _('blocked both ways');
 			if (e.status === 'unknown') return _('uncertain');

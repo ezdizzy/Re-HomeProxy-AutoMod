@@ -8393,3 +8393,7 @@ msgstr ""
 
 msgid "Remove the core? THE PROXY STOPS COMPLETELY — no tunnels or DPI routing run until a core is installed again."
 msgstr ""
+
+# s195 G4: verdict provenance (automation.js reasonText)
+msgid "measured via: %s"
+msgstr ""

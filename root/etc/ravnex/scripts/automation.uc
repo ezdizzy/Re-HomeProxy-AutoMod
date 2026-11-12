@@ -68,7 +68,8 @@ import { conntrack_flows, is_special_ip } from '/etc/ravnex/scripts/discovery.uc
  * модуля на роутере. */
 import {
 	validate_learned_ip, uuid_collapse, psl_parent, src_diversity,
-	transport_kind, rkn_corroborate, is_never_learn_domain
+	transport_kind, rkn_corroborate, is_never_learn_domain,
+	ipv4_in_net, dns_nxdomain_verdict
 } from '/etc/ravnex/scripts/learn_core.uc';
 /* сеанс 188 (решение юзера): автообучение мёртвых пулов YouTube из живых
  * зомби-соединений clash-api. Чистая логика = yt_steer.uc (selftest-гейт),
@@ -307,6 +308,71 @@ let manual_direct_set = {};
  * their routing is the generator's oauth-domain rule (same exit as the service),
  * and a learned entry here would only fight that rule and split OAuth flows. */
 let oauth_provider_set = {};
+
+/* ── G4: контекст владельца контура (REPORT_s188_g4_design.md) ──
+ * Персистентный профиль /etc/ravnex/provider_profile.json — ПАМЯТЬ того,
+ * ЧЕРЕЗ ЧЬЁ владение измерен вердикт (генератор объявляет, hotswap владеет,
+ * профиль помнит). Ленивый лоадер с mtime-сигнатурой (паттерн
+ * oauth_provider_set). НЕ влияет на решение learn/heal (дисциплина G1:
+ * подсказка, не фактор) — только доказуемость записи: «измерено через …».
+ * Поля отсутствуют, если не измерено — честная неполнота, не фейк-ноль. */
+const PP_PROFILE_FILE = HP_DIR + '/provider_profile.json';
+let exit_ctx_cache = null;
+let exit_ctx_sig = 0;
+let exit_ctx_loaded = false;
+function exit_ctx_snapshot() {
+	let sig = 0;
+	try {
+		const sx = stat(PP_PROFILE_FILE);
+		sig = (sx && sx.size > 0) ? (sx.mtime || 0) : 0;
+	} catch (e) {
+		sig = 0;
+	}
+	if (exit_ctx_loaded && sig === exit_ctx_sig)
+		return exit_ctx_cache;
+	exit_ctx_sig = sig;
+	exit_ctx_loaded = true;
+	exit_ctx_cache = null;
+	try {
+		const raw = readfile(PP_PROFILE_FILE);
+		if (raw != null && length(trim(raw))) {
+			const doc = json(raw);
+			if (doc != null && type(doc) === 'object' && type(doc.data) === 'object' &&
+			    type(doc.data.contours) === 'object') {
+				const cs = doc.data.contours;
+				const mo = (type(cs['main-out']) === 'object' && type(cs['main-out'].owner) === 'object') ? cs['main-out'].owner : null;
+				const di = (type(cs['direct-out']) === 'object' && type(cs['direct-out'].owner) === 'object') ? cs['direct-out'].owner : null;
+				const ctx = {};
+				if (mo != null && mo.label && length(mo.label))
+					ctx.main = '' + mo.label;
+				if (di != null) {
+					if (di.asn && length(di.asn))
+						ctx.isp = '' + di.asn;
+					else if (di.country && length(di.country))
+						ctx.isp = 'cc:' + di.country;
+				}
+				if (length(keys(ctx)))
+					exit_ctx_cache = ctx;
+			}
+		}
+	} catch (e) {
+		exit_ctx_cache = null;
+	}
+	return exit_ctx_cache;
+}
+
+function exit_ctx_stamp(rec) {
+	const ec = exit_ctx_snapshot();
+	if (ec == null)
+		return;
+	const c = {};
+	if (ec.main)
+		c.main = ec.main;
+	if (ec.isp)
+		c.isp = ec.isp;
+	c.ts = time();
+	rec.exit_ctx = c;
+}
 
 /* RU-geo working sets. DECLARATIONS here, functions below (after read_lines):
  * this ucode build has no function hoisting, so helpers must be declared
@@ -830,6 +896,25 @@ function resolve_plain_view(host) {
 	if (null_seen)
 		blocked_hosts[host] = time();
 	return null;
+}
+
+/* s195: СЫРОЙ DNS-вывод для вердикта «домен мёртв» (dns_nxdomain_verdict из
+ * learn_core). 'plain' = RU-вид браузера (mosdns plain listener, если жив —
+ * иначе публичный 8.8.8.8); 'public' = независимый публичный канал. Вывод
+ * парсит ЧИСТАЯ функция — здесь только захват. */
+function dns_raw_probe(host, kind) {
+	if (kind === 'plain') {
+		if (uci && (uci.get('ravnex', 'multidns', 'enabled') || '0') === '1' &&
+		    access('/usr/bin/mosdns') && pm_reg_alive('mosdns')) {
+			const mp = uci.get('ravnex', 'multidns', 'plain_port') || '5453';
+			return capture(`nslookup -type=A -port=${mp} ${shellquote(host)} 127.0.0.1 2>/dev/null`);
+		}
+		return capture(`nslookup -type=A ${shellquote(host)} 8.8.8.8 2>/dev/null`);
+	}
+	let out = capture(`nslookup -type=A ${shellquote(host)} 1.1.1.1 2>/dev/null`);
+	if (!match(out, /Address/))
+		out = capture(`nslookup -type=A ${shellquote(host)} 77.88.8.8 2>/dev/null`);
+	return out;
 }
 
 function probe(host, via_proxy, timeout) {
@@ -3073,6 +3158,35 @@ echo done > "$PRE.done"
 			dns_flush_main();
 			log('applied purge of covered hosts to the core (hot reload)');
 		}
+		/* s195: СИРОТЫ-state — записи, которых больше нет ни в списках, ни в
+		 * пинах и у которых движок ещё не ставил причину (класс «мёртвый
+		 * VPN-хост» из живого репорта: de4.hotway.linkpc.net висел в
+		 * auto_proxy_list при NXDOMAIN у всех резолверов). Честная история:
+		 * колонка «Почему» получает «снято: удалено из списков». Гвард: прун
+		 * разрешён ТОЛЬКО когда наборы непусты — битый/пустой список-эпизод
+		 * не имеет права стереть всю историю разом. */
+		if (length(keys(auto_set)) > 0 || length(keys(auto_ip_set)) > 0 ||
+		    length(keys(manual_proxy_set)) > 0 || length(keys(manual_direct_set)) > 0) {
+			let orphaned = 0;
+			for (let h in keys(state)) {
+				if (substr(h, 0, 2) === '__')
+					continue;
+				const s0 = state[h];
+				if (type(s0) !== 'object' || s0.drop_reason)
+					continue;
+				if (auto_set[h] || auto_ip_set[h] || manual_proxy_set[h] || manual_direct_set[h])
+					continue;
+				s0.drop_reason = 'removed from the lists (engine hygiene)';
+				s0.drop_t = time();
+				s0.status = 'direct';
+				orphaned++;
+				log('hygiene: orphan state entry marked removed: ' + h);
+			}
+			if (orphaned > 0) {
+				save_state(state);
+				log('hygiene: ' + orphaned + ' orphan state entries marked removed');
+			}
+		}
 		/* ч.61: re-derive the auth-family list (learned/pinned auth-like hosts
 		 * → their registered parent) and hot-sync the watched rule-set. */
 		sync_auth_families();
@@ -3485,6 +3599,9 @@ echo done > "$PRE.done"
 		if (d.geo && p && p.geo) {
 			st.status = 'geo_blocked';
 			st.confirms = 0;
+			/* G4: сервис отклонил ТЕКУЩИЙ выход — фиксируем, ЧЕРЕЗ ЧЬЁ владение
+			 * это измерено (UI показывает «измерено через …» у geo_blocked). */
+			exit_ctx_stamp(st);
 			log(`geo-refused on BOTH paths: ${dom} - current exit node is rejected by the service (switch the node)`);
 			return;
 		}
@@ -3572,7 +3689,7 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
- 			if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); push(learn_names, dom); }
+ 			if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); push(learn_names, dom); exit_ctx_stamp(st); }
  			} else if (!auto_set[dom]) {
  				/* s190: resolver/NTP/DoH infrastructure never learns as blocked —
  				 * the probe "failure" is the endpoint not speaking HTTP
@@ -3583,7 +3700,7 @@ echo done > "$PRE.done"
  					st.confirms = 0;
  					return;
  				}
- 				auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')'); push(learn_names, dom);
+ 				auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')'); push(learn_names, dom); exit_ctx_stamp(st);
 					if (is_auth_like(dom))
 						sync_auth_families();
 				}
@@ -3672,7 +3789,7 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
- 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); push(learn_names, dom); }
+ 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); push(learn_names, dom); exit_ctx_stamp(st); }
  				} else if (!auto_set[dom]) {
  					/* s190: same never-learn guard on the confirmed path. */
  					if (is_never_learn_domain(dom)) {
@@ -3681,7 +3798,7 @@ echo done > "$PRE.done"
  						st.confirms = 0;
  						return;
  					}
- 					auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom); push(learn_names, dom);
+ 					auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom); push(learn_names, dom); exit_ctx_stamp(st);
 					/* ч.61: a fresh auth-like learn extends its domain family. */
 					if (is_auth_like(dom))
 						sync_auth_families();
@@ -3698,6 +3815,68 @@ echo done > "$PRE.done"
 			delete st.dconfirms;
 			delete state[dom];
 		}
+	}
+
+	/* ── s195: санитар DNS-фолбэка dnsmasq (живой репорт nearhot) ──
+	 * Цепь DNS: устройства → dnsmasq:53 → [5333 (ядро), 5453 (mosdns)] +
+	 * ФОЛБЭК-нога на провайдерский plain-DNS (90-redirect-dns-fallback.conf).
+	 * Когда ядро/mosdns эпизодом не отвечают, dnsmasq берёт провайдера и
+	 * ЗАКЕШИРУЕТ TSPU-подмену (sinkhole-пара 188.114.96.1/.97.1 класс) —
+	 * телефоны часами открывают заглушку на живой сайт. Санитар: раз в 15 мин
+	 * просит dnsmasq о ВЫУЧЕННОМ блокированном домене; если ответ из сети
+	 * заглушек (данные-файл, кураторский), а ядро в тот же момент отвечает
+	 * честно — это кеш/фолбэк: флеш (HUP главному dnsmasq) + событие. Ядро,
+	 * тоже отвечающее заглушкой, флешу не подлежит (это не его кеш). */
+	const SINK_NETS = RES + '/dns_sinkhole_nets.txt';
+	let last_sink_tick = 0;
+
+	function sinkhole_guard_tick() {
+		/* Маркер — любой выученный ДОМЕН (IP не показывает DNS-подмену). */
+		let marker = null;
+		for (let h in keys(auto_set))
+			if (!match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) { marker = h; break; }
+		if (marker == null)
+			return;
+		if (!access(SINK_NETS))
+			return;
+		let dip = null;
+		const out = capture(`nslookup -type=A ${shellquote(marker)} 127.0.0.1 2>/dev/null`);
+		for (let l in split(out, '\n')) {
+			const m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
+			if (m && m[2] !== '0.0.0.0' && substr(m[2], 0, 4) !== '127.') { dip = m[2]; break; }
+		}
+		if (dip == null)
+			return;                          /* NXDOMAIN/эпизод — не наш кейс */
+		let is_sink = false;
+		for (let n in read_lines(SINK_NETS)) {
+			const nn = trim(n);
+			if (!length(nn))
+				continue;
+			if (ipv4_in_net(dip, nn)) { is_sink = true; break; }
+		}
+		if (!is_sink)
+			return;
+		let core_dip = null;
+		const cout = capture(`nslookup -type=A ${shellquote(marker)} 127.0.0.1:5333 2>/dev/null`);
+		for (let l in split(cout, '\n')) {
+			const m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
+			if (m && m[2] !== '0.0.0.0' && substr(m[2], 0, 4) !== '127.') { core_dip = m[2]; break; }
+		}
+		let core_sink = false;
+		if (core_dip != null)
+			for (let n in read_lines(SINK_NETS)) {
+				const nn = trim(n);
+				if (!length(nn))
+					continue;
+				if (ipv4_in_net(core_dip, nn)) { core_sink = true; break; }
+			}
+		if (core_sink) {
+			log('DNS sinkhole answer seen at CORE (' + marker + ' → ' + dip + ') — not flushing dnsmasq, upstream view differs');
+			return;
+		}
+		log('DNS sinkhole in dnsmasq answer (' + marker + ' → ' + dip + ', core clean) — flushing DNS cache');
+		dns_flush_main();
+		eng_event('dnsmasq', 'Сброс DNS-кеша: sinkhole-подмена в ответе', marker + ' → ' + dip + ' (ядро отвечает чисто)');
 	}
 
 	function pass(run_now) {
@@ -3758,6 +3937,13 @@ echo done > "$PRE.done"
 		eng_pass = { dns: 0, clash: 0, sni: 0, direct: 0, proxy: 0, tcp: 0 };
 
 		load_engine_protect();
+
+		/* s195: санитар dnsmasq — раз в 15 мин и только в живом проходе. */
+		const sn_now = time();
+		if ((sn_now - last_sink_tick) > 900) {
+			last_sink_tick = sn_now;
+			try { sinkhole_guard_tick(); } catch (e2) { /* санитар не валит проход */ }
+		}
 
 /* Candidate intake: normalise case (DNS queries and SNI keep client-side
 		 * case; mixed-case duplicates like "zz.rw"/"ZZ.rw" would be probed twice)
@@ -4390,7 +4576,26 @@ echo done > "$PRE.done"
 					st.evidence = ev;
 					if (!measured) {
 						/* ч.119: нет измерения — не считаем и не сбрасываем серию. */
-						st.next_due = now + 600;
+						/* s195: DNS-фаза различает ЭПИЗОД (RKN глотает DNS минуты)
+						 * и МЁРТВЫЙ домен (NXDOMAIN у plain-листенера И у
+						 * публичного резолвера). Второе — честный unlearn: класс
+						 * «мёртвый VPN-хост» не должен вечными записями
+						 * замусоривать learned-список (живой репорт hotway). */
+						let dead_verdict = null;
+						if (!is_ip_list)
+							dead_verdict = dns_nxdomain_verdict(dns_raw_probe(h, 'plain'), dns_raw_probe(h, 'public'));
+						if (dead_verdict === 'dead_nxdomain') {
+							delete lst[h];
+							st.status = 'direct';
+							st.confirms = 0;
+							st.drop_reason = 'dead domain (NXDOMAIN in plain and public DNS)';
+							st.drop_t = now;
+							st.heal_count = int(st.heal_count || 0) + 1;
+							push(healed, h + ' (dead domain)');
+							log('unlearned DEAD domain (NXDOMAIN in plain AND public DNS): ' + h);
+						} else {
+							st.next_due = now + 600;
+						}
 					} else if (d_ok) {
 						st.heal = int(st.heal || 0) + 1;
 						if (st.heal >= HEAL_CONFIRM) {
@@ -4413,6 +4618,10 @@ echo done > "$PRE.done"
 							st.next_due = now + HEAL_SERIES_GAP;
 						}
 					} else {
+						/* Блок ПЕРЕ-ПОДТВЕРЖДЁН текущими контурами (heal не прошёл):
+						 * контекст владельца обновляется — это свежее измерение
+						 * того же вердикта (честная доказуемость, не история). */
+						exit_ctx_stamp(st);
 						st.heal = 0;
 						st.next_due = now + REEVAL_AGE;
 					}

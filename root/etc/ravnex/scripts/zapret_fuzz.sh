@@ -1506,14 +1506,30 @@ const stun_items = (function () {
 		}
 	return n;
 })();
-const scanj = parse("/var/run/ravnex/wizard_scan_result.json");
+/* G4 (REPORT_s188_g4_design.md §5): provider-note дискорда — живой читатель
+ * персистентного профиля владельца контура. Прежние ключи isp_name/isp/
+ * provider/asn_name в wizard_scan_result.json НЕ ПИШУТСЯ никем — читатель
+ * был мёртвым, нота всегда null. Факты = direct-out owner (class isp) или
+ * provider-алиас профиля. Нет фактов → null (честно, не фейк). */
+const ppfj = parse("/etc/ravnex/provider_profile.json");
 let scan_note = null;
-if (scanj != null && type(scanj) === "object") {
-	for (let sk in ["isp_name", "isp", "provider", "asn_name"]) {
-		const sv = scanj[sk];
-		if (sv != null && type(sv) === "string" && length(sv)) {
-			scan_note = "провайдер (скан): " + sv;
-			break;
+if (ppfj != null && type(ppfj) === "object" && type(ppfj.data) === "object") {
+	const pn_src = (type(ppfj.data.contours) === "object" &&
+	                type(ppfj.data.contours["direct-out"]) === "object" &&
+	                type(ppfj.data.contours["direct-out"].owner) === "object")
+		? ppfj.data.contours["direct-out"].owner
+		: ((type(ppfj.data.provider) === "object") ? ppfj.data.provider : null);
+	if (pn_src != null) {
+		const pn_nm = (pn_src.org != null && pn_src.org !== "") ? pn_src.org
+			: ((pn_src.label != null && pn_src.label !== "") ? pn_src.label : null);
+		const pn_asn = (pn_src.asn != null && pn_src.asn !== "") ? pn_src.asn : null;
+		if (pn_nm != null || pn_asn != null) {
+			const pn_parts = [];
+			if (pn_asn != null)
+				push(pn_parts, pn_asn);
+			if (pn_nm != null)
+				push(pn_parts, pn_nm);
+			scan_note = "провайдер: " + join(" ", pn_parts);
 		}
 	}
 }
