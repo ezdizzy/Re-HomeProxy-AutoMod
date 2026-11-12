@@ -184,11 +184,11 @@ return view.extend({
 		 * Service rules page (the honest expert group, with the expert
 		 * toggle living next to the editors it gates). modeNow stays for
 		 * the RU-protection card below. */
-		const modeNow = uci.get(data[0], 'config', 'routing_mode') || 'proxy_banned_ru';
+		const modeNow = uci.get('ravnex', 'config', 'routing_mode') || 'proxy_banned_ru';
 
 		/* Cache all configured proxy nodes, they will be called multiple times */
 		let proxy_nodes = {};
-		uci.sections(data[0], 'node', (res) => {
+		uci.sections('ravnex', 'node', (res) => {
 			let nodeaddr = ((res.type === 'direct') ? res.override_address : res.address) || '',
 			    nodeport = ((res.type === 'direct') ? res.override_port : res.port) || '';
 
@@ -258,7 +258,7 @@ return view.extend({
 				               trusttunnel: 'TrustTunnel' };
 				const selName = sel === 'hiddify' ? 'hiddify-core' : 'sing-box-extended';
 				let skipped = {};
-				uci.sections(data[0], 'node', (res) => {
+				uci.sections('ravnex', 'node', (res) => {
 					const req = REQ[res.type];
 					if (req && !tags[req])
 						skipped[res.type] = (skipped[res.type] || 0) + 1;
@@ -392,9 +392,9 @@ return view.extend({
 		o.value('urltest', _('URLTest'));
 		for (let i in proxy_nodes)
 			o.value(i, proxy_nodes[i]);
-		if (uci.get(data[0], 'config', 'byedpi_enabled') === '1')
+		if (uci.get('ravnex', 'config', 'byedpi_enabled') === '1')
 			o.value('byedpi-out', _('ByeDPI'));
-		if (uci.get(data[0], 'config', 'zapret_enabled') === '1')
+		if (uci.get('ravnex', 'config', 'zapret_enabled') === '1')
 			o.value('zapret-out', _('Zapret'));
 		o.value('direct-out', _('Direct (no proxy)'));
 		o.default = 'nil';

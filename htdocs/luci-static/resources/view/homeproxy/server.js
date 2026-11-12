@@ -422,8 +422,8 @@ return view.extend({
 		srvGrid.rowcolors = true;
 		srvGrid.sortable = true;
 		srvGrid.nodescriptions = true;
-		srvGrid.modaltitle = L.bind(hp.loadModalTitle, this, _('Server'), _('Add a server'), data[0]);
-		srvGrid.sectiontitle = L.bind(hp.loadDefaultLabel, this, data[0]);
+		srvGrid.modaltitle = L.bind(hp.loadModalTitle, this, _('Server'), _('Add a server'), 'ravnex');
+		srvGrid.sectiontitle = L.bind(hp.loadDefaultLabel, this, 'ravnex');
 		srvGrid.renderSectionAdd = L.bind(hp.renderSectionAdd, this, srvGrid);
 
 		srvGrid.render = function() {
@@ -437,8 +437,8 @@ return view.extend({
 		};
 
 		o = srvGrid.option(form.Value, 'label', _('Label'));
-		o.load = L.bind(hp.loadDefaultLabel, this, data[0]);
-		o.validate = L.bind(hp.validateUniqueValue, this, data[0], 'server', 'label');
+		o.load = L.bind(hp.loadDefaultLabel, this, 'ravnex');
+		o.validate = L.bind(hp.validateUniqueValue, this, 'ravnex', 'server', 'label');
 		o.rmempty = false;
 		o.modalonly = true;
 
@@ -479,7 +479,7 @@ return view.extend({
 		o = srvGrid.option(form.Value, 'port', _('Listen port'),
 			_('The port must be unique.'));
 		o.datatype = 'port';
-		o.validate = L.bind(hp.validateUniqueValue, this, data[0], 'server', 'port');
+		o.validate = L.bind(hp.validateUniqueValue, this, 'ravnex', 'server', 'port');
 
 		o = srvGrid.option(form.Value, 'username', _('Username'));
 		o.depends('type', 'http');

@@ -965,7 +965,7 @@ function buildZapretCard(zapret, isMainNode) {
 	const labBtn = mkBtn(_('Strategy Lab'), 'ghost', {
 		style: 'margin-left:4px'
 	});
-	labBtn.onclick = () => { location.href = L.url('admin/services/ravnex/bypass'); };
+	labBtn.onclick = () => { hp.embedGo('bypass'); };
 
 	return E('div', { 'class': 'hpui-panel' }, [
 		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [

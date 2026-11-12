@@ -40,6 +40,13 @@ return view.extend({
 	},
 
 	render() {
+		/* Singleton shell (live acceptance, с.193): the phantom SECOND
+		 * dispatch pass must get the SAME wired root back — a second
+		 * build left wipe windows («карточка по центру + пустая
+		 * страница») and raced the keeper. */
+		if (hp.EMBED_LIVE && hp.EMBED_LIVE.isConnected)
+			return hp.EMBED_LIVE;
+
 		hp.embedBoot();
 
 		const self = this;
@@ -185,6 +192,8 @@ return view.extend({
 		 * et al.): remount the given section instead of reloading the
 		 * whole page. */
 		hp.__embedRemount = function(n) { self.mount(n, true); };
+		hp.EMBED_LIVE = root;
+		hp.embedAnchorWatch();
 
 		/* Anchor keeper: any stray second dispatch pass may swap #view
 		 * content (observed live, wave A acceptance). Registered with the

@@ -933,7 +933,19 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 		if (this.EMBED_SKEL)
 			return;
 		const vp = document.getElementById('view');
-		if (!vp || vp.querySelector('.hp-embed-root'))
+		if (!vp) {
+			/* Race: luci.js may create #view a tick AFTER this module
+			 * evaluates — the «окно раньше меню» randomness. Retry briefly
+			 * instead of silently skipping the pre-paint. */
+			if (this.__skelTries == null)
+				this.__skelTries = 0;
+			if (this.__skelTries++ < 25) {
+				const self = this;
+				window.setTimeout(function() { try { self.embedSkeleton(); } catch (e) {} }, 80);
+			}
+			return;
+		}
+		if (vp.querySelector('.hp-embed-root'))
 			return;
 		const ctx = this.buildEmbedCard();
 		ctx.holder.replaceChildren(this.embedLoading());
@@ -941,6 +953,28 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 			vp.removeChild(vp.firstChild);
 		vp.appendChild(ctx.root);
 		this.EMBED_SKEL = ctx;
+	},
+
+	/* The live shell singleton: a stray second dispatch pass must get the
+	 * SAME wired root back, not build a competing one (the wipe windows
+	 * behind «карточка в центре + пустая страница», live с.193). */
+	embedAnchorWatch() {
+		if (this.__anchorObs)
+			return;
+		const self = this;
+		try {
+			this.__anchorObs = new MutationObserver(function() {
+				try {
+					const vp = document.getElementById('view');
+					if (vp && self.EMBED_LIVE && self.EMBED_LIVE.isConnected === false &&
+					    !vp.querySelector('.hp-embed-root') &&
+					    document.body.classList.contains('hp-embed'))
+						vp.replaceChildren(self.EMBED_LIVE);
+				} catch (e) {}
+			});
+			const vp = document.getElementById('view');
+			this.__anchorObs.observe(vp || document.body, { childList: true, subtree: false });
+		} catch (e) {}
 	},
 
 	embedLoading() {
@@ -1028,8 +1062,27 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 				root.style.setProperty('--hp-panel-bg-2', css(shade(panel, -0.03)));
 			}
 			const fgM = window.getComputedStyle(document.body).color.match(/rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/);
-			if (fgM)
-				root.style.setProperty('--hp-fg', 'rgb(' + fgM[1] + ',' + fgM[2] + ',' + fgM[3] + ')');
+			if (fgM) {
+				const fg = [ Number(fgM[1]), Number(fgM[2]), Number(fgM[3]) ];
+				const rgba = (c, a) => 'rgba(' + c.join(',') + ',' + a + ')';
+				root.style.setProperty('--hp-fg', css(fg));
+				root.style.setProperty('--hp-fg-dim', rgba(fg, .64));
+				root.style.setProperty('--hp-fg-faint', rgba(fg, .45));
+				root.style.setProperty('--hp-hover', rgba(fg, .05));
+				root.style.setProperty('--hp-hover-2', rgba(fg, .09));
+				root.style.setProperty('--hp-input-line', rgba(fg, .25));
+				root.style.setProperty('--hp-grey', rgba(fg, .62));
+				root.style.setProperty('--hp-table-head-fg', css(fg));
+			}
+			/* Inputs and the table head follow the panel, not the page: the
+			 * «выпадающие списки серые тут, синие там» mismatch dies when
+			 * every surface is keyed off the SAME sampled base. */
+			const panelBase = panel || (base ? shade(base, 0.06) : null);
+			if (panelBase) {
+				root.style.setProperty('--hp-input-bg', css(shade(panelBase, 0.03)));
+				root.style.setProperty('--hp-table-head', css(shade(panelBase, -0.10)));
+				root.style.setProperty('--hp-shell-bg-3', css(shade(panelBase, -0.12)));
+			}
 		} catch (e) {}
 	},
 
@@ -1049,6 +1102,21 @@ body.hp-shell :focus { outline: none; box-shadow: var(--hp-focus-ring) !importan
 			try { this.__embedRemount(name); return; } catch (e) {}
 		}
 		window.location.reload();
+	},
+
+	/* Programmatic navigation door for buttons that used location.href
+	 * (hero «Проверить сейчас», «Открыть лабораторию»): in embed mode this
+	 * mounts in place and keeps the URL bookable; a full load otherwise. */
+	embedGo(name, hash) {
+		const target = L.url('admin/services/ravnex', name) + (hash ? '#' + hash : '');
+		if (this.EMBED && typeof this.__embedRemount === 'function') {
+			try {
+				try { window.history.replaceState(null, '', target); } catch (e) {}
+				this.__embedRemount(name);
+				return;
+			} catch (e) {}
+		}
+		window.location = target;
 	},
 
 	/* Long section ops (compose check ~60-80 s) outlive the 20 s XHR window;

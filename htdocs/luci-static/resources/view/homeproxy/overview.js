@@ -349,8 +349,10 @@ return view.extend({
 		]);
 
 		heroBtn.addEventListener('click', function() {
-			/* D32: Check & repair lives on the Health center (repair tab). */
-			window.location = L.url('admin/services/ravnex/health') + '#repair';
+			/* D32: Check & repair lives on the Health center (repair tab).
+			 * In embed mode this mounts in place (hp.embedGo); the hash
+			 * keeps the deep-link. */
+			hp.embedGo('health', 'repair');
 		});
 
 		/* D32 deep links: L.url() TRUNCATES at '#' (path() joins parts and the

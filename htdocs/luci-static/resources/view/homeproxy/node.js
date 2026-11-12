@@ -208,13 +208,13 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	s.rowcolors = true;
 	s.sortable = true;
 	s.nodescriptions = true;
-	s.modaltitle = L.bind(hp.loadModalTitle, this, _('Node'), _('Add a node'), data[0]);
-	s.sectiontitle = L.bind(hp.loadDefaultLabel, this, data[0]);
+	s.modaltitle = L.bind(hp.loadModalTitle, this, _('Node'), _('Add a node'), 'ravnex');
+	s.sectiontitle = L.bind(hp.loadDefaultLabel, this, 'ravnex');
 
 
 	o = s.option(form.Value, 'label', _('Label'));
-	o.load = L.bind(hp.loadDefaultLabel, this, data[0]);
-	o.validate = L.bind(hp.validateUniqueValue, this, data[0], 'node', 'label');
+	o.load = L.bind(hp.loadDefaultLabel, this, 'ravnex');
+	o.validate = L.bind(hp.validateUniqueValue, this, 'ravnex', 'node', 'label');
 	o.modalonly = true;
 
 	/* Type list: NO feature gating (D34c multi-core) — node DATA must survive
@@ -272,10 +272,10 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	 * ranges live in hysteria_hopping_port, so print them instead of the bare
 	 * (derived or zero) primary port. The edit modal is unaffected. */
 	o.textvalue = function(section_id) {
-		const ntype = uci.get(data[0], section_id, 'type'),
-		      p = uci.get(data[0], section_id, 'port'),
-		      hop = uci.get(data[0], section_id, 'hysteria_hopping_port'),
-		      mieru_range = uci.get(data[0], section_id, 'mieru_port_range');
+		const ntype = uci.get('ravnex', section_id, 'type'),
+		      p = uci.get('ravnex', section_id, 'port'),
+		      hop = uci.get('ravnex', section_id, 'hysteria_hopping_port'),
+		      mieru_range = uci.get('ravnex', section_id, 'mieru_port_range');
 		if (ntype === 'mieru' && mieru_range != null && mieru_range !== '')
 			return '' + (Array.isArray(mieru_range) ? mieru_range.join(', ') : mieru_range);
 		if ((ntype === 'hysteria2' || ntype === 'hysteria') && hop != null &&
@@ -1460,14 +1460,14 @@ return view.extend({
 			document.head.appendChild(E('style', { id: 'hp-node-style' }, [ NODE_CSS ]));
 
 		const features = data[1];
-		const main_node = uci.get(data[0], 'config', 'main_node');
-		const routing_mode = uci.get(data[0], 'config', 'routing_mode');
+		const main_node = uci.get('ravnex', 'config', 'main_node');
+		const routing_mode = uci.get('ravnex', 'config', 'routing_mode');
 		let subStatus = data[2] || { last: null, groups: {}, node_total: 0 };
 
 		/* Subscription info from the UCI list — hash with the SAME FNV-1a the
 		 * subscription daemon uses (the old MD5 here made group matching break). */
 		function subInfoList() {
-			const v = uci.get(data[0], 'subscription', 'subscription_url');
+			const v = uci.get('ravnex', 'subscription', 'subscription_url');
 			const list = (v == null) ? [] : (Array.isArray(v) ? v : [ v ]);
 			return list.map(function(suburl) {
 				let url = null;
@@ -1512,7 +1512,7 @@ return view.extend({
 			}));
 
 		function updateSummary() {
-			const sections = uci.sections(data[0], 'node');
+			const sections = uci.sections('ravnex', 'node');
 			let mine = 0, sub = 0, active = 0;
 			sections.forEach(function(s) {
 				if (s.grouphash)
@@ -1837,7 +1837,7 @@ return view.extend({
 						lines.push(E('div', { 'class': 'right', 'style': 'margin-top:8px' }, [
 							E('button', { 'class': 'hpui-btn hpui-btn-primary', 'click': function() {
 								const existing = new Set(
-									uci.sections(data[0], 'node').map(function(s) { return s.label; })
+									uci.sections('ravnex', 'node').map(function(s) { return s.label; })
 										.filter(Boolean));
 								r.nodes.forEach(function(cfg) {
 									let label = cfg.label;
@@ -1849,10 +1849,10 @@ return view.extend({
 									}
 									existing.add(label);
 									cfg.label = label;
-									const sid = uci.add(data[0], 'node');
+									const sid = uci.add('ravnex', 'node');
 									Object.keys(cfg).forEach(function(k) {
 										if (cfg[k] != null)
-											uci.set(data[0], sid, k,
+											uci.set('ravnex', sid, k,
 												Array.isArray(cfg[k]) ? cfg[k] : String(cfg[k]));
 									});
 								});
@@ -1923,7 +1923,7 @@ return view.extend({
 							}
 
 							const existing = new Set(
-								uci.sections(data[0], 'node').map(function(s) { return s.label; })
+								uci.sections('ravnex', 'node').map(function(s) { return s.label; })
 									.filter(Boolean));
 							if (existing.has(config.label)) {
 								const base = config.label;
@@ -1932,10 +1932,10 @@ return view.extend({
 								config.label = base + '-' + n;
 							}
 
-							const sid = uci.add(data[0], 'node');
+							const sid = uci.add('ravnex', 'node');
 							for (const k in config)
 								if (config[k] != null)
-									uci.set(data[0], sid, k,
+									uci.set('ravnex', sid, k,
 										Array.isArray(config[k]) ? config[k] : String(config[k]));
 
 							ui.hideModal();
@@ -2024,7 +2024,7 @@ return view.extend({
 		renderNodeSettings(ss, data, features, main_node, routing_mode);
 		ss.addremove = true;
 		ss.filter = function(section_id) {
-			return !uci.get(data[0], section_id, 'grouphash');
+			return !uci.get('ravnex', section_id, 'grouphash');
 		}
 		ss.renderSectionAdd = function(/* ... */) {
 			let el = form.GridSection.prototype.renderSectionAdd.apply(this, arguments),
@@ -2069,7 +2069,7 @@ return view.extend({
 			ss.description = info.host;
 			renderNodeSettings(ss, data, features, main_node, routing_mode);
 			ss.filter = function(section_id) {
-				return (uci.get(data[0], section_id, 'grouphash') === info.hash);
+				return (uci.get('ravnex', section_id, 'grouphash') === info.hash);
 			}
 		});
 
