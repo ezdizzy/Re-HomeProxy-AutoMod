@@ -1079,7 +1079,7 @@ msgid "Resources management"
 msgstr "Управление ресурсами"
 
 msgid "Application"
-msgstr "Приложение"
+msgstr "Применение"
 
 msgid "Core management"
 msgstr "Управление ядром"
@@ -5102,7 +5102,7 @@ msgid "own profile"
 msgstr "свой профиль"
 
 msgid "general profile (catch-all)"
-msgstr "общий профиль (catch-all)"
+msgstr "общий профиль (всё остальное)"
 
 msgid "Zapret: no general profile — this traffic passes WITHOUT desync."
 msgstr "Zapret: общего профиля нет — этот трафик идёт БЕЗ дезинка."
@@ -8189,3 +8189,96 @@ msgstr "Забыть выученные мёртвые пулы YouTube? Кон�
 
 msgid "Learned pools forgotten — the config is regenerated."
 msgstr "Выученные пулы забыты — конфиг перегенерирован."
+
+msgid "Profiles: source of truth"
+msgstr "Профили: источник истины"
+
+msgid "Everything else"
+msgstr "Всё остальное"
+
+msgid "Measure, then decide: auto-pick or pick from the ranking table, fuzz the catalog against your provider, import and share catalogs. Apply a winner for one resource right from the table."
+msgstr "Сначала измерить, потом решать: автоподбор или выбор из таблицы ранжирования, фаззинг каталога на вашем провайдере, импорт и обмен каталогами. Победителя можно применить к одному ресурсу прямо из таблицы."
+
+msgid "Everything applied by hand: the global Zapret strategy (or a scoped one for a single resource), the ByeDPI card with its presets and flags, and the per-resource composition of both engines. To route a SERVICE through an engine, use the Service rules page."
+msgstr "Всё, что накладывается руками: глобальная стратегия Zapret (или сценарная для одного ресурса), карточка ByeDPI с пресетами и флагами и межресурсная композиция обоих движков. Направить СЕРВИС через движок — на странице «Правила для сервисов»."
+
+msgid "How the blocked sites open: what works right now (the Serving map), the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it."
+msgstr "Как открываются заблокированные сайты: что работает прямо сейчас (карта обслуживания), Лаборатория стратегий и ручное применение. Сверху вниз — проверить состояние, подобрать или проверить стратегию, применить."
+
+msgid "own profile — no rule (the profile serves the domains it carries)"
+msgstr "свой профиль — правила нет (профиль обслуживает свои домены)"
+
+msgid "For the whole engine"
+msgstr "Для всего движка"
+
+msgid "For one resource"
+msgstr "Для одного ресурса"
+
+msgid "Resource name (e.g. Steam)"
+msgstr "Имя ресурса (например, Steam)"
+
+msgid "«For the whole engine» serves EVERY flow routed to Zapret and replaces the profile set with one general profile (a confirmation appears when scoped profiles exist). «For one resource» adds/replaces a scoped profile for that resource and keeps everything else — the applied line is rebuilt from the profiles automatically. Applying also enables Zapret and restarts the engine; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest)."
+msgstr "«Для всего движка» обслуживает ВЕСЬ трафик, идущий в Zapret, и заменяет набор профилей одним общим профилем (если есть сценарные профили — появится подтверждение). «Для одного ресурса» добавляет/заменяет сценарный профиль этого ресурса и сохраняет остальные — применённая строка пересобирается из профилей автоматически. Применение включает Zapret и перезапускает движок; проверка гоняет стратегию на изолированной очереди по 4 тест-сайтам (YouTube, Telegram, Discord, Speedtest)."
+
+msgid "A custom resource needs a name and at least one domain."
+msgstr "Своему ресурсу нужны имя и хотя бы один домен."
+
+msgid "Apply for one resource"
+msgstr "Применить к одному ресурсу"
+
+msgid "Apply this strategy to %s? Other resources keep their profiles, the applied line is rebuilt from them automatically (a short engine restart)."
+msgstr "Применить эту стратегию к %s? Другие ресурсы сохранят свои профили, применённая строка пересоберётся из них автоматически (короткий перезапуск движка)."
+
+msgid "Applying the scoped profile — the engine restarts…"
+msgstr "Применяю сценарный профиль — движок перезапускается…"
+
+msgid "Scoped profile applied and verified — the line was rebuilt from the profiles."
+msgstr "Сценарный профиль применён и проверен — строка пересобрана из профилей."
+
+msgid "Apply globally? This REPLACES the whole profile set: %d scoped profile(s) for other resources will be lost (their resources fall back to this one strategy). Restore stays available."
+msgstr "Применить глобально? Это ЗАМЕНИТ весь набор профилей: %d сценарных профилей других ресурсов будет потеряно (их ресурсы перейдут на эту одну стратегию). Restore остаётся доступным."
+
+msgid "Apply globally? The strategy serves EVERY flow routed to Zapret (the applied line becomes one general profile)."
+msgstr "Применить глобально? Стратегия обслуживает ВЕСЬ трафик, идущий в Zapret (применённая строка станет одним общим профилем)."
+
+msgid "Strategy applied and verified — Zapret serves it now. Run \"Test strategy\" to confirm it works on your ISP, then create a service rule on the Service rules page."
+msgstr "Стратегия применена и проверена — теперь её обслуживает Zapret. Нажмите «Проверить стратегию», чтобы убедиться, что она работает у вашего провайдера, затем создайте правило сервиса на странице «Правила для сервисов»."
+
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured on the Application tab."
+msgstr "В один клик: фаззер ранжирует корпус (свежий переиспользуется), лучшая стратегия ресурса применяется как сценарный профиль со снапшотом сервера, затем ресурс проверяется по настроенному пути (страница, CDN, НАСТОЯЩИЙ видеопоток в КБ/с). Только Zapret — стратегии ByeDPI настраиваются на вкладке «Применение»."
+
+msgid "in sync"
+msgstr "в синхроне"
+
+msgid "The applied line diverged from the profiles (an external/manual edit). Rebuilding from profiles restores the source of truth."
+msgstr "Применённая строка разошлась с профилями (внешняя/ручная правка). Пересборка из профилей вернёт источник истины."
+
+msgid "Rebuild the line from profiles"
+msgstr "Пересобрать строку из профилей"
+
+msgid "Rebuilding — the service restarts…"
+msgstr "Пересобираю — служба перезапускается…"
+
+msgid "Rebuild failed: "
+msgstr "Пересборка не удалась: "
+
+msgid "The line was rebuilt from the profiles and verified."
+msgstr "Строка пересобрана из профилей и проверена."
+
+msgid "An applied line exists, but no profiles yet — the line can become the first («everything else») profile without losing service."
+msgstr "Применённая строка есть, профилей ещё нет — строка может стать первым профилем «всё остальное» без потери обслуживания."
+
+msgid "Make the current line the first profile"
+msgstr "Сделать текущую строку первым профилем"
+
+msgid "Profile created from the current line."
+msgstr "Профиль создан из текущей строки."
+
+msgid "Nothing to seed."
+msgstr "Сеять нечего."
+
+msgid "No profiles yet — the strategy applies globally (everything routed to the engine)."
+msgstr "Профилей ещё нет — стратегия применяется глобально (весь трафик, идущий в движок)."
+
+msgid "Dead-pool steering"
+msgstr "Стиринг мёртвых пулов"

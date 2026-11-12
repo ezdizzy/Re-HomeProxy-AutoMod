@@ -93,6 +93,11 @@ import { classify_path } from '/etc/ravnex/scripts/diag_core.uc';
  * лента «Журналы» на странице автоматизации). Best-effort: сломанная шина
  * никогда не роняет демона (тот же контракт, что у log()). */
 import { emit as ev_emit } from '/etc/ravnex/scripts/eventbus.uc';
+/* Сеанс 191: канонический контракт «стратегия → ресурс» (UCI-профили —
+ * источник истины; «чужие» профили НЕуправляемых ресурсов сохраняются). */
+import {
+	profiles_read as zp_profiles_read
+} from '/etc/ravnex/scripts/zapret_profile.uc';
 
 const RUN_DIR = '/var/run/ravnex';
 const STATE = RUN_DIR + '/zapret_autopilot.json';
@@ -981,8 +986,16 @@ function compose_build(profiles) {
 	return { zapret: '' + (pr.zapret || ''), byedpi: '' + (pr.byedpi || ''), notes: pr.notes || [] };
 }
 
-function compose_apply(zapret) {
-	const payload = sprintf('{"zapret":%.J,"byedpi":""}', zapret);
+function compose_apply(zapret, profiles) {
+	/* Сеанс 191: profiles идут в RPC — compose_apply сверяет пересборку и
+	 * пишет зеркало UCI-профилей одним коммитом (стирание чужих
+	 * scoped-профилей фикс-контрактом, не фолбэком). */
+	let payload;
+	if (profiles != null) {
+		const pj = sprintf('%.J', profiles);
+		payload = sprintf('{"zapret":%.J,"byedpi":"","profiles":%.J}', zapret, pj);
+	} else
+		payload = sprintf('{"zapret":%.J,"byedpi":""}', zapret);
 	const out = popen_read(`ubus call luci.ravnex wizard_compose_apply ${sq(payload)}`);
 	let pr = null;
 	try { pr = json(out || ''); } catch (e) { pr = null; }
@@ -1201,6 +1214,35 @@ function resume() {
 function apply_target(cfg, target) {
 	const was_ok = preapply_probe(cfg);
 	const profiles = [];
+	/* Сеанс 191: «чужие» scoped-профили НЕуправляемых ресурсов (telegram,
+	 * custom, ресурсы вне этого цикла) сохраняются из ЖИВОГО набора
+	 * UCI-профилей — rebuild больше не теряет их при выключенном
+	 * автопилоте или смене списка ресурсов. */
+	const prs = zp_profiles_read(cursor());
+	const preserved = {};
+	if (prs != null) {
+		for (let i = 0; i < length(prs); i++) {
+			const p = prs[i];
+			if (!p.enabled || p.resource === 'general')
+				continue;
+			/* RES_KEYS — МАССИВ (for..in = элементы): индексация строкой
+			 * всегда null — членство только линейным поиском (урок 417). */
+			let managed = false;
+			for (let mi = 0; mi < length(RES_KEYS); mi++)
+				if (RES_KEYS[mi] === p.resource && has_res(cfg.resources, p.resource)) {
+					managed = true;
+					break;
+				}
+			if (managed)
+				continue;   /* управляется этим циклом — перекроется победителем */
+			preserved[p.resource + '|' + p.label] = {
+				engine: p.engine, resource: p.resource, label: p.label,
+				domains: p.domains, strategy: p.strategy
+			};
+		}
+	}
+	for (let pk in preserved)
+		push(profiles, preserved[pk]);
 	for (let res in RES_KEYS) {
 		if (!has_res(cfg.resources, res) || res === 'general')
 			continue;
@@ -1260,7 +1302,7 @@ function apply_target(cfg, target) {
 	log('применяю: ' + join(' · ', target_names));
 	if (length(built.notes))
 		log('заметки конструктора: ' + join(' | ', built.notes));
-	compose_apply(built.zapret);
+	compose_apply(built.zapret, profiles);
 	/* If the restart kill is slow, finish the verify inline; otherwise the
 	 * respawned daemon resumes from the pending journal. */
 	resume();

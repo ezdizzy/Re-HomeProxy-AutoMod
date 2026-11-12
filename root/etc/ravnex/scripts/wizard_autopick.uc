@@ -78,6 +78,11 @@ import { cursor } from 'uci';
 import {
 	find_daemons as pm_find, entry_alive as pm_entry_alive, reg_get as pm_reg_get
 } from '/etc/ravnex/scripts/pmgr.uc';
+/* Сеанс 191: канонический контракт «стратегия → ресурс» (UCI-профили). */
+import {
+	profiles_read as zp_profiles_read,
+	profiles_replace as zp_profiles_replace
+} from '/etc/ravnex/scripts/zapret_profile.uc';
 import {
 	SERVICE_NEEDS as OPT_NEEDS, rollback_decision as opt_rollback
 } from '/etc/ravnex/scripts/service_optimizer.uc';
@@ -881,57 +886,58 @@ function main() {
 	writefile(BAK + '.tmp', sprintf("%.J\n", snap));
 	system(`mv -f ${sq(BAK + '.tmp')} ${sq(BAK)}`);
 	let final_args = res.chosen.args;
+	let apply_profiles = null;
 	if (resource !== 'general') {
-		const profiles = [];
-		push(profiles, { engine: 'zapret', resource: resource, strategy: res.chosen.args });
-		/* Other managed resources keep their own scoped strategies (the
-		 * auto-pilot winners when the daemon runs); without it the general
-		 * tail below would serve them with THIS strategy again. */
-		const ap = read_json(RUN_DIR + '/zapret_autopilot.json');
-		const others = {};
-		if (ap != null && type(ap.resources) === 'object') {
-			/* ч.233: telegram исключён — победитель автопилота по tg больше
-		 * никогда не Adopt-ится в композицию (автопилот tg не управляет). */
-		for (let rk in ['youtube', 'discord']) {
-				if (rk === resource)
+		/* Сеанс 191: «чужие» scoped-профили восстанавливаются из ЖИВОГО
+		 * набора UCI-профилей (источник истины), а НЕ из winners автопилота
+		 * (старый дефект: при выключенном автопилоте/unmanaged ресурсе их
+		 * профили молча выпадали). Общий хвост = общий UCI-профиль;
+		 * фолбэк на winners/последний-блок строки — только когда общего
+		 * профиля нет. */
+		const prs = zp_profiles_read(c);
+		apply_profiles = [];
+		push(apply_profiles, { engine: 'zapret', resource: resource, strategy: res.chosen.args });
+		let tail = '';
+		if (prs != null) {
+			for (let i = 0; i < length(prs); i++) {
+				const p = prs[i];
+				if (!p.enabled)
 					continue;
-				const rr = ap.resources[rk];
-				if (type(rr) === 'object' && rr.mgmt && type(rr.winner) === 'object' &&
-					rr.winner.args != null && length('' + rr.winner.args))
-					others[rk] = '' + rr.winner.args;
+				if (p.resource === resource)
+					continue;
+				if (p.resource === 'general') {
+					tail = '' + p.strategy;
+					continue;
+				}
+				push(apply_profiles, { engine: p.engine, resource: p.resource,
+					label: p.label, domains: p.domains, strategy: p.strategy });
 			}
 		}
-		/* The general tail: the auto-pilot's general winner, else the
-		 * CURRENT strategy — when the current one is a COMPOSITION (contains
-		 * --new), adopt only its catch-all TAIL (the last block): a whole
-		 * composition as one profile breaks the builder's per-profile cap
-		 * (caught live ч.116: 'strategy longer than 2000 chars'). The
-		 * composition's scoped blocks are re-emitted from the winners above. */
-		let tail = '';
-		if (ap != null && type(ap.resources) === 'object' &&
-			type(ap.resources.general) === 'object' &&
-			type(ap.resources.general.winner) === 'object' &&
-			ap.resources.general.winner.args != null)
-			tail = '' + ap.resources.general.winner.args;
-		else
-			tail = '' + (c.get('ravnex', 'config', 'zapret_cmd_opts') || '');
-		if (index(tail, '--new') >= 0) {
-			const parts_ = split(tail, '--new');
-			tail = trim(parts_[length(parts_) - 1] || '');
+		if (!length(tail)) {
+			const ap = read_json(RUN_DIR + '/zapret_autopilot.json');
+			if (ap != null && type(ap.resources) === 'object' &&
+				type(ap.resources.general) === 'object' &&
+				type(ap.resources.general.winner) === 'object' &&
+				ap.resources.general.winner.args != null)
+				tail = '' + ap.resources.general.winner.args;
+			else
+				tail = '' + (c.get('ravnex', 'config', 'zapret_cmd_opts') || '');
+			if (index(tail, '--new') >= 0) {
+				const parts_ = split(tail, '--new');
+				tail = trim(parts_[length(parts_) - 1] || '');
+			}
 		}
 		if (length(tail) > 2000) {
 			note(res, 'Общий хвост отброшен (длиннее лимита профиля) — трафик вне сценарных ресурсов идёт без дезинка.');
 			tail = '';
 		}
-		for (let rk in keys(others))
-			push(profiles, { engine: 'zapret', resource: rk, strategy: others[rk] });
 		if (length(tail))
-			push(profiles, { engine: 'zapret', resource: 'general', strategy: tail });
+			push(apply_profiles, { engine: 'zapret', resource: 'general', strategy: tail });
 		/* max 5 zapret profiles here (target + 3 resources + general tail) —
 		 * under the builder's 8-profile cap by construction. */
 		/* profiles cross as a JSON-encoded STRING (issue #11): %.J of the
 		 * JSON text embeds it as a quoted JSON string. */
-		const pj = sprintf('%.J', profiles);
+		const pj = sprintf('%.J', apply_profiles);
 		const payload = sprintf('{"profiles":%.J}', pj);
 		const fd = popen(`ubus call luci.ravnex wizard_compose_build ${sq(payload)} 2>/dev/null`);
 		let cout = '';
@@ -964,6 +970,16 @@ function main() {
 	}
 	c.set('ravnex', 'config', 'zapret_cmd_opts', final_args);
 	c.set('ravnex', 'config', 'zapret_enabled', '1');
+	/* Сеанс 191: зеркало — применённые профили в UCI.profile тем же
+	 * коммитом (источник истины). Ручной/общий путь = один общий профиль. */
+	const merr = zp_profiles_replace(c, (apply_profiles != null) ? apply_profiles
+		: [ { engine: 'zapret', resource: 'general', strategy: final_args } ]);
+	if (merr != null) {
+		res.running = false; res.stage = 'error';
+		res.error = 'зеркало профилей: ' + merr;
+		wstat(res);
+		return;
+	}
 	c.commit('ravnex');
 	/* ч.116: hand the manual pick to the auto-pilot daemon — on its next
 	 * tick the daemon adopts it as the resource winner (a manual choice

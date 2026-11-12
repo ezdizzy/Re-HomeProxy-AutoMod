@@ -8198,3 +8198,96 @@ msgstr ""
 # s189: learned-pools forget button (bypass.js serving map)
 msgid "Learned pools forgotten — the config is regenerated."
 msgstr ""
+
+msgid "Profiles: source of truth"
+msgstr ""
+
+msgid "Everything else"
+msgstr ""
+
+msgid "Measure, then decide: auto-pick or pick from the ranking table, fuzz the catalog against your provider, import and share catalogs. Apply a winner for one resource right from the table."
+msgstr ""
+
+msgid "Everything applied by hand: the global Zapret strategy (or a scoped one for a single resource), the ByeDPI card with its presets and flags, and the per-resource composition of both engines. To route a SERVICE through an engine, use the Service rules page."
+msgstr ""
+
+msgid "How the blocked sites open: what works right now (the Serving map), the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it."
+msgstr ""
+
+msgid "own profile — no rule (the profile serves the domains it carries)"
+msgstr ""
+
+msgid "For the whole engine"
+msgstr ""
+
+msgid "For one resource"
+msgstr ""
+
+msgid "Resource name (e.g. Steam)"
+msgstr ""
+
+msgid "«For the whole engine» serves EVERY flow routed to Zapret and replaces the profile set with one general profile (a confirmation appears when scoped profiles exist). «For one resource» adds/replaces a scoped profile for that resource and keeps everything else — the applied line is rebuilt from the profiles automatically. Applying also enables Zapret and restarts the engine; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest)."
+msgstr ""
+
+msgid "A custom resource needs a name and at least one domain."
+msgstr ""
+
+msgid "Apply for one resource"
+msgstr ""
+
+msgid "Apply this strategy to %s? Other resources keep their profiles, the applied line is rebuilt from them automatically (a short engine restart)."
+msgstr ""
+
+msgid "Applying the scoped profile — the engine restarts…"
+msgstr ""
+
+msgid "Scoped profile applied and verified — the line was rebuilt from the profiles."
+msgstr ""
+
+msgid "Apply globally? This REPLACES the whole profile set: %d scoped profile(s) for other resources will be lost (their resources fall back to this one strategy). Restore stays available."
+msgstr ""
+
+msgid "Apply globally? The strategy serves EVERY flow routed to Zapret (the applied line becomes one general profile)."
+msgstr ""
+
+msgid "Strategy applied and verified — Zapret serves it now. Run \"Test strategy\" to confirm it works on your ISP, then create a service rule on the Service rules page."
+msgstr ""
+
+msgid "One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured on the Application tab."
+msgstr ""
+
+msgid "in sync"
+msgstr ""
+
+msgid "The applied line diverged from the profiles (an external/manual edit). Rebuilding from profiles restores the source of truth."
+msgstr ""
+
+msgid "Rebuild the line from profiles"
+msgstr ""
+
+msgid "Rebuilding — the service restarts…"
+msgstr ""
+
+msgid "Rebuild failed: "
+msgstr ""
+
+msgid "The line was rebuilt from the profiles and verified."
+msgstr ""
+
+msgid "An applied line exists, but no profiles yet — the line can become the first («everything else») profile without losing service."
+msgstr ""
+
+msgid "Make the current line the first profile"
+msgstr ""
+
+msgid "Profile created from the current line."
+msgstr ""
+
+msgid "Nothing to seed."
+msgstr ""
+
+msgid "No profiles yet — the strategy applies globally (everything routed to the engine)."
+msgstr ""
+
+msgid "Dead-pool steering"
+msgstr ""

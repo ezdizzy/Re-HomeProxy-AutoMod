@@ -34,6 +34,22 @@
 'require view';
 'require homeproxy as hp';
 
+/* Сеанс 191: тоггл стиринга мёртвых YouTube-пулов и «Забыть выученные
+ * пулы» переехали сюда с Мастера стратегий (поведение системы, а не
+ * состояние; RPC-двери те же — yt_steer_set / yt_steer_learned_clear). */
+const callYtSteerSet = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'yt_steer_set',
+	params: [ 'value' ],
+	expect: { '': {} }
+});
+
+const callYtSteerLearnedClear = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'yt_steer_learned_clear',
+	expect: { '': {} }
+});
+
 const callStatus = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'automation_status',
@@ -844,6 +860,50 @@ return view.extend({
 		panes.dpi.appendChild(E('div', { style: 'margin-top:10px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
 			[ apHead, apRow1, apResWrap, apRow3, apSaveMsg, E('p', { 'class': 'wiz-note' },
 				[ _('The auto-pilot keeps the strategies working without attention: on schedule it re-ranks the corpus and applies the best strategy per resource (a >10% win replaces the current one); when a resource fails the checks repeatedly, the next alternative applies immediately. The "apply in window" time gate applies to the scheduled re-rank only — health checks and repairs run around the clock. With "Keep the rules on Zapret" the managed resources get their rule pointed at Zapret — a strategy serves a resource only through its rule. Every apply takes a server snapshot — Restore always reverts. ByeDPI strategies are not managed.') ]), apStatus ]));
+		/* Сеанс 191: стиринг мёртвых пулов — ПОВЕДЕНИЕ системы, место на
+		 * Автообходе (панель после «DPI auto-pilot», до остального контента). */
+		const steerBox = E('input', { type: 'checkbox' });
+		steerBox.checked = (uci.get('ravnex', 'config', 'yt_steer_dead') === '1');
+		const steerNote = E('p', { 'class': 'wiz-note', style: 'margin:4px 0 0 0' });
+		const steerClear = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button' },
+			[ _('Forget learned pools') ]);
+		steerClear.addEventListener('click', function() {
+			if (!window.confirm(_('Forget the learned dead YouTube pools? The core config regenerates (a short connection blip); an ALIVE pool will not be re-learned (the content guard), a dead one returns on its own within minutes.')))
+				return;
+			steerClear.disabled = true;
+			resultNote(steerNote, true, _('Applying…'));
+			L.resolveDefault(callYtSteerLearnedClear(), {}).then(function(r) {
+				steerClear.disabled = false;
+				if (r && r.result === true) {
+					resultNote(steerNote, true, _('Learned pools forgotten — the config is regenerated.'));
+					return;
+				}
+				resultNote(steerNote, false, _('Failed: ') + ((r && r.error) || _('rpc error')));
+			});
+		});
+		steerBox.addEventListener('click', function() {
+			const want = steerBox.checked ? '1' : '0';
+			resultNote(steerNote, true, _('Saving…'));
+			L.resolveDefault(callYtSteerSet(want), {}).then(function(r) {
+				if (r && r.result === true) {
+					resultNote(steerNote, true, (r.unchanged ? _('Steering already in this state.') :
+						((want === '1') ? _('Steering ON — MultiDNS picks it up on its next tick (dead pools answer 0.0.0.0).')
+							: _('Steering OFF — the refuse set is cleared on the next MultiDNS tick.'))));
+					return;
+				}
+				steerBox.checked = !steerBox.checked;
+				resultNote(steerNote, false, _('Save failed: ') + ((r && r.error) || _('rpc error')));
+			});
+		});
+		panes.dpi.appendChild(E('div', { style: 'margin-top:10px; border-top:1px solid var(--hp-panel-line); padding-top:8px' },
+			[ E('div', { 'class': 'wiz-row' },
+				[ E('strong', {}, [ _('Dead-pool steering') ]),
+				  E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
+					[ steerBox, ' ' + _('Steer dead YouTube pools (DNS refuse)') ]), steerClear ]),
+			  E('p', { 'class': 'wiz-note' },
+				[ _('Pools that never delivered a single alive edge under ANY measured strategy (dead whole, fresh ≤48 h) are DNS-REJECTED in the core config: instant refusal, the player switches to a live edge in milliseconds instead of hanging 5–10 s. The pool catalog is maintained by the Strategy Lab sweeps; the pool currently serving the stream is never refused; an empty catalog means nothing is refused. Toggling regenerates the core config (verified apply). The catalog feeder runs inside MultiDNS (mosdns).') ]),
+			  steerNote ]));
+
 		let apDirty = false;
 		for (let k in apRes)
 			apRes[k].addEventListener('change', function() { apDirty = true; });

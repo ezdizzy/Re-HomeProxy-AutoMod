@@ -19,7 +19,8 @@
  *   table, the external catalog importer (wizard_strategy_update/status/
  *   apply via wizard_strategies.uc) and the mutation generator
  *   (wizard_fuzz_generate).
- *   «Manual & compositions» — the global Zapret strategy, the ByeDPI card
+	 *   «Application» — the global Zapret strategy (or scoped for one
+	 *   resource via strategy_apply_scoped), the ByeDPI card
  *   with its presets and flags (wizard_byedpi_set), the per-resource
  *   Composition of both engines (wizard_compose_*) and the
  *   «apply strategy → service rule → live check» chain (wizard_preset_apply).
@@ -295,7 +296,24 @@ const callComposeStatus = rpc.declare({
 const callComposeApply = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'wizard_compose_apply',
-	params: [ 'zapret', 'byedpi' ],
+	params: [ 'zapret', 'byedpi', 'profiles' ],
+	expect: { '': {} }
+});
+
+/* Сеанс 191: честное «применить стратегию X к ресурсу Y» одним действием —
+ * scoped-профиль в UCI-профили (источник истины), rebuild остальных из
+ * живого набора, валидация бинарником, свет-рестарт движка. */
+const callStrategyScoped = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'strategy_apply_scoped',
+	params: [ 'resource', 'strategy', 'domains', 'label', 'verify' ],
+	expect: { '': {} }
+});
+
+/* Сеанс 191: посев — текущая строка становится одним общим профилем. */
+const callStrategyProfileSeed = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'strategy_profile_seed',
 	expect: { '': {} }
 });
 
@@ -343,32 +361,10 @@ return view.extend({
 	render: function() {
 		hp.uiShell();
 
-		/* The chain's source list («send a service through the engine»):
-		 * the same sources the Service rules presets write (no new
-		 * hardcode); `hosts` are the route_explain targets of the
-		 * follow-up live check. The full preset editor lives on the
-		 * Service rules page (v3b). */
-		const PRESETS = [
-			{ source: 'google_ai', title: _('Google AI (Gemini, AI Studio)'), check: 'google_ai',
-				hosts: [ 'gemini.google.com', 'generativelanguage.googleapis.com' ] },
-			{ source: 'youtube', title: _('YouTube'), hosts: [ 'www.youtube.com' ] },
-			{ source: 'discord', title: _('Discord'), hosts: [ 'discord.com' ] },
-			{ source: 'telegram', title: _('Telegram'), hosts: [ 'web.telegram.org' ] },
-			{ source: 'openai', title: _('OpenAI (ChatGPT)'), check: 'openai',
-				hosts: [ 'chatgpt.com', 'api.openai.com' ] },
-			{ source: 'anthropic', title: _('Claude / Anthropic'),
-				hosts: [ 'claude.ai', 'api.anthropic.com' ] },
-			{ source: 'whatsapp', title: _('WhatsApp'),
-				hosts: [ 'web.whatsapp.com' ] },
-			{ source: 'twitch', title: _('Twitch'),
-				hosts: [ 'www.twitch.tv' ] },
-			{ source: 'meta', title: _('Meta (Facebook, Instagram)'), hosts: [ 'instagram.com' ] },
-			{ source: 'twitter', title: _('Twitter / X'), hosts: [ 'x.com' ] },
-			{ source: 'tiktok', title: _('TikTok'), hosts: [] },
-			{ source: 'roblox', title: _('Roblox'), hosts: [ 'roblox.com' ] },
-			{ source: 'google_play', title: _('Google Play'), hosts: [] },
-			{ source: 'google-meet', title: _('Google Meet'), hosts: [] }
-		];
+		/* Сеанс 191: панель «Send a service through the engine» УДАЛЕНА —
+		 * устаревший дубль «Правил для сервисов» (14 vs 28 сервисов,
+		 * пустые hosts). Маршрутизацией сервисов ведает только страница
+		 * правил; отсюда на неё ведёт навигационная подсказка. */
 
 		const WIZ_CSS = `
 .wiz-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
@@ -386,12 +382,12 @@ return view.extend({
 		if (!st)
 			document.head.appendChild(E('style', { id: 'hp-byp-style' }, [ WIZ_CSS ]));
 
-		/* ── Zone frame (R3 v3c) ───────────────────────────────────────── */
-		/* The wizard DPI section moved here as FOUR human zones
-		 * (19-UX_REDESIGN стр. 4): what works now, the automatic side, the
-		 * Lab, and everything applied by hand. The result area is ONE
-		 * shared node that moves under the active zone — results stay in
-		 * one place, replacing the previous. */
+		/* ── Zone frame (R3 v3c, сеанс 191: 4 вкладки → 3 ЗОНЫ) ─────────── */
+		/* Аудит сеанса 191: вкладка «Strategy picking» (1 ряд) слита с
+		 * Лабораторией (автоподбор = действие над ранжированием), панель
+		 * «Send a service» удалена (дубль «Правил для сервисов»), тоггл
+		 * стиринга/«Забыть пулы» переехали на Автообход (поведение системы,
+		 * а не состояние). Зоны: Обзор / Лаборатория / Применение. */
 		const dpiBanner = E('div', {});
 		/* Static container (built once, poll updates texts IN PLACE) — the
 		 * hpui-stagger entrance is safe here (Ф9.2/Ф9.3). */
@@ -400,6 +396,7 @@ return view.extend({
 		 * now (rule → engine → strategy → last check), the user complaint
 		 * «не видно какие реально сейчас используются стратегии». */
 		const dpiMap = E('div', {});
+		const dpiSync = E('div', {});
 		const dpiQuality = E('div', {});
 		const dpiLab = E('div', {});
 		const dpiCorpus = E('div', {});
@@ -410,15 +407,10 @@ return view.extend({
 		const zapBox = E('div', {});
 		const byeBox = E('div', {});
 		const compBox = E('div', {});
-		const chainBox = E('div', {});
 		const DPI_TABS = [
-			[ 'dpiOv',  _('Working right now') ],
-			/* D32: the tab is the one-click strategy PICKER — "Auto-pilot"
-			 * promised the scheduled keeper that lives on the Auto-bypass
-			 * page (Ф7.1). */
-			[ 'dpiAp',  _('Strategy picking') ],
+			[ 'dpiOv',  _('Overview') ],
 			[ 'dpiLab', _('Strategy Lab') ],
-			[ 'dpiMan', _('Manual & compositions') ]
+			[ 'dpiMan', _('Application') ]
 		];
 		const dpiPanes = {};
 		for (let t in DPI_TABS)
@@ -507,37 +499,36 @@ return view.extend({
 			return p;
 		};
 
-		/* «Working right now» zone — the honest state, no actions here. */
+		/* «Обзор» — честное состояние (сеанс 191: заголовок новый, действий
+		 * больше нет на вкладке — тоггл стиринга/«Забыть пулы» на Автообходе). */
 		dpiPanes.dpiOv.appendChild(E('p', { 'class': 'hpui-hint' },
 			[ _('The live state of the bypass: which engines are running, which strategy serves each resource right now, and the measured quality of the desync path. Actions live on the other tabs; the results area follows you to every tab.') ]));
 		dpiPanes.dpiOv.appendChild(panelOf('zap', _('Engines'), [ dpiBanner, dpiCards ]));
 		dpiPanes.dpiOv.appendChild(panelOf('shuffle', _('What serves what right now'), [ dpiMap ]));
+		dpiPanes.dpiOv.appendChild(panelOf('layers', _('Profiles: source of truth'), [ dpiSync ]));
 		dpiPanes.dpiOv.appendChild(panelOf('trend', _('Quality now'), [ dpiQuality ]));
 
-		/* «Auto-pilot» zone — one-click picks; the scheduled keeper lives on
-		 * the Automation page (Ф7.1). */
-		dpiPanes.dpiAp.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('One click keeps a resource working: the auto-pick ranks the strategies and applies the best one for a single resource with a server snapshot and a live check. The SCHEDULED auto-pilot (always-on re-ranks and repairs) is configured on the Auto-bypass page — an always-on keeper belongs to automation.') ]));
-		dpiPanes.dpiAp.appendChild(panelOf('crosshair', _('Strategy picking'), [ dpiPick ]));
-
-		/* «Strategy Lab» zone — measure, then decide. */
+		/* «Лаборатория» (сеанс 191): автоподбор СЛИТ с фаззингом — действие
+		 * над ранжированием, корпус и импорты в той же зоне. */
 		dpiPanes.dpiLab.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Measure, not guesswork: the Lab tests the strategy catalog against your provider and ranks honestly — the fresh-connection start first, then the video flow. Apply a winner for one resource right from the table, generate mutations, or import and share catalogs.') ]));
+			[ _('Measure, then decide: auto-pick or pick from the ranking table, fuzz the catalog against your provider, import and share catalogs. Apply a winner for one resource right from the table.') ]));
+		dpiPanes.dpiLab.appendChild(panelOf('crosshair', _('Strategy picking'), [ dpiPick ]));
 		dpiPanes.dpiLab.appendChild(panelOf('activity', _('Fuzzing'), [ dpiLab ]));
 		dpiPanes.dpiLab.appendChild(panelOf('database', _('Strategy catalog'), [ dpiCorpus ]));
 
-		/* «Manual & compositions» zone — everything applied by hand. */
+		/* «Применение» — всё, что накладывается руками (сеанс 191: цепочка
+		 * «Отправить сервис» удалена — дубль «Правил для сервисов»; в
+		 * карточке Zapret явный выбор уровня: для всего движка / для ресурса). */
 		dpiPanes.dpiMan.appendChild(E('p', { 'class': 'hpui-hint' },
-			[ _('Everything applied by hand: the global Zapret strategy, the ByeDPI card with its presets and flags, the per-resource composition of both engines, and the "send a service through the engine" chain. Automatic selection lives on the Strategy picking tab.') ]));
+			[ _('Everything applied by hand: the global Zapret strategy (or a scoped one for a single resource), the ByeDPI card with its presets and flags, and the per-resource composition of both engines. To route a SERVICE through an engine, use the Service rules page.') ]));
 		dpiPanes.dpiMan.appendChild(panelOf('shuffle', _('Zapret strategy'), [ zapBox ]));
 		dpiPanes.dpiMan.appendChild(panelOf('zap', _('ByeDPI strategy'), [ byeBox ]));
 		dpiPanes.dpiMan.appendChild(panelOf('layers', _('Composition'), [ compBox ]));
-		dpiPanes.dpiMan.appendChild(panelOf('send', _('Send a service through the engine'), [ chainBox ]));
 
 		dpiPanes.dpiOv.appendChild(dpiResultRow);
 		const bypRoot = E('div', {});
 		bypRoot.appendChild(hp.pageIntro(_('Strategy master'),
-			_('How the blocked sites open: what works right now (the Serving map), the strategy picking, the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it.')));
+			_('How the blocked sites open: what works right now (the Serving map), the Strategy Lab and the manual application. Work top to bottom — check the state, pick or test a strategy, apply it.')));
 		bypRoot.appendChild(dpiTabBar);
 		for (let t in DPI_TABS)
 			bypRoot.appendChild(dpiPanes[DPI_TABS[t][0]]);
@@ -546,7 +537,7 @@ return view.extend({
 
 
 		const state = { dpiSig: null, stratSig: null, fuzzSig: null, corpusSig: null, prevSig: null,
-			dpiPendingCheck: null,
+			profilesSyncSig: null,
 			/* Ф8-F4 composition builder: the profile draft is PERSISTED on the
 			 * server (ч.109) — compDirty guards the one-time seed from it. */
 			compProfiles: [ { engine: 'zapret', resource: 'youtube', domains: '', strategy: '' } ],
@@ -635,17 +626,6 @@ return view.extend({
 		}
 
 		let lastEnv = null;
-
-		/* ── Short trace (the DPI chain check renders routes with it) ──── */
-		function shortTrace(t) {
-			if (!t || t.error)
-				return E('span', { 'class': 'hpui-b-grey hpui-badge' }, [ (t && t.error) || '—' ]);
-			const label = t.outbound ? resolveTag(t.outbound) : (t.action || '?');
-			return E('span', {}, [
-				E('strong', {}, [ label ]),
-				E('span', { style: 'opacity:.75' }, [ (t.match ? (' ← ' + t.match) : '') + (t.fallback ? (' · ' + _('default route')) : '') ])
-			]);
-		}
 
 		/* ── DPI section (Ф3): engine status, strategy, Lab, corpus ────── */
 
@@ -750,16 +730,47 @@ return view.extend({
 				: '';
 		}
 
-		/* ── ч.109: Serving map — per-resource live view: rule → engine →
-		 * strategy → last health check. Everything the user complained was
-		 * invisible («какая стратегия работает, какая нет»). Data is merged
-		 * from dpi_status + preset rules + the auto-pilot probe journal. */
-		const MAP_ROWS = [
-			[ 'youtube', 'YouTube' ],
-			[ 'discord', 'Discord' ],
-			[ 'telegram', _('Telegram (TLS)') ],
-			[ 'general', _('General (catch-all)') ]
-		];
+		/* ── ч.109 → сеанс 191: Serving map — ДИНАМИЧЕСКИЕ строки.
+		 * Раньше: жёсткие 4 ресурса (карта врала при 28 возможных правилах).
+		 * Теперь: известные ресурсы + ресурсы UCI-профилей (custom-метки)
+		 * + источники правил, пришедшие с сервера. */
+		const MAP_LABELS = function() {
+			return {
+				youtube: 'YouTube',
+				discord: 'Discord',
+				telegram: _('Telegram (TLS)'),
+				general: _('Everything else')
+			};
+		};
+		function buildMapRows(presets, dpiSt) {
+			const seen = {}, rows = [];
+			const add = function(key, label) {
+				if (seen[key]) return;
+				seen[key] = true;
+				rows.push([ key, label ]);
+			};
+			add('youtube', 'YouTube');
+			add('discord', 'Discord');
+			add('telegram', _('Telegram (TLS)'));
+			/* Ресурсы UCI-профилей (custom — по метке или ресурсу). */
+			const ps = (dpiSt && dpiSt.profiles_sync && dpiSt.profiles_sync.profiles) || [];
+			for (let i = 0; i < ps.length; i++) {
+				const p = ps[i];
+				if (p.resource === 'custom')
+					add('custom:' + (p.label || p.domains), p.label || p.domains);
+				else
+					add(p.resource, (MAP_LABELS()[p.resource] != null)
+						? MAP_LABELS()[p.resource] : p.resource);
+			}
+			/* Правила сервера — всё, чего ещё нет на карте. */
+			const rules = (presets && presets.rules) || {};
+			for (const rk in rules) {
+				const lbl = (MAP_LABELS()[rk] != null) ? MAP_LABELS()[rk] : rk;
+				add(rk, lbl);
+			}
+			add('general', _('Everything else'));
+			return rows;
+		}
 		const mapBody = E('tbody', {});
 		const mapWrap = E('div', { 'class': 'hpui-wrap' });
 		mapWrap.appendChild(E('table', { 'class': 'hpui-table' }, [
@@ -776,51 +787,9 @@ return view.extend({
 		dpiMap.appendChild(E('p', { 'class': 'wiz-note', style: 'margin-top:2px' },
 			[ _('The map is live: the rule column shows where the resource is routed, the strategy column — the engine profile actually serving it now (an own scoped profile, the general tail, or a global strategy). «Check» probes the resource through the configured path (YouTube: the page, the thumbnail CDN, the video edge AND the real video stream measured in KB/s).') ]));
 
-		/* Сеанс 187: негативный стиринг — мёртвые пулы YouTube отвечаются
-		 * DNS-отказом (0.0.0.0) мгновенно; плеер ротит на живой край сам. */
-		const steerBox = E('input', { type: 'checkbox' });
-		steerBox.checked = (uci.get('ravnex', 'config', 'yt_steer_dead') === '1');
-		const steerNote = E('p', { 'class': 'wiz-note', style: 'margin-top:2px' });
-		const steerClear = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button', style: 'margin-left:12px' },
-			[ _('Forget learned pools') ]);
-		steerClear.addEventListener('click', function() {
-			if (!window.confirm(_('Forget the learned dead YouTube pools? The core config regenerates (a short connection blip); an ALIVE pool will not be re-learned (the content guard), a dead one returns on its own within minutes.')))
-				return;
-			steerClear.disabled = true;
-			dom.content(steerNote, E('span', { 'class': 'hpui-hint' }, [ _('Applying…') ]));
-			L.resolveDefault(callYtSteerLearnedClear(), {}).then(function(r) {
-				steerClear.disabled = false;
-				if (r && r.result === true) {
-					dom.content(steerNote, E('span', { 'class': 'hpui-hint' },
-						[ _('Learned pools forgotten — the config is regenerated.') ]));
-					return;
-				}
-				dom.content(steerNote, E('span', { 'class': 'hpui-hint' },
-					[ _('Failed: ') + ((r && r.error) || _('rpc error')) ]));
-			});
-		});
-		dpiMap.appendChild(E('div', { 'class': 'wiz-row', style: 'margin-top:6px' },
-			[ E('label', { 'class': 'wiz-note', style: 'margin:0; cursor:pointer' },
-				[ steerBox, ' ' + _('Steer dead YouTube pools (DNS refuse)') ]), steerClear ]));
-		dpiMap.appendChild(E('p', { 'class': 'wiz-note', style: 'margin-top:2px' },
-			[ _('Pools that never delivered a single alive edge under ANY measured strategy (dead whole, fresh ≤48 h) are DNS-REJECTED in the core config: instant refusal, the player switches to a live edge in milliseconds instead of hanging 5–10 s. The pool catalog is maintained by the Strategy Lab sweeps; the pool currently serving the stream is never refused; an empty catalog means nothing is refused. Toggling regenerates the core config (verified apply). The catalog feeder runs inside MultiDNS (mosdns).') ]));
-		dpiMap.appendChild(steerNote);
-		steerBox.addEventListener('click', function() {
-			const want = steerBox.checked ? '1' : '0';
-			dom.content(steerNote, E('span', { 'class': 'hpui-hint' }, [ _('Saving…') ]));
-			L.resolveDefault(callYtSteerSet(want), {}).then(function(r) {
-				if (r && r.result === true) {
-					dom.content(steerNote, E('span', { 'class': 'hpui-hint' },
-						[ (r.unchanged ? _('Steering already in this state.') :
-							((want === '1') ? _('Steering ON — MultiDNS picks it up on its next tick (dead pools answer 0.0.0.0).')
-								: _('Steering OFF — the refuse set is cleared on the next MultiDNS tick.'))) ]));
-					return;
-				}
-				steerBox.checked = !steerBox.checked;
-				dom.content(steerNote, E('span', { 'class': 'hpui-hint' },
-					[ _('Save failed: ') + ((r && r.error) || _('rpc error')) ]));
-			});
-		});
+		/* Сеанс 191: тоггл стиринга мёртвых пулов и «Забыть выученные пулы»
+		 * ПЕРЕЕХАЛИ на «Автообход» (поведение системы, а не состояние;
+		 * был противоречием «на вкладке-обзоре действий нет»). */
 
 		function servingText(rk, rule, dpiSt) {
 			const z = dpiSt.zapret || {}, b = dpiSt.byedpi || {};
@@ -877,21 +846,27 @@ return view.extend({
 				return;
 			state.mapSig = sig;
 			mapBody.innerHTML = '';
-			for (let r in MAP_ROWS) {
-				const rk = MAP_ROWS[r][0], label = MAP_ROWS[r][1];
-				const rule = rules[rk] || null;
+			const rows = buildMapRows(presets, dpiSt || {});
+			for (let r in rows) {
+				const rk = rows[r][0], label = rows[r][1];
+				/* custom-строки карты: 'custom:<метка>' — скоуп у блока = метка. */
+				const isCustom = (rk.indexOf('custom:') === 0);
+				const scopedKey = isCustom ? rk.substring('custom:'.length) : rk;
+				const rule = rules[rk] || rules[scopedKey] || null;
 				const tr = E('tr', {});
 				tr.appendChild(E('td', { style: 'font-weight:600; white-space:nowrap' }, [ label ]));
 				const ruleTd = E('td', {});
 				if (rk === 'general') {
-					const env = lastEnv || {};
 					ruleTd.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
 						[ _('catch-all — unmatched traffic') ]));
+				} else if (isCustom && !rule) {
+					ruleTd.appendChild(E('span', { 'class': 'wiz-note', style: 'margin:0' },
+						[ _('own profile — no rule (the profile serves the domains it carries)') ]));
 				} else
-					ruleTd.appendChild(ruleStateText(rule, counts[rk] || 0));
+					ruleTd.appendChild(ruleStateText(rule, counts[scopedKey] || counts[rk] || 0));
 				tr.appendChild(ruleTd);
 				tr.appendChild(E('td', { style: 'font-size:.85em' },
-					[ servingText(rk, rule, dpiSt || {}) ]));
+					[ servingText(scopedKey, rule, dpiSt || {}) ]));
 				const lastTd = E('td', { style: 'white-space:nowrap' }, [ '—' ]);
 				if (apOk && st.resources && st.resources[rk]) {
 					const p = st.resources[rk].probe || {};
@@ -947,6 +922,107 @@ return view.extend({
 				});
 				tr.appendChild(E('td', {}, [ chk ]));
 				mapBody.appendChild(tr);
+			}
+		}
+
+		/* ── Сеанс 191: карточка «Профили: источник истины» (Обзор) ──────
+		 * UCI-профили = источник, строка zapret_cmd_opts — производная.
+		 * Дрейф = честная карточка с кнопкой пересборки; посев — кнопка
+		 * «из текущей строки». */
+		function renderProfilesSync(dpiSt) {
+			const ps = dpiSt && dpiSt.profiles_sync;
+			if (!ps)
+				return;
+			const list = ps.profiles || [];
+			const sig = JSON.stringify([ ps.drift, ps.seed_needed,
+				list.map(function(p) {
+					return p.section + ':' + p.enabled + ':' + p.resource + ':' +
+						p.label + ':' + p.strategy;
+				}) ]);
+			if (sig === state.profilesSyncSig)
+				return;
+			state.profilesSyncSig = sig;
+			dpiSync.innerHTML = '';
+			if (list.length) {
+				const tb = E('tbody', {});
+				const labels = MAP_LABELS();
+				for (let i = 0; i < list.length; i++) {
+					const p = list[i];
+					const tr = E('tr', {});
+					tr.appendChild(E('td', { style: 'white-space:nowrap' },
+						[ p.enabled ? badge('hpui-b-green', _('enabled')) : badge('hpui-b-grey', _('disabled')) ]));
+					const resTxt = (p.resource === 'custom')
+						? ((_('Custom list') + ': ' + (p.label || p.domains)))
+						: ((labels[p.resource] != null) ? labels[p.resource] : p.resource);
+					tr.appendChild(E('td', { style: 'font-weight:600; white-space:nowrap' }, [ resTxt ]));
+					tr.appendChild(E('td', { style: 'font-size:.85em' },
+						[ shortStrategy(p.strategy, 70) ]));
+					tb.appendChild(tr);
+				}
+				dpiSync.appendChild(E('div', { 'class': 'hpui-wrap' }, E('table', { 'class': 'hpui-table' }, [
+					E('thead', {}, E('tr', {}, [
+						E('th', {}, [ _('State') ]),
+						E('th', {}, [ _('Resource') ]),
+						E('th', {}, [ _('Strategy') ])
+					])),
+					tb
+				])));
+				dpiSync.appendChild(E('p', { 'class': 'wiz-note', style: 'margin-top:2px' },
+					[ _('Profiles apply in order (first match wins): scoped ones first, «everything else» last. The Composition editor below edits this list; the applied line is built from it.') ]));
+			}
+			if (ps.drift) {
+				const box = E('div', {});
+				box.appendChild(E('p', { 'class': 'hpui-banner' },
+					[ _('The applied line diverged from the profiles (an external/manual edit). Rebuilding from profiles restores the source of truth.') ]));
+				const rb = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
+					[ _('Rebuild the line from profiles') ]);
+				rb.addEventListener('click', function() {
+					rb.disabled = true;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Rebuilding — the service restarts…') ]));
+					L.resolveDefault(callComposeApply('', '', JSON.stringify(
+						list.map(function(p) {
+							return { engine: p.engine, resource: p.resource,
+								label: p.label, domains: p.domains, strategy: p.strategy };
+						}))), {}).then(function(r) {
+						rb.disabled = false;
+						if (!r || (r.result === false && !r.op_id)) {
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Rebuild failed: ') + ((r && r.error) || _('rpc error')) ]));
+							return;
+						}
+						pollApply(r, _('The line was rebuilt from the profiles and verified.'));
+					});
+				});
+				box.appendChild(rb);
+				dpiSync.appendChild(box);
+			} else if (ps.seed_needed) {
+				const box2 = E('div', {});
+				box2.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:4px 0' },
+					[ _('An applied line exists, but no profiles yet — the line can become the first («everything else») profile without losing service.') ]));
+				const sb = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' },
+					[ _('Make the current line the first profile') ]);
+				sb.addEventListener('click', function() {
+					sb.disabled = true;
+					L.resolveDefault(callStrategyProfileSeed(), {}).then(function(r) {
+						sb.disabled = false;
+						state.profilesSyncSig = null;
+						if (r && r.result === true)
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ (r.seeded === 1) ? _('Profile created from the current line.') : ((r.note) || _('Nothing to seed.')) ]));
+						else
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Failed: ') + ((r && r.error) || _('rpc error')) ]));
+					});
+				});
+				box2.appendChild(sb);
+				dpiSync.appendChild(box2);
+			} else if (list.length) {
+				dpiSync.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:4px 0' },
+					[ badge('hpui-b-green', _('in sync')) ]));
+			} else {
+				dpiSync.appendChild(E('p', { 'class': 'wiz-note', style: 'margin:4px 0' },
+					[ _('No profiles yet — the strategy applies globally (everything routed to the engine).') ]));
 			}
 		}
 
@@ -1028,12 +1104,45 @@ return view.extend({
 				[ _('Every number here was measured through your real path. The flow speed refreshes on every auto-pilot health check; without the auto-pilot it comes from the last fuzz ranking.') ]));
 		}
 
-		/* Strategy row — persistent elements, options rebuilt on corpus change. */
+		/* Strategy row — persistent elements, options rebuilt on corpus change.
+		 * Сеанс 191: явный выбор уровня — «для всего движка» / «для ресурса»
+		 * (пер-ресурсный путь БЕЗ тяжёлого конвейера автоподбора). */
+		let zapLevel = 'global';
+		const lvlGlobalBtn = E('button', { 'class': 'hpui-tab active', type: 'button' }, [ _('For the whole engine') ]);
+		const lvlScopedBtn = E('button', { 'class': 'hpui-tab', type: 'button' }, [ _('For one resource') ]);
+		const lvlBar = E('div', { 'class': 'hpui-tabs', style: 'margin:2px 0' });
+		lvlBar.appendChild(lvlGlobalBtn);
+		lvlBar.appendChild(lvlScopedBtn);
+		function setZapLevel(v) {
+			zapLevel = v;
+			lvlGlobalBtn.classList.toggle('active', v === 'global');
+			lvlScopedBtn.classList.toggle('active', v === 'scoped');
+			scopedRow.style.display = (v === 'scoped') ? '' : 'none';
+		}
+		/* Scoped-ряд: ресурс + (custom: имя + домены). */
+		const scopedResSel = E('select', { 'class': 'cbi-input-select wiz-select' });
+		[ ['youtube', 'YouTube'], ['discord', 'Discord'], ['telegram', _('Telegram (TLS)')], ['custom', _('Custom list')] ]
+			.forEach(function(o) { scopedResSel.appendChild(E('option', { value: o[0] }, [ o[1] ])); });
+		const scopedLabelInp = E('input', { type: 'text', 'class': 'cbi-input-text wiz-select',
+			placeholder: _('Resource name (e.g. Steam)'), style: 'display:none' });
+		const scopedDomainsInp = E('input', { type: 'text', 'class': 'cbi-input-text wiz-strat',
+			placeholder: _('Domains: a.com, b.com (comma or space separated)'), style: 'display:none' });
+		const scopedRow = E('div', { 'class': 'wiz-row' });
+		scopedRow.appendChild(scopedResSel);
+		scopedRow.appendChild(scopedLabelInp);
+		scopedRow.appendChild(scopedDomainsInp);
+		scopedRow.style.display = 'none';
+		scopedResSel.addEventListener('change', function() {
+			const isCustom = (scopedResSel.value === 'custom');
+			scopedLabelInp.style.display = isCustom ? '' : 'none';
+			scopedDomainsInp.style.display = isCustom ? '' : 'none';
+		});
 		const stratSel = E('select', { 'class': 'cbi-input-select wiz-select' });
 		const stratInput = E('input', { type: 'text', 'class': 'cbi-input-text wiz-strat',
 			placeholder: 'nfqws2 --lua-desync=… args' });
 		const stratRow = E('div', { 'class': 'wiz-row' });
 		stratRow.appendChild(E('span', { 'class': 'wiz-title' }, [ _('Zapret strategy') ]));
+		stratRow.appendChild(lvlBar);
 		stratRow.appendChild(stratSel);
 		stratRow.appendChild(stratInput);
 		const applyStratBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
@@ -1042,8 +1151,9 @@ return view.extend({
 		stratRow.appendChild(applyStratBtn);
 		stratRow.appendChild(testStratBtn);
 		zapBox.appendChild(stratRow);
+		zapBox.appendChild(scopedRow);
 		zapBox.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('The global "Apply strategy" serves EVERY flow routed to Zapret (one engine strategy, no hostlists — the routing rules select the traffic). A per-resource apply (Strategy Lab rows, auto-pick) builds a SCOPED profile instead — other managed resources keep their strategies; the Composition below edits the same blocks manually. Applying also enables Zapret and restarts the service; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest).') ]));
+			[ _('«For the whole engine» serves EVERY flow routed to Zapret and replaces the profile set with one general profile (a confirmation appears when scoped profiles exist). «For one resource» adds/replaces a scoped profile for that resource and keeps everything else — the applied line is rebuilt from the profiles automatically. Applying also enables Zapret and restarts the engine; testing runs the strategy on an isolated queue over 4 test sites (YouTube, Telegram, Discord, Speedtest).') ]));
 
 		function renderStrategySel(cands) {
 			state.cands = cands || [];
@@ -1085,17 +1195,69 @@ return view.extend({
 				ui.addNotification(null, E('p', {}, _('No strategy set — pick one from the catalog or enter the options first.')), 'error');
 				return;
 			}
-			applyStratBtn.disabled = true;
-			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-				[ _('Applying the strategy — the service restarts…') ]));
-			L.resolveDefault(callFuzzApply(s), {}).then(function(r) {
-				applyStratBtn.disabled = false;
-				if (!r || (r.result === false && !r.op_id)) {
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
+			/* Сеанс 191: уровень применения. Для всего движка — прежний
+			 * глобальный apply с ПОДТВЕРЖДЕНИЕМ затирания scoped-профилей
+			 * (мина, найденная аудитом, обезврежена); для ресурса —
+			 * strategy_apply_scoped одним действием. */
+			function scopedCount() {
+				const ps = (state.lastDpi && state.lastDpi.profiles_sync &&
+					state.lastDpi.profiles_sync.profiles) || [];
+				let n = 0;
+				for (let i = 0; i < ps.length; i++)
+					if (ps[i].enabled && ps[i].resource !== 'general')
+						n++;
+				return n;
+			}
+			if (zapLevel === 'scoped') {
+				const resource = scopedResSel.value;
+				const label = String(scopedLabelInp.value || '').trim();
+				const domains = String(scopedDomainsInp.value || '').trim();
+				if (resource === 'custom' && (!label || !domains)) {
+					ui.addNotification(null, E('p', {}, _('A custom resource needs a name and at least one domain.')), 'error');
 					return;
 				}
-				pollApply(r, _('Strategy applied and verified — Zapret serves it now. Run "Test strategy" to confirm it works on your ISP, then create a service rule below.'));
+				const resText = (resource === 'custom')
+					? label
+					: scopedResSel.options[scopedResSel.selectedIndex].text;
+				hp.confirmModal(_('Apply for one resource'),
+					_('Apply this strategy to %s? Other resources keep their profiles, the applied line is rebuilt from them automatically (a short engine restart).').format(resText),
+					_('Apply')).then(function(ok) {
+					if (!ok)
+						return;
+					applyStratBtn.disabled = true;
+					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+						[ _('Applying the scoped profile — the engine restarts…') ]));
+					L.resolveDefault(callStrategyScoped(resource, s, domains, label, 'light'), {}).then(function(r) {
+						applyStratBtn.disabled = false;
+						if (!r || (r.result === false && !r.op_id)) {
+							dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
+							return;
+						}
+						pollApply(r, _('Scoped profile applied and verified — the line was rebuilt from the profiles.'));
+					});
+				});
+				return;
+			}
+			const sN = scopedCount();
+			const warnTxt = (sN > 0)
+				? _('Apply globally? This REPLACES the whole profile set: %d scoped profile(s) for other resources will be lost (their resources fall back to this one strategy). Restore stays available.').format(sN)
+				: _('Apply globally? The strategy serves EVERY flow routed to Zapret (the applied line becomes one general profile).');
+			hp.confirmModal(_('Apply strategy'), warnTxt, _('Apply')).then(function(ok) {
+				if (!ok)
+					return;
+				applyStratBtn.disabled = true;
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('Applying the strategy — the service restarts…') ]));
+				L.resolveDefault(callFuzzApply(s), {}).then(function(r) {
+					applyStratBtn.disabled = false;
+					if (!r || (r.result === false && !r.op_id)) {
+						dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+							[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
+						return;
+					}
+					pollApply(r, _('Strategy applied and verified — Zapret serves it now. Run "Test strategy" to confirm it works on your ISP, then create a service rule on the Service rules page.'));
+				});
 			});
 		});
 
@@ -1430,7 +1592,7 @@ return view.extend({
 			[ 'youtube', 'YouTube' ],
 			[ 'discord', 'Discord' ],
 			[ 'telegram', _('Telegram (TLS)') ],
-			[ 'general', _('General (catch-all)') ],
+			[ 'general', _('Everything else') ],
 			[ 'custom', _('Custom list') ]
 		];
 		const FUZZ_TAGS = [ [ 'yt', 'YouTube' ], [ 'tg', 'Telegram' ],
@@ -1682,7 +1844,10 @@ return view.extend({
 			compApplyBtn.disabled = true;
 			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
 				[ _('Applying composition — the service restarts…') ]));
-			L.resolveDefault(callComposeApply(cb.zapret || '', cb.byedpi || ''), {}).then(function(r) {
+			/* Сеанс 191: профили едут в apply — сервер сверяет пересборку и
+			 * пишет зеркало UCI-профилей одним коммитом. */
+			L.resolveDefault(callComposeApply(cb.zapret || '', cb.byedpi || '',
+				JSON.stringify(state.compProfiles)), {}).then(function(r) {
 				compApplyBtn.disabled = false;
 				if (!r || (r.result === false && !r.op_id)) {
 					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
@@ -2419,7 +2584,7 @@ return view.extend({
 			[ autBtn, autSel, autFullWrap, autSetRuleWrap, autStatus ]);
 		dpiPick.appendChild(autRow);
 		dpiPick.appendChild(E('p', { 'class': 'wiz-note' },
-			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured on the Manual & compositions tab.') ]));
+			[ _('One click: the fuzzer ranks the corpus (reused when fresh), the best strategy for the resource is applied as a scoped profile with a server snapshot, and the resource is then checked through the configured path (page, CDN, the REAL video stream in KB/s). Zapret only — ByeDPI strategies are configured on the Application tab.') ]));
 		autSel.addEventListener('change', function() {
 			autSetRuleWrap.style.display = (autSel.value === 'general') ? 'none' : '';
 		});
@@ -2582,96 +2747,9 @@ return view.extend({
 			dom.content(dpiResult, box);
 		}
 
-		/* Service rule through the engine: the «apply → rule → verify» chain.
-		 * The engine select rebuilds with the environment; results land in
-		 * dpiResult (ONE place). */
-		const chainRow = E('div', { 'class': 'wiz-row' });
-		const chainSel = E('select', { 'class': 'cbi-input-select wiz-select' });
-		const chainEngine = E('select', { 'class': 'cbi-input-select', 'style': 'min-width:120px' });
-		const chainBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' },
-			[ _('Create rule and verify') ]);
-		chainRow.appendChild(E('span', { 'class': 'wiz-title' }, [ _('Send a service through the engine') ]));
-		chainRow.appendChild(chainSel);
-		chainRow.appendChild(chainEngine);
-		chainRow.appendChild(chainBtn);
-		chainBox.appendChild(E('div', { style: 'margin-top:10px' }, [ chainRow ]));
-
-		function renderChain() {
-			const env = lastEnv || {};
-			const sig = JSON.stringify([ env.zapret_enabled, env.byedpi_enabled ]);
-			if (sig === state.chainSig)
-				return;
-			state.chainSig = sig;
-			chainSel.innerHTML = '';
-			for (let p in PRESETS)
-				chainSel.appendChild(E('option', { value: PRESETS[p].source }, [ PRESETS[p].title ]));
-			chainEngine.innerHTML = '';
-			if (env.zapret_enabled)
-				chainEngine.appendChild(E('option', { value: 'zapret-out' }, [ 'Zapret' ]));
-			if (env.byedpi_enabled)
-				chainEngine.appendChild(E('option', { value: 'byedpi-out' }, [ 'ByeDPI' ]));
-			if (!env.zapret_enabled && !env.byedpi_enabled)
-				chainEngine.appendChild(E('option', { value: '' }, [ _('— no engine enabled —') ]));
-		}
-
-		chainBtn.addEventListener('click', function() {
-			const src = chainSel.value;
-			const eng = chainEngine.value;
-			if (!src || !eng) {
-				ui.addNotification(null, E('p', {}, _('Enable Zapret or ByeDPI on the Connection page first.')), 'error');
-				return;
-			}
-			chainBtn.disabled = true;
-			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-				[ _('Applying the rule — the route check follows…') ]));
-					/* set_rule + urltest_nodes cross as STRINGS (issue #11). */
-					L.resolveDefault(callPresetApply(src, eng, '[]'), {}).then(function(r) {
-				chainBtn.disabled = false;
-				if (!r || r.result === false) {
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Apply failed: ') + ((r && r.error) || _('rpc error')) ]));
-					return;
-				}
-				if (r.unchanged)
-					dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-						[ _('Rule is already in place — running the route check…') ]));
-				let hosts = [];
-				for (let p in PRESETS)
-					if (PRESETS[p].source === src)
-						hosts = PRESETS[p].hosts || [];
-				/* Ф1.1b: the apply rides an operation — the chain check waits
-				 * for the op verdict BEFORE probing the route (the reload may
-				 * not even have started when the 8 s guard fires). */
-				state.dpiPendingCheck = { source: src, hosts: hosts, since: Date.now(),
-					op_id: (r.apply && r.apply.op_id) || '' };
-				refresh();
-			});
-		});
-
-		function runChainCheck(dc) {
-			const hosts = dc.hosts || [];
-			if (!hosts.length) {
-				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
-					[ _('Rule applied. Run the "Provider" check to verify reachability.') ]));
-				return;
-			}
-			Promise.all(hosts.map(function(h) {
-				return L.resolveDefault(callRouteExplain(h), {}).then(function(t) {
-					return { host: h, trace: t };
-				});
-			})).then(function(results) {
-				const box = E('div', {});
-				box.appendChild(E('div', { 'class': 'wiz-note' },
-					[ _('Live route for %s:').format(dc.source) ]));
-				for (let i in results) {
-					const line = E('div', { 'class': 'wiz-note' });
-					line.appendChild(document.createTextNode(results[i].host + ': '));
-					line.appendChild(shortTrace(results[i].trace));
-					box.appendChild(line);
-				}
-				dom.content(dpiResult, box);
-			});
-		}
+		/* Сеанс 191: цепочка «apply → rule → verify» удалена вместе с
+		 * панелью-дублем (см. шапку render()). Маршрутизация сервисов —
+		 * на «Правилах для сервисов». */
 
 		/* Strategy catalog: refresh from the external source + the generator. */
 		const corpusLine = E('div', { 'class': 'wiz-note' });
@@ -2947,13 +3025,12 @@ return view.extend({
 				L.resolveDefault(callDeviceVerdicts(), {}),
 				L.resolveDefault(callStrategySourceStatus(), {})
 			]).then(function(data) {
-				if (data[0] && data[0].env) {
+				if (data[0] && data[0].env)
 					lastEnv = data[0].env;
-					renderChain();
-				}
 				/* ч.232: live device marks (fresher than any sweep snapshot). */
 				state.dev = (data[8] && data[8].device) || state.dev || {};
 				renderDpi(data[1] || {});
+				state.lastDpi = data[1] || {};
 				seedCompProfiles((data[1] || {}).comp_profiles);
 				renderStrategySel((data[2] && data[2].candidates) || []);
 				renderCorpus(data[1] ? (data[1].corpus || {}) : {}, data[3] || {});
@@ -2969,37 +3046,8 @@ return view.extend({
 				/* ч.123: the Overview «Quality now» panel. */
 				renderDpiQuality(data[1] || {}, data[7] || {}, data[4] || {});
 				renderRollback((data[1] && data[1].rollback) || null);
-
-				/* The DPI chain (strategy → rule → verify) waits the same way
-				 * as the presets did: fire once the core is running again
-				 * after the apply-triggered reload (min 8 s after apply).
-				 * Ф1.1b: when the apply spawned an operation, the op verdict
-				 * comes first — probing mid-reload would read the OLD config. */
-				const dc = state.dpiPendingCheck;
-				if (dc && (Date.now() - dc.since > 8000)) {
-					const proceed = function() {
-						state.dpiPendingCheck = null;
-						callServiceList('ravnex').then(function(res) {
-							let running = false;
-							try { running = !!res['ravnex']['instances']['hiddify-c']['running']; } catch (e) {}
-							if (running)
-								runChainCheck(dc);
-							else
-								state.dpiPendingCheck = dc;
-						}).catch(function() {
-							state.dpiPendingCheck = dc;
-						});
-					};
-					if (dc.op_id) {
-						L.resolveDefault(callOpStatus(dc.op_id), {}).then(function(st) {
-							const op = st && st.op;
-							if (!op || op.status === 'completed' || op.status === 'failed')
-								proceed();
-						});
-					} else {
-						proceed();
-					}
-				}
+				/* Сеанс 191: карточка синхрона профилей (дрейф/посев). */
+				renderProfilesSync(data[1] || {});
 			});
 		}
 

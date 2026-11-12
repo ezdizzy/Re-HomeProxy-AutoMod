@@ -58,6 +58,16 @@ import {
 	RECOVERY_PATH as RC_PATH, request_manual as rc_request_manual
 } from '/etc/ravnex/scripts/recovery.uc';
 import { compose as explain_compose } from '/etc/ravnex/scripts/explain.uc';
+/* Сеанс 191: канонический парсер/сборщик профилей «стратегия → ресурс»
+ * (UCI ravnex.profile = источник истины, строка — производная). */
+import {
+	split_new as zp_split_new, extract_blobs as zp_extract_blobs,
+	block_scope as zp_block_scope, domains_for as zp_domains_for,
+	resolve_strategy as zp_resolve_strategy, ciadpi_struct as zp_ciadpi_struct,
+	compose_all as zp_compose_all, blocks_from_string as zp_blocks_from_string,
+	profiles_read as zp_profiles_read, profiles_valid as zp_profiles_valid,
+	profiles_replace as zp_profiles_replace, sync_view as zp_sync_view
+} from '/etc/ravnex/scripts/zapret_profile.uc';
 /* Ф6.2 Discovery Engine: снимок обнаружения собирается этим модулем
  * (единый источник — automation.uc собирает тем же кодом кандидатов). */
 import { write_snapshot as discovery_write_snapshot }
@@ -1735,6 +1745,9 @@ const COMP_LISTS = {
  * rollback never depends on JS memory. */
 function hp_apply_backup_write() {
 	const c = cursor();
+	/* Сеанс 191: снапшот несёт и UCI-профили (источник истины) — Restore
+	 * восстанавливает строку И профили одной операцией. */
+	const prs = zp_profiles_read(c);
 	const snap = {
 		ts: time(),
 		zapret: {
@@ -1744,7 +1757,8 @@ function hp_apply_backup_write() {
 		byedpi: {
 			cmd_opts: '' + (c.get('ravnex', 'config', 'byedpi_cmd_opts') || ''),
 			enabled: (c.get('ravnex', 'config', 'byedpi_enabled') === '1')
-		}
+		},
+		profiles: (prs == null) ? [] : prs
 	};
 	system('mkdir -p ' + shellquote(HP_DIR + '/backups'));
 	writefile(COMP_BAK + '.tmp', sprintf("%.J\n", snap));
@@ -1807,237 +1821,63 @@ function hp_comp_domain_ok(d) {
 }
 
 /* Domain list for a profile: file-backed resource lists or the custom
- * string. Returns null for 'general' (catch-all), an array for scoped. */
+ * string. Returns null for 'general' (catch-all), an array for scoped.
+ * Сеанс 191: тело переехало в канонический модуль zapret_profile.uc. */
 function hp_comp_domains(p) {
-	if (p.resource === 'general')
-		return null;
-	let out = [];
-	if (p.resource === 'custom') {
-		const raw = split('' + (p.domains || ''), /[[:space:],;]+/);
-		for (let d in raw) {
-			d = trim(d);
-			if (length(d) && hp_comp_domain_ok(d))
-				push(out, d);
-		}
-		if (!length(out))
-			return null;
-	} else {
-		const f = COMP_LISTS[p.resource];
-		if (!f || !access(f))
-			return null;
-		const raw = split(readfile(f) || '', '\n');
-		for (let d in raw) {
-			d = trim(d);
-			if (!length(d) || substr(d, 0, 1) === '#')
-				continue;
-			if (hp_comp_domain_ok(d))
-				push(out, d);
-		}
-		if (!length(out))
-			return null;
-	}
-	/* Sanity cap: a hostlist row must stay a sane one-line option. */
-	if (length(out) > 128) {
-		const capped = [];
-		for (let i = 0; i < 128; i++)
-			push(capped, out[i]);
-		out = capped;
-	}
-	return out;
+	return zp_domains_for(p.resource, p.domains);
 }
 
 /* Split an nfqws2 strategy string into profile blocks by '--new'
  * (lesson 77: never by commas/whitespace — blocks may carry their own
- * unquoted multi-token options). */
+ * unquoted multi-token options). Сеанс 191: тело в zapret_profile.uc. */
 function hp_comp_split_new(args) {
-	const raw = split('' + args, '--new');
-	const blocks = [];
-	for (let i = 0; i < length(raw); i++) {
-		const b = trim(raw[i]);
-		if (length(b))
-			push(blocks, b);
-	}
-	return blocks;
+	return zp_split_new(args);
 }
 
 /* Global --blob tokens are nfqws2-wide and must sit before the first
- * profile block; pull them out of a block (session-13 probe T8). */
+ * profile block; pull them out of a block (session-13 probe T8).
+ * Сеанс 191: тело в zapret_profile.uc. */
 function hp_comp_extract_blobs(block) {
-	const toks = split(block, ' ');
-	const rest = [], blobs = [];
-	for (let i = 0; i < length(toks); i++) {
-		const t = trim(toks[i]);
-		if (!length(t))
-			continue;
-		if (index(t, '--blob=') === 0)
-			push(blobs, t);
-		else
-			push(rest, t);
-	}
-	return [ join(' ', rest), blobs ];
+	return zp_extract_blobs(block);
 }
 
 /* Resolve a profile strategy: raw args when it starts with '--', else a
- * corpus name lookup. Returns null when unresolvable. */
+ * corpus name lookup. Returns null when unresolvable.
+ * Сеанс 191: тело в zapret_profile.uc (гварды символов там же). */
 function hp_comp_resolve(strategy, corpus) {
-	const s = trim('' + (strategy || ''));
-	if (!length(s))
-		return null;
-	if (index(s, '--') === 0) {
-		/* Raw args reach nfqws2's eval split through the runner file — the
-		 * same guard as zapret_fuzz_apply/compose_apply (length, --shape,
-		 * no shell metacharacters). Protects EVERY caller at one place. */
-		if (length(s) > 8000 || match(s, /[`$;&|<>\n\r]/))
-			return null;
-		return s;
-	}
-	for (let ci = 0; ci < length(corpus.candidates); ci++) {
-		const c = corpus.candidates[ci];
-		if (type(c) === 'object' && c.name === s)
-			return '' + c.args;
-	}
-	return null;
+	return zp_resolve_strategy(strategy, corpus);
 }
 
 /* ciadpi group/instance options must come from the BUILDER only — a user
  * profile carrying -A/-H/-K (or the instance-level -i/-p, which init.d
- * adds itself) would silently restructure the generated group layout. */
+ * adds itself) would silently restructure the generated group layout.
+ * Сеанс 191: тело в zapret_profile.uc. */
 function hp_comp_ciadpi_struct(args) {
-	const banned = { '-A': 1, '--auto': 1, '-H': 1, '--hosts': 1, '-K': 1,
-		'--proto': 1, '-j': 1, '--ipset': 1, '-V': 1, '--pf': 1,
-		'-i': 1, '--ip': 1, '-p': 1, '--port': 1 };
-	const prefixes = [ '--auto=', '--hosts=', '--proto=', '--ipset=', '--pf=',
-		'--ip=', '--port=', '-A:', '-H:', '-K:', '-j:', '-V:', '-i:', '-p:' ];
-	const toks = split('' + args, ' ');
-	for (let i = 0; i < length(toks); i++) {
-		const t = trim(toks[i]);
-		if (!length(t))
-			continue;
-		if (banned[t])
-			return t;
-		for (let pi = 0; pi < length(prefixes); pi++)
-			if (index(t, prefixes[pi]) === 0)
-				return t;
-	}
-	return null;
+	return zp_ciadpi_struct(args);
 }
 
 /* Build the final strings for both engines. Returns
- * { zapret, byedpi, notes } or { error }. */
+ * { zapret, byedpi, notes } or { error }.
+ * Сеанс 191: каноническое тело переехало в zapret_profile.uc (compose_all,
+ * включая исправление per-block has_own_hl); здесь — обёртка с корпусом. */
 function hp_compose_build(profiles) {
-	const corpus = hp_corpus_read();
-	const notes = [];
-	const blob_map = {};
-	const z_scoped = [], z_general = [];
-	const b_scoped = [];
-	let b_fallback = '';
-	let n_z = 0, n_b = 0;
-	let z_hl_note = false;
-	let b_tg_note = false;
-	for (let i = 0; i < length(profiles); i++) {
-		const p = profiles[i];
-		if (type(p) !== 'object')
-			return { error: 'плохой профиль #' + (i + 1) };
-		const engine = trim('' + (p.engine || 'zapret'));
-		if (engine !== 'zapret' && engine !== 'byedpi')
-			return { error: 'неизвестный движок: ' + engine };
-		const res = trim('' + (p.resource || 'general'));
-		if (res !== 'youtube' && res !== 'discord' && res !== 'telegram' &&
-		    res !== 'general' && res !== 'custom')
-			return { error: 'неизвестный ресурс: ' + res };
-		const args = hp_comp_resolve(p.strategy, corpus);
-		if (args == null)
-			return { error: 'неизвестная или пустая стратегия: ' + trim('' + (p.strategy || '')) };
-		if (length(args) > 2000)
-			return { error: 'стратегия длиннее 2000 символов' };
-		const doms = hp_comp_domains({ resource: res, domains: p.domains });
-		if (res === 'custom' && doms == null)
-			return { error: 'у пользовательского профиля нет валидных доменов' };
-		if (res !== 'general' && res !== 'custom' && doms == null)
-			return { error: 'нет hostlist для ресурса: ' + res };
-		if (engine === 'zapret') {
-			n_z++;
-			/* A strategy that ships its own hostlist already scopes itself;
-			 * stacking a second --hostlist-domains would UNION the sets and
-			 * widen the scope instead of narrowing it — keep it honest. */
-			const has_own_hl = !!match(args, /--hostlist/);
-			const blocks = hp_comp_split_new(args);
-			for (let bi = 0; bi < length(blocks); bi++) {
-				const ex = hp_comp_extract_blobs(blocks[bi]);
-				let blk = ex[0];
-				for (let b in ex[1])
-					blob_map[b] = true;
-				if (doms != null && !has_own_hl)
-					blk += ' --hostlist-domains=' + join(',', doms);
-				if (has_own_hl && doms != null && !z_hl_note) {
-					z_hl_note = true;
-					push(notes, 'Zapret: стратегия несёт свой hostlist — привязка к ресурсу к ней НЕ применялась.');
-				}
-				blk = trim(blk);
-				if (length(blk))
-					push((doms != null) ? z_scoped : z_general, blk);
-			}
-		} else {
-			n_b++;
-			const bad = hp_comp_ciadpi_struct(args);
-			if (bad)
-				return { error: 'аргументы ByeDPI содержат служебную опцию конструктора: ' + bad };
-			if (res === 'telegram' && doms != null && !b_tg_note) {
-				b_tg_note = true;
-				push(notes, 'Telegram: к доменам привязаны только TLS веб-пути; MTProto UDP-трафик — нет.');
-			}
-			if (doms != null)
-				push(b_scoped, '-H :' + join(',', doms) + ' -K t ' + args);
-			else
-				b_fallback = trim(args);
-		}
+	return zp_compose_all(profiles, hp_corpus_read());
+}
+
+/* Метки кастомных профилей для карты: {domains-CSV-как-в-UCI: label}.
+ * block_scope ищет ПОДСТРОКУ пути/CSV — полный CSV совпадает точно.
+ * null-курсор (окно коммита) = пустая карта (честный предел). */
+function hp_profile_labels(c) {
+	const prs = zp_profiles_read(c);
+	const out = {};
+	if (prs == null)
+		return out;
+	for (let i = 0; i < length(prs); i++) {
+		const p = prs[i];
+		if (p.resource === 'custom' && length(p.label) && length(p.domains))
+			out[p.domains] = p.label;
 	}
-	/* nfqws2: blobs first, scoped blocks, then the catch-all tail (lesson 74:
-	 * a trailing profile after the last --new is mandatory). */
-	let zapret = '';
-	if (n_z) {
-		const blob_arr = [];
-		for (let k in blob_map)
-			push(blob_arr, k);
-		const blocks = [];
-		/* ucode for-in over an array yields the ELEMENTS (lesson 20). */
-		for (let b in z_scoped)
-			push(blocks, b);
-		for (let b in z_general)
-			push(blocks, b);
-		zapret = join(' ', blob_arr);
-		for (let i = 0; i < length(blocks); i++)
-			zapret += ((length(zapret) ? ' ' : '') + blocks[i]) +
-				((i < length(blocks) - 1) ? ' --new' : '');
-		/* safety: a leading --new opens an empty catch-all profile (T11). */
-		while (length(zapret) > 6 && substr(zapret, 0, 6) === '--new ')
-			zapret = trim(substr(zapret, 6));
-		/* Composed strings grow past single-strategy size (blobs are global
-		 * plus per-profile hostlists) — the composed cap is larger than the
-		 * per-profile 2000; UCI holds it and init.d re-parses via eval. */
-		if (length(zapret) > 8000)
-			return { error: 'собранная стратегия Zapret длиннее 8000 символов' };
-		if (length(z_scoped) && length(z_general))
-			push(notes, 'Zapret: профили ресурсов идут первыми, общий профиль — последним (первое совпадение срабатывает).');
-		else if (length(z_scoped) && !length(z_general))
-			push(notes, 'Zapret: общего профиля нет — трафик вне сценарных ресурсов идёт без дезинка (nfqws2 не трогает нераспознанные пакеты).');
-	}
-	/* ciadpi: groups through -A n, the last group without -H. */
-	let byedpi = '';
-	if (n_b) {
-		byedpi = join(' -A n ', b_scoped);
-		if (length(b_fallback))
-			byedpi = (length(byedpi) ? byedpi + ' -A n ' : '') + b_fallback;
-		else if (length(b_scoped)) {
-			byedpi += ' -A n';
-			push(notes, 'ByeDPI: общего профиля нет — добавлена явная пустая резервная группа; домены вне сценариев идут без дезинка.');
-		}
-		if (length(byedpi) > 8000)
-			return { error: 'собранная стратегия ByeDPI длиннее 8000 символов' };
-		if (length(b_scoped))
-			push(notes, 'ByeDPI: сценарные группы только TCP (-K t) с точными доменами; QUIC/UDP-трафик к доменам не привязывается и идёт через резервную группу.');
-	}
-	return { zapret: zapret, byedpi: byedpi, notes: notes };
+	return out;
 }
 
 /* ч.116: parse the CURRENT zapret_cmd_opts into profile blocks so the UI
@@ -2048,58 +1888,12 @@ function hp_compose_build(profiles) {
  * path or a --hostlist-domains CSV matched by its distinctive domains);
  * null = a catch-all/general block. name: the corpus entry matching the
  * block with its appended scoping token stripped (falling back to the
- * raw block — corpus entries may carry their own hostlist). */
-function hp_zapret_blocks(args, corpus) {
-	const blocks = [];
-	for (let b in hp_comp_split_new(args)) {
-		const raw = '' + b;
-		let scope = null;
-		const mh = match(raw, /--hostlist=(\/[^ ]+)/);
-		if (mh != null) {
-			const f = '' + mh[1];
-			if (index(f, 'youtube') >= 0)
-				scope = 'youtube';
-			else if (index(f, 'discord') >= 0)
-				scope = 'discord';
-			else if (index(f, 'telegram') >= 0)
-				scope = 'telegram';
-		} else {
-			const md = match(raw, /--hostlist-domains=([^ ]+)/);
-			if (md != null) {
-				const csv = '' + md[1];
-				if (index(csv, 'googlevideo') >= 0 || index(csv, 'youtube') >= 0 ||
-					index(csv, 'youtu') >= 0)
-					scope = 'youtube';
-				else if (index(csv, 'discord') >= 0)
-					scope = 'discord';
-				else if (index(csv, 'telegram') >= 0)
-					scope = 'telegram';
-			}
-		}
-		const base = trim(replace(raw, / --hostlist(-domains)?=[^ ]+/, ''));
-		let name = null;
-		if (length(base))
-			for (let x in corpus.candidates)
-				if (type(x) === 'object' && x.args === base) { name = '' + x.name; break; }
-		if (name == null && length(raw))
-			for (let x in corpus.candidates)
-				if (type(x) === 'object' && x.args === raw) { name = '' + x.name; break; }
-		if (name == null && length(base)) {
-			/* composition blocks are fragments of corpus strategies — match
-			 * by containment, the shortest containing entry wins (caught live
-			 * ч.116: the map showed raw args where the corpus name exists). */
-			let best = null, best_len = 0;
-			for (let x in corpus.candidates)
-				if (type(x) === 'object' && index('' + x.args, base) >= 0) {
-					const al = length('' + x.args);
-					if (best == null || al < best_len) { best = x; best_len = al; }
-				}
-			if (best != null)
-				name = '' + (best.name || '');
-		}
-		push(blocks, { scope: scope, name: name, base: base });
-	}
-	return blocks;
+ * raw block — corpus entries may carry their own hostlist).
+ * Сеанс 191: тело в zapret_profile.uc (blocks_from_string) — обогащённый
+ * скоуп (канонические пути файлов + словарь доменов + метки кастомных
+ * профилей UCI). profile_labels из hp_profile_labels(). */
+function hp_zapret_blocks(args, corpus, profile_labels) {
+	return zp_blocks_from_string(args, corpus, profile_labels);
 }
 
 /* ── «Контроль» (HomeControl integration, plan 14): helpers ────────────
@@ -6394,8 +6188,13 @@ const methods = {
 		args: { strategy: 'strategy' },
 		call: function(req) {
 			const strat = trim((req && req.args && req.args.strategy) || '');
-			if (!length(strat) || length(strat) > 2000)
+			if (!length(strat))
 				return { result: false, error: 'invalid strategy' };
+			/* Сеанс 191: лимит выровнен с композитором (8000) — раньше ручное
+			 * поле отсекало композиции на 2000, толкая пользователей ломать
+			 * их через shell-правку. */
+			if (length(strat) > 8000)
+				return { result: false, error: 'стратегия длиннее 8000 символов' };
 			/* Only nfqws2-shaped strings: must start with a -- flag and never
 			 * contain shell metacharacters (it later goes through eval set --). */
 			if (!match(strat, /^--[a-z]/) || match(strat, /[`$;&|<>\n]/))
@@ -6428,6 +6227,16 @@ const methods = {
 			const z_alive = (uci_get('ravnex.config.zapret_enabled', '0') === '1') &&
 				length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + uci_get('ravnex.config.zapret_qnum', '200') ] })) > 0;
 			system('uci commit ravnex');
+			/* Сеанс 191: зеркало профилей. Ручной apply = «для всего движка» —
+			 * одиночный общий профиль; scoped-профили затираются (UI честно
+			 * предупреждает). ОТДЕЛЬНЫЙ курсор строго ПОСЛЕ shell-коммита:
+			 * курсор, загруженный до `uci set`, при commit откатил бы строку
+			 * (гонка shell-vs-cursor). */
+			const mc = cursor();
+			const mirr = zp_profiles_replace(mc, [ { engine: 'zapret', resource: 'general', strategy: strat } ]);
+			if (mirr != null)
+				return { result: false, error: 'зеркало профилей: ' + mirr };
+			mc.commit('ravnex');
 			return (z_alive)
 				? op_spawn_dpi(true, 'zapret strategy apply')
 				: op_spawn_dpi(false, 'zapret strategy apply');
@@ -6497,12 +6306,21 @@ const methods = {
 	},
 
 	wizard_compose_apply: {
-		args: { zapret: 'zapret', byedpi: 'byedpi' },
+		args: { zapret: 'zapret', byedpi: 'byedpi', profiles: 'profiles' },
 		call: function(req) {
-			const z = trim('' + ((req && req.args && req.args.zapret) || ''));
-			const b = trim('' + ((req && req.args && req.args.byedpi) || ''));
-			if (!length(z) && !length(b))
-				return { result: false, error: 'composition is empty' };
+			let z = trim('' + ((req && req.args && req.args.zapret) || ''));
+			let b = trim('' + ((req && req.args && req.args.byedpi) || ''));
+			/* Сеанс 191: пустые строки + непустой profiles = «пересобрать из
+			 * профилей» (кнопка синхронизации при дрейфе) — строки берутся
+			 * из серверной пересборки ниже. */
+			let from_profiles = false;
+			if (!length(z) && !length(b)) {
+				const prs0 = hp_json_arg((req && req.args && req.args.profiles) || '');
+				if (prs0 != null && length(prs0))
+					from_profiles = true;
+				else
+					return { result: false, error: 'composition is empty' };
+			}
 			if (length(z) > 8000 || length(b) > 8000)
 				return { result: false, error: 'composition is too long' };
 			if (length(z) && (!match(z, /^--[a-z]/) || match(z, /[`$;&|<>\n]/)))
@@ -6513,6 +6331,30 @@ const methods = {
 				const bad = hp_comp_ciadpi_struct(b);
 				if (bad)
 					return { result: false, error: 'ByeDPI part contains a builder-only option: ' + bad };
+			}
+			/* Сеанс 191: когда пришли профили — источник истины подтверждается
+			 * серверной пересборкой (stale-UI ловится честной ошибкой, а не
+			 * тихой записью чужой строки). */
+			const prs = hp_json_arg((req && req.args && req.args.profiles) || '');
+			let mirror = null;
+			if (prs != null && length(prs)) {
+				const verr = zp_profiles_valid(prs);
+				if (verr != null)
+					return { result: false, error: 'профили: ' + verr };
+				const built2 = zp_compose_all(prs, hp_corpus_read());
+				if (built2.error != null)
+					return { result: false, error: built2.error };
+				if (from_profiles) {
+					/* Пересборка из профилей: строки — ПРОИЗВОДНЫЕ. */
+					z = built2.zapret;
+					b = built2.byedpi;
+				} else {
+					if (length(z) && built2.zapret !== z)
+						return { result: false, error: 'строка Zapret не соответствует профилям — обновите композитор' };
+					if (length(b) && built2.byedpi !== b)
+						return { result: false, error: 'строка ByeDPI не соответствует профилям — обновите композитор' };
+				}
+				mirror = prs;
 			}
 			if (length(z) && !access('/opt/zapret2/nfq2/nfqws2'))
 				return { result: false, error: 'zapret2 is not installed' };
@@ -6551,6 +6393,19 @@ const methods = {
 			if (length(b)) {
 				c.set('ravnex', 'config', 'byedpi_cmd_opts', b);
 				c.set('ravnex', 'config', 'byedpi_enabled', '1');
+			}
+			/* Сеанс 191: зеркало профилей в ОДНОМ коммите со строкой.
+			 * Без аргумента profiles (legacy-путь автопилота до его
+			 * обновления) — честный фолбэк: строка становится ОДНИМ общим
+			 * профилем (scoped-профили затираются, снапшот уже писан). */
+			if (mirror != null) {
+				const merr = zp_profiles_replace(c, mirror);
+				if (merr != null)
+					return { result: false, error: 'зеркало профилей: ' + merr };
+			} else if (length(z)) {
+				const merr2 = zp_profiles_replace(c, [ { engine: 'zapret', resource: 'general', strategy: z } ]);
+				if (merr2 != null)
+					return { result: false, error: 'зеркало профилей: ' + merr2 };
 			}
 			c.commit('ravnex');
 			const ap = op_spawn_dpi(light, 'engine cmd-opts apply');
@@ -6593,9 +6448,20 @@ const methods = {
 			c.set('ravnex', 'config', 'zapret_enabled', new_z);
 			c.set('ravnex', 'config', 'byedpi_cmd_opts', '' + (bak.byedpi.cmd_opts || ''));
 			c.set('ravnex', 'config', 'byedpi_enabled', new_b);
+			/* Сеанс 191: Restore восстанавливает и профили (источник истины)
+			 * одним коммитом со строкой. Снапшоты до волны без profiles
+			 * честно пропускают восстановление (профили остаются как есть). */
+			let prof_restored = false;
+			if (bak.profiles != null && type(bak.profiles) === 'array') {
+				const merr = zp_profiles_replace(c, bak.profiles);
+				if (merr != null)
+					return { result: false, error: 'зеркало профилей: ' + merr };
+				prof_restored = true;
+			}
 			c.commit('ravnex');
 			const ap = op_spawn_dpi(light, 'ByeDPI/Zapret restore');
 			ap.restored = { zapret: bak.zapret, byedpi: bak.byedpi };
+			ap.profiles_restored = prof_restored;
 			return ap;
 		}
 	},
@@ -6627,6 +6493,121 @@ const methods = {
 			writefile(path + '.tmp', sprintf('%.J\n', { ts: time(), profiles: profiles }));
 			system(`mv -f ${shellquote(path + '.tmp')} ${shellquote(path)}`);
 			return { result: true, saved: length(profiles) };
+		}
+	},
+
+	/* ── Сеанс 191: UCI-профили = источник истины «стратегия → ресурс» ──── */
+
+	/* Посев: текущая строка становится ОДНИМ общим профилем (без потери
+	 * обслуживания). Только когда профилей нет совсем и строка непуста. */
+	strategy_profile_seed: {
+		call: function(req) {
+			const c = cursor();
+			const prs = zp_profiles_read(c);
+			if (prs == null)
+				return { result: false, error: 'курсор недоступен' };
+			if (length(prs))
+				return { result: true, seeded: 0, note: 'профили уже есть' };
+			const str = trim('' + (c.get('ravnex', 'config', 'zapret_cmd_opts') || ''));
+			if (!length(str))
+				return { result: true, seeded: 0, note: 'стратегии нет — нечего засеивать' };
+			const err = zp_profiles_replace(c, [ { engine: 'zapret', resource: 'general', strategy: str } ]);
+			if (err != null)
+				return { result: false, error: err };
+			c.commit('ravnex');
+			return { result: true, seeded: 1 };
+		}
+	},
+
+	/* Честное «применить стратегию X к ресурсу Y» одним действием:
+	 * target-профиль в UCI.profile, остальные — из ЖИВОГО набора профилей
+	 * (rebuild не из winners автопилота), сборка каноническим модулем,
+	 * валидация бинарником, снапшот, коммит строки+профилей одним атомом,
+	 * light/full apply. Routing (правила) этим RPC не трогается — он на
+	 * «Правилах для сервисов»/автоподборе. */
+	strategy_apply_scoped: {
+		args: { resource: 'resource', strategy: 'strategy', domains: 'domains', label: 'label', verify: 'verify' },
+		call: function(req) {
+			const a = (req && req.args) || {};
+			const resource = trim('' + (a.resource || ''));
+			const strategy = trim('' + (a.strategy || ''));
+			const domains = trim('' + (a.domains || ''));
+			const label = trim('' + (a.label || ''));
+			const verify = trim('' + (a.verify || 'light'));
+			if (!(resource in ['youtube', 'discord', 'telegram', 'general', 'custom']))
+				return { result: false, error: 'invalid resource' };
+			if (resource === 'custom' && (!length(label) || length(label) > 64))
+				return { result: false, error: 'custom-ресурс требует имя (до 64 символов)' };
+			if (resource === 'custom' && (length(domains) > 2000 || match(domains, /[`$;&|<>\n\r]/)))
+				return { result: false, error: 'плохие домены' };
+			if (!length(strategy))
+				return { result: false, error: 'invalid strategy' };
+			if (length(strategy) > 4000 || match(strategy, /[`$;&|<>\n\r]/) || !match(strategy, /^-/))
+				return { result: false, error: 'invalid strategy' };
+			if (verify !== 'light' && verify !== 'none')
+				return { result: false, error: 'verify: light|none' };
+			if (!access('/opt/zapret2/nfq2/nfqws2'))
+				return { result: false, error: 'zapret2 is not installed' };
+			const memref = mem_gate_refusal();
+			if (memref != null)
+				return { result: false, error: memref };
+			const c = cursor();
+			let prs = zp_profiles_read(c);
+			if (prs == null)
+				return { result: false, error: 'курсор недоступен' };
+			if (!length(prs)) {
+				/* Seed-на-лету: строка есть, профилей нет — строка становится
+				 * общим профилем, ничего не теряется. */
+				const cur = trim('' + (c.get('ravnex', 'config', 'zapret_cmd_opts') || ''));
+				if (length(cur))
+					prs = [ { engine: 'zapret', resource: 'general', strategy: cur,
+						label: '', domains: '', enabled: true, order: 100 } ];
+			}
+			const kept = [];
+			let max_order = 0;
+			for (let i = 0; i < length(prs); i++) {
+				const p = prs[i];
+				const same = (p.resource === resource) &&
+					(resource !== 'custom' || p.label === label);
+				if (same)
+					continue;
+				push(kept, { engine: p.engine, resource: p.resource, label: p.label,
+					domains: p.domains, strategy: p.strategy, enabled: p.enabled });
+				if (p.order > max_order)
+					max_order = p.order;
+			}
+			push(kept, { engine: 'zapret', resource: resource, label: label,
+				domains: domains, strategy: strategy, enabled: true, order: max_order + 10 });
+			const verr = zp_profiles_valid(kept);
+			if (verr != null)
+				return { result: false, error: 'профили: ' + verr };
+			const built = zp_compose_all(kept, hp_corpus_read());
+			if (built.error != null)
+				return { result: false, error: built.error };
+			if (!length(built.zapret))
+				return { result: false, error: 'сборка пуста' };
+			if (verify === 'light') {
+				const vref = hp_zapret_validate(built.zapret);
+				if (vref != null)
+					return { result: false, error: vref };
+			}
+			hp_apply_backup_write();
+			c.set('ravnex', 'config', 'zapret_cmd_opts', built.zapret);
+			c.set('ravnex', 'config', 'zapret_enabled', '1');
+			const merr = zp_profiles_replace(c, kept);
+			if (merr != null)
+				return { result: false, error: 'зеркало профилей: ' + merr };
+			c.commit('ravnex');
+			/* light только при живом движке (та же семантика compose_apply). */
+			const prev_z = c.get('ravnex', 'config', 'zapret_enabled');
+			const zq = trim('' + (c.get('ravnex', 'config', 'zapret_qnum') || '200'));
+			const z_ok = (('' + (prev_z || '')) === '1') && pm_bin_alive('nfqws2') &&
+				length(pm_find({ exe: 'nfqws2', arg_all: [ '--qnum=' + zq ] })) > 0;
+			const ap = op_spawn_dpi(z_ok, 'scoped strategy apply');
+			ap.applied = { resource: resource, profiles: length(kept) };
+			ap.zapret = built.zapret;
+			ap.notes = built.notes;
+			return ap;
 		}
 	},
 
@@ -8961,6 +8942,20 @@ const methods = {
 						comp_profiles = cp.profiles;
 				} catch (e) { comp_profiles = null; }
 			}
+			/* Сеанс 191: UCI-профили — источник истины. Карта блоков строится
+			 * с метками кастомных профилей; sync-вид несёт дрейф
+			 * «rebuild(профили) != строка» и флаг посева из строки. */
+			const syncv = zp_sync_view(c, corpus, { force_string: true });
+			let prof_list = null;
+			if (syncv.profiles != null) {
+				prof_list = [];
+				for (let i = 0; i < length(syncv.profiles); i++) {
+					const p = syncv.profiles[i];
+					push(prof_list, { section: p.section, enabled: p.enabled,
+						engine: p.engine, resource: p.resource, label: p.label,
+						domains: p.domains, strategy: p.strategy, order: p.order });
+				}
+			}
 			return {
 				result: true,
 				zapret: {
@@ -8972,8 +8967,14 @@ const methods = {
 					/* ч.116: per-block scopes — the UI map shows WHICH block
 					 * (own profile vs the general tail vs a global strategy)
 					 * serves each resource. */
-					blocks: length(zstrat) ? hp_zapret_blocks(zstrat, corpus) : [],
+					blocks: length(zstrat)
+						? hp_zapret_blocks(zstrat, corpus, hp_profile_labels(c)) : [],
 					nfqueue: hp_zapret_queue_counters()
+				},
+				profiles_sync: {
+					profiles: prof_list,
+					drift: syncv.drift,
+					seed_needed: syncv.seed_needed
 				},
 				byedpi: {
 					enabled: (c.get('ravnex', 'config', 'byedpi_enabled') === '1'),

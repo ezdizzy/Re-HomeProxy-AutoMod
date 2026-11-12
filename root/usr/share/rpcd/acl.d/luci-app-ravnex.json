@@ -56,6 +56,8 @@
 					"app_rulesets_local_seed", "app_restore_internet",
 					"zapret_fuzz_start", "zapret_fuzz_apply", "zapret_device_verdict_set",
 					"wizard_compose_run", "wizard_compose_apply", "wizard_compose_rollback", "wizard_compose_save",
+
+					"strategy_profile_seed", "strategy_apply_scoped",
 					"wizard_dpi_probe", "wizard_autopilot_set", "wizard_autopilot_hold_release", "wizard_byedpi_set", "wizard_auto_pick_start",
 				"yt_steer_set", "yt_steer_regenerate", "yt_steer_learned_clear",
 					"wizard_provider_scan", "wizard_dpidetect_update", "wizard_ai_nodes_check",
