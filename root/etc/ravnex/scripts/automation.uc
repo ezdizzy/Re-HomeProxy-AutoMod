@@ -4025,9 +4025,23 @@ echo done > "$PRE.done"
 					if (dwave[f.dwi] && dwave[f.dwi].ok)
 						push(extra, { i: f.i, h: f.h });
 				let fwave = length(extra) ? probe_all(extra, 'proxy', timeout, http2_probe) : {};
-				for (let f in force) {
-					const dom = f.h;
-					const p_ok = (pwave[f.pwi] && pwave[f.pwi].ok) || (fwave[f.i] && fwave[f.i].ok);
+ 				for (let f in force) {
+ 					const dom = f.h;
+ 					/* s190: the pain lane is a THIRD learn door — resolver/NTP/DoH
+ 					 * hosts hammer exactly here (browser DoH retries while the
+ 					 * verdict is direct). Never learn them. */
+ 					if (is_never_learn_domain(dom)) {
+ 						log('not learning (resolver/NTP infrastructure, always direct): ' + dom);
+ 						const fst_nl = state[dom];
+ 						if (fst_nl != null && type(fst_nl) === 'object') {
+ 							fst_nl.status = 'direct';
+ 							fst_nl.confirms = 0;
+ 							delete fst_nl.pain_burst;
+ 							fst_nl.pain_passes = 0;
+ 						}
+ 						continue;
+ 					}
+ 					const p_ok = (pwave[f.pwi] && pwave[f.pwi].ok) || (fwave[f.i] && fwave[f.i].ok);
 					const fst = state[dom];
 					if (p_ok && learn_gate_ok) {
 						auto_set[dom] = true;
