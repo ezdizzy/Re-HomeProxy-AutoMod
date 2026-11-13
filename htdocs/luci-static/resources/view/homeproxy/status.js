@@ -503,6 +503,15 @@ const callFeedSetup = rpc.declare({
 	expect: { '': {} }
 });
 
+/* сеанс 198: обновление нативных хелперов (probe_pool, sni_sniffer,
+ * utls_probe) — тот же RPC, что у кнопки на Автоматизации; карточка
+ * «Хелперы» на Обслуживании зовёт его по кнопке плашки-связки. */
+const callHelpersInstall = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'automation_helpers_install',
+	expect: { '': {} }
+});
+
 const callFeedRemove = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'feed_remove',
@@ -2000,6 +2009,45 @@ function buildFeedCard(feed) {
 	const resultEl = mkResult();
 	const setMsg = (txt, kind) => resultEl.setResult(txt, kind);
 
+	/* сеанс 198: связка «хелперы ↔ версия приложения». Приложение хелперы
+	 * НЕ обновляет (пакет arch-independent, бинарников не содержит), поэтому
+	 * расхождение показывается честной плашкой с ОДНОЙ кнопкой (тот же RPC
+	 * automation_helpers_install, что у кнопки на Автоматизации); маркер
+	 * /etc/ravnex/tools/helpers_release пишет бэкенд при установке хелперов. */
+	const pairBox = E('div', {});
+	function renderPairing() {
+		const hp = st.helpers_pairing || {};
+		if (!hp.drift) {
+			dom.content(pairBox, []);
+			return;
+		}
+		const btn = mkBtn(_('Update helpers'), 'primary', {
+			style: 'margin-left:8px',
+			click: async function() {
+				if (!await hp.confirmModal(_('Update helpers'),
+					_('Update the automation helpers (probe_pool, sni_sniffer, utls_probe) for the app version %s? The automation engine restarts (a short pause).').format(hp.app_version || '?'),
+					_('Update')))
+					return;
+				btn.disabled = true;
+				setMsg(_('Updating the helpers…'), 'grey');
+				const ret = await L.resolveDefault(callHelpersInstall(), {});
+				st = await L.resolveDefault(callFeedStatus(), {});
+				applyState();
+				renderPairing();
+				const okAny = (ret != null && ret.result !== false && !ret.error);
+				setMsg(okAny
+					? _('Helpers updated — the automation engine picks them up at once.')
+					: _('Failed: ') + ((ret && ret.error) || _('RPC error')), okAny ? 'green' : 'red');
+			}
+		});
+		dom.content(pairBox, [
+			E('div', { 'class': 'hpui-banner', style: 'margin:6px 0; display:flex; align-items:center; flex-wrap:wrap; gap:4px' }, [
+				E('span', {}, _('The app was updated to %s, the helpers were installed for %s — update them (the app package never carries the helper binaries).').format(hp.app_version || '?', hp.helpers_release || '?')),
+				btn
+			])
+		]);
+	}
+
 	function compCell(label, row) {
 		row = row || {};
 		const inst = row.installed || '—';
@@ -2035,13 +2083,20 @@ function buildFeedCard(feed) {
 		manEl.className = 'hpui-badge ' + manCls;
 		manEl.textContent = manTxt;
 		const pk = st.policy || {};
+		const hp = st.helpers_pairing || {};
 		dom.content(pkgLine, [
 			_('Components (installed → offered)') + ': ',
 			...compCell('mosdns', pk.mosdns),
-			...compCell('helpers', pk.probe_pool),
+			...compCell('probe_pool', pk.probe_pool),
+			...compCell('sni_sniffer', pk.sni_sniffer),
+			/* сеанс 198: utls_probe в фиде НЕТ (по контракту — только релиз-
+			 * zips, сеанс 158/Б3); его версия = релиз, под который ставились
+			 * хелперы (маркер бэкенда). */
+			...compCell('utls_probe', { installed: hp.helpers_release || '—', candidate: '—' }),
 			...compCell('byedpi', pk.byedpi),
 			...compCell('zapret2', pk.zapret2)
 		]);
+		renderPairing();
 		/* Session 161: «Set up» is only actionable when the source is NOT
 		 * configured yet (apk systems only) — before this, both buttons were
 		 * always enabled at once (user report, ch.244). */
@@ -2094,6 +2149,7 @@ function buildFeedCard(feed) {
 			removeBtn
 		]),
 		pkgLine,
+		pairBox,
 		resultEl
 	]);
 }

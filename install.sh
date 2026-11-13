@@ -1023,6 +1023,18 @@ install_native_helpers() {
 	# клиента; curl не воспроизводит). Нет бинарника — Passed честно меряет
 	# только curl (как раньше), прогон не падает.
 	install_go_tool utls_probe $FORCE || true
+	# сеанс 198: маркер связки «хелперы ↔ версия приложения» — приложение
+	# хелперы не обновляет (пакет arch-independent), Обслуживание честно
+	# показывает, для какой версии приложения ставились хелперы. Один файл
+	# ~10 байт, не копии.
+	if [ "$FORCE" = force ] || [ -x /usr/bin/probe_pool ] || [ -x /usr/bin/sni_sniffer ]; then
+		local HV
+		HV=$(app_installed_version)
+		if [ -n "$HV" ]; then
+			mkdir -p /etc/ravnex/tools
+			echo "$HV" > /etc/ravnex/tools/helpers_release
+		fi
+	fi
 }
 
 # ------------------------------------------------- 3. подписка / конфигурация
@@ -1594,6 +1606,13 @@ install_app
 set_dns_defaults
 
 feed_init || true   # источник обновлений: ключ + манифест (best-effort, фолбэк — обычные пути)
+
+# сеанс 198: зеркало GitHub — в UCI СРАЗУ после установки приложения
+# (/etc/config/ravnex уже существует — shipped-дефолты не блокируются),
+# чтобы делегированная установка ядра (install_core → core_mgmt download_pkg)
+# видела зеркало на ПЕРВОЙ установке. Раньше зеркало дописывалось только в
+# ensure_baseline — ПОСЛЕ install_core, и свежая установка ядра шла без него.
+apply_gh_mirror
 
 install_core
 

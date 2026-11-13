@@ -8492,3 +8492,18 @@ msgstr "QUIC уже мёртв"
 
 msgid "QUIC lane (UDP/443), probe_pool -quic-check; silence is a LIKELY cut, not proof"
 msgstr "QUIC-лейна (UDP/443), probe_pool -quic-check; тишина — ВЕРОЯТНЫЙ срез, не доказательство"
+
+msgid "Update helpers"
+msgstr "Обновить хелперы"
+
+msgid "Update the automation helpers (probe_pool, sni_sniffer, utls_probe) for the app version %s? The automation engine restarts (a short pause)."
+msgstr "Обновить хелперы автоматизации (probe_pool, sni_sniffer, utls_probe) под версию приложения %s? Движок автоматизации перезапустится (короткая пауза)."
+
+msgid "Updating the helpers…"
+msgstr "Обновляю хелперы…"
+
+msgid "Helpers updated — the automation engine picks them up at once."
+msgstr "Хелперы обновлены — движок автоматизации подхватит их сразу."
+
+msgid "The app was updated to %s, the helpers were installed for %s — update them (the app package never carries the helper binaries)."
+msgstr "Приложение обновлено до %s, хелперы ставились для %s — обновите их (пакет приложения никогда не содержит бинарники хелперов)."

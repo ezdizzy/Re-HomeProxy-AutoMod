@@ -420,20 +420,76 @@ function hp_core_features_cached(bin) {
  * legacy name is tried second, so the check works both BEFORE and AFTER the GitHub
  * repository rename (404 body has no tag_name -> fall through). Returns the parsed
  * JSON with tag_name, or null on failure. */
-function app_github_release() {
+/* ── сеанс 198: общий транспорт GitHub-API — curl-first (урок 161: на
+ * TSPU-провайдерах busybox-wget к api.github.com таймаутит при живом curl,
+ * и wget-only хелперы ложно доносили «GitHub недоступен»); фолбэк — wget.
+ * Токен придаётся в любом транспорте. Возвращает ТЕЛО ответа или null. ── */
+function gh_api_get(url, timeout_s) {
 	const token_fd = popen('uci -q get ravnex.config.github_token 2>/dev/null');
 	let token = null;
 	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
-	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
-	const repos = ['ezdizzy/ravnex', 'ezdizzy/ravnex'];
-	for (let i = 0; i < length(repos); i++) {
-		const fd = popen(`wget -qO- --timeout=10 ${auth} "https://api.github.com/repos/${repos[i]}/releases/latest" 2>/dev/null`);
-		if (!fd) continue;
-		const raw = fd.read('all');
-		fd.close();
-		let rel = null;
-		try { rel = json(raw); } catch(e) { rel = null; }
-		if (rel && length(rel.tag_name)) return rel;
+	const auth = length(token) ? ('--header "Authorization: token ' + token + '"') : '';
+	let raw = '';
+	const cfd = popen(`curl -s --retry 2 --retry-delay 2 --connect-timeout 10 --max-time ${timeout_s || 15} ${auth} ${shellquote(url)} 2>/dev/null`);
+	if (cfd) { raw = cfd.read('all'); cfd.close(); }
+	if (!length(trim(raw || ''))) {
+		const wfd = popen(`wget -qO- --timeout=10 ${auth} ${shellquote(url)} 2>/dev/null`);
+		if (wfd) { raw = wfd.read('all'); wfd.close(); }
+	}
+	raw = trim(raw || '');
+	return length(raw) ? raw : null;
+}
+
+/* Кэш последних известных тегов релизов ПО РЕПОЗИТОРИЮ — один маленький
+ * JSON (~100–300 байт: тег + время, НЕ копии файлов), /etc/ravnex/
+ * release_cache.json, запись только при изменении. Смысл: при «слепом»
+ * api.github.com кнопки проверки обновлений отвечают последним
+ * ИЗВЕСТНЫМ тегом с честной пометкой «из кэша», а не ошибкой транспорта. */
+const REL_CACHE_FILE = HP_DIR + '/release_cache.json';
+function rel_cache_read() {
+	try {
+		const d = json(readfile(REL_CACHE_FILE) || '');
+		return (d != null && type(d) === 'object') ? d : {};
+	} catch (e) { return {}; }
+}
+function rel_cache_write(repo, tag) {
+	try {
+		const d = rel_cache_read();
+		if (d[repo] === tag)
+			return;                        /* change-only запись */
+		d[repo] = tag;
+		d.ts = time();
+		mkdir(HP_DIR);
+		writefile(REL_CACHE_FILE + '.tmp', sprintf('%.J', d) + '\n');
+		rename(REL_CACHE_FILE + '.tmp', REL_CACHE_FILE);
+	} catch (e) { /* best-effort: кэш никогда не ломает живой ответ */ }
+}
+
+function app_github_release() {
+	const raw = gh_api_get('https://api.github.com/repos/ezdizzy/ravnex/releases/latest', 15);
+	if (raw == null)
+		return null;
+	let rel = null;
+	try { rel = json(raw); } catch(e) { rel = null; }
+	if (rel && length(rel.tag_name)) {
+		rel_cache_write('app', rel.tag_name);
+		return rel;
+	}
+	return null;
+}
+
+/* Latest release tag of an arbitrary GitHub repo (for tool check-update
+ * buttons). Honors the optional GitHub token. Returns the tag ("v" prefix
+ * included) or null on failure; success lands in the release cache. */
+function gh_latest_tag(repo) {
+	const raw = gh_api_get(`https://api.github.com/repos/${repo}/releases/latest`, 15);
+	if (raw == null)
+		return null;
+	let rel = null;
+	try { rel = json(raw); } catch(e) { rel = null; }
+	if (rel && rel.tag_name) {
+		rel_cache_write(repo, rel.tag_name);
+		return rel.tag_name;
 	}
 	return null;
 }
@@ -454,35 +510,12 @@ function app_vercmp(a, b) {
 	return 0;
 }
 
-/* Latest release tag of an arbitrary GitHub repo (for tool check-update buttons).
- * Honors the optional GitHub token like app_github_release(). Returns the tag
- * ("v" prefix included) or null on failure. */
-function gh_latest_tag(repo) {
-	const token_fd = popen('uci -q get ravnex.config.github_token 2>/dev/null');
-	let token = null;
-	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
-	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
-	const fd = popen(`wget -qO- --timeout=10 ${auth} "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null`);
-	if (!fd) return null;
-	const raw = fd.read('all');
-	fd.close();
-	try {
-		const rel = json(raw);
-		return (rel && rel.tag_name) ? rel.tag_name : null;
-	} catch(e) { return null; }
-}
-
 /* Full release JSON (tag + assets with per-asset digest), token-aware —
  * seance 177 engine prepares need the asset list AND the sha256 digest. */
 function gh_release_json(repo) {
-	const token_fd = popen('uci -q get ravnex.config.github_token 2>/dev/null');
-	let token = null;
-	if (token_fd) { token = trim(token_fd.read('all')); token_fd.close(); }
-	const auth = length(token) ? `--header="Authorization: token ${token}"` : '';
-	const fd = popen(`wget -qO- --timeout=15 ${auth} "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null`);
-	if (!fd) return null;
-	const raw = fd.read('all');
-	fd.close();
+	const raw = gh_api_get(`https://api.github.com/repos/${repo}/releases/latest`, 20);
+	if (raw == null)
+		return null;
 	try { return json(raw); } catch(e) { return null; }
 }
 
@@ -511,14 +544,34 @@ function detect_pm_rpc() {
 
 /* Uniform reply for the tool check-update methods: strip the "v" prefix from
  * the tag and compare against the installed semver. */
-function check_update_reply(installed_version, tag) {
+function check_update_reply(installed_version, tag, stale_note) {
 	if (!tag)
 		return { error: 'cannot reach GitHub (or rate-limited)' };
 	const latest = replace(tag, /^v/, '');
 	if (!length(latest))
 		return { error: 'cannot read latest version' };
 	const update_available = installed_version && app_vercmp(installed_version, latest) < 0;
-	return { installed_version: installed_version, latest_version: latest, update_available: !!update_available };
+	const r = { installed_version: installed_version, latest_version: latest, update_available: !!update_available };
+	/* сеанс 198: ответ из кэша тегов (api.github.com недоступен) — честная
+	 * пометка, чтобы UI не выдал кэш за свежий замер. */
+	if (stale_note) {
+		r.stale = true;
+		r.note = stale_note;
+	}
+	return r;
+}
+
+/* сеанс 198: единый check-update для тулов/движков — живой API, при слепом
+ * транспорте честный фолбэк на кэш последних известных тегов. */
+function gh_check_update_reply(repo, installed_version) {
+	const tag = gh_latest_tag(repo);
+	if (tag != null)
+		return check_update_reply(installed_version, tag);
+	const cached = rel_cache_read()[repo];
+	if (cached != null && length('' + cached))
+		return check_update_reply(installed_version, '' + cached,
+			'последний известный тег из кэша — api.github.com недоступен');
+	return check_update_reply(installed_version, null);
 }
 
 /* Engine version marker (seance 177, де-форк): byedpi/zapret2 now install
@@ -4788,9 +4841,8 @@ const methods = {
 
 	byedpi_check_update: {
 		call: function(req) {
-			return check_update_reply(engine_marker_version('byedpi') ||
-				installed_pkg_version('byedpi', /byedpi-([0-9][0-9.]*)/),
-				gh_latest_tag('hufrea/byedpi'));
+			return gh_check_update_reply('hufrea/byedpi', engine_marker_version('byedpi') ||
+				installed_pkg_version('byedpi', /byedpi-([0-9][0-9.]*)/));
 		}
 	},
 
@@ -5009,9 +5061,8 @@ const methods = {
 
 	zapret_check_update: {
 		call: function(req) {
-			return check_update_reply(engine_marker_version('zapret2') ||
-				installed_pkg_version('zapret2', /zapret2-([0-9][0-9.]*)/),
-				gh_latest_tag('bol-van/zapret2'));
+			return gh_check_update_reply('bol-van/zapret2', engine_marker_version('zapret2') ||
+				installed_pkg_version('zapret2', /zapret2-([0-9][0-9.]*)/));
 		}
 	},
 
@@ -5415,12 +5466,27 @@ const methods = {
 			const version = app_installed_version(app_pkg_manager());
 
 			const rel = app_github_release();
-			if (!rel) return { error: 'cannot reach GitHub (or rate-limited)' };
-			let latest = replace(rel.tag_name || '', /^v/, '');
-			if (!length(latest)) return { error: 'cannot read latest version' };
+			let latest = null, stale = false;
+			if (rel && length(rel.tag_name)) {
+				latest = replace(rel.tag_name || '', /^v/, '');
+			} else {
+				/* сеанс 198: слепой api.github.com — честный ответ из кэша
+				 * последних известных тегов (не копии файлов, ~100 байт). */
+				const cached = rel_cache_read()['app'];
+				if (cached != null && length('' + cached)) {
+					latest = replace('' + cached, /^v/, '');
+					stale = true;
+				}
+			}
+			if (!length(latest)) return { error: 'cannot reach GitHub (or rate-limited)' };
 
 			const update_available = version && app_vercmp(version, latest) < 0;
-			return { installed_version: version, latest_version: latest, update_available: !!update_available };
+			const r = { installed_version: version, latest_version: latest, update_available: !!update_available };
+			if (stale) {
+				r.stale = true;
+				r.note = 'последний известный тег из кэша — api.github.com недоступен';
+			}
+			return r;
 		}
 	},
 
@@ -10516,6 +10582,23 @@ const methods = {
 			}
 			if (pp_installed || sni_installed)
 				restart_daemon_instance('automation.uc', 'automation');
+			/* сеанс 198: маркер связки «хелперы ↔ версия приложения» —
+			 * приложение хелперы НЕ обновляет (пакет arch-independent, без
+			 * бинарников), поэтому Обслуживание честно показывает, для какой
+			 * версии приложения ставились хелперы, и предлагает обновить при
+			 * расхождении. Один маленький файл (~10 байт), не копии. */
+			const any_installed = pp_installed || sni_installed ||
+				(type(res.utls_probe) === 'object' && res.utls_probe.installed === true);
+			if (any_installed) {
+				try {
+					const appv = app_installed_version(app_pkg_manager());
+					if (appv != null) {
+						mkdir(HP_DIR + '/tools');
+						writefile(HP_DIR + '/tools/helpers_release' + '.tmp', appv + '\n');
+						rename(HP_DIR + '/tools/helpers_release.tmp', HP_DIR + '/tools/helpers_release');
+					}
+				} catch (e) { /* best-effort: маркер не влияет на установку */ }
+			}
 			return res;
 		}
 	},
@@ -10578,7 +10661,7 @@ const methods = {
 				const m = match(out, /v?([0-9]+\.[0-9]+\.[0-9]+)/);
 				if (m) installed_version = m[1];
 			}
-			return check_update_reply(installed_version, gh_latest_tag('IrineSistiana/mosdns'));
+			return gh_check_update_reply('IrineSistiana/mosdns', installed_version);
 		}
 	},
 
@@ -10611,6 +10694,23 @@ const methods = {
 					sha: !!(c && (c.apk_sha256 || c.ipk_sha256))
 				};
 			}
+			/* сеанс 198: связка «хелперы ↔ версия приложения» — релиз, под
+			 * который хелперы ставились в последний раз (маркер бэкенда
+			 * /etc/ravnex/tools/helpers_release), и текущая версия приложения.
+			 * Только локальные файлы — кэш-only контракт фида соблюдён;
+			 * drift = приложение обновилось, хелперы нет (честная плашка). */
+			let helpers_pairing = {};
+			if (access(HP_DIR + '/tools/helpers_release')) {
+				const hrel = trim(readfile(HP_DIR + '/tools/helpers_release') || '');
+				if (length(hrel)) {
+					helpers_pairing.helpers_release = hrel;
+					const avp = app_installed_version(app_pkg_manager());
+					if (avp != null) {
+						helpers_pairing.app_version = avp;
+						helpers_pairing.drift = (hrel !== avp);
+					}
+				}
+			}
 			return {
 				result: true,
 				pkg_manager: pm,
@@ -10625,6 +10725,7 @@ const methods = {
 				manifest_fresh: man_fresh,
 				manifest_series: man_series,
 				manifest_arch: man_arch,
+				helpers_pairing: helpers_pairing,
 				policy: policy
 			};
 		}

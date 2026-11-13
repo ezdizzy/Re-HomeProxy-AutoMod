@@ -8469,3 +8469,18 @@ msgstr ""
 
 msgid "QUIC lane (UDP/443), probe_pool -quic-check; silence is a LIKELY cut, not proof"
 msgstr ""
+
+msgid "Update helpers"
+msgstr ""
+
+msgid "Update the automation helpers (probe_pool, sni_sniffer, utls_probe) for the app version %s? The automation engine restarts (a short pause)."
+msgstr ""
+
+msgid "Updating the helpers…"
+msgstr ""
+
+msgid "Helpers updated — the automation engine picks them up at once."
+msgstr ""
+
+msgid "The app was updated to %s, the helpers were installed for %s — update them (the app package never carries the helper binaries)."
+msgstr ""
