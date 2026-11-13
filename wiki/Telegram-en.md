@@ -32,6 +32,7 @@ UCI/shell edits).
 | `/status_engine` | Transport-layer engine state |
 | `/connections` | Live connections |
 | `/close` | Close connections |
+| `/alerts` | Notification category toggles |
 
 **Access control:**
 
@@ -59,11 +60,13 @@ timeout and hang-protection, and a full audit trail in the journal.
 
 - node switches (Hot Swap) — with a **human-readable node name**;
 - service failures and recoveries;
-- self-learning engine events (a new direct-unreachable site learned, etc.).
+- self-learning engine events (a new direct-unreachable site learned, etc.) — worded
+  «taken off the bypass».
 
 Pushes are **deduplicated**: a repeated alarm from one subsystem does not spam (cooldown), and
 «recovered» arrives only in response to an actually delivered alarm; critical notifications are
-never gated. Notification categories are configurable — unnecessary noise can be turned off.
+never gated. The flap gate: failure pairs of one resource (removed → put back) do not turn into
+a push series. Notification categories are configurable — unnecessary noise can be turned off.
 
 The bot stays connected even when the **proxy chain has died** — channel resilience is built in.
 

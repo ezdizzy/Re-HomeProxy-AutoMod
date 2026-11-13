@@ -20,6 +20,7 @@ is the state of every app service.
 - The list of active connections with **search and filters** (by device, node, resource).
 - The **Close all** button — drop every connection (for example, after an exit change, so apps
   immediately re-dial through the new route).
+- Selective close: per-row checkboxes + **«Close selected»**.
 
 ---
 

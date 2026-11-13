@@ -106,7 +106,9 @@ Every rule = a **source list** + an **exit**. The lists are community-maintained
   Xbox;
 - **Other**: international news, anime, HDRezka, adult, geo-blocked services.
 
-Re-adding the same source is marked — only the first rule takes effect.
+Re-adding the same source is marked — only the first rule takes effect. A custom-list rule can
+be deleted row by row — the button in the row; the list pipeline is checked automatically by
+the CI hub with a sha256 gate.
 
 ### Pins
 

@@ -35,6 +35,30 @@ The engine distinguishes **how** a resource is blocked and shows it in the table
 | `hardcode` | Hardcoded address |
 | `upstream_blocked` | Blocked at the upstream |
 
+### QUIC context
+
+- **QUIC contrast**: the engine measures UDP/443 (Version Negotiation) on the learned hosts — the
+  `tcp_only_block` / `blocked_both` / `quic_dead` classes are visible in the verdicts and the «Why»
+  column; a control probe from the router's own WAN every 6 h catches an ISP swapping VN responses
+  (in that case the QUIC measurements are flagged unreliable).
+- **QUIC drop**: UDP/443 to hosts sent through the proxy is dropped in the kernel (route-reject) —
+  QUIC cannot ride a SOCKS proxy anyway, and raw direct h3 gets cut mid-stream by the ISP; the
+  browser instantly falls back to TCP. A host learned «by pain» while QUIC was alive keeps the
+  QUIC drop even after being taken off the bypass — the «removed → QUIC pain → put back» cycle
+  does not repeat.
+
+### Verdict stability
+
+- **Flap windows**: ≥3 verdict changes within 6 h make an honest «Unstable» (Flapping) episode with
+  per-host event suppression and a counter. A direct learn shortly after a reverse one requires
+  2 confirmations within 10 minutes (the first learn of any host is instant, critical tracks have
+  no brake); a dead domain is removed only after a second independent NXDOMAIN measurement
+  15 minutes later.
+- **Pain-aware heal**: the take-off-the-bypass series does not finish while the user is actively
+  using the resource (the pain is fresh) — but not forever: after two deferred series the heal
+  finishes honestly («the deferral budget is exhausted, the direct path kept confirming»). Events
+  are worded «taken off the bypass».
+
 ### The resource table
 
 - The **Resource** column holds a domain or an IP address; the **Type** column shows the entry
@@ -75,7 +99,12 @@ A permanent strategy watchdog (as opposed to the one-shot **auto-pick** on
 ## Native helpers (Go)
 
 - **probe_pool** — batch probing of candidates;
-- **sni_sniffer** — SNI capture as a candidate source.
+- **sni_sniffer** — SNI capture as a candidate source;
+- **utls_probe** — a browser-style ClientHello probe; installed from the release zip, deliberately
+  absent from the feed.
+
+Helper version parity with the app version is controlled — any drift is visible in the
+«Application» card on Maintenance.
 
 ---
 

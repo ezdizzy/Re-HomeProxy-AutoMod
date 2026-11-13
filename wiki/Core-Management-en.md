@@ -99,8 +99,10 @@ restarts the service itself.
 - **Version / status:** the section shows the installed core and its version.
 
 The app itself, mosdns, the helpers and our own apk/ipk packaging of the engines come from
-**our signed package source**; the cores themselves come only from the originals: details and
-the «Update source» card: [Installation and Updates](Installation-and-Updates-en).
+**our signed package source**; the cores themselves come only from the originals: details in
+[Installation and Updates](Installation-and-Updates-en). The parity of the automation helpers
+(probe_pool/sni_sniffer) with the app version is visible in the **«Application»** card on
+Maintenance — a banner with the «Update helpers» button and an honest version-drift note.
 
 ---
 

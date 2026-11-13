@@ -60,6 +60,8 @@ The **strategy picker** on the Strategy master page fills the strategy field for
 |-------|------------|
 | **Recommended** | A small curated set, purpose-named (e.g. *Default (fake + multidisorder)*, *Multisplit*, *Fake only*). Start here. |
 | **Imported (catalog)** / **Generated** / **Full-test pool** | The larger technique-named pools used by the Strategy Lab and the full tester. |
+| **Tachyon (import)** | A corpus of ~68 strategies from Tachyon — source attribution preserved. |
+| **Community** | The provider-community strategy index, republished by our validated lists hub. |
 
 Strategies are shipped read-only in `/etc/ravnex/zapret_candidates.json` and are based on [bol-van/zapret2](https://github.com/bol-van/zapret2) (nfqws2/blockcheck2) with some adapted from [flowseal/zapret-discord-youtube](https://github.com/flowseal/zapret-discord-youtube) (MIT). You can also leave the picker empty and type your own option string in the strategy field.
 
@@ -77,7 +79,7 @@ Strategies are shipped read-only in `/etc/ravnex/zapret_candidates.json` and are
 Because the right strategy is ISP-specific, the **Strategy master** page includes a **tester** that never touches your live traffic — it spins up a **temporary NFQUEUE scoped to the test sites** and checks whether each TLS handshake completes:
 
 - **Check strategy** — runs whatever is in the strategy field against **YouTube**, **Telegram**, **Discord** and **Speedtest.net**, showing each site as ✓ / ✗ with the handshake time, plus an `ok/total` count.
-- **Strategy Lab** — quick/full **fuzzing** of the whole strategy corpus with a no-desync baseline, majority-of-rounds ranking and a history of the last runs. The currently applied strategy is measured too (the deep battery); hosts no candidate passed are honestly excluded from the counts. A verdict is a measurement **on this router**: differences up to ~25% count as noise. The full battery also includes a **UDP/STUN probe of the Discord voice edge** — an honest verdict by response (including «silence»).
+- **Strategy Lab** — quick/full **fuzzing** of the whole strategy corpus with a no-desync baseline, majority-of-rounds ranking and a history of the last runs. The currently applied strategy is measured too (the deep battery); hosts no candidate passed are honestly excluded from the counts. A verdict is a measurement **on this router**: differences up to ~25% count as noise. The full battery also includes a **UDP/STUN probe of the Discord voice edge** — an honest verdict by response (including «silence»). Dead edges are re-checked under every candidate strategy; there is also a browser (ClientHello) probe — where a measurement is impossible, an honest «not measured» mark is shown; verdicts are also computed per pool as a whole («the pool is dead in its entirety»).
 - **Auto-pick strategy** — one click: reuses (or builds) the fuzz ranking, applies the best strategy *for the chosen resource* with a server snapshot, and checks the resource live through its configured path.
 - **Composition** — per-resource profiles (e.g. a dedicated YouTube strategy + a Discord strategy + a general one) built, tested and applied server-side, with a **Restore** button that survives page reloads.
 - **The scheduled autopilot** — the keeper mode on the [Auto-bypass](Automation-Status-en) page: periodic re-ranks apply the best strategy per resource, live checks immediately re-pick a strategy that stopped working, verdicts are alive / degraded / dead.

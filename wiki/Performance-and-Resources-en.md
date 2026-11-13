@@ -99,7 +99,7 @@ The **Maintenance → Resource profile** page: Auto (by cores/RAM) or manual.
 
 | Profile | UI poll rate | Daemons | For |
 |---|---|---|---|
-| Eco | ×3 slower | reduced samples, state_cap 5000 | boxes ≤256 MB RAM |
+| Lite | ×3 slower | reduced samples, state_cap 5000 | boxes ≤256 MB RAM |
 | Balanced | ×2 | middle ground | the 512 MB class |
 | Performance | ×1 (reference) | full history depth and samples | 1 GB and up |
 | Auto | — | picked by hardware | the default |

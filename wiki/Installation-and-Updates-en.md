@@ -28,6 +28,9 @@ Point at a mirror (the variable goes before `sh`):
 wget -qO- https://raw.githubusercontent.com/ezdizzy/ravnex/master/install.sh | GH_MIRROR=https://your.mirror sh
 ```
 
+The mirror is saved into the settings automatically during the install (`install.sh` writes
+`GH_MIRROR` into UCI), so delegated downloads see the mirror right away.
+
 There is also a local `--local` mode — installing from files on the device (for example,
 downloaded on an Android phone with a terminal and pushed to the router).
 
@@ -65,6 +68,9 @@ progress. Detailed manual steps live in [Getting started](Getting-Started-en).
 release; the **Update** button installs the new app (and the Russian translation) in place and
 rpcd restarts automatically — no SSH needed.
 
+When the GitHub API is unreachable, the Check update button honestly answers with the last known
+tag from a small cache — marked «the data may be stale», not with an invented freshness.
+
 Updates from previous versions (Re:HomeProxy AutoMod 2.x) need no manual steps — the app is
 called Ravnex once the new version is installed.
 
@@ -87,9 +93,11 @@ they install straight from the original releases with the SHA256 gate (see
 - The client never registers foreign repositories with the package manager (no `repositories.d`
   line at all) — a foreign feed cannot out-version our components.
 
-The source status is visible on **Maintenance → the «Update source» card**: key presence,
-manifest reachability and freshness, an «installed → offered» table per component, and the
-**Connect / Disconnect** buttons.
+The feed is invisible plumbing: `install.sh` installs the signing key during the initial install,
+and the first package install from the feed lazily pulls the key itself (`feed_ensure_key`). There
+is no separate «Update source» card with **Connect / Disconnect** buttons in the UI anymore; the
+feed state is visible indirectly — in the **«Application»** card on Maintenance (the helper parity
+banner).
 
 ---
 

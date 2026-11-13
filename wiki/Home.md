@@ -29,7 +29,7 @@
 | [Resources & Performance](Performance-and-Resources-en) | Resource profiles, OOM victim hierarchy, memory budgets, GOMEMLIMIT, the sleeping tab |
 | [Access Control](Access-Control-en) | Per-device proxy modes, site rules, schedules, Wi-Fi — and the same from Telegram |
 | [Phone Control (Telegram)](Telegram-en) | The bot: commands, subscriptions, arbitrary commands, push notifications |
-| [Auto-bypass](Automation-Status-en) | The self-learning engine: sources, block-type verdicts, RU protection; the DPI autopilot |
+| [Auto-bypass](Automation-Status-en) | The self-learning engine: sources, block-type verdicts, RU protection, QUIC context and instability episodes; the DPI autopilot |
 | [DNS Settings](DNS-Settings-en) | Server pools, reserve DNS and MultiDNS with a live quality monitor |
 | [DNS & Diagnostics](DNS-and-Diagnostics-en) | Clean vs secure DNS, IPv6 leaks, the live checks and the support report |
 | [ByeDPI](ByeDPI-en) | SOCKS-level desync — un-throttles slowed sites without a VPN, 47 presets and the tester |
@@ -58,7 +58,7 @@
 | [Ресурсы и производительность](Performance-and-Resources-ru) | Профили ресурсов, иерархия жертв OOM, бюджеты памяти, GOMEMLIMIT, спящая вкладка |
 | [Контроль доступа](Access-Control-ru) | Режимы прокси на карточке устройства, правила сайтов, расписания, Wi-Fi — и то же из Telegram |
 | [Управление с телефона](Telegram-ru) | Бот: команды, подписки, произвольные команды, пуш-уведомления |
-| [Автообход блокировок](Automation-Status-ru) | Движок самообучения: источники, вердикты типов блокировки, RU-защита; автопилот DPI |
+| [Автообход блокировок](Automation-Status-ru) | Движок самообучения: источники, вердикты типов блокировки, RU-защита, QUIC-контекст и эпизоды нестабильности; автопилот DPI |
 | [Настройки DNS](DNS-Settings-ru) | Пулы серверов, резервный DNS и MultiDNS с живым монитором качества |
 | [DNS и диагностика](DNS-and-Diagnostics-ru) | Чистый и защищённый DNS, утечки IPv6, живые проверки и отчёт для поддержки |
 | [ByeDPI](ByeDPI-ru) | Рассинхронизация на уровне SOCKS — снимает троттлинг без VPN, 47 пресетов и тестер |

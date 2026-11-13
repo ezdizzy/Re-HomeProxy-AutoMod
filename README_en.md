@@ -393,13 +393,13 @@ Ravnex is developed with the constrained compute resources of routers in mind. T
 The «Maintenance» section offers four profiles:
 
 - **Auto** — automatic management of load parameters.
-- **Eco** — minimized background activity and memory consumption.
+- **Lite** — minimized background activity and memory consumption.
 - **Balanced** — a compromise between monitoring frequency and resource usage.
 - **Performance** — increased check intensity and extended diagnostic samples.
 
 The profiles change poll rates, history depth, sample sizes and the internal-state limits of the automation engine.
 
-The economy mode additionally reduces the memory used by the self-learning engine, roughly by 10–15 MB.
+The Lite mode additionally reduces the memory used by the self-learning engine, roughly by 10–15 MB.
 
 ### Memory management
 
@@ -496,9 +496,7 @@ The update is installed directly on the device. The required control services re
 
 Migration from previous Re:HomeProxy AutoMod 2.x versions is supported by the built-in migration mechanism.
 
-**Important:** updating from version 3.0.x to 3.1.0 and newer must be done via `install.sh`, not via the app's update button.
-
-Version 3.1.0 renames the system package to `luci-app-ravnex`. The installer correctly migrates from the old package name.
+**Important:** updating from version 3.0.x to 3.1.0 must be done via `install.sh`, not via the app's update button — version 3.1.0 renames the system package to `luci-app-ravnex`, and the installer correctly migrates from the old package name. Updates from version 3.1.0 and newer (including 3.2.0) work through the regular "Check update" button.
 
 ---
 
