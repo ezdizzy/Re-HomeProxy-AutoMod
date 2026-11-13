@@ -10835,6 +10835,13 @@ const methods = {
 			const pkg = trim('' + (req.args?.pkg || ''));
 			if (!match(pkg, /^[a-z0-9-]+$/) || length(pkg) > 64)
 				return { result: false, error: 'invalid feed package name' };
+			/* s200: whitelist-gate по FEED_PKGS — RPC ставит только пакеты,
+			 * которые эта сборка обслуживает (пост-чек знает их бинарники).
+			 * Истина о версиях/файлах остаётся в манифесте (feed_install_pkg);
+			 * чужое имя = честный отказ вместо поиска по манифесту. Синхронно
+			 * с твином core_mgmt (зеркало ч.223). */
+			if (index(FEED_PKGS, pkg) < 0)
+				return { result: false, error: `${pkg} не входит в набор пакетов фида этой сборки` };
 			return feed_install_pkg(pkg);
 		}
 	},

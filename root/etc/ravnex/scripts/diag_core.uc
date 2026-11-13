@@ -555,6 +555,25 @@ export function diag_cause(facts) {
 		add_ev('данных недостаточно для причины');
 	}
 
+	/* ── s200: QUIC-факт прямого пути (facts.d.quic, ставит раннер из state
+	 * движка: { v: 'alive'|'cut'|'reject', ctrl, kind }) — ТОЛЬКО аннотация,
+	 * дисциплина G1: вердикты/причины QUIC не меняет. Класс myspace:
+	 * TCP-проба зелёная, а браузерный h3 умирает посреди потока (TSPU режет
+	 * ПОСЛЕ Version Negotiation — VN-щуп честно «alive» и всё равно не
+	 * доказывает живость). healthy-кейс (cause=null) несёт ноту отдельным
+	 * полем quic_note — иначе класс был бы невидим именно там, где живёт. */
+	const _q = (d && type(d) === 'object' && type(d.quic) === 'object') ? d.quic : null;
+	let quic_note = null;
+	if (_q && _q.v === 'cut' && d_ok) {
+		quic_note = 'QUIC (UDP/443) прямого пути срезан — браузерный HTTP/3 будет умирать посреди потока при живом TCP (класс myspace); ядро роняет UDP/443 для таких хостов';
+		add_ev(quic_note);
+	} else if (_q && _q.v === 'alive' && _q.ctrl === 'spoofed') {
+		quic_note = 'VN-ответы подменяются на пути (контроль-проба) — QUIC-измерения этого пути недостоверны';
+		add_ev(quic_note);
+	} else if (_q && _q.v === 'alive' && d_ok) {
+		quic_note = 'QUIC (UDP/443) прямого пути отвечает на Version Negotiation — живость h3-ПОТОКОВ это не доказывает (срез возможен после рукопожатия)';
+	}
+
 	/* ── рекомендация (routing-слой; коды прежние — UI-совместимость) ── */
 	let recommend = 'none';
 	switch (verdict) {
@@ -579,6 +598,7 @@ export function diag_cause(facts) {
 		verdict: verdict,
 		geo_side: geo_side,
 		recommend: recommend,
+		quic_note: quic_note,
 		cause: ctype ? { type: ctype, confidence: cconf, evidence: ev } : null
 	};
 };
@@ -657,6 +677,28 @@ export function selftest() {
 
 	let r = diag_cause(F({ direct: _ok200(), proxy: _ok200(), live: _ok200() }));
 	t('all ok → opens_direct, no cause', r.verdict === 'opens_direct' && r.cause == null);
+
+	/* s200: QUIC-факт — только аннотация (G1): вердикты не меняет, нота живёт
+	 * отдельно (healthy-кейс) и в evidence (при существующей причине). */
+	r = diag_cause(F({ direct: _path({ code: '200', rc: 0, ok: true, net: true, app_state: 'ok',
+		quic: { v: 'cut', kind: null, ctrl: null } }), proxy: _ok200(), live: _ok200() }));
+	t('quic cut + tcp ok → opens_direct, quic_note set, no cause', r.verdict === 'opens_direct' &&
+		r.cause == null && index('' + r.quic_note, 'QUIC (UDP/443)') >= 0);
+	r = diag_cause(F({ direct: _path({ code: '200', rc: 0, ok: true, net: true, app_state: 'ok',
+		quic: { v: 'alive', kind: null, ctrl: 'spoofed' } }), proxy: _ok200(), live: _ok200() }));
+	t('quic alive + ctrl spoofed → note, verdict untouched', r.verdict === 'opens_direct' &&
+		index('' + r.quic_note, 'подменяются') >= 0);
+	r = diag_cause(F({ direct: _path({ code: '200', rc: 0, ok: true, net: true, app_state: 'ok',
+		quic: { v: 'alive', kind: null, ctrl: null } }), proxy: _ok200(), live: _ok200() }));
+	t('quic alive plain → note, no spoofed claim', r.verdict === 'opens_direct' &&
+		index('' + r.quic_note, 'не доказывает') >= 0);
+	r = diag_cause(F({ direct: _path({ code: '000', rc: 35, kind: 'tls_dpi',
+		quic: { v: 'cut', kind: null, ctrl: null } }), proxy: _ok200(),
+		live: _path({ code: '000', rc: 35, kind: 'tls_dpi' }) }));
+	t('quic cut with dead tcp → no myspace note (blocked_both class)', r.verdict === 'needs_strategy' &&
+		r.quic_note == null);
+	r = diag_cause(F({ direct: _ok200(), proxy: _ok200(), live: _ok200() }));
+	t('no quic fact → quic_note null', r.quic_note == null);
 
 	r = diag_cause(F({
 		direct: _path({ code: '000', rc: 35, kind: 'tls_dpi' }),

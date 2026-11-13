@@ -506,6 +506,12 @@ const FEED_MANIFEST_TTL = 1800;
 const FEED_BRANCH = 'refs/heads/feed';
 /* Single repo since the rename — see the luci.ravnex feed block (ч.286). */
 const FEED_REPOS = ['ezdizzy/ravnex'];
+/* s200: whitelist of feed packages this build serves — mirrors FEED_PKGS in
+ * luci.ravnex verbatim (зеркало ч.223: двойные копии синхронизировать ВСЕГДА).
+ * The install_feed_pkg action refuses foreign names with an honest error;
+ * the manifest remains the truth for versions/files inside feed_install_pkg. */
+const FEED_PKGS = ['mosdns', 'probe_pool',
+	'sni_sniffer', 'byedpi', 'zapret2'];
 const FEED_BIN_PATH = {
 	'hiddify-core': '/usr/bin/hiddify-core',
 	'hiddify-core-compact': '/usr/bin/hiddify-core',
@@ -1411,6 +1417,10 @@ let result;
 	const feed_pkg = ARGV[1];
 	if (!match(feed_pkg, /^[a-z0-9-]+$/) || length(feed_pkg) > 64) {
 		result = { result: false, error: 'invalid feed package name' };
+	} else if (index(FEED_PKGS, feed_pkg) < 0) {
+		/* s200: whitelist-gate по FEED_PKGS — синхронно с RPC-дверью
+		 * luci.ravnex (чужое имя = честный отказ, не поиск по манифесту). */
+		result = { result: false, error: feed_pkg + ' не входит в набор пакетов фида этой сборки' };
 	} else if (!feed_configured()) {
 		result = { result: false, error: 'own feed is not configured' };
 	} else {

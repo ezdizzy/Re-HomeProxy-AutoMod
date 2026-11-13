@@ -50,7 +50,7 @@ import {
 	PROFILES, PROFILE_KEYS, judge_http, judge_video, judge_ws, judge_tcp,
 	judge_stun, judge_quic
 } from '/etc/ravnex/scripts/service_profiles.uc';
-import { conntrack_flows, clash_conns } from '/etc/ravnex/scripts/discovery.uc';
+import { conntrack_flows, clash_conns, engine_state } from '/etc/ravnex/scripts/discovery.uc';
 
 const RUN_DIR = '/var/run/ravnex';
 const STATUS = RUN_DIR + '/service_profile.json';
@@ -355,6 +355,18 @@ function differential(row, prof_key, counters) {
 		counters.diff++;
 		p = probe_via(row.url, PROXY_PORT, true, null, null);
 	}
+	/* s200: QUIC-факт движка в evidence (facts.d.quic) — аннотация класса
+	 * «браузерный h3 умирает посреди потока при зелёных TCP-пробах» (myspace).
+	 * G1: на вердикт/причину не влияет. Хост ищется точно + срез www. */
+	if (d) {
+		const es = engine_state();
+		let qh = es[row.host] || null;
+		if (!(qh && type(qh) === 'object') && substr(row.host, 0, 4) === 'www.')
+			qh = es[substr(row.host, 4)] || null;
+		if (qh && type(qh) === 'object' && type(qh.quic) === 'object' && qh.quic.v)
+			d.quic = { v: qh.quic.v, kind: qh.quic_kind || null,
+				ctrl: (type(es.__quic_ctrl) === 'object') ? (es.__quic_ctrl.v || null) : null };
+	}
 	const v = diag_cause({
 		svc: prof_key,
 		dns: { differs: false, poison: false, plain_ip: plain_ip },
@@ -367,6 +379,8 @@ function differential(row, prof_key, counters) {
 		row.cause = { type: v.cause.type, confidence: v.cause.confidence,
 			evidence: v.cause.evidence };
 	row.routing_verdict = v.verdict;
+	if (v.quic_note)
+		row.quic_note = v.quic_note;
 }
 
 /* ── Main ── */

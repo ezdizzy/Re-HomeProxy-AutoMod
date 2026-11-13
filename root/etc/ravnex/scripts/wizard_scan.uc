@@ -100,6 +100,7 @@ import { cursor } from 'uci';
  * (block/geo/WAF) импортируются, не копируются. */
 import { classify_path, diag_cause, code_class, trust_kind }
 	from '/etc/ravnex/scripts/diag_core.uc';
+import { engine_state } from '/etc/ravnex/scripts/discovery.uc';
 
 const RUN_DIR = '/var/run/ravnex';
 const STATUS = RUN_DIR + '/wizard_scan.json';
@@ -544,6 +545,18 @@ for (let item in hosts) {
 	 * РАЗДЕЛЬНЫ и считаются ОДНИМ кодом в diag_core.uc — классификатор общий
 	 * с Automation/Autopilot (Ф6.6/Ф6.7 подключат его же). Рекомендация —
 	 * server-side, JS остаётся тупым. */
+	/* s200: QUIC-факт движка в evidence (facts.d.quic) — аннотация класса
+	 * «браузерный h3 умирает посреди потока при зелёных TCP-пробах» (myspace).
+	 * G1: на вердикт/причину не влияет. Хост ищется точно + срез www. */
+	if (res.direct) {
+		const es = engine_state();
+		let qh = es[host] || null;
+		if (!(qh && type(qh) === 'object') && substr(host, 0, 4) === 'www.')
+			qh = es[substr(host, 4)] || null;
+		if (qh && type(qh) === 'object' && type(qh.quic) === 'object' && qh.quic.v)
+			res.direct.quic = { v: qh.quic.v, kind: qh.quic_kind || null,
+				ctrl: (type(es.__quic_ctrl) === 'object') ? (es.__quic_ctrl.v || null) : null };
+	}
 	const verdict = diag_cause({
 		svc: svc,
 		dns: { differs: res.dns_differs, poison: res.dns_poison, plain_ip: res.plain_ip },
@@ -559,6 +572,8 @@ for (let item in hosts) {
 	res.geo_side = verdict.geo_side;
 	res.recommend = verdict.recommend;
 	res.cause = verdict.cause;
+	if (verdict.quic_note)
+		res.quic_note = verdict.quic_note;
 
 	push(results, res);
 	done++;

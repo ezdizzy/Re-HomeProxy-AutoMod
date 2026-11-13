@@ -287,6 +287,15 @@ function causeLine(r) {
 		[ base + (conf ? (' · ' + conf) : '') ]);
 }
 
+/* сеанс 200: QUIC-факт прямого пути (diag_core facts.d.quic) — аннотация
+ * класса «браузерный h3 умирает посреди потока при зелёных TCP-пробах»
+ * (myspace). Живёт ОТДЕЛЬНО от cause: в здоровом кейсе причины нет, а нота
+ * нужна именно там. Текст бэкенда — verbatim (как evidence). */
+function quicNoteLine(r) {
+	return r.quic_note ? E('div', { 'class': 'wiz-note', style: 'margin:2px 0 0' },
+		[ r.quic_note ]) : null;
+}
+
 /* The scanner sees no rules; the client remaps the verdict to what the
  * user configured (Ф8-W2). */
 function effVerdict(r, rule) {
@@ -312,9 +321,13 @@ function verdictCell(r, rule) {
 	}
 	const badge = E('span', { 'class': 'hpui-badge ' + spec[0] }, [ label ]);
 	/* Ф6.1: причина (почему недоступен) живёт РЯДОМ с routing-вердиктом —
-	 * одно место, без отдельных колонок. */
+	 * одно место, без отдельных колонок. s200: рядом же QUIC-нота. */
 	const cl = causeLine(r);
-	return cl ? E('div', {}, [ badge, cl ]) : badge;
+	const ql = quicNoteLine(r);
+	const parts = [ badge ];
+	if (cl) parts.push(cl);
+	if (ql) parts.push(ql);
+	return (cl || ql) ? E('div', {}, parts) : badge;
 }
 
 const PROV_KINDS = {
@@ -702,9 +715,11 @@ function buildProfilesSection() {
 				[ _('Video quality: %s (%s)').format(r.level, r.plays || '') +
 					(r.speed_bps ? (' · ' + Math.round(r.speed_bps / 125) + ' kbit/s') : '') ]) : null;
 			const cl = causeLine(r);
+			const ql = quicNoteLine(r);
 			const main = E('div', {}, [ badge ]);
 			if (level) main.appendChild(level);
 			if (cl) main.appendChild(cl);
+			if (ql) main.appendChild(ql);
 			tbody.appendChild(E('tr', {}, [
 				E('td', { style: 'font-weight:600' }, [ String(r.label || r.id) ]),
 				E('td', {}, [ main ]),

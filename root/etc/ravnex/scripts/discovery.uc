@@ -364,6 +364,20 @@ export function state_ip_map(max_entries) {
 	return map;
 };
 
+/* s200: полное состояние движка (кэш на процесс) — QUIC-факты для
+ * диагностических evidence (diag_core facts.d.quic). Мягкий отказ:
+ * файла нет / битый JSON = {} (честное «не измерено», никогда не крэш). */
+let _eng_state_cache = null;
+export function engine_state() {
+	if (_eng_state_cache != null)
+		return _eng_state_cache;
+	_eng_state_cache = {};
+	const st = rjson(STATE_FILE);
+	if (st != null && type(st) === 'object')
+		_eng_state_cache = st;
+	return _eng_state_cache;
+};
+
 /* ── Снимок (сборка; запись файла — у вызывающего через write_snapshot) ── */
 export function snapshot() {
 	const flows = conntrack_flows(CT_MAX_LINES);
