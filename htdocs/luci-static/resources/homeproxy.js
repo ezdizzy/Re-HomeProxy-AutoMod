@@ -1781,6 +1781,28 @@ body.hp-shell.hp-embed #maincontent { margin: 0 auto !important; max-width: none
 #hp-embed-card.collapsed .hp-sb-collapse { margin: 4px auto 0; }
 .hp-embed-main { flex: 1 1 0%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 
+/* s202: the stock save bar lives at the END of a LONG form — on a phone
+ * (a ~6000px Подключение page) it read as «кнопок нет»: the user never
+ * sees the bottom. Stick it to the viewport bottom while its column is
+ * in view (the bar rides inside the embed root, so re-anchors keep it;
+ * opaque background so content does not bleed through). */
+.hp-embed-root .cbi-page-actions {
+	position: sticky;
+	bottom: 0;
+	z-index: 30;
+	margin: 12px 0 0;
+	padding: 10px 2px;
+	background: var(--hp-shell-bg);
+	border-top: 1px solid var(--hp-panel-line);
+}
+/* The stock LuCI .container carries overflow-y:auto — that ancestor
+ * becomes the sticky containing scroll box (never scrolls itself), so
+ * the bar never engages (verified live: with the wrapper visible the
+ * bar pins at the viewport bottom at ANY scroll offset). In embed mode
+ * our sections own their inner scroll guards (tables et al), so the
+ * wrapper can let sticky latch to the real viewport scroller. */
+html body.hp-embed .container { overflow: visible !important; }
+
 /* Basic/Expert segmented switch (Tachyon Simple/Advanced). */
 .hp-sb-mode { display: flex; gap: 4px; margin: 6px 6px 8px; padding: 3px; border: 1px solid var(--hp-panel-line); border-radius: var(--hp-pill); background: var(--hp-panel-bg); flex: none; }
 .hp-sb-mode-btn { flex: 1 1 0; appearance: none; border: 1px solid transparent; background: transparent; color: inherit; padding: 5px 8px; border-radius: var(--hp-pill); cursor: pointer; font-size: .86em; opacity: .7; white-space: nowrap; }
