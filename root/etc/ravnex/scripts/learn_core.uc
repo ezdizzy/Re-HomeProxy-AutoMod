@@ -636,6 +636,196 @@ export function ipv4_in_net(ip, cidr) {
 	return true;
 };
 
+/* ── сеанс 198 G3: QUIC-контраст (вторая лейна правды движка) ──
+ * Все существующие пробы — TCP; судьба UDP/443 не измерялась вовсе
+ * (automation.uc:28 «UDP NOT detectable»). probe_pool -quic-check (v1.7.0)
+ * даёт UDP/443 Version-Negotiation-щуп с вердиктами vn/icmp/silence —
+ * ЗДЕСЬ только чистая нормализация и таблица контраста (I/O у демона).
+ * Дисциплина G1 соблюдена по построению: результат — ТОЛЬКО лейблы
+ * контраста, никаких learn/heal-решений. Честность: silence ≠ блок
+ * (сервер может игнорировать VN) — нота «вероятно»; ctrl='spoofed'
+ * (VN-подмена провайдера на контрольной цели) перекрывает доверие к alive.
+ * Влияние на порог — осознанное юзер-решение фазы 2, не этой волны. */
+
+export function quic_norm(raw) {
+	if (raw == null)
+		return null;
+	const s = lc(trim('' + raw));
+	/* Идемпотентно: принимает И сырой вердикт щупа (vn/silence/icmp), И уже
+	 * нормализованный (alive/cut/reject) — писатели передают разное. */
+	if (s === 'vn' || s === 'alive')
+		return 'alive';
+	if (s === 'silence' || s === 'cut')
+		return 'cut';
+	if (s === 'icmp' || s === 'reject')
+		return 'reject';
+	return null;
+};
+
+/* tcp_ok: true = прямая TCP-проба прошла, false = срезан, null = не измерено.
+ * quic_v: сырой вердикт щупа ('vn'/'silence'/'icmp') или null.
+ * ctrl_v: вердикт контроль-пробы ISP-уровня ('vn'/'silence'/'icmp'/'spoofed').
+ * Возвращает { kind, note }: kind '' = норма (поле не пишем), null = QUIC не
+ * измерен (поле отсутствует — никогда не фейк-ноль). */
+export function quic_contrast(tcp_ok, quic_v, ctrl_v) {
+	if (tcp_ok == null || quic_v == null)
+		return null;
+	const q = quic_norm(quic_v);
+	if (q == null)
+		return null;
+	const spoofed = (lc(trim('' + (ctrl_v == null ? '' : ctrl_v))) === 'spoofed');
+	if (tcp_ok === true) {
+		if (q === 'alive')
+			return { kind: '', note: spoofed ? 'spoofed' : null };
+		/* QUIC срезан/отвергнут при живом TCP: per-origin reject ничего
+		 * не добавляет — QUIC-лейна уже мертва на уровне провайдера. */
+		return { kind: 'quic_dead', note: null };
+	}
+	if (tcp_ok === false) {
+		if (q === 'alive')
+			return { kind: 'tcp_only_block',
+				note: spoofed ? 'unverified' : 'browser_h3' };
+		if (q === 'cut')
+			return { kind: 'blocked_both', note: 'likely' };
+		return { kind: 'blocked_both', note: 'rejected' };
+	}
+	return null;
+};
+
+/* ── сеанс 198 G5: флап-окна — устойчивость вердиктов ВО ВРЕМЕНИ ──
+ * Окна меняют только МОМЕНТ и ЧАСТОТУ смены состояния, не критерии:
+ * L1 = существующие лестницы (не трогаются), L2 = условный тормоз
+ * «2 подтверждения в 10 мин» ТОЛЬКО после недавнего противоположного
+ * коммита (первый learn любого хоста остаётся мгновенным/лестничным
+ * как сегодня), L3 = флап-супервизор «≥3 коммит-флипа в 6 ч → честный
+ * бейдж Flapping + подавление per-host событий со счётчиком». Здесь
+ * ТОЛЬКО чистое ядро (I/O и события — у демона). Состояние живёт в
+ * записи automation_state.json: st.flips (кольцо ≤FLIP_RING_CAP:
+ * {t, dir: 'fwd'|'rev', src}), st.flapping ({since, suppressed}),
+ * st.pending (кандидат-вердикт {v, n, since, last}). Emergency-путь
+ * (прецедент sev='crit' бота): crit-коммиты всегда проходят — реальная
+ * смерть ресурса не может зависнуть в старом вердикте; reverse всегда
+ * коммитит (серия 3× — сильнейшее доказательство, зона вызывающего). */
+
+export const FLAP_WINDOW = 21600;   /* скользящее окно подсчёта флипов (6 ч) */
+export const FLAP_FLIPS = 3;        /* порог «нестабилен» */
+export const FLAP_RELEASE = 86400;  /* тишина до снятия flapping (24 ч) */
+export const HOLD_WINDOW = 600;     /* окно условного тормоза L2 (10 мин) */
+export const HOLD_CONFIRM = 2;      /* подтверждений в окне тормоза */
+export const PENDING_MAX = 900;     /* кандидат живёт ≤15 мин без свежих замеров */
+export const FLIP_RING_CAP = 6;     /* кап кольца флипов */
+export const DEAD_DNS_GAP = 900;    /* второй dead-замер через 15 мин (U3) */
+
+/* Регистрация коммит-флипа: кольцо с капом; мусорные входы — честный
+ * отказ (false), не краш. */
+export function flip_ring(rec, dir, now, src) {
+	if (rec == null || type(rec) !== 'object')
+		return false;
+	const d = (dir === 'fwd' || dir === 'rev') ? dir : null;
+	if (d == null || !(int(now) > 0))
+		return false;
+	if (type(rec.flips) !== 'array')
+		rec.flips = [];
+	push(rec.flips, { t: int(now), dir: d,
+		src: (src == null || !length(trim('' + src))) ? null : trim('' + src) });
+	while (length(rec.flips) > FLIP_RING_CAP)
+		shift(rec.flips);
+	return true;
+};
+
+/* Флап-вердикт записи: активный эпизод держится до FLAP_RELEASE от входа
+ * (старые флипы выходят из окна — кольцо капнуто — но эпизод честен, пока
+ * не истекла тишина; явное снятие завершённой серией — у вызывающего) или
+ * открывается по ≥FLAP_FLIPS флипов в окне. Возвращает
+ * { flapping, since, n, opened?, released? }. */
+export function flap_verdict(rec, now) {
+	const now_i = (int(now) > 0) ? int(now) : time();
+	if (rec == null || type(rec) !== 'object')
+		return { flapping: false, since: 0, n: 0 };
+	const flips = (type(rec.flips) === 'array') ? rec.flips : [];
+	let n = 0;
+	for (let f in flips)
+		if (type(f) === 'object' && int(f.t) > 0 && (now_i - int(f.t)) <= FLAP_WINDOW)
+			n++;
+	const cur = (type(rec.flapping) === 'object' && int(rec.flapping.since || 0) > 0) ? rec.flapping : null;
+	if (cur != null) {
+		if ((now_i - int(cur.since)) >= FLAP_RELEASE)
+			return { flapping: false, since: int(cur.since), n: n, released: true };
+		return { flapping: true, since: int(cur.since), n: n };
+	}
+	if (n >= FLAP_FLIPS)
+		return { flapping: true, since: now_i, n: n, opened: true };
+	return { flapping: false, since: 0, n: n };
+};
+
+/* L2-гейт коммита: 'commit' (быстрая дорожка цела / тормоз пройден),
+ * 'hold' (forward после недавнего reverse — нужны HOLD_CONFIRM замера в
+ * окне, кандидат ведёт вызывающий через pending_*), 'commit_crit'
+ * (emergency: INSTANT-виды и pain-override проходят всегда). Reverse —
+ * всегда 'commit': решает завершённая серия вызывающего. */
+export function commit_gate(rec, dir, now, crit) {
+	if (dir === 'rev')
+		return 'commit';
+	if (crit)
+		return 'commit_crit';
+	if (rec == null || type(rec) !== 'object')
+		return 'commit';
+	const now_i = int(now);
+	const flips = (type(rec.flips) === 'array') ? rec.flips : [];
+	let last_rev = 0;
+	for (let f in flips)
+		if (type(f) === 'object' && f.dir === 'rev' && int(f.t) > last_rev)
+			last_rev = int(f.t);
+	if (!last_rev || (now_i - last_rev) > HOLD_WINDOW)
+		return 'commit';
+	const p = (type(rec.pending) === 'object' && rec.pending.v === 'blocked') ? rec.pending : null;
+	if (p != null && int(p.n || 0) >= HOLD_CONFIRM)
+		return 'commit';
+	return 'hold';
+};
+
+/* Кандидат-вердикт: слияние замера ОДНОГО направления; противоположный
+ * кандидат сбрасывает счёт; остывший (>PENDING_MAX) начинает заново.
+ * Возвращает накопленное n. */
+export function pending_merge(rec, v, now) {
+	if (rec == null || type(rec) !== 'object' || (v !== 'blocked' && v !== 'direct'))
+		return 0;
+	const now_i = int(now);
+	let p = (type(rec.pending) === 'object') ? rec.pending : null;
+	if (p == null || p.v !== v || (now_i - int(p.last || 0)) > PENDING_MAX)
+		p = { v: v, n: 0, since: now_i, last: now_i };
+	p.n = int(p.n || 0) + 1;
+	p.last = now_i;
+	rec.pending = p;
+	return int(p.n);
+};
+
+export function pending_ready(rec, need) {
+	if (rec == null || type(rec) !== 'object')
+		return false;
+	const p = rec.pending;
+	return (type(p) === 'object' && int(p.n || 0) >= ((int(need) > 0) ? int(need) : 1));
+};
+
+export function pending_clear(rec) {
+	if (rec != null && type(rec) === 'object')
+		delete rec.pending;
+};
+
+/* U3 (единственное место §4.7, где критерий «почти меняется»: число
+ * измерений, не форма): dead-domain unlearn по ВТОРОМУ независимому
+ * замеру. Первый dead → 'hold' (окно DEAD_DNS_GAP); второй по прошествии
+ * окна → 'commit'. Расхождение сторон (verdict null) — 'wait' без записи
+ * окна; если юзер сочтёт задержку честного unlearn ~15 мин слишком высокой,
+ * пункт вырезается отдельно, остальная волна не зависит. */
+export function dead_dns_gate(first_ts, now) {
+	const now_i = (int(now) > 0) ? int(now) : time();
+	const f = int(first_ts || 0);
+	if (f <= 0)
+		return 'hold';
+	return ((now_i - f) >= DEAD_DNS_GAP) ? 'commit' : 'hold';
+};
+
 /* ── Selftest ──
  * Тот же контракт, что service_optimizer/service_profiles:
  * возвращает { pass, fail, details }. */
@@ -835,6 +1025,69 @@ export function selftest() {
 	t('dns disagreement inconclusive', dns_nxdomain_verdict("** server can't find x: NXDOMAIN\n", 'Address: 1.2.3.4\n') == null);
 	t('dns blocker-style not an answer', dns_nxdomain_verdict('Address: 0.0.0.0\n', '** server can\'t find x: NXDOMAIN\n') === 'dead_nxdomain');
 	t('dns empty inputs dead', dns_nxdomain_verdict('', null) === 'dead_nxdomain');
+
+	/* ── сеанс 198 G3: QUIC-контраст ── */
+	t('qn vn alive', quic_norm('vn') === 'alive');
+	t('qn silence cut', quic_norm('silence') === 'cut');
+	t('qn icmp reject', quic_norm('icmp') === 'reject');
+	t('qn case fold', quic_norm('VN') === 'alive');
+	t('qn junk null', quic_norm('garbage') == null && quic_norm(42) == null && quic_norm(null) == null);
+	t('qn idempotent alive', quic_norm('alive') === 'alive');
+	t('qn idempotent cut', quic_norm('cut') === 'cut');
+	t('qn idempotent reject', quic_norm('reject') === 'reject');
+	t('qc ok alive norm empty', quic_contrast(true, 'vn', null).kind === '');
+	t('qc ok cut dead', quic_contrast(true, 'silence', null).kind === 'quic_dead');
+	t('qc ok reject dead', quic_contrast(true, 'icmp', null).kind === 'quic_dead');
+	t('qc fail alive tcp_only', quic_contrast(false, 'vn', null).kind === 'tcp_only_block' &&
+		quic_contrast(false, 'vn', null).note === 'browser_h3');
+	t('qc fail cut blocked_both likely', quic_contrast(false, 'silence', null).kind === 'blocked_both' &&
+		quic_contrast(false, 'silence', null).note === 'likely');
+	t('qc fail reject blocked_both', quic_contrast(false, 'icmp', null).kind === 'blocked_both' &&
+		quic_contrast(false, 'icmp', null).note === 'rejected');
+	t('qc spoofed overrides alive (fail)', quic_contrast(false, 'vn', 'spoofed').kind === 'tcp_only_block' &&
+		quic_contrast(false, 'vn', 'spoofed').note === 'unverified');
+	t('qc spoofed ok alive noted', quic_contrast(true, 'vn', 'spoofed').kind === '' &&
+		quic_contrast(true, 'vn', 'spoofed').note === 'spoofed');
+	t('qc quic null honest', quic_contrast(false, null, null) == null);
+	t('qc tcp null honest', quic_contrast(null, 'vn', null) == null);
+	t('qc junk quic honest', quic_contrast(false, 'garbage', null) == null);
+
+	/* ── сеанс 198 G5: флап-окна ── */
+	t('fr first flip', flip_ring({}, 'fwd', 1000, 'learn') === true);
+	t('fr junk dir refused', flip_ring({}, 'sideways', 1000, 'x') === false);
+	t('fr junk rec refused', flip_ring(null, 'fwd', 1000, 'x') === false && flip_ring('x', 'fwd', 1000, 'x') === false);
+	let fr_rec = {};
+	for (let i = 0; i < 8; i++)
+		flip_ring(fr_rec, (i % 2) ? 'rev' : 'fwd', 1000 + i, 's');
+	t('fr ring cap 6', length(fr_rec.flips) === FLIP_RING_CAP && fr_rec.flips[0].t === 1002);
+	t('fv two flips not flapping', flap_verdict({ flips: [ { t: 100, dir: 'fwd' }, { t: 200, dir: 'rev' } ] }, 300).flapping === false);
+	const fv3 = flap_verdict({ flips: [ { t: 100, dir: 'fwd' }, { t: 150, dir: 'rev' }, { t: 200, dir: 'fwd' } ] }, 300);
+	t('fv three flips open', fv3.flapping === true && fv3.since === 300 && fv3.opened === true && fv3.n === 3);
+	const fv4 = flap_verdict({ flapping: { since: 300 }, flips: [ { t: 100, dir: 'fwd' } ] }, 22000);
+	t('fv active persists below window', fv4.flapping === true && fv4.n === 0);
+	const fv5 = flap_verdict({ flapping: { since: 100 }, flips: [] }, 100 + FLAP_RELEASE);
+	t('fv release after 24h silence', fv5.flapping === false && fv5.released === true);
+	t('fv garbage rec safe', flap_verdict(null, 1).flapping === false && flap_verdict('x', 1).flapping === false);
+	t('fv flips outside window ignored', flap_verdict({ flips: [ { t: 10, dir: 'fwd' }, { t: 20, dir: 'rev' }, { t: 30, dir: 'fwd' } ] }, 100 + FLAP_WINDOW).flapping === false);
+	t('cg no history commits fast', commit_gate({}, 'fwd', 1000, false) === 'commit');
+	t('cg rev always commits', commit_gate({ flips: [ { t: 990, dir: 'rev' } ] }, 'rev', 1000, false) === 'commit');
+	t('cg recent rev holds fwd', commit_gate({ flips: [ { t: 990, dir: 'rev' } ] }, 'fwd', 1000, false) === 'hold');
+	const cg2 = { flips: [ { t: 990, dir: 'rev' } ], pending: { v: 'blocked', n: 2, since: 995, last: 999 } };
+	t('cg hold satisfied by pending', commit_gate(cg2, 'fwd', 1000, false) === 'commit');
+	t('cg crit bypasses hold', commit_gate({ flips: [ { t: 990, dir: 'rev' } ] }, 'fwd', 1000, true) === 'commit_crit');
+	t('cg old rev outside window', commit_gate({ flips: [ { t: 300, dir: 'rev' } ] }, 'fwd', 1000, false) === 'commit');
+	t('cg junk rec commits', commit_gate(null, 'fwd', 1000, false) === 'commit' && commit_gate('x', 'fwd', 1000, false) === 'commit');
+	let pm_rec = {};
+	t('pm merge counts', pending_merge(pm_rec, 'blocked', 1000) === 1 && pending_merge(pm_rec, 'blocked', 1010) === 2);
+	t('pm opposite resets', pending_merge(pm_rec, 'direct', 1020) === 1 && pm_rec.pending.v === 'direct');
+	t('pm stale restarts', pending_merge(pm_rec, 'direct', 1020 + PENDING_MAX + 5) === 1 && pm_rec.pending.since === 1020 + PENDING_MAX + 5);
+	t('pr ready need=1 immediate', pending_ready({ pending: { v: 'blocked', n: 1 } }, 1) === true && pending_ready({}, 1) === false);
+	t('pr need=2 gate', pending_ready({ pending: { v: 'blocked', n: 2 } }, 2) === true && pending_ready({ pending: { v: 'blocked', n: 1 } }, 2) === false);
+	pending_clear(pm_rec);
+	t('pc clears', pm_rec.pending == null && pending_ready(pm_rec, 1) === false);
+	t('dd first hold', dead_dns_gate(0, 1000) === 'hold');
+	t('dd second before gap hold', dead_dns_gate(950, 1000) === 'hold');
+	t('dd second after gap commit', dead_dns_gate(100, 100 + DEAD_DNS_GAP) === 'commit');
 
 	return { pass: length(pass), fail: length(fail), details: fail };
 };

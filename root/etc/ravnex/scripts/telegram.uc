@@ -1911,11 +1911,18 @@ function bus_push(ev) {
 			(length(who) ? '\nКто: <code>' + esc_html(who) + '</code>' : '') +
 			(length(detail) ? '\n' + esc_html(detail) : ''), kb: null };
 	}
-	/* automation */
+	/* automation. Сеанс 198 G5: outage/owner_change несут meta.key — после
+	 * этого существующий Ф9.15а flap-gate (600 c от последней ДОСТАВЛЕННОЙ
+	 * тревоги + честный fsup + «восстановлено» только в ответ на
+	 * доставленную тревогу) гейтит их пары ⚠️/✅ без правок send_push. */
 	if (ev.type === 'outage')
-		return { text: '⚠️ <b>Автоматизация — авария</b>: ' + esc_html(detail || 'авария: обучение приостановлено'), kb: KB_PUSH_STATUS };
+		return { text: '⚠️ <b>Автоматизация — авария</b>: ' + esc_html(detail || 'авария: обучение приостановлено'), kb: KB_PUSH_STATUS, key: 'automation:прямой путь' };
 	if (ev.type === 'outage_end')
-		return { text: '✅ <b>Автоматизация — авария завершена</b>: ' + esc_html(detail || 'авария завершена'), kb: KB_PUSH_STATUS };
+		return { text: '✅ <b>Автоматизация — авария завершена</b>: ' + esc_html(detail || 'авария завершена'), kb: KB_PUSH_STATUS, key: 'automation:прямой путь', rec: true };
+	if (ev.type === 'owner_change')
+		return { text: '🔁 <b>Автоматизация — владелец контура сменился</b>' +
+			(length(who) ? ': ' + esc_html(who) : '') +
+			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_STATUS, key: 'automation:владелец' };
 	if (ev.type === 'heal')
 		return { text: '✅ <b>Автоматизация — самолечение</b>' +
 			(length(detail) ? ':\n' + esc_html(detail) : ''), kb: KB_PUSH_STATUS };

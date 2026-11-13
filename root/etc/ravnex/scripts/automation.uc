@@ -69,7 +69,10 @@ import { conntrack_flows, is_special_ip } from '/etc/ravnex/scripts/discovery.uc
 import {
 	validate_learned_ip, uuid_collapse, psl_parent, src_diversity,
 	transport_kind, rkn_corroborate, is_never_learn_domain,
-	ipv4_in_net, dns_nxdomain_verdict
+	ipv4_in_net, dns_nxdomain_verdict,
+	quic_norm, quic_contrast,
+	flip_ring, flap_verdict, commit_gate, pending_merge, pending_clear,
+	dead_dns_gate, DEAD_DNS_GAP
 } from '/etc/ravnex/scripts/learn_core.uc';
 /* сеанс 188 (решение юзера): автообучение мёртвых пулов YouTube из живых
  * зомби-соединений clash-api. Чистая логика = yt_steer.uc (selftest-гейт),
@@ -121,6 +124,15 @@ const HEAL_CONFIRM = 3;
 const HEAL_SERIES_GAP = 900;    /* быстрая серия: следующая проверка через 15 мин */
 const HEAL_POLL = 300;          /* такт планировщика fast-серии (5 мин) */
 const PTR_BATCH = 12;           /* фоновый rDNS-свип за часовой цикл (B5.17) */
+
+/* сеанс 198 G3: QUIC-лейна (вторая правда движка). QUIC_BATCH — параллельных
+ * one-shot щупов probe_pool -quic-check за цикл (worst case ≈4 c стены);
+ * QUIC_CTRL_TTL — срок годности и контроль-пробы подмены VN, и свежести
+ * per-ресурсного quic-факта (переизмерение не чаще раза в 6 ч). Цель
+ * контроль-пробы — собственный WAN-адрес: UDP/443 там никто не слушает,
+ * ответ vn = на пути живёт VN-спуфер (решение юзера ч.198). */
+const QUIC_BATCH = 4;
+const QUIC_CTRL_TTL = 21600;
 
 /* Shared-CDN IPv4 prefixes NEVER learned as IPs. Big CDNs hand the SAME addresses to
  * blocked and unblocked services alike; one learned prefix there reroutes unrelated
@@ -432,18 +444,33 @@ function ev_auto(type, who, detail) {
 }
 
 /* Aggregated 'learn' record: up to 8 host names + '+K' tail. Called at the
- * apply point where learn_names is drained. */
+ * apply point where learn_names is drained. G5: hosts with an ACTIVE flap
+ * episode are excluded from the bus record (their churn is announced once
+ * by the 'flap' event); the suppressed count is honest (suppressed counter
+ * in the record). */
 function ev_learn_flush(where) {
 	const n = length(learn_names);
 	if (!n) return;
-	let shown = [];
-	for (let i = 0; i < n && i < 8; i++)
-		push(shown, learn_names[i]);
-	let detail = join(', ', shown);
-	if (n > 8)
-		detail += ' …+' + (n - 8);
-	ev_auto('learn', 'выучено ' + n, detail + ' (' + where + ')');
+	let shown = [], nsup = 0;
+	for (let i = 0; i < n; i++) {
+		const h = learn_names[i];
+		const hst = state[h];
+		if (type(hst) === 'object' && type(hst.flapping) === 'object') {
+			hst.flapping.suppressed = int(hst.flapping.suppressed || 0) + 1;
+			nsup++;
+			continue;
+		}
+		push(shown, h);
+	}
+	let detail = join(', ', slice(shown, 0, 8));
+	if (length(shown) > 8)
+		detail += ' …+' + (length(shown) - 8);
+	if (nsup > 0)
+		detail += ' · +' + nsup + ' нестабильных (подавлено)';
 	learn_names = [];
+	if (!length(shown))
+		return;                       /* всё подавлено — счётчик в записи */
+	ev_auto('learn', 'выучено ' + length(shown), detail + ' (' + where + ')');
 }
 
 /* Daemon RAM (VmRSS of THIS process, kB). POSIX ERE: /proc files separate
@@ -2408,6 +2435,229 @@ echo done > "$PRE.done"
 	else
 		log('probe_pool not installed - using shell workers');
 
+	/* ── сеанс 198 G3: QUIC-контраст — вторая (UDP/443) лейна правды ──
+	 * probe_pool -quic-check (v1.7.0): один long-header пакет 1200 байт с
+	 * подделанной версией → RFC 9000 Version Negotiation; вердикты
+	 * vn/icmp/silence (silence = ВЕРОЯТНЫЙ срез — сервер может просто
+	 * игнорировать пробу; честность подписей обязательна). Граница: пин-
+	 * инбаунды движка — SOCKS5-TCP, QUIC сквозь main-out неизмерим —
+	 * измеряется ПРЯМАЯ (ISP) лейна к тому же plain-view IP, что TCP-проба
+	 * (ноль лишнего DNS); QUIC-способность main-out декларируется
+	 * конфигурацией, не измерением. Запуск от daemon-юзера — форма пробы
+	 * бит-в-бит с лабораторной (zapret_test.sh:601-603). Дисциплина G1:
+	 * quic-факт — подсказка/аннотация, learn/heal решения не меняет. */
+	function quic_probe_one(ip, host) {
+		if (!access(PROBE_POOL_BIN) || !ip || !host)
+			return null;
+		const of = RUN_DIR + '/quic.one.json';
+		/* Файл создаётся ЗАРАНЕЕ с правом записи всем: щуп едет от юзера
+		 * daemon (форма пробы бит-в-бит с лабораторной), а RUN_DIR принадлежит
+		 * root — redirect в несуществующий файл у daemon-юзера падает молча
+		 * (живой факт приёмки G3). */
+		system(`rm -f ${shellquote(of)}; touch ${shellquote(of)}; chmod 666 ${shellquote(of)}`);
+		const inner = PROBE_POOL_BIN + ' -quic-check ' + shellquote(ip) + ' -quic-host ' + shellquote(host) + ' > ' + shellquote(of) + ' 2>/dev/null';
+		system(`su -s /bin/sh daemon -c ${shellquote(inner)} >/dev/null 2>&1`, 12000);
+		const raw = trim(readfile(of) || '');
+		system(`rm -f ${shellquote(of)}`);
+		if (!length(raw))
+			return null;
+		let doc = null;
+		try { doc = json(raw); } catch (e) { doc = null; }
+		if (doc == null || type(doc) !== 'object')
+			return null;
+		const v = quic_norm(doc.verdict);
+		if (v == null)
+			return null;
+		return { v: v, ip: ip, host: host, t: time() };
+	}
+
+	/* Батч one-shot щупов (≤QUIC_BATCH параллельно, done-маркеры, дедлайн 8 c)
+	 * → { host: { v, ip, t } }; несостоявшаяся проба = отсутствие ключа
+	 * (честное «не измерено», никогда не фейк-ноль). */
+	function quic_wave(items) {
+		const out = {};
+		if (!access(PROBE_POOL_BIN))
+			return out;
+		let started = [];
+		for (let k = 0; k < length(items) && k < QUIC_BATCH; k++) {
+			const it = items[k];
+			if (!it || !it.ip || !it.host)
+				continue;
+			const of = RUN_DIR + '/quic.' + k + '.json';
+			/* G3: выходной файл pre-create 666 (щуп под daemon пишет в
+			 * root-owned RUN_DIR — redirect в существующий файл прав хватает);
+			 * done-маркер — в /tmp (world-writable): маркер в RUN_DIR сам
+			 * не создастся, а pre-created маркер ломал ожидание (living fact
+			 * приёмки). */
+			const df = '/tmp/quic.' + k + '.done';
+			system(`rm -f ${shellquote(of)} ${shellquote(df)}; touch ${shellquote(of)}; chmod 666 ${shellquote(of)}`);
+			const inner = PROBE_POOL_BIN + ' -quic-check ' + shellquote(it.ip) + ' -quic-host ' + shellquote(it.host) + ' > ' + shellquote(of) + ' 2>/dev/null; echo done > ' + shellquote(df);
+			system(`su -s /bin/sh daemon -c ${shellquote(inner)} >/dev/null 2>&1 &`);
+			push(started, { it: it, of: of, df: df });
+		}
+		const deadline = time() + 8;
+		while (time() < deadline) {
+			let left = 0;
+			for (let s in started)
+				if (!access(s.df)) left++;
+			if (!left)
+				break;
+			sleep(250);
+		}
+		for (let s in started) {
+			const raw = trim(readfile(s.of) || '');
+			system(`rm -f ${shellquote(s.of)} ${shellquote(s.df)}`);
+			let doc = null;
+			try { doc = json(raw); } catch (e) { doc = null; }
+			const v = (doc != null && type(doc) === 'object') ? quic_norm(doc.verdict) : null;
+			if (v == null)
+				continue;                 /* не измерено — строку в лог не пишем */
+			log('quic wave: ' + s.it.host + ' -> ' + v);
+			out[s.it.host] = { v: v, ip: s.it.ip, t: time() };
+		}
+		return out;
+	}
+
+	function quic_ctrl_of() {
+		return (type(state.__quic_ctrl) === 'object' && state.__quic_ctrl.v) ? state.__quic_ctrl.v : null;
+	}
+
+	/* Запись результата пробы в st: quic-факт + производный контраст.
+	 * tcp_ok — вердикт СВЕЖЕЙ прямой TCP-пробы; отсутствующий контраст —
+	 * поля quic_kind/quic_note нет (не пишем норму). */
+	function quic_record(st, host, tcp_ok, q) {
+		if (type(st) !== 'object' || !q)
+			return;
+		st.quic = { v: q.v, ip: q.ip, t: q.t };
+		const qc = quic_contrast(tcp_ok, q.v, quic_ctrl_of());
+		if (qc == null || !qc.kind) {
+			delete st.quic_kind;
+			delete st.quic_note;
+			return;
+		}
+		st.quic_kind = qc.kind;
+		st.quic_note = qc.note || null;
+		if (!st.quic_note)
+			delete st.quic_note;
+	}
+
+	/* Одна проба в момент learn: plain-view IP уже спиннут прямой пробой
+	 * (d.ip) — ноль лишнего DNS. Коммиты learn редки; ~3-4 c стены приемлемы
+	 * (бюджет дизайна G3). */
+	function quic_learn_probe(dom, st, d) {
+		if (!d || !d.ip)
+			return;
+		const res = quic_wave([ { ip: d.ip, host: dom } ]);
+		quic_record(st, dom, false, res[dom]);
+	}
+
+	/* Контроль-проба подмены VN (ISP-уровень), гейт 15-мин санитара: свой
+	 * WAN (src дефолтного маршрута) не слушает UDP/443 — ожидание
+	 * silence/icmp; vn = на пути подменяют Version Negotiation, и все
+	 * per-ресурсные alive недостоверны (помечается уровнем ISP в UI). */
+	function quic_ctrl_tick(now) {
+		const prev = (type(state.__quic_ctrl) === 'object') ? state.__quic_ctrl : null;
+		if (prev != null && int(prev.t || 0) > 0 && (now - int(prev.t)) < QUIC_CTRL_TTL)
+			return;
+		if (!access(PROBE_POOL_BIN))
+			return;
+		const gout = capture(`ip -4 route get 1.1.1.1 2>/dev/null`);
+		const gm = match(gout || '', /src ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
+		if (gm == null)
+			return;
+		const wan = gm[1];
+		if (!is_local_ip(wan))
+			return;                        /* не свой адрес — честно не меряем */
+		const r = quic_probe_one(wan, 'ravnex-quic-control');
+		if (r == null)
+			return;
+		const v = (r.v === 'alive') ? 'spoofed' : r.v;
+		state.__quic_ctrl = { v: v, ip: wan, t: now };
+		log('quic control probe: ' + wan + ' -> ' + r.v + ((v === 'spoofed') ? ' (VN answers FORGED on this path)' : ''));
+		if (v === 'spoofed')
+			eng_event('quic', 'контроль-проба: VN-ответы подменяются на пути (' + wan + ')');
+	}
+
+	/* Ротация по выученным записям: QUIC_BATCH за цикл (прецедент
+	 * PTR_BATCH). IP берётся из СВЕЖЕГО pv_cache; его нет у выученного
+	 * хоста (он не пробуется на обычных проходах) — честный фолбэк
+	 * resolve_plain_view (тот же plain-резолвер движка, стоимость
+	 * ограничена батчем); нет и там = пропуск («не измерено»). */
+	let quic_rot = 0;
+	function quic_rotate(now) {
+		if (!access(PROBE_POOL_BIN))
+			return;
+		const hosts = sort(keys(auto_set));
+		if (!length(hosts))
+			return;
+		let items = [];
+		for (let k = 0; k < length(hosts) && length(items) < QUIC_BATCH; k++) {
+			const h = hosts[(quic_rot + k) % length(hosts)];
+			const st = state[h];
+			if (type(st) !== 'object')
+				continue;
+			if (type(st.quic) === 'object' && int(st.quic.t || 0) > 0 &&
+			    (now - int(st.quic.t)) < QUIC_CTRL_TTL)
+				continue;              /* свежий факт не переизмеряем */
+			let ip = null;
+			const ce = pv_cache[h];
+			if (type(ce) === 'object' && ce.ip && (now - int(ce.t)) < 600)
+				ip = ce.ip;
+			else
+				ip = resolve_plain_view(h);
+			if (!ip)
+				continue;
+			push(items, { ip: ip, host: h });
+		}
+		quic_rot = (quic_rot + QUIC_BATCH) % length(hosts);
+		if (!length(items))
+			return;
+		log('quic wave: probing ' + length(items) + ' learned host(s) over UDP/443');
+		const res = quic_wave(items);
+		for (let h in keys(res))
+			quic_record(state[h], h, (type(state[h]) === 'object' && state[h].status === 'direct'), res[h]);
+	}
+
+	/* ── сеанс 198 G5: коммит-флип + переходы флап-эпизода ──
+	 * Каждый коммит списков (learn = fwd, unlearn = rev) регистрируется в
+	 * кольце записи. Супервизор открывает честный эпизод «Нестабилен» по
+	 * ≥3 флипам в 6 ч (ОДНО событие с числами); бейдж таблицы показывает
+	 * его поверх последнего устойчивого вердикта. Снятие: завершённая
+	 * reverse-серия (доказательство сильнее окон — события flap_end при
+	 * подавленных) или 24 ч тишины (проверка на hourly prune). События
+	 * learn/heal осциллятора подавляются НА АГРЕГАТАХ (ev_learn_flush /
+	 * heal-пуш исключают хост, счётчик suppressed копится честно —
+	 * прецедент fsup бота). Критерии вердиктов не меняются: окна живут
+	 * ТОЛЬКО на коммите, замеры не откладываются. */
+	function g5_flip(st, host, dir, src) {
+		if (type(st) !== 'object')
+			return;
+		flip_ring(st, dir, time(), src);
+		const fv = flap_verdict(st, time());
+		if (fv.flapping) {
+			if (type(st.flapping) !== 'object') {
+				st.flapping = { since: fv.since, suppressed: 0 };
+				log('flapping: ' + host + ' (' + fv.n + ' commit flips in the window) — the badge shows it, events are counted, not delivered');
+				eng_event('flap', 'нестабильный ресурс: ' + host + ' (' + fv.n + ' переключений)');
+				ev_auto('flap', 'нестабильный ресурс: ' + host,
+					fv.n + ' переключений списков за окно; вердикты следуют сериям подтверждений');
+			}
+			return;
+		}
+		if (type(st.flapping) === 'object') {
+			const sup = int(st.flapping.suppressed || 0);
+			if (dir === 'rev' || fv.released) {
+				if (sup > 0) {
+					log('flap end: ' + host + ' (' + sup + ' events suppressed during the episode)');
+					eng_event('flap_end', host + ' (подавлено ' + sup + ')');
+					ev_auto('flap_end', 'стабилизировался: ' + host,
+						'эпизод нестабильности завершён' + ((sup > 0) ? '; подавлено событий: ' + sup : ''));
+				}
+				delete st.flapping;
+			}
+		}
+	}
+
 	/* Adaptive per-host probe timeout (Phase 1, made real): hosts with a
 	 * recorded EWMA response time are measured with a timeout scaled to THEIR
 	 * observed speed — fast hosts fail fast (the freed budget goes to other
@@ -3483,6 +3733,24 @@ echo done > "$PRE.done"
 		else if (st.status !== 'blocked')
 			delete st.block_kind;
 
+		/* ── сеанс 198 G3: пересчёт QUIC-контраста на каждом измерении, когда
+		 * QUIC-факт уже есть (learn-точка или ротация). Сама проба здесь НЕ
+		 * ставится (дорогой one-shot — только learn-точки/ротация); нет
+		 * st.quic = «не измерено», поле не пишется. Производная от свежей
+		 * TCP-стороны × кеша QUIC × контроль-пробы — learn/heal не меняет. */
+		if (type(st.quic) === 'object' && st.quic.v) {
+			const qc = quic_contrast((d.ok && !d.geo), st.quic.v, quic_ctrl_of());
+			if (qc == null || !qc.kind) {
+				delete st.quic_kind;
+				delete st.quic_note;
+			} else {
+				st.quic_kind = qc.kind;
+				st.quic_note = qc.note || null;
+				if (!st.quic_note)
+					delete st.quic_note;
+			}
+		}
+
 		/* Ф6.6/B5.18: история доказательств — кольцо последних 5 измерений
 		 * { t, d, p } + счётчик проверок. Пишется на КАЖДОЕ измерение записи:
 		 * статус и коды всегда можно сверить с фактами (урок 254). */
@@ -3689,7 +3957,7 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
- 			if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); push(learn_names, dom); exit_ctx_stamp(st); }
+ 			if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP, ' + d.kind + ')'); push(learn_names, dom); exit_ctx_stamp(st); quic_learn_probe(dom, st, d); g5_flip(st, dom, 'fwd', 'instant:' + d.kind); pending_clear(st); }
  			} else if (!auto_set[dom]) {
  				/* s190: resolver/NTP/DoH infrastructure never learns as blocked —
  				 * the probe "failure" is the endpoint not speaking HTTP
@@ -3701,6 +3969,7 @@ echo done > "$PRE.done"
  					return;
  				}
  				auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (instant, ${d.kind}, direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (' + d.kind + ')'); push(learn_names, dom); exit_ctx_stamp(st);
+					quic_learn_probe(dom, st, d); g5_flip(st, dom, 'fwd', 'instant:' + d.kind); pending_clear(st);
 					if (is_auth_like(dom))
 						sync_auth_families();
 				}
@@ -3776,10 +4045,19 @@ echo done > "$PRE.done"
 				need = min_confirm;
 		st.status = 'blocked';
 		st.confirms = (st.confirms || 0) + 1;
-		if (st.confirms >= need) {
-			/* сеанс 187 G1-readside: корроборация (лестничный learn). */
-			st.rkn_hint = rkn_corroborate(dom, rkn_sets_load());
-			if (is_ip) {
+   		if (st.confirms >= need) {
+   			/* сеанс 187 G1-readside: корроборация (лестничный learn). */
+   			st.rkn_hint = rkn_corroborate(dom, rkn_sets_load());
+   			/* сеанс 198 G5: L2-тормоз — forward после недавнего reverse-
+   			 * коммита требует HOLD_CONFIRM замеров в окне тормоза (кандидат
+   			 * в st.pending, статус остаётся 'blocked' — fast-track и так
+   			 * пере-пробует его через CONFIRM_RETRY). Первый learn любого
+   			 * хоста проходит без тормоза: быстрая дорожка цела. */
+   			if (commit_gate(st, 'fwd', time(), false) === 'hold') {
+   				pending_merge(st, 'blocked', time());
+   				st.status = 'blocked';
+   			} else {
+   			if (is_ip) {
 					/* Last line of defence before the write: rDNS the candidate —
 					 * a bare IP naming a RU-TLD host is RU infrastructure that
 					 * always goes direct, never a learnable block. */
@@ -3789,7 +4067,7 @@ echo done > "$PRE.done"
 						st.confirms = 0;
 						return;
 					}
- 					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); push(learn_names, dom); exit_ctx_stamp(st); }
+  					if (!auto_ip_set[dom]) { auto_ip_set[dom] = true; st.added = time(); st.learn_method = (p && p.code === 'TCP') ? 'tcp' : 'http'; write_auto_ip_list(auto_ip_set); log(`learned BLOCKED ip: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom + ' (IP)'); push(learn_names, dom); exit_ctx_stamp(st); quic_learn_probe(dom, st, d); g5_flip(st, dom, 'fwd', 'confirm'); pending_clear(st); }
  				} else if (!auto_set[dom]) {
  					/* s190: same never-learn guard on the confirmed path. */
  					if (is_never_learn_domain(dom)) {
@@ -3798,13 +4076,15 @@ echo done > "$PRE.done"
  						st.confirms = 0;
  						return;
  					}
- 					auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom); push(learn_names, dom); exit_ctx_stamp(st);
-					/* ч.61: a fresh auth-like learn extends its domain family. */
-					if (is_auth_like(dom))
-						sync_auth_families();
-				}
-			}
-		} else if (p && p.block) {
+  					auto_set[dom] = true; st.added = time(); st.learn_method = 'http'; write_auto_list(auto_set); log(`learned BLOCKED: ${dom} (direct ${d.code} / proxy ${p.code})`); pending_reload = true; pending_new++; eng_event('learn', dom); push(learn_names, dom); exit_ctx_stamp(st);
+					quic_learn_probe(dom, st, d); g5_flip(st, dom, 'fwd', 'confirm'); pending_clear(st);
+   					/* ч.61: a fresh auth-like learn extends its domain family. */
+   					if (is_auth_like(dom))
+   						sync_auth_families();
+   				}
+   			}
+   			}
+   		} else if (p && p.block) {
 			st.status = 'blocked_no_proxy';
 			st.confirms = 0;
 		} else {
@@ -4105,7 +4385,11 @@ echo done > "$PRE.done"
 			last_sink_tick = sn_now;
 			try { sinkhole_guard_tick(); } catch (e2) { /* санитар не валит проход */ }
 			try { owner_watch_tick(sn_now); } catch (e3) { /* G4-follow-up не валит проход */ }
+			try { quic_ctrl_tick(sn_now); } catch (e4) { /* G3-контроль не валит проход */ }
 		}
+		/* сеанс 198 G3: ротация QUIC-проб по выученным — QUIC_BATCH за цикл,
+		 * только записи со свежим plain-view IP (ноль лишнего DNS). */
+		try { quic_rotate(sn_now); } catch (e5) { log('quic rotate failed: ' + e5); }
 
 /* Candidate intake: normalise case (DNS queries and SNI keep client-side
 		 * case; mixed-case duplicates like "zz.rw"/"ZZ.rw" would be probed twice)
@@ -4403,12 +4687,17 @@ echo done > "$PRE.done"
 						fst.sight = 0;
 						delete fst.pain_burst;
 						delete fst.dconfirms;
- 						write_auto_list(auto_set);
- 						log('learned (persistent user pain overrides passing probes): ' + dom);
- 						eng_event('learn', dom + ' (pain override)');
- 						pending_reload = true;
- 						pending_new++;
- 						push(learn_names, dom);
+  					write_auto_list(auto_set);
+  						log('learned (persistent user pain overrides passing probes): ' + dom);
+  						eng_event('learn', dom + ' (pain override)');
+  						pending_reload = true;
+  						pending_new++;
+  						push(learn_names, dom);
+  						/* G5: pain-override = crit-дорожка (emergency-путь без
+  						 * тормозов — реальная боль юзера старше окон), но флип
+  						 * честно регистрируется в кольце супервизора. */
+  						g5_flip(fst, dom, 'fwd', 'pain');
+  						pending_clear(fst);
 					} else {
 						log('pain override skipped - proxy cannot reach ' + dom);
 						fst.pain_passes = 0;
@@ -4597,12 +4886,21 @@ echo done > "$PRE.done"
 							ist.status = 'direct';
 							ist.confirms = 0;
 							/* B5.15: атомарность — block_kind и next_due не переживают
-							 * снятие записи, иначе UI/планировщик врут. */
+							 * снятие записи, иначе UI/планировщик врут. G3: quic-факт
+							 * той же природы — измерение снятой записи. */
 							delete ist.block_kind;
+							delete ist.quic;
+							delete ist.quic_kind;
+							delete ist.quic_note;
 							delete ist.next_due;
-							ist.heal_count = int(ist.heal_count || 0) + 1;
-							delete ist.recheck_n;
-							delete ist.recheck_t;
+ 							ist.heal_count = int(ist.heal_count || 0) + 1;
+ 							delete ist.recheck_n;
+ 							delete ist.recheck_t;
+ 							/* G5: reverse-коммит (завершённая серия 3×) — флип в
+ 							 * кольцо; активный флап-эпизод снимается сильнейшим
+ 							 * доказательством (событие flap_end при подавленных). */
+ 							g5_flip(ist, h, 'rev', 'recheck');
+ 							pending_clear(ist);
 						} else {
 							push(recheck_queue, h);   /* needs the next spaced confirm */
 						}
@@ -4660,8 +4958,9 @@ echo done > "$PRE.done"
 			}
 			if (heal_weekly)
 				last_reeval = now;
-			let healed = [];
-			let healed_auth = false;
+ 			let healed = [];
+ 			let healed_auth = false;
+ 			let healed_flap = {};   /* G5: хосты, чей heal снял активный флап-эпизод (их событие гасится flap_end'ом) */
 			const heal_cursor = (type(state.__heal_cursor) === 'object') ? state.__heal_cursor : {};
 			const due_of = (st) => (type(st) === 'object')
 				? ((st.next_due != null) ? int(st.next_due)
@@ -4746,7 +5045,18 @@ echo done > "$PRE.done"
 						let dead_verdict = null;
 						if (!is_ip_list)
 							dead_verdict = dns_nxdomain_verdict(dns_raw_probe(h, 'plain'), dns_raw_probe(h, 'public'));
-						if (dead_verdict === 'dead_nxdomain') {
+ 						if (dead_verdict === 'dead_nxdomain') {
+							/* сеанс 198 G5 (U3, единственное место §4.7): unlearn
+							 * по ВТОРОМУ независимому dead-замеру — один минутный
+							 * отказ обоих резолверов больше не снимает запись.
+							 * Первый dead держит окно DEAD_DNS_GAP; расхождение
+							 * сторон (verdict null) окно стирает. */
+							const ddg = dead_dns_gate(st.dead_first, now);
+							if (ddg === 'hold') {
+								if (!int(st.dead_first || 0))
+									st.dead_first = now;
+								st.next_due = now + DEAD_DNS_GAP;
+							} else {
 							delete lst[h];
 							st.status = 'direct';
 							st.confirms = 0;
@@ -4754,25 +5064,39 @@ echo done > "$PRE.done"
 							st.drop_t = now;
 							st.heal_count = int(st.heal_count || 0) + 1;
 							push(healed, h + ' (dead domain)');
-							log('unlearned DEAD domain (NXDOMAIN in plain AND public DNS): ' + h);
+							log('unlearned DEAD domain (NXDOMAIN in plain AND public DNS, 2 measures): ' + h);
+							delete st.dead_first;
+							g5_flip(st, h, 'rev', 'dead-dns');
+							pending_clear(st);
+							}
 						} else {
+							delete st.dead_first;
 							st.next_due = now + 600;
 						}
 					} else if (d_ok) {
 						st.heal = int(st.heal || 0) + 1;
-						if (st.heal >= HEAL_CONFIRM) {
-							/* B5.15: атомарный heal — список + статус + счётчики. */
-							delete lst[h];
-							st.status = 'direct';
-							st.confirms = 0;
-							st.heal = 0;
-							delete st.block_kind;
-							delete st.dconfirms;
-							delete st.recheck_n;
-							delete st.recheck_t;
-							delete st.next_due;
-							st.heal_count = int(st.heal_count || 0) + 1;
-							push(healed, h);
+ 					if (st.heal >= HEAL_CONFIRM) {
+ 							/* B5.15: атомарный heal — список + статус + счётчики. */
+ 							delete lst[h];
+ 							st.status = 'direct';
+ 							st.confirms = 0;
+ 							st.heal = 0;
+ 							delete st.block_kind;
+ 							delete st.quic;
+ 							delete st.quic_kind;
+ 							delete st.quic_note;
+ 							delete st.dconfirms;
+ 							delete st.recheck_n;
+ 							delete st.recheck_t;
+ 							delete st.next_due;
+ 							st.heal_count = int(st.heal_count || 0) + 1;
+ 							/* G5: завершённая серия 3× — reverse-коммит; активный
+ 							 * эпизод снимается, событие гасится в пользу flap_end. */
+ 							if (type(st.flapping) === 'object')
+ 								healed_flap[h] = true;
+ 							g5_flip(st, h, 'rev', 'heal');
+ 							pending_clear(st);
+ 							push(healed, h);
 							if (!is_ip_list && is_auth_like(h))
 								healed_auth = true;
 						} else {
@@ -4797,11 +5121,20 @@ echo done > "$PRE.done"
  				log('self-healed (answers direct again): ' + join(', ', healed));
  				eng_event('heal', join(', ', healed));
  				{
- 					let shown = [];
- 					for (let i = 0; i < length(healed) && i < 8; i++)
-  						push(shown, healed[i]);
- 					let hd = join(', ', shown) + ((length(healed) > 8) ? ' …+' + (length(healed) - 8) : '');
- 					ev_auto('heal', 'самолечение: ' + length(healed), hd);
+ 					/* G5: хосты, чей heal снял флап-эпизод, на шину не идут —
+ 					 * их возврат уже объявлен flap_end'ом (одна пара на эпизод). */
+ 					let shown = [], nsup = 0;
+ 					for (let i = 0; i < length(healed); i++) {
+ 						const hh = healed[i];
+ 						const hk = trim((match(hh, /^(\S+)/) || [ '', '' ])[1]);
+ 						if (healed_flap[hk] || healed_flap[hh]) { nsup++; continue; }
+ 						push(shown, hh);
+ 					}
+ 					let hd = join(', ', slice(shown, 0, 8)) + ((length(shown) > 8) ? ' …+' + (length(shown) - 8) : '');
+ 					if (nsup > 0)
+ 						hd += ' · +' + nsup + ' нестабильных (подавлено)';
+ 					if (length(shown) || nsup)
+ 						ev_auto('heal', 'самолечение: ' + (length(shown) + nsup), hd);
  				}
  				pending_reload = true;
  			}
@@ -4839,23 +5172,45 @@ echo done > "$PRE.done"
 				/* B5.15/планировщик: служебные ключи heal-планировщика и
 				 * rDNS-курсора не записи — переживают чистку. */
 				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist' ||
-				    h === '__heal_cursor' || h === '__heal_next' || h === '__owner_seen' || h === '__ptr_cursor') continue;
+				    h === '__heal_cursor' || h === '__heal_next' || h === '__owner_seen' || h === '__ptr_cursor' ||
+				    h === '__quic_ctrl') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let st = state[h];
 				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
 					push(stale, h);
 			}
 			for (let i, h in stale) delete state[h];
+			/* G5: снятие флап-эпизодов по 24 ч тишины — у хоста без коммитов
+			 * событие некому эмитить, проверка живёт на hourly prune. */
+			for (let h in keys(state)) {
+				const fst = state[h];
+				if (type(fst) !== 'object' || type(fst.flapping) !== 'object')
+					continue;
+				const fv = flap_verdict(fst, now);
+				if (fv.flapping)
+					continue;
+				const sup = int(fst.flapping.suppressed || 0);
+				if (sup > 0) {
+					log('flap end: ' + h + ' (' + sup + ' events suppressed during the episode)');
+					eng_event('flap_end', h + ' (подавлено ' + sup + ')');
+					ev_auto('flap_end', 'стабилизировался: ' + h, 'эпизод нестабильности завершён; подавлено событий: ' + sup);
+				}
+				delete fst.flapping;
+			}
 			/* Hard cap on the remaining non-listed set: evict oldest by last_probe.
 			 * Records with a pending 'blocked' confirmation are exempt — evicting
 			 * them reset the confirm counter and the host never got learned. */
 			let rest = [];
 			for (let h in keys(state)) {
 				if (h === '__dns_offset' || h === '__outage' || h === '__outage_hist' ||
-				    h === '__heal_cursor' || h === '__heal_next' || h === '__owner_seen' || h === '__ptr_cursor') continue;
+				    h === '__heal_cursor' || h === '__heal_next' || h === '__owner_seen' || h === '__ptr_cursor' ||
+				    h === '__quic_ctrl') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let cst = state[h];
 				if (type(cst) === 'object' && cst.status === 'blocked' && int(cst.confirms) > 0) continue;
+				/* G5: кандидат-вердикт в окне тормоза переживает cap — выселение
+				 * убивало окно мимо воли (прецедент blocked-кандидатов). */
+				if (type(cst) === 'object' && type(cst.pending) === 'object') continue;
 				push(rest, { h: h, t: state[h].last_probe || 0 });
 			}
 			/* Ф10.2: the cap is RE-READ at each hourly prune — a manual profile
@@ -4993,7 +5348,11 @@ echo done > "$PRE.done"
 			/* сеанс 187 G2: +4 транспортных подп-kind'а (чат RPC отдаёт
 			 * verbatim — новые ключи проходят без правок RPC). */
 			kinds: { tls_dpi: 0, dns_poison: 0, stub: 0, sigpage: 0, hardcode: 0, upstream_blocked: 0,
-				tcp_refused: 0, connect_timeout: 0, tls_timeout: 0, tls_mitm: 0 } };
+				tcp_refused: 0, connect_timeout: 0, tls_timeout: 0, tls_mitm: 0 },
+			/* сеанс 198 G3: QUIC-контраст — счётные классы второй лейны
+			 * (панель «Вердикты»); отсутствующее = не измерено. */
+			quic_kinds: { tcp_only_block: 0, blocked_both: 0, quic_dead: 0 },
+			quic_measured: 0 };
 		for (let h in keys(state)) {
 			if (h === '__dns_offset') continue;
 			const st = state[h];
@@ -5003,6 +5362,11 @@ echo done > "$PRE.done"
 				v.blocked++;
 				const k = st.block_kind || '';
 				if (length(k) && exists(v.kinds, k)) v.kinds[k]++;
+				if (type(st.quic) === 'object' && st.quic.v) {
+					v.quic_measured++;
+					const qk = st.quic_kind || '';
+					if (length(qk) && exists(v.quic_kinds, qk)) v.quic_kinds[qk]++;
+				}
 			} else if (length(s) && exists(v, s)) {
 				v[s]++;
 			}

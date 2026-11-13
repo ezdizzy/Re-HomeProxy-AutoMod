@@ -1153,7 +1153,7 @@ return view.extend({
 
 		/* ── Table rendering ───────────────────────────────────────────── */
 
-		function statusBadge(e) {
+		function statusBadgeBase(e) {
 			if (e.src === 'manual_proxy')
 				return E('span', { 'class': 'hpbadge hpb-mproxy' }, [ _('Always proxy') ]);
 			if (e.src === 'manual_direct')
@@ -1188,6 +1188,22 @@ return view.extend({
 			return E('span', { 'class': 'hpbadge hpb-type' }, [ e.status || '—' ]);
 		}
 
+		/* сеанс 198 G5: активный флап-эпизод — честный оверлей поверх
+		 * последнего устойчивого вердикта (вместо мигания alive/dead);
+		 * в титуле — число подавленных событий эпизода. */
+		function statusBadge(e) {
+			const base = statusBadgeBase(e);
+			if (e.flapping && int(e.flapping.since) > 0) {
+				const wrap = E('span', {});
+				wrap.appendChild(base);
+				wrap.appendChild(E('span', { 'class': 'hpbadge hpb-pending', style: 'margin-left:4px',
+					title: _('Flapping: the verdict flipped repeatedly; it follows the confirmation series, %d events suppressed').format(int(e.flapping.suppressed) || 0) },
+					[ _('Flapping') ]));
+				return wrap;
+			}
+			return base;
+		}
+
 		/* G4 (REPORT_s188_g4_design.md): провенанс вердикта — ЧЕРЕЗ ЧЬЁ владение
 		 * контура он измерен (exit_ctx: узел и/или ISP). Поле отсутствует =
 		 * не измерено — строка не рисуется (честная неполнота, не фейк). */
@@ -1201,6 +1217,29 @@ return view.extend({
 			if (c.isp)
 				bits.push('ISP ' + c.isp);
 			return ' · ' + _('measured via: %s').format(bits.join(', '));
+		}
+
+		/* сеанс 198 G3: QUIC-контраст — вторая лейна правды (UDP/443 через
+		 * probe_pool -quic-check). Поле отсутствует = не измерено — строка
+		 * не рисуется (честная неполнота, никогда не фейк-ноль). silence —
+		 * ВЕРОЯТНЫЙ срез (сервер может игнорировать пробу); ctrl='spoofed'
+		 * (контроль-проба) помечает недостоверность. */
+		function quicText(e) {
+			if (!e.quic || !e.quic.v)
+				return '';
+			const V = { alive: _('QUIC: reachable'), cut: _('QUIC: likely cut'), reject: _('QUIC: rejected') };
+			let s = V[e.quic.v] || null;
+			if (!s)
+				return '';
+			if (e.quic_kind === 'tcp_only_block')
+				s += ' — ' + _('TCP is blocked but QUIC is alive — the browser may ride HTTP/3');
+			else if (e.quic_kind === 'blocked_both')
+				s += ' — ' + _('nothing works: neither TCP nor QUIC (likely cut)');
+			else if (e.quic_kind === 'quic_dead')
+				s += ' — ' + _('QUIC is already cut by the provider — a QUIC reject adds nothing');
+			if (e.quic_note === 'unverified')
+				s += ' · ' + _('unverified: the control probe says QUIC answers are forged on this path');
+			return ' · ' + s;
 		}
 
 		function reasonText(e) {
@@ -1242,16 +1281,24 @@ return view.extend({
 					tls_mitm:         _('a TLS certificate substitute answered (MITM shape) — probe class for future probe builds')
 				};
 				let kind = KINDS[e.kind] || null;
+				/* сеанс 198 G5: кандидат в окне тормоза — честная строка
+				 * «переход: подтверждено N/2» вместо тихого ожидания. */
+				const pend = (e.pending && e.pending.v === 'blocked' && int(e.pending.n) > 0)
+					? ' · ' + _('hold: %d/%d confirmations after a recent flip').format(int(e.pending.n), 2)
+					: '';
+				const flap = (e.flapping && int(e.flapping.since) > 0)
+					? ' · ' + _('unstable: %d flips recorded, %d events suppressed').format(int(e.flap_flips) || 0, int(e.flapping.suppressed) || 0)
+					: '';
 				if (!e.direct && !e.proxy)
 					return (kind || _('blocked (details not recorded)')) +
 						(e.rkn_hint ? ' · ' + _('also present in the local registry lists (%s) — likely a registry block, not necessarily DPI').format(e.rkn_hint) : '') +
 						(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '') +
-						provText(e);
+						provText(e) + quicText(e) + pend + flap;
 				let d = e.direct || '✗', p = e.proxy || '✓';
 				return (kind ? (kind + ' · ') : '') + _('direct %s ✗ / proxy %s ✓').format(d, p) +
 					(e.rkn_hint ? ' · ' + _('also present in the local registry lists (%s) — likely a registry block, not necessarily DPI').format(e.rkn_hint) : '') +
 					(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '') +
-					provText(e);
+					provText(e) + quicText(e) + pend + flap;
 			}
 			if (e.status === 'blocked_no_proxy') return _('blocked both ways');
 			if (e.status === 'unknown') return _('uncertain');
@@ -1411,6 +1458,12 @@ return view.extend({
 			[ 'tls_timeout',     _('Blocked (TLS timeout)') ],
 			[ 'tls_mitm',        _('Blocked (TLS MITM)') ]
 		];
+		/* сеанс 198 G3: QUIC-контраст — счётные классы второй лейны. */
+		const QUIC_BADGES = [
+			[ 'tcp_only_block', _('QUIC alive, TCP cut') ],
+			[ 'blocked_both',   _('cut both (likely)') ],
+			[ 'quic_dead',      _('QUIC already dead') ]
+		];
 		const STATUS_BADGES = [
 			[ 'blocked',          _('Blocked') ],
 			[ 'direct',           _('Direct') ],
@@ -1543,6 +1596,7 @@ return view.extend({
 			/* Verdict distribution: statuses + block-kind counts. */
 			const v = st.verdicts || {};
 			const kinds = v.kinds || {};
+			const quicKinds = v.quic_kinds || {};
 			const parts = [];
 			for (let s in STATUS_BADGES) {
 				const n = v[STATUS_BADGES[s][0]] || 0;
@@ -1552,6 +1606,16 @@ return view.extend({
 				const n = kinds[KIND_BADGES[k][0]] || 0;
 				if (n > 0) parts.push(KIND_BADGES[k][0] + ':' + n);
 			}
+			/* сеанс 198 G3: QUIC-классы + честная доля измеренных. */
+			let quicParts = [];
+			for (let qk in QUIC_BADGES) {
+				const qn = quicKinds[QUIC_BADGES[qk][0]] || 0;
+				if (qn > 0) quicParts.push(QUIC_BADGES[qk][0] + ':' + qn);
+			}
+			if ((v.quic_measured || 0) > 0)
+				quicParts.unshift('measured:' + v.quic_measured);
+			const quicSig = quicParts.join('|');
+			parts.push.apply(parts, quicParts);
 			const kdSig = parts.join('|');
 			if (kdSig !== state.kdSig) {
 				state.kdSig = kdSig;
@@ -1572,6 +1636,14 @@ return view.extend({
 					if (n > 0)
 						engKinds.appendChild(E('span', { 'class': 'hpbadge hpb-type' },
 							[ KIND_BADGES[k][1] + ' ' + n ]));
+				}
+				/* сеанс 198 G3: QUIC-классы — с честной пометкой метода. */
+				for (let qk in QUIC_BADGES) {
+					const qn = quicKinds[QUIC_BADGES[qk][0]] || 0;
+					if (qn > 0)
+						engKinds.appendChild(E('span', { 'class': 'hpbadge hpb-type',
+							title: _('QUIC lane (UDP/443), probe_pool -quic-check; silence is a LIKELY cut, not proof') },
+							[ QUIC_BADGES[qk][1] + ' ' + qn ]));
 				}
 				if (!parts.length)
 					engKinds.appendChild(E('span', { 'class': 'hpauto-cap' }, [ _('no data yet') ]));

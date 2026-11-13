@@ -8447,3 +8447,48 @@ msgstr "Общая политика и режимы на карточках пр
 
 msgid "Mass list"
 msgstr "Массовый список"
+
+msgid "Flapping: the verdict flipped repeatedly; it follows the confirmation series, %d events suppressed"
+msgstr "Нестабилен: вердикт переключался несколько раз; следует сериям подтверждений, событий подавлено: %d"
+
+msgid "Flapping"
+msgstr "Нестабилен"
+
+msgid "QUIC: reachable"
+msgstr "QUIC: жив"
+
+msgid "QUIC: likely cut"
+msgstr "QUIC: вероятно срезан"
+
+msgid "QUIC: rejected"
+msgstr "QUIC: отвергнут"
+
+msgid "TCP is blocked but QUIC is alive — the browser may ride HTTP/3"
+msgstr "TCP срезан, но QUIC жив — браузер может ехать по HTTP/3"
+
+msgid "nothing works: neither TCP nor QUIC (likely cut)"
+msgstr "не работает ни TCP, ни QUIC (вероятный срез)"
+
+msgid "QUIC is already cut by the provider — a QUIC reject adds nothing"
+msgstr "QUIC уже срезан провайдером — QUIC-reject ничего не добавит"
+
+msgid "unverified: the control probe says QUIC answers are forged on this path"
+msgstr "недостоверно: контроль-проба показывает, что QUIC-ответы на этом пути подделываются"
+
+msgid "hold: %d/%d confirmations after a recent flip"
+msgstr "пауза: подтверждений после недавнего переключения %d/%d"
+
+msgid "unstable: %d flips recorded, %d events suppressed"
+msgstr "нестабилен: переключений %d, событий подавлено %d"
+
+msgid "QUIC alive, TCP cut"
+msgstr "QUIC жив, TCP срезан"
+
+msgid "cut both (likely)"
+msgstr "срезано всё (вероятно)"
+
+msgid "QUIC already dead"
+msgstr "QUIC уже мёртв"
+
+msgid "QUIC lane (UDP/443), probe_pool -quic-check; silence is a LIKELY cut, not proof"
+msgstr "QUIC-лейна (UDP/443), probe_pool -quic-check; тишина — ВЕРОЯТНЫЙ срез, не доказательство"

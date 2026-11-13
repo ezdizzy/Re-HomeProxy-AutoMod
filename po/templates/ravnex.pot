@@ -8424,3 +8424,48 @@ msgstr ""
 
 msgid "Mass list"
 msgstr ""
+
+msgid "Flapping: the verdict flipped repeatedly; it follows the confirmation series, %d events suppressed"
+msgstr ""
+
+msgid "Flapping"
+msgstr ""
+
+msgid "QUIC: reachable"
+msgstr ""
+
+msgid "QUIC: likely cut"
+msgstr ""
+
+msgid "QUIC: rejected"
+msgstr ""
+
+msgid "TCP is blocked but QUIC is alive — the browser may ride HTTP/3"
+msgstr ""
+
+msgid "nothing works: neither TCP nor QUIC (likely cut)"
+msgstr ""
+
+msgid "QUIC is already cut by the provider — a QUIC reject adds nothing"
+msgstr ""
+
+msgid "unverified: the control probe says QUIC answers are forged on this path"
+msgstr ""
+
+msgid "hold: %d/%d confirmations after a recent flip"
+msgstr ""
+
+msgid "unstable: %d flips recorded, %d events suppressed"
+msgstr ""
+
+msgid "QUIC alive, TCP cut"
+msgstr ""
+
+msgid "cut both (likely)"
+msgstr ""
+
+msgid "QUIC already dead"
+msgstr ""
+
+msgid "QUIC lane (UDP/443), probe_pool -quic-check; silence is a LIKELY cut, not proof"
+msgstr ""

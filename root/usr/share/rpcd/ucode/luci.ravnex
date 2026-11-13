@@ -7328,6 +7328,21 @@ const methods = {
 						 * ({main: узел, isp: ASN/CC, ts}); отсутствует = не измерено. */
 						if (type(st.exit_ctx) === 'object')
 							e.exit_ctx = st.exit_ctx;
+						/* сеанс 198 G3: QUIC-лейна — факт ({v, ip, t}) + производный
+						 * контраст (quic_kind/quic_note); отсутствует = не измерено. */
+						if (type(st.quic) === 'object')
+							e.quic = st.quic;
+						if (st.quic_kind) e.quic_kind = st.quic_kind;
+						if (st.quic_note) e.quic_note = st.quic_note;
+						/* сеанс 198 G5: флап-окна — кандидат-вердикт ({v, n, since,
+						 * last}), активный эпизод нестабильности ({since,
+						 * suppressed}) и размер кольца флипов; отсутствует = нет. */
+						if (type(st.pending) === 'object')
+							e.pending = st.pending;
+						if (type(st.flapping) === 'object')
+							e.flapping = st.flapping;
+						if (type(st.flips) === 'array' && length(st.flips))
+							e.flap_flips = length(st.flips);
 						if (type(st.evidence) === 'array' && length(st.evidence)) {
 							const lev = st.evidence[length(st.evidence) - 1];
 							e.ev_last = { t: int(lev.t || 0), d: '' + (lev.d || ''), p: '' + (lev.p || '') };
@@ -7488,6 +7503,9 @@ const methods = {
 				paused: paused,
 				learned: learned,
 				entries: entries,
+				/* сеанс 198 G3: контроль-проба подмены VN (ISP-уровень,
+				 * {v: alive|cut|reject|spoofed, ip, t}); отсутствует = не измерено. */
+				quic_ctrl: (type(state.__quic_ctrl) === 'object') ? state.__quic_ctrl : null,
 				counts: {
 					blocked: length(blocked), direct: length(direct), unknown: length(unknown),
 					learned: n_learned, manual: n_manual_proxy + n_manual_direct,
