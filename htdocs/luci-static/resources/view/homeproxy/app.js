@@ -163,10 +163,25 @@ return view.extend({
 					 * bar is removed first: in-place remounts would duplicate
 					 * it. One hook for ALL sections — СМОТРИ В ЦЕЛОЕ. */
 					try {
+						/* s202: the footer bar must live INSIDE the embed root's
+						 * main column. LuCI's addFooter() only RETURNS a fragment
+						 * (the dispatcher does DOM.append itself), and the wave-A
+						 * re-anchoring machinery (self-heal, 2 s keeper, anchor
+						 * watcher) rebuilds #view around the root on every stray
+						 * dispatch pass — a bar appended to #view was deleted
+						 * within one tick (user report: «опять сломали кнопки
+						 * сохранить\применить»; live trace: bar added twice, then
+						 * wiped by the re-anchor, final bars=0 with the map
+						 * mounted). Inside the root the bar rides every
+						 * re-anchor; the keeper below cleans vp-level strays. */
 						const vp2 = document.getElementById('view');
 						if (vp2) {
 							vp2.querySelectorAll('.cbi-page-actions').forEach((b) => b.remove());
-							self.addFooter();
+							const footer = self.addFooter();
+							if (footer && footer.nodeType) {
+								const mainCol = holder.parentElement || root;
+								mainCol.appendChild(footer);
+							}
 						}
 					} catch (e) {}
 					/* Warm the other sections once per tab (stale-chunk
@@ -223,8 +238,16 @@ return view.extend({
 		poll.add(L.bind(function() {
 			try {
 				const vp = document.getElementById('view');
-				if (vp && !vp.querySelector('.hp-embed-root') && this._rootEl)
-					vp.replaceChildren(this._rootEl);
+				if (vp && this._rootEl) {
+					if (!vp.querySelector('.hp-embed-root'))
+						vp.replaceChildren(this._rootEl);
+					else
+						/* s202: stray dispatch passes append THEIR addFooter()
+						 * bar to #view (outside the root) — it duplicates ours
+						 * (which lives inside the root and survives re-anchors).
+						 * Clean only vp-DIRECT bars; the in-root one is safe. */
+						vp.querySelectorAll(':scope > .cbi-page-actions').forEach((b) => b.remove());
+				}
 			} catch (e) {}
 			return Promise.resolve();
 		}, this), hp.pollSec(2));
