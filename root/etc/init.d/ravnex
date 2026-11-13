@@ -637,6 +637,13 @@ start_service() {
 	# only the generated RUN_DIR copy is.
 	rm -f "$RUN_DIR/hiddify-c.json.candidate"
 	rm -f "$RUN_DIR/hiddify-c.json"
+	# s205: восстановление выбора нод (urltest_sticky) после ребута — tmpfs
+	# пуст, зеркало живёт в леджере; без подкладки каждый ребут стартовал
+	# пулы с авто-выбора («какая нога живее» забыта).
+	if [ ! -e "$RUN_DIR/urltest_sticky" ] && [ -s "$HP_DIR/ledger/urltest_sticky" ]; then
+		cp "$HP_DIR/ledger/urltest_sticky" "$RUN_DIR/urltest_sticky" 2>/dev/null || true
+		log "restored urltest picks from ledger"
+	fi
 	# The generator writes hiddify-c.json.candidate and atomically renames it
 	# to hiddify-c.json ONLY after the core check passed (audit 27); a fatal
 	# check leaves the running config untouched and exits non-zero.
@@ -1028,6 +1035,11 @@ snapshot_urltest_picks() {
 	# crash-respawn) must not wipe the last known picks.
 	if [ -s "$tmp" ]; then
 		mv -f "$tmp" "$RUN_DIR/urltest_sticky"
+		# s205: зеркало выбора нод юзера в персистентный леджер — tmpfs
+		# переживает рестарт сервиса, но не ребут; подкладка перед генерацией
+		# возвращает выбор сразу после включения бокса.
+		mkdir -p "$HP_DIR/ledger"
+		cp "$RUN_DIR/urltest_sticky" "$HP_DIR/ledger/urltest_sticky" 2>/dev/null || true
 	else
 		rm -f "$tmp"
 	fi

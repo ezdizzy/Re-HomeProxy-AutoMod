@@ -11373,6 +11373,10 @@ const methods = {
 			/* Wipe the per-host state completely. */
 			const state_file = RUN_DIR + '/automation_state.json';
 			system('rm -f ' + shellquote(state_file));
+			/* s205: persister ledger тоже с нуля — иначе ребут после Clear
+			 * воскресит выученное из снапшота/журнала. Демон-обработчик
+			 * _clear сбрасывает свою очередь/базу сам (двойной rm безопасен). */
+			system('rm -f ' + HP_DIR + '/ledger/journal.jsonl ' + HP_DIR + '/ledger/journal.1.jsonl ' + HP_DIR + '/ledger/snapshot.json');
 			/* ч.62: tell the RUNNING daemon to drop its in-memory state and
 			 * re-read the emptied lists — otherwise its old auto_set resurrected
 			 * cleared entries on the next learn and stale verdicts suppressed

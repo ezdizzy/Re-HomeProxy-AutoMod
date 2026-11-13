@@ -81,6 +81,15 @@ import {
 import {
 	zombie_pools, current_suffix_from_host
 } from '/etc/ravnex/scripts/yt_steer.uc';
+/* s205: PERSISTER LEDGER — низкочастотный флеш-слой learned-стейта
+ * (снапшот + append-only журнал в /etc/ravnex/ledger). Листовой модуль;
+ * движок диффа/реплея живёт здесь (нужны state/maps). */
+import {
+	append_events as lg_append, read_events as lg_read_events,
+	read_snapshot as lg_read_snapshot, write_snapshot as lg_write_snapshot,
+	clear_journal as lg_clear_journal, reset_files as lg_reset_files,
+	journal_bytes as lg_bytes, replay_plan as lg_replay_plan
+} from '/etc/ravnex/scripts/ledger.uc';
 
 const HP_DIR = '/etc/ravnex';
 const RUN_DIR = '/var/run/ravnex';
@@ -576,6 +585,13 @@ function read_lines(path) {
 	c = trim(c);
 	if (!length(c)) return [];
 	return filter(split(c, /[\r\n]/), (x) => length(trim(x)) && !match(trim(x), /^\s*#/));
+}
+
+/* s205: dbg звался в двух catch-путях (yt_steer_regen/learn), но нигде не
+ * был объявлен — несказанное имя в catch = тот же класс краша, что урок 201
+ * (латентная мина: срабатывает только при ошибке внутри ошибки). Шим в лог. */
+function dbg(msg) {
+	log('dbg: ' + msg);
 }
 
 /* ── RU-geo database (loaded from resources/ru_geoip.txt + ru_geosite.txt,
@@ -2419,10 +2435,370 @@ function yt_steer_learn_pass() {
 			yt_steer_regen_request();
 		}
 	} catch (e) {
-		dbg('yt_learn error: ' + sprintf('%s', e));
+		log('yt_learn error: ' + sprintf('%s', e));
 	}
 }
 
+
+/* ── s205: PERSISTER LEDGER (REPORT_s205_persister_ledger_design.md) ──────
+ * Проблема (класс rutracker): авторитетный state живёт в tmpfs, RAM-карты
+ * (poisoned/blocked/fam_ledger) — вообще только в памяти демона; рестарт
+ * демона стирает RAM-карты, ребут стирает всё — движок переобучает с нуля.
+ * Решение: низкочастотный флеш-слой в /etc/ravnex/ledger — СНАПШОТ (полная
+ * копия state + RAM-карт + fam_ledger + yt-пулов, атомарная запись) +
+ * append-only журнал СЕМАНТИЧЕСКИХ переходов. Диф на границе цикла: событие
+ * создаётся при СМЕНЕ факта (learn/unlearn/quic-флаг/poison/fam/yt), не при
+ * наблюдении — тихий роутер не пишет флеш вовсе; счётчики (sight/pain/ewma)
+ * в журнал не попадают никогда (иначе флеш-шторм) — только в снапшот.
+ * Restore при старте: tmpfs-стейт жив → он авторитет (рестарт демона),
+ * но RAM-карты/fam_ledger/yt ДОКАРМЛИВАются всегда (умирают при каждом
+ * respawn); state-файла нет (ребут) → полный restore = снапшот + реплей
+ * журнала по монотонности seq (дыра/рвань/битьё = честная остановка,
+ * никогда не краш). s188-трейд не нарушается: high-frequency остаётся в
+ * tmpfs, леджер добавляет только low-frequency слой. */
+const LEDGER_COMPACT_GAP = 1800;    /* компакция не чаще раза в 30 мин */
+const LEDGER_JOURNAL_MAX = 131072;  /* жёсткий триггер компакции по размеру */
+const LEDGER_SNAPSHOT_MAX_AGE = 2592000;  /* снапшот старше 30 дней = мусор */
+let ledger_q = [];
+let ledger_seq = 0;
+let ledger_prev = null;
+let ledger_dirty = false;
+let ledger_compact_ts = 0;
+
+function ledger_yt_pools() {
+	try {
+		if (!access(YT_LEARNED_FILE))
+			return {};
+		const doc = json(readfile(YT_LEARNED_FILE) || '');
+		if (doc != null && type(doc) === 'object' && doc.pools != null && type(doc.pools) === 'object')
+			return doc.pools;
+	} catch (e) {
+		log('ledger: yt file unreadable: ' + sprintf('%s', e));
+	}
+	return {};
+}
+
+/* Сигнатура семантических фактов для дифа (ТОЛЬКО переходы, не наблюдения). */
+function ledger_sig(state) {
+	const sig = { dom: {}, ip: {}, quic: {}, poi: {}, blk: {}, fam: {}, yt: {} };
+	for (let h in keys(auto_set)) sig.dom[h] = 1;
+	for (let h in keys(auto_ip_set)) sig.ip[h] = 1;
+	for (let h in keys(state)) {
+		if (substr(h, 0, 2) === '__') continue;
+		const st = state[h];
+		if (type(st) !== 'object') continue;
+		if (st.quic_drop) sig.quic[h] = 1;
+		if (type(st.fam) === 'object') sig.fam[h] = 1;
+	}
+	for (let h in keys(poisoned_hosts)) sig.poi[h] = 1;
+	for (let h in keys(blocked_hosts)) sig.blk[h] = 1;
+	const ytp = ledger_yt_pools();
+	for (let p in keys(ytp)) sig.yt[p] = 1;
+	return sig;
+}
+
+/* Базлайн после первичного reload_lists(): то, что уже на диске/в restored
+ * стейте, не журналируется — события только для последующих ПЕРЕХОДОВ. */
+function ledger_baseline(state) {
+	ledger_prev = ledger_sig(state);
+	ledger_q = [];
+}
+
+function ledger_diff(state) {
+	const cur = ledger_sig(state);
+	const now = time();
+	const ytp = ledger_yt_pools();
+	const q = [];
+	if (ledger_prev != null) {
+		const p = ledger_prev;
+		for (let h in keys(cur.dom)) if (!p.dom[h]) push(q, { op: 'L', h: h, d: { ip: 0 } });
+		for (let h in keys(p.dom)) if (!cur.dom[h]) push(q, { op: 'U', h: h, d: {} });
+		for (let h in keys(cur.ip)) if (!p.ip[h]) push(q, { op: 'L', h: h, d: { ip: 1 } });
+		for (let h in keys(p.ip)) if (!cur.ip[h]) push(q, { op: 'U', h: h, d: {} });
+		for (let h in keys(cur.quic)) if (!p.quic[h]) push(q, { op: 'Q1', h: h, d: {} });
+		for (let h in keys(p.quic)) if (!cur.quic[h]) push(q, { op: 'Q0', h: h, d: {} });
+		for (let h in keys(cur.poi)) if (!p.poi[h]) push(q, { op: 'P1', h: h, d: { t: int(poisoned_hosts[h] || now) } });
+		for (let h in keys(p.poi)) if (!cur.poi[h]) push(q, { op: 'P0', h: h, d: {} });
+		for (let h in keys(cur.blk)) if (!p.blk[h]) push(q, { op: 'B1', h: h, d: { t: int(blocked_hosts[h] || now) } });
+		for (let h in keys(p.blk)) if (!cur.blk[h]) push(q, { op: 'B0', h: h, d: {} });
+		for (let h in keys(cur.fam)) if (!p.fam[h]) {
+			const st = state[h];
+			const f = (type(st) === 'object' && type(st.fam) === 'object') ? st.fam : {};
+			push(q, { op: 'FA', h: h, d: { a: f.a, k: f.k, t: int(f.t || 0), ls: int(f.ls || 0) } });
+		}
+		for (let h in keys(p.fam)) if (!cur.fam[h]) push(q, { op: 'FD', h: h, d: {} });
+		for (let pn in keys(cur.yt)) if (!p.yt[pn]) push(q, { op: 'YT', h: pn, d: ytp[pn] });
+	}
+	ledger_prev = cur;
+	if (!length(q))
+		return 0;
+	for (let ev in q) {
+		ledger_seq++;
+		ev.seq = ledger_seq;
+		ev.ts = now;
+		push(ledger_q, ev);
+	}
+	ledger_dirty = true;
+	return length(q);
+}
+
+/* Применение события реплея. st_apply=false (tmpfs-стейт жив) — state-опы
+ * пропускаются (tmpfs авторитет), карт-опы применяются всегда. */
+function ledger_apply_event(state, ev, st_apply) {
+	const op = '' + (ev.op || '');
+	const h = '' + (ev.h || '');
+	if (!length(h) || substr(h, 0, 2) === '__')
+		return;
+	const d = (type(ev.d) === 'object' && ev.d != null) ? ev.d : {};
+	if (op === 'P1') {
+		poisoned_hosts[h] = int(d.t || ev.ts || time());
+	} else if (op === 'P0') {
+		delete poisoned_hosts[h];
+	} else if (op === 'B1') {
+		blocked_hosts[h] = int(d.t || ev.ts || time());
+	} else if (op === 'B0') {
+		delete blocked_hosts[h];
+	} else if (op === 'YT') {
+		/* yt-пулы мерджатся отдельным проходом (ledger_yt_merge). */
+	} else if (!st_apply) {
+		return;
+	} else if (op === 'L') {
+		if (type(state[h]) !== 'object')
+			state[h] = {};
+		const st = state[h];
+		if (!st.status) {
+			st.status = 'blocked';
+			st.added = int(ev.ts || time());
+			st.learn_method = d.ip ? 'ip' : 'http';
+			st.last_probe = int(ev.ts || time());
+		}
+	} else if (op === 'U') {
+		if (type(state[h]) === 'object') {
+			const st = state[h];
+			if (type(st.fam) !== 'object')
+				delete state[h];
+			else
+				delete st.quic_drop;
+		}
+	} else if (op === 'Q1') {
+		if (type(state[h]) === 'object')
+			state[h].quic_drop = 1;
+	} else if (op === 'Q0') {
+		if (type(state[h]) === 'object')
+			delete state[h].quic_drop;
+	} else if (op === 'FA') {
+		if (type(state[h]) !== 'object')
+			state[h] = {};
+		state[h].fam = { a: d.a, k: d.k, t: int(d.t || 0), ls: int(d.ls || 0) };
+	} else if (op === 'FD') {
+		if (type(state[h]) === 'object')
+			delete state[h].fam;
+	}
+	/* Неизвестный op = тихий skip (прямая совместимость версий схемы). */
+}
+
+function ledger_merge_fam_ledger(src) {
+	if (src == null || type(src) !== 'object')
+		return;
+	for (let h in keys(src)) {
+		const rec = src[h];
+		if (rec == null || type(rec) !== 'object')
+			continue;
+		const cur = fam_ledger[h];
+		if (cur != null && type(cur) === 'object' && int(cur.t_last || 0) >= int(rec.t_last || 0))
+			continue;
+		let merged = (cur != null && type(cur) === 'object') ? cur : { clients: {} };
+		merged.t_last = int(rec.t_last || 0);
+		if (rec.seen_win != null) merged.seen_win = rec.seen_win;
+		if (rec.src_last != null) merged.src_last = rec.src_last;
+		if (type(rec.clients) === 'object') {
+			if (type(merged.clients) !== 'object') merged.clients = {};
+			for (let ip in keys(rec.clients)) {
+				const t = int(rec.clients[ip] || 0);
+				if (merged.clients[ip] == null || merged.clients[ip] < t)
+					merged.clients[ip] = t;
+			}
+		}
+		fam_ledger[h] = merged;
+	}
+}
+
+/* yt-пулы (tmpfs-файл) — восстановить недостающие записи из снапшота/журнала. */
+function ledger_yt_merge(snap_yt, evs) {
+	try {
+		if ((uci.get('ravnex', 'config', 'yt_steer_dead') || '0') !== '1')
+			return;
+		let cur = {};
+		if (access(YT_LEARNED_FILE)) {
+			try {
+				const doc = json(readfile(YT_LEARNED_FILE) || '');
+				if (doc != null && type(doc) === 'object' && type(doc.pools) === 'object')
+					cur = doc.pools;
+			} catch (e) { cur = {}; }
+		}
+		let added = null;
+		const add = (p, rec) => {
+			if (p == null || !length('' + p) || rec == null || type(rec) !== 'object')
+				return;
+			if (cur[p] != null)
+				return;
+			if (added == null) added = {};
+			added[p] = rec;
+		};
+		if (snap_yt != null && type(snap_yt) === 'object')
+			for (let p in keys(snap_yt)) add(p, snap_yt[p]);
+		for (let ev in evs)
+			if (('' + (ev.op || '')) === 'YT')
+				add('' + (ev.h || ''), ev.d);
+		if (added != null) {
+			for (let p in keys(added)) cur[p] = added[p];
+			yt_learn_write_atomic(YT_LEARNED_FILE, sprintf('%.J\n', { version: 1, pools: cur }));
+			log('ledger: yt-пулы восстановлены (+' + length(keys(added)) + ' записей)');
+		}
+	} catch (e) {
+		log('ledger: yt merge error: ' + sprintf('%s', e));
+	}
+}
+
+/* Restore при старте демона (замена голого load_state()). */
+function ledger_restore(state_cap) {
+	let state = load_state();
+	const have_tmpfs = (length(keys(state)) > 0);
+	const snap = lg_read_snapshot(LEDGER_SNAPSHOT_MAX_AGE);
+	let base = 0;
+	let snap_yt = null;
+	if (snap != null) {
+		base = snap.seq;
+		snap_yt = snap.data.yt;
+		if (!have_tmpfs) {
+			state = snap.data.state;
+			log('ledger: снапшот принят (seq=' + base + ', записей=' + length(keys(state)) + ')');
+		} else {
+			log('ledger: tmpfs-стейт жив (' + length(keys(state)) + ' записей) — снапшот только для RAM-карт');
+		}
+	} else if (!have_tmpfs) {
+		log('ledger: снапшота нет — холодный старт (поведение s188)');
+	} else {
+		/* Первый запуск леджера на живом tmpfs: базлайн без журналирования,
+		 * но первый флаш обязан записать стартовый снапшот (дизайн §3.3:
+		 * компакция при старте) — иначе до первой компакции ребут = холодный старт. */
+		log('ledger: tmpfs-стейт жив (' + length(keys(state)) + ' записей), снапшота ещё нет — будет записан при первом флаше');
+	}
+	const evs = lg_read_events();
+	const st_apply = !have_tmpfs;
+	const rp = lg_replay_plan(evs, base);
+	base = rp.base;
+	if (rp.torn > 0)
+		log('ledger: журнал оборван на seq=' + rp.torn + ' (ожидался ' + (base + 1) + ') — хвост проигнорирован, восстановлено до seq=' + base);
+	for (let ev in rp.to_apply)
+		ledger_apply_event(state, ev, st_apply);
+	if (length(rp.to_apply) > 0)
+		log('ledger: реплей ' + length(rp.to_apply) + ' событий журнала (до seq=' + base + ')');
+	/* RAM-only карты — докормить в ЛЮБОМ случае (умирают при каждом respawn). */
+	if (snap != null && type(snap.data.maps) === 'object') {
+		const mp = snap.data.maps;
+		const poi = (type(mp.poi) === 'object') ? mp.poi : {};
+		const blk = (type(mp.blk) === 'object') ? mp.blk : {};
+		const now = time();
+		for (let h in keys(poi)) {
+			const t = int(poi[h] || 0);
+			if (t > 0 && (now - t) <= LEDGER_SNAPSHOT_MAX_AGE &&
+			    (poisoned_hosts[h] == null || poisoned_hosts[h] < t))
+				poisoned_hosts[h] = t;
+		}
+		for (let h in keys(blk)) {
+			const t = int(blk[h] || 0);
+			if (t > 0 && (now - t) <= LEDGER_SNAPSHOT_MAX_AGE &&
+			    (blocked_hosts[h] == null || blocked_hosts[h] < t))
+				blocked_hosts[h] = t;
+		}
+	}
+	if (snap != null && type(snap.data.fam_ledger) === 'object')
+		ledger_merge_fam_ledger(snap.data.fam_ledger);
+	ledger_yt_merge(snap_yt, evs);
+	/* Капы при восстановлении — те же живые константы, evict по oldest
+	 * (зеркало prune-логики: fam-члены и pending-кандидаты exempt). */
+	if (st_apply) {
+		const cap = (int(state_cap) > 0) ? int(state_cap) : ECO_STATE_CAP;
+		let recs = [];
+		for (let h in keys(state)) {
+			if (substr(h, 0, 2) === '__') continue;
+			const st = state[h];
+			if (type(st) !== 'object') continue;
+			if (type(st.fam) === 'object') continue;
+			if (type(st.pending) === 'object') continue;
+			push(recs, { h: h, t: int(st.last_probe || 0) });
+		}
+		if (length(recs) > cap) {
+			sort(recs, (a, b) => a.t - b.t);
+			const excess = length(recs) - cap;
+			for (let i = 0; i < excess; i++)
+				delete state[recs[i].h];
+			log('ledger: кап стейта при восстановлении — выселено ' + excess + ' старейших (cap=' + cap + ')');
+		}
+	}
+	const fcap = (fam_caps && fam_caps.ledger) ? fam_caps.ledger : FAMILY_LEDGER_MAX;
+	if (length(keys(fam_ledger)) > fcap) {
+		const fl = [];
+		for (let h in keys(fam_ledger)) {
+			const rec = fam_ledger[h];
+			push(fl, { h: h, t: int(rec && rec.t_last || 0) });
+		}
+		sort(fl, (a, b) => a.t - b.t);
+		const excess = length(fl) - fcap;
+		for (let i = 0; i < excess; i++)
+			delete fam_ledger[fl[i].h];
+	}
+	ledger_seq = base;
+	ledger_q = [];
+	if (snap == null) {
+		/* Снапшота ещё нет: первый флаш обязан записать стартовый
+		 * (компакция при старте, дизайн §3.3) — без 30-мин отсрочки. */
+		ledger_dirty = true;
+		ledger_compact_ts = 0;
+	} else {
+		ledger_dirty = false;
+		ledger_compact_ts = time();
+	}
+	if (st_apply)
+		save_state(state);   /* материализовать tmpfs один раз за восстановление */
+	return state;
+}
+
+/* Флаш границы цикла (зовётся рядом с save_state, ВНУТРИ persist-гейта). */
+function ledger_flush(state) {
+	ledger_diff(state);
+	if (length(ledger_q)) {
+		if (!lg_append(ledger_q))
+			log('ledger: НЕ удалось дописать журнал — ' + length(ledger_q) + ' событий потеряно (лучший-усилие)');
+		else
+			log('ledger: + ' + length(ledger_q) + ' событие(й), seq=' + ledger_seq);
+		ledger_q = [];
+	}
+	const now = time();
+	if ((ledger_dirty && (now - ledger_compact_ts) >= LEDGER_COMPACT_GAP) || lg_bytes() >= LEDGER_JOURNAL_MAX) {
+		lg_write_snapshot({ state: state,
+			maps: { poi: poisoned_hosts, blk: blocked_hosts },
+			fam_ledger: fam_ledger, yt: ledger_yt_pools() }, ledger_seq);
+		lg_clear_journal();
+		ledger_dirty = false;
+		ledger_compact_ts = now;
+		log('ledger: снапшот записан (seq=' + ledger_seq + ', записей стейта=' + length(keys(state)) + ')');
+	}
+}
+
+/* Сброс леджера на Clear: новая генерация журнала (seq с нуля) + грязный
+ * флаг — следующий флаш перезапишет снапшот ПУСТЫМ (ребут после Clear не
+ * воскрешает выученное). */
+function ledger_clear_local() {
+	ledger_q = [];
+	ledger_prev = null;
+	ledger_seq = 0;
+	ledger_dirty = true;
+	ledger_compact_ts = time();
+	lg_reset_files();
+	log('ledger: сброшен (clear) — новая генерация журнала');
+}
 
 	function dns_failover_check() {
 		/* MultiDNS already races EVERY server in each pool and returns the fastest
@@ -2551,7 +2927,7 @@ function main() {
 	 * "access to undeclared variable" (the asn_enabled lesson, hit again by
 	 * host_timeout() which reads the EWMA state). state + adaptive_timeout are
 	 * therefore declared here, BEFORE the probe helper definitions below. */
-	let state = load_state();
+	let state = ledger_restore(state_cap);
 
 	/* ── s200 QUIC-drop: хосты с липким флагом st.quic_drop ──
 	 * Флаг ставится на обеих сторонах болезненного цикла (pain-override learn
@@ -3801,6 +4177,11 @@ echo done > "$PRE.done"
 		save_state(state);
 		log('purged ' + unknown_dropped + ' legacy unknown-status state records');
 	}
+
+	/* s205: базлайн леджера — ПОСЛЕ первичного reload_lists(): наборы с /etc-
+	 * файлов уже в памяти, restored-стейт на месте; всё это не журналируется,
+	 * события только для последующих переходов. */
+	ledger_baseline(state);
 
 	/* When the main path is plain Direct there is no proxy side to probe: auto-proxy-in
 	 * routes to a direct outbound, so the "proxy" probe is a copy of the direct one and
@@ -5728,6 +6109,9 @@ echo done > "$PRE.done"
 			sync_families(state);
 			state.__dns_offset = dns_log_offset;
 			save_state(state);
+			/* s205: диф семантических переходов + батч-аппенд журнала +
+			 * компакция по гигиене/размеру (низкочастотный флеш-слой). */
+			ledger_flush(state);
 		}
 
 		/* Batch-flush window: apply when the time throttle elapsed OR enough new entries
@@ -5926,6 +6310,9 @@ echo done > "$PRE.done"
 			state.__dns_offset = dns_log_offset;
 			reload_lists();
 			save_state(state);
+			/* s205: леджер тоже с нуля — новая генерация журнала, пустой
+			 * снапшот при следующем флаше (ребут после Clear не воскрешает). */
+			ledger_clear_local();
 			/* Outage guard state is wiped with everything else. */
 			outage_since = 0;
 			recheck_queue = [];
