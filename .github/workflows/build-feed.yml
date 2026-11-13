@@ -148,6 +148,23 @@ jobs:
                 echo "$sha_i  $d/$ipkf" | sha256sum -c - >/dev/null || { echo "::error::$m: ipk sha256 mismatch $ipkf"; exit 1; }
               done || fail=1
           done
+          # versions.txt must agree with the manifests in BOTH directions
+          # (the live feed was caught with a stale versions.txt that named a
+          # package the tree never had - mosdns on mips_24kc - and missed one
+          # the tree had - lite on mipsel_24kc; the change-guard then compared
+          # garbage and silently kept the drift): the sorted (pkg, version,
+          # arch) sets of versions.txt and of the manifests must be identical.
+          awk -F'\t' 'NF==3 && $1!="" {print $1"\t"$2"\t"$3}' feed/versions.txt | sort > /tmp/ver_side
+          : > /tmp/man_side
+          for m in $(find feed -name manifest.json); do
+            a=$(basename "$(dirname "$m")")
+            jq -r --arg a "$a" '.pkgs | to_entries[] | "\(.key)\t\(.value.version)\t\($a)"' "$m" >> /tmp/man_side
+          done
+          sort /tmp/man_side -o /tmp/man_side
+          if ! diff -u /tmp/ver_side /tmp/man_side; then
+            echo "::error::versions.txt does not agree with the manifests (see the diff above)"
+            fail=1
+          fi
           if [ -n "${{ secrets.APK_SIGNING_KEY }}" ]; then
             # every index must carry at least one signature block
             for i in $(find feed -name packages.adb); do
