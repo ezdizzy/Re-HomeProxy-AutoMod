@@ -916,7 +916,10 @@ function fingerprint(b) {
  * Plain-view DNS resolution: prefer local mosdns plain listener (127.0.0.1:5453)
  * when MultiDNS is active (mdns_ok), which races RU-facing plain upstreams and
  * returns the fastest valid answer — exactly the same view the user's browser gets.
- * Fallback to direct nslookup to 8.8.8.8/1.1.1.1/77.88.8.8 if mosdns unavailable. */
+ * Fallback to direct nslookup to public resolvers if mosdns unavailable: s206
+ * (F1/F3) puts the honest RU resolver FIRST — a direct foreign UDP-53
+ * (8.8.8.8/1.1.1.1) is a TSPU-controlled channel (2.5 s holds, fast-fake
+ * answers), and this path must mimic the RU view the browser sees. */
 /* ч.115: a plain-view answer of 0.0.0.0/127.* is a DNS-blocker verdict
  * (AdGuard/Pi-hole/dnsmasq address= lists), not a usable address — such
  * answers are skipped (the next resolver is tried) instead of being pinned
@@ -958,12 +961,13 @@ function resolve_plain_view(host) {
 		}
 	}
 
-	/* Fallback: direct nslookup to public resolvers (same as before). */
-	let out = capture(`nslookup -type=A ${shellquote(host)} 8.8.8.8 2>/dev/null`);
+	/* Fallback: direct nslookup to public resolvers (same as before). s206
+	 * (F1/F3): honest RU resolver first — direct foreign UDP-53 last. */
+	let out = capture(`nslookup -type=A ${shellquote(host)} 77.88.8.8 2>/dev/null`);
 	if (!match(out, /Address/)) {
-		out = capture(`nslookup -type=A ${shellquote(host)} 1.1.1.1 2>/dev/null`);
+		out = capture(`nslookup -type=A ${shellquote(host)} 8.8.8.8 2>/dev/null`);
 		if (!match(out, /Address/))
-			out = capture(`nslookup -type=A ${shellquote(host)} 77.88.8.8 2>/dev/null`);
+			out = capture(`nslookup -type=A ${shellquote(host)} 1.1.1.1 2>/dev/null`);
 	}
 	for (let l in split(out, '\n')) {
 		let m = match(trim(l), /^Address(\s+[0-9]+)?:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(\s|$)/);
@@ -985,8 +989,8 @@ function resolve_plain_view(host) {
 
 /* s195: СЫРОЙ DNS-вывод для вердикта «домен мёртв» (dns_nxdomain_verdict из
  * learn_core). 'plain' = RU-вид браузера (mosdns plain listener, если жив —
- * иначе публичный 8.8.8.8); 'public' = независимый публичный канал. Вывод
- * парсит ЧИСТАЯ функция — здесь только захват. */
+ * иначе честный RU-резолвер, s206 F1/F3); 'public' = независимый публичный
+ * канал. Вывод парсит ЧИСТАЯ функция — здесь только захват. */
 function dns_raw_probe(host, kind) {
 	if (kind === 'plain') {
 		if (uci && (uci.get('ravnex', 'multidns', 'enabled') || '0') === '1' &&
@@ -994,7 +998,9 @@ function dns_raw_probe(host, kind) {
 			const mp = uci.get('ravnex', 'multidns', 'plain_port') || '5453';
 			return capture(`nslookup -type=A -port=${mp} ${shellquote(host)} 127.0.0.1 2>/dev/null`);
 		}
-		return capture(`nslookup -type=A ${shellquote(host)} 8.8.8.8 2>/dev/null`);
+		/* s206 (F1/F3): RU-вид без mosdns = честный RU-резолвер; прямой
+		 * foreign UDP-53 (8.8.8.8) — управляемый TSPU канал (holds/fast-fake). */
+		return capture(`nslookup -type=A ${shellquote(host)} 77.88.8.8 2>/dev/null`);
 	}
 	let out = capture(`nslookup -type=A ${shellquote(host)} 1.1.1.1 2>/dev/null`);
 	if (!match(out, /Address/))
@@ -3001,6 +3007,17 @@ function main() {
 	 * <prefix>.body and a <prefix>.done marker when finished. The code file
 	 * carries "<http_code> <time_total>" — curl's own stopwatch, no BusyBox
 	 * date(1) arithmetic (busybox date lacks %N, so %s%3N was garbage). */
+	/* s206 (F1/F3): direct-side hostname resolution for batch probes. The
+	 * local mosdns plain listener goes first (the same RU view the browser
+	 * gets), then the honest RU public resolver; direct foreign UDP-53
+	 * (8.8.8.8/1.1.1.1) is a TSPU-controlled channel (2.5 s holds, fast-fake
+	 * answers) — last resort only. The chain is interpolated into the worker
+	 * below; a dead local port fails instantly (loopback ICMP unreachable). */
+	let wk_mdns_port = '';
+	let wk_res_public = '77.88.8.8 8.8.8.8 1.1.1.1';
+	if (uci && access('/usr/bin/mosdns') && pm_reg_alive('mosdns') &&
+	    (uci.get('ravnex', 'multidns', 'enabled') || '0') === '1')
+		wk_mdns_port = '' + (int(uci.get('ravnex', 'multidns', 'plain_port') || '5453') || 5453);
 	const WORKER = RUN_DIR + '/probe_worker.sh';
 	writefile(WORKER, `#!/bin/sh
 # automation.uc probe worker: <host> <direct|proxy|tcp|tcpproxy> <port> <timeout> <prefix> <http2>
@@ -3020,8 +3037,12 @@ if [ "$SIDE" = direct ]; then
 		*[!0-9.]*) ;;
 		*) IP="$H" ;;
 	esac
+	if [ -z "$IP" ] && [ -n "${wk_mdns_port}" ]; then
+		IP=$(nslookup -port=${wk_mdns_port} -type=A "$H" 127.0.0.1 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
+	fi
 	if [ -z "$IP" ]; then
-		for R in 8.8.8.8 1.1.1.1 77.88.8.8; do
+		# s206 (F1/F3): honest RU resolver first; direct foreign UDP-53 last.
+		for R in ${wk_res_public}; do
 			IP=$(nslookup -type=A "$H" "$R" 2>/dev/null | awk '/^Address/ {print $NF}' | grep -E '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' | grep -v '^127\\.0\\.0\\.1$' | head -n 1)
 			[ -n "$IP" ] && break
 			sleep 1
@@ -3348,7 +3369,8 @@ echo done > "$PRE.done"
 	 * concurrently; first answer wins). Same guard as resolve_plain_view():
 	 * the local mosdns plain listener only when MultiDNS is actually running
 	 * (a UCI-only check would burn a dead-port timeout per host), then the
-	 * public RU-facing resolvers. */
+	 * public RU-facing resolvers — s206 (F1/F3): honest RU first, direct
+	 * foreign UDP-53 last (TSPU-controlled channel). */
 	function resolver_list() {
 		let list = [];
 		if (access('/usr/bin/mosdns') && pm_reg_alive('mosdns') &&
@@ -3356,9 +3378,9 @@ echo done > "$PRE.done"
 			const pport = int(uci.get('ravnex', 'multidns', 'plain_port') || '5453') || 5453;
 			push(list, sprintf('127.0.0.1:%d', pport));
 		}
+		push(list, '77.88.8.8');
 		push(list, '8.8.8.8');
 		push(list, '1.1.1.1');
-		push(list, '77.88.8.8');
 		return list;
 	}
 
