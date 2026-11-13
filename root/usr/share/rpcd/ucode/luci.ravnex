@@ -2557,7 +2557,10 @@ const FEED_MANIFEST_FILE = '/var/run/ravnex/feed_manifest.json';
 const FEED_MANIFEST_TTL = 1800;      /* CI rebuilds daily; 30 min cache */
 const FEED_PROBE_TTL = 300;          /* reachability probe cache */
 const FEED_BRANCH = 'refs/heads/feed';
-const FEED_REPOS = ['ezdizzy/ravnex', 'ezdizzy/ravnex'];
+/* Single repo: the second entry was the pre-rename fallback; after the
+ * ezdizzy/ravnex rename it became a literal duplicate of the same repo and
+ * doubled every download attempt (fixed ч.286). */
+const FEED_REPOS = ['ezdizzy/ravnex'];
 /* ч.265 (де-форк): ЯДРА больше не возятся фидом — оригиналы публикуют свои
  * пакеты (решения 1/4/5). Фид остаётся каналом НАШИХ пакетов (приложение,
  * mosdns, хелперы) и наших сборок движков из оригинальных бинарников, до
@@ -2616,9 +2619,9 @@ function feed_rel(path) {
 	return 'releases/' + feed_series() + '/' + feed_detect_arch() + '/' + path;
 }
 
-/* The FULL download ladder for one feed-relative path: two repos ×
- * (raw → jsDelivr → UCI gh-proxy mirror). The github.com/raw form is
- * used for the mirror rung so the prefix convention of gh_mirror_of
+/* The FULL download ladder for one feed-relative path over the single
+ * feed repo: raw → jsDelivr → UCI gh-proxy mirror. The github.com/raw form
+ * is used for the mirror rung so the prefix convention of gh_mirror_of
  * (used for release assets) applies unchanged. */
 function feed_urls(rel) {
 	const urls = [];
@@ -2651,13 +2654,11 @@ function feed_probe() {
 	return feed_probe_cache;
 }
 
-/* Ladder download of a feed-relative path. Tries the FULL ladder of the
- * first repo before falling back to the pre-rename repository. Returns
- * { ok, url, rung, repo } — ok means the file exists at dest and is not
- * empty. wget per rung (bounded), caller owns the timeout budget. */
+/* Ladder download of a feed-relative path over the single feed repo.
+ * Returns { ok, url, rung, repo } — ok means the file exists at dest and
+ * is not empty. wget per rung (bounded), caller owns the timeout budget. */
 function feed_fetch(rel, dest, timeout_ms) {
 	const urls = feed_urls(rel);
-	let last_repo = null;
 	for (let r in FEED_REPOS) {
 		for (let u in urls) {
 			if (u.repo != r) continue;

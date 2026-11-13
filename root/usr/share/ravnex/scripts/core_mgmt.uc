@@ -504,7 +504,8 @@ const FEED_LIST_LEGACY = '/etc/apk/repositories.d/ravnex-feed.list';
 const FEED_MANIFEST_FILE = '/var/run/ravnex/feed_manifest.json';
 const FEED_MANIFEST_TTL = 1800;
 const FEED_BRANCH = 'refs/heads/feed';
-const FEED_REPOS = ['ezdizzy/ravnex', 'ezdizzy/ravnex'];
+/* Single repo since the rename — see the luci.ravnex feed block (ч.286). */
+const FEED_REPOS = ['ezdizzy/ravnex'];
 const FEED_BIN_PATH = {
 	'hiddify-core': '/usr/bin/hiddify-core',
 	'hiddify-core-compact': '/usr/bin/hiddify-core',
