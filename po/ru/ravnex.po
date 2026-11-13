@@ -8571,8 +8571,8 @@ msgstr "Откладывать в сервисное окно"
 msgid "Maintenance window (HH:MM)"
 msgstr "Сервисное окно (ЧЧ:ММ)"
 
-msgid "Local time when accumulated automatic applies are executed by one service restart (default 03:00). A missed window waits for the next day."
-msgstr "Локальное время, когда накопленные автоматические применения выполняются одной перезагрузкой службы (по умолчанию 03:00). Пропущенное окно ждёт следующего дня."
+msgid "Local time when accumulated automatic applies are executed by one service restart (default 03:00). A missed window waits for the next day. Relevant for the \"Deferred to the maintenance window\" policy."
+msgstr "Локальное время, когда накопленные автоматические применения выполняются одной перезагрузкой службы (по умолчанию 03:00). Пропущенное окно ждёт следующего дня. Актуально для политики «Откладывать в сервисное окно»."
 
 msgid "Expect HH:MM (24-hour), e.g. 03:00"
 msgstr "Ожидается ЧЧ:ММ (24-часовые), например 03:00"

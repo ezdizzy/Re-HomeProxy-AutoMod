@@ -8548,7 +8548,7 @@ msgstr ""
 msgid "Maintenance window (HH:MM)"
 msgstr ""
 
-msgid "Local time when accumulated automatic applies are executed by one service restart (default 03:00). A missed window waits for the next day."
+msgid "Local time when accumulated automatic applies are executed by one service restart (default 03:00). A missed window waits for the next day. Relevant for the \"Deferred to the maintenance window\" policy."
 msgstr ""
 
 msgid "Expect HH:MM (24-hour), e.g. 03:00"
