@@ -445,6 +445,27 @@ return view.extend({
 			_('Watch recurring conntrack destinations (games, Telegram data centers, apps without SNI) and learn those that fail directly but answer through the proxy. Off by default — enable if you use such apps.'));
 		o.default = o.disabled;
 
+		/* s206: «окно перезагрузок» — автоматические перезагрузки ядра
+		 * копятся и применяются одной перезагрузкой в окно (решение юзера:
+		 * «директы не должны рваться на ровном месте»). */
+		o = sx.option(form.ListValue, 'core_restart_policy', _('Core restarts policy'),
+			_('Deferred to the window: automatic core restarts that would drop connections (DNS-failover apply, first learned-list injection, autopilot rule/strategy swaps) are accumulated and applied by ONE service restart inside the maintenance window — with a notice in the Telegram chat. Failures (core down / hung / memory-critical) are always repaired immediately. Manual applies from buttons are never deferred.'));
+		o.value('auto', _('Immediate (as before)'));
+		o.value('window', _('Deferred to the maintenance window'));
+		o.default = 'auto';
+
+		o = sx.option(form.Value, 'core_restart_window', _('Maintenance window (HH:MM)'),
+			_('Local time when accumulated automatic applies are executed by one service restart (default 03:00). A missed window waits for the next day. Relevant for the "Deferred to the maintenance window" policy.'));
+		/* s206: сознательно БЕЗ o.depends — на этой форме любой change рвёт
+		 * LuCI checkDepends посередине (предсуществующий TypeError '_class',
+		 * wave-A keeper vs form.js triggerValidation; копилка аудита), и
+		 * зависимое поле может не показаться. Поле видно всегда. */
+		o.placeholder = '03:00';
+		o.validate = function(section_id, value) {
+			return (value == null || value === '' || /^[0-9]{1,2}:[0-9]{2}$/.test(value))
+				? true : _('Expect HH:MM (24-hour), e.g. 03:00');
+		};
+
 		o = sx.option(form.Flag, 'poison_verify', _('Verify DNS-poison verdicts by the plain answer'),
 			_('Before a plain-vs-DoH mismatch is treated as DNS poisoning, the direct probe answer from the plain-view IP must be a real site response (no block/stub page, no TLS anomaly, no cross-host redirect). Anycast/geo divergence on CDN hosts (github.com, google.com, dl.google.com…) then no longer produces false “Blocked (DNS)” verdicts, while a real ISP stub — which never answers cleanly — is still learned instantly. Applied after Restart service.'));
 		o.default = o.enabled;
@@ -1455,8 +1476,10 @@ return view.extend({
 				let lastCell;
 				if (e.src === 'family') {
 					/* s201: у члена семьи вместо ✕-удаления — «отвязать»
-					 * (family_off.txt, переживает ребут; rebind — кнопка в
-					 * карточке семьи, вернётся сам при живом якоре). */
+					 * (family_off.txt, переживает ребут). s206 (аудит m6):
+					 * rebind — кнопка ЗДЕСЬ же (раньше объявлялась и не
+					 * вызывалась, а подсказка обещала карточку, которой
+					 * нет — случайно отвязанный хост нельзя было вернуть). */
 					const ub = E('button', { 'class': 'hpdel', type: 'button', title: _('Unbind from family') }, [ '⛓' ]);
 					ub.addEventListener('click', function() {
 						ub.disabled = true;
@@ -1469,7 +1492,14 @@ return view.extend({
 								}).catch(function() {}).finally(function() { ub.disabled = false; });
 							});
 					});
-					lastCell = ub;
+					const rb = E('button', { 'class': 'hpdel', type: 'button', title: _('Re-bind to family') }, [ '⟲' ]);
+					rb.addEventListener('click', function() {
+						rb.disabled = true;
+						callFamilyRebind(e.host).then(function(r) {
+							return applyLearnedOp(r && r.apply, refresh, _('Family member re-bound.'), sitesSink, sitesResult);
+						}).catch(function() {}).finally(function() { rb.disabled = false; });
+					});
+					lastCell = E('span', { 'style': 'white-space:nowrap' }, [ ub, ' ', rb ]);
 				} else {
 					const delBtn = E('button', { 'class': 'hpdel', type: 'button', title: _('Delete entry') }, [ '✕' ]);
 					delBtn.addEventListener('click', function() {

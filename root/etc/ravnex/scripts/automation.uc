@@ -2810,6 +2810,67 @@ function ledger_clear_local() {
 	log('ledger: сброшен (clear) — новая генерация журнала');
 }
 
+/* ── s206: «окно перезагрузок» (решение юзера, сеанс 206) ────────────────
+ * core_restart_policy='window' гасит ТОЛЬКО автоматические перезагрузки
+ * ядра (DNS-failover reload, первый learn-flush с полной перезагрузкой;
+ * автопилот гейтит свои пути у себя) — они копятся в маркере
+ * deferred_core_reload.json и применяются ОДНОЙ перезагрузкой в заданное
+ * окно (по умолчанию 03:00). Кнопки юзера в UI и аварии (ядро вниз /
+ * зависло / RSS-крит у recovery/sentinel) — как раньше, немедленно.
+ * Горячее применение выученных списков НЕ гейтится (соединений не рвёт).
+ * Уведомления — в шину (LuCI-журнал + TG-чат), честно и по краю. */
+const DEFER_FILE = RUN_DIR + '/deferred_core_reload.json';
+let defer_bypass = false;	/* исполнитель окна обходит гейты */
+
+function core_restart_window_active() {
+	if (defer_bypass)
+		return false;
+	return ((uci.get('ravnex', 'automation', 'core_restart_policy') || 'auto') === 'window');
+}
+
+function core_restart_window_mod() {
+	const w = '' + (uci.get('ravnex', 'automation', 'core_restart_window') || '03:00');
+	const m = match(w, /^([0-9]{1,2}):([0-9]{2})$/);
+	let h = 3, mm = 0;
+	if (m) { h = int(m[1]); mm = int(m[2]); }
+	if (h > 23 || mm > 59) { h = 3; mm = 0; }
+	return h * 60 + mm;
+}
+
+/* Внутри часового слота окна? Пропущенное окно (демон был вниз) ждёт
+ * завтрашнего — «в 3 ночи» не значит «утром как догоним». */
+function core_restart_window_now() {
+	const lt = localtime(time());
+	if (lt == null || type(lt) !== 'object')
+		return false;
+	const now_mod = int(lt.hour || 0) * 60 + int(lt.min || 0);
+	const wm = core_restart_window_mod();
+	return (now_mod >= wm && now_mod < wm + 60);
+}
+
+/* Отложить вид применения. Маркер копит ФЛАГИ (виды сливаются в одно
+ * применение); возвращает true только если вид новый — уведомление по краю,
+ * без спама на каждом проходе. */
+function core_restart_defer(kind, reason) {
+	let d = {};
+	let was_new = true;
+	if (access(DEFER_FILE)) {
+		try {
+			const prev = json(readfile(DEFER_FILE) || '');
+			if (type(prev) === 'object') {
+				d = prev;
+				if (d[kind] === true)
+					was_new = false;
+			}
+		} catch (e) { d = {}; }
+	}
+	d[kind] = true;
+	d.ts = time();
+	d.reason = '' + reason;
+	atomic_write(DEFER_FILE, sprintf('%.J\n', d));
+	return was_new;
+}
+
 	function dns_failover_check() {
 		/* MultiDNS already races EVERY server in each pool and returns the fastest
 		 * live answer, so the legacy single-primary failover is redundant (and would
@@ -2836,6 +2897,17 @@ function ledger_clear_local() {
 			for (let s in plain_list) {
 				if (s === plain_primary) continue;
 				if (dns_reachable(s)) {
+					/* s206: окно перезагрузок — commit урывал бы соединения
+					 * (procd-триггер = полный stop/start). Отложить в окно. */
+					if (core_restart_window_active()) {
+						if (core_restart_defer('dns', 'DNS failover (plain): primary down, alternate ' + s + ' ready')) {
+							log('DNS failover (plain): primary недоступен, замена найдена — применение ОТЛОЖЕНО в окно перезагрузок');
+							eng_event('defer', 'DNS-failover отложен в окно перезагрузок');
+							ev_auto('core_restart_defer', 'DNS-failover отложен',
+								'plain-primary недоступен, здоровая замена найдена — применю в окно перезагрузок одной перезагрузкой');
+						}
+						return;
+					}
 					/* REORDER, don't truncate: move the healthy server to the front
 					 * and keep every other entry. The old `uci.set(key, s)` replaced
 					 * the whole list with ONE server, silently destroying the user's
@@ -2860,6 +2932,16 @@ function ledger_clear_local() {
 			for (let s in secure_list) {
 				if (s === secure_primary) continue;
 				if (dns_reachable(s)) {
+					/* s206: окно перезагрузок — как в plain-ветке. */
+					if (core_restart_window_active()) {
+						if (core_restart_defer('dns', 'DNS failover (secure): primary down, alternate ' + s + ' ready')) {
+							log('DNS failover (secure): primary недоступен, замена найдена — применение ОТЛОЖЕНО в окно перезагрузок');
+							eng_event('defer', 'DNS-failover (secure) отложен в окно перезагрузок');
+							ev_auto('core_restart_defer', 'DNS-failover (secure) отложен',
+								'secure-primary недоступен, здоровая замена найдена — применю в окно перезагрузок одной перезагрузкой');
+						}
+						return;
+					}
 					let newlist = [ s ];
 					for (let x in secure_list) {
 						x = trim(x);
@@ -4264,6 +4346,18 @@ echo done > "$PRE.done"
 		/* First run / migration: the running config does not yet reference the learned
 		 * local rule-sets, so one full restart is required to inject them (generate_client
 		 * writes the marker above, enabling the hot path afterwards). */
+		/* s206: окно перезагрузок — полная перезагрузка рвёт соединения:
+		 * отложить в окно (исполнитель окна довызовет do_reload с обходом). */
+		if (core_restart_window_active()) {
+			if (core_restart_defer('learn', 'learned rule-sets not in running config (full reload needed)')) {
+				log('learn flush: полная перезагрузка службы ОТЛОЖЕНА в окно перезагрузок (до инъекции списки применяются холоднее)');
+				eng_event('defer', 'learn-flush отложен в окно перезагрузок');
+				ev_auto('core_restart_defer', 'learn-flush отложен',
+					'выученные списки требуют полной перезагрузки службы — применю в окно перезагрузок одной перезагрузкой');
+			}
+			pending_reload = true;
+			return;
+		}
 		log('learned rule-sets not in running config - doing full service reload to inject them.');
 		system('ucode ' + HP_DIR + '/scripts/generate_client.uc >' + RUN_DIR + '/generate_client.log 2>&1');
 		if (!access(RUN_DIR + '/hiddify-c.json')) {
@@ -6319,6 +6413,34 @@ echo done > "$PRE.done"
 			pm_reg_del('automation');
 			if (has('dns')) disable_dns_log();
 			return;
+		}
+
+		/* s206: исполнитель «окна перезагрузок» — накопленные авто-применения
+		 * одной перезагрузкой в окно; если окно выключили — применить сразу
+		 * (честное поведение по переключателю). */
+		if (access(DEFER_FILE)) {
+			let dm = null;
+			try { dm = json(readfile(DEFER_FILE) || ''); } catch (e) { dm = null; }
+			const pol_window = ((uci.get('ravnex', 'automation', 'core_restart_policy') || 'auto') === 'window');
+			if (type(dm) === 'object' && (!pol_window || core_restart_window_now())) {
+				system('rm -f ' + shellquote(DEFER_FILE));
+				let what = [];
+				if (dm.learn === true) push(what, 'learn');
+				if (dm.dns === true) push(what, 'dns-failover');
+				if (dm.strategy === true) push(what, 'strategy');
+				log('окно перезагрузок: применяю накопленное (' + join(', ', what) + ')');
+				eng_event('deferred_apply', 'окно перезагрузок: применение накопленного');
+				ev_auto('core_restart_apply', 'окно перезагрузок: применяю',
+					'накопленные отложенные применения (' + join(', ', what) + ') — служба перезагружается, соединения восстановятся за секунды');
+				defer_bypass = true;
+				if (dm.learn === true)
+					do_reload();
+				if (dm.dns === true)
+					dns_failover_check();
+				if (dm.strategy === true)
+					system('/etc/init.d/ravnex reload >/dev/null 2>&1 &');
+				defer_bypass = false;
+			}
 		}
 
 		/* External edits (Automation table RPC: add/delete/manual status, RU-geo

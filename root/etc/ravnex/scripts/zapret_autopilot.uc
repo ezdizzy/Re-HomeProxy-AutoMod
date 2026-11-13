@@ -231,6 +231,29 @@ function dv_of(res, args) {
 	return (mv != null && type(mv) === 'object') ? ('' + (mv.verdict || '')) : '';
 }
 
+/* ── s206: «окно перезагрузок» (решение юзера, сеанс 206) ────────────────
+ * core_restart_policy='window': автоматические применения, рвущие
+ * соединения (правило → Zapret, смена композиции), копятся до окна и
+ * применяются тиком внутри часового слота (по умолчанию 03:00–03:59).
+ * Кнопки юзера и аварии — не здесь. Сообщение юзеру честное и по краю. */
+function cr_window_active() {
+	return ((cursor().get('ravnex', 'automation', 'core_restart_policy') || 'auto') === 'window');
+}
+
+function cr_window_now() {
+	const w = '' + (cursor().get('ravnex', 'automation', 'core_restart_window') || '03:00');
+	const m = match(w, /^([0-9]{1,2}):([0-9]{2})$/);
+	let h = 3, mm = 0;
+	if (m) { h = int(m[1]); mm = int(m[2]); }
+	if (h > 23 || mm > 59) { h = 3; mm = 0; }
+	const lt = localtime(time());
+	if (lt == null || type(lt) !== 'object')
+		return false;
+	const now_mod = int(lt.hour || 0) * 60 + int(lt.min || 0);
+	const wm = h * 60 + mm;
+	return (now_mod >= wm && now_mod < wm + 60);
+}
+
 function log(msg) {
 	push(S.log, { ts: time(), m: '' + msg });
 	while (length(S.log) > 24)
@@ -945,6 +968,18 @@ function ensure_rules(cfg) {
 		S.resources[res].rule_node = node;
 		if (node === 'zapret-out')
 			continue;
+		/* s206: окно перезагрузок — RPC применения перезагружает службу
+		 * (рвёт соединения): отложить тик до окна, сообщить по краю. */
+		if (cr_window_active() && !cr_window_now()) {
+			if (S['cr_defer_note'] !== ('rule:' + res)) {
+				S['cr_defer_note'] = 'rule:' + res;
+				log('правило ' + res + ' → Zapret: применение ОТЛОЖЕНО в окно перезагрузок');
+				ap_emit('core_restart_defer', 'правило ' + res + ': применение отложено',
+					'работает окно перезагрузок — верну правило на Zapret внутри окна (соединения не рвутся)');
+				wstat();
+			}
+			continue;
+		}
 		S.pending = { kind: 'rule', ts: time(), src: res };
 		stage('rule', 'ставлю правило ' + res + ' → Zapret (служба перезагружается)…');
 		log('правило ' + res + ' не ведёт на Zapret (' + (node || 'правила нет') + ') — ставлю → Zapret');
@@ -1267,6 +1302,20 @@ function apply_target(cfg, target) {
 		S.next_cycle_ts = time() + cfg.interval_h * 3600;
 		return false;
 	}
+	/* s206: окно перезагрузок — смена композиции перезагружает службу:
+	 * отложить до окна (тик внутри часового слота применит сам). Гейт ДО
+	 * записи S.pending — журнал прерванного применения не должен описывать
+	 * применение, которое не начиналось. */
+	if (cr_window_active() && !cr_window_now()) {
+		if (S['cr_defer_note'] !== 'strategy') {
+			S['cr_defer_note'] = 'strategy';
+			log('применение композиции ОТЛОЖЕНО в окно перезагрузок');
+			ap_emit('core_restart_defer', 'смена стратегии отложена',
+				'работает окно перезагрузок — применю победителя внутри окна (соединения не рвутся)');
+			wstat();
+		}
+		return false;
+	}
 	const target_names = [];
 	for (let res in RES_KEYS) {
 		const w = target.resources[res];
@@ -1298,6 +1347,8 @@ function apply_target(cfg, target) {
 		was_ok: was_ok,
 		notes: built.notes
 	};
+	/* s206: окно перезагрузок — смена композиции перезагружает службу:
+	 * отложить до окна (тик внутри часового слота применит сам). */
 	stage('apply', 'применяю композицию — служба перезапускается…');
 	log('применяю: ' + join(' · ', target_names));
 	if (length(built.notes))

@@ -8532,3 +8532,30 @@ msgstr ""
 
 msgid "CDN/cloud address: standalone learning is closed (shared edges answer probes unreliably); it follows the site family when co-observed."
 msgstr ""
+
+msgid "Core restarts policy"
+msgstr ""
+
+msgid "Deferred to the window: automatic core restarts that would drop connections (DNS-failover apply, first learned-list injection, autopilot rule/strategy swaps) are accumulated and applied by ONE service restart inside the maintenance window — with a notice in the Telegram chat. Failures (core down / hung / memory-critical) are always repaired immediately. Manual applies from buttons are never deferred."
+msgstr ""
+
+msgid "Immediate (as before)"
+msgstr ""
+
+msgid "Deferred to the maintenance window"
+msgstr ""
+
+msgid "Maintenance window (HH:MM)"
+msgstr ""
+
+msgid "Local time when accumulated automatic applies are executed by one service restart (default 03:00). A missed window waits for the next day."
+msgstr ""
+
+msgid "Expect HH:MM (24-hour), e.g. 03:00"
+msgstr ""
+
+msgid "Re-bind to family"
+msgstr ""
+
+msgid "Family member re-bound."
+msgstr ""

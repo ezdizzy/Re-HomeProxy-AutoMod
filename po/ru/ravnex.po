@@ -8555,3 +8555,30 @@ msgstr "Член семьи: засечен рядом с сайтом и сле
 
 msgid "CDN/cloud address: standalone learning is closed (shared edges answer probes unreliably); it follows the site family when co-observed."
 msgstr "CDN/облачный адрес: точечное обучение закрыто (общие края отвечают пробам недостоверно); следует ноге сайта при совместном наблюдении."
+
+msgid "Core restarts policy"
+msgstr "Политика перезагрузок ядра"
+
+msgid "Deferred to the window: automatic core restarts that would drop connections (DNS-failover apply, first learned-list injection, autopilot rule/strategy swaps) are accumulated and applied by ONE service restart inside the maintenance window — with a notice in the Telegram chat. Failures (core down / hung / memory-critical) are always repaired immediately. Manual applies from buttons are never deferred."
+msgstr "В окно: автоматические перезагрузки ядра, рвущие соединения (применение DNS-failover, первая инъекция выученных списков, смена правила/стратегии автопилотом), копятся и применяются ОДНОЙ перезагрузкой службы в сервисное окно — с уведомлением в чате Telegram. Аварии (ядро вниз / зависло / крит по памяти) чинятся всегда сразу. Ручные применения кнопками не откладываются."
+
+msgid "Immediate (as before)"
+msgstr "Сразу (как раньше)"
+
+msgid "Deferred to the maintenance window"
+msgstr "Откладывать в сервисное окно"
+
+msgid "Maintenance window (HH:MM)"
+msgstr "Сервисное окно (ЧЧ:ММ)"
+
+msgid "Local time when accumulated automatic applies are executed by one service restart (default 03:00). A missed window waits for the next day."
+msgstr "Локальное время, когда накопленные автоматические применения выполняются одной перезагрузкой службы (по умолчанию 03:00). Пропущенное окно ждёт следующего дня."
+
+msgid "Expect HH:MM (24-hour), e.g. 03:00"
+msgstr "Ожидается ЧЧ:ММ (24-часовые), например 03:00"
+
+msgid "Re-bind to family"
+msgstr "Вернуть в семью"
+
+msgid "Family member re-bound."
+msgstr "Член семьи возвращён."

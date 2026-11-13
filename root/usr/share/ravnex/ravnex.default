@@ -101,4 +101,6 @@ config ravnex 'automation'
 	option proxy_path 'main'
 	option flush_min_entries '1'
 	option ip_learn '0'
+	option core_restart_policy 'auto'
+	option core_restart_window '03:00'
 

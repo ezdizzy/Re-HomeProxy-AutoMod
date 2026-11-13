@@ -183,7 +183,7 @@ config ravnex 'config'
 	option russia_dns_auto_doh '0'
 
 config ravnex 'control'
-	option lan_proxy_mode 'except_listed'
+	option lan_proxy_mode 'disabled'
 
 config ravnex 'routing'
 	option sniff_override '1'
@@ -216,6 +216,7 @@ config ravnex 'subscription'
 	option packet_encoding 'xudp'
 	option update_via_proxy '0'
 	option filter_nodes 'blacklist'
+	list filter_keywords 'Expiration|Remaining'
 
 config ravnex 'server'
 	option enabled '0'
@@ -235,6 +236,8 @@ config ravnex 'automation'
 	option proxy_path 'main'
 	option flush_min_entries '1'
 	option ip_learn '0'
+	option core_restart_policy 'auto'
+	option core_restart_window '03:00'
 `;
 
 function check_homeproxy_cfg() {
