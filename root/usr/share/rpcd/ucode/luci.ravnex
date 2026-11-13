@@ -7509,6 +7509,26 @@ const methods = {
 					for (let i, x in filter(split(c, /[\r\n]/), (y) => length(trim(y)) && !match(trim(y), /^\s*#/)))
 						push_entry(trim(x), 'manual_direct');
 			}
+			/* s201: члены СЕМЕЙНОЙ НОГИ — отдельный src ('family'); routing-truth
+			 * = state[h].fam (watched family_route.json пишет демон). Честно:
+			 * якорь, тип, свежесть, клиент, отвязка. Без фейк-вердикта: у
+			 * члена без собственных проб статус = 'family'. */
+			for (let h in state) {
+				const fst = state[h];
+				if (type(fst) !== 'object' || type(fst.fam) !== 'object')
+					continue;
+				if (by_host[h])
+					continue;
+				push_entry(h, 'family');
+				const fe = by_host[h];
+				if (fe != null) {
+					fe.fam = fst.fam;
+					if (!fst.status)
+						fe.status = 'family';
+					if (int(fst.fam.t || 0) > 0)
+						fe.added = int(fst.fam.t);
+				}
+			}
 			sort(entries, (a, b) => (b.added || 0) - (a.added || 0));
 
 			/* Ф6.6/B5.17: недавно снятые записи с ПРИЧИНОЙ — честный UI:
@@ -7587,10 +7607,17 @@ const methods = {
 				paused = 'outage';
 
 			let n_manual_proxy = 0, n_manual_direct = 0, n_learned = 0;
+			let n_family = 0;
+			const fam_anchors = {};
 			for (let i, e in entries) {
 				if (e.src === 'learned') n_learned++;
 				else if (e.src === 'manual_proxy') n_manual_proxy++;
 				else if (e.src === 'manual_direct') n_manual_direct++;
+				else if (e.src === 'family') {
+					n_family++;
+					if (type(e.fam) === 'object' && e.fam.a)
+						fam_anchors[e.fam.a] = true;
+				}
 			}
 
 			/* Native automation helpers visibility (probe_pool = one-shot batch
@@ -7632,8 +7659,11 @@ const methods = {
 					blocked: length(blocked), direct: length(direct), unknown: length(unknown),
 					learned: n_learned, manual: n_manual_proxy + n_manual_direct,
 					manual_proxy: n_manual_proxy, manual_direct: n_manual_direct,
+					family: n_family,
 					total: length(entries)
 				},
+				/* s201: семейная нога — сводка для карточки UI. */
+				family: { members: n_family, anchors: length(keys(fam_anchors)) },
 				geo: ru_geo_read_meta(),
 				helpers: helpers,
 				profile: profile,
@@ -11600,6 +11630,44 @@ const methods = {
 			}
 			const apply = automation_apply_files(false);
 			return { result: true, apply: apply };
+		}
+	},
+
+	/* ── s201: семейная нога — отвязка/привязка члена ──────────────────────
+	 * Отвязка = resources/family_off.txt (переживает ребут; ДЕМОН читает его
+	 * в reload_lists по маркеру — UCI-exclude до живого демона НЕ доходит,
+	 * он парсится только на старте). Член выпадает из семьи на следующей
+	 * ре-деривации (excludes-гвард старше семьи). Rebind = обратная операция
+	 * (член вернётся сам, как только появится живое совместное наблюдение). */
+	automation_family_unbind: {
+		args: { entry: 'entry' },
+		call: function(req) {
+			const entry = valid_automation_entry(req.args?.entry);
+			if (!entry)
+				return { result: false, error: 'некорректная запись' };
+			const off = auto_read_set(HP_DIR + '/resources/family_off.txt');
+			if (off[entry])
+				return { result: true, entry: entry, unbound: true, note: 'уже отвязано' };
+			off[entry] = true;
+			auto_write_set(HP_DIR + '/resources/family_off.txt', off);
+			const apply = automation_apply_files(false);
+			return { result: true, entry: entry, unbound: true, apply: apply };
+		}
+	},
+
+	automation_family_rebind: {
+		args: { entry: 'entry' },
+		call: function(req) {
+			const entry = valid_automation_entry(req.args?.entry);
+			if (!entry)
+				return { result: false, error: 'некорректная запись' };
+			const off = auto_read_set(HP_DIR + '/resources/family_off.txt');
+			if (!off[entry])
+				return { result: true, entry: entry, unbound: false, note: 'не в списке отвязанных' };
+			delete off[entry];
+			auto_write_set(HP_DIR + '/resources/family_off.txt', off);
+			const apply = automation_apply_files(false);
+			return { result: true, entry: entry, unbound: false, apply: apply };
 		}
 	},
 

@@ -649,6 +649,60 @@ export function sync_manual_direct_ruleset(res_dir) {
 	return { domains: length(doms), ips: length(ip_arr), dropped: drops };
 };
 
+/* ── s201: СЕМЕЙНАЯ НОГА — watched rule-set'ы членов семьи ────────────────
+ * Члены семьи (хосты, следующие ноге якоря без собственного вердикта; философия
+ * юзера «сайт целиком как в Global», жёстко — только RU) живут в ДВУХ watched
+ * файлах, пишет их демон (automation.sync_families, changed-only); здесь —
+ * та же гарантия существования до старта ядра:
+ *   family_route.json — СМЕШАННЫЙ (domain_suffix + ip_cidr, прецедент
+ *     auto_direct.json): на него ссылаются ОБА route-правила — UDP/443-reject
+ *     (QUIC-drop вслед) и route → main-out;
+ *   family_domain.json — domains-only близнец для DNS-правил (B6.5: DNS-правило
+ *     с ip_cidr = FATAL sing-box 1.14+): SVCB/HTTPS-reject + secure-dns.
+ * Пустой набор = пустой rule-set = no-op (откат волны безопасен).
+ * Записи прогоняются через classify_entry() (Ф4.1) — мусор отбрасывается и
+ * считается, никогда не молчит. */
+export function sync_family_rulesets(res_dir, domains, ips) {
+	let res = res_dir || (HP_DIR + '/resources');
+	system('mkdir -p ' + shellQuote(res));
+	let doms = {}, ipset = {}, drops = 0;
+	for (let d in (type(domains) === 'array' ? domains : [])) {
+		let c = classify_entry(d);
+		if (c && c.kind === 'domain')
+			doms[c.value] = true;
+		else
+			drops++;
+	}
+	for (let d in (type(ips) === 'array' ? ips : [])) {
+		let c = classify_entry(d);
+		if (c && c.kind !== 'domain')
+			ipset[c.value] = true;
+		else
+			drops++;
+	}
+	let dom_arr = [], ip_arr = [];
+	for (let v in keys(doms))
+		push(dom_arr, v);
+	for (let v in keys(ipset))
+		push(ip_arr, v);
+	sort(dom_arr, (a, b) => (a < b) ? -1 : (a > b) ? 1 : 0);
+	sort(ip_arr, (a, b) => (a < b) ? -1 : (a > b) ? 1 : 0);
+	let rules = [];
+	if (length(dom_arr))
+		push(rules, { domain_suffix: dom_arr });
+	if (length(ip_arr))
+		push(rules, { ip_cidr: ip_arr });
+	write_ruleset_file(res + '/family_route.json', {
+		version: 1,
+		rules: rules
+	});
+	write_ruleset_file(res + '/family_domain.json', {
+		version: 1,
+		rules: length(dom_arr) ? [ { domain_suffix: dom_arr } ] : []
+	});
+	return { domains: length(dom_arr), ips: length(ip_arr), dropped: drops };
+};
+
 /* OAuth stability (ч.59): watched local rule-set consumed by the 'oauth-domain'
  * route/DNS rules (generate_client.uc, proxy_banned_ru). Auth-provider hosts
  * from resources/oauth_stable.txt ride the SAME exit as the services that open

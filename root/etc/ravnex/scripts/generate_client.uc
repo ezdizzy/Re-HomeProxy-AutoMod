@@ -16,7 +16,7 @@ import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
 	removeBlankAttrs, validation, HP_DIR, RUN_DIR,
 	sync_learned_rulesets, sync_manual_direct_ruleset, sync_ru_geo_rulesets,
-	sync_oauth_ruleset, sync_auto_auth_ruleset, sync_user_list, classify_entry
+	sync_oauth_ruleset, sync_auto_auth_ruleset, sync_family_rulesets, sync_user_list, classify_entry
 } from 'homeproxy';
 
 /* Process Manager (Ф1.4b): ownership-grade mosdns liveness — a bare pidof
@@ -2994,6 +2994,32 @@ if (!isEmpty(main_node)) {
 			path: HP_DIR + '/resources/auto_ip.json'
 		});
 
+	/* s201 СЕМЕЙНАЯ НОГА: члены семьи (сиблинги-домены + голые CDN-IP, со-
+	 * наблюдённые с живым якорем) следуют ноге якоря БЕЗ собственного
+	 * вердикта — философия юзера «сайт целиком, как в Global»; жёстко —
+	 * только RU (RU-члены невозможны по гвардам демона, порядок правил ниже —
+	 * вторая линия). ДВА watched-файла от демона (sync_families):
+	 *   family-route.json — СМЕШАННЫЙ: на него смотрят ОБА route-правила
+	 *     ниже (UDP/443-reject = QUIC-drop вслед + route → main-out);
+	 *   family-domain.json — domains-only близнец для DNS-зеркала
+	 *     (B6.5: DNS-правило с ip_cidr = FATAL sing-box 1.14+).
+	 * Гейт как у auto-ip; always-emitted НЕ нужен: без включённой автоматизации
+	 * семьи не существует (демон выключен — файлы не пишутся). */
+	if (automation_enabled === '1' && !isEmpty(main_node)) {
+		push(config.route.rule_set, {
+			type: 'local',
+			tag: 'family-route',
+			format: 'source',
+			path: HP_DIR + '/resources/family_route.json'
+		});
+		push(config.route.rule_set, {
+			type: 'local',
+			tag: 'family-domain',
+			format: 'source',
+			path: HP_DIR + '/resources/family_domain.json'
+		});
+	}
+
 	/* B6.3: MANUAL IP entries (static proxy_list + manual "always proxy" pins)
 	 * in their OWN watched rule-set file, emitted UNCONDITIONALLY (empty is a
 	 * no-op) — a hand-pinned IP must route with Automation off too. The
@@ -3658,6 +3684,22 @@ if (!isEmpty(main_node)) {
 			action: 'route',
 			server: 'secure-dns'
 		});
+		/* s201 СЕМЕЙНАЯ НОГА, DNS-зеркало (domains-only близнец): члены семьи
+		 * резолвятся через зашифрованный пул + SVCB/HTTPS-reject (анти-лик:
+		 * интерес к домену семьи не виден TSPU в plain-резолве; паритет с
+		 * learned-доменами). IP-члены DNS не имеют (прецедент ru-geoip). */
+		if (automation_enabled === '1' && !isEmpty(main_node)) {
+			push(config.dns.rules, {
+				rule_set: 'family-domain',
+				query_type: [64, 65],
+				action: 'reject'
+			});
+			push(config.dns.rules, {
+				rule_set: 'family-domain',
+				action: 'route',
+				server: 'secure-dns'
+			});
+		}
 		push(config.route.rules, {
 			rule_set: 'proxy-domain',
 			action: 'route',
@@ -3684,6 +3726,28 @@ if (!isEmpty(main_node)) {
 				action: 'route',
 				outbound: 'main-out'
 			});
+
+		/* s201 СЕМЕЙНАЯ НОГА: QUIC-drop вслед + маршрут вслед (позиция — сразу
+		 * после auto-ip, ДО region-baseline/final=direct-out и НИЖЕ user-слоёв
+		 * RU-protect/auto-direct/per-service: first-match-wins — вторая линия
+		 * RU-защиты). QUIC-drop: браузерный h3 к члену роняется → мгновенный
+		 * фолбэк на TCP, который едет main-out (QUIC сквозь socks мёртв, сырой
+		 * h3 напрямую TSPU режет посреди потока — сеанс 200). Trade: общий
+		 * CDN-край теряет h3 и для чужих сайтов на том же крае — они честно
+		 * фолбэкаются на TCP (не ломаются); откат = убрать reject-правило. */
+		if (automation_enabled === '1' && !isEmpty(main_node)) {
+			push(config.route.rules, {
+				rule_set: 'family-route',
+				network: 'udp',
+				port: [443],
+				action: 'reject'
+			});
+			push(config.route.rules, {
+				rule_set: 'family-route',
+				action: 'route',
+				outbound: 'main-out'
+			});
+		}
 		/* Reverse: region baseline -> direct (lowest priority, AFTER per-service overrides).
 		 * MUST include geoip (IP) so non-sniffable UDP / no-SNI gets the direct decision. */
 		if (is_bypass_mode(routing_mode)) {
@@ -3794,11 +3858,20 @@ system('mkdir -p ' + RUN_DIR);
  * Ф4.1: invalid list entries are dropped AND counted by the classifier — never silent. */
 {
 	let cls_dropped = 0;
-	let rr = sync_learned_rulesets();        cls_dropped += rr.dropped || 0;
+	let 	rr = sync_learned_rulesets();        cls_dropped += rr.dropped || 0;
 	rr = sync_manual_direct_ruleset();       cls_dropped += rr.dropped || 0;
 	rr = sync_ru_geo_rulesets();             cls_dropped += rr.dropped || 0;
 	rr = sync_oauth_ruleset();               cls_dropped += rr.dropped || 0;
 	rr = sync_auto_auth_ruleset();           cls_dropped += rr.dropped || 0;
+	/* s201: семейная нога — файлы должны существовать до старта ядра
+	 * (пустой набор = no-op). Содержимое пишет демон (sync_families);
+	 * СУЩЕСТВУЮЩИЕ файлы НЕ затираем: реген конфига не должен пустить
+	 * семью впустую до следующего прохода демона (члены уже в state). */
+	if (!access(HP_DIR + '/resources/family_route.json') ||
+	    !access(HP_DIR + '/resources/family_domain.json')) {
+		rr = sync_family_rulesets(null, [], []);
+		cls_dropped += rr.dropped || 0;
+	}
 	/* Ф4.2: every user list (incl. DISABLED ones — the file must exist, the
 	 * core's hot-reload watch may already reference it from a previous start). */
 	for (let ul in user_lists) {

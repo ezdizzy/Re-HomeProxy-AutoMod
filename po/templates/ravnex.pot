@@ -8493,3 +8493,42 @@ msgstr ""
 
 msgid "The app was updated to %s, the helpers were installed for %s — update them (the app package never carries the helper binaries)."
 msgstr ""
+
+msgid "Family members"
+msgstr ""
+
+msgid "Family"
+msgstr ""
+
+msgid "Family legs"
+msgstr ""
+
+msgid "%d member(s), %d live anchor(s)"
+msgstr ""
+
+msgid "hosts co-observed with a learned site or pin follow its leg (site whole, like Global; hard rules stay RU-only). Unbind with the chain button in the row."
+msgstr ""
+
+msgid "follows the leg of %s (co-observed, no own verdict)"
+msgstr ""
+
+msgid "Unbind from family"
+msgstr ""
+
+msgid "Unbind %s? It stops following the site leg and will not come back until you re-bind it."
+msgstr ""
+
+msgid "Unbind"
+msgstr ""
+
+msgid "Family member unbound."
+msgstr ""
+
+msgid "CDN class"
+msgstr ""
+
+msgid "Family member: co-observed with the site and follows its leg (no own verdict)."
+msgstr ""
+
+msgid "CDN/cloud address: standalone learning is closed (shared edges answer probes unreliably); it follows the site family when co-observed."
+msgstr ""

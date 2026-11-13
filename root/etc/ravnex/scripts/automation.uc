@@ -46,7 +46,7 @@ import { access, readfile, writefile, open, stat } from 'fs';
 import { atomic_write } from '/etc/ravnex/scripts/statestore.uc';
 import { emit as ev_emit } from '/etc/ravnex/scripts/eventbus.uc';
 import { cursor } from 'uci';
-import { sync_learned_rulesets, sync_auto_auth_ruleset, isEmpty, classify_entry } from 'homeproxy';
+import { sync_learned_rulesets, sync_auto_auth_ruleset, sync_family_rulesets, isEmpty, classify_entry } from 'homeproxy';
 import {
 	find_daemons as pm_find, kill_entry as pm_kill_entry, entry_alive as pm_entry_alive,
 	reg_set as pm_reg_set, reg_get as pm_reg_get, reg_del as pm_reg_del, reg_alive as pm_reg_alive,
@@ -72,7 +72,8 @@ import {
 	ipv4_in_net, dns_nxdomain_verdict,
 	quic_norm, quic_contrast,
 	flip_ring, flap_verdict, commit_gate, pending_merge, pending_clear,
-	dead_dns_gate, DEAD_DNS_GAP
+	dead_dns_gate, DEAD_DNS_GAP,
+	family_derive
 } from '/etc/ravnex/scripts/learn_core.uc';
 /* сеанс 188 (решение юзера): автообучение мёртвых пулов YouTube из живых
  * зомби-соединений clash-api. Чистая логика = yt_steer.uc (selftest-гейт),
@@ -325,6 +326,37 @@ let manual_direct_set = {};
  * their routing is the generator's oauth-domain rule (same exit as the service),
  * and a learned entry here would only fight that rule and split OAuth flows. */
 let oauth_provider_set = {};
+
+/* ── s201: СЕМЕЙНАЯ НОГА (REPORT_s201_family_leg_design.md) ────────────────
+ * Философия юзера: сайт должен работать ЦЕЛИКОМ, как в Global; жёсткие
+ * правила — только RU-зона. Хосты, наблюдённые В ОДНОМ ОКНЕ с живым якорем
+ * (выученный/пин/боль), без собственного вердикта следуют ноге якоря:
+ * watched family_route.json (domain_suffix + ip_cidr) + family_domain.json.
+ * Члены НЕ пишут в auto_set/auto_ip_set (это аудит-списки юзера) — живут
+ * в state[h].fam (tmpfs) и своих watched-файлах; ре-деривация = чистая
+ * функция (learn_core.family_derive, selftest-гейт), reversible по
+ * конструкции: нет якоря/наблюдений — нет члена. */
+const FAMILY_ANCHOR_TTL = 900;      /* якорь жив: наблюдение ≤15 мин или боль */
+const FAMILY_SIGHT_WINDOW = 300;    /* наблюдение члена свежее 5 мин */
+const FAMILY_FRESH_DOM = 86400;     /* член-домен: sliding 24 ч */
+const FAMILY_FRESH_IP = 21600;      /* член-IP (CDN-край): sliding 6 ч */
+const FAMILY_MAX_MEMBERS = 256;
+const FAMILY_MAX_PER_ANCHOR = 64;
+const FAMILY_MAX_IP_PER_ANCHOR = 48;
+const FAMILY_LEDGER_MAX = 1024;
+const CDN_SKIP_MAX = 256;           /* честных cdn_skip-записей в state */
+let fam_dom_set = {};
+let fam_ip_set = {};
+/* Отвязанные юзером члены (RPC automation_family_unbind → family_off.txt):
+ * гвард старше семьи — отвязанный хост не возвращается, пока строка в файле. */
+let fam_off_set = {};
+/* Ledger наблюдений (host → { t_last, seen_win, clients: {ip|'': t} }) —
+ * ТОЛЬКО в памяти (RAM), персист не нужен: окно 5 мин, потеря при ребуте
+ * = 1–2 прохода переучивания. */
+let fam_ledger = {};
+let cdn_skip_logged = {};           /* ip → ts последней лог-строки (дедуп 24 ч) */
+let fam_caps = { members: FAMILY_MAX_MEMBERS, per_anchor: FAMILY_MAX_PER_ANCHOR,
+	ip_per_anchor: FAMILY_MAX_IP_PER_ANCHOR, ledger: FAMILY_LEDGER_MAX };
 
 /* ── G4: контекст владельца контура (REPORT_s188_g4_design.md) ──
  * Персистентный профиль /etc/ravnex/provider_profile.json — ПАМЯТЬ того,
@@ -1555,11 +1587,14 @@ function is_excluded(host, ignore_lists) {
 		if (is_ru_domain(host)) return true;
 		if (match(host, /^\d{1,3}(\.\d{1,3}){3}$/) && is_ru_ip(host)) return true;
 		/* CDN/cloud ASNs (shared fate — never learn IPs from CDNs; ranges come
-		 * from cdn_ip4.txt built by ru_geo_build.uc, no runtime whois needed). */
-		if (asn_enabled && match(host, /^\d{1,3}(\.\d{1,3}){3}$/) && is_cdn_ip(host)) {
-			log('excluding IP (CDN/cloud range): ' + host);
+		 * from cdn_ip4.txt built by ru_geo_build.uc, no runtime whois needed).
+		 * s201: ПОЛИТИКА не меняется (урок 254: hostless-пробы CDN-краёв врут
+		 * в обе стороны), меняется ЧЕСТНОСТЬ — лог-спам убран (дедуп со
+		 * state-записью cdn_skip живёт в IP call-site pass(), где доступен
+		 * state; семейство даёт этим адресам легальную дверь «вслед за
+		 * сайтом» — sync_families/family_derive). */
+		if (asn_enabled && match(host, /^\d{1,3}(\.\d{1,3}){3}$/) && is_cdn_ip(host))
 			return true;
-		}
 	}
 	for (let e in excludes) {
 		e = trim(e);
@@ -1576,18 +1611,22 @@ function is_excluded(host, ignore_lists) {
 	return false;
 }
 
-	function looks_like_host(h) {
-		if (match(h, /^(https?|tls|quic):\/\//)) return false;
-		if (match(h, /^[0-9a-fA-F:]+$/)) return false;             /* bare IPv6 fragment */
-		if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) return true;      /* IPv4 */
-		if (match(h, /^[a-zA-Z0-9._-]+$/)) {
-			let parts = split(h, '.');
-			let last = parts[length(parts) - 1];
-			if (match(last, /^[0-9]+$/)) return false;             /* final label all digits → junk (e.g. "192.100", "0.1") */
-			return true;
-		}
-		return false;
+/* ── s201: хелперы семьи — ОБЪЯВЛЕНЫ ВЫШЕ вызывающих (эта сборка ucode НЕ
+ * хоистит объявления: «helpers must be declared above their callers» —
+ * crash-loop 2026-11-13: fam_observe ссылался на looks_like_host, объявленную
+ * ниже, → «undeclared variable» на каждом старте). ── */
+function looks_like_host(h) {
+	if (match(h, /^(https?|tls|quic):\/\//)) return false;
+	if (match(h, /^[0-9a-fA-F:]+$/)) return false;             /* bare IPv6 fragment */
+	if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/)) return true;      /* IPv4 */
+	if (match(h, /^[a-zA-Z0-9._-]+$/)) {
+		let parts = split(h, '.');
+		let last = parts[length(parts) - 1];
+		if (match(last, /^[0-9]+$/)) return false;             /* final label all digits → junk (e.g. "192.100", "0.1") */
+		return true;
 	}
+	return false;
+}
 
 /* Tracker/telemetry farms mint UNLIMITED unique subdomains
  * (<uuid>-netseer-ipaddr-assoc.xz.fbcdn.net — 100+ state entries seen). Collapse
@@ -1609,48 +1648,6 @@ function collapse_uuid_host(h) {
 	return (cd == null) ? h : cd;
 }
 
-/* ── Discovery ──────────────────────────────────────────────────────────── */
-
-function discover_clash(timeout) {
-	let raw = capture(`curl -s --max-time 3 http://127.0.0.1:9090/connections 2>/dev/null`);
-	if (!raw) return [];
-	let data;
-	try { data = json(raw); } catch (e) { return []; }
-	let hosts = [];
-	for (let i, c in (data.connections || [])) {
-		let m = c.metadata || {};
-		let host = m.host;
-		if (!host || match(host, /^[0-9.]+$/) || match(host, /^[0-9a-fA-F:]+$/))
-			host = m.destinationIP;
-		if (!host) continue;
-		if (m.outbound && m.outbound !== 'direct-out' && m.outbound !== 'auto-direct-in')
-			continue;
-		push(hosts, host);
-	}
-	return hosts;
-}
-
-function discover_conntrack() {
-	/* Ф6.2 Discovery Engine: сбор через discovery.uc — ОДНА команда conntrack
-	 * с лимитом строк, парсинг ТОЛЬКО оригинального tuple (B5.1: ответное
-	 * направление больше не подмешивает клиентские адреса). Здесь фильтр
-	 * «веб-потоков»: TCP/80+443, IPv4 (B5.2: IPv6 в IP-learning исключён),
-	 * публичный адрес назначения. Дубликаты СОХРАНЯЮТСЯ — по ним считается
-	 * seen-порог повторяемости адреса за проход. */
-	const flows = conntrack_flows(400);
-	const dst = [];
-	for (let f in flows) {
-		if (f.proto !== 'tcp' || (f.dport !== 80 && f.dport !== 443))
-			continue;
-		if (f.v6 || is_private_ip(f.dst))
-			continue;
-		push(dst, f.dst);
-		if (length(dst) >= 300)
-			break;
-	}
-	return dst;
-}
-
 /* Ф1.4: HUP the MAIN dnsmasq only (its own pidfile, exe-verified) — the old
  * `killall -HUP dnsmasq` swept EVERY dnsmasq, including the per-client filter
  * instances of «Контроль» (audit 34 family: never signal by name). */
@@ -1666,6 +1663,253 @@ function dns_flush_main() {
 		system(`kill -HUP ${info.pid} 2>/dev/null`);
 	else
 		system('killall -HUP dnsmasq >/dev/null 2>&1');   /* stale pidfile — legacy fallback */
+}
+
+/* ── s201: fam_observe — кормление ledger наблюдений семейной ноги ─────────
+ * Модульный уровень (fam_ledger/константы — module scope; урок 405). Гигиена
+ * входа: looks_like_host + UUID-схлопывание (мапеды-фермы не заваливают
+ * ledger), приватные/локальные IP не наблюдаются. Клиент без IPv4-формы
+ * (SNI-снифер не несёт источник) = слабый свидетель (''). */
+function fam_observe(host, client, src) {
+	host = lc(trim('' + (host == null ? '' : host)));
+	if (!length(host) || !looks_like_host(host)) return;
+	const co = collapse_uuid_host(host);
+	if (co != null) host = co;
+	if (match(host, /^\d{1,3}(\.\d{1,3}){3}$/) && is_private_ip(host)) return;
+	client = trim('' + (client == null ? '' : client));
+	if (!match(client, /^\d{1,3}(\.\d{1,3}){3}$/))
+		client = '';
+	const now = time();
+	let e = fam_ledger[host];
+	if (type(e) !== 'object' || !e) {
+		e = { t_last: 0, seen_win: 0, clients: {} };
+		fam_ledger[host] = e;
+	}
+	if ((now - int(e.t_last || 0)) > FAMILY_SIGHT_WINDOW)
+		e.seen_win = 1;
+	else
+		e.seen_win = int(e.seen_win || 0) + 1;
+	e.t_last = now;
+	e.src_last = '' + (src || '');
+	if (length(client))
+		e.clients[client] = now;
+	const cap = int(fam_caps.ledger || FAMILY_LEDGER_MAX);
+	let n = length(keys(fam_ledger));
+	while (n > cap) {
+		let oldest = null, ot = 0;
+		const ks = keys(fam_ledger);
+		for (let i = 0; i < length(ks); i++) {
+			const le = fam_ledger[ks[i]];
+			if (type(le) !== 'object') continue;
+			if (oldest == null || int(le.t_last || 0) < ot) { ot = int(le.t_last || 0); oldest = ks[i]; }
+		}
+		if (oldest == null) break;
+		delete fam_ledger[oldest];
+		n--;
+	}
+}
+
+/* ── s201: sync_families — ре-деривация семейной ноги (changed-only) ───────
+ * Семья = ЧИСТАЯ функция от (якоря, свежие совместные наблюдения, гварды):
+ * смерть якоря / истечение свежести / Clear гасят членов сами. state —
+ * ПАРАМЕТРОМ (урок 405: модульный уровень не видит локалы main — crash-loop
+ * ч.287). I/O: watched family_route.json + family_domain.json (ядро
+ * подхватывает hot-reload'ом сам — pending_reload/рестарт НЕ нужен) +
+ * flush DNS-кэша (семейные домены должны перерезолвиться сразу). */
+function sync_families(state) {
+	const now = time();
+	/* Якоря-кандидаты: выученные + пины; боль = свежий pain_burst/sight. */
+	const anchors = {};
+	for (let a in auto_set)
+		anchors[a] = { pain: false };
+	for (let a in manual_proxy_set)
+		anchors[a] = { pain: false };
+	for (let a in anchors) {
+		const st = state[a];
+		if (type(st) !== 'object') continue;
+		const pb = int(st.pain_burst || 0);
+		const sg = int(st.sight || 0);
+		if ((pb > 0 && (now - pb) < 600) ||
+		    (sg >= HOT_MIN_FREQ && (now - int(st.sight_t || 0)) < 600))
+			anchors[a].pain = true;
+	}
+	/* QUIC-края якорей (+ свежие plain-view края) → IP-члены с seen=1
+	 * (адресная проба якоря; кейс flowmusic: 8.47.69.0 в quic-факте). */
+	const edges = {};
+	for (let a in anchors) {
+		const st = state[a];
+		if (type(st) !== 'object') continue;
+		if (type(st.quic) === 'object' && length(st.quic.ip) &&
+		    (now - int(st.quic.t || 0)) <= QUIC_CTRL_TTL)
+			edges[st.quic.ip] = a;
+		const pv = pv_cache[a];
+		if (type(pv) === 'object' && length(pv.ip) && (now - int(pv.t || 0)) <= 600)
+			edges[pv.ip] = a;
+	}
+	/* env — инъекция ВСЕХ гвардов в чистую функцию. in_lists = владельцы
+	 * маршрута ЯВНЫМ списком (learned/pins/manual-direct/списки/fam_off/
+	 * oauth/engine-protect/RU-TLD/RU-geo/user excludes). 🔴 НАМЕРЕННО БЕЗ
+	 * is_excluded(): его CDN-филиал (гвард IP-ОБУЧЕНИЯ, урок 254) закрыл бы
+	 * дверь семьи для CDN-IP — а маршрут-вслед-за-сайтом есть та легальная
+	 * дверь, ради которой волна и делается (дизайн s201 §2.4.6). */
+	const env = {
+		ru_dom: is_ru_domain,
+		ru_ip: is_ru_ip,
+		ru_ptr: ptr_is_ru,
+		/* s201: RU plain-view гвард доменных членов — RU-сервис на чужом TLD
+		 * (sberbank-tele.com), не покрытый geo-DB, резолвится в RU-сеть →
+		 * не член (жёстко — только RU; I/O кэшируется pv_cache 600 с). */
+		ru_plain: (h) => {
+			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/))
+				return false;
+			const ip = resolve_plain_view(h);
+			return !!(ip && is_ru_ip(ip));
+		},
+		never_learn: (h) => (is_never_learn_domain(h) ? 1 : 0),
+		cdn_ip: is_cdn_ip,
+		special: is_special_ip,
+		local: is_local_ip,
+		resolver: is_resolver_ip,
+		in_lists: (h) => {
+			if (auto_set[h] || auto_ip_set[h] || manual_proxy_set[h] ||
+			    manual_direct_set[h] || direct_set[h] || proxy_set[h] ||
+			    auto_auth_set[h] || oauth_provider_set[h] || fam_off_set[h])
+				return true;
+			if (is_oauth_provider(h) || is_engine_protected(h))
+				return true;
+			if (match(h, /^\d{1,3}(\.\d{1,3}){3}$/))
+				return is_ru_ip(h);          /* RU-IP гвард; CDN-класс — НЕ гвард семьи */
+			if (is_rutld_host(h) || is_ru_domain(h))
+				return true;
+			for (let e in excludes) {
+				e = trim(e);
+				if (!length(e)) continue;
+				if (h === e) return true;
+				if (length(h) > length(e) && substr(h, length(h) - length(e) - 1) === '.' + e)
+					return true;
+			}
+			return false;
+		},
+		status_of: (h) => {
+			const st = state[h];
+			return (type(st) === 'object') ? (st.status || null) : null;
+		}
+	};
+	const opts = {
+		now: now,
+		anchor_ttl: FAMILY_ANCHOR_TTL,
+		sight_win: FAMILY_SIGHT_WINDOW,
+		fresh_dom: FAMILY_FRESH_DOM,
+		fresh_ip: FAMILY_FRESH_IP,
+		max_members: fam_caps.members,
+		max_per_anchor: fam_caps.per_anchor,
+		max_ip_per_anchor: fam_caps.ip_per_anchor
+	};
+	const cur = {};
+	for (let h in keys(state)) {
+		if (substr(h, 0, 2) === '__') continue;
+		const st = state[h];
+		if (type(st) === 'object' && type(st.fam) === 'object')
+			cur[h] = st.fam;
+	}
+	const r = family_derive(anchors, fam_ledger, cur, edges, env, opts);
+	/* State-поля членов обновляются КАЖДЫЙ проход (дёшево: state сериализуется
+	 * и так; смена якоря не теряется при changed=false), файлы/события —
+	 * только при реальном изменении набора (changed-only). */
+	const nd = {}, ni = {};
+	let added_n = 0;
+	for (let host in r.next) {
+		const m = r.next[host];
+		let st = state[host];
+		if (type(st) !== 'object') { state[host] = {}; st = state[host]; }
+		const prev = (type(st.fam) === 'object') ? st.fam : null;
+		st.fam = { a: m.a, k: m.k, t: prev ? (int(prev.t || 0) || m.t) : m.t,
+			ls: m.ls, cl: m.cl, s: m.s };
+		if (prev == null) {
+			added_n++;
+			log('family member (' + (m.k === 'ip' ? 'cdn-ip' : 'domain') + '): ' + host +
+				' -> follows ' + m.a);
+		}
+		if (m.k === 'ip') ni[host] = true; else nd[host] = true;
+	}
+	let removed_n = 0;
+	for (let i = 0; i < length(r.removed); i++) {
+		const host = r.removed[i].host;
+		const st = state[host];
+		if (type(st) !== 'object') continue;
+		if (type(st.fam) !== 'object') continue;
+		delete st.fam;
+		removed_n++;
+		st.drop_reason = 'family ended (' + (r.removed[i].why || 'anchor/freshness') + ')';
+		st.drop_t = now;
+		/* Пустая запись (член был только семьёй) — мусор, честно удалить. */
+		if (!st.status && !st.last_probe && !st.direct && !st.proxy) {
+			delete state[host];
+			continue;
+		}
+		log('family member left: ' + host + ' (' + st.drop_reason + ')');
+	}
+	fam_dom_set = nd;
+	fam_ip_set = ni;
+	if (!r.changed)
+		return { domains: length(keys(fam_dom_set)), ips: length(keys(fam_ip_set)),
+			anchors: r.anchors_alive, added: 0, removed: 0, changed: false };
+	const rr = sync_family_rulesets(null, keys(nd), keys(ni));
+	dns_flush_main();
+	const msg = 'families: +' + added_n + '/-' + removed_n +
+		' (domains ' + ((rr && rr.domains) || 0) + ', cdn-ips ' + ((rr && rr.ips) || 0) +
+		', anchors alive ' + r.anchors_alive + ')';
+	log(msg);
+	eng_event('family', msg);
+	ev_auto('family', 'семья обновлена',
+		'+' + added_n + '/-' + removed_n + '; якорей живых: ' + r.anchors_alive);
+	return { domains: (rr && rr.domains) || 0, ips: (rr && rr.ips) || 0,
+		anchors: r.anchors_alive, added: added_n, removed: removed_n, changed: true };
+}
+
+/* ── Discovery ──────────────────────────────────────────────────────────── */
+
+function discover_clash(timeout) {
+	let raw = capture(`curl -s --max-time 3 http://127.0.0.1:9090/connections 2>/dev/null`);
+	if (!raw) return [];
+	let data;
+	try { data = json(raw); } catch (e) { return []; }
+	/* s201: тройки {h, c, ob} — ЛЮБЫЕ соединения (фильтр outbound перенесён
+	 * в call-site кандидатов): live-соединение якоря через main-out — самое
+	 * сильное свидетельство «юзер сейчас на сайте» для семейной ноги;
+	 * metadata.sourceIP = LAN-клиент (luci.ravnex:4285, metrics.uc). */
+	let out = [];
+	for (let i, c in (data.connections || [])) {
+		let m = c.metadata || {};
+		let host = m.host;
+		if (!host || match(host, /^[0-9.]+$/) || match(host, /^[0-9a-fA-F:]+$/))
+			host = m.destinationIP;
+		if (!host) continue;
+		push(out, { h: host, c: trim('' + (m.sourceIP || '')), ob: m.outbound || '' });
+	}
+	return out;
+}
+
+function discover_conntrack() {
+	/* Ф6.2 Discovery Engine: сбор через discovery.uc — ОДНА команда conntrack
+	 * с лимитом строк, парсинг ТОЛЬКО оригинального tuple (B5.1: ответное
+	 * направление больше не подмешивает клиентские адреса). Здесь фильтр
+	 * «веб-потоков»: TCP/80+443, IPv4 (B5.2: IPv6 в IP-learning исключён),
+	 * публичный адрес назначения. Дубликаты СОХРАНЯЮТСЯ — по ним считается
+	 * seen-порог повторяемости адреса за проход.
+	 * s201: пары {ip, c} — f.src (LAN-клиент) уже парсится discovery.uc:200. */
+	const flows = conntrack_flows(400);
+	const dst = [];
+	for (let f in flows) {
+		if (f.proto !== 'tcp' || (f.dport !== 80 && f.dport !== 443))
+			continue;
+		if (f.v6 || is_private_ip(f.dst))
+			continue;
+		push(dst, { ip: f.dst, c: trim('' + (f.src || '')) });
+		if (length(dst) >= 300)
+			break;
+	}
+	return dst;
 }
 
 /* SNI discovery (source `sni`): capture TLS ClientHello packets on the LAN bridge
@@ -1851,10 +2095,13 @@ function discover_dns() {
 	let fd = open(DNS_LOG, 'r');
 	if (!fd) return [];
 	fd.seek(dns_log_offset);
-	let hosts = [];
+	/* s201: пары {h, c} — строка dnsmasq несёт `from <client-IP>`; клиент
+	 * нужен семейной ноге (ко-оккурентность на одном устройстве). Старый
+	 * парсер отбрасывал его. */
+	let pairs = [];
 	for (let line = fd.read('line'); length(line); line = fd.read('line')) {
-		let m = match(trim(line), /query\[[Aq]+\]\s+([^ ]+)\s+from/);
-		if (m) push(hosts, m[1]);
+		let m = match(trim(line), /query\[[Aq]+\]\s+([^ ]+)\s+from\s+([0-9.]+)/);
+		if (m) push(pairs, { h: m[1], c: m[2] });
 	}
 	/* ucode file objects have no tell(); we read to EOF so the new offset is the file size. */
 	dns_log_offset = size;
@@ -1863,8 +2110,8 @@ function discover_dns() {
 	 * the user's current pain — the per-cycle probe cap should spend on them,
 	 * not on the oldest traffic in the log. */
 	let rev = [];
-	for (let i = length(hosts) - 1; i >= 0; i = i - 1)
-		push(rev, hosts[i]);
+	for (let i = length(pairs) - 1; i >= 0; i = i - 1)
+		push(rev, pairs[i]);
 	return rev;
 }
 
@@ -2285,6 +2532,8 @@ function main() {
 	if (pm_res_profile().profile === 'lite') {
 		state_cap = LITE_STATE_CAP;
 		pv_cap = 150;
+		/* s201: lite — уменьшенные капы семьи и ledger (RAM-дисциплина Ф10.2). */
+		fam_caps = { members: 96, per_anchor: 24, ip_per_anchor: 16, ledger: 384 };
 	}
 	log(`performance profile: ${perf_mode} (dom_cap=${dom_cap}, ip_cap=${ip_cap}, parallel=${par}, state_cap=${state_cap})`);
 
@@ -3322,6 +3571,9 @@ echo done > "$PRE.done"
 		for (let d in read_lines(RES + '/proxy_list.txt')) proxy_set[trim(d)] = true;
 		for (let d in read_lines(MANUAL_PROXY_LIST)) { d = trim(d); if (length(d)) manual_proxy_set[d] = true; }
 		for (let d in read_lines(MANUAL_DIRECT_LIST)) { d = trim(d); if (length(d)) manual_direct_set[d] = true; }
+		/* s201: отвязанные члены семьи — гвард старше ре-деривации. */
+		fam_off_set = {};
+		for (let d in read_lines(RES + '/family_off.txt')) { d = trim(d); if (length(d)) fam_off_set[d] = true; }
 		/* ч.62: LOAD the derived auth-family set from its file. It used to be
 		 * write-only in memory (module init {}): after a restart the daemon
 		 * believed the set was empty while the file still routed stale families
@@ -3456,6 +3708,10 @@ echo done > "$PRE.done"
 				const s0 = state[h];
 				if (type(s0) !== 'object' || s0.drop_reason)
 					continue;
+				/* s201: члены семьи маршрутируются своими watched-правилами —
+				 * «сиротами» НЕ являются (иначе гигиена лжёт в колонке «Почему»). */
+				if (type(s0.fam) === 'object')
+					continue;
 				if (auto_set[h] || auto_ip_set[h] || manual_proxy_set[h] || manual_direct_set[h])
 					continue;
 				s0.drop_reason = 'removed from the lists (engine hygiene)';
@@ -3469,9 +3725,22 @@ echo done > "$PRE.done"
 				log('hygiene: ' + orphaned + ' orphan state entries marked removed');
 			}
 		}
+		/* s201: восстановить fam-наборы из state (перезапуск демона не рвёт
+		 * семью — watched-файлы на диске, члены в state[fam]). */
+		fam_dom_set = {};
+		fam_ip_set = {};
+		for (let h in keys(state)) {
+			if (substr(h, 0, 2) === '__') continue;
+			const s0 = state[h];
+			if (type(s0) !== 'object' || type(s0.fam) !== 'object') continue;
+			if (s0.fam.k === 'ip') fam_ip_set[h] = true; else fam_dom_set[h] = true;
+		}
 		/* ч.61: re-derive the auth-family list (learned/pinned auth-like hosts
 		 * → their registered parent) and hot-sync the watched rule-set. */
 		sync_auth_families();
+		/* s201: ре-деривация семейной ноги (changed-only; Clear опустошает
+		 * семью сам — якорей нет). */
+		sync_families(state);
 		return (dropped + ip_dropped);
 	}
 
@@ -4470,15 +4739,42 @@ echo done > "$PRE.done"
 	/* DNS first: it captures the domain at query time, newest-first. Weighted score
 	 * combines per-source counts so the probe budget goes to what the user actually
 	 * hammers most across all sources, not just DNS hash order. */
+	/* s201: ЛЮБОЕ наблюдение (dns/clash/sni/conntrack) кормит ledger семейной
+	 * ноги ДО intake-фильтров — ко-оккурентность с якорем не зависит от
+	 * статуса кандидата. */
 	if (has('dns'))
-		for (let i, h in discover_dns()) { eng_pass.dns++; intake(h, w_dns, 'dns'); }
-	if (has('clash'))     for (let i, h in discover_clash(timeout)) { eng_pass.clash++; intake(h, w_clash, 'clash'); }
-	if (has('sni'))       for (let i, h in discover_sni(sni_pkts, sni_secs)) { eng_pass.sni++; intake(h, w_sni, 'sni'); }
+		for (let i, pr in discover_dns()) {
+			eng_pass.dns++;
+			fam_observe(pr.h, pr.c, 'dns');
+			intake(pr.h, w_dns, 'dns');
+		}
+	if (has('clash')) {
+		const conns = discover_clash(timeout);
+		for (let i, pr in conns) {
+			eng_pass.clash++;
+			fam_observe(pr.h, pr.c, 'clash');
+			/* Кандидаты — как раньше: только прямая нога (незаученное). */
+			if (pr.ob && pr.ob !== 'direct-out' && pr.ob !== 'auto-direct-in')
+				continue;
+			intake(pr.h, w_clash, 'clash');
+		}
+	}
+	if (has('sni')) {
+		const sni_hosts = discover_sni(sni_pkts, sni_secs);
+		for (let i, h in sni_hosts) {
+			eng_pass.sni++;
+			/* SNI-событие не несёт клиента — слабый свидетель (''). */
+			fam_observe(h, '', 'sni');
+			intake(h, w_sni, 'sni');
+		}
+	}
 	/* Raw-IP candidates are collected ONLY when IP learning is enabled — the old
 	 * separate 'conntrack' discovery source is merged into the ip_learn switch. */
 	if (ip_learn === '1')
-		for (let i, ip in discover_conntrack())
-			ip_candidates[ip] = (int(ip_candidates[ip]) || 0) + 1;
+		for (let i, pr in discover_conntrack()) {
+			fam_observe(pr.ip, pr.c, 'ct');
+			ip_candidates[pr.ip] = (int(ip_candidates[pr.ip]) || 0) + 1;
+		}
 
 		if (mode === 'aggressive') {
 			reeval_set = {};
@@ -4780,6 +5076,32 @@ echo done > "$PRE.done"
 				/* Seen-threshold: a fresh conntrack IP must recur before we spend a
 				 * probe on it (learned/fast-tracked IPs pass via their count). */
 				if (((int(ip_candidates[ip]) || 0) < MIN_IP_SEEN) && !auto_ip_set[ip]) continue;
+				/* s201: честный CDN-слой — ПОЛИТИКА гварда не меняется (урок 254:
+				 * hostless-пробы CDN-краёв врут в обе стороны), меняется
+				 * честность: state-запись cdn_skip с счётчиком вместо молчалки,
+				 * лог-дедуп 24 ч (было: строка на КАЖДОМ проходе — 435 строк на
+				 * 42 IP). ПОСЛЕ seen-порога: честные записи — только для
+				 * РЕАЛЬНО используемых адресов, conntrack-шум их не плодит.
+				 * Легальная дверь для этих адресов — семейная нога
+				 * (sync_families: CDN-IP, со-наблюдённый с якорем, следует
+				 * ноге сайта). RU-IP/Cloudflare отсечены РАНЬШЕ
+				 * (validate_learned_ip). */
+				if (asn_enabled && is_cdn_ip(ip) && !auto_ip_set[ip]) {
+					let cst = state[ip];
+					if (type(cst) !== 'object' || !cst) { state[ip] = {}; cst = state[ip]; }
+					cst.status = 'cdn_skip';
+					cst.cdn_seen = int(cst.cdn_seen || 0) + 1;
+					cst.last_seen = now;
+					if (!cst.drop_reason)
+						cst.drop_reason = 'cdn_shared (CDN/cloud class: standalone IP learning closed; follows the site family)';
+					const lt = int(cdn_skip_logged[ip] || 0);
+					if (((now - lt) > 86400) || (int(cst.cdn_seen) % 100) === 0) {
+						cdn_skip_logged[ip] = now;
+						log('cdn skip (learning closed, family may follow): ' + ip +
+							' (seen ' + cst.cdn_seen + ')');
+					}
+					continue;
+				}
 				if (length(keys(auto_ip_set)) >= IP_LIST_MAX && !auto_ip_set[ip]) continue;
 				let st = state[ip];
 				if (st && type(st) === 'object' && st.last_probe && (now - st.last_probe) < ((st.status === 'blocked' && int(st.confirms) > 0) || st.status === 'direct_pending' ? CONFIRM_RETRY : (mode === 'aggressive' ? reeval_interval : 86400))) {
@@ -5252,10 +5574,37 @@ echo done > "$PRE.done"
 				    h === '__quic_ctrl') continue;
 				if (auto_set[h] || auto_ip_set[h] || keep[h]) continue;
 				let st = state[h];
+				/* s201: члены семьи переживают прун, пока жива запись fam —
+				 * их жизнь управляется sync_families (якорь/свежесть), не
+				 * last_probe (их никто не пробует). */
+				if (st && type(st.fam) === 'object') continue;
+				/* s201: cdn_skip-записи живут на last_seen (их никто не
+				 * пробует): свежие ≤7 дней переживают, дальше — вон. */
+				if (st && st.status === 'cdn_skip') {
+					if (st.last_seen && (now - st.last_seen) <= 604800) continue;
+					push(stale, h);
+					continue;
+				}
 				if (!st || !st.last_probe || (now - st.last_probe) > PRUNE_AGE)
 					push(stale, h);
 			}
 			for (let i, h in stale) delete state[h];
+			/* s201: честный кап cdn_skip-записей (conntrack-шум не должен
+			 * разрастаться) — эвикция по last_seen, старейшие уходят. */
+			{
+				let skips = [];
+				for (let h in keys(state)) {
+					const st = state[h];
+					if (type(st) === 'object' && st.status === 'cdn_skip')
+						push(skips, { h: h, t: int(st.last_seen || 0) });
+				}
+				if (length(skips) > CDN_SKIP_MAX) {
+					sort(skips, (a, b) => a.t - b.t);
+					const over = length(skips) - CDN_SKIP_MAX;
+					for (let i = 0; i < over; i++) delete state[skips[i].h];
+					log('cdn_skip cap: evicted ' + over + ' oldest records (cap=' + CDN_SKIP_MAX + ')');
+				}
+			}
 			/* G5: снятие флап-эпизодов по 24 ч тишины — у хоста без коммитов
 			 * событие некому эмитить, проверка живёт на hourly prune. */
 			for (let h in keys(state)) {
@@ -5287,6 +5636,9 @@ echo done > "$PRE.done"
 				/* G5: кандидат-вердикт в окне тормоза переживает cap — выселение
 				 * убивало окно мимо воли (прецедент blocked-кандидатов). */
 				if (type(cst) === 'object' && type(cst.pending) === 'object') continue;
+				/* s201: члены семьи exempt от cap-эвикции (их life-cycle = якорь/
+				 * свежесть, а не last_probe; выселение ломало маршрут вслед). */
+				if (type(cst) === 'object' && type(cst.fam) === 'object') continue;
 				push(rest, { h: h, t: state[h].last_probe || 0 });
 			}
 			/* Ф10.2: the cap is RE-READ at each hourly prune — a manual profile
@@ -5361,6 +5713,11 @@ echo done > "$PRE.done"
 		 * is persisted HERE (final for this cycle): the offset save in main()
 		 * then sees an equal value and skips the second full serialization. */
 		if (!access(RELOAD_MARKER + '_clear')) {
+			/* s201: ре-деривация семьи на каждом АКТИВНОМ проходе — покрывает
+			 * learn/pain/heal/recheck без отдельных хуков; changed-only не
+			 * пишет файлы зря. После persist-гейта: fam-записи попадают в
+			 * save_state того же прохода. */
+			sync_families(state);
 			state.__dns_offset = dns_log_offset;
 			save_state(state);
 		}
@@ -5432,7 +5789,10 @@ echo done > "$PRE.done"
 			/* s200: хосты с UDP/443-reject (обходная нога + липкий флаг;
 			 * FILE-набор может быть на пару www-apex шире — счётчик честно
 			 * считает только записи с состоянием). */
-			quic_dropped: 0 };
+			quic_dropped: 0,
+			/* s201: честный CDN-слой — сколько адресов засечено в CDN/облачных
+			 * диапазонах (обучение закрыто, маршрут — вслед за сайтом). */
+			cdn_skip: 0 };
 		for (let h in keys(state)) {
 			if (h === '__dns_offset') continue;
 			const st = state[h];
@@ -5489,6 +5849,9 @@ echo done > "$PRE.done"
 			probes: { last_total: probes_total, per_sec: per_sec, avg_per_sec: eng_stats.pps_ewma },
 			sources: { dns: p.dns, clash: p.clash, sni: p.sni },
 			learned: { domains: nd, ips: ni },
+			/* s201: семейная нога — размер + живые якоря (Engine overview). */
+			family: { domains: length(keys(fam_dom_set)), ips: length(keys(fam_ip_set)),
+				caps: fam_caps },
 			verdicts: v,
 			/* Ф8-F3: Master-rule protection counters (Engine overview panel). */
 			protected: { sources: protect_stats.sources, hosts: protect_stats.hosts,

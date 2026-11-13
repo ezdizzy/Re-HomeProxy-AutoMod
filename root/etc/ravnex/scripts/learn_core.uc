@@ -826,6 +826,263 @@ export function dead_dns_gate(first_ts, now) {
 	return ((now_i - f) >= DEAD_DNS_GAP) ? 'commit' : 'hold';
 };
 
+/* ── s201: family_derive — чистая ре-деривация СЕМЕЙНОЙ НОГИ ──
+ * Философия юзера (сеанс 201): сайт должен работать ЦЕЛИКОМ, как в Global;
+ * жёсткие правила — только RU-зона. Члены семьи (сиблинги-домены, голые
+ * CDN-IP) БЕЗ собственного вердикта следуют ноге якоря. Семья = ЧИСТАЯ
+ * функция от (якоря, свежие совместные наблюдения, гварды): нет якоря /
+ * нет наблюдений → нет члена. Reversible по конструкции.
+ *
+ * anchors — кандидаты в якоря: { host: { pain: true|false } }
+ *   (якорь жив: наблюдение в ledger свежее anchor_ttl ИЛИ pain-фаза);
+ * ledger — наблюдения: { host: { t_last, seen_win, clients: { ip|'': t } } };
+ * cur — текущие члены: { host: { a, k, t, ls, cl, s } } (из state[h].fam);
+ * quic_edges — { ip: anchor_host }: свежие QUIC-края якорей (прямое
+ *   свидетельство «край обслуживает якорь», кейс flowmusic 8.47.69.0);
+ * env — инъекция зависимостей (все необязательны, отсутствие = гвард пропущен):
+ *   ru_dom(h), ru_ip(ip), ru_ptr(ip), never_learn(h), cdn_ip(ip),
+ *   special(ip), local(ip), resolver(ip), in_lists(h), status_of(h);
+ * opts — { now, anchor_ttl, sight_win, fresh_dom, fresh_ip,
+ *          max_members, max_per_anchor, max_ip_per_anchor }.
+ *
+ * Возвращает { next, added, removed, changed, anchors_alive }:
+ *   next — { host: { a: якорь, k: 'd'|'ip', t: допуск, ls: со-наблюдение,
+ *                    cl: совместный клиент, s: совместных наблюдений } }. */
+export function family_derive(anchors, ledger, cur, quic_edges, env, opts) {
+	const o = (type(opts) === 'object') ? opts : {};
+	const now = int(o.now || 0) || time();
+	const anchor_ttl = int(o.anchor_ttl || 900);
+	const sight_win = int(o.sight_win || 300);
+	const fresh_dom = int(o.fresh_dom || 86400);
+	const fresh_ip = int(o.fresh_ip || 21600);
+	const cap_members = int(o.max_members || 256);
+	const cap_per_anchor = int(o.max_per_anchor || 64);
+	const cap_ip_per_anchor = int(o.max_ip_per_anchor || 48);
+	const e = (type(env) === 'object') ? env : {};
+	const fn = (k) => ((type(e[k]) === 'function') ? e[k] : null);
+
+	const next = {};
+	const added = [];
+	const removed = [];
+	const guard = (host) => {
+		const f = fn('in_lists');
+		if (f && f(host)) return false;
+		const st = fn('status_of');
+		if (st) {
+			const s = st(host);
+			if (s === 'blocked' || s === 'geo_blocked' || s === 'blocked_no_proxy')
+				return false;
+		}
+		const rd = fn('ru_dom');
+		if (rd && rd(host)) return false;
+		const nl = fn('never_learn');
+		if (nl && nl(host)) return false;
+		/* s201: RU plain-view гвард — RU-сервис на иностранном TLD (класс
+		 * sberbank-tele.com), которого нет в geo-DB, не следует в туннель:
+		 * его plain A-ответ в RU-сетях = RU-зона, всегда direct (философия
+		 * юзера: жёстко — только RU; последний и самый дешёвый гвард). */
+		const rpl = fn('ru_plain');
+		if (rpl && rpl(host)) return false;
+		return true;
+	};
+	const guard_ip = (ip) => {
+		const ru = fn('ru_ip');
+		if (ru && ru(ip)) return false;
+		const rp = fn('ru_ptr');
+		if (rp && rp(ip)) return false;      /* s201: вторая линия RU-защиты */
+		const ci = fn('cdn_ip');
+		if (!ci || !ci(ip)) return false;    /* только класс CDN — дверь семьи */
+		const sp = fn('special');
+		if (sp && sp(ip)) return false;
+		const lo = fn('local');
+		if (lo && lo(ip)) return false;
+		const rs = fn('resolver');
+		if (rs && rs(ip)) return false;
+		return true;
+	};
+
+	/* 1. Живые якоря: свежее наблюдение в окне anchor_ttl или боль. */
+	const anchors_alive = {};
+	const led = (type(ledger) === 'object') ? ledger : {};
+	const anc = (type(anchors) === 'object') ? anchors : {};
+	for (let a in anc) {
+		const rd = fn('ru_dom');
+		if (rd && rd(a)) continue;           /* RU никогда не якорь */
+		const nl = fn('never_learn');
+		if (nl && nl(a)) continue;
+		const le = led[a];
+		const seen_fresh = (type(le) === 'object') && ((now - int(le.t_last || 0)) <= anchor_ttl);
+		const pain = (type(anc[a]) === 'object' && anc[a].pain === true);
+		if (seen_fresh || pain)
+			anchors_alive[a] = (type(le) === 'object') ? le : { clients: {} };
+	}
+	if (!length(keys(anchors_alive))) {
+		const gone = [], c0 = (type(cur) === 'object') ? cur : {};
+		for (let host in c0)
+			if (type(c0[host]) === 'object')
+				push(gone, { host: host, why: 'family died (anchor/freshness)' });
+		return { next: {}, added: [], removed: gone, changed: length(gone) > 0, anchors_alive: 0 };
+	}
+
+	/* 2. Кандидаты из свежих наблюдений ledger. */
+	for (let host in led) {
+		const ent = led[host];
+		if (type(ent) !== 'object') continue;
+		if ((now - int(ent.t_last || 0)) > sight_win) continue;
+		if (anchors_alive[host]) continue;           /* якорь сам себе не член */
+		if (!guard(host)) continue;
+		const is_ip = (match('' + host, /^\d{1,3}(\.\d{1,3}){3}$/) != null);
+		if (is_ip) {
+			if (!guard_ip(host)) continue;
+		}
+		/* Совместное наблюдение: пересечение клиентов с живым якорем.
+		 * Выбираем якоря с самой свежей совместностью. */
+		let best = null, best_t = -1, joint_n = 0;
+		const cl = (type(ent.clients) === 'object') ? ent.clients : {};
+		for (let a in anchors_alive) {
+			const ac = (type(anchors_alive[a].clients) === 'object') ? anchors_alive[a].clients : {};
+			let shared = null;
+			for (let c in cl)
+				if (ac[c] != null && c !== '') { shared = c; break; }
+			if (shared != null) {
+				joint_n++;
+				const at = int(anchors_alive[a].t_last || 0);
+				if (at > best_t) { best_t = at; best = { a: a, cl: shared }; }
+			}
+		}
+		/* Слабый свидетель: только SNI без клиента, ≥2 наблюдений в окне. */
+		let weak_only = false;
+		if (best == null) {
+			let only_anon = true, n = 0;
+			for (let c in cl) {
+				if (c !== '') only_anon = false;
+				n += int(cl[c] || 0) > 0 ? 1 : 0;
+			}
+			weak_only = only_anon && (int(ent.seen_win || 0) >= 2 || n >= 2);
+			if (weak_only) {
+				/* самый свежий якорь */
+				let bt = -1;
+				for (let a in anchors_alive) {
+					const at = int(anchors_alive[a].t_last || 0);
+					if (at > bt) { bt = at; best = { a: a, cl: '' }; }
+				}
+			}
+		}
+		if (best == null) continue;
+		const kind = is_ip ? 'ip' : 'd';
+		next[host] = {
+			a: best.a, k: kind, t: int(ent.t_last || 0), ls: int(ent.t_last || 0),
+			cl: best.cl, s: (joint_n > 0) ? joint_n : int(ent.seen_win || 1)
+		};
+	}
+	/* QUIC-края якорей — IP-члены с seen=1 (адресная проба якоря). */
+	const qe = (type(quic_edges) === 'object') ? quic_edges : {};
+	for (let ip in qe) {
+		const a = qe[ip];
+		if (!anchors_alive[a] || type(next[ip]) === 'object') continue;
+		if (!guard(ip) || !guard_ip(ip)) continue;
+		next[ip] = { a: a, k: 'ip', t: now, ls: now, cl: '', s: 1 };
+	}
+
+	/* 3. Свежесть существующих членов: держим, пока якорь жив и ls не истёк;
+	 *    свежее совместное наблюдение продлевает (sliding). */
+	const c = (type(cur) === 'object') ? cur : {};
+	for (let host in c) {
+		const f = c[host];
+		if (type(f) !== 'object') continue;
+		const fresh = (f.k === 'ip') ? fresh_ip : fresh_dom;
+		const anchor_ok = (anchors_alive[f.a] == null) ? false
+			: ((now - int(f.ls || 0)) <= fresh);
+		if (anchor_ok) {
+			if (type(next[host]) === 'object') {
+				next[host].t = f.t;             /* допуск не старше исходного */
+			} else {
+				next[host] = { a: f.a, k: f.k, t: f.t, ls: f.ls, cl: f.cl, s: f.s };
+			}
+		} else if (type(next[host]) === 'object') {
+			/* со-наблюдение есть, но якорь сменился — допуск обновляется сам */
+		} else {
+			push(removed, { host: host, why: 'family died (anchor/freshness)' });
+		}
+	}
+
+	/* 4. Diff + капы. */
+	for (let host in next)
+		if (type(c[host]) !== 'object')
+			push(added, host);
+	for (let host in c) {
+		if (type(c[host]) !== 'object') continue;
+		if (type(next[host]) !== 'object') {
+			let dup = false;
+			for (let r in removed)
+				if (r.host === host) { dup = true; break; }
+			if (!dup)
+				push(removed, { host: host, why: 'family died (anchor/freshness)' });
+		}
+	}
+	/* Пер-якорь и IP-капы: eviction по свежести ls (старейшие уходят). */
+	const per_anchor = {}, per_anchor_ip = {};
+	for (let host in next) {
+		const m = next[host];
+		per_anchor[m.a] = (int(per_anchor[m.a] || 0) + 1);
+		if (m.k === 'ip')
+			per_anchor_ip[m.a] = (int(per_anchor_ip[m.a] || 0) + 1);
+	}
+	const evict = [];
+	for (let a in per_anchor) {
+		while (int(per_anchor[a]) > cap_per_anchor) {
+			let oldest = null, ot = 0;
+			for (let host in next) {
+				if (next[host].a !== a) continue;
+				if (oldest == null || int(next[host].ls) < ot) { ot = int(next[host].ls); oldest = host; }
+			}
+			if (oldest == null) break;
+			if (type(c[oldest]) === 'object')
+				push(removed, { host: oldest, why: 'family cap (per anchor)' });
+			delete next[oldest];
+			per_anchor[a] = int(per_anchor[a]) - 1;
+			push(evict, oldest);
+		}
+	}
+	for (let a in per_anchor_ip) {
+		while (int(per_anchor_ip[a]) > cap_ip_per_anchor) {
+			let oldest = null, ot = 0;
+			for (let host in next) {
+				if (next[host].a !== a || next[host].k !== 'ip') continue;
+				if (oldest == null || int(next[host].ls) < ot) { ot = int(next[host].ls); oldest = host; }
+			}
+			if (oldest == null) break;
+			if (type(c[oldest]) === 'object')
+				push(removed, { host: oldest, why: 'family cap (ip/anchor)' });
+			delete next[oldest];
+			per_anchor_ip[a] = int(per_anchor_ip[a]) - 1;
+		}
+	}
+	while (length(keys(next)) > cap_members) {
+		let oldest = null, ot = 0;
+		for (let host in next) {
+			if (oldest == null || int(next[host].ls) < ot) { ot = int(next[host].ls); oldest = host; }
+		}
+		if (oldest == null) break;
+		if (type(c[oldest]) === 'object')
+			push(removed, { host: oldest, why: 'family cap (total)' });
+		delete next[oldest];
+	}
+	/* Эвиктированные новые кандидаты — не «added». */
+	const added2 = [];
+	for (let i = 0; i < length(added); i++)
+		if (type(next[added[i]]) === 'object')
+			push(added2, added[i]);
+	for (let i = 0; i < length(evict); i++) {
+		for (let j = 0; j < length(added2); j++) {
+			if (added2[j] === evict[i]) { added2[j] = ''; break; }
+		}
+	}
+	const added3 = filter(added2, (x) => length(x));
+	const changed = (length(added3) > 0) || (length(removed) > 0);
+	return { next: next, added: added3, removed: removed, changed: changed, anchors_alive: length(keys(anchors_alive)) };
+};
+
 /* ── Selftest ──
  * Тот же контракт, что service_optimizer/service_profiles:
  * возвращает { pass, fail, details }. */
@@ -1088,6 +1345,117 @@ export function selftest() {
 	t('dd first hold', dead_dns_gate(0, 1000) === 'hold');
 	t('dd second before gap hold', dead_dns_gate(950, 1000) === 'hold');
 	t('dd second after gap commit', dead_dns_gate(100, 100 + DEAD_DNS_GAP) === 'commit');
+
+	/* ── s201: family_derive — семейная нога ── */
+	const fenv = {
+		ru_dom: (h) => (h === 'sberbank.example' || match(h, /\.(ru|su)$/)),
+		ru_ip: (ip) => (ip === '95.161.1.1'),
+		ru_ptr: (ip) => (ip === '89.250.12.19'),
+		never_learn: (h) => (h === 'cloudflare-dns.com' || h === '0.pool.ntp.org'),
+		cdn_ip: (ip) => (match(ip, /^3\./) != null || ip === '8.47.69.0'),
+		special: (ip) => (ip === '100.64.1.1'),
+		local: (ip) => (ip === '192.168.1.1'),
+		resolver: (ip) => (ip === '8.8.8.8'),
+		in_lists: (h) => (h === 'listed.example' || h === 'excluded.example'),
+		status_of: (h) => (h === 'blockedhost.example' ? 'blocked' :
+			(h === 'bnphost.example' ? 'blocked_no_proxy' :
+			(h === 'directhost.example' ? 'direct' : null)))
+	};
+	const fopts = { now: 1000000, anchor_ttl: 900, sight_win: 300, fresh_dom: 86400, fresh_ip: 21600,
+		max_members: 256, max_per_anchor: 64, max_ip_per_anchor: 48 };
+	const anchor_live = { 'site.example': { pain: false } };
+	const led_live = {
+		'site.example':        { t_last: 999990, seen_win: 3, clients: { '192.168.1.50': 999990 } },
+		'sib.myspacecdn.example': { t_last: 999980, seen_win: 2, clients: { '192.168.1.50': 999980 } },
+		'other.example':       { t_last: 999970, seen_win: 1, clients: { '192.168.1.77': 999970 } },
+		'anon-sniff.example':  { t_last: 999960, seen_win: 1, clients: { '': 999960 } },
+		'anon-sniff2.example': { t_last: 999955, seen_win: 2, clients: { '': 999955 } },
+		'ru-sib.example.ru':   { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'cloudflare-dns.com':  { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'listed.example':      { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'blockedhost.example': { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'bnphost.example':     { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'directhost.example':  { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'3.33.252.61':         { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'93.184.216.34':       { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'95.161.1.1':          { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'89.250.12.19':        { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'8.8.8.8':             { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } }
+	};
+	const fr1 = family_derive(anchor_live, led_live, {}, {}, fenv, fopts);
+	t('fam sibling same client joins', type(fr1.next['sib.myspacecdn.example']) === 'object' &&
+		fr1.next['sib.myspacecdn.example'].a === 'site.example' && fr1.next['sib.myspacecdn.example'].k === 'd');
+	t('fam foreign client no join', fr1.next['other.example'] == null);
+	t('fam weak 1 sighting no join', fr1.next['anon-sniff.example'] == null);
+	t('fam weak 2 sightings joins', fr1.next['anon-sniff2.example'] != null);
+	t('fam ru sibling never joins', fr1.next['ru-sib.example.ru'] == null);
+	t('fam never-learn no join', fr1.next['cloudflare-dns.com'] == null);
+	t('fam listed/excluded no join', fr1.next['listed.example'] == null);
+	t('fam blocked-verdict no join', fr1.next['blockedhost.example'] == null && fr1.next['bnphost.example'] == null);
+	t('fam direct-verdict CAN join', type(fr1.next['directhost.example']) === 'object');
+	t('fam cdn ip joins as ip', type(fr1.next['3.33.252.61']) === 'object' && fr1.next['3.33.252.61'].k === 'ip');
+	t('fam non-cdn ip no join', fr1.next['93.184.216.34'] == null);
+	t('fam ru ip no join', fr1.next['95.161.1.1'] == null);
+	t('fam ru-ptr ip no join', fr1.next['89.250.12.19'] == null);
+	t('fam resolver ip no join', fr1.next['8.8.8.8'] == null);
+	/* s201: RU plain-view гвард — RU-сервис на чужом TLD (geo-DB gap) не член */
+	const fenv_rp = { ru_dom: fenv.ru_dom, ru_ip: fenv.ru_ip, never_learn: fenv.never_learn,
+		cdn_ip: fenv.cdn_ip, in_lists: fenv.in_lists, status_of: fenv.status_of,
+		ru_plain: (h) => (h === 'sbt.example') };
+	const led_rp = {
+		'site.example': { t_last: 999990, seen_win: 2, clients: { '192.168.1.50': 999990 } },
+		'sbt.example':  { t_last: 999985, seen_win: 2, clients: { '192.168.1.50': 999985 } }
+	};
+	const fr10 = family_derive(anchor_live, led_rp, {}, {}, fenv_rp, fopts);
+	t('fam ru-plain service never joins', fr10.next['sbt.example'] == null);
+	t('fam anchor not its own member', fr1.next['site.example'] == null);
+	t('fam anchors_alive counted', fr1.anchors_alive === 1);
+	/* QUIC-край якоря — IP-член с seen=1 (кейс flowmusic 8.47.69.0) */
+	const fr2 = family_derive(anchor_live, led_live, {}, { '8.47.69.0': 'site.example' }, fenv, fopts);
+	t('fam quic edge joins seen=1', type(fr2.next['8.47.69.0']) === 'object' &&
+		fr2.next['8.47.69.0'].s === 1 && fr2.next['8.47.69.0'].k === 'ip');
+	/* Смерть якоря гасит семью */
+	const cur1 = { 'sib.myspacecdn.example': { a: 'site.example', k: 'd', t: 999980, ls: 999980, cl: '192.168.1.50', s: 1 } };
+	const fr3 = family_derive({}, led_live, cur1, {}, fenv, fopts);
+	t('fam anchor death clears', fr3.next == null || length(keys(fr3.next)) === 0);
+	t('fam anchor death reports removal', fr3.changed === true && length(fr3.removed) === 1 &&
+		fr3.removed[0].host === 'sib.myspacecdn.example');
+	/* Свежесть: sliding продлевает, истечение удаляет */
+	const cur_old = { 'sib.myspacecdn.example': { a: 'site.example', k: 'd', t: 990000, ls: 990000, cl: '192.168.1.50', s: 1 } };
+	const fr4 = family_derive(anchor_live, led_live, cur_old, {}, fenv, fopts);
+	t('fam sliding refresh keeps member', type(fr4.next['sib.myspacecdn.example']) === 'object' &&
+		int(fr4.next['sib.myspacecdn.example'].ls) === 999980);
+	const cur_stale = { 'sib.myspacecdn.example': { a: 'site.example', k: 'd', t: 900000, ls: 900000, cl: '192.168.1.50', s: 1 } };
+	const fopts_cold = { now: 1000000, anchor_ttl: 900, sight_win: 300, fresh_dom: 86400, fresh_ip: 21600,
+		max_members: 256, max_per_anchor: 64, max_ip_per_anchor: 48 };
+	const led_cold = { 'site.example': { t_last: 999990, seen_win: 1, clients: { '192.168.1.50': 999990 } } };
+	const fr5 = family_derive(anchor_live, led_cold, cur_stale, {}, fenv, fopts_cold);
+	t('fam stale member dropped (no co-observation)', fr5.next['sib.myspacecdn.example'] == null &&
+		length(fr5.removed) === 1);
+	/* Идемпотентность: повторный прогон с cur=next не меняет */
+	const cur2 = {};
+	for (let h in fr1.next)
+		cur2[h] = { a: fr1.next[h].a, k: fr1.next[h].k, t: fr1.next[h].t, ls: fr1.next[h].ls, cl: fr1.next[h].cl, s: fr1.next[h].s };
+	const fr6 = family_derive(anchor_live, led_live, cur2, {}, fenv, fopts);
+	t('fam idempotent rerun', fr6.changed === false && length(fr6.added) === 0 && length(fr6.removed) === 0);
+	/* Пер-якорь кап: старейший вылетает */
+	const fopts_cap = { now: 1000000, anchor_ttl: 900, sight_win: 300, fresh_dom: 86400, fresh_ip: 21600,
+		max_members: 256, max_per_anchor: 2, max_ip_per_anchor: 48 };
+	const led_cap = {
+		'site.example': { t_last: 999990, seen_win: 1, clients: { '192.168.1.50': 999990 } },
+		'cap1.example': { t_last: 999900, seen_win: 2, clients: { '192.168.1.50': 999900 } },
+		'cap2.example': { t_last: 999950, seen_win: 2, clients: { '192.168.1.50': 999950 } },
+		'cap3.example': { t_last: 999980, seen_win: 2, clients: { '192.168.1.50': 999980 } }
+	};
+	const fr7 = family_derive(anchor_live, led_cap, {}, {}, fenv, fopts_cap);
+	t('fam per-anchor cap evicts oldest', fr7.next['cap1.example'] == null &&
+		type(fr7.next['cap2.example']) === 'object' && type(fr7.next['cap3.example']) === 'object');
+	/* RU-якорь невозможен */
+	const fr8 = family_derive({ 'ru-site.example.ru': { pain: true } }, led_live, {}, {}, fenv, fopts);
+	t('fam ru anchor never alive', fr8.anchors_alive === 0 && length(fr8.removed) === 0 && fr8.changed === false);
+	/* pain-якорь без ledger-наблюдений жив */
+	const fr9 = family_derive({ 'pain.example': { pain: true } }, {}, {}, {}, fenv, fopts);
+	t('fam pain anchor alive', fr9.anchors_alive === 1);
 
 	return { pass: length(pass), fail: length(fail), details: fail };
 };

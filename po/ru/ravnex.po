@@ -8516,3 +8516,42 @@ msgstr "Хелперы обновлены — движок автоматиза�
 
 msgid "The app was updated to %s, the helpers were installed for %s — update them (the app package never carries the helper binaries)."
 msgstr "Приложение обновлено до %s, хелперы ставились для %s — обновите их (пакет приложения никогда не содержит бинарники хелперов)."
+
+msgid "Family members"
+msgstr "Члены семьи"
+
+msgid "Family"
+msgstr "Семья"
+
+msgid "Family legs"
+msgstr "Семейные ноги"
+
+msgid "%d member(s), %d live anchor(s)"
+msgstr "членов: %d, якорей живых: %d"
+
+msgid "hosts co-observed with a learned site or pin follow its leg (site whole, like Global; hard rules stay RU-only). Unbind with the chain button in the row."
+msgstr "хосты, засеченные рядом с выученным сайтом или пином, следуют его ноге (сайт целиком — как в Global; жёсткие правила — только RU-зона). Отвязка — кнопкой-цепью в строке."
+
+msgid "follows the leg of %s (co-observed, no own verdict)"
+msgstr "следует ноге %s (со-наблюдение, своего вердикта нет)"
+
+msgid "Unbind from family"
+msgstr "Отвязать от семьи"
+
+msgid "Unbind %s? It stops following the site leg and will not come back until you re-bind it."
+msgstr "Отвязать %s? Хост перестанет следовать ноге сайта и не вернётся, пока вы его не привяжете снова."
+
+msgid "Unbind"
+msgstr "Отвязать"
+
+msgid "Family member unbound."
+msgstr "Член семьи отвязан."
+
+msgid "CDN class"
+msgstr "CDN-класс"
+
+msgid "Family member: co-observed with the site and follows its leg (no own verdict)."
+msgstr "Член семьи: засечен рядом с сайтом и следует его ноге (своего вердикта нет)."
+
+msgid "CDN/cloud address: standalone learning is closed (shared edges answer probes unreliably); it follows the site family when co-observed."
+msgstr "CDN/облачный адрес: точечное обучение закрыто (общие края отвечают пробам недостоверно); следует ноге сайта при совместном наблюдении."

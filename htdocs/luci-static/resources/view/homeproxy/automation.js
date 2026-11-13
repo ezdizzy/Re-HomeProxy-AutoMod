@@ -86,6 +86,22 @@ const callEntryAction = rpc.declare({
 	expect: { '': {} }
 });
 
+/* s201: семейная нога — отвязка/привязка члена (family_off.txt, переживает
+ * ребут; демона достигает по маркеру reload). */
+const callFamilyUnbind = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'automation_family_unbind',
+	params: [ 'entry' ],
+	expect: { '': {} }
+});
+
+const callFamilyRebind = rpc.declare({
+	object: 'luci.ravnex',
+	method: 'automation_family_rebind',
+	params: [ 'entry' ],
+	expect: { '': {} }
+});
+
 /* Ф7.1: the scheduled DPI auto-pilot moved here from the Blocking bypass
  * page (its logical home is automation). Same RPCs, same contract. */
 const callAutoPilotStatus = rpc.declare({
@@ -542,10 +558,13 @@ return view.extend({
 		const pauseEl = E('div', { 'class': 'hpauto-banner', style: 'display:none' });
 		const geoLine = E('div', { 'class': 'hpui-hint' });
 		const helperLine = E('div', { 'class': 'hpui-hint' });
+		/* s201: семейная нога — сводка-пояснение (честная видимость механизма). */
+		const famLine = E('div', { 'class': 'hpui-hint', style: 'display:none' });
 		panes.engine.appendChild(ovCards);
 		panes.engine.appendChild(pauseEl);
 		panes.engine.appendChild(geoLine);
 		panes.engine.appendChild(helperLine);
+		panes.engine.appendChild(famLine);
 		/* The Sites table (the RESULT of learning) follows the status. */
 		const sitesBox = E('div', {});
 		panes.engine.appendChild(sitesBox);
@@ -675,6 +694,7 @@ return view.extend({
 			[ 'all', _('All entries') ],
 			[ 'learned', _('Learned (engine)') ],
 			[ 'manual', _('Manual pins') ],
+			[ 'family', _('Family members') ],
 			[ 'blocked', _('Blocked only') ],
 			[ 'direct', _('Direct only') ]
 		];
@@ -1158,9 +1178,21 @@ return view.extend({
 				return E('span', { 'class': 'hpbadge hpb-mproxy' }, [ _('Always proxy') ]);
 			if (e.src === 'manual_direct')
 				return E('span', { 'class': 'hpbadge hpb-mdirect' }, [ _('Always direct') ]);
+			/* s201: член семьи — следует ноге якоря без собственного вердикта. */
+			if (e.src === 'family')
+				return E('span', { 'class': 'hpbadge hpb-mproxy',
+					title: _('Family member: co-observed with the site and follows its leg (no own verdict).') },
+					[ _('Family') ]);
 			/* Ф6.6/B5.17: недавно снятая запись — серый бейдж, причина в «Почему». */
-			if (e.src === 'dropped')
+			if (e.src === 'dropped') {
+				/* s201: cdn_skip — не «снято», а постоянный честный статус:
+				 * адрес в CDN/облачном диапазоне, точечное обучение закрыто. */
+				if (e.status === 'cdn_skip')
+					return E('span', { 'class': 'hpbadge hpb-type',
+						title: _('CDN/cloud address: standalone learning is closed (shared edges answer probes unreliably); it follows the site family when co-observed.') },
+						[ _('CDN class') ]);
 				return E('span', { 'class': 'hpbadge hpb-type' }, [ _('Removed') ]);
+			}
 			if (e.status === 'geo')
 				return E('span', { 'class': 'hpbadge hpb-mproxy' }, [ _('Geo (proxied)') ]);
 			if (e.status === 'geo_blocked')
@@ -1251,6 +1283,9 @@ return view.extend({
 		}
 
 		function reasonText(e) {
+			/* s201: член семьи — честная причина маршрута. */
+			if (e.src === 'family')
+				return _('follows the leg of %s (co-observed, no own verdict)').format((e.fam && e.fam.a) ? e.fam.a : '—');
 			/* Ф6.6/B5.17: причина снятия записи (единая валидация IP). */
 			if (e.src === 'dropped') {
 				const DROPS = {
@@ -1355,6 +1390,7 @@ return view.extend({
 			let rows = entries;
 			if (state.filter === 'learned') rows = rows.filter(function(e) { return e.src === 'learned'; });
 			else if (state.filter === 'manual') rows = rows.filter(function(e) { return e.src !== 'learned'; });
+			else if (state.filter === 'family') rows = rows.filter(function(e) { return e.src === 'family' || e.status === 'cdn_skip'; });
 			else if (state.filter === 'blocked') rows = rows.filter(function(e) { return e.src === 'learned' && e.status === 'blocked'; });
 			else if (state.filter === 'direct') rows = rows.filter(function(e) { return e.src === 'learned' && (e.status === 'direct' || e.status === 'direct_pending'); });
 			if (state.search.length)
@@ -1406,17 +1442,38 @@ return view.extend({
 				const e = rows[i];
 				const rowCls = (e.src !== 'learned') ? ('hpsrc-manual' + (e.src === 'manual_direct' ? ' hpsrc-manual-direct' : '')) : '';
 				const tr = E('tr', { 'class': rowCls });
-				const delBtn = E('button', { 'class': 'hpdel', type: 'button', title: _('Delete entry') }, [ '✕' ]);
-				delBtn.addEventListener('click', function() {
-					delBtn.disabled = true;
-					hp.confirmModal(_('Delete entry'), _('Delete entry %s?').format(e.host), _('Delete'))
-						.then(function(ok) {
-							if (!ok) { delBtn.disabled = false; return; }
-							callEntryDelete(e.host).then(function(r) {
-								return applyLearnedOp(r && r.apply, refresh, _('Entry deleted.'), sitesSink, sitesResult);
-							}).finally(function() { delBtn.disabled = false; });
-						});
-				});
+				let lastCell;
+				if (e.src === 'family') {
+					/* s201: у члена семьи вместо ✕-удаления — «отвязать»
+					 * (family_off.txt, переживает ребут; rebind — кнопка в
+					 * карточке семьи, вернётся сам при живом якоре). */
+					const ub = E('button', { 'class': 'hpdel', type: 'button', title: _('Unbind from family') }, [ '⛓' ]);
+					ub.addEventListener('click', function() {
+						ub.disabled = true;
+						hp.confirmModal(_('Unbind from family'),
+							_('Unbind %s? It stops following the site leg and will not come back until you re-bind it.').format(e.host), _('Unbind'))
+							.then(function(ok) {
+								if (!ok) { ub.disabled = false; return; }
+								callFamilyUnbind(e.host).then(function(r) {
+									return applyLearnedOp(r && r.apply, refresh, _('Family member unbound.'), sitesSink, sitesResult);
+								}).catch(function() {}).finally(function() { ub.disabled = false; });
+							});
+					});
+					lastCell = ub;
+				} else {
+					const delBtn = E('button', { 'class': 'hpdel', type: 'button', title: _('Delete entry') }, [ '✕' ]);
+					delBtn.addEventListener('click', function() {
+						delBtn.disabled = true;
+						hp.confirmModal(_('Delete entry'), _('Delete entry %s?').format(e.host), _('Delete'))
+							.then(function(ok) {
+								if (!ok) { delBtn.disabled = false; return; }
+								callEntryDelete(e.host).then(function(r) {
+									return applyLearnedOp(r && r.apply, refresh, _('Entry deleted.'), sitesSink, sitesResult);
+								}).finally(function() { delBtn.disabled = false; });
+							});
+					});
+					lastCell = delBtn;
+				}
 				const cells = [
 					E('span', { style: 'font-weight:600' }, [ String(e.host || '') ]),
 					E('span', { 'class': 'hpbadge hpb-type' }, [ e.type === 'ip' ? _('IP') : _('Domain') ]),
@@ -1425,7 +1482,7 @@ return view.extend({
 					E('span', { style: 'white-space:nowrap; opacity:.8' }, [ fmtTime(e.last_probe) ]),
 					E('span', { 'class': 'hpauto-why' }, [ String(reasonText(e)) ]),
 					chips(e),
-					delBtn
+					lastCell
 				];
 				for (let c in cells)
 					tr.appendChild(E('td', {}, [ cells[c] ]));
@@ -1727,6 +1784,8 @@ return view.extend({
 				ovCards.appendChild(mk(st.enabled === '1' ? _('yes') : _('no'), _('Enabled'), st.enabled === '1' ? 'c-green' : 'c-grey'));
 				ovCards.appendChild(mk(c.learned || 0, _('Learned (blocked)'), 'c-red'));
 				ovCards.appendChild(mk(c.manual || 0, _('Manual pins'), 'c-blue'));
+				/* s201: семейная нога — члены следуют ноге якоря (как в Global). */
+				ovCards.appendChild(mk(c.family || 0, _('Family members'), 'c-blue'));
 				ovCards.appendChild(mk(c.direct || 0, _('Direct verdicts'), 'c-amber'));
 				const reason = pauseReasons[st.paused];
 				if (reason) {
@@ -1769,6 +1828,17 @@ return view.extend({
 				helperLine.appendChild(h.sni_running ? hspan(true, _('running'))
 					: (h.sni_sniffer ? hspan(null, _('stopped')) : hspan(false, _('not installed'))));
 				helperLine.appendChild(document.createTextNode('.'));
+				/* s201: семейная нога — сводка (0 членов = строка скрыта). */
+				const fam = st.family || {};
+				famLine.innerHTML = '';
+				if ((c.family || 0) > 0) {
+					famLine.style.display = 'block';
+					famLine.appendChild(document.createTextNode(_('Family legs') + ': '));
+					famLine.appendChild(E('b', {}, [ _('%d member(s), %d live anchor(s)').format(c.family || 0, fam.anchors || 0) ]));
+					famLine.appendChild(document.createTextNode(' — ' + _('hosts co-observed with a learned site or pin follow its leg (site whole, like Global; hard rules stay RU-only). Unbind with the chain button in the row.')));
+				} else {
+					famLine.style.display = 'none';
+				}
 				renderTable();
 				logEl.textContent = st.log || '';
 			}).catch(function(e) {
