@@ -447,14 +447,19 @@ function ev_auto(type, who, detail) {
  * apply point where learn_names is drained. G5: hosts with an ACTIVE flap
  * episode are excluded from the bus record (their churn is announced once
  * by the 'flap' event); the suppressed count is honest (suppressed counter
- * in the record). */
-function ev_learn_flush(where) {
+ * in the record). The state map is PASSED IN: this function lives at module
+ * scope and main() locals are invisible here (ucode lexical closure,
+ * lesson 405) — the ч.286 G5 wave read `state` directly and the daemon
+ * died with "access to undeclared variable state" on EVERY hot-reload
+ * apply (found live 2026-11-13, session 199; the selftest never covers
+ * runner-scope closures, so this class only shows up live). */
+function ev_learn_flush(where, st) {
 	const n = length(learn_names);
 	if (!n) return;
 	let shown = [], nsup = 0;
 	for (let i = 0; i < n; i++) {
 		const h = learn_names[i];
-		const hst = state[h];
+		const hst = (type(st) === 'object') ? st[h] : null;
 		if (type(hst) === 'object' && type(hst.flapping) === 'object') {
 			hst.flapping.suppressed = int(hst.flapping.suppressed || 0) + 1;
 			nsup++;
@@ -3539,7 +3544,7 @@ echo done > "$PRE.done"
  			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && (r.auto_ips != null ? r.auto_ips : r.ips)) || 0) + ' ip (hot)' + ((r && r.dropped) ? (', ' + r.dropped + ' dropped') : ''));
  			/* Ф2.4: one aggregated bus record per apply — a learn burst must
  			 * not flood the LuCI journal / the TG chat with per-host rows. */
- 			ev_learn_flush('горячее применение');
+ 			ev_learn_flush('горячее применение', state);
  			last_reload = time();
 			pending_reload = false;
 			pending_new = 0;
@@ -3557,7 +3562,7 @@ echo done > "$PRE.done"
 		sync_learned_rulesets();
  		log('applying learned list - restarting service to load new config.');
  		eng_event('reload', 'service reload');
- 		ev_learn_flush('применение с перезапуском');
+ 		ev_learn_flush('применение с перезапуском', state);
  		system('/etc/init.d/ravnex reload >/dev/null 2>&1');
 		last_reload = time();
 		pending_reload = false;

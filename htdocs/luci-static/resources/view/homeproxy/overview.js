@@ -685,7 +685,7 @@ return view.extend({
 
 		function renderProfile(p) {
 			p = p || {};
-			const names = { lite: 'Lite', balanced: 'Balanced', performance: 'Performance' };
+			const names = { lite: _('Lite'), balanced: _('Balanced'), performance: _('Performance') };
 			const src = (p.source === 'auto') ? ' · ' + _('auto')
 				: (p.source === 'manual' ? ' · ' + _('manual') : '');
 			profV.textContent = p.profile ? ((names[p.profile] || p.profile) + src) : '—';
