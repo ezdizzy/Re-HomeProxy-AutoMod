@@ -526,6 +526,14 @@ return view.extend({
 			outage: _('Automation is paused: network outage — the direct-path baseline (control sites) does not answer, so failed probes are NOT recorded as blocks. Learning resumes automatically once the connection is back.')
 		};
 
+		/* ucode int() equivalent: daemon entry fields (flapping/pending counters)
+		 * are raw JSON numbers or numeric strings; JS has no int() — calling it
+		 * threw ReferenceError mid-row-loop and the Sites table stayed empty. */
+		function int(v) {
+			const n = Number(v);
+			return isFinite(n) ? Math.floor(n) : 0;
+		}
+
 		function fmtTime(ts) {
 			if (!ts) return '—';
 			try { return new Date(Number(ts) * 1000).toLocaleString(); }
@@ -1382,11 +1390,13 @@ return view.extend({
 			 * cells (fresh listeners) on EVERY 5 s tick for identical data was
 			 * the heaviest DOM churn in the app. The view controls (filter/
 			 * search/sort) are part of the signature: changing one of them must
-			 * still re-render through the early-return path. */
+			 * still re-render through the early-return path. The signature is
+			 * committed only AFTER a successful build — a mid-build exception
+			 * leaves it stale, so the next poll retries instead of wedging the
+			 * empty table until a manual filter change. */
 			const sig = JSON.stringify([entries, state.filter, state.search, state.sortKey, state.sortDir]);
 			if (sig === state.tableSig)
 				return;
-			state.tableSig = sig;
 			let rows = entries;
 			if (state.filter === 'learned') rows = rows.filter(function(e) { return e.src === 'learned'; });
 			else if (state.filter === 'manual') rows = rows.filter(function(e) { return e.src !== 'learned'; });
@@ -1504,6 +1514,7 @@ return view.extend({
 			wrap.appendChild(table);
 			tableEl.appendChild(wrap);
 			wrap.scrollTop = scrollTop;
+			state.tableSig = sig;
 		}
 
 		/* ── Geo cards: REMOVED (Ф7.2) — the RU-protection card (guarantee +
