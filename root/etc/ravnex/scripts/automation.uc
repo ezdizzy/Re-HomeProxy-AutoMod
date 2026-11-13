@@ -2696,11 +2696,11 @@ function ledger_restore(state_cap) {
 	base = rp.base;
 	if (rp.torn > 0)
 		log('ledger: журнал оборван на seq=' + rp.torn + ' (ожидался ' + (base + 1) + ') — хвост проигнорирован, восстановлено до seq=' + base);
-	for (let ev in rp.to_apply)
-		ledger_apply_event(state, ev, st_apply);
-	if (length(rp.to_apply) > 0)
-		log('ledger: реплей ' + length(rp.to_apply) + ' событий журнала (до seq=' + base + ')');
-	/* RAM-only карты — докормить в ЛЮБОМ случае (умирают при каждом respawn). */
+	/* s206 (аудит M1): RAM-only карты докармливаются ДО реплея журнала —
+	 * события P0/B0 («яд снят», «разблокирован») из хвоста журнала обязаны
+	 * иметь ПОСЛЕДНЕЕ слово; merge ПОСЛЕ реплея воскрешал снятые маркеры из
+	 * устаревшего снапшота (условие «== null» истинно сразу после P0/B0
+	 * удаления). Карты умирают при каждом respawn — докормить в ЛЮБОМ случае. */
 	if (snap != null && type(snap.data.maps) === 'object') {
 		const mp = snap.data.maps;
 		const poi = (type(mp.poi) === 'object') ? mp.poi : {};
@@ -2721,6 +2721,10 @@ function ledger_restore(state_cap) {
 	}
 	if (snap != null && type(snap.data.fam_ledger) === 'object')
 		ledger_merge_fam_ledger(snap.data.fam_ledger);
+	for (let ev in rp.to_apply)
+		ledger_apply_event(state, ev, st_apply);
+	if (length(rp.to_apply) > 0)
+		log('ledger: реплей ' + length(rp.to_apply) + ' событий журнала (до seq=' + base + ')');
 	ledger_yt_merge(snap_yt, evs);
 	/* Капы при восстановлении — те же живые константы, evict по oldest
 	 * (зеркало prune-логики: fam-члены и pending-кандидаты exempt). */
@@ -6330,6 +6334,13 @@ echo done > "$PRE.done"
 			system('rm -f ' + shellquote(RELOAD_MARKER + '_clear'));
 			state = {};
 			state.__dns_offset = dns_log_offset;
+			/* s206 (аудит M2): RAM-карты тоже с нуля — иначе следующий флаш
+			 * пишет их в новый снапшот, и ребут после Clear воскрешает
+			 * poisoned/blocked/fam-состояние (нарушение контракта s205
+			 * «Clear чистит леджер — ребут не воскрешает»). */
+			poisoned_hosts = {};
+			blocked_hosts = {};
+			fam_ledger = {};
 			reload_lists();
 			save_state(state);
 			/* s205: леджер тоже с нуля — новая генерация журнала, пустой
