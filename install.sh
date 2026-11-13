@@ -1374,7 +1374,13 @@ telegram_setup() {
 		warn "  токен не похож на формат Telegram (ожидается цифры:символы) — отмена."
 		return 1
 	fi
-	RES=$(curl -s --max-time 10 "https://api.telegram.org/bot${TOK}/getMe" 2>/dev/null)
+	# s206 (аудит m3): токен не светится в /proc/*/cmdline (виден любому
+	# локальному процессу) — curl -K читает URL из 0600-файла, как telegram.uc.
+	TOKCFG=$(mktemp)
+	chmod 600 "$TOKCFG" 2>/dev/null
+	printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$TOK" > "$TOKCFG"
+	RES=$(curl -s --max-time 10 -K "$TOKCFG" 2>/dev/null)
+	rm -f "$TOKCFG"
 	BOTNAME=$(jget "$RES" username)
 	if printf '%s' "$RES" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
 		ok "  токен принят (бот: @${BOTNAME:-?})."

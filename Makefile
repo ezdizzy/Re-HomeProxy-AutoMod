@@ -37,10 +37,10 @@ define Package/luci-app-ravnex/conffiles
 /etc/config/ravcontrol
 /etc/ravnex/certs/
 /etc/ravnex/ruleset/
-	/etc/ravnex/resources/direct_list.txt
-	/etc/ravnex/resources/proxy_list.txt
-	/etc/ravnex/resources/auto_proxy_list.txt
-	/etc/ravnex/resources/auto_proxy_ip.txt
+/etc/ravnex/resources/direct_list.txt
+/etc/ravnex/resources/proxy_list.txt
+/etc/ravnex/resources/auto_proxy_list.txt
+/etc/ravnex/resources/auto_proxy_ip.txt
 endef
 
 define Package/luci-app-ravnex/postinst

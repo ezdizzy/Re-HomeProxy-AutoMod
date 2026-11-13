@@ -11390,8 +11390,10 @@ const methods = {
 		automation_clear_log: {
 			call: function(req) {
 			const log_file = RUN_DIR + '/automation.log';
+			/* s206 (аудит M3): демоны держат лог открытым в append — обрезка
+			 * голым writefile гонка; канон — атомарная замена. */
 			if (access(log_file))
-				writefile(log_file, '');
+				atomic_write(log_file, '');
 			return { result: true };
 		}
 	},
@@ -11465,8 +11467,12 @@ const methods = {
 					target = ip_lines;
 					continue;
 				}
-				if (match(l, /^\s*#/))
+				/* s206 (аудит m4): комментарии — часть списка юзера,
+				 * восстанавливаются как есть (организация списка его). */
+				if (match(l, /^\s*#/)) {
+					push(target, l);
 					continue;
+				}
 				push(target, l);
 			}
 			if (!length(dom_lines) && !length(ip_lines))
@@ -11491,7 +11497,9 @@ const methods = {
 				return added;
 			};
 			const added_dom = merge_into(dom_file, dom_lines, false);
-			const added_ip = merge_into(ip_file, filter(ip_lines, (x) => match(x, /^(\d{1,3}\.){3}\d{1,3}$/)), true);
+			/* s206 (аудит m4): CIDR-записи валидны для learned-IP — не
+			 * отбрасывать их молча. */
+			const added_ip = merge_into(ip_file, filter(ip_lines, (x) => match(x, /^(\d{1,3}\.){3}\d{1,3}(\/(3[0-2]|[12]?[0-9]))?$/)), true);
 
 			if (!added_dom && !added_ip)
 				return { result: true, added: 0 };

@@ -144,6 +144,10 @@ import {
 	emit as bus_emit,
 	cursor_get as bus_cursor_get, cursor_set as bus_cursor_set
 } from '/etc/ravnex/scripts/eventbus.uc';
+/* s206 (аудит m2): queue-файлы и offset — durable-стейт; голый writefile
+ * при смерти в середине записи даёт порванное место (queue теряется,
+ * offset поднимается мимо живой батчи). Канон — атомарная запись. */
+import { atomic_write } from '/etc/ravnex/scripts/statestore.uc';
 
 const RUN_DIR = '/var/run/ravnex';
 const LOG_FILE = RUN_DIR + '/telegram.log';
@@ -3209,7 +3213,7 @@ function done_save() {
 function queue_put(u) {
 	try {
 		mkdir(QUEUE_DIR);
-		writefile(QUEUE_DIR + '/' + u.update_id + '.json', sprintf('%J', { bot: bot_id, u: u }));
+		atomic_write(QUEUE_DIR + '/' + u.update_id + '.json', sprintf('%J', { bot: bot_id, u: u }));
 	} catch (e) { log('queue put: ' + e); }
 }
 
@@ -3262,7 +3266,7 @@ function queue_drain() {
 		if (qid > last_update_id && qid <= last_update_id + 1000) {
 			last_update_id = qid;
 			offset_lost = false;
-			writefile(off_file(), sprintf('%d', last_update_id));
+			atomic_write(off_file(), sprintf('%d', last_update_id));
 		} else if (qid > last_update_id) {
 			if (offset_lost && last_update_id === 0) {
 				if (qid > adopt_mx)
@@ -3274,7 +3278,7 @@ function queue_drain() {
 	}
 	if (adopt_mx > last_update_id) {
 		last_update_id = adopt_mx;
-		try { writefile(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
+		try { atomic_write(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
 		offset_lost = false;
 		log('offset re-seeded from the live batch (' + adopt_mx + ') — confirmation restored');
 	}
@@ -3369,7 +3373,7 @@ function main() {
 					}
 					if (mx > 0) {
 						last_update_id = mx;
-						try { writefile(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
+						try { atomic_write(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
 						log('offset restored from the done-journal (' + mx + ')');
 					}
 				}
@@ -3421,7 +3425,7 @@ function main() {
 			if (live_mx > last_update_id) {
 				last_update_id = live_mx;
 				offset_lost = false;
-				try { writefile(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
+				try { atomic_write(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
 				log('offset confirmed from the live batch (' + live_mx + ')');
 			}
 			/* Ф8.6: решения egress-фейловера + честный пуш о переключении —
