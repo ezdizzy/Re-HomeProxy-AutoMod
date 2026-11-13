@@ -92,7 +92,8 @@
 'use strict';
 
 import { access, readfile, writefile, popen } from 'fs';
-import { atomic_write } from '/etc/ravnex/scripts/statestore.uc';
+import { atomic_write, read_state, write_state } from '/etc/ravnex/scripts/statestore.uc';
+import { exit_stamp, profile_apply } from '/etc/ravnex/scripts/learn_core.uc';
 import { cursor } from 'uci';
 /* Ф6.1 Diagnostic Core: ЕДИНАЯ классификация пути и причин — этот сканер
  * измеряет (mechanics) и передаёт факты в diag_cause(); сигнатуры-списки
@@ -252,26 +253,57 @@ function port_listening(port) {
 	return found;
 }
 
-/* Country of the LIVE exit (the same providers hp_exit_lookup uses — api.ip.sb
- * alone proved unreliable from VPN exits). ONE lookup per scan run: the exit
- * country feeds the Google AI region guard. A router-originated call rides
- * the output rules → the real configured exit. */
-function live_exit_country() {
+/* Geo facts THROUGH A GIVEN PATH (the scan's own routing vocabulary):
+ * `port` = a loopback inbound of the engine; socks5h resolves at the tunnel
+ * end (main path = the configured exit), plain socks5 resolves locally
+ * (direct path = the RU provider's own view). Which VIEW an answer carries
+ * is decided by the INBOUND, not by provider-routing luck. First provider
+ * that answers wins; per-provider fields normalized (ip.sb: organization;
+ * ipwho.is: connection{asn,org,isp}; ip-api: as="AS… name" + asnum).
+ * ucode for..in yields ELEMENTS (lesson 417) — the provider is used by the
+ * loop value itself; the old `providers[p]` shape curled literal «(null)»
+ * (rc=6 on every provider — live_exit_country never worked, exit stayed
+ * honest-null forever). */
+function geo_via(port, socks_h) {
 	const providers = [
 		'https://api.ip.sb/geoip',
 		'https://ipwho.is/',
 		'http://ip-api.com/json/?fields=status,country,countryCode,as,asnum,query'
 	];
-	for (let p in providers) {
+	const px = `socks5${socks_h ? 'h' : ''}://127.0.0.1:${port}`;
+	for (let url in providers) {
 		const cf = RUN_DIR + '/wiz_probe.code';
 		system(`rm -f ${sq(cf)} 2>/dev/null`);
-		const rc = system(`curl -s --connect-timeout 4 --max-time 7 -k ${sq(providers[p])} > ${sq(cf)} 2>/dev/null`, 8000);
+		const rc = system(`curl -s --connect-timeout 4 --max-time 7 -k -x ${px} ${sq(url)} > ${sq(cf)} 2>/dev/null`, 8000);
 		if (rc !== 0) continue;
 		let j = null;
 		try { j = json(readfile(cf) || ''); } catch (e) { j = null; }
 		if (!j || type(j) !== 'object') continue;
 		const cc = lc(trim('' + (j.countryCode || j.country_code || '')));
-		if (length(cc)) return cc;
+		if (!length(cc)) continue;
+		/* ASN/org: у каждого провайдера своё место (ip.sb — organization,
+		 * ipwho.is — connection{asn,org,isp}, ip-api — as="AS… Имя" + asnum). */
+		let asn = null, org = null;
+		if (j.asn != null && (match('' + j.asn, /^[0-9]+$/) || match('' + j.asn, /^AS[0-9]+$/i)))
+			asn = '' + j.asn;
+		if (j.organization != null && length(trim('' + j.organization)))
+			org = trim('' + j.organization);
+		if (asn == null && type(j.connection) === 'object') {
+			const c = j.connection;
+			if (c.asn != null && (match('' + c.asn, /^[0-9]+$/) || match('' + c.asn, /^AS[0-9]+$/i)))
+				asn = '' + c.asn;
+			if (c.org != null && length(trim('' + c.org)))
+				org = trim('' + c.org);
+			else if (c.isp != null && length(trim('' + c.isp)))
+				org = trim('' + c.isp);
+		}
+		if (asn == null && j.asnum != null && match('' + j.asnum, /^AS[0-9]+$/i)) {
+			asn = '' + j.asnum;
+			const as = trim('' + (j.as || ''));
+			if (length(as) > length(asn) && substr(as, 0, length(asn)) == asn)
+				org = trim(substr(as, length(asn)));
+		}
+		return { cc: cc, asn: asn, org: org };
 	}
 	return null;
 }
@@ -415,7 +447,13 @@ if (access(EXTRA)) {
 }
 
 const total = length(hosts);
-const exit_cc = live_exit_country();
+	/* Два честных вида (s196): главный вход движка = сконфигурированный выход
+	 * (exit_cc для AI-блэклиста и поля exit); прямой вход = собственный ответ
+	 * RU-провайдера (факты для direct-out владельца профиля, фаза 2).
+	 * Вход недоступен = честное отсутствие вида, не фейк. */
+	const geo_exit = (proxy_in || mixed_in) ? geo_via(proxy_in ? PROXY_PORT : int(mixed_port), true) : null;
+	const geo_direct = direct_in ? geo_via(DIRECT_PORT, false) : null;
+	const exit_cc = (geo_exit != null) ? geo_exit.cc : null;
 write_status({ running: true, done: 0, total: total, current: '',
 	direct_in: direct_in, proxy_in: proxy_in, mixed_in: mixed_in, mixed_port: mixed_port });
 
@@ -551,6 +589,31 @@ atomic_write(RESULT, sprintf('%.J', {
 	hosts: results,
 	summary: summary
 }) + '\n');
+
+/* ── s196: provider-раздел профиля (G4 фаза 2, writer side) ──────────────
+ * Прямой вход движка отвечает собственным видом RU-провайдера — факты
+ * владельца direct-out. Обогащение ≠ смена владельца (identity class+ASN
+ * внутри profile_apply): та же сеть = факты обновляются без роста history;
+ * реальная смена провайдера честно попадает в history профиля, после чего
+ * движок сам ставит affected-записи на перепроверку. Вида нет (вход закрыт)
+ * = честный skip. Ошибки глотаются: скан не должен зависеть от памяти. */
+try {
+	if (geo_direct != null && (geo_direct.asn != null || length(geo_direct.cc))) {
+		const prs = read_state('/etc/ravnex/provider_profile.json');
+		const pr = profile_apply((prs.data != null) ? prs.data : null, 'direct-out', {
+			owner: exit_stamp({
+				class: 'isp',
+				country_code: geo_direct.cc,
+				asn: geo_direct.asn,
+				org: geo_direct.org,
+				src: 'wizard_scan'
+			})
+		}, time(), 16);
+		if (pr.changed)
+			write_state('/etc/ravnex/provider_profile.json', pr.doc);
+	}
+} catch (e) { /* память не должна ломать скан */ }
+
 write_status({ running: false, done: total, total: total, current: 'done',
 	direct_in: direct_in, proxy_in: proxy_in, mixed_in: mixed_in, mixed_port: mixed_port,
 	finished: time() });

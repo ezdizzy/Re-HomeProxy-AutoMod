@@ -3828,6 +3828,10 @@ echo done > "$PRE.done"
 	 * честно — это кеш/фолбэк: флеш (HUP главному dnsmasq) + событие. Ядро,
 	 * тоже отвечающее заглушкой, флешу не подлежит (это не его кеш). */
 	const SINK_NETS = RES + '/dns_sinkhole_nets.txt';
+	/* s196: персист мультипуловой правды (писатель zapret_fuzz.sh; читатель
+	 * strategy_lab/стиринг-фидер). Модульный уровень — sandbox-харнесс может
+	 * переопределить путь (живой файл не трогается тестом). */
+	const POOL_FILE = '/var/run/ravnex/zapret_pools.json';
 	let last_sink_tick = 0;
 	let sink_rot = 0;                /* s196: rotation cursor over learned domains */
 	let sink_beats = 0;              /* s196: completed ticks — heartbeat cadence */
@@ -3986,6 +3990,38 @@ echo done > "$PRE.done"
 			}
 		}
 		state.__owner_seen = { main: mo, direct: di };
+		/* Инвалидация dead_whole-вердиктов пулов при смене ISP (G4-follow-up,
+		 * копилка s187): «пул мёртв целиком» = доказательство прежнего
+		 * провайдерского пути. Имена пулов остаются (каталог — факт),
+		 * измерения → честное «не измерено» (-1, прецедент PSUF_FULL в
+		 * fuzz.sh; отсутствующий dir-ключ = «прямой проход не измерен»).
+		 * Атомарно tmp+mv (урок 421-класса: truncate+write калечит читателей).
+		 * ВАЖНО: даже при touched == 0 вердикты пулов всё равно протухли. */
+		if (isp_changed) {
+			try {
+				if (access(POOL_FILE)) {
+					const pj = json(readfile(POOL_FILE));
+					if (pj != null && type(pj.pools) === 'object') {
+						const ps = pj.pools;
+						for (let s in keys(ps)) {
+							const row = ps[s];
+							if (type(row) !== 'object')
+								continue;
+							row.alive = -1;
+							row.dead = -1;
+							row.dead_whole = -1;
+							delete row.alive_dir;
+							delete row.dead_dir;
+							delete row.dead_whole_dir;
+						}
+						pj.isp_epoch = di.isp;
+						writefile(POOL_FILE + '.tmp', sprintf('%.J\n', pj));
+						system('mv -f ' + shellquote(POOL_FILE + '.tmp') + ' ' + shellquote(POOL_FILE));
+						log('ISP change: pool dead_whole verdicts invalidated (was ' + seen.direct.isp + ' → now ' + di.isp + ')');
+					}
+				}
+			} catch (e4) { /* инвалидация не валит проход */ }
+		}
 		if (touched === 0)
 			return;
 		const parts = [];
@@ -3998,7 +4034,7 @@ echo done > "$PRE.done"
 		if (hn === 0 || hn > now + 120)
 			state.__heal_next = now + 120;   /* первый due вскоре состояться */
 		log('owner changed (' + why + ') — affected entries queued for re-check: ' + touched);
-		ev_auto('owner_change', 'владелец контура сменился — перепроверка', why + ' · на перепроверку: ' + touched + ' записей');
+		ev_auto('owner_change', 'владелец контура сменился — перепроверка', why + ' · на перепроверку: ' + touched + ' записей' + (isp_changed ? ' · вердикты пулов сброшены' : ''));
 	}
 
 	function pass(run_now) {
