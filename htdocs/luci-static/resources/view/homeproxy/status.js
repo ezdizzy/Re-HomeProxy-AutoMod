@@ -490,40 +490,21 @@ const callMosdnsCheckUpdate = rpc.declare({
 	expect: { '': {} }
 });
 
-/* §1.7 Own apk feed (client side). */
+/* §1.7 own feed (client side): feed_status powers the helpers pairing
+ * banner on the app card (the source itself has no user-facing UI since
+ * s199 — the feed is plumbing: install.sh/the backend manage the key). */
 const callFeedStatus = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'feed_status',
 	expect: { '': {} }
 });
 
-const callFeedSetup = rpc.declare({
-	object: 'luci.ravnex',
-	method: 'feed_setup',
-	expect: { '': {} }
-});
-
-/* сеанс 198: обновление нативных хелперов (probe_pool, sni_sniffer,
- * utls_probe) — тот же RPC, что у кнопки на Автоматизации; карточка
- * «Хелперы» на Обслуживании зовёт его по кнопке плашки-связки. */
+/* s198: обновление нативных хелперов (probe_pool, sni_sniffer,
+ * utls_probe) — тот же RPC, что у кнопки на Автоматизации; кнопка
+ * плашки-связки в карточке «Приложение» зовёт его. */
 const callHelpersInstall = rpc.declare({
 	object: 'luci.ravnex',
 	method: 'automation_helpers_install',
-	expect: { '': {} }
-});
-
-const callFeedRemove = rpc.declare({
-	object: 'luci.ravnex',
-	method: 'feed_remove',
-	expect: { '': {} }
-});
-
-/* V2 explicit-file install from the update source (byedpi/zapret2/mosdns
- * cards call it when prepare_install returned a feed hit). */
-const callFeedInstallPkg = rpc.declare({
-	object: 'luci.ravnex',
-	method: 'install_feed_pkg',
-	params: [ 'pkg' ],
 	expect: { '': {} }
 });
 
@@ -1104,7 +1085,7 @@ function buildCurlCard(curl) {
 	]);
 }
 
-function buildAppCard(appStatus) {
+function buildAppCard(appStatus, feedStatus) {
 	const installed = !!appStatus;
 	let version = appStatus?.version || null;
 	const pkgMgr = appStatus?.pkg_manager || null;
@@ -1115,6 +1096,46 @@ function buildAppCard(appStatus) {
 
 	const resultEl = mkResult();
 	const setMsg = (txt, kind) => resultEl.setResult(txt, kind);
+
+	/* s199: связка «хелперы ↔ версия приложения» — переехала сюда из
+	 * удалённой карточки «Источник обновлений»: обновил приложение —
+	 * тут же видишь предложение обновить хелперы. Приложение хелперы
+	 * НЕ обновляет (пакет arch-independent, бинарников не содержит);
+	 * маркер /etc/ravnex/tools/helpers_release пишет бэкенд при
+	 * установке хелперов. Заодно снят латентный баг s198: локальная
+	 * hp затеняла модульную (confirmModal был бы «не функцией»). */
+	const pairBox = E('div', {});
+	function renderPairing(fs) {
+		const pair = (fs && fs.helpers_pairing) || {};
+		if (!pair.drift) {
+			dom.content(pairBox, []);
+			return;
+		}
+		const btn = mkBtn(_('Update helpers'), 'primary', {
+			style: 'margin-left:8px',
+			click: async function() {
+				if (!await hp.confirmModal(_('Update helpers'),
+					_('Update the automation helpers (probe_pool, sni_sniffer, utls_probe) for the app version %s? The automation engine restarts (a short pause).').format(pair.app_version || '?'),
+					_('Update')))
+					return;
+				btn.disabled = true;
+				setMsg(_('Updating the helpers…'), 'grey');
+				const ret = await L.resolveDefault(callHelpersInstall(), {});
+				renderPairing(await L.resolveDefault(callFeedStatus(), {}));
+				const okAny = (ret != null && ret.result !== false && !ret.error);
+				setMsg(okAny
+					? _('Helpers updated — the automation engine picks them up at once.')
+					: _('Failed: ') + ((ret && ret.error) || _('RPC error')), okAny ? 'green' : 'red');
+			}
+		});
+		dom.content(pairBox, [
+			E('div', { 'class': 'hpui-banner', style: 'margin:6px 0; display:flex; align-items:center; flex-wrap:wrap; gap:4px' }, [
+				E('span', {}, _('The app was updated to %s, the helpers were installed for %s — update them (the app package never carries the helper binaries).').format(pair.app_version || '?', pair.helpers_release || '?')),
+				btn
+			])
+		]);
+	}
+	renderPairing(feedStatus);
 
 	let updateAvailable = false;
 
@@ -1220,6 +1241,7 @@ function buildAppCard(appStatus) {
 			checkBtn,
 			updateBtn
 		]),
+		pairBox,
 		resultEl,
 		E('div', { style: 'margin-top:4px; font-size:0.9em; opacity:.85' },
 			_('The LuCI app itself. "Check update" compares your installed version with the latest GitHub release; "Update" downloads and installs the new app (and the Russian translation) in place.'))
@@ -1993,166 +2015,12 @@ function buildCoreCard(core, coreInfo) {	const isHiddify = core === 'hiddify';
 	]);
 }
 
-/* §1.7 V2: the "Update source" card — key + manifest.json + per-component
- * installed → candidate. Honest verdicts: the candidates come from the
- * CACHED manifest (freshness shown), the reachability probe is TTL-cached
- * by the backend; opkg systems get the honest "ipk + sha256" wording —
- * no apk key exists there. After setup/remove the card re-fetches the
- * status and repaints itself in place; every verdict lands in ONE result
- * area (project rule). */
-function buildFeedCard(feed) {
-	let st = feed || {};
-
-	const statusEl = E('strong', {});
-	const manEl = E('span', {});
-	const pkgLine = E('div', { style: 'font-size:0.9em; opacity:.85; padding:2px 0' });
-	const resultEl = mkResult();
-	const setMsg = (txt, kind) => resultEl.setResult(txt, kind);
-
-	/* сеанс 198: связка «хелперы ↔ версия приложения». Приложение хелперы
-	 * НЕ обновляет (пакет arch-independent, бинарников не содержит), поэтому
-	 * расхождение показывается честной плашкой с ОДНОЙ кнопкой (тот же RPC
-	 * automation_helpers_install, что у кнопки на Автоматизации); маркер
-	 * /etc/ravnex/tools/helpers_release пишет бэкенд при установке хелперов. */
-	const pairBox = E('div', {});
-	function renderPairing() {
-		const hp = st.helpers_pairing || {};
-		if (!hp.drift) {
-			dom.content(pairBox, []);
-			return;
-		}
-		const btn = mkBtn(_('Update helpers'), 'primary', {
-			style: 'margin-left:8px',
-			click: async function() {
-				if (!await hp.confirmModal(_('Update helpers'),
-					_('Update the automation helpers (probe_pool, sni_sniffer, utls_probe) for the app version %s? The automation engine restarts (a short pause).').format(hp.app_version || '?'),
-					_('Update')))
-					return;
-				btn.disabled = true;
-				setMsg(_('Updating the helpers…'), 'grey');
-				const ret = await L.resolveDefault(callHelpersInstall(), {});
-				st = await L.resolveDefault(callFeedStatus(), {});
-				applyState();
-				renderPairing();
-				const okAny = (ret != null && ret.result !== false && !ret.error);
-				setMsg(okAny
-					? _('Helpers updated — the automation engine picks them up at once.')
-					: _('Failed: ') + ((ret && ret.error) || _('RPC error')), okAny ? 'green' : 'red');
-			}
-		});
-		dom.content(pairBox, [
-			E('div', { 'class': 'hpui-banner', style: 'margin:6px 0; display:flex; align-items:center; flex-wrap:wrap; gap:4px' }, [
-				E('span', {}, _('The app was updated to %s, the helpers were installed for %s — update them (the app package never carries the helper binaries).').format(hp.app_version || '?', hp.helpers_release || '?')),
-				btn
-			])
-		]);
-	}
-
-	function compCell(label, row) {
-		row = row || {};
-		const inst = row.installed || '—';
-		const cand = row.candidate || '—';
-		const upd = (row.installed && row.candidate &&
-			row.installed != row.candidate) ? ' → ' + cand : '';
-		return [
-			E('strong', {}, label + ': ' + inst + upd),
-			E('span', { style: 'opacity:.6' }, ' · ')
-		];
-	}
-
-	function applyState() {
-		const configured = !!st.configured;
-		const published = !!st.published;
-		const isApk = (st.pkg_manager === 'apk');
-		statusEl.textContent = isApk
-			? (configured ? _('Update source configured (signing key installed)') : _('Update source is not configured'))
-			: _('Components install as ipk files with sha256 verification (no apk on this system)');
-		statusEl.style.color = (configured || !isApk) ? 'var(--hp-accent-strong)' : 'var(--hp-grey)';
-		let manTxt, manCls;
-		if (published)
-			manTxt = _('Manifest reachable');
-		else if (st.manifest_code && st.manifest_code != '000')
-			manTxt = _('Manifest unreachable (code %s)').format(st.manifest_code);
-		else
-			manTxt = _('The feed manifest is not published yet');
-		manCls = published ? 'hpui-b-green' : (configured ? 'hpui-b-amber' : 'hpui-b-grey');
-		if (published && st.manifest_ts) {
-			const age = Math.max(0, Math.floor(Date.now() / 1000 - st.manifest_ts));
-			manTxt += (st.manifest_fresh ? ' · ' + _('fresh') : ' · ' + _('cached %s min ago')).format(age >= 60 ? Math.floor(age / 60) : age);
-		}
-		manEl.className = 'hpui-badge ' + manCls;
-		manEl.textContent = manTxt;
-		const pk = st.policy || {};
-		const hp = st.helpers_pairing || {};
-		dom.content(pkgLine, [
-			_('Components (installed → offered)') + ': ',
-			...compCell('mosdns', pk.mosdns),
-			...compCell('probe_pool', pk.probe_pool),
-			...compCell('sni_sniffer', pk.sni_sniffer),
-			/* сеанс 198: utls_probe в фиде НЕТ (по контракту — только релиз-
-			 * zips, сеанс 158/Б3); его версия = релиз, под который ставились
-			 * хелперы (маркер бэкенда). */
-			...compCell('utls_probe', { installed: hp.helpers_release || '—', candidate: '—' }),
-			...compCell('byedpi', pk.byedpi),
-			...compCell('zapret2', pk.zapret2)
-		]);
-		renderPairing();
-		/* Session 161: «Set up» is only actionable when the source is NOT
-		 * configured yet (apk systems only) — before this, both buttons were
-		 * always enabled at once (user report, ch.244). */
-		setupBtn.disabled = (!isApk || configured);
-		removeBtn.disabled = !(configured && isApk);
-	}
-
-	const setupBtn = mkBtn(_('Set up the update source'), 'primary', {
-		style: 'margin-left:4px',
-		click: async function() {
-			setupBtn.disabled = true;
-			removeBtn.disabled = true;
-			setMsg(_('Setting up the update source…'), 'grey');
-			const ret = await L.resolveDefault(callFeedSetup(), {});
-			if (ret.result) {
-				st = await L.resolveDefault(callFeedStatus(), {});
-				applyState();
-				setMsg(_('Update source configured — components install as explicit files from the manifest.') + (ret.note ? (' ' + ret.note) : ''), 'green');
-			} else {
-				applyState();
-				setMsg(_('Update source setup failed: ') + (ret.error || _('RPC error')), 'red');
-			}
-		}
-	});
-
-	const removeBtn = mkBtn(_('Remove the update source'), 'danger', {
-		style: 'margin-left:4px',
-		click: async function() {
-			setupBtn.disabled = true;
-			removeBtn.disabled = true;
-			const ret = await L.resolveDefault(callFeedRemove(), {});
-			if (ret.result) {
-				st = await L.resolveDefault(callFeedStatus(), {});
-				applyState();
-				setMsg(_('Update source removed — installs return to the original sources.'), 'green');
-			} else {
-				applyState();
-				setMsg(_('Update source removal failed: ') + (ret.error || _('RPC error')), 'red');
-			}
-		}
-	});
-
-	applyState();
-
-	return E('div', { 'class': 'hpui-panel' }, [
-		E('div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:6px' }, [
-			statusEl,
-			manEl,
-			setupBtn,
-			removeBtn
-		]),
-		pkgLine,
-		pairBox,
-		resultEl
-	]);
-}
+/* §1.7 V2 feed client: с s199 у источника НЕТ пользовательской карточки —
+ * фид стал невидимым каналом доставки: ключ подписи ставит install.sh,
+ * бэкенд дотавливает его лениво перед первой фид-установкой; кнопки
+ * обновления каждого компонента живут в своих карточках (приложение,
+ * mosdns, движки), а плашка-связка «хелперы ↔ версия приложения»
+ * переехала в карточку «Приложение» (buildAppCard). */
 
 return view.extend({
 	load() {
@@ -2303,7 +2171,7 @@ return view.extend({
 		s.description = _('The app itself: check for updates, install or reinstall the package.');
 
 		o = s.option(form.DummyValue, '_app_card');
-		o.default = buildAppCard(appStatus);
+		o.default = buildAppCard(appStatus, feedStatus);
 
 		s = m.section(form.NamedSection, 'config', 'ravnex', _('Core management'));
 		s.anonymous = true;
@@ -2378,15 +2246,11 @@ return view.extend({
 		o = s.option(form.DummyValue, '_multidns_card');
 		o.default = buildMosdnsCard(mdnsStatus, mosdnsStatus);
 
-		/* §1.7 own feed (ревизия ч.265): МОИ пакеты (приложение, mosdns,
-		 * хелперы) и мои сборки движков из оригинальных бинарников. Ядра фидом
-		 * больше НЕ возятся — оригиналы публикуют свои пакеты. */
-		s = m.section(form.NamedSection, 'config', 'ravnex', _('Update source'));
-		s.anonymous = true;
-		s.description = _('Own signed package source for OUR components (the app, mosdns, the automation helpers) and our own apk/ipk packaging of the DPI engines built from the original upstream binaries. Every component installs as an explicit file named by the feed manifest — apk signature-verified on apk systems, sha256-verified on opkg. Nothing is written to repositories.d, so a foreign repository can never out-version our components. The PROXY CORES are no longer delivered through this source: they install from the original upstream releases (SHA256-gated).');
-
-		o = s.option(form.DummyValue, '_feed_card');
-		o.default = buildFeedCard(feedStatus);
+		/* §1.7 own feed (s199): пользовательской карточки «Источник
+		 * обновлений» больше нет — фид = невидимый канал доставки для
+		 * mosdns/хелперов (ключ ставится автоматически); версии и кнопки
+		 * обновления каждого компонента живут в его собственной карточке,
+		 * связка «хелперы ↔ приложение» — в карточке «Приложение» выше. */
 
 		s = m.section(form.NamedSection, 'config', 'ravnex');
 		s.anonymous = true;

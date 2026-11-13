@@ -1924,7 +1924,7 @@ function bus_push(ev) {
 			(length(who) ? ': ' + esc_html(who) : '') +
 			(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_STATUS, key: 'automation:владелец' };
 	if (ev.type === 'heal')
-		return { text: '✅ <b>Автоматизация — самолечение</b>' +
+		return { text: '✅ <b>Автоматизация — снят с обхода</b>' +
 			(length(detail) ? ':\n' + esc_html(detail) : ''), kb: KB_PUSH_STATUS };
 	return { text: '🧠 <b>Автоматизация</b>' + (length(who) ? ': ' + esc_html(who) : '') +
 		(length(detail) ? '\n' + esc_html(detail) : ''), kb: KB_PUSH_STATUS };

@@ -2909,12 +2909,68 @@ function feed_vercmp_base(a, b) {
  * post-check access(). Sibling removal is bounded to the two own
  * families (FEED_SIBLING). The service is NOT restarted here — same
  * contract as before (the caller restarts after a successful install). */
+
+/* s199: установка ключа подписи фида. Жила только за пользовательской
+ * карточкой «Подключить источник» — карточки больше нет (фид = невидимый
+ * канал доставки), поэтому ключ дотавливается ЛЕНИВО: install.sh ставит
+ * его при начальной установке, эта функция закрывает всё остальное
+ * (свежая система, переустановка, снесённый ключ) прямо перед первой
+ * фид-установкой. install.sh дублирует ту же логику на шеле. */
+function feed_ensure_key() {
+	const tmp_key = '/tmp/ravnex-feed.pub';
+	const got = feed_fetch('ravnex-feed.pub', tmp_key, 30000);
+	if (!got.ok) {
+		system(`rm -f ${shellquote(tmp_key)}`);
+		return { ok: false, error: 'не удалось получить ключ источника обновлений ни с одного источника (raw/jsDelivr/зеркало)' };
+	}
+	/* sanity: a PEM public key starts with the header line — the header
+	 * is EXACTLY 26 chars ("-----BEGIN PUBLIC KEY-----"); the old 27-char
+	 * slice compared 27 chars and could never match (a latent V1 bug,
+	 * caught live by the loopback acceptance). */
+	const key_head = substr(trim(readfile(tmp_key) || ''), 0, 26);
+	if (key_head != '-----BEGIN PUBLIC KEY-----') {
+		system(`rm -f ${shellquote(tmp_key)}`);
+		return { ok: false, error: 'полученный файл не является PEM-ключом: ' + got.url };
+	}
+	mkdir('/etc/apk/keys');
+	mkdir('/lib/upgrade/keep.d');
+	/* 🔴 ч.237 (live acceptance): ucode rename(2) CANNOT move a file
+	 * across filesystems — /tmp (tmpfs) → /etc (overlay) fails with
+	 * EXDEV and the key silently never landed (the V1 code did this
+	 * and returned key:true unchecked). Atomic placement ON the
+	 * target fs: writefile to the sibling temp name, rename within
+	 * /etc/apk/keys (same fs → rename works). */
+	system(`rm -f ${shellquote(FEED_KEY_FILE + '.tmp')}`);
+	writefile(FEED_KEY_FILE + '.tmp', readfile(tmp_key) || '');
+	rename(FEED_KEY_FILE + '.tmp', FEED_KEY_FILE);
+	system(`rm -f ${shellquote(tmp_key)}`);
+	if (!access(FEED_KEY_FILE))
+		return { ok: false, error: 'ключ скачан, но не удалось разместить его в /etc/apk/keys' };
+	chmod(FEED_KEY_FILE, 432);
+	/* V1 cleanup: the repositories.d line must never survive — the
+	 * client does not resolve through repositories at all. */
+	if (access(FEED_LIST_LEGACY))
+		system(`rm -f ${shellquote(FEED_LIST_LEGACY)}`);
+	/* keep.d: the key only (survives sysupgrade) */
+	const tmp_keep = FEED_KEEP_FILE + '.tmp';
+	writefile(tmp_keep, FEED_KEY_FILE + '\n');
+	rename(tmp_keep, FEED_KEEP_FILE);
+	return { ok: true, url: got.url };
+}
+
 function feed_install_pkg(pkg) {
 	const pm = feed_pkg_manager();
 	if (!pm)
 		return { result: false, error: 'no supported package manager (apk/opkg)' };
-	if (pm === 'apk' && !access(FEED_KEY_FILE))
-		return { result: false, error: 'ключ фида не установлен — сначала «Подключить источник обновлений»' };
+	let key_note = null;
+	if (pm === 'apk' && !access(FEED_KEY_FILE)) {
+		/* s199: карточки «Подключить источник» больше нет — ключ ставится
+		 * автоматически перед первой фид-установкой. */
+		const ke = feed_ensure_key();
+		if (!ke.ok)
+			return { result: false, error: 'ключ фида не установлен, дотянуть не удалось: ' + ke.error };
+		key_note = 'ключ подписи фида установлен автоматически; ';
+	}
 	const man = feed_manifest(true);
 	if (!man)
 		return { result: false, error: 'манифест фида недоступен (raw/jsDelivr/зеркало не ответили)' };
@@ -2995,7 +3051,7 @@ function feed_install_pkg(pkg) {
 		pm_kill_matched({ exe: respawn_exe }, 3000);
 	try { hc_add_event('update', 'feed', `${pkg} ${entry.version} установлен из источника обновлений`); } catch (e) { /* best-effort */ }
 	return { result: true, version: '' + entry.version, pkg_manager: pm,
-		note: `installed from the update source: ${pkg} ${entry.version}` };
+		note: (key_note ? key_note : '') + `installed from the update source: ${pkg} ${entry.version}` };
 }
 
 /* Сеанс 158/Б6: общая расчётная часть prepare (app_prepare_install и
@@ -10375,7 +10431,7 @@ const methods = {
 			const SAMPLES = {
 				hotswap: '🔄 <b>Hot Swap — смена выхода</b>\nТеперь: <b>Hysteria — Германия TLS</b>\nПричина: узел не отвечал 3 пробы подряд',
 				watchdog: '⛔ <b>URLTest — узел недоступен</b>\nУзел: <b>Vless — Финляндия</b>\n0/3 проб успешны — узел исключён из авто-выбора',
-				learn: '🧠 <b>Автоматизация — самолечение</b>:\nexample.ru добавлен в список обхода (ошибка соединения)',
+				learn: '🧠 <b>Автоматизация — обход</b>:\nexample.ru добавлен в список обхода (ошибка соединения)',
 				service: '✅ <b>Подписки обновлены</b>\n4 узла, изменений: 1',
 				control: '🔒 <b>Контроль</b>: Планшет (192.168.1.50)\nзаблокирован вручную',
 				exec: '⌨ <b>Произвольная команда — результат</b>\nuptime — завершено, код 0 за 1 с',
@@ -10736,59 +10792,26 @@ const methods = {
 			/* V2: the ONLY persistent artifact is the signing key (apk
 			 * systems). opkg systems need no setup — the manifest is fetched
 			 * on demand and the sha256 gate is the verification; say so
-			 * honestly. The ladder (raw → jsDelivr → gh-proxy mirror) covers
-			 * blocked-GitHub routers (Ф11.4). */
+			 * honestly. s199: the user-facing card is gone — this RPC stays
+			 * as the internals behind feed_install_pkg's lazy ensure (and
+			 * for support); the ladder (raw → jsDelivr → gh-proxy mirror)
+			 * covers blocked-GitHub routers (Ф11.4). */
 			const pm = feed_pkg_manager();
 			if (!pm)
 				return { result: false, error: 'no supported package manager (apk/opkg)' };
 			if (pm === 'opkg')
 				return { result: true, pkg_manager: 'opkg', key: false,
 					note: 'apk отсутствует — компоненты ставятся ipk-файлами из манифеста с sha256-проверкой; приложение обновляется с Releases' };
-			const tmp_key = '/tmp/ravnex-feed.pub';
-			const got = feed_fetch('ravnex-feed.pub', tmp_key, 30000);
-			if (!got.ok) {
-				system(`rm -f ${shellquote(tmp_key)}`);
-				return { result: false, error: 'не удалось получить ключ источника обновлений ни с одного источника (raw/jsDelivr/зеркало)' };
-			}
-			/* sanity: a PEM public key starts with the header line — the
-			 * header is EXACTLY 26 chars ("-----BEGIN PUBLIC KEY-----");
-			 * the old 27-char slice compared 27 chars and could never match
-			 * (a latent V1 bug, caught live by the loopback acceptance). */
-			const key_head = substr(trim(readfile(tmp_key) || ''), 0, 26);
-			if (key_head != '-----BEGIN PUBLIC KEY-----') {
-				system(`rm -f ${shellquote(tmp_key)}`);
-				return { result: false, error: 'полученный файл не является PEM-ключом: ' + got.url };
-			}
-			mkdir('/etc/apk/keys');
-			mkdir('/lib/upgrade/keep.d');
-			/* 🔴 ч.237 (live acceptance): ucode rename(2) CANNOT move a file
-			 * across filesystems — /tmp (tmpfs) → /etc (overlay) fails with
-			 * EXDEV and the key silently never landed (the V1 code did this
-			 * and returned key:true unchecked). Atomic placement ON the
-			 * target fs: writefile to the sibling temp name, rename within
-			 * /etc/apk/keys (same fs → rename works). */
-			system(`rm -f ${shellquote(FEED_KEY_FILE + '.tmp')}`);
-			writefile(FEED_KEY_FILE + '.tmp', readfile(tmp_key) || '');
-			rename(FEED_KEY_FILE + '.tmp', FEED_KEY_FILE);
-			system(`rm -f ${shellquote(tmp_key)}`);
-			if (!access(FEED_KEY_FILE))
-				return { result: false, error: 'ключ скачан, но не удалось разместить его в /etc/apk/keys' };
-			chmod(FEED_KEY_FILE, 432);
-			/* V1 cleanup: the repositories.d line must never survive — the
-			 * client does not resolve through repositories at all. */
-			if (access(FEED_LIST_LEGACY))
-				system(`rm -f ${shellquote(FEED_LIST_LEGACY)}`);
-			/* keep.d: the key only (survives sysupgrade) */
-			const tmp_keep = FEED_KEEP_FILE + '.tmp';
-			writefile(tmp_keep, FEED_KEY_FILE + '\n');
-			rename(tmp_keep, FEED_KEEP_FILE);
+			const ke = feed_ensure_key();
+			if (!ke.ok)
+				return { result: false, error: ke.error };
 			/* prime the manifest cache (small file, bounded ladder) so the
-			 * card shows candidates immediately */
+			 * consumers show candidates immediately */
 			feed_manifest(true);
 			feed_probe_cache = { ts: 0, code: '000', url: null };
 			try { hc_add_event('update', 'feed', 'источник обновлений подключён: ключ подписи установлен'); } catch (e) { /* best-effort */ }
 			return {
-				result: true, url: got.url, key: true,
+				result: true, url: ke.url, key: true,
 				note: 'ключ подписи установлен; пакеты ставятся явными файлами по manifest.json (repositories.d не пишется)'
 			};
 		}

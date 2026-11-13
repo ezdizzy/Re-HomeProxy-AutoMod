@@ -5079,7 +5079,23 @@ echo done > "$PRE.done"
 							st.next_due = now + 600;
 						}
 					} else if (d_ok) {
-						st.heal = int(st.heal || 0) + 1;
+						/* s199 pain-aware heal: юзер долбит хост прямо сейчас
+						 * (свежий sight >= HOT_MIN_FREQ за 10 мин) — серия heal
+						 * не копится: снятие с обхода при активной боли ломает
+						 * пользователю сайт, который движку «доступен» одиночной
+						 * пробой (curl отличается от браузера: mid-stream
+						 * QUIC-киллы и много-коннные загрузки проба не видит —
+						 * живой кейс myspace/CDN 2026-11-13). Запись остаётся
+						 * в обходе — безопасно и обратимо; серия перезапустится,
+						 * когда боль утихнет. */
+						const hl_sight = ((now - int(st.sight_t || 0)) < 600) ? int(st.sight || 0) : 0;
+						if (hl_sight >= HOT_MIN_FREQ) {
+							st.heal = 0;
+							st.next_due = now + HEAL_SERIES_GAP;
+							log('heal deferred (user pain is fresh, stays on bypass): ' + h);
+						} else {
+							st.heal = int(st.heal || 0) + 1;
+						}
  					if (st.heal >= HEAL_CONFIRM) {
  							/* B5.15: атомарный heal — список + статус + счётчики. */
  							delete lst[h];
@@ -5123,7 +5139,7 @@ echo done > "$PRE.done"
  				write_auto_ip_list(auto_ip_set);
 				if (healed_auth)
 					sync_auth_families();   /* B5.15b: family без основания умирает */
- 				log('self-healed (answers direct again): ' + join(', ', healed));
+ 				log('self-healed (answers direct again — removed from bypass): ' + join(', ', healed));
  				eng_event('heal', join(', ', healed));
  				{
  					/* G5: хосты, чей heal снял флап-эпизод, на шину не идут —
@@ -5138,8 +5154,8 @@ echo done > "$PRE.done"
  					let hd = join(', ', slice(shown, 0, 8)) + ((length(shown) > 8) ? ' …+' + (length(shown) - 8) : '');
  					if (nsup > 0)
  						hd += ' · +' + nsup + ' нестабильных (подавлено)';
- 					if (length(shown) || nsup)
- 						ev_auto('heal', 'самолечение: ' + (length(shown) + nsup), hd);
+					if (length(shown) || nsup)
+						ev_auto('heal', 'снят с обхода: ' + (length(shown) + nsup), hd);
  				}
  				pending_reload = true;
  			}
