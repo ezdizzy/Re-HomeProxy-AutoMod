@@ -1252,9 +1252,11 @@ let ru_rules = [];
  * core_rule_map contract (first ENABLED rule per source in UCI file order,
  * sentinel.uc uci_rule_nodes): the classic hp-ru-<src>-out tag belongs to it. */
 let ru_uci_first = {};
+let ru_rule_count = {};
 uci.foreach(uciconfig, ucirurule, (cfg) => { if (cfg.enabled === '1') {
 	if (ru_uci_first['' + cfg.source] == null)
 		ru_uci_first['' + cfg.source] = '' + cfg.node;
+	ru_rule_count['' + cfg.source] = int(ru_rule_count['' + cfg.source] || 0) + 1;
 	push(ru_rules, cfg); } });
 ru_rules = sort(ru_rules, (a, b) => ru_source_priority(a.source) - ru_source_priority(b.source));
 
@@ -1370,6 +1372,52 @@ if (!isEmpty(main_node)) {
 				return (zapret_enabled === '1') ? 'secure-dns' : null;
 			return 'secure-dns';
 		};
+		/* s204 (ч.292): EXIT-GEO DNS для proxy-источников. Механизм доказан
+		 * A/B 2026-11-13 (тот же браузер, тот же выход: Global = «мгновенно»,
+		 * правила = тормоза/шторм): в правилах media-CDN (googlevideo и т.п.)
+		 * резолвился RU-пулом (mosdns/secure-dns direct) → края по гео RU,
+		 * а ехали через зарубежный выход → подписанные CDN-редиректы на
+		 * RU-края (mip=RU WAN), часть краёв из-под выхода мертва, антибот
+		 * YouTube вешает пеню на сессию. Лечение: proxy-источник резолвится
+		 * DoH СКВОЗЬ СВОЙ ВЫХОД (detour = outbound правила) — Google видит
+		 * гео выхода и отдаёт правильные края (как в Global: «remote DNS
+		 * through the tunnel», и как у телефона: серверный DNS). Engines
+		 * (Zapret/ByeDPI) диалют resolved IP сами и воюют с TSPU на RU-краях
+		 * — им вид RU НУЖЕН, не трогаем. Тег detour предсказывается БЕЗ
+		 * has_outbound/hp_tag_owner (урок 405: объявлены ПОЗЖЕ) — только
+		 * ГАРАНТИРОВАННЫЕ случаи: (а) node main-out/tgws-out → 'main-out'
+		 * (когда main_node не Direct); (б) у источника РОВНО одно включённое
+		 * правило → классический 'hp-ru-<src>-out' (клеймить его больше
+		 * некому). Мульти-выходные источники честно остаются на secure-dns
+		 * (регресса нет — расширение в копилку). Резолвер = пользовательский
+		 * secure-провайдер IP-литералом (нечего бутстрапить; UDP-bootstrap
+		 * через TCP-only naive не живёт — класс secure_bootstrap). */
+		const ru_exit_dns_of = (cfg) => {
+			const n = cfg.node || 'main-out';
+			const src = '' + cfg.source;
+			if (n === 'zapret-out' || n === 'byedpi-out')
+				return null;
+			if (src === 'refilter' || src === 'russia-inside')
+				return null;
+			if (int(ru_rule_count[src] || 0) !== 1)
+				return null;
+			let detour = null;
+			if (n === 'main-out' || n === 'tgws-out')
+				detour = (main_node !== 'direct-out') ? 'main-out' : null;
+			else
+				detour = 'hp-ru-' + src + '-out';
+			if (detour == null)
+				return null;
+			const url = secure_ip_literal(secure_dns_server);
+			if (isEmpty(url) || index(url, 'https://') !== 0)
+				return null;
+			const u = parseURL(url);
+			if (u == null || isEmpty(u.hostname) ||
+			    !(validation('ip4addr', u.hostname) || validation('ip6addr', u.hostname)))
+				return null;
+			return { tag: 'exit-dns-' + src, detour: detour, url: url };
+		};
+		let seen_exit_dns = {};
 		/* сеанс 187: НЕГАТИВНЫЙ СТИРИНГ YouTube — мёртвые пулы (dead_whole
 		 * из каталога свипов /var/run/ravnex/zapret_pools.json, свежесть ≤48 ч,
 		 * деривация = yt_steer.uc steer_pools, СЕЛФТЕСТ-гейт модуля) отвергаются
@@ -1458,9 +1506,21 @@ if (!isEmpty(main_node)) {
 			}
 		}
 		for (let cfg in ru_rules) {
-			const dnst = ru_dns_target_of(cfg);
+			/* s204 (ч.292): proxy-источники резолвятся exit-geo (DoH сквозь
+			 * свой выход); engines/деградировавшие случаи — прежний secure-dns
+			 * (ru_exit_dns_of возвращает null → легаси-путь ниже без изменений). */
+			const exitd = ru_exit_dns_of(cfg);
+			const dnst = exitd ? exitd.tag : ru_dns_target_of(cfg);
 			if (!dnst)
 				continue;
+			if (exitd && !seen_exit_dns[exitd.tag]) {
+				seen_exit_dns[exitd.tag] = true;
+				push(config.dns.servers, {
+					tag: exitd.tag,
+					detour: exitd.detour,
+					...parse_dnsserver(exitd.url, 'tcp')
+				});
+			}
 			const inline_dns = hp_remote_preferred(cfg.source) ? null : hp_service_inline_domains(cfg.source);
 			if (inline_dns)
 				push(config.dns.rules, {
