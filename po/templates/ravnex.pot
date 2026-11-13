@@ -8434,6 +8434,15 @@ msgstr ""
 msgid "QUIC: reachable"
 msgstr ""
 
+msgid "QUIC→TCP"
+msgstr ""
+
+msgid "UDP/443 is rejected in the core for this host — the browser is kept on TCP (HTTP/3 was dying mid-stream on this path)"
+msgstr ""
+
+msgid "QUIC drop: UDP/443 is rejected for these hosts (bypass lane + sticky pain-cycle flag) — browsers fall back to TCP instantly"
+msgstr ""
+
 msgid "QUIC: likely cut"
 msgstr ""
 

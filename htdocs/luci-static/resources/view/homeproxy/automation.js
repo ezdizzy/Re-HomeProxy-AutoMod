@@ -1242,6 +1242,14 @@ return view.extend({
 			return ' · ' + s;
 		}
 
+		/* сеанс 200 QUIC-drop: UDP/443 к хосту роняется в ядре (обходная нога +
+		 * липкий флаг болезненного цикла). Не зависит от quic-фактов: флаг
+		 * переживает снятие с обхода, факты при нём стираются — показываем
+		 * честно и отдельно. */
+		function quicDropText(e) {
+			return e.quic_drop ? (' · ' + _('UDP/443 is rejected in the core for this host — the browser is kept on TCP (HTTP/3 was dying mid-stream on this path)')) : '';
+		}
+
 		function reasonText(e) {
 			/* Ф6.6/B5.17: причина снятия записи (единая валидация IP). */
 			if (e.src === 'dropped') {
@@ -1293,12 +1301,12 @@ return view.extend({
 					return (kind || _('blocked (details not recorded)')) +
 						(e.rkn_hint ? ' · ' + _('also present in the local registry lists (%s) — likely a registry block, not necessarily DPI').format(e.rkn_hint) : '') +
 						(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '') +
-						provText(e) + quicText(e) + pend + flap;
+						provText(e) + quicText(e) + quicDropText(e) + pend + flap;
 				let d = e.direct || '✗', p = e.proxy || '✓';
 				return (kind ? (kind + ' · ') : '') + _('direct %s ✗ / proxy %s ✓').format(d, p) +
 					(e.rkn_hint ? ' · ' + _('also present in the local registry lists (%s) — likely a registry block, not necessarily DPI').format(e.rkn_hint) : '') +
 					(e.learn_method === 'tcp' ? ' · ' + _('learned via TCP probe') : '') +
-					provText(e) + quicText(e) + pend + flap;
+					provText(e) + quicText(e) + quicDropText(e) + pend + flap;
 			}
 			if (e.status === 'blocked_no_proxy') return _('blocked both ways');
 			if (e.status === 'unknown') return _('uncertain');
@@ -1614,6 +1622,10 @@ return view.extend({
 			}
 			if ((v.quic_measured || 0) > 0)
 				quicParts.unshift('measured:' + v.quic_measured);
+			/* сеанс 200 QUIC-drop: сколько хостов держится на TCP ядром. */
+			const qdropN = v.quic_dropped || 0;
+			if (qdropN > 0)
+				quicParts.push('qdrop:' + qdropN);
 			const quicSig = quicParts.join('|');
 			parts.push.apply(parts, quicParts);
 			const kdSig = parts.join('|');
@@ -1645,6 +1657,11 @@ return view.extend({
 							title: _('QUIC lane (UDP/443), probe_pool -quic-check; silence is a LIKELY cut, not proof') },
 							[ QUIC_BADGES[qk][1] + ' ' + qn ]));
 				}
+				/* сеанс 200 QUIC-drop: хосты, чей UDP/443 роняется ядром. */
+				if (qdropN > 0)
+					engKinds.appendChild(E('span', { 'class': 'hpbadge hpb-type',
+						title: _('QUIC drop: UDP/443 is rejected for these hosts (bypass lane + sticky pain-cycle flag) — browsers fall back to TCP instantly') },
+						[ _('QUIC→TCP') + ' ' + qdropN ]));
 				if (!parts.length)
 					engKinds.appendChild(E('span', { 'class': 'hpauto-cap' }, [ _('no data yet') ]));
 			}

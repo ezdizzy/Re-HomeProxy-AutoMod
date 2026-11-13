@@ -374,7 +374,7 @@ function learned_ip_env_hp() {
 	return { special: is_special_ip };
 }
 
-export function sync_learned_rulesets(res_dir) {
+export function sync_learned_rulesets(res_dir, extra_drop) {
 	let res = res_dir || (HP_DIR + '/resources');
 	system('mkdir -p ' + shellQuote(res));
 	/* Ф4.1: every entry decision goes through classify_entry() — one classifier
@@ -525,8 +525,34 @@ export function sync_learned_rulesets(res_dir) {
 		rules: length(aip_arr) ? [ { ip_cidr: aip_arr } ] : []
 	});
 
+	/* s200 QUIC-drop: транспортная семантика обхода. Хост обходной ноги ездит
+	 * через прокси ПО TCP — QUIC (UDP/443) сквозь socks-ногу не едет никогда,
+	 * любой браузерный h3-заход идёт СЫРЫМ direct'ом, где провайдер режет потоки
+	 * посреди стрима (живой класс myspace 2026-11-13: VN-щуп говорит «alive»,
+	 * браузер ловит ERR_QUIC на каждом втором запросе). UDP/443 к этим доменам
+	 * роняется в ядре (route-reject рядом с per-origin googlevideo) → браузер
+	 * мгновенно падает на TCP, который едет по обходной ноге. Watched-файл:
+	 * hot-reload вместе с learned-набором. Статические KEYWORD-записи сознательно
+	 * НЕ входят (подстрочная семантика роняла бы QUIC целым чужим семействам);
+	 * входят learned + ручные пины + www-apex (точная suffix-семантика) и
+	 * extra_drop — хосты с липким state-флагом st.quic_drop (болезненный цикл
+	 * переучивания: флаг держит хост в drop-наборе на ЛЮБОЙ ноге, пока жива
+	 * запись — иначе «heal снял → QUIC-боль → pain вернул» не кончается). */
+	let qdrop = [];
+	for (let i, d in learned_domains)
+		push(qdrop, d);
+	if (extra_drop != null)
+		for (let i, d in extra_drop)
+			if (index(qdrop, d) < 0)
+				push(qdrop, d);
+	write_ruleset_file(res + '/auto_quic_drop.json', {
+		version: 1,
+		rules: length(qdrop) ? [ { domain_suffix: qdrop } ] : []
+	});
+
 	return { domains: length(domains) + length(learned_domains),
-		manual_ips: length(mip_arr), auto_ips: length(aip_arr), dropped: drops };
+		manual_ips: length(mip_arr), auto_ips: length(aip_arr), dropped: drops,
+		quic_domains: length(qdrop) };
 };
 
 /* ── Ф4.2 (U7) User list sync ────────────────────────────────────────────────
@@ -1240,6 +1266,34 @@ export function selftest() {
 			length(j14.rules[1].domain_suffix) === 2 &&
 			j14.rules[1].domain_suffix[0] === 'www.linkedin.com' &&
 			j14.rules[1].domain_suffix[1] === 'linkedin.com');
+
+		/* s200 QUIC-drop: drop-набор = learned+пины+apex (suffix-семантика),
+		 * keyword-статика НЕ входит, extra (state-флаги) сливается без дублей,
+		 * пустой набор = валидный пустой rules (прецедент manual_ip.json) */
+		writefile(dir + '/proxy_list.txt', '');
+		writefile(dir + '/manual_proxy.txt', '');
+		writefile(dir + '/auto_proxy_list.txt', 'myspace.com\n');
+		writefile(dir + '/auto_proxy_ip.txt', '');
+		let rq1 = sync_learned_rulesets(dir);
+		let jq1 = rj('auto_quic_drop.json');
+		ok('quicdrop learned only', rq1.quic_domains === 1 && jq1 && jq1.rules[0] &&
+			length(jq1.rules[0].domain_suffix) === 1 && jq1.rules[0].domain_suffix[0] === 'myspace.com');
+		writefile(dir + '/proxy_list.txt', 'youtube\n');
+		writefile(dir + '/manual_proxy.txt', 'pinned.example\n');
+		let rq2 = sync_learned_rulesets(dir, [ 'flagged.host' ]);
+		let jq2 = rj('auto_quic_drop.json');
+		ok('quicdrop merge extras', rq2.quic_domains === 3 && jq2 && jq2.rules[0] &&
+			index(jq2.rules[0].domain_suffix, 'flagged.host') >= 0 &&
+			index(jq2.rules[0].domain_suffix, 'pinned.example') >= 0 &&
+			index(jq2.rules[0].domain_suffix, 'myspace.com') >= 0 &&
+			index(jq2.rules[0].domain_suffix, 'youtube') < 0);
+		writefile(dir + '/proxy_list.txt', '');
+		writefile(dir + '/manual_proxy.txt', '');
+		writefile(dir + '/auto_proxy_list.txt', '');
+		let rq3 = sync_learned_rulesets(dir);
+		let jq3 = rj('auto_quic_drop.json');
+		ok('quicdrop empty valid', rq3.quic_domains === 0 && jq3 &&
+			type(jq3.rules) === 'array' && length(jq3.rules) === 0);
 
 		/* повреждённый список: sync выживает, JSON остаётся ВАЛИДНЫМ (ядро не
 		 * получает битый rule-set), валидные соседи-строки выживают */

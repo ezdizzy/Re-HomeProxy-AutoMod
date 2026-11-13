@@ -3005,6 +3005,22 @@ if (!isEmpty(main_node)) {
 		path: HP_DIR + '/resources/manual_ip.json'
 	});
 
+	/* s200 QUIC-drop: транспорт обхода. Хост обходной ноги едет прокси ПО TCP —
+	 * браузерный QUIC (UDP/443) сквозь socks-ногу не едет никогда, он идёт сырым
+	 * direct'ом, где h3-потоки режутся посреди стрима (живой класс myspace
+	 * 2026-11-13: VN-щуп «alive», браузер ловит ERR_QUIC). Reject-правило ниже
+	 * (рядом с per-origin googlevideo) роняет UDP/443 к этим доменам → браузер
+	 * мгновенно падает на TCP, который едет по обходной ноге. WATCHED-файл пишет
+	 * sync_learned_rulesets() (+ state-флаги st.quic_drop сливает демон) —
+	 * hot-reload вместе с learned-набором. Always emitted (пустой = no-op,
+	 * пустой rules[] валиден — прецедент manual-ip). */
+	push(config.route.rule_set, {
+		type: 'local',
+		tag: 'auto-quic-drop',
+		format: 'source',
+		path: HP_DIR + '/resources/auto_quic_drop.json'
+	});
+
 	/* Ф4.2 (U7): user list rule-set files (watched, one per list) — declared
 	 * in user_list_prepare() at rule emission time below. */
 
@@ -3105,6 +3121,15 @@ if (!isEmpty(main_node)) {
 		 * «Подключение» описывает это честно. */
 		push(config.route.rules, {
 			domain_suffix: ['googlevideo.com'],
+			network: 'udp',
+			port: [443],
+			action: 'reject'
+		});
+		/* s200 QUIC-drop для обходной ноги — см. комментарий у декларации
+		 * 'auto-quic-drop' выше. Пользовательские advanced-правила ВЫШЕ остаются
+		 * старше (своё UDP-правило юзера побеждает reject — first-match-wins). */
+		push(config.route.rules, {
+			rule_set: 'auto-quic-drop',
 			network: 'udp',
 			port: [443],
 			action: 'reject'

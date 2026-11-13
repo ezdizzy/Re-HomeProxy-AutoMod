@@ -8457,6 +8457,15 @@ msgstr "Нестабилен"
 msgid "QUIC: reachable"
 msgstr "QUIC: жив"
 
+msgid "QUIC→TCP"
+msgstr "QUIC→TCP"
+
+msgid "UDP/443 is rejected in the core for this host — the browser is kept on TCP (HTTP/3 was dying mid-stream on this path)"
+msgstr "UDP/443 к этому хосту роняется в ядре — браузер держим на TCP (HTTP/3 на этом пути умирал посреди потока)"
+
+msgid "QUIC drop: UDP/443 is rejected for these hosts (bypass lane + sticky pain-cycle flag) — browsers fall back to TCP instantly"
+msgstr "QUIC-drop: UDP/443 роняется для этих хостов (обходная нога + липкий флаг болезненного цикла) — браузер мгновенно падает на TCP"
+
 msgid "QUIC: likely cut"
 msgstr "QUIC: вероятно срезан"
 

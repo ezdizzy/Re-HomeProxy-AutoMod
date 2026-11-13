@@ -122,6 +122,11 @@ const REEVAL_BATCH = 2;
 const REEVAL_BATCH_IP = 2;      /* separate IP budget (B5.9: IP-список не голодает) */
 const HEAL_CONFIRM = 3;
 const HEAL_SERIES_GAP = 900;    /* быстрая серия: следующая проверка через 15 мин */
+/* s200: бюджет отсрочек pain-aware heal (s199). Дефер не может быть вечным:
+ * боль свежа ровно потому, что юзер страдает на (возможно, сломанной) обходной
+ * ноге — вечный сброс серии = вечный deadlock. После HEAL_DEFER_MAX отсрочек
+ * серия завершается честно (каждый отложенный проход заново мерил direct). */
+const HEAL_DEFER_MAX = 2;
 const HEAL_POLL = 300;          /* такт планировщика fast-серии (5 мин) */
 const PTR_BATCH = 12;           /* фоновый rDNS-свип за часовой цикл (B5.17) */
 
@@ -2291,6 +2296,28 @@ function main() {
 	 * therefore declared here, BEFORE the probe helper definitions below. */
 	let state = load_state();
 
+	/* ── s200 QUIC-drop: хосты с липким флагом st.quic_drop ──
+	 * Флаг ставится на обеих сторонах болезненного цикла (pain-override learn
+	 * при живом QUIC-факте; heal-завершение при живом QUIC + свежей боли) —
+	 * сигнатура класса «mid-stream QUIC-киллы» (myspace 2026-11-13: TCP-пробы
+	 * проходят, браузерный h3 режется посреди стрима, боль гоняет хост между
+	 * ногами). Держит UDP/443-reject для хоста на ЛЮБОЙ ноге, пока жива запись
+	 * (prune снимет вместе с ней), иначе цикл «heal снял → QUIC-боль → pain
+	 * вернул» не кончается никогда. ВАЖНО: helper объявлен СРАЗУ после state
+	 * (урок 405 — лексическая резолюция: ранние вызовы в purge-пути видят
+	 * только то, что объявлено текстуально раньше). */
+	function quic_drop_extras() {
+		let out = [];
+		for (let h in keys(state)) {
+			if (substr(h, 0, 2) === '__')
+				continue;
+			const s = state[h];
+			if (type(s) === 'object' && s.quic_drop)
+				push(out, h);
+		}
+		return out;
+	}
+
 	/* Ф6.6/B5.17: причина удаления записи — в state для UI (automation.js
 	 * показывает её в колонке «Почему») + событие в ленту (только при СМЕНЕ
 	 * причины — conntrack-шум не спамит ленту каждый проход). Запись
@@ -3406,10 +3433,10 @@ echo done > "$PRE.done"
 			if (ip_dropped > 0)
 				write_auto_ip_list(auto_ip_set);
 			/* Ф8-F3: the shrunken learned set must reach the watched rule-set
-			 * files the same way a fresh learn does — regenerate them and flush
-			 * the DNS cache NOW. do_reload()'s pending_reload gate cannot be
-			 * used here: the startup sequence resets that flag after this. */
-			sync_learned_rulesets();
+		 * files the same way a fresh learn does — regenerate them and flush
+		 * the DNS cache NOW. do_reload()'s pending_reload gate cannot be
+		 * used here: the startup sequence resets that flag after this. */
+			sync_learned_rulesets(null, quic_drop_extras());
 			dns_flush_main();
 			log('applied purge of covered hosts to the core (hot reload)');
 		}
@@ -3534,13 +3561,13 @@ echo done > "$PRE.done"
 			 * auto_ip.json). Both cores auto-reload a `type: local` rule-set on file
 			 * change, so learned sites apply to NEW connections immediately — no service
 			 * restart, no dropped connections. In-flight flows keep their route. */
-			let r = sync_learned_rulesets();
+			let r = sync_learned_rulesets(null, quic_drop_extras());
 			/* Flush the router's DNS cache so LAN clients re-resolve learned
 			 * domains immediately instead of serving stale (often forged)
 			 * answers until their old TTL expires - this is the dominant part
 			 * of the "site works only minutes later" delay. */
 			dns_flush_main();
- 			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && (r.auto_ips != null ? r.auto_ips : r.ips)) || 0) + ' ips' + ((r && r.dropped) ? (', ' + r.dropped + ' invalid dropped') : '') + '.');
+ 			log('applied learned list (hot reload, no restart): ' + ((r && r.domains) || 0) + ' domains, ' + ((r && (r.auto_ips != null ? r.auto_ips : r.ips)) || 0) + ' ips' + ((r && r.dropped) ? (', ' + r.dropped + ' invalid dropped') : '') + ((r && r.quic_domains != null) ? (', quic-drop ' + r.quic_domains) : '') + '.');
  			eng_event('reload', ((r && r.domains) || 0) + ' dom / ' + ((r && (r.auto_ips != null ? r.auto_ips : r.ips)) || 0) + ' ip (hot)' + ((r && r.dropped) ? (', ' + r.dropped + ' dropped') : ''));
  			/* Ф2.4: one aggregated bus record per apply — a learn burst must
  			 * not flood the LuCI journal / the TG chat with per-host rows. */
@@ -3559,7 +3586,7 @@ echo done > "$PRE.done"
 			log('regenerate FAILED - see ' + RUN_DIR + '/generate_client.log');
 			return; /* do NOT reload onto a broken/absent config */
 		}
-		sync_learned_rulesets();
+		sync_learned_rulesets(null, quic_drop_extras());
  		log('applying learned list - restarting service to load new config.');
  		eng_event('reload', 'service reload');
  		ev_learn_flush('применение с перезапуском', state);
@@ -4688,6 +4715,14 @@ echo done > "$PRE.done"
 						fst.proxy = (fwave[f.i] || pwave[f.pwi] || {}).code || '200';
 						fst.added = time();
 						fst.learn_method = 'http';
+						/* s200: pain-override при живом QUIC-факте = сигнатура класса
+						 * «mid-stream QUIC-киллы» (myspace: TCP-пробы проходят, браузерный
+						 * h3 режется, боль возвращает хост на обход, где прокси-нога не
+						 * лучше). Липкий флаг держит UDP/443-reject для хоста на ЛЮБОЙ
+						 * ноге — после честного heal-снятия QUIC-боль не вернёт его. */
+						if (type(fst.quic) === 'object' && (fst.quic.v === 'alive' || fst.quic.v === 'vn'))
+							fst.quic_drop = 1;
+						delete fst.heal_defers;
 						fst.pain_passes = 0;
 						fst.sight = 0;
 						delete fst.pain_burst;
@@ -5088,17 +5123,36 @@ echo done > "$PRE.done"
 						 * живой кейс myspace/CDN 2026-11-13). Запись остаётся
 						 * в обходе — безопасно и обратимо; серия перезапустится,
 						 * когда боль утихнет. */
-						const hl_sight = ((now - int(st.sight_t || 0)) < 600) ? int(st.sight || 0) : 0;
-						if (hl_sight >= HOT_MIN_FREQ) {
-							st.heal = 0;
-							st.next_due = now + HEAL_SERIES_GAP;
-							log('heal deferred (user pain is fresh, stays on bypass): ' + h);
-						} else {
-							st.heal = int(st.heal || 0) + 1;
-						}
+ 						const hl_sight = ((now - int(st.sight_t || 0)) < 600) ? int(st.sight || 0) : 0;
+ 						if (hl_sight >= HOT_MIN_FREQ && int(st.heal_defers || 0) < HEAL_DEFER_MAX) {
+ 							st.heal = 0;
+ 							st.heal_defers = int(st.heal_defers || 0) + 1;
+ 							st.next_due = now + HEAL_SERIES_GAP;
+ 							log('heal deferred (user pain is fresh, stays on bypass, defer ' + st.heal_defers + '/' + HEAL_DEFER_MAX + '): ' + h);
+ 						} else {
+ 							if (hl_sight >= HOT_MIN_FREQ) {
+ 								/* s200: бюджет отсрочек исчерпан — каждая отложенная серия
+ 								 * заново мерила direct (d_ok), доказательство уже накоплено;
+ 								 * завершаем ЧЕСТНО вместо вечного сброса: дефер s199 мог
+ 								 * держать хост на сломанной обходной ноге вечно — боль
+ 								 * свежа ровно потому, что юзер страдает на этой ноге
+ 								 * (живой deadlock myspace 2026-11-13). */
+ 								st.heal = HEAL_CONFIRM;
+ 								log('heal forced (defer budget spent, direct kept confirming): ' + h);
+ 							} else {
+ 								st.heal = int(st.heal || 0) + 1;
+ 							}
+ 						}
  					if (st.heal >= HEAL_CONFIRM) {
  							/* B5.15: атомарный heal — список + статус + счётчики. */
- 							delete lst[h];
+ 							/* s200: снятие с обхода хоста с живым QUIC-фактом и свежей
+ 							 * болью = та же сигнатура метели с другой стороны: липкий
+ 							 * флаг держит UDP/443-reject и на прямой ноге, иначе
+ 							 * QUIC-боль вернёт хост на обход (цикл myspace). */
+ 							if (type(st.quic) === 'object' && (st.quic.v === 'alive' || st.quic.v === 'vn') &&
+ 							    ((now - int(st.pain_burst || 0)) < 600 || int(st.sight || 0) >= HOT_MIN_FREQ))
+ 								st.quic_drop = 1;
+  							delete lst[h];
  							st.status = 'direct';
  							st.confirms = 0;
  							st.heal = 0;
@@ -5106,6 +5160,7 @@ echo done > "$PRE.done"
  							delete st.quic;
  							delete st.quic_kind;
  							delete st.quic_note;
+ 							delete st.heal_defers;
  							delete st.dconfirms;
  							delete st.recheck_n;
  							delete st.recheck_t;
@@ -5373,12 +5428,18 @@ echo done > "$PRE.done"
 			/* сеанс 198 G3: QUIC-контраст — счётные классы второй лейны
 			 * (панель «Вердикты»); отсутствующее = не измерено. */
 			quic_kinds: { tcp_only_block: 0, blocked_both: 0, quic_dead: 0 },
-			quic_measured: 0 };
+			quic_measured: 0,
+			/* s200: хосты с UDP/443-reject (обходная нога + липкий флаг;
+			 * FILE-набор может быть на пару www-apex шире — счётчик честно
+			 * считает только записи с состоянием). */
+			quic_dropped: 0 };
 		for (let h in keys(state)) {
 			if (h === '__dns_offset') continue;
 			const st = state[h];
 			if (type(st) !== 'object') continue;
 			const s = st.status || '';
+			if (st.quic_drop || auto_set[h] || manual_proxy_set[h])
+				v.quic_dropped++;
 			if (s === 'blocked') {
 				v.blocked++;
 				const k = st.block_kind || '';
