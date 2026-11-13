@@ -1551,25 +1551,33 @@ return view.extend({
 				const opt = mSrc.querySelector('option[value="' + src + '"]');
 				const mass = !!(opt && opt.getAttribute('data-mass') === '1');
 				/* Mass layer opt-in (user decision): one honest confirmation —
-				 * big aggregates cost real memory on the router. */
-				if (mass && !window.confirm(_('Mass list: big aggregates (hundreds of thousands of entries) cost real router memory and are never enabled by default. Add the row anyway?')))
-					return;
-				mShow.disabled = true;
-				callPresetPinSet(src, '1').then(function(r) {
-					mShow.disabled = false;
-					if (!r || r.result === false) {
+				 * big aggregates cost real memory on the router. The themed
+				 * modal (one modal pattern) replaces the native confirm. */
+				const doShow = function() {
+					mShow.disabled = true;
+					callPresetPinSet(src, '1').then(function(r) {
+						mShow.disabled = false;
+						if (!r || r.result === false) {
+							dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
+								[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
+							return;
+						}
+						if (state.pins.indexOf(src) < 0)
+							state.pins.push(src);
+						mForm.style.display = 'none';
 						dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-							[ _('Failed: ') + ((r && r.error) || _('RPC error')) ]));
-						return;
-					}
-					if (state.pins.indexOf(src) < 0)
-						state.pins.push(src);
-					mForm.style.display = 'none';
-					dom.content(checkResult, E('p', { 'class': 'hpui-hint' },
-						[ _('The list is in the rows below — pick the route there. While "No rule" is picked, nothing is routed for it.') ]));
-					renderPresets(state.lastList);
-					fillCatalog();
-				}).catch(function() { mShow.disabled = false; });
+							[ _('The list is in the rows below — pick the route there. While "No rule" is picked, nothing is routed for it.') ]));
+						renderPresets(state.lastList);
+						fillCatalog();
+					}).catch(function() { mShow.disabled = false; });
+				};
+				if (mass) {
+					hp.confirmModal(_('Mass list'),
+						_('Mass list: big aggregates (hundreds of thousands of entries) cost real router memory and are never enabled by default. Add the row anyway?'), _('Add'))
+						.then(function(ok) { if (ok) doShow(); });
+					return;
+				}
+				doShow();
 			});
 			mBtn.addEventListener('click', function() {
 				if (mForm.style.display === 'none') {

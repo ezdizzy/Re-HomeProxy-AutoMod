@@ -376,7 +376,10 @@ return view.extend({
 			_('The main switch: whether Ravnex accepts incoming connections at all. Each server below is one endpoint other devices connect to — your own phone away from home, a friend, or a second router.'));
 		o.rmempty = false;
 		o.onchange = function(ev, section_id, value) {
-			return Promise.resolve(this.map.save(null, true)).catch(function() {});
+			const anchor = ev && ev.target;
+			return Promise.resolve(this.map.save(null, true)).then(function() {
+				hp.instantSavedNote(anchor, _('Saved — takes effect at the next service restart.'));
+			}).catch(function() {});
 		};
 
 		/* ── Panel 2: quick server wizard ───────────────────────────────── */

@@ -367,7 +367,8 @@ return view.extend({
 
 		let o = s.option(form.Flag, 'enabled', _('Enable automation'),
 			_('Automatically learn blocked sites: traffic that fails directly but works through the proxy is added to the Routing Rules lists. Fully compatible with ByeDPI and Zapret — learned sites simply use your configured main path.<br>'
-			+ '<b>Mode notes:</b> active only in "Bypass blocking". Automatically paused in "Everything through node" (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in "Direct" mode (all mechanisms are off).'));
+			+ '<b>Mode notes:</b> active only in "Bypass blocking". Automatically paused in "Everything through node" (everything tunnels anyway, nothing to learn), while the Main node is Direct (no proxy side to verify against), and in "Direct" mode (all mechanisms are off).<br>'
+			+ '<b>How saving works here:</b> this switch and the expert settings apply after «Save & Apply» at the bottom of the page; the auto-pilot panel and the steering toggle below save instantly with their own buttons.'));
 		o.rmempty = false;
 
 		/* The expert section: SAME UCI section, every knob hidden by default. */
@@ -876,18 +877,24 @@ return view.extend({
 		const steerClear = E('button', { 'class': 'hpui-btn hpui-btn-ghost hpui-btn-sm', type: 'button' },
 			[ _('Forget learned pools') ]);
 		steerClear.addEventListener('click', function() {
-			if (!window.confirm(_('Forget the learned dead YouTube pools? The core config regenerates (a short connection blip); an ALIVE pool will not be re-learned (the content guard), a dead one returns on its own within minutes.')))
-				return;
-			steerClear.disabled = true;
-			resultNote(steerNote, true, _('Applying…'));
-			L.resolveDefault(callYtSteerLearnedClear(), {}).then(function(r) {
-				steerClear.disabled = false;
-				if (r && r.result === true) {
-					resultNote(steerNote, true, _('Learned pools forgotten — the config is regenerated.'));
-					return;
-				}
-				resultNote(steerNote, false, _('Failed: ') + ((r && r.error) || _('rpc error')));
-			});
+			/* сеанс 198 (audit tail): the themed modal (one modal pattern)
+			 * replaces the native confirm; a dismiss takes no action. */
+			hp.confirmModal(_('Forget learned pools'),
+				_('Forget the learned dead YouTube pools? The core config regenerates (a short connection blip); an ALIVE pool will not be re-learned (the content guard), a dead one returns on its own within minutes.'), _('Forget'))
+				.then(function(ok) {
+					if (!ok)
+						return;
+					steerClear.disabled = true;
+					resultNote(steerNote, true, _('Applying…'));
+					L.resolveDefault(callYtSteerLearnedClear(), {}).then(function(r) {
+						steerClear.disabled = false;
+						if (r && r.result === true) {
+							resultNote(steerNote, true, _('Learned pools forgotten — the config is regenerated.'));
+							return;
+						}
+						resultNote(steerNote, false, _('Failed: ') + ((r && r.error) || _('rpc error')));
+					});
+				});
 		});
 		steerBox.addEventListener('click', function() {
 			const want = steerBox.checked ? '1' : '0';

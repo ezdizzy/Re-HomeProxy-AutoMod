@@ -232,8 +232,13 @@ return view.extend({
 			o.default = 'auto';
 			o.rmempty = false;
 
+			/* сеанс 198 (audit tail): instant-save must not be silent — the
+			 * field says where the value lands and when it takes effect. */
 			o.onchange = function(ev, section_id, value) {
-				return Promise.resolve(this.map.save(null, true)).catch(function() {});
+				const anchor = ev && ev.target;
+				return Promise.resolve(this.map.save(null, true)).then(function() {
+					hp.instantSavedNote(anchor, _('Saved — takes effect at the next service restart.'));
+				}).catch(function() {});
 			};
 
 			/* Live compatibility hint: nodes the SELECTED core cannot load. The
@@ -288,7 +293,10 @@ return view.extend({
 		o.rmempty = false;
 		o.onchange = function(ev, section_id, value) {
 			if (!section_id) return;
-			Promise.resolve(this.map.save(null, true)).catch(function() {});
+			const anchor = ev && ev.target;
+			Promise.resolve(this.map.save(null, true)).then(function() {
+				hp.instantSavedNote(anchor, _('Saved — takes effect at the next service restart.'));
+			}).catch(function() {});
 		};
 
 		/* Live: which node URLTest currently has selected. Only shown in URLTest mode
@@ -676,7 +684,10 @@ return view.extend({
 		 * procd reload trigger — the mode applies with the next service restart. */
 		o.onchange = function(ev, section_id, value) {
 			if (!section_id) return;
-			Promise.resolve(this.map.save(null, true)).catch(function() {});
+			const anchor = ev && ev.target;
+			Promise.resolve(this.map.save(null, true)).then(function() {
+				hp.instantSavedNote(anchor, _('Saved — takes effect at the next service restart.'));
+			}).catch(function() {});
 		}
 
 		/* «Напрямую» (Ф3.1): an honest notice INSTEAD of hiding the options —

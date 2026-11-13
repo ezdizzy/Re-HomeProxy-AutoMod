@@ -319,6 +319,24 @@ const api = baseclass.extend({
 		});
 	},
 
+	/* Honest one-line verdict for instant-saved fields (audit s194): the
+	 * value lands in UCI at once, but takes effect at the next service
+	 * restart — the field must say so next to itself, not stay silent. */
+	instantSavedNote(anchor, text) {
+		try {
+			const row = (anchor && anchor.closest) ? anchor.closest('.cbi-value') : null;
+			if (!row)
+				return;
+			let el = row.querySelector('.hp-instant-note');
+			if (!el) {
+				el = E('div', { 'class': 'hp-instant-note',
+					'style': 'font-size:.9em;margin-top:2px;color:#3fbf5f' });
+				row.appendChild(el);
+			}
+			el.textContent = text;
+		} catch (e) { /* the save itself must never depend on the note */ }
+	},
+
 	/* Shared delay→badge mapping (Monitoring page and the Servers grid):
 	 * red = 65535 timeout sentinel, amber = slow (>=3000 ms), green healthy,
 	 * grey = unmeasured. One source, so both pages speak the same language. */

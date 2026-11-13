@@ -483,10 +483,29 @@ return view.extend({
 
 		const enableBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' }, [ _('Enable control') ]);
 		const pauseBtn = E('button', { 'class': 'btn cbi-button-negative', type: 'button' }, [ _('Pause all (allow everything)') ]);
+		/* сеанс 198 (audit tail): the dashboard and the Settings pane carry
+		 * the same Enable control — while one works, the twin locks, so the
+		 * two copies can never race; refreshStatus() re-labels both. */
+		function setControl(target, resultEl, clicked) {
+			const twin = (clicked === enableBtn) ? setEnableBtn : enableBtn;
+			clicked.disabled = true;
+			twin.disabled = true;
+			busy(resultEl);
+			L.resolveDefault(callSet(target), null).then(function(r) {
+				if (!r || r.result === false)
+					note(resultEl, false, (r && r.error) ? String(r.error) : _('Operation failed'));
+				else
+					note(resultEl, true, (target === '1') ? _('Control enabled') : _('Control disabled'));
+				return refreshStatus();
+			}).catch(function(e) {
+				note(resultEl, false, _('Operation failed') + ': ' + (e && e.message ? e.message : ''));
+			}).finally(function() {
+				clicked.disabled = false;
+				twin.disabled = false;
+			});
+		}
 		enableBtn.addEventListener('click', function() {
-			const target = (S.status && S.status.enabled) ? '0' : '1';
-			act(dashResult, callSet(target),
-				(target === '1') ? _('Control enabled') : _('Control disabled'), enableBtn);
+			setControl((S.status && S.status.enabled) ? '0' : '1', dashResult, enableBtn);
 		});
 		pauseBtn.addEventListener('click', function() {
 			const target = (S.status && S.status.paused) ? '0' : '1';
@@ -699,14 +718,20 @@ return view.extend({
 			for (let i = 0; i < dboxes.length; i++)
 				if (dboxes[i].checked)
 					days.push(dboxes[i].getAttribute('data-day'));
-			act(ruleResult, callRuleAdd(
+			/* сеанс 198 (audit tail): the fields clear only on SUCCESS — a
+			 * failed add keeps what the user typed (the verdict says why). */
+			const p = callRuleAdd(
 				String(ruleName.value || '').trim(),
 				ruleType.value, targets, cids.join(','),
 				String(ruleT1.value || ''), String(ruleT2.value || ''),
 				days.join(','),
-				String(ruleD1.value || ''), String(ruleD2.value || '')),
-				_('Rule added'));
-			ruleTargets.value = ''; ruleName.value = '';
+				String(ruleD1.value || ''), String(ruleD2.value || ''));
+			act(ruleResult, p, _('Rule added'));
+			p.then(function(r) {
+				if (r && r.result !== false) {
+					ruleTargets.value = ''; ruleName.value = '';
+				}
+			});
 		});
 
 		function renderRules() {
@@ -1150,9 +1175,7 @@ return view.extend({
 
 		const setEnableBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply', type: 'button' });
 		setEnableBtn.addEventListener('click', function() {
-			const target = (S.status && S.status.enabled) ? '0' : '1';
-			act(setResult, callSet(target),
-				(target === '1') ? _('Control enabled') : _('Control disabled'));
+			setControl((S.status && S.status.enabled) ? '0' : '1', setResult, setEnableBtn);
 		});
 		panes.settings.appendChild(E('div', { 'class': 'ct-toolbar' }, [ setEnableBtn ]));
 		panes.settings.appendChild(resultBlock(setResult));

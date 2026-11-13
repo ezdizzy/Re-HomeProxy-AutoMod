@@ -546,7 +546,7 @@ return view.extend({
 			 * server (ч.109) — compDirty guards the one-time seed from it. */
 			compProfiles: [ { engine: 'zapret', resource: 'youtube', domains: '', strategy: '' } ],
 			compBuilt: null, composeSig: null, composeSeeded: false, rbSig: null,
-			compSeeded: false, compDirty: false, compSaveError: null,
+			compSeeded: false, compDirty: false, compSaveError: null, compStale: false,
 			mapSig: null, fuzzShownSig: null,
 			/* ч.232: метки с устройства { resource: { args: {verdict, ts} } }. */
 			dev: {} };
@@ -1693,11 +1693,19 @@ return view.extend({
 		const compTestBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Test composition') ]);
 		const compApplyBtn = E('button', { 'class': 'hpui-btn hpui-btn-primary', type: 'button' }, [ _('Apply composition') ]);
 		const compClearBtn = E('button', { 'class': 'hpui-btn hpui-btn-ghost', type: 'button' }, [ _('Clear') ]);
+		/* сеанс 198 (audit tail): edits after a test make the tested args
+		 * stale — the badge says so, and Apply refuses honestly (the server
+		 * rebuild check would fail the stale args anyway, but silently). */
+		const compStaleBadge = E('span', { 'class': 'hpui-badge hpui-b-amber', style: 'display:none' },
+			[ _('The composition changed since the test — run "Test composition" again.') ]);
 		const restoreRow = E('div', { 'class': 'wiz-note', style: 'margin:4px 0' }, [ '' ]);
 		compBox.appendChild(compRowsBox);
 		compBox.appendChild(E('div', { 'class': 'wiz-toolbar' },
-			[ compAddBtn, compTestBtn, compApplyBtn, compClearBtn ]));
+			[ compAddBtn, compTestBtn, compApplyBtn, compClearBtn, compStaleBadge ]));
 		compBox.appendChild(restoreRow);
+		function updateCompStale() {
+			compStaleBadge.style.display = state.compStale ? '' : 'none';
+		}
 		compBox.appendChild(E('p', { 'class': 'wiz-note' },
 			[ _('Profiles are matched in order (first match wins): scoped profiles run first, the general profile last. The server builds the final args, tests them on the isolated queue (Zapret) and through the local tester (ByeDPI); applying snapshots the previous strategies on the server, so Restore survives page reloads. ByeDPI scoped profiles are exact-domain and TCP-only (SNI in TLS-CHello/HTTP); QUIC/UDP is not domain-scoped and falls to the fallback group.') ]));
 
@@ -1871,6 +1879,12 @@ return view.extend({
 		 * the next dpi poll as a hint. */
 		function saveComposeDraft() {
 			state.compDirty = true;
+			/* сеанс 198: any draft edit invalidates the tested args — the
+			 * badge shows it and Apply refuses (the server rebuild check
+			 * would fail the stale args anyway, but silently). */
+			if (state.compBuilt)
+				state.compStale = true;
+			updateCompStale();
 			/* profiles cross as a JSON-encoded STRING (issue #11). */
 			L.resolveDefault(callComposeSave(JSON.stringify(state.compProfiles)), {}).then(function(r) {
 				if (r && r.result === false)
@@ -1990,6 +2004,8 @@ return view.extend({
 					return;
 				}
 				state.compBuilt = { zapret: r.zapret || '', byedpi: r.byedpi || '' };
+				state.compStale = false;
+				updateCompStale();
 				/* This run's DONE verdict is FRESH, not stale-from-before-
 				 * page-load: pre-arm the seed guard so the result renders. */
 				state.composeSeeded = true;
@@ -2005,6 +2021,13 @@ return view.extend({
 			if (!cb.zapret && !cb.byedpi) {
 				ui.addNotification(null, E('p', {},
 					_('Run "Test composition" first — Apply uses the server-built args.')), 'error');
+				return;
+			}
+			/* сеанс 198 (audit tail): a stale test must not pass silently —
+			 * Apply refuses in the result area (the honest one place). */
+			if (state.compStale) {
+				dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+					[ _('The composition changed since the test — run "Test composition" again: Apply uses the tested server-built args, and a stale test fails the server-side rebuild check.') ]));
 				return;
 			}
 			/* Bug (в), с.193: the SAME overwrite contract as the global
@@ -2966,6 +2989,10 @@ return view.extend({
 			document.body.appendChild(a);
 			a.click();
 			a.remove();
+			/* сеанс 198 (audit tail): the download answers in the result area —
+			 * the button never stays silent. */
+			dom.content(dpiResult, E('p', { 'class': 'hpui-hint' },
+				[ _('Exported %d strategies — the file %s is downloaded.').format(cands.length, 'ravnex-zapret-strategies.json') ]));
 		});
 		impBtn.addEventListener('click', function() { impFile.click(); });
 		impFile.addEventListener('change', function() {

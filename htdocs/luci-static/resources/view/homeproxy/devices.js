@@ -536,8 +536,15 @@ return view.extend({
 				note(devResult, false, _('MAC or IP is required'));
 				return;
 			}
-			act(devResult, callClientAdd(name, mac, ip), _('Device added'), devAddBtn);
-			devName.value = ''; devMac.value = ''; devIp.value = ''; devPicker.value = '';
+			/* сеанс 198 (audit tail): the fields clear only on SUCCESS — a
+			 * failed add keeps what the user typed (the verdict says why). */
+			const p = callClientAdd(name, mac, ip);
+			act(devResult, p, _('Device added'), devAddBtn);
+			p.then(function(r) {
+				if (r && r.result !== false) {
+					devName.value = ''; devMac.value = ''; devIp.value = ''; devPicker.value = '';
+				}
+			});
 		});
 
 		/* ── Registry: the unified device card grid ─────────────────── */
@@ -797,6 +804,9 @@ return view.extend({
 		 * checks are convenience only. */
 		const ipv6 = (uci.get('ravnex', 'config', 'ipv6_support') === '1');
 		const EXPERT = {};
+		/* сеанс 198: assigned below (after the badge exists) — rebuild() calls
+		 * it through the null-guard, so the first render stays safe. */
+		let expertDirtyRefresh = null;
 
 		function expertReset() {
 			for (let i = 0; i < LAN_MODES.length; i++)
@@ -857,6 +867,10 @@ return view.extend({
 				if (!nodes.length)
 					nodes.push(E('span', { 'class': 'hpui-cap' }, [ '—' ]));
 				dom.content(chips, nodes);
+				/* сеанс 198 (audit tail): staged edits are LOCAL until
+				 * "Save the lists" — the marker keeps that honest. */
+				if (expertDirtyRefresh)
+					expertDirtyRefresh();
 			}
 
 			const inp = E('input', { 'type': 'text', 'class': 'cbi-input-text',
@@ -926,6 +940,15 @@ return view.extend({
 
 		const expSave = E('button', { 'class': 'hpui-btn hpui-btn-primary', 'type': 'button' }, [ _('Save the lists') ]);
 		const expDiscard = E('button', { 'class': 'hpui-btn hpui-btn-ghost', 'type': 'button' }, [ _('Discard changes') ]);
+		/* сеанс 198 (audit tail): staged chips live only in the browser until
+		 * saved — the badge names that state, leaving the page still loses
+		 * them. */
+		const expDirtyNote = E('span', { 'class': 'hpui-badge hpui-b-amber', style: 'display:none;margin-left:8px' },
+			[ _('Unsaved edits — they are lost if you leave the page.') ]);
+		expertDirtyRefresh = function() {
+			expDirtyNote.style.display = Object.keys(expertDiff()).length ? '' : 'none';
+		};
+		expertDirtyRefresh();
 
 		expSave.addEventListener('click', function() {
 			const diff = expertDiff();
@@ -965,7 +988,7 @@ return view.extend({
 				_('Lists shared by the whole home network: an entry here applies no matter what the card modes say. The device cards above manage the MAC/IPv4 membership of single devices.')
 			]),
 			expertBody,
-			E('div', { 'class': 'dev-policy-actions' }, [ expSave, expDiscard ])
+			E('div', { 'class': 'dev-policy-actions' }, [ expSave, expDiscard, expDirtyNote ])
 		]);
 
 		/* ── poll ───────────────────────────────────────────────────── */
@@ -1012,6 +1035,9 @@ return view.extend({
 				E('h4', { 'class': 'hpui-h4' }, [ hp.icon('layers'), _('Proxy policy') ]),
 				E('p', { 'class': 'hpui-hint' }, [
 					_('«Auto» on a device card means «like everyone else» — this policy. A card mode (Direct/Proxied/Gaming/Global) overrides it for that one device. What is proxied for the whole home is decided on the Service rules and Strategy master pages.')
+				]),
+				E('p', { 'class': 'hpui-hint' }, [
+					_('The common policy and the card modes apply at once — there is no Apply button on this page; each action answers in the result area below.')
 				]),
 				E('div', { 'class': 'dev-field', 'style': 'max-width:480px' }, [
 					E('label', {}, [ _('Common policy for "Auto" devices') ]),
