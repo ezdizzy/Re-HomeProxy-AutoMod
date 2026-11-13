@@ -149,10 +149,29 @@ return view.extend({
 							else if (!rootLive && root.isConnected !== true && vp)
 								vp.replaceChildren(root);
 						} catch (e) {}
-						holder.appendChild(node);
-						/* Warm the other sections once per tab (stale-chunk
-						 * cure + instant first visits). */
-						hp.prefetchSections(name);
+					holder.appendChild(node);
+					/* s200: the standard LuCI save bar never appears on embed-
+					 * mounted form sections: the dispatcher builds it ONCE from
+					 * this view's render() output — which is the pre-paint
+					 * SKELETON (no .cbi-map yet, wave A) — so every field
+					 * without an instant-save handler was silently UNSAVABLE
+					 * (user report: «на Подключении невозможно ничего
+					 * сохранить, кнопки применить вообще нет»). Re-run THIS
+					 * view's own addFooter() now, when the map actually exists
+					 * — LuCI's canonical bar (readonly-aware, Save & Apply /
+					 * Save / Reset wired to the stock handlers). The previous
+					 * bar is removed first: in-place remounts would duplicate
+					 * it. One hook for ALL sections — СМОТРИ В ЦЕЛОЕ. */
+					try {
+						const vp2 = document.getElementById('view');
+						if (vp2) {
+							vp2.querySelectorAll('.cbi-page-actions').forEach((b) => b.remove());
+							self.addFooter();
+						}
+					} catch (e) {}
+					/* Warm the other sections once per tab (stale-chunk
+					 * cure + instant first visits). */
+					hp.prefetchSections(name);
 					});
 				}).catch((e) => {
 					/* Audit A3: never paint a DEAD section's error over a
