@@ -3284,13 +3284,20 @@ function queue_drain() {
 
 /* A token change must apply AT ONCE: api_base is rebuilt and getMe resolves
  * the bot identity; the offset file is PER BOT (a second bot starts from
- * its own offset, the legacy file migrates once). */
+ * its own offset, the legacy file migrates once).
+ * GitHub issue #19: a getMe that failed on cold start (egress not up yet)
+ * stuck FOREVER — the early-return below fired every cycle with bot_id = 0,
+ * getMe was never retried, and polling ran without an identity on the
+ * legacy offset file. Retry each cycle until the identity resolves. */
 function apply_token() {
-	if (cfg.token === token_used && length(api_base))
+	const fresh = (cfg.token !== token_used || !length(api_base));
+	if (!fresh && bot_id > 0)
 		return;
-	token_used = cfg.token;
-	api_base = `https://api.telegram.org/bot${cfg.token}`;
-	bot_id = 0;
+	if (fresh) {
+		token_used = cfg.token;
+		api_base = `https://api.telegram.org/bot${cfg.token}`;
+		bot_id = 0;
+	}
 	const me = tg_call('getMe', null);
 	if (me && me.ok === true && me.result && me.result.id != null) {
 		const bid = int(me.result.id);
@@ -3302,7 +3309,11 @@ function apply_token() {
 			}
 		}
 	}
-	log('token applied (bot_id=' + bot_id + ')');
+	/* Log the state CHANGE only: a failed retry loops every cycle until the
+	 * egress is up — one line per attempt would spam the log. */
+	if (fresh || bot_id > 0)
+		log('token applied (bot_id=' + bot_id + ')' +
+		    ((bot_id > 0) ? '' : ' — getMe failed, will retry'));
 }
 
 /* ── main loop ────────────────────────────────────────────────────────── */
@@ -3330,6 +3341,13 @@ function main() {
 			}
 			ensure_owner_seed();
 			apply_token();
+			/* issue #19: without an identity there is nothing to poll — the
+			 * offset file is per bot. Retry getMe next cycle instead of
+			 * hammering getUpdates on a foreign/legacy offset. */
+			if (bot_id === 0) {
+				sleep(10000);
+				continue;
+			}
 			allowed_chat = int(cfg.chat_id || '0') || 0;
 			if (off_loaded_for !== bot_id) {
 				off_loaded_for = bot_id;
@@ -3376,14 +3394,36 @@ function main() {
 			const poll = (match(cfg.poll, /^[0-9]+$/) != null) ? int(cfg.poll) : 25;
 			if (poll < 5) cfg.poll = '5';
 			const j = tg_call(`getUpdates?timeout=${poll}&offset=${last_update_id + 1}`, null);
+			let live_mx = -1;
 			if (j && type(j.result) === 'array') {
 				for (let i = 0; i < length(j.result); i++) {
 					const u = j.result[i];
 					if (type(u) !== 'object' || !u.update_id) continue;
 					queue_put(u);   /* durable BEFORE handling (audit 1.2) */
+					const uid = int(u.update_id);
+					if (uid > live_mx)
+						live_mx = uid;
 				}
 			}
 			queue_drain();
+			/* issue #19: the LAST stuck-offset hole. The +1000 bound inside
+			 * queue_drain protects against synthetic jumps (ч.184), but a
+			 * STALE NONZERO offset (legacy file, long downtime) beyond the
+			 * bound never advanced — «too far ahead» forever, hourly
+			 * redelivery after each done-journal expiry. A LIVE API batch is
+			 * Telegram-authoritative (the same trust the ч.262 queue-file
+			 * re-seed already relies on), and by the time the drain has run,
+			 * every item of this batch is processed and done-marked — so the
+			 * batch max IS the confirmation boundary. Advance AFTER the
+			 * drain: nothing unprocessed is ever skipped (the queue is
+			 * durable BEFORE handling), and the drain's own bound stays as
+			 * defense in depth. */
+			if (live_mx > last_update_id) {
+				last_update_id = live_mx;
+				offset_lost = false;
+				try { writefile(off_file(), sprintf('%d', last_update_id)); } catch (e) {}
+				log('offset confirmed from the live batch (' + live_mx + ')');
+			}
 			/* Ф8.6: решения egress-фейловера + честный пуш о переключении —
 			 * доставляется УЖЕ НОВЫМ каналом (сама доставка и есть доказательство). */
 			egress_tick();

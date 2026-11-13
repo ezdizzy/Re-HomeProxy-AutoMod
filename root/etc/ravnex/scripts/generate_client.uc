@@ -407,10 +407,14 @@ if (legacy_ut_mode === 'manual')
 			push(exit_reserves, hs_sid);
 /* Kernel-композиция групп (единая для main/UDP): prefer — только с живым
  * preferred (структура [preferred, alt] держит preferred на уровне ядра);
+ * manual — пул юзера (резервы: «фейловер строго по списку», дизайн §3.2 +
+ * GitHub issue #18 — 170-узловая подписка на слабом боксе = fd-взрыв от
+ * URL-проб всех узлов; пустой список → весь пул, fallback build_urltest);
  * иначе auto (все узлы — kernel-страховка, политика у движка). */
 const exit_pref_usable = !isEmpty(exit_preferred_opt) &&
 	uci.get_all(uciconfig, exit_preferred_opt) != null && hp_node_usable(exit_preferred_opt);
-const exit_kernel_mode = (exit_mode_opt === 'prefer' && exit_pref_usable) ? 'prefer' : 'auto';
+const exit_kernel_mode = (exit_mode_opt === 'prefer' && exit_pref_usable) ? 'prefer'
+	: ((exit_mode_opt === 'manual') ? 'manual' : 'auto');
 
 /* OAuth stability (ч.59): auth-provider hosts ride the SAME exit as the services that
  * use them (main-out) instead of the RU-geo "always direct" split, QUIC/SVCB escapes
@@ -2142,6 +2146,28 @@ function build_urltest(tag, mode, preferred, manual_nodes, interval, tolerance) 
 	}, extra: extra };
 }
 
+/* manual-пул для kernel-группы (GitHub issue #18): резервы юзера + ТЕКУЩИЙ пик
+ * контура из стейта движка. Design §3.2: manual держит ВЫБОР юзера — пик из
+ * дашборда может лежать вне списка резервов; без него селектор после регена
+ * не предложит его и sticky-resume потеряет пик. Пустой итог → весь пул
+ * (fallback build_urltest). Хелпер объявлен ВЫШЕ обоих вызовов (lesson 405). */
+function exit_manual_pool(contour) {
+	const out = [...exit_reserves];
+	try {
+		const ms = ss_read_state(RUN_DIR + '/hotswap_state.json').data;
+		let held = null;
+		if (ms && type(ms.contours) === 'object' && type(ms.contours[contour]) === 'object' &&
+		    type(ms.contours[contour].held) === 'string')
+			held = ms.contours[contour].held;
+		else if (contour === 'main-out' && ms && type(ms.active) === 'string')
+			held = ms.active;   /* legacy mirror */
+		const m = (held != null) ? match(held, /^cfg-([A-Za-z0-9]+)-out$/) : null;
+		if (m && index(out, m[1]) < 0)
+			push(out, m[1]);
+	} catch (e) {}
+	return out;
+}
+
 /* Main outbounds */
 if (!isEmpty(main_node)) {
 	let urltest_nodes = [];
@@ -2151,14 +2177,17 @@ if (!isEmpty(main_node)) {
 		 * ВСЕГДА (когда пул ≥2) — движок владеет селектором без легаси-флага hotswap.
 		 * Состав kernel-группы по exit_mode: prefer → [preferred, alt(rest)]
 		 * (PREFER_HOLD_TOLERANCE держит preferred на уровне ядра — страховка при
-		 * мёртвом движке), auto/manual → все узлы (kernel = страховка, политика —
-		 * у движка). Легаси main_urltest_nodes в состав пула больше не входит
-		 * (список мигрировал в резервы движка). */
+		 * мёртвом движке), manual → резервы юзера (строгий список — дизайн §3.2 +
+		 * GitHub issue #18; пустой список → весь пул через fallback build_urltest),
+		 * auto → все узлы (kernel = страховка, политика — у движка). Легаси
+		 * main_urltest_nodes в состав пула отдельно не входит — он мигрировал в
+		 * резервы движка (exit_reserves). */
 		const main_urltest_interval = uci.get(uciconfig, ucimain, 'main_urltest_interval');
 		const main_urltest_tolerance = uci.get(uciconfig, ucimain, 'main_urltest_tolerance');
 		const hs_group = 'main-out-auto';
 		const ut = build_urltest(hs_group, exit_kernel_mode, exit_preferred_opt,
-			[], main_urltest_interval, main_urltest_tolerance);
+			(exit_kernel_mode === 'manual') ? exit_manual_pool('main-out') : exit_reserves,
+			main_urltest_interval, main_urltest_tolerance);
 		if (ut.outbound) {
 			push(config.outbounds, ut.outbound);
 			urltest_nodes = ut.extra;
@@ -2449,16 +2478,19 @@ if (!isEmpty(main_node)) {
 		const main_udp_urltest_interval = uci.get(uciconfig, ucimain, 'main_udp_urltest_interval');
 		const main_udp_urltest_tolerance = uci.get(uciconfig, ucimain, 'main_udp_urltest_tolerance');
 		/* Exit Engine (Ф9.16, второй контур): kernel-группа main-udp-auto под
-		 * селектором main-udp-out (тег правил сохранён). Режим/пороги общие с main;
+		 * селектором main-udp-out (тег правил сохранён). Режим/пороги общие с main
+		 * (manual → строгий список + пик контура, как у main — issue #18);
 		 * preferred у UDP свой (exit_udp_preferred, иначе наследует main). Резервы
 		 * общие, применяются к пулу UDP. Правила ссылаются на main-udp-out — тег
 		 * селектора, поэтому правила не меняются. */
 		const udp_pref_sid = (!isEmpty(exit_udp_preferred_opt) &&
 			uci.get_all(uciconfig, exit_udp_preferred_opt) != null &&
 			hp_node_usable(exit_udp_preferred_opt)) ? exit_udp_preferred_opt : null;
-		const udp_kernel_mode = (exit_kernel_mode === 'prefer' && udp_pref_sid != null) ? 'prefer' : 'auto';
+		const udp_kernel_mode = (exit_kernel_mode === 'prefer' && udp_pref_sid != null) ? 'prefer'
+			: ((exit_kernel_mode === 'manual') ? 'manual' : 'auto');
 		const ut = build_urltest('main-udp-auto', udp_kernel_mode, udp_pref_sid,
-			[], main_udp_urltest_interval, main_udp_urltest_tolerance);
+			(udp_kernel_mode === 'manual') ? exit_manual_pool('main-udp-out') : exit_reserves,
+			main_udp_urltest_interval, main_udp_urltest_tolerance);
 		if (ut.outbound && length(ut.extra) >= 2) {
 			push(config.outbounds, ut.outbound);
 			let udp_members = ['main-udp-auto'];
